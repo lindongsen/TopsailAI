@@ -1305,6 +1305,41 @@ class TestLLMModelErrorHandling(unittest.TestCase):
         self.assertEqual(result, ["success"])
 
 
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.input_yes_or_no", return_value=True)
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_manual_retry_uses_five_second_sleep_after_automatic_retries(
+        self,
+        mock_base_init,
+        mock_logger,
+        mock_format,
+        mock_is_main_thread,
+        mock_input_yes_or_no,
+        mock_sleep,
+    ):
+        """A manually confirmed retry waits five seconds before its next attempt."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Success after manual retry"
+        mock_format.side_effect = [
+            TypeError("automatic retry one"),
+            TypeError("automatic retry two"),
+            RuntimeError("manual retry"),
+            ["success"],
+        ]
+
+        model = self._create_mock_model()
+        model.model.create.return_value = mock_response
+
+        result = model.chat(self.messages)
+
+        self.assertEqual(result, ["success"])
+        self.assertEqual(mock_sleep, [5, 10, 5])
+        mock_input_yes_or_no.assert_called_once()
+
     @patch("topsailai.ai_base.llm_base.input_yes_or_no", return_value=True)
     @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)

@@ -906,6 +906,7 @@ class LLMModel(LLMModelBase):
 
         retry_times = 17
         err_count_map = {}
+        manual_retry_requested = False
 
         rsp_content = None
         rsp_obj = None
@@ -929,7 +930,8 @@ class LLMModel(LLMModelBase):
                 break
 
             if i > 0:
-                sec = (i%retry_times)*5
+                sec = 5 if manual_retry_requested else (i%retry_times)*5
+                manual_retry_requested = False
                 if sec <= 0:
                     sec = 3
                 if sec > 120:
@@ -987,6 +989,7 @@ class LLMModel(LLMModelBase):
                 if input_func is None:
                     input_func = input
                 if input_yes_or_no(">>> LLM Retry [yes/no] ", input_func):
+                    manual_retry_requested = True
                     continue
                 raise KeyboardInterrupt()
             except JsonError as e:
@@ -1108,6 +1111,7 @@ class LLMModel(LLMModelBase):
                     if input_func is None:
                         input_func = input
                     if input_yes_or_no(">>> LLM Retry [yes/no] ", input_func):
+                        manual_retry_requested = True
                         continue
                 raise e
 
