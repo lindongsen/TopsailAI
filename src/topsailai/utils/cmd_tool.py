@@ -6,6 +6,7 @@
 '''
 
 import os
+import signal
 import socket
 import subprocess
 
@@ -59,6 +60,37 @@ def build_env(d:dict=None, keys:list=None):
     return env
 
 
+def _set_process_group_options(options):
+    """Configure a new process group for timeout cleanup."""
+    if os.name == "posix":
+        options["start_new_session"] = True
+        return
+    if os.name == "nt":
+        creationflags = options.get("creationflags", 0)
+        options["creationflags"] = creationflags | subprocess.CREATE_NEW_PROCESS_GROUP
+
+
+def _kill_process_tree(process):
+    """Kill a process and its descendants after a command timeout."""
+    if os.name == "posix":
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        return
+    if os.name == "nt":
+        result = subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if result.returncode == 0:
+            return
+    if process.poll() is None:
+        process.kill()
+
+
 def exec_cmd(
         cmd:str|list,
         no_need_stderr:bool=False,
@@ -71,7 +103,7 @@ def exec_cmd(
     ):
     """Execute a shell command and return the result.
 
-    This function runs a command using subprocess.run, capturing stdout and stderr.
+    This function runs a command using subprocess.Popen, capturing stdout and stderr.
     It automatically handles encoding of output and allows suppressing stderr output.
 
     Args:
@@ -99,25 +131,33 @@ def exec_cmd(
     subprocess_input = options.pop("input", None)
     if stdin_text is not None:
         subprocess_input = stdin_text.encode("utf-8")
-    result = subprocess.run(
+    if subprocess_input is not None:
+        if options.get("stdin") is not None:
+            raise ValueError("stdin and input arguments may not both be used.")
+        options["stdin"] = subprocess.PIPE
+    _set_process_group_options(options)
+    process = subprocess.Popen(
         cmd,
         env=env,
         shell=isinstance(cmd, str),
-        check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=False,
-        timeout=timeout,
-        input=subprocess_input,
         **options
     )
+    try:
+        stdout, stderr = process.communicate(input=subprocess_input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(process)
+        process.communicate()
+        raise
     ret = (
-        result.returncode,
-        safe_decode(result.stdout),
-        "" if no_need_stderr else safe_decode(result.stderr),
+        process.returncode,
+        safe_decode(stdout),
+        "" if no_need_stderr else safe_decode(stderr),
     )
     if need_error_log:
-        if result.returncode != 0:
+        if process.returncode != 0:
             logger.error("failed to execute command: cmd=[%s], ret=[%s]", cmd, ret)
     return ret
 

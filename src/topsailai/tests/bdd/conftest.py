@@ -16,8 +16,8 @@ def pytest_configure(config):
         "wip: scenario pinned to a known source defect, expected to fail",
     )
 
-
 pytest_plugins = [
+    "tests.bdd.steps.exec_cmd_process_lifecycle_steps",
     "tests.bdd.steps.tool_param_cmd_git_file_steps",
     "tests.bdd.steps.tool_param_remote_steps",
     "tests.bdd.steps.tool_param_human_guard_steps",
