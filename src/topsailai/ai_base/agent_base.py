@@ -89,11 +89,21 @@ class AgentBase(AgentTool):
 
         # LLM
         # lazy import due to too long time to import
-        from topsailai.ai_base.llm_base import (
-           LLMModel,
+        from topsailai.ai_base.llm_base import LLMModel
+        from topsailai.context.llm_request_stat import LLMRequestStat
+        from topsailai.context.llm_state_visualizer import LLMStateVisualizer
+
+        self.llm_request_stat = LLMRequestStat()
+        self.state_visualizer = LLMStateVisualizer(self.llm_request_stat)
+        self.llm_model = LLMModel(
+            llm_request_stat=self.llm_request_stat,
+            state_visualizer=self.state_visualizer,
         )
-        self.llm_model = LLMModel()
         return
+
+    def close(self) -> None:
+        """Close runtime components owned by this agent."""
+        self.llm_model.close()
 
     def __str__(self) -> str:
         parts = {

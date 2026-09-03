@@ -189,9 +189,58 @@ class TestLLMModelBase:
         model = TestModel(frequency_penalty=0.5)
         assert model.frequency_penalty == 0.5
 
+    def test_init_owns_request_stat_and_matching_visualizer(self):
+        """Create one request tracker and bind the base-owned visualizer to it."""
+        from topsailai.context.llm_request_stat import LLMRequestStat
+        from topsailai.context.llm_state_visualizer import LLMStateVisualizer
+
+        model = self._make_environment_model()
+
+        assert isinstance(model.llm_request_stat, LLMRequestStat)
+        assert isinstance(model.state_visualizer, LLMStateVisualizer)
+        assert model.state_visualizer.request_stat is model.llm_request_stat
+
+    def test_init_preserves_injected_runtime_components(self):
+        """Retain caller-provided request statistics and visualizer instances."""
+        request_stat = MagicMock()
+        state_visualizer = MagicMock()
+
+        model = self._make_environment_model(
+            llm_request_stat=request_stat,
+            state_visualizer=state_visualizer,
+        )
+
+        assert model.llm_request_stat is request_stat
+        assert model.state_visualizer is state_visualizer
+
+    def test_get_state_visualizer_creates_model_local_legacy_fallback(self):
+        """Create a matching visualizer when construction was bypassed."""
+        from topsailai.context.llm_request_stat import LLMRequestStat
+        from topsailai.context.llm_state_visualizer import LLMStateVisualizer
+
+        model = object.__new__(LLMModelBase)
+
+        visualizer = model._get_state_visualizer()
+
+        assert isinstance(model.llm_request_stat, LLMRequestStat)
+        assert isinstance(visualizer, LLMStateVisualizer)
+        assert visualizer.request_stat is model.llm_request_stat
+        assert model._get_state_visualizer() is visualizer
+
+    def test_close_stops_base_owned_visualizer_and_token_worker(self):
+        """Clean up both runtime workers from their owning base class."""
+        model = object.__new__(LLMModelBase)
+        model.state_visualizer = MagicMock()
+        model.tokenStat = MagicMock(flag_running=True)
+
+        model.close()
+
+        model.state_visualizer.stop.assert_called_once_with()
+        assert model.tokenStat.flag_running is False
+
 
     @staticmethod
-    def _make_environment_model():
+    def _make_environment_model(**kwargs):
         """Create a minimal model for environment-resolution tests."""
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -203,7 +252,7 @@ class TestLLMModelBase:
             def chat(self, *args, **kwargs):
                 pass
 
-        return TestModel()
+        return TestModel(**kwargs)
 
     def test_init_falls_back_to_legacy_llm_parameter_variables(self, monkeypatch):
         """Legacy variables remain effective when preferred variables are unset."""

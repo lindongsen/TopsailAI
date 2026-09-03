@@ -48,6 +48,25 @@ class TestLLMChat(unittest.TestCase):
         self.assertEqual(chat.first_message, "")
         self.assertEqual(chat.last_message, "")
 
+    def test_close_closes_owned_model(self):
+        """Closing a direct LLM chat closes its model runtime components."""
+        from topsailai.workspace.llm_shell import LLMChat
+
+        chat = LLMChat(self.mock_prompt_ctl, self.mock_llm_model)
+        chat.close()
+
+        self.mock_llm_model.close.assert_called_once_with()
+
+    def test_context_manager_closes_owned_model(self):
+        """Context-managed direct LLM usage closes the model on exit."""
+        from topsailai.workspace.llm_shell import LLMChat
+
+        chat = LLMChat(self.mock_prompt_ctl, self.mock_llm_model)
+        with chat as entered:
+            self.assertIs(entered, chat)
+
+        self.mock_llm_model.close.assert_called_once_with()
+
     def test_chat_with_message(self):
         """Test chat method with a user message."""
         from topsailai.workspace.llm_shell import LLMChat

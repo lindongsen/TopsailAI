@@ -1,9 +1,10 @@
 """Public visualization state manager.
 
-This module provides a singleton ``StateVisualizer`` that tracks the current
-visualization state (e.g. IDLE, THINKING) and emits corresponding log messages
-via ``print_tool``. A background thread waits on a ``threading.Condition`` and
-prints a message only when the state transitions to a new value.
+This module provides an instance-scoped ``StateVisualizer`` that tracks the
+current visualization state (e.g. IDLE, THINKING) and emits corresponding log
+messages via ``print_tool``. A background thread waits on a
+``threading.Condition`` and prints a message only when the state transitions to
+a new value.
 
 The visualizer can be disabled by setting the environment variable
 ``DISABLE_VISUALIZER`` to ``1``, ``true`` or ``yes`` (case-insensitive).
@@ -31,7 +32,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 
 class StateVisualizer:
-    """Singleton visualization state manager.
+    """Instance-scoped visualization state manager.
 
     Usage:
         visualizer = StateVisualizer()
@@ -48,28 +49,13 @@ class StateVisualizer:
 
     A decorator is provided for the common case of marking an entire function:
 
-        @_state_visualizer.visualize_state(VisualizationState.THINKING)
-        def call_llm_model(self, ...):
+        @visualizer.visualize_state(VisualizationState.THINKING)
+        def perform_work(...):
             ...
     """
 
-    _instance: Optional["StateVisualizer"] = None
-    _instance_lock = threading.Lock()
-
-    def __new__(cls) -> "StateVisualizer":
-        if cls._instance is None:
-            with cls._instance_lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-        return cls._instance
-
     def __init__(self) -> None:
-        # ``__init__`` may run multiple times because ``__new__`` always returns
-        # the same object. Guard against re-initialization with a marker.
-        if getattr(self, "_initialized", False):
-            return
-
-        self._initialized = True
+        """Initialize an independent state visualizer."""
         self._state = VisualizationState.IDLE
         self._last_printed_state: Optional[VisualizationState] = None
         self._lock = threading.RLock()
@@ -164,8 +150,8 @@ class StateVisualizer:
         positional and keyword arguments unchanged.
 
         Example:
-            @_state_visualizer.visualize_state(VisualizationState.THINKING)
-            def call_llm_model(self, messages):
+            @visualizer.visualize_state(VisualizationState.THINKING)
+            def perform_work(items):
                 ...
         """
 
@@ -181,6 +167,7 @@ class StateVisualizer:
             return wrapper  # type: ignore[return-value]
 
         return decorator
+
 
 
 class _StateScope:

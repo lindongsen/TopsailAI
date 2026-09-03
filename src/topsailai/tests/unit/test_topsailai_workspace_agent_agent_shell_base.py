@@ -66,6 +66,7 @@ class TestAgentChatRun(unittest.TestCase):
 
         self.assertEqual(result, "Test response")
         self.mock_ai_agent.run.assert_called_once()
+        self.mock_ai_agent.close.assert_called_once_with()
 
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
     @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")

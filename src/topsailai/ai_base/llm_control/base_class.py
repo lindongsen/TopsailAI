@@ -26,6 +26,8 @@ from topsailai.utils.print_tool import (
 from topsailai.ai_base.constants import (
     LLM_KEYWORD_MISTAKE,
 )
+from topsailai.context.llm_request_stat import LLMRequestStat
+from topsailai.context.llm_state_visualizer import LLMStateVisualizer
 from topsailai.context.token import (
     TokenStat,
     count_tokens,
@@ -100,6 +102,8 @@ class LLMModelBase(object):
             top_p=0.97,
             frequency_penalty=0.0,
             model_name=None,
+            llm_request_stat=None,
+            state_visualizer=None,
         ):
         """
         Initialize the LLM model with configuration parameters.
@@ -110,6 +114,8 @@ class LLMModelBase(object):
             top_p (float, optional): Nucleus sampling parameter. Defaults to 0.97.
             frequency_penalty (float, optional): Frequency penalty. Defaults to 0.0.
             model_name (str, optional): Model name. Defaults to environment variable or DeepSeek-V3.1-Terminus.
+            llm_request_stat (LLMRequestStat, optional): Context-local request tracker.
+            state_visualizer (LLMStateVisualizer, optional): Context-local state visualizer.
         """
         self.max_tokens = EnvReaderInstance.get_with_fallback(
             "TOPSAILAI_MAX_COMPLETION_TOKENS", "MAX_TOKENS",
@@ -138,8 +144,49 @@ class LLMModelBase(object):
         logger.info(f"model={self.model_name}, max_tokens={self.max_tokens}")
 
         self.tokenStat = TokenStat(id(self))
+        self.llm_request_stat = llm_request_stat or LLMRequestStat()
+        self.state_visualizer = state_visualizer or LLMStateVisualizer(
+            self.llm_request_stat
+        )
 
         self.content_senders = [] # instances of base class ContentSender
+
+    def _get_llm_request_stat(self):
+        """Return this model's request tracker, creating a local legacy fallback."""
+        request_stat = getattr(self, "llm_request_stat", None)
+        if request_stat is None:
+            request_stat = LLMRequestStat()
+            self.llm_request_stat = request_stat
+        return request_stat
+
+    def _get_state_visualizer(self):
+        """Return this model's visualizer, creating a local legacy fallback."""
+        visualizer = getattr(self, "state_visualizer", None)
+        if visualizer is None:
+            visualizer = LLMStateVisualizer(self._get_llm_request_stat())
+            self.state_visualizer = visualizer
+        return visualizer
+
+    def _record_llm_request_stat(self, record_method_name):
+        """Apply one statistics update without producing duplicate output."""
+        request_stat = self._get_llm_request_stat()
+        getattr(request_stat, record_method_name)()
+
+    def _record_llm_request(self):
+        """Record one provider request attempt."""
+        self._record_llm_request_stat("record_request")
+
+    def _record_llm_request_success(self):
+        """Record one successful provider request."""
+        self._record_llm_request_stat("record_request_success")
+
+    def _record_llm_request_failure(self):
+        """Record one failed provider request."""
+        self._record_llm_request_stat("record_request_failure")
+
+    def _record_llm_response_content_error(self):
+        """Record one tool-response content error."""
+        self._record_llm_request_stat("record_response_content_error")
 
     def __str__(self) -> str:
         parts = {
@@ -194,13 +241,18 @@ class LLMModelBase(object):
             sender.send(content)
         return
 
-    def __del__(self):
-        """
-        Cleanup method called when the object is destroyed.
+    def close(self) -> None:
+        """Stop context-local background workers; repeated calls are safe."""
+        visualizer = getattr(self, "state_visualizer", None)
+        if visualizer is not None:
+            visualizer.stop()
+        token_stat = getattr(self, "tokenStat", None)
+        if token_stat is not None:
+            token_stat.flag_running = False
 
-        Stops the token statistics tracking thread.
-        """
-        self.tokenStat.flag_running = False
+    def __del__(self):
+        """Best-effort cleanup for callers that do not explicitly close the model."""
+        self.close()
 
     @property
     def chat_model(self):

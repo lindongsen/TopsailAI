@@ -154,6 +154,7 @@ class TestLLMModelCallLLMModel(unittest.TestCase):
         model.models = []
         model.model = MagicMock()
         model.tokenStat = MagicMock()
+        model.llm_request_stat = MagicMock()
         model.model_config = {"api_key": "test-key"}
         model.model_name = "test-model"
         model.temperature = 0.7

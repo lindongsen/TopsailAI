@@ -1,6 +1,6 @@
 """Unit tests for ``StateVisualizer``.
 
-These tests verify the singleton behaviour, state transitions, background
+These tests verify independent instances, state transitions, background
 thread printing, the ``DISABLE_VISUALIZER`` environment switch, and clean
 shutdown via ``stop()``.
 """
@@ -16,30 +16,17 @@ import pytest
 
 from topsailai.utils.state_visualizer import StateVisualizer, VisualizationState
 
-@pytest.fixture(autouse=True)
-def reset_singleton():
-    """Reset the singleton instance before and after each test.
-
-    This guarantees that tests are isolated from each other even though
-    ``StateVisualizer`` is a singleton.
-    """
-    original_instance = StateVisualizer._instance
-    # Stop the original instance first to reduce cross-test interference from
-    # any lingering background worker.
-    if original_instance is not None:
-        original_instance.stop()
-    StateVisualizer._instance = None
-    yield
-    # Restore the original instance so that production code that already
-    # imported the singleton is not left with a stale reference.
-    StateVisualizer._instance = original_instance
-
-
-class TestStateVisualizerSingleton:
-    def test_multiple_calls_return_same_instance(self):
+class TestStateVisualizerInstances:
+    def test_multiple_calls_return_independent_instances(self):
         first = StateVisualizer()
         second = StateVisualizer()
-        assert first is second
+        try:
+            assert first is not second
+            assert not hasattr(first, "request_stat")
+            assert not hasattr(second, "request_stat")
+        finally:
+            first.stop()
+            second.stop()
 
 
 class TestStateVisualizerStateAccess:
@@ -57,18 +44,21 @@ class TestStateVisualizerStateAccess:
 class TestStateVisualizerPrinting:
     def test_thinking_state_prints_once(self, monkeypatch):
         visualizer = StateVisualizer()
-        visualizer.start()
+        try:
+            with mock.patch(
+                "topsailai.utils.state_visualizer.print_info"
+            ) as mock_print_info:
+                visualizer.start()
+                self._wait_for_worker(visualizer)
+                visualizer.set_state(VisualizationState.THINKING)
+                self._wait_for_worker(visualizer)
 
-        with mock.patch(
-            "topsailai.utils.state_visualizer.print_info"
-        ) as mock_print_info:
-            visualizer.set_state(VisualizationState.THINKING)
-            self._wait_for_worker(visualizer)
+                visualizer.set_state(VisualizationState.THINKING)
+                self._wait_for_worker(visualizer)
 
-            visualizer.set_state(VisualizationState.THINKING)
-            self._wait_for_worker(visualizer)
-
-        mock_print_info.assert_called_once_with("Thinking...")
+            mock_print_info.assert_called_once_with("Thinking...")
+        finally:
+            visualizer.stop()
 
     def test_idle_state_does_not_print(self, monkeypatch):
         visualizer = StateVisualizer()

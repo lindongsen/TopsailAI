@@ -52,6 +52,40 @@ class TestAgentBaseInitialization(unittest.TestCase):
         self.assertEqual(agent.agent_type, "")
         self.assertEqual(agent.agent_role, "worker")
 
+    def test_agent_injects_shared_runtime_components_into_llm_model(self):
+        """Agent and model share the same request stat and visualizer instances."""
+        from topsailai.ai_base.agent_base import AgentBase
+        from topsailai.ai_base.llm_base import LLMModel
+
+        agent = AgentBase(
+            system_prompt="You are a helpful assistant",
+            tools={},
+            agent_name="TestAgent",
+        )
+
+        call_kwargs = LLMModel.call_args.kwargs
+        self.assertIs(call_kwargs["llm_request_stat"], agent.llm_request_stat)
+        self.assertIs(call_kwargs["state_visualizer"], agent.state_visualizer)
+
+    def test_agents_own_isolated_runtime_components(self):
+        """Separate agents never share request statistics or visualizers."""
+        from topsailai.ai_base.agent_base import AgentBase
+
+        first = AgentBase("prompt", {}, "first")
+        second = AgentBase("prompt", {}, "second")
+
+        self.assertIsNot(first.llm_request_stat, second.llm_request_stat)
+        self.assertIsNot(first.state_visualizer, second.state_visualizer)
+
+    def test_close_delegates_to_owned_llm_model(self):
+        """Closing an agent closes its model-owned runtime components."""
+        from topsailai.ai_base.agent_base import AgentBase
+
+        agent = AgentBase("prompt", {}, "agent")
+        agent.close()
+
+        self.mock_llm_model.close.assert_called_once_with()
+
     def test_init_with_tool_prompt(self):
         """Test initialization with tool prompt."""
         from topsailai.ai_base.agent_base import AgentBase

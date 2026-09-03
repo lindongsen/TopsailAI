@@ -150,6 +150,7 @@ class AgentChat(AgentChatBase):
                     getattr(self.ctx_runtime_data, "session_id", None),
                 )
             self._stop_control_server()
+            self.ai_agent.close()
 
     def _clear_interrupt_state(self):
         """Clear the interrupted state and any current-process flag file."""

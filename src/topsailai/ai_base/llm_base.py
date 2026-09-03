@@ -5,6 +5,8 @@
   Purpose:
 '''
 
+import contextvars
+import functools
 import os
 import random
 import time
@@ -51,10 +53,8 @@ from topsailai.utils import (
     input_tool,
 )
 from topsailai.utils.input_tool import input_yes_or_no
-from topsailai.utils.state_visualizer import (
-    StateVisualizer,
-    VisualizationState,
-)
+from topsailai.context.llm_state_visualizer import visualize_model_state
+from topsailai.utils.state_visualizer import VisualizationState
 from topsailai.utils.thread_local_tool import (
     get_agent_object,
     get_agent_runtime_input,
@@ -110,13 +110,34 @@ def _match_non_retryable_bad_request(e_str: str) -> str:
     return ""
 
 
-# Module-level singleton visualizer used by all LLMModel instances.
-_state_visualizer = StateVisualizer()
-_state_visualizer.start()
+_llm_request_started = contextvars.ContextVar(
+    "topsailai_llm_request_started", default=False
+)
+
+
+def _record_llm_request_outcome(method):
+    """Record one success or failure for each started provider request."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        token = _llm_request_started.set(False)
+        try:
+            result = method(self, *args, **kwargs)
+            if _llm_request_started.get():
+                self._record_llm_request_success()
+            return result
+        except BaseException:
+            if _llm_request_started.get():
+                self._record_llm_request_failure()
+            raise
+        finally:
+            _llm_request_started.reset(token)
+
+    return wrapper
 
 
 class LLMModel(LLMModelBase):
-    """ openai methods """
+    """OpenAI-compatible model with context-local runtime components."""
+
 
     def _get_pending_native_tool_call_responses(self):
         """Return the per-model FIFO for synthetic native tool-call responses."""
@@ -326,6 +347,8 @@ class LLMModel(LLMModelBase):
         )
 
         if first_byte_timeout is None or first_byte_timeout <= 0:
+            self._record_llm_request()
+            _llm_request_started.set(True)
             response = self.chat_model.create(timeout=(5, 300), **params)
             if stream:
                 return response, False
@@ -337,6 +360,7 @@ class LLMModel(LLMModelBase):
 
         def _create():
             try:
+                self._record_llm_request()
                 result[0] = self.chat_model.create(timeout=(5, 300), **params)
             except Exception as e:
                 first_exc[0] = e
@@ -346,6 +370,7 @@ class LLMModel(LLMModelBase):
         start_time = time.monotonic()
         create_thread = threading.Thread(target=_create, daemon=True)
         create_thread.start()
+        _llm_request_started.set(True)
 
         timed_out = not got_result.wait(timeout=first_byte_timeout)
         elapsed = time.monotonic() - start_time
@@ -510,7 +535,8 @@ class LLMModel(LLMModelBase):
             # Safe hook: never re-raise; never mutate shared state.
             pass
 
-    @_state_visualizer.visualize_state(VisualizationState.THINKING)
+    @visualize_model_state(VisualizationState.THINKING)
+    @_record_llm_request_outcome
     def call_llm_model(self, messages, tools=None, tool_choice="auto"):
         """
         Call the LLM model with the provided messages and tools.
@@ -638,7 +664,8 @@ class LLMModel(LLMModelBase):
         yield first_chunk[0]
         for chunk in stream:
             yield chunk
-    @_state_visualizer.visualize_state(VisualizationState.THINKING)
+    @visualize_model_state(VisualizationState.THINKING)
+    @_record_llm_request_outcome
     def call_llm_model_by_stream(self, messages, tools=None, tool_choice="auto"):
         """
         Call the LLM model with streaming response.

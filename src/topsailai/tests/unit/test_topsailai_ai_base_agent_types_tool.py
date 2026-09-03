@@ -274,6 +274,37 @@ class TestExecToolFunc(unittest.TestCase):
         self.assertEqual(result, "None")
 
 
+class TestToolResponseContentErrorStat(unittest.TestCase):
+    """Tool response errors are routed to the current agent only."""
+
+    @patch("topsailai.context.llm_request_stat.get_agent_object")
+    def test_regular_tool_error_updates_only_current_agent(self, mock_get_agent):
+        """A tool exception increments the thread-local agent's tracker."""
+        from topsailai.ai_base.agent_types.tool import exec_tool_func
+        from topsailai.context.llm_request_stat import LLMRequestStat
+
+        current = MagicMock()
+        current.llm_request_stat = LLMRequestStat()
+        other = LLMRequestStat()
+        mock_get_agent.return_value = current
+
+        def failing_tool():
+            raise ValueError("bad tool output")
+
+        self.assertEqual(exec_tool_func(failing_tool, {}, "failing"), "bad tool output")
+        self.assertEqual(current.llm_request_stat.get_request_stat_info()["response_content_errors"], 1)
+        self.assertEqual(other.get_request_stat_info()["response_content_errors"], 0)
+
+    @patch("topsailai.context.llm_request_stat.get_agent_object", return_value=None)
+    def test_regular_tool_error_without_agent_remains_safe(self, _mock_get_agent):
+        """A tool exception outside an Agent context does not require global state."""
+        from topsailai.ai_base.agent_types.tool import exec_tool_func
+
+        def failing_tool():
+            raise ValueError("bad tool output")
+
+        self.assertEqual(exec_tool_func(failing_tool, {}, "failing"), "bad tool output")
+
 class TestExceptionStepCallEnd(unittest.TestCase):
     """Test cases for ExceptionStepCallEnd exception."""
 

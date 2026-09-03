@@ -60,6 +60,18 @@ class LLMChat(object):
         self.last_message = ""
         return
 
+    def close(self) -> None:
+        """Close runtime components owned by this direct LLM chat."""
+        self.llm_model.close()
+
+    def __enter__(self):
+        """Return this chat for context-managed direct LLM usage."""
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        """Close the model when leaving a direct LLM chat context."""
+        self.close()
+
     def chat(self, message: str = "", need_print: bool = True, need_env_message: bool = True) -> str:
         """
         Send a message to the LLM and receive a response.

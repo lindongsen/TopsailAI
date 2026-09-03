@@ -16,12 +16,11 @@ from topsailai.context import (
     tool_call_warning,
     ctx_safe,
 )
+from topsailai.context.llm_request_stat import record_current_agent_response_content_error as _record_llm_response_content_error
 from topsailai.ai_base.tool_call import (
     StepCallBase,
 )
-from topsailai.utils.thread_tool import (
-    is_main_thread,
-)
+from topsailai.utils.thread_tool import is_main_thread
 from topsailai.utils.thread_local_tool import (
     get_agent_name,
     get_agent_object,
@@ -116,6 +115,7 @@ def get_tool_func(tool_map: dict, tool_name: str):
 
     return None
 
+
 def with_tool_response_safe(exec_tool_func: Callable) -> Callable:
     """
     A decorator for context safe to Avoid excessive context that may reach the limit!
@@ -175,6 +175,7 @@ def exec_tool_func(tool_func, args, tool_name:str=None):
     except Exception as e:
         error = e
         result = str(e)
+        _record_llm_response_content_error()
         print_tool.print_error(e, exception=True)
     finally:
         tool_stat.record_tool_call(
@@ -256,6 +257,7 @@ class StepCallTool(StepCallBase):
         tool_call_info = self.get_tool_call_info(step, rsp_msg_obj)
         if tool_call_info is None:
             # LLM mistake, missing argv
+            _record_llm_response_content_error()
             return agent_exception.ToolError("missing tool_call or arguments error")
 
         tool = tool_call_info.func_name
@@ -264,6 +266,7 @@ class StepCallTool(StepCallBase):
         tool_func = get_tool_func(tools, tool)
         if tool_func is None:
             # LLM mistake, no found this tool
+            _record_llm_response_content_error()
             return agent_exception.ToolError(f"no found such as tool: {tool}")
 
         try:
