@@ -952,10 +952,10 @@ class TestCacheHitRate(unittest.TestCase):
         printed = [str(call.args[0]) for call in mock_print.call_args_list if call.args]
         self.assertEqual(result, "Response")
         self.assertEqual(printed.count("Response"), 1)
-        self.assertEqual(printed.count("total_tokens        : 1000"), 1)
+        self.assertEqual(printed.count("total_prompt_tokens : 1000"), 1)
         self.assertEqual(printed.count("total_cached_tokens : 250"), 1)
         self.assertEqual(printed.count("cache_hit_rate      : 25.000%"), 1)
-        self.assertLess(printed.index("Response"), printed.index("total_tokens        : 1000"))
+        self.assertLess(printed.index("Response"), printed.index("total_prompt_tokens : 1000"))
         mock_tool_stat.get_agent_tool_stat.assert_called_once_with(agent_chat.ai_agent)
         mock_tool_stat.get_agent_tool_stat.return_value.export_json.assert_called_once_with()
         agent_chat.ctx_runtime_data.reset_messages.assert_not_called()

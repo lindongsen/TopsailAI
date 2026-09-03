@@ -518,7 +518,7 @@ class AgentChat(AgentChatBase):
                 print(f"start_time          : {time_tool.parse_time_seconds(start_time)}")
                 print(f"end_time(now)       : {time_tool.parse_time_seconds(end_time)}")
                 print(f"elapsed_time        : {end_time-start_time}")
-                print(f"total_tokens        : {total_tokens}")
+                print(f"total_prompt_tokens : {total_tokens}")
                 print(f"total_cached_tokens : {total_cached_tokens}")
                 print(f"cache_hit_rate      : {cache_hit_rate}")
                 sys.stdout.flush()

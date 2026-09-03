@@ -392,10 +392,9 @@ class TokenStat(threading.Thread):
         return True
 
     def get_token_stat_info(self):
-        """Return a snapshot of explicit and backward-compatible token metrics."""
+        """Return a snapshot of explicit token metrics."""
         with self.rlock:
             return dict(
-                current_tokens=self.current_tokens,
                 current_prompt_tokens=self.current_prompt_tokens,
                 current_completion_tokens=self.current_completion_tokens,
                 current_total_tokens=self.current_total_tokens,
@@ -405,7 +404,6 @@ class TokenStat(threading.Thread):
                 current_text_len=self.current_text_len,
                 total_cached_tokens=self.total_cached_tokens,
                 total_text_len=self.total_text_len,
-                total_tokens=self.total_tokens,
                 total_prompt_tokens=self.total_prompt_tokens,
                 total_completion_tokens=self.total_completion_tokens,
                 total_usage_tokens=self.total_usage_tokens,

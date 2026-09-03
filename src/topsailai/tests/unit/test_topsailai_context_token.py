@@ -697,6 +697,10 @@ class TestTokenStat(unittest.TestCase):
             after = stat.get_token_stat_info()
 
         self.assertEqual(before, after)
+        self.assertNotIn("current_tokens", after)
+        self.assertNotIn("total_tokens", after)
+        self.assertEqual(after["current_prompt_tokens"], 7)
+        self.assertEqual(after["total_prompt_tokens"], 7)
         self.assertEqual(stat.total_prompt_tokens, 7)
         self.assertEqual(stat.total_completion_tokens, 4)
         self.assertEqual(stat.total_cached_tokens, 2)

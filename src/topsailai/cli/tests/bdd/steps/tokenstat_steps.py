@@ -8,7 +8,6 @@ from pytest_bdd import given, then, when
 
 
 TOKENSTAT_FIELDS = {
-    "current_tokens",
     "current_prompt_tokens",
     "current_completion_tokens",
     "current_total_tokens",
@@ -18,7 +17,6 @@ TOKENSTAT_FIELDS = {
     "current_text_len",
     "total_cached_tokens",
     "total_text_len",
-    "total_tokens",
     "total_prompt_tokens",
     "total_completion_tokens",
     "total_usage_tokens",
@@ -28,7 +26,6 @@ TOKENSTAT_FIELDS = {
 }
 
 TOKENSTAT_INTEGER_FIELDS = {
-    "current_tokens",
     "current_prompt_tokens",
     "current_completion_tokens",
     "current_total_tokens",
@@ -38,7 +35,6 @@ TOKENSTAT_INTEGER_FIELDS = {
     "current_text_len",
     "total_cached_tokens",
     "total_text_len",
-    "total_tokens",
     "total_prompt_tokens",
     "total_completion_tokens",
     "total_usage_tokens",

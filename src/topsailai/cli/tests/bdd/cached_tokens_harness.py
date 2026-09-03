@@ -298,7 +298,7 @@ class CachedTokensHarness:
         ]
         summary_indexes = [
             index for index, value in enumerate(self.one_shot_output)
-            if value.startswith("total_tokens        :")
+            if value.startswith("total_prompt_tokens :")
         ]
         return (
             len(answer_indexes) == 1
