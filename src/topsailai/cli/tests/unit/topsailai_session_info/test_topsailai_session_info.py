@@ -167,11 +167,15 @@ class TestSessionToDict:
             session_name="token-session",
             total_tokens=1234,
             total_cached_tokens=567,
+            total_completion_tokens=56,
         )
         session.create_time = datetime(2026, 7, 5, 10, 30, 15)
 
         data = si._session_to_dict(session, str(tmp_path))
         assert data["total_tokens"] == 1234
+        assert data["total_prompt_tokens"] == 1234
+        assert data["total_completion_tokens"] == 56
+        assert data["total_usage_tokens"] == 1290
         assert data["total_cached_tokens"] == 567
 
 
@@ -227,6 +231,9 @@ class TestFormatSessionJson:
             "is_running",
             "create_time_relative",
             "total_tokens",
+            "total_prompt_tokens",
+            "total_completion_tokens",
+            "total_usage_tokens",
             "total_cached_tokens",
         }
         assert set(parsed.keys()) == expected_keys
@@ -238,6 +245,7 @@ class TestFormatSessionJson:
             session_name="token-session",
             total_tokens=9999,
             total_cached_tokens=4444,
+            total_completion_tokens=111,
         )
         session.create_time = datetime(2026, 7, 5, 10, 30, 15)
 
@@ -245,6 +253,9 @@ class TestFormatSessionJson:
         parsed = json.loads(output)
 
         assert parsed["total_tokens"] == 9999
+        assert parsed["total_prompt_tokens"] == 9999
+        assert parsed["total_completion_tokens"] == 111
+        assert parsed["total_usage_tokens"] == 10110
         assert parsed["total_cached_tokens"] == 4444
 
 
@@ -272,8 +283,11 @@ class TestFormatSession:
         assert "/workspace/abc" in output
         assert "/workspace/abc/src" in output
         assert "/home/abc/.topsailai" in output
-        assert "Total Tokens" in output
-        assert "Total Cached Tokens" in output
+        assert "Prompt Tokens" in output
+        assert "Completion Tokens" in output
+        assert "Total Usage Tokens" in output
+        assert "Cached Prompt Tokens" in output
+        assert "Total Tokens" not in output
 
     @patch.object(si, "_supports_color", return_value=False)
     @patch("shutil.get_terminal_size", return_value=Mock(columns=80))
@@ -284,13 +298,19 @@ class TestFormatSession:
             session_name="token-session",
             total_tokens=1234,
             total_cached_tokens=567,
+            total_completion_tokens=56,
         )
         session.create_time = datetime(2026, 7, 5, 10, 30, 15)
 
         output = si._format_session(session, str(tmp_path), False)
-        assert "Total Tokens" in output
-        assert "Total Cached Tokens" in output
+        assert "Prompt Tokens" in output
+        assert "Completion Tokens" in output
+        assert "Total Usage Tokens" in output
+        assert "Cached Prompt Tokens" in output
+        assert "Total Tokens" not in output
         assert "1234" in output
+        assert "56" in output
+        assert "1290" in output
         assert "567" in output
 
     @patch.object(si, "_supports_color", return_value=False)

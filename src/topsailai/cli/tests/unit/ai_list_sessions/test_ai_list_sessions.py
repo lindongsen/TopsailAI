@@ -36,6 +36,7 @@ class FakeSession:
         topsailai_home=None,
         total_tokens=0,
         total_cached_tokens=0,
+        total_completion_tokens=0,
     ):
         self.session_id = session_id
         self.session_name = session_name
@@ -46,6 +47,7 @@ class FakeSession:
         self.topsailai_home = topsailai_home
         self.total_tokens = total_tokens
         self.total_cached_tokens = total_cached_tokens
+        self.total_completion_tokens = total_completion_tokens
 
 class TestRelativeTime(unittest.TestCase):
     """Tests for _relative_time helper."""
@@ -183,13 +185,17 @@ class TestFormatSessions(unittest.TestCase):
             topsailai_home="/home/user/.topsailai",
             total_tokens=1234,
             total_cached_tokens=567,
+            total_completion_tokens=56,
         )
         output = ai_list_sessions.format_sessions([session])
         self.assertIn("Project:         /workspace/project", output)
         self.assertIn("PWD:             /workspace/project/src", output)
         self.assertIn("Home:            /home/user/.topsailai", output)
-        self.assertIn("Total Tokens:    1234", output)
-        self.assertIn("Cached Tokens:   567", output)
+        self.assertIn("Prompt Tokens:   1234", output)
+        self.assertIn("Completion Tokens: 56", output)
+        self.assertIn("Usage Tokens:    1290", output)
+        self.assertIn("Cached Prompt Tokens: 567", output)
+        self.assertNotIn("Total Tokens:", output)
 
     @mock.patch.object(ai_list_sessions, "_supports_color", return_value=False)
     @mock.patch("shutil.get_terminal_size", return_value=mock.Mock(columns=80))
@@ -300,6 +306,9 @@ class TestJsonAndFilterFlags(unittest.TestCase):
         self.assertEqual(data[0]["topsailai_home"], "/home/user/.topsailai")
         self.assertIn("create_time", data[0])
         self.assertIn("total_tokens", data[0])
+        self.assertIn("total_prompt_tokens", data[0])
+        self.assertIn("total_completion_tokens", data[0])
+        self.assertIn("total_usage_tokens", data[0])
         self.assertIn("total_cached_tokens", data[0])
 
     @mock.patch.object(sys.stdout, "isatty", return_value=False)

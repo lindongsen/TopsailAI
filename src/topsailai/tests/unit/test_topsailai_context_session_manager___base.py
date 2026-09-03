@@ -84,6 +84,31 @@ class TestSessionData(unittest.TestCase):
         self.assertEqual(session.total_tokens, 1234)
         self.assertEqual(session.total_cached_tokens, 567)
 
+    def test_explicit_token_totals_are_calculated_safely(self):
+        """Test explicit token properties and historical None normalization."""
+        session = SessionData(
+            session_id="s1",
+            total_tokens=1234,
+            total_completion_tokens=56,
+        )
+
+        self.assertEqual(session.total_prompt_tokens, 1234)
+        self.assertEqual(session.total_usage_tokens, 1290)
+
+        session.total_tokens = None
+        session.total_completion_tokens = None
+        self.assertEqual(session.total_prompt_tokens, 0)
+        self.assertEqual(session.total_usage_tokens, 0)
+
+    def test_explicit_token_properties_are_read_only(self):
+        """Test explicit token aliases cannot replace persisted token fields."""
+        session = SessionData(session_id="s1", total_tokens=10)
+
+        with self.assertRaises(AttributeError):
+            session.total_prompt_tokens = 20
+        with self.assertRaises(AttributeError):
+            session.total_usage_tokens = 20
+
     def test_attributes_are_writable(self):
         """Test that session attributes can be set after initialization."""
         session = SessionData(session_id="s1", task="t1")

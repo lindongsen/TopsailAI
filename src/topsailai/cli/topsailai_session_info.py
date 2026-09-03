@@ -147,6 +147,12 @@ def _session_to_dict(session: SessionData, home: str) -> dict[str, Any]:
     create_time_str = ""
     if session.create_time:
         create_time_str = session.create_time.strftime("%Y-%m-%d %H:%M:%S")
+    total_prompt_tokens = int(
+        getattr(session, "total_prompt_tokens", getattr(session, "total_tokens", 0)) or 0
+    )
+    total_completion_tokens = int(getattr(session, "total_completion_tokens", 0) or 0)
+    total_usage_tokens = total_prompt_tokens + total_completion_tokens
+    total_cached_tokens = int(getattr(session, "total_cached_tokens", 0) or 0)
 
     return {
         # Original SessionData fields
@@ -156,8 +162,11 @@ def _session_to_dict(session: SessionData, home: str) -> dict[str, Any]:
         "project_workspace": str(session.project_workspace) if session.project_workspace else "",
         "pwd": str(session.pwd) if session.pwd else "",
         "topsailai_home": str(session.topsailai_home) if session.topsailai_home else "",
-        "total_tokens": int(session.total_tokens) if getattr(session, "total_tokens", None) is not None else 0,
-        "total_cached_tokens": int(session.total_cached_tokens) if getattr(session, "total_cached_tokens", None) is not None else 0,
+        "total_tokens": total_prompt_tokens,
+        "total_prompt_tokens": total_prompt_tokens,
+        "total_completion_tokens": total_completion_tokens,
+        "total_usage_tokens": total_usage_tokens,
+        "total_cached_tokens": total_cached_tokens,
         "create_time": create_time_str,
         # Computed metadata
         "status": "Running" if running else "Idle",
@@ -227,8 +236,14 @@ def _format_session(session: SessionData, home: str, color_enabled: bool) -> str
     add_row("Project Workspace", str(session.project_workspace) if session.project_workspace else "(none)")
     add_row("PWD", str(session.pwd) if session.pwd else "(none)")
     add_row("TOPSAILAI_HOME", str(session.topsailai_home) if session.topsailai_home else "(none)")
-    add_row("Total Tokens", str(session.total_tokens) if getattr(session, "total_tokens", None) is not None else "0")
-    add_row("Total Cached Tokens", str(session.total_cached_tokens) if getattr(session, "total_cached_tokens", None) is not None else "0")
+    total_prompt_tokens = int(
+        getattr(session, "total_prompt_tokens", getattr(session, "total_tokens", 0)) or 0
+    )
+    total_completion_tokens = int(getattr(session, "total_completion_tokens", 0) or 0)
+    add_row("Prompt Tokens", str(total_prompt_tokens))
+    add_row("Completion Tokens", str(total_completion_tokens))
+    add_row("Total Usage Tokens", str(total_prompt_tokens + total_completion_tokens))
+    add_row("Cached Prompt Tokens", str(getattr(session, "total_cached_tokens", 0) or 0))
 
     task_label = "Task"
     task_label_text = f"{task_label}:".ljust(label_width)

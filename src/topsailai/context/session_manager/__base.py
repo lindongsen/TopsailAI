@@ -70,9 +70,14 @@ class SessionData(object):
         self.total_completion_tokens = total_completion_tokens
 
     @property
+    def total_prompt_tokens(self):
+        """Return accumulated prompt tokens under an explicit name."""
+        return self.total_tokens or 0
+
+    @property
     def total_usage_tokens(self):
         """Return accumulated prompt plus completion tokens."""
-        return self.total_tokens + self.total_completion_tokens
+        return self.total_prompt_tokens + (self.total_completion_tokens or 0)
 
     def __str__(self):
         """Return string representation of SessionData."""

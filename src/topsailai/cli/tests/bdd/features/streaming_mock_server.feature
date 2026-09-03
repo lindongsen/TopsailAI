@@ -16,6 +16,7 @@ Feature: llm_mock_server streaming support over real HTTP/SSE
     And the streaming request contains the scenario user message
     And the streaming token stat exposes prompt completion and combined totals
     And the legacy streaming token fields remain prompt-only
+    And session CLI token fields distinguish prompt completion and combined usage
     And every streamed response chunk is output before the token summary
 
   Scenario: Streaming usage chunk feeds cached tokens into TokenStat

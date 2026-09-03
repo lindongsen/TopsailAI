@@ -10,6 +10,9 @@ from pytest_bdd import given, parsers, then, when
 import openai
 
 from tests.bdd.streaming_mock_server_harness import StreamingMockServerHarness
+from topsailai.context.session_manager import SessionData
+
+import topsailai_session_info
 
 
 @pytest.fixture
@@ -262,6 +265,28 @@ def streaming_legacy_fields_remain_prompt_only(
     assert token_stat.current_tokens == token_stat.current_prompt_tokens
     assert token_stat.total_tokens == token_stat.total_prompt_tokens
     assert token_stat.current_total_tokens > token_stat.current_tokens
+
+
+@then("session CLI token fields distinguish prompt completion and combined usage")
+def session_cli_explicit_usage_fields(
+    streaming_mock_server_context: dict[str, Any],
+    tmp_path,
+) -> None:
+    """Require session JSON terminology to preserve legacy prompt semantics."""
+    token_stat = streaming_mock_server_context["harness"].model.tokenStat
+    session = SessionData(
+        session_id="bdd-streaming-session",
+        total_tokens=token_stat.total_prompt_tokens,
+        total_completion_tokens=token_stat.total_completion_tokens,
+        total_cached_tokens=token_stat.total_cached_tokens,
+    )
+
+    data = topsailai_session_info._session_to_dict(session, str(tmp_path))
+    assert data["total_tokens"] == token_stat.total_prompt_tokens
+    assert data["total_prompt_tokens"] == token_stat.total_prompt_tokens
+    assert data["total_completion_tokens"] == token_stat.total_completion_tokens
+    assert data["total_usage_tokens"] == token_stat.total_usage_tokens
+    assert data["total_cached_tokens"] == token_stat.total_cached_tokens
 
 
 @then("every streamed response chunk is output before the token summary")

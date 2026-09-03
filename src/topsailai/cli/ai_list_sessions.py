@@ -108,8 +108,12 @@ def _format_session(session, index, total_width, color_enabled):
     project_workspace = str(session.project_workspace) if session.project_workspace else ""
     pwd = str(session.pwd) if session.pwd else ""
     topsailai_home = str(session.topsailai_home) if session.topsailai_home else ""
-    total_tokens = getattr(session, "total_tokens", 0)
-    total_cached_tokens = getattr(session, "total_cached_tokens", 0)
+    total_prompt_tokens = int(
+        getattr(session, "total_prompt_tokens", getattr(session, "total_tokens", 0)) or 0
+    )
+    total_completion_tokens = int(getattr(session, "total_completion_tokens", 0) or 0)
+    total_usage_tokens = total_prompt_tokens + total_completion_tokens
+    total_cached_tokens = int(getattr(session, "total_cached_tokens", 0) or 0)
 
     lines = []
     header = f"[{index}] {session_id}"
@@ -147,10 +151,16 @@ def _format_session(session, index, total_width, color_enabled):
         pwd_label = _color("PWD:".ljust(label_width), yellow, color_enabled)
         lines.append(f"{indent}{pwd_label} {pwd}")
 
-    tokens_label = _color("Total Tokens:".ljust(label_width), yellow, color_enabled)
-    lines.append(f"{indent}{tokens_label} {total_tokens}")
+    prompt_tokens_label = _color("Prompt Tokens:".ljust(label_width), yellow, color_enabled)
+    lines.append(f"{indent}{prompt_tokens_label} {total_prompt_tokens}")
 
-    cached_tokens_label = _color("Cached Tokens:".ljust(label_width), yellow, color_enabled)
+    completion_tokens_label = _color("Completion Tokens:".ljust(label_width), yellow, color_enabled)
+    lines.append(f"{indent}{completion_tokens_label} {total_completion_tokens}")
+
+    usage_tokens_label = _color("Usage Tokens:".ljust(label_width), yellow, color_enabled)
+    lines.append(f"{indent}{usage_tokens_label} {total_usage_tokens}")
+
+    cached_tokens_label = _color("Cached Prompt Tokens:".ljust(label_width), yellow, color_enabled)
     lines.append(f"{indent}{cached_tokens_label} {total_cached_tokens}")
 
     if topsailai_home:
@@ -215,6 +225,10 @@ def format_sessions(sessions):
 
 def _session_to_dict(session):
     """Convert a session object to a plain dictionary for JSON output."""
+    total_prompt_tokens = int(
+        getattr(session, "total_prompt_tokens", getattr(session, "total_tokens", 0)) or 0
+    )
+    total_completion_tokens = int(getattr(session, "total_completion_tokens", 0) or 0)
     return {
         "session_id": str(session.session_id) if session.session_id else "",
         "session_name": str(session.session_name) if session.session_name else "",
@@ -223,7 +237,10 @@ def _session_to_dict(session):
         "project_workspace": str(session.project_workspace) if session.project_workspace else "",
         "pwd": str(session.pwd) if session.pwd else "",
         "topsailai_home": str(session.topsailai_home) if session.topsailai_home else "",
-        "total_tokens": int(getattr(session, "total_tokens", 0) or 0),
+        "total_tokens": total_prompt_tokens,
+        "total_prompt_tokens": total_prompt_tokens,
+        "total_completion_tokens": total_completion_tokens,
+        "total_usage_tokens": total_prompt_tokens + total_completion_tokens,
         "total_cached_tokens": int(getattr(session, "total_cached_tokens", 0) or 0),
     }
 
