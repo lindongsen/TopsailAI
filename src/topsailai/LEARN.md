@@ -142,3 +142,8 @@ Lessons:
 4. Match at least one regression test to the exact production enablement state that caused the incident; label transition and compatibility scenarios separately instead of presenting them as faithful reproductions.
 5. Before optimizing disabled-mode work, verify whether the boundary also protects data created while the feature was previously enabled; this prevents a locally reasonable gate from removing the final compatibility safeguard.
 6. In this project, `build_parameters_for_chat()` in `ai_base/llm_control/base_class.py` must keep its request-boundary calls to `normalize_message_tool_calls` and `drop_orphaned_tool_messages` mode-independent: the earlier cleanup sites in `workspace/context/agent.py` and `ai_base/llm_hooks/hook_before_chat/tool_call_pairing.py` are already gated by `TOPSAILAI_USE_TOOL_CALLS`, so adding the same gate at the request boundary removes the final safeguard for inherited native history and reopens the provider 400 `No tool call found for function call output with call_id ...`.
+
+## Keep utility-layer classes free of business-layer dependencies
+
+When the LLM request-statistics feature caused `utils.StateVisualizer` to import, instantiate, and invoke `context.LLMRequestStat`, the trigger was a review request to keep utility methods generic. The correction moved statistics coordination into `context.LLMStateVisualizer`, a subclass of the generic utility visualizer, and moved the LLM model-specific decorator into the context layer. This prevents recurrence by requiring dependency direction to remain business/context to utility and by keeping both runtime dependencies and examples in utility modules free of domain-specific concepts.
+
