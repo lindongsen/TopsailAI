@@ -306,7 +306,12 @@ def generate_session_name(session_id: str, message: str) -> str:
         logger.debug(f"generate_session_name failed for session_id={session_id}: {e}")
         return ""
 
-def _async_update_session_name(session_id: str, message: str, session_mgr: SessionStorageBase):
+def _async_update_session_name(
+        session_id: str,
+        message: str,
+        session_mgr: SessionStorageBase,
+        agent_name: str,
+    ):
     """
     Background worker: generate a session name and update storage.
 
@@ -317,17 +322,20 @@ def _async_update_session_name(session_id: str, message: str, session_mgr: Sessi
         session_id (str): The session id to rename.
         message (str): The message or task content to summarize from.
         session_mgr (SessionStorageBase): Session manager used to update the name.
+        agent_name (str): Base agent name used to identify worker log messages.
     """
     thread_local_tool.set_thread_name(session_id)
-    try:
-        session_name = generate_session_name(session_id, message)
-        if not session_name:
-            return
+    worker_agent_name = f"{agent_name}/GenerateSessionName"
+    with thread_local_tool.ctxm_give_agent_name(worker_agent_name):
+        try:
+            session_name = generate_session_name(session_id, message)
+            if not session_name:
+                return
 
-        session_mgr.update_session_name(session_id, session_name)
-        logger.info(f"auto_rename: session_id={session_id}, session_name={session_name}")
-    except Exception as e:
-        logger.debug(f"auto_rename failed for session_id={session_id}: {e}")
+            session_mgr.update_session_name(session_id, session_name)
+            logger.info(f"auto_rename: session_id={session_id}, session_name={session_name}")
+        except Exception as e:
+            logger.debug(f"auto_rename failed for session_id={session_id}: {e}")
 
 
 def _get_session_environment_paths() -> dict[str, Optional[str]]:
@@ -355,7 +363,13 @@ def _get_session_environment_paths() -> dict[str, Optional[str]]:
     }
 
 
-def create_session(session_id:str, task:str, session_name:str=None, session_mgr:SessionStorageBase=None) -> bool:
+def create_session(
+        session_id: str,
+        task: str,
+        session_name: str = None,
+        session_mgr: SessionStorageBase = None,
+        agent_name: str = None,
+    ) -> bool:
     """
     Create a new session for a specific task.
 
@@ -365,7 +379,9 @@ def create_session(session_id:str, task:str, session_name:str=None, session_mgr:
         session_name (str, optional): Display name for the session. If empty
             or None, an asynchronous LLM-based rename may be triggered.
         session_mgr (SessionStorageBase, optional): Session manager instance.
-                                                   If None, a new one is created.
+            If None, a new one is created.
+        agent_name (str, optional): Base agent name for the asynchronous rename
+            worker. Falls back to TOPSAILAI_AGENT_NAME, then TopsailAI.
 
     Returns:
         bool: True if session was created successfully, False otherwise.
@@ -397,9 +413,10 @@ def create_session(session_id:str, task:str, session_name:str=None, session_mgr:
     if not session_name and task:
         if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_AUTO_SESSION_NAME_ENABLED", default=True):
             try:
+                worker_agent_name = agent_name or os.getenv("TOPSAILAI_AGENT_NAME") or "TopsailAI"
                 threading.Thread(
                     target=_async_update_session_name,
-                    args=(session_id, task, session_mgr),
+                    args=(session_id, task, session_mgr, worker_agent_name),
                     daemon=True,
                 ).start()
             except Exception as e:

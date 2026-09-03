@@ -14,7 +14,9 @@ This module tests the context management functions including:
 Author: mm-m25
 """
 
+import logging
 import os
+import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -545,6 +547,213 @@ class TestUpdateSessionName(unittest.TestCase):
 
         self.assertFalse(result)
         mock_get_session_mgr.assert_not_called()
+
+
+class TestAsyncSessionNameAgentIdentity(unittest.TestCase):
+    """Test agent identity propagation for the auto-rename worker."""
+
+    def setUp(self):
+        """Store environment and clear the current thread's agent identity."""
+        self.original_env = os.environ.copy()
+        from topsailai.utils import thread_local_tool
+
+        thread_local_tool.unset_thread_var(thread_local_tool.KEY_AGENT_NAME)
+
+    def tearDown(self):
+        """Restore environment and clear the current thread's agent identity."""
+        from topsailai.utils import thread_local_tool
+
+        thread_local_tool.unset_thread_var(thread_local_tool.KEY_AGENT_NAME)
+        os.environ.clear()
+        os.environ.update(self.original_env)
+
+    @patch('topsailai.context.ctx_manager.generate_session_name')
+    def test_worker_identity_covers_generation_update_and_success_log(self, mock_generate):
+        """Keep the composed identity active for the complete worker operation."""
+        from topsailai.context.ctx_manager import _async_update_session_name
+        from topsailai.utils import thread_local_tool
+
+        identities = []
+        mock_generate.side_effect = lambda *_: (
+            identities.append(thread_local_tool.get_agent_name()) or 'Auto Name'
+        )
+        session_mgr = MagicMock()
+        session_mgr.update_session_name.side_effect = lambda *_: identities.append(
+            thread_local_tool.get_agent_name()
+        )
+
+        with patch('topsailai.context.ctx_manager.logger.info') as mock_info:
+            mock_info.side_effect = lambda *_: identities.append(
+                thread_local_tool.get_agent_name()
+            )
+            _async_update_session_name(
+                'session-123',
+                'Task',
+                session_mgr,
+                'AgentA',
+            )
+
+        self.assertEqual(
+            identities,
+            ['AgentA/GenerateSessionName'] * 3,
+        )
+        session_mgr.update_session_name.assert_called_once_with(
+            'session-123',
+            'Auto Name',
+        )
+        self.assertIsNone(thread_local_tool.get_agent_name())
+
+    @patch('topsailai.context.ctx_manager.generate_session_name', return_value='')
+    def test_worker_cleans_identity_after_early_return(self, mock_generate):
+        """Clear the worker identity when generation returns no name."""
+        from topsailai.context.ctx_manager import _async_update_session_name
+        from topsailai.utils import thread_local_tool
+
+        session_mgr = MagicMock()
+        _async_update_session_name('session-123', 'Task', session_mgr, 'AgentA')
+
+        mock_generate.assert_called_once_with('session-123', 'Task')
+        session_mgr.update_session_name.assert_not_called()
+        self.assertIsNone(thread_local_tool.get_agent_name())
+
+    @patch('topsailai.context.ctx_manager.generate_session_name')
+    def test_worker_restores_identity_after_exception(self, mock_generate):
+        """Restore a pre-existing identity after a swallowed worker exception."""
+        from topsailai.context.ctx_manager import _async_update_session_name
+        from topsailai.utils import thread_local_tool
+
+        mock_generate.side_effect = RuntimeError('generation failed')
+        thread_local_tool.set_thread_var(
+            thread_local_tool.KEY_AGENT_NAME,
+            'ParentAgent',
+        )
+        logged_identities = []
+
+        with patch('topsailai.context.ctx_manager.logger.debug') as mock_debug:
+            mock_debug.side_effect = lambda *_: logged_identities.append(
+                thread_local_tool.get_agent_name()
+            )
+            _async_update_session_name(
+                'session-123',
+                'Task',
+                MagicMock(),
+                'AgentA',
+            )
+
+        self.assertEqual(
+            logged_identities,
+            ['AgentA/GenerateSessionName'],
+        )
+        self.assertEqual(thread_local_tool.get_agent_name(), 'ParentAgent')
+
+    def test_create_session_resolves_direct_caller_agent_name_fallbacks(self):
+        """Resolve explicit, environment, and default worker base names."""
+        from topsailai.context.ctx_manager import create_session
+
+        cases = (
+            ('ExplicitAgent', 'EnvAgent', 'ExplicitAgent'),
+            (None, 'EnvAgent', 'EnvAgent'),
+            (None, None, 'TopsailAI'),
+        )
+        for explicit_name, env_name, expected_name in cases:
+            with self.subTest(expected_name=expected_name):
+                if env_name is None:
+                    os.environ.pop('TOPSAILAI_AGENT_NAME', None)
+                else:
+                    os.environ['TOPSAILAI_AGENT_NAME'] = env_name
+                session_mgr = MagicMock()
+                with patch('topsailai.context.ctx_manager.threading.Thread') as mock_thread:
+                    result = create_session(
+                        'session-123',
+                        'Task',
+                        session_mgr=session_mgr,
+                        agent_name=explicit_name,
+                    )
+
+                self.assertTrue(result)
+                thread_kwargs = mock_thread.call_args.kwargs
+                self.assertEqual(thread_kwargs['args'][-1], expected_name)
+                self.assertNotIn('/GenerateSessionName', thread_kwargs['args'][-1])
+
+    @patch('topsailai.context.ctx_manager.generate_session_name')
+    def test_concurrent_workers_keep_agent_identities_isolated(self, mock_generate):
+        """Keep composed identities isolated across concurrent workers."""
+        from topsailai.context.ctx_manager import _async_update_session_name
+        from topsailai.utils import thread_local_tool
+
+        barrier = threading.Barrier(2)
+        identities = {}
+        identities_lock = threading.Lock()
+
+        def generate(session_id, _message):
+            barrier.wait(timeout=2)
+            with identities_lock:
+                identities[session_id] = thread_local_tool.get_agent_name()
+            return ''
+
+        mock_generate.side_effect = generate
+        threads = [
+            threading.Thread(
+                target=_async_update_session_name,
+                args=('session-a', 'Task A', MagicMock(), 'AgentA'),
+            ),
+            threading.Thread(
+                target=_async_update_session_name,
+                args=('session-b', 'Task B', MagicMock(), 'AgentB'),
+            ),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+
+        self.assertEqual(
+            identities,
+            {
+                'session-a': 'AgentA/GenerateSessionName',
+                'session-b': 'AgentB/GenerateSessionName',
+            },
+        )
+
+    @patch('topsailai.context.ctx_manager.generate_session_name', return_value='Auto Name')
+    def test_worker_log_contains_agent_and_existing_thread_identity(self, mock_generate):
+        """Format a real worker log with composed agent and session identities."""
+        from io import StringIO
+
+        from topsailai.context import ctx_manager
+        from topsailai.logger.base_logger import AgentFormatter
+
+        stream = StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(AgentFormatter(fmt='%(message_id)s %(message)s'))
+        worker_logger = logging.getLogger('test.async-session-name-worker')
+        original_handlers = worker_logger.handlers[:]
+        original_propagate = worker_logger.propagate
+        original_level = worker_logger.level
+        try:
+            worker_logger.handlers = [handler]
+            worker_logger.propagate = False
+            worker_logger.setLevel(logging.INFO)
+
+            with patch.object(ctx_manager, 'logger', worker_logger):
+                ctx_manager._async_update_session_name(
+                    'session-123',
+                    'Task',
+                    MagicMock(),
+                    'TopsailAI',
+                )
+        finally:
+            worker_logger.handlers = original_handlers
+            worker_logger.propagate = original_propagate
+            worker_logger.setLevel(original_level)
+            handler.close()
+
+        self.assertIn(
+            '(TopsailAI/GenerateSessionName:session-123) auto_rename:',
+            stream.getvalue(),
+        )
+        mock_generate.assert_called_once_with('session-123', 'Task')
 
 
 class TestAddSessionMessage(unittest.TestCase):

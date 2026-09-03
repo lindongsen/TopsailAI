@@ -387,6 +387,61 @@ class TestGetAgentChat(unittest.TestCase):
         # Verify agent name was set on ai_agent
         self.assertEqual(self.mock_agent_instance.agent_name, agent_name)
 
+    def test_get_agent_chat_explicit_agent_name_propagation(self):
+        """Test explicit agent name is propagated without mutating parent state when disabled."""
+        from topsailai.workspace.agent_shell import get_agent_chat
+
+        with patch.dict(os.environ, {"TOPSAILAI_AGENT_NAME": "EnvAgent"}):
+            get_agent_chat(
+                agent_name="ExplicitAgent",
+                session_id="test-session",
+                message="task",
+                need_set_agent_name_to_thread_local=False,
+            )
+
+        self.mock_thread_local.set_thread_var.assert_not_called()
+        self.assertEqual(
+            self.mock_ctx_manager.create_session.call_args.kwargs["agent_name"],
+            "ExplicitAgent",
+        )
+        self.assertEqual(
+            self.mock_agent_run.call_args.kwargs["agent_name"],
+            "ExplicitAgent",
+        )
+
+    def test_get_agent_chat_environment_agent_name_propagation(self):
+        """Test environment agent name is propagated to session and agent creation."""
+        from topsailai.workspace.agent_shell import get_agent_chat
+
+        with patch.dict(os.environ, {"TOPSAILAI_AGENT_NAME": "EnvAgent"}):
+            get_agent_chat(session_id="test-session", message="task")
+
+        self.assertEqual(
+            self.mock_ctx_manager.create_session.call_args.kwargs["agent_name"],
+            "EnvAgent",
+        )
+        self.assertEqual(
+            self.mock_agent_run.call_args.kwargs["agent_name"],
+            "EnvAgent",
+        )
+
+    def test_get_agent_chat_agent_type_name_propagation(self):
+        """Test agent type name is propagated when explicit and environment names are absent."""
+        from topsailai.workspace.agent_shell import get_agent_chat
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TOPSAILAI_AGENT_NAME", None)
+            get_agent_chat(session_id="test-session", message="task")
+
+        self.assertEqual(
+            self.mock_ctx_manager.create_session.call_args.kwargs["agent_name"],
+            "ReActAgent",
+        )
+        self.assertEqual(
+            self.mock_agent_run.call_args.kwargs["agent_name"],
+            "ReActAgent",
+        )
+
     def test_get_agent_chat_with_session_head_tail_offset(self):
         """Test get_agent_chat with session_head_tail_offset."""
         from topsailai.workspace.agent_shell import get_agent_chat

@@ -82,6 +82,7 @@ def get_ai_agent(
         agent_role=None,
         enabled_tools:list[str]=None,
         tool_map:dict=None,
+        agent_name:str=None,
     ):
     """Create and return an AI agent instance in ReAct mode.
 
@@ -96,6 +97,7 @@ def get_ai_agent(
         agent_role: Role of the agent to create. Defaults to "worker".
         enabled_tools: List of tool names to include from the agent.
         tool_map: extra tool, key is tool_name, value is tool_func.
+        agent_name: Explicit agent name. Falls back to environment and agent type.
 
     Returns:
         AgentRun: An initialized AI agent instance.
@@ -110,10 +112,11 @@ def get_ai_agent(
 
     agent_type_name = agent_type
     agent_type = get_agent_type(agent_type)
+    resolved_agent_name = agent_name or os.getenv("TOPSAILAI_AGENT_NAME") or agent_type.AGENT_NAME
     agent = AgentRun(
         agent_type.SYSTEM_PROMPT + "\n---\n" + system_prompt,
         tools=tool_map,
-        agent_name=os.getenv("TOPSAILAI_AGENT_NAME") or agent_type.AGENT_NAME,
+        agent_name=resolved_agent_name,
         tool_kits=enabled_tools,
         excluded_tool_kits=env_disabled_tools if isinstance(env_disabled_tools, list) else disabled_tools,
     )
@@ -212,6 +215,11 @@ def _get_agent_chat_impl(
         message = message_from_args + "\n" + message
 
     # session
+    resolved_agent_name = (
+        agent_name
+        or os.getenv("TOPSAILAI_AGENT_NAME")
+        or get_agent_type(agent_type).AGENT_NAME
+    )
     if session_id is None:
         session_id = env_tool.get_session_id()
 
@@ -228,7 +236,11 @@ def _get_agent_chat_impl(
         if not ctx_runtime_data.messages and not ctx_manager.exists_session(session_id):
             if not message:
                 message = get_message(hook_instruction, need_input=need_input_message)
-            ctx_manager.create_session(session_id, task=message[:100])
+            ctx_manager.create_session(
+                session_id,
+                task=message[:100],
+                agent_name=resolved_agent_name,
+            )
 
     # ai agent
     ai_agent = get_ai_agent(
@@ -239,6 +251,7 @@ def _get_agent_chat_impl(
         tool_map=tool_map,
         agent_type=agent_type,
         agent_role=agent_role,
+        agent_name=resolved_agent_name,
     )
 
     if agent_name:
