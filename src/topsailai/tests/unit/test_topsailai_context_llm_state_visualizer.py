@@ -67,6 +67,26 @@ def test_model_decorator_uses_runtime_visualizer_and_restores_idle():
     ]
 
 
+def test_model_decorator_handles_thinking_before_immediate_return():
+    """An immediate return must not skip synchronous Thinking output."""
+    request_stat = mock.Mock()
+    model = mock.Mock()
+    visualizer = LLMStateVisualizer(request_stat)
+    model._get_state_visualizer.return_value = visualizer
+
+    @visualize_model_state(VisualizationState.THINKING)
+    def execute(current_model):
+        request_stat.print_request_stat.assert_called_once_with()
+        assert visualizer.get_state() == VisualizationState.THINKING
+        return "done"
+
+    with mock.patch("topsailai.utils.state_visualizer.print_info") as print_info:
+        assert execute(model) == "done"
+
+    print_info.assert_called_once_with("Thinking...")
+    assert visualizer.get_state() == VisualizationState.IDLE
+
+
 def test_model_decorator_restores_idle_after_error():
     """The LLM decorator should restore idle when the wrapped call fails."""
     visualizer = mock.Mock()

@@ -1,10 +1,8 @@
 """Public visualization state manager.
 
 This module provides an instance-scoped ``StateVisualizer`` that tracks the
-current visualization state (e.g. IDLE, THINKING) and emits corresponding log
-messages via ``print_tool``. A background thread waits on a
-``threading.Condition`` and prints a message only when the state transitions to
-a new value.
+current visualization state (e.g. IDLE, THINKING) and synchronously emits the
+corresponding log message via ``print_tool`` when the state changes.
 
 The visualizer can be disabled by setting the environment variable
 ``DISABLE_VISUALIZER`` to ``1``, ``true`` or ``yes`` (case-insensitive).
@@ -59,9 +57,6 @@ class StateVisualizer:
         self._state = VisualizationState.IDLE
         self._last_printed_state: Optional[VisualizationState] = None
         self._lock = threading.RLock()
-        self._condition = threading.Condition(self._lock)
-        self._stop_event = threading.Event()
-        self._worker: Optional[threading.Thread] = None
         self._disabled = self._is_disabled()
 
     @staticmethod
@@ -70,49 +65,10 @@ class StateVisualizer:
         return value in ("1", "true", "yes")
 
     def start(self) -> None:
-        """Start the background state-checking thread if not disabled."""
-        if self._disabled:
-            return
-
-        with self._condition:
-            if self._worker is not None and self._worker.is_alive():
-                return
-            self._stop_event.clear()
-            self._worker = threading.Thread(target=self._run, daemon=True)
-            self._worker.start()
+        """Retain the former lifecycle API; synchronous mode needs no startup."""
 
     def stop(self) -> None:
-        """Signal the background thread to stop and wait for it to finish."""
-        if self._disabled:
-            return
-
-        self._stop_event.set()
-        with self._condition:
-            self._condition.notify_all()
-
-        worker = self._worker
-        if worker is not None and worker.is_alive():
-            worker.join(timeout=2.0)
-        self._worker = None
-
-    def _run(self) -> None:
-        """Background loop: wait for state changes and print accordingly."""
-        while not self._stop_event.is_set():
-            with self._condition:
-                # Wait until the state changes or we are asked to stop.
-                while (
-                    not self._stop_event.is_set()
-                    and self._state == self._last_printed_state
-                ):
-                    self._condition.wait(timeout=0.5)
-
-                if self._stop_event.is_set():
-                    break
-
-                state = self._state
-                self._last_printed_state = state
-
-            self._handle_state(state)
+        """Retain the former lifecycle API; synchronous mode needs no teardown."""
 
     def _handle_state(self, state: VisualizationState) -> None:
         """Emit the log message associated with ``state``."""
@@ -121,17 +77,21 @@ class StateVisualizer:
         # IDLE and future states intentionally produce no output by default.
 
     def set_state(self, state: VisualizationState) -> None:
-        """Set the current visualization state and notify the worker thread."""
+        """Set and synchronously handle a changed visualization state."""
         if self._disabled:
             return
 
-        with self._condition:
+        with self._lock:
             self._state = state
-            self._condition.notify_all()
+            if state == self._last_printed_state:
+                return
+            self._last_printed_state = state
+
+        self._handle_state(state)
 
     def get_state(self) -> VisualizationState:
         """Return the current visualization state."""
-        with self._condition:
+        with self._lock:
             return self._state
 
     def state_scope(self, state: VisualizationState):
