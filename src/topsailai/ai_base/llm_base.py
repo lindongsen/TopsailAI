@@ -113,13 +113,17 @@ def _match_non_retryable_bad_request(e_str: str) -> str:
 _llm_request_started = contextvars.ContextVar(
     "topsailai_llm_request_started", default=False
 )
+_llm_request_timing_ticket = contextvars.ContextVar(
+    "topsailai_llm_request_timing_ticket", default=None
+)
 
 
 def _record_llm_request_outcome(method):
-    """Record one success or failure for each started provider request."""
+    """Record one outcome and finish timing for each started provider request."""
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
-        token = _llm_request_started.set(False)
+        started_token = _llm_request_started.set(False)
+        ticket_token = _llm_request_timing_ticket.set(None)
         try:
             result = method(self, *args, **kwargs)
             if _llm_request_started.get():
@@ -128,9 +132,13 @@ def _record_llm_request_outcome(method):
         except BaseException:
             if _llm_request_started.get():
                 self._record_llm_request_failure()
+                ticket = _llm_request_timing_ticket.get()
+                if ticket is not None:
+                    self._finish_llm_request(ticket)
             raise
         finally:
-            _llm_request_started.reset(token)
+            _llm_request_timing_ticket.reset(ticket_token)
+            _llm_request_started.reset(started_token)
 
     return wrapper
 
@@ -347,30 +355,52 @@ class LLMModel(LLMModelBase):
         )
 
         if first_byte_timeout is None or first_byte_timeout <= 0:
-            self._record_llm_request()
+            ticket = self._start_llm_request()
             _llm_request_started.set(True)
-            response = self.chat_model.create(timeout=(5, 300), **params)
+            _llm_request_timing_ticket.set(ticket)
+            try:
+                response = self.chat_model.create(timeout=(5, 300), **params)
+            except BaseException:
+                self._finish_llm_request(ticket)
+                raise
             if stream:
+                self._pause_llm_request(ticket)
                 return response, False
+            self._finish_llm_request(ticket)
             return response
 
         result = [None]
         first_exc = [None]
+        timing_ticket = [None]
+        ticket_started = threading.Event()
         got_result = threading.Event()
 
         def _create():
+            ticket = None
             try:
-                self._record_llm_request()
+                ticket = self._start_llm_request()
+                timing_ticket[0] = ticket
+                ticket_started.set()
                 result[0] = self.chat_model.create(timeout=(5, 300), **params)
-            except Exception as e:
-                first_exc[0] = e
+                if stream:
+                    self._pause_llm_request(ticket)
+                else:
+                    self._finish_llm_request(ticket)
+            except BaseException as error:
+                if ticket is not None:
+                    self._finish_llm_request(ticket)
+                first_exc[0] = error
             finally:
+                ticket_started.set()
                 got_result.set()
 
         start_time = time.monotonic()
         create_thread = threading.Thread(target=_create, daemon=True)
         create_thread.start()
-        _llm_request_started.set(True)
+        ticket_started.wait()
+        if timing_ticket[0] is not None:
+            _llm_request_started.set(True)
+            _llm_request_timing_ticket.set(timing_ticket[0])
 
         timed_out = not got_result.wait(timeout=first_byte_timeout)
         elapsed = time.monotonic() - start_time
@@ -664,6 +694,23 @@ class LLMModel(LLMModelBase):
         yield first_chunk[0]
         for chunk in stream:
             yield chunk
+
+    def _iter_stream_for_request_timing(self, stream, ticket):
+        """Time only blocking provider iterator operations, not chunk processing."""
+        iterator = iter(stream)
+        while True:
+            self._resume_llm_request(ticket)
+            try:
+                chunk = next(iterator)
+            except StopIteration:
+                self._pause_llm_request(ticket)
+                return
+            except BaseException:
+                self._pause_llm_request(ticket)
+                raise
+            self._pause_llm_request(ticket)
+            yield chunk
+
     @visualize_model_state(VisualizationState.THINKING)
     @_record_llm_request_outcome
     def call_llm_model_by_stream(self, messages, tools=None, tool_choice="auto"):
@@ -718,8 +765,10 @@ class LLMModel(LLMModelBase):
             stream_chunk_sample = 0
         sampled_chunks = [] if stream_chunk_sample > 0 else None
 
+        timing_ticket = _llm_request_timing_ticket.get()
+        timed_response = self._iter_stream_for_request_timing(response, timing_ticket)
         for chunk in self.iter_stream_with_first_byte_timeout(
-            response,
+            timed_response,
             first_byte_timeout,
             raise_on_timeout=raise_on_first_byte_timeout,
             create_timed_out=create_timed_out,
@@ -818,6 +867,10 @@ class LLMModel(LLMModelBase):
                     if tool_call.function.arguments:
                         curr_tool_call["function"]["arguments"] += tool_call.function.arguments
         # enf for chunk
+
+        timing_ticket = _llm_request_timing_ticket.get()
+        if timing_ticket is not None:
+            self._finish_llm_request(timing_ticket)
 
         # Record first-byte timing for stream responses.
         if first_byte_ms is not None:

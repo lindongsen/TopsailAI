@@ -172,8 +172,24 @@ class LLMModelBase(object):
         request_stat = self._get_llm_request_stat()
         getattr(request_stat, record_method_name)()
 
+    def _start_llm_request(self):
+        """Record one provider attempt and return its duration ticket."""
+        return self._get_llm_request_stat().start_request()
+
+    def _pause_llm_request(self, ticket):
+        """Pause timing immediately after one provider I/O operation."""
+        self._get_llm_request_stat().pause_request(ticket)
+
+    def _resume_llm_request(self, ticket):
+        """Resume timing immediately before the next provider I/O operation."""
+        self._get_llm_request_stat().resume_request(ticket)
+
+    def _finish_llm_request(self, ticket):
+        """Record the accumulated provider request/response duration."""
+        self._get_llm_request_stat().finish_request(ticket)
+
     def _record_llm_request(self):
-        """Record one provider request attempt."""
+        """Record one provider request attempt without duration tracking."""
         self._record_llm_request_stat("record_request")
 
     def _record_llm_request_success(self):

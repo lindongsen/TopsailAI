@@ -1,7 +1,7 @@
 Feature: LLM provider request statistics
   As an operator
   I want each real LLM provider request to update visible execution-context statistics
-  So that I can observe total request volume and rolling requests per minute
+  So that I can observe request volume, outcomes, and full-response duration
 
   Scenario: A real non-streaming LLM request updates total and RPM statistics
     Given an LLM request statistics environment with a private mock LLM server
@@ -9,6 +9,7 @@ Feature: LLM provider request statistics
     Then the LLM request statistics mock server received exactly 1 completion request
     And the LLM request statistics request body contains the user message
     And the execution-context LLM total and RPM each increased by 1
+    And one full-response duration sample has complete aggregate metrics
     And each Thinking log has exactly one complete LLM request statistics output immediately before it
 
   Scenario: An invalid real LLM response increments request failures

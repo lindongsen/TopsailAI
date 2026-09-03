@@ -22,11 +22,20 @@ class MutableClock:
         return self.value
 
 
+EMPTY_DURATION_METRICS = {
+    "request_duration_count": 0,
+    "request_duration_min_sec": None,
+    "request_duration_avg_sec": None,
+    "request_duration_max_sec": None,
+    "request_duration_p95_sec": None,
+}
+
+
 def _make_request_model(create_result=None, create_error=None):
     """Build the minimum model required to exercise the provider boundary."""
     model = LLMModel.__new__(LLMModel)
     model.build_parameters_for_chat = MagicMock(return_value={"stream": False})
-    model._record_llm_request = MagicMock()
+    model.llm_request_stat = LLMRequestStat()
     model.tokenStat = MagicMock()
     model.models = []
     model.model = MagicMock()
@@ -48,6 +57,7 @@ def test_record_request_reports_total_and_rolling_minute():
         "request_successes": 0,
         "request_failures": 0,
         "response_content_errors": 0,
+        **EMPTY_DURATION_METRICS,
     }
     clock.value = 69.999
     assert stat.record_request() == {
@@ -56,6 +66,7 @@ def test_record_request_reports_total_and_rolling_minute():
         "request_successes": 0,
         "request_failures": 0,
         "response_content_errors": 0,
+        **EMPTY_DURATION_METRICS,
     }
 
 
@@ -73,6 +84,7 @@ def test_requests_at_sixty_seconds_expire_only_from_rpm():
         "request_successes": 0,
         "request_failures": 0,
         "response_content_errors": 0,
+        **EMPTY_DURATION_METRICS,
     }
 
 
@@ -89,6 +101,7 @@ def test_concurrent_recording_loses_no_requests():
         "request_successes": 0,
         "request_failures": 0,
         "response_content_errors": 0,
+        **EMPTY_DURATION_METRICS,
     }
 
 
@@ -107,6 +120,7 @@ def test_completed_requests_split_into_success_and_failure():
         "request_successes": 1,
         "request_failures": 1,
         "response_content_errors": 0,
+        **EMPTY_DURATION_METRICS,
     }
     assert snapshot["request_successes"] + snapshot["request_failures"] == 2
 
@@ -125,6 +139,7 @@ def test_response_content_error_overlaps_success():
         "request_successes": 1,
         "request_failures": 0,
         "response_content_errors": 1,
+        **EMPTY_DURATION_METRICS,
     }
 
 
@@ -150,6 +165,127 @@ def test_concurrent_request_outcomes_lose_no_updates():
     assert snapshot["request_failures"] == 80
 
 
+def test_request_durations_report_count_min_avg_max_and_p95():
+    """Completed timing tickets should produce deterministic duration metrics."""
+    clock = MutableClock(10.0)
+    stat = LLMRequestStat(clock=clock)
+
+    for duration in [1.0, 2.0, 3.0, 4.0, 5.0]:
+        ticket = stat.start_request()
+        stat.finish_request(ticket, timestamp=clock.value + duration)
+
+    snapshot = stat.get_request_stat_info()
+    assert snapshot["request_duration_count"] == 5
+    assert snapshot["request_duration_min_sec"] == 1.0
+    assert snapshot["request_duration_avg_sec"] == 3.0
+    assert snapshot["request_duration_max_sec"] == 5.0
+    assert snapshot["request_duration_p95_sec"] == 4.8
+
+
+@pytest.mark.parametrize(
+    ("durations", "expected_p95"),
+    [
+        ([1.0, 2.0, 3.0, 4.0, 5.0], 4.8),
+        ([1.0, 2.0, 3.0, 4.0], 3.85),
+    ],
+)
+def test_request_duration_p95_uses_linear_interpolation(
+    durations, expected_p95
+):
+    """Odd and even sample counts should use the documented P95 formula."""
+    stat = LLMRequestStat(clock=lambda: 0.0)
+
+    for duration in durations:
+        stat.finish_request(stat.start_request(), timestamp=duration)
+
+    assert stat.get_request_stat_info()["request_duration_p95_sec"] == expected_p95
+
+
+def test_request_timing_ticket_finishes_only_once():
+    """Repeated cleanup paths must not record one attempt more than once."""
+    stat = LLMRequestStat(clock=lambda: 0.0)
+    ticket = stat.start_request()
+
+    stat.finish_request(ticket, timestamp=1.0)
+    snapshot = stat.finish_request(ticket, timestamp=9.0)
+
+    assert snapshot["request_duration_count"] == 1
+    assert snapshot["request_duration_avg_sec"] == 1.0
+
+
+
+def test_request_timing_ticket_excludes_paused_non_io_time():
+    """Paused intervals such as local stream setup must not affect duration."""
+    clock = MutableClock(10.0)
+    stat = LLMRequestStat(clock=clock)
+    ticket = stat.start_request()
+
+    stat.pause_request(ticket)
+    clock.value = 30.0
+    stat.resume_request(ticket)
+    stat.finish_request(ticket, timestamp=32.0)
+
+    snapshot = stat.get_request_stat_info(timestamp=32.0)
+    assert snapshot["request_duration_count"] == 1
+    assert snapshot["request_duration_avg_sec"] == 2.0
+
+
+class _ClockedChunks:
+    """Advance a test clock only while the provider iterator is executing."""
+
+    def __init__(self, clock):
+        """Initialize two response chunks and a terminal provider read."""
+        self.clock = clock
+        self._chunks = iter(["first", "second"])
+
+    def __iter__(self):
+        """Return this object as its own iterator."""
+        return self
+
+    def __next__(self):
+        """Charge two seconds to each provider iterator operation."""
+        self.clock.value += 2.0
+        return next(self._chunks)
+
+
+def test_stream_duration_excludes_local_chunk_processing_time():
+    """Only create and provider iterator operations contribute to duration."""
+    clock = MutableClock(0.0)
+    model = LLMModel.__new__(LLMModel)
+    model.llm_request_stat = LLMRequestStat(clock=clock)
+    ticket = model._start_llm_request()
+
+    clock.value = 1.0
+    model._pause_llm_request(ticket)
+    for _ in model._iter_stream_for_request_timing(_ClockedChunks(clock), ticket):
+        clock.value += 10.0
+    model._finish_llm_request(ticket)
+
+    snapshot = model.llm_request_stat.get_request_stat_info()
+    assert snapshot["request_duration_count"] == 1
+    assert snapshot["request_duration_avg_sec"] == 7.0
+
+def test_concurrent_request_tickets_remain_correctly_paired():
+    """Concurrent completions should retain each request's own start time."""
+    stat = LLMRequestStat(clock=lambda: 10.0)
+    tickets = [stat.start_request() for _ in range(100)]
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(
+            executor.map(
+                lambda pair: stat.finish_request(pair[0], timestamp=pair[1]),
+                zip(tickets, [11.0 + index for index in range(100)]),
+            )
+        )
+
+    snapshot = stat.get_request_stat_info(timestamp=10.0)
+    assert snapshot["request_duration_count"] == 100
+    assert snapshot["request_duration_min_sec"] == 1.0
+    assert snapshot["request_duration_avg_sec"] == 50.5
+    assert snapshot["request_duration_max_sec"] == 100.0
+    assert snapshot["request_duration_p95_sec"] == 95.05
+
+
 def test_models_create_independent_request_trackers(monkeypatch):
     """Direct model contexts must not share request statistics."""
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -166,17 +302,23 @@ def test_models_create_independent_request_trackers(monkeypatch):
 
 
 def test_print_request_stat_uses_supplied_snapshot(monkeypatch):
-    """Printing an atomic record snapshot should expose both metric names."""
+    """Printing a snapshot should expose request and duration metric names."""
     print_info = MagicMock()
     monkeypatch.setattr(request_stat_module, "print_info", print_info)
     stat = LLMRequestStat()
+    snapshot = {
+        "total_requests": 7,
+        "requests_per_minute": 3,
+        "request_duration_avg_sec": 2.5,
+        "request_duration_p95_sec": 4.75,
+    }
 
-    stat.print_request_stat({"total_requests": 7, "requests_per_minute": 3})
+    stat.print_request_stat(snapshot)
 
     output = print_info.call_args.args[0]
     assert "LLMRequestStat" in output
-    assert "'total_requests': 7" in output
-    assert "'requests_per_minute': 3" in output
+    for name, value in snapshot.items():
+        assert f"'{name}': {value}" in output
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -191,7 +333,9 @@ def test_timeout_disabled_provider_attempt_is_counted_once(stream):
         first_byte_timeout=0,
     )
 
-    model._record_llm_request.assert_called_once_with()
+    snapshot = model.llm_request_stat.get_request_stat_info()
+    assert snapshot["total_requests"] == 1
+    assert snapshot["request_duration_count"] == (0 if stream else 1)
     model.chat_model.create.assert_called_once()
     assert result == (response, False) if stream else result is response
 
@@ -207,7 +351,9 @@ def test_timeout_monitored_provider_attempt_is_counted_once():
     )
 
     assert result is response
-    model._record_llm_request.assert_called_once_with()
+    snapshot = model.llm_request_stat.get_request_stat_info()
+    assert snapshot["total_requests"] == 1
+    assert snapshot["request_duration_count"] == 1
     model.chat_model.create.assert_called_once()
 
 
@@ -221,7 +367,9 @@ def test_failed_provider_attempt_is_counted():
             first_byte_timeout=0,
         )
 
-    model._record_llm_request.assert_called_once_with()
+    snapshot = model.llm_request_stat.get_request_stat_info()
+    assert snapshot["total_requests"] == 1
+    assert snapshot["request_duration_count"] == 1
     model.chat_model.create.assert_called_once()
 
 
@@ -243,6 +391,7 @@ def _make_outcome_model(response=None, create_error=None):
     model.build_parameters_for_chat = MagicMock(return_value={"stream": False})
     model.tokenStat = MagicMock()
     model.llm_request_stat = MagicMock()
+    model.llm_request_stat.start_request.return_value = object()
     model.llm_request_stat.record_request.return_value = {"total_requests": 1}
     model.llm_request_stat.record_request_success.return_value = {
         "request_successes": 1,
@@ -269,6 +418,135 @@ def _make_non_stream_response(content="ok"):
     response.choices = [MagicMock()]
     response.choices[0].message.content = content
     return response
+
+
+class _ClockAdvancingStream:
+    """Advance a mutable clock when a test stream completes or fails."""
+
+    def __init__(self, clock, end_time, error=None):
+        """Store the clock, terminal timestamp, and optional terminal error."""
+        self.clock = clock
+        self.end_time = end_time
+        self.error = error
+
+    def __iter__(self):
+        """Return this object as its own iterator."""
+        return self
+
+    def __next__(self):
+        """Advance time and complete or fail stream consumption."""
+        self.clock.value = self.end_time
+        if self.error is not None:
+            raise self.error
+        raise StopIteration
+
+
+def test_non_stream_success_records_full_response_duration():
+    """Non-stream timing should end when the complete response is returned."""
+    clock = MutableClock(10.0)
+    response = _make_non_stream_response()
+    model = _make_outcome_model(response)
+    model.llm_request_stat = LLMRequestStat(clock=clock)
+    model.model.create.side_effect = lambda **_: (
+        setattr(clock, "value", 12.5) or response
+    )
+    model.fix_response_content = MagicMock(return_value="ok")
+    model.check_response_content = MagicMock()
+
+    model.call_llm_model([{"role": "user", "content": "hello"}])
+
+    snapshot = model.llm_request_stat.get_request_stat_info(timestamp=12.5)
+    assert snapshot["request_duration_count"] == 1
+    assert snapshot["request_duration_avg_sec"] == 2.5
+
+def test_non_stream_duration_excludes_pre_request_and_post_response_work():
+    """Duration must include only the provider create request/response interval."""
+    clock = MutableClock(10.0)
+    response = _make_non_stream_response()
+    model = _make_outcome_model(response)
+    model.llm_request_stat = LLMRequestStat(clock=clock)
+
+    def build_parameters(*_, **__):
+        clock.value = 20.0
+        return {"stream": False}
+
+    def create_response(**_):
+        clock.value = 23.0
+        return response
+
+    def post_process(*_, **__):
+        clock.value = 40.0
+        return "ok"
+
+    model.build_parameters_for_chat.side_effect = build_parameters
+    model.model.create.side_effect = create_response
+    model.fix_response_content = MagicMock(side_effect=post_process)
+    model.check_response_content = MagicMock()
+
+    model.call_llm_model([{"role": "user", "content": "hello"}])
+
+    snapshot = model.llm_request_stat.get_request_stat_info(timestamp=40.0)
+    assert snapshot["request_duration_count"] == 1
+    assert snapshot["request_duration_avg_sec"] == 3.0
+    assert snapshot["request_duration_min_sec"] == 3.0
+    assert snapshot["request_duration_max_sec"] == 3.0
+    assert snapshot["request_duration_p95_sec"] == 3.0
+
+
+
+def test_provider_failure_records_full_response_duration():
+    """Provider timing should end when request creation raises an error."""
+    clock = MutableClock(20.0)
+    model = _make_outcome_model()
+    model.llm_request_stat = LLMRequestStat(clock=clock)
+
+    def fail_create(**_):
+        clock.value = 21.25
+        raise RuntimeError("provider failed")
+
+    model.model.create.side_effect = fail_create
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        model.call_llm_model([{"role": "user", "content": "hello"}])
+
+    snapshot = model.llm_request_stat.get_request_stat_info(timestamp=21.25)
+    assert snapshot["request_duration_count"] == 1
+    assert snapshot["request_duration_avg_sec"] == 1.25
+
+
+def test_stream_success_records_duration_after_full_consumption():
+    """Streaming timing should end only after the iterator is exhausted."""
+    clock = MutableClock(30.0)
+    stream = _ClockAdvancingStream(clock, 33.0)
+    model = _make_outcome_model(stream)
+    model.llm_request_stat = LLMRequestStat(clock=clock)
+    model.fix_response_content = MagicMock(return_value="")
+    model.check_response_content = MagicMock()
+
+    model.call_llm_model_by_stream([{"role": "user", "content": "hello"}])
+
+    snapshot = model.llm_request_stat.get_request_stat_info(timestamp=33.0)
+    assert snapshot["request_duration_count"] == 1
+    assert snapshot["request_duration_avg_sec"] == 3.0
+
+
+def test_stream_failure_records_duration_at_iteration_error():
+    """Streaming timing should end when iterator consumption raises an error."""
+    clock = MutableClock(40.0)
+    stream = _ClockAdvancingStream(
+        clock, 44.0, error=RuntimeError("stream failed")
+    )
+    model = _make_outcome_model(stream)
+    model.llm_request_stat = LLMRequestStat(clock=clock)
+
+    with pytest.raises(RuntimeError, match="stream failed"):
+        model.call_llm_model_by_stream(
+            [{"role": "user", "content": "hello"}]
+        )
+
+    snapshot = model.llm_request_stat.get_request_stat_info(timestamp=44.0)
+    assert snapshot["request_duration_count"] == 1
+    assert snapshot["request_duration_avg_sec"] == 4.0
 
 
 def test_non_stream_request_records_success_once():
@@ -330,6 +608,7 @@ def test_parameter_build_error_does_not_record_request_outcome():
     with pytest.raises(ValueError, match="bad parameters"):
         model.call_llm_model([{"role": "user", "content": "hello"}])
 
+    model.llm_request_stat.start_request.assert_not_called()
     model.llm_request_stat.record_request.assert_not_called()
     model.llm_request_stat.record_request_success.assert_not_called()
     model.llm_request_stat.record_request_failure.assert_not_called()

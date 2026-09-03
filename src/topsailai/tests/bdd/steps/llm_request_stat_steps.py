@@ -52,6 +52,23 @@ def then_llm_request_stat_snapshot_increased(llm_request_stat_ctx):
     assert after["requests_per_minute"] == before["requests_per_minute"] + 1
 
 
+@then("one full-response duration sample has complete aggregate metrics")
+def then_llm_request_duration_snapshot_is_complete(llm_request_stat_ctx):
+    """Assert one completed request produces all full-response duration fields."""
+    after = llm_request_stat_ctx.after
+    assert after is not None
+    assert after["request_duration_count"] == 1
+    duration_fields = (
+        "request_duration_min_sec",
+        "request_duration_avg_sec",
+        "request_duration_max_sec",
+        "request_duration_p95_sec",
+    )
+    values = [after[field] for field in duration_fields]
+    assert all(value is not None and value >= 0 for value in values)
+    assert len(set(values)) == 1
+
+
 @then(
     "each Thinking log has exactly one complete LLM request statistics output "
     "immediately before it"
@@ -77,6 +94,11 @@ def then_llm_request_stat_output_precedes_thinking(llm_request_stat_ctx):
             "request_successes",
             "request_failures",
             "response_content_errors",
+            "request_duration_count",
+            "request_duration_min_sec",
+            "request_duration_avg_sec",
+            "request_duration_max_sec",
+            "request_duration_p95_sec",
         ):
             assert field in outputs[index]
 
