@@ -145,7 +145,8 @@ class TestSessionToDict:
         assert data["status"] == "Idle"
         assert data["is_running"] is False
         assert data["create_time"] == "2026-07-05 10:30:15"
-        assert data["total_tokens"] == 0
+        assert "total_tokens" not in data
+        assert data["total_prompt_tokens"] == 0
         assert data["total_cached_tokens"] == 0
 
     def test_running_session_dict(self, tmp_path: Path):
@@ -172,7 +173,7 @@ class TestSessionToDict:
         session.create_time = datetime(2026, 7, 5, 10, 30, 15)
 
         data = si._session_to_dict(session, str(tmp_path))
-        assert data["total_tokens"] == 1234
+        assert "total_tokens" not in data
         assert data["total_prompt_tokens"] == 1234
         assert data["total_completion_tokens"] == 56
         assert data["total_usage_tokens"] == 1290
@@ -209,7 +210,8 @@ class TestFormatSessionJson:
         assert isinstance(parsed["create_time_relative"], str)
 
         # Token totals default to 0 when not provided
-        assert parsed["total_tokens"] == 0
+        assert "total_tokens" not in parsed
+        assert parsed["total_prompt_tokens"] == 0
         assert parsed["total_cached_tokens"] == 0
 
     def test_json_output_includes_all_expected_keys(self, tmp_path: Path):
@@ -230,7 +232,6 @@ class TestFormatSessionJson:
             "status",
             "is_running",
             "create_time_relative",
-            "total_tokens",
             "total_prompt_tokens",
             "total_completion_tokens",
             "total_usage_tokens",
@@ -252,7 +253,7 @@ class TestFormatSessionJson:
         output = si._format_session_json(session, str(tmp_path))
         parsed = json.loads(output)
 
-        assert parsed["total_tokens"] == 9999
+        assert "total_tokens" not in parsed
         assert parsed["total_prompt_tokens"] == 9999
         assert parsed["total_completion_tokens"] == 111
         assert parsed["total_usage_tokens"] == 10110

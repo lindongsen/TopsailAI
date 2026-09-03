@@ -930,10 +930,10 @@ class TestSessionTokenAccumulation:
 
         assert session_mgr.get_session_token_totals("token_session") == (100, 40)
         assert session_mgr.get_session_token_usage("token_session") == {
-            "prompt_tokens": 100,
-            "completion_tokens": 25,
-            "total_tokens": 125,
-            "cached_prompt_tokens": 40,
+            "total_prompt_tokens": 100,
+            "total_completion_tokens": 25,
+            "total_usage_tokens": 125,
+            "total_cached_tokens": 40,
         }
         session_data = session_mgr.get_session("token_session")
         assert session_data.total_tokens == 100
@@ -952,10 +952,10 @@ class TestSessionTokenAccumulation:
         )
 
         usage = session_mgr.get_session_token_usage("token_session")
-        assert usage["prompt_tokens"] == 100
-        assert usage["completion_tokens"] == 20
-        assert usage["total_tokens"] == 120
-        assert usage["cached_prompt_tokens"] == 25
+        assert usage["total_prompt_tokens"] == 100
+        assert usage["total_completion_tokens"] == 20
+        assert usage["total_usage_tokens"] == 120
+        assert usage["total_cached_tokens"] == 25
 
     def test_existing_sqlite_schema_gains_completion_column(self, tmp_path):
         """Add the completion column without reinterpreting historical totals."""
@@ -981,10 +981,10 @@ class TestSessionTokenAccumulation:
         try:
             usage = migrated.get_session_token_usage("legacy")
             assert usage == {
-                "prompt_tokens": 90,
-                "completion_tokens": 0,
-                "total_tokens": 90,
-                "cached_prompt_tokens": 30,
+                "total_prompt_tokens": 90,
+                "total_completion_tokens": 0,
+                "total_usage_tokens": 90,
+                "total_cached_tokens": 30,
             }
         finally:
             migrated.engine.dispose()

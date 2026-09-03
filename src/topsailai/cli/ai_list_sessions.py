@@ -237,7 +237,6 @@ def _session_to_dict(session):
         "project_workspace": str(session.project_workspace) if session.project_workspace else "",
         "pwd": str(session.pwd) if session.pwd else "",
         "topsailai_home": str(session.topsailai_home) if session.topsailai_home else "",
-        "total_tokens": total_prompt_tokens,
         "total_prompt_tokens": total_prompt_tokens,
         "total_completion_tokens": total_completion_tokens,
         "total_usage_tokens": total_prompt_tokens + total_completion_tokens,

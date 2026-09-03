@@ -179,9 +179,12 @@ def _assert_known_usage_matches_responses(context: dict[str, Any]) -> None:
         request["prompt_tokens"] for request in state["requests"]
     )
     expected_completion_tokens = request_count * harness.response_completion_tokens()
-    assert usage["prompt_tokens"] == expected_prompt_tokens
-    assert usage["completion_tokens"] == expected_completion_tokens
-    assert usage["total_tokens"] == expected_prompt_tokens + expected_completion_tokens
+    assert "total_tokens" not in usage
+    assert usage["total_prompt_tokens"] == expected_prompt_tokens
+    assert usage["total_completion_tokens"] == expected_completion_tokens
+    assert usage["total_usage_tokens"] == (
+        expected_prompt_tokens + expected_completion_tokens
+    )
 
 
 @then("request cache usage is unknown while known session usage is accumulated")
@@ -191,7 +194,7 @@ def unknown_request_persists_known_usage(cached_tokens_context: dict[str, Any]) 
     assert harness.cached_tokens is None
     usage = harness.session_token_usage()
     assert usage is not None
-    assert usage["cached_prompt_tokens"] == 0
+    assert usage["total_cached_tokens"] == 0
     _assert_known_usage_matches_responses(cached_tokens_context)
 
 
@@ -202,7 +205,7 @@ def zero_request_persists_known_usage(cached_tokens_context: dict[str, Any]) -> 
     assert harness.cached_tokens == 0
     usage = harness.session_token_usage()
     assert usage is not None
-    assert usage["cached_prompt_tokens"] == 0
+    assert usage["total_cached_tokens"] == 0
     _assert_known_usage_matches_responses(cached_tokens_context)
 
 
@@ -214,7 +217,7 @@ def positive_request_increments_cache_total(cached_tokens_context: dict[str, Any
     assert harness.cached_tokens > 0
     usage = harness.session_token_usage()
     assert usage is not None
-    assert usage["cached_prompt_tokens"] == harness.cached_tokens
+    assert usage["total_cached_tokens"] == harness.cached_tokens
     _assert_known_usage_matches_responses(cached_tokens_context)
 
 

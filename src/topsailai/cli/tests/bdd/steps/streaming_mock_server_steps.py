@@ -272,7 +272,7 @@ def session_cli_explicit_usage_fields(
     streaming_mock_server_context: dict[str, Any],
     tmp_path,
 ) -> None:
-    """Require session JSON terminology to preserve legacy prompt semantics."""
+    """Require session JSON to expose only explicit token terminology."""
     token_stat = streaming_mock_server_context["harness"].model.tokenStat
     session = SessionData(
         session_id="bdd-streaming-session",
@@ -282,7 +282,7 @@ def session_cli_explicit_usage_fields(
     )
 
     data = topsailai_session_info._session_to_dict(session, str(tmp_path))
-    assert data["total_tokens"] == token_stat.total_prompt_tokens
+    assert "total_tokens" not in data
     assert data["total_prompt_tokens"] == token_stat.total_prompt_tokens
     assert data["total_completion_tokens"] == token_stat.total_completion_tokens
     assert data["total_usage_tokens"] == token_stat.total_usage_tokens

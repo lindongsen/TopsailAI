@@ -516,7 +516,7 @@ class SessionSQLAlchemy(SessionStorageBase):
         usage = self.get_session_token_usage(session_id)
         if usage is None:
             return None
-        return usage["prompt_tokens"], usage["cached_prompt_tokens"]
+        return usage["total_prompt_tokens"], usage["total_cached_tokens"]
 
     def get_session_token_usage(self, session_id: str) -> dict[str, int] | None:
         """Return explicit prompt, completion, combined, and cache totals."""
@@ -537,10 +537,10 @@ class SessionSQLAlchemy(SessionStorageBase):
             prompt_tokens = session.total_tokens or 0
             completion_tokens = session.total_completion_tokens or 0
             return {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-                "cached_prompt_tokens": session.total_cached_tokens or 0,
+                "total_prompt_tokens": prompt_tokens,
+                "total_completion_tokens": completion_tokens,
+                "total_usage_tokens": prompt_tokens + completion_tokens,
+                "total_cached_tokens": session.total_cached_tokens or 0,
             }
         except Exception as e:
             db_session.rollback()

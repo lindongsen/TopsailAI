@@ -305,7 +305,7 @@ class TestJsonAndFilterFlags(unittest.TestCase):
         self.assertEqual(data[0]["pwd"], "/work/project-json")
         self.assertEqual(data[0]["topsailai_home"], "/home/user/.topsailai")
         self.assertIn("create_time", data[0])
-        self.assertIn("total_tokens", data[0])
+        self.assertNotIn("total_tokens", data[0])
         self.assertIn("total_prompt_tokens", data[0])
         self.assertIn("total_completion_tokens", data[0])
         self.assertIn("total_usage_tokens", data[0])

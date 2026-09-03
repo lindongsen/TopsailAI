@@ -48,7 +48,6 @@ topsailai_session_info <session_id>
 | `project_workspace` | Recorded project workspace path. |
 | `pwd` | Recorded working directory. |
 | `topsailai_home` | Recorded `TOPSAILAI_HOME` path. |
-| `total_tokens` | Legacy JSON field for accumulated prompt tokens; retained for compatibility. |
 | `total_prompt_tokens` | Accumulated prompt tokens under an explicit name. |
 | `total_completion_tokens` | Accumulated completion tokens. |
 | `total_usage_tokens` | Combined prompt and completion tokens. |
@@ -58,7 +57,7 @@ topsailai_session_info <session_id>
 | `is_running` | Boolean running status (JSON output only). |
 | `create_time_relative` | Human-readable relative time, e.g. "3 minutes ago". |
 
-The human-readable card labels these metrics as `Prompt Tokens`, `Completion Tokens`, `Total Usage Tokens`, and `Cached Prompt Tokens`. No additional database columns are used: `total_prompt_tokens` aliases the legacy prompt-only `total_tokens` column, and `total_usage_tokens` is calculated from prompt plus completion totals.
+The human-readable card labels these metrics as `Prompt Tokens`, `Completion Tokens`, `Total Usage Tokens`, and `Cached Prompt Tokens`. The JSON result does not expose the ambiguous `total_tokens` name. No additional database columns are used: `total_prompt_tokens` maps the internal legacy prompt-only `total_tokens` column to an explicit query field, and `total_usage_tokens` is calculated from prompt plus completion totals.
 
 ## Examples
 
