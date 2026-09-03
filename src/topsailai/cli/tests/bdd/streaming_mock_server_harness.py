@@ -27,7 +27,12 @@ class _CountingRequestHandler(LLMMockRequestHandler):
 class StreamingMockServerHarness:
     """Drive real LLMModel streaming through the official HTTP client."""
 
-    def __init__(self, monkeypatch, stream_chunks=("Hello ", "streaming ", "world")) -> None:
+    def __init__(
+        self,
+        monkeypatch,
+        stream_chunks=("Hello ", "streaming ", "world"),
+        report_usage=True,
+    ) -> None:
         """Start an SSE mock server and construct a real OpenAI-backed model.
 
         ``stream_chunks=None`` configures the server with streaming disabled
@@ -37,6 +42,7 @@ class StreamingMockServerHarness:
         self.server = create_server(MockServerConfig(
             port=0,
             stream_chunks=stream_chunks,
+            report_usage=report_usage,
         ))
         # Count POSTs at the HTTP layer because requests rejected with 400
         # never reach the mock server's prompt-cache accounting.

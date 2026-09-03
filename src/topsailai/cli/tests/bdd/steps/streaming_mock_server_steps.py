@@ -11,6 +11,7 @@ import openai
 
 from tests.bdd.streaming_mock_server_harness import StreamingMockServerHarness
 from topsailai.context.session_manager import SessionData
+from topsailai.context.token import count_tokens
 
 import topsailai_session_info
 
@@ -39,6 +40,14 @@ def streaming_server_ready(
     assert streaming_mock_server_context["harness"].server.server_port > 0
 
 
+@given("a streaming LLM mock server that omits usage")
+def streaming_server_without_usage(
+    streaming_mock_server_context: dict[str, Any],
+) -> None:
+    """Configure the scenario server to omit Provider usage."""
+    streaming_mock_server_context["report_usage"] = False
+
+
 @given(parsers.parse("the SSE chunks are {chunks}"))
 def configure_sse_chunks(
     streaming_mock_server_context: dict[str, Any],
@@ -52,6 +61,7 @@ def configure_sse_chunks(
     streaming_mock_server_context["harness"] = StreamingMockServerHarness(
         streaming_mock_server_context["monkeypatch"],
         stream_chunks=tuple(chunk_list),
+        report_usage=streaming_mock_server_context.get("report_usage", True),
     )
 
 
@@ -238,6 +248,17 @@ def streaming_request_contains_scenario_message(
         and message.get("content") == "BDD streaming mock server"
         for message in request_body["messages"]
     ), request_body
+
+
+@then(parsers.parse('completion tokens equal the local estimate of "{content}"'))
+def completion_tokens_equal_local_estimate(
+    streaming_mock_server_context: dict[str, Any],
+    content: str,
+) -> None:
+    """Require completion usage estimated from the assembled response text."""
+    token_stat = streaming_mock_server_context["harness"].model.tokenStat
+    assert token_stat.current_completion_tokens == count_tokens(content)
+    assert token_stat.current_completion_tokens > 0
 
 
 @then("the streaming token stat exposes prompt completion and combined totals")

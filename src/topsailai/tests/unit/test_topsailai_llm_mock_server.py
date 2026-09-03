@@ -155,6 +155,15 @@ def test_cache_usage_details_can_be_omitted_without_hiding_known_usage():
     assert usage["total_tokens"] == usage["prompt_tokens"] + usage["completion_tokens"]
 
 
+def test_provider_usage_can_be_omitted_without_hiding_response_content():
+    """An opt-out response must omit usage while preserving completion content."""
+    messages = [_message("user", "usage omitted")]
+    with running_server(report_usage=False, reply="content remains") as (_, base_url):
+        response = _completion(base_url, messages)
+    assert response["choices"][0]["message"]["content"] == "content remains"
+    assert "usage" not in response
+
+
 def test_appended_suffix_reports_partial_prefix_hit():
     """An appended suffix must reuse all previously sent leading messages."""
     prefix = [_message("system", "stable"), _message("user", "hello")]

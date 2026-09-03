@@ -597,9 +597,12 @@ class LLMModel(LLMModelBase):
             raise_on_timeout=raise_on_first_byte_timeout,
         )
         self.tokenStat.wait(token_stat_ticket)
-        self.tokenStat.finalize_usage(self.get_response_usage(response), token_stat_ticket)
-
         full_content = response.choices[0].message.content
+        self.tokenStat.finalize_usage(
+            self.get_response_usage(response),
+            token_stat_ticket,
+            full_content,
+        )
 
         full_content = self.fix_response_content(rsp_obj=response, rsp_content=full_content)
         self.check_response_content(rsp_obj=response, rsp_content=full_content)
@@ -917,7 +920,7 @@ class LLMModel(LLMModelBase):
             usage_details_chunk_count,
             cached_tokens_chunk_count,
         )
-        self.tokenStat.finalize_usage(usage, token_stat_ticket)
+        self.tokenStat.finalize_usage(usage, token_stat_ticket, full_content)
 
         full_content = full_content.strip()
 

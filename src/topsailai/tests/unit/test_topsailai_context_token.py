@@ -443,6 +443,67 @@ class TestTokenStat(unittest.TestCase):
             self.assertEqual(stat.current_count_source, "local_estimate")
             stat.flag_running = False
 
+    @patch('topsailai.context.token.count_tokens', side_effect=[11, 5])
+    def test_missing_completion_tokens_use_local_response_estimate(self, mock_count_tokens):
+        """Estimate completion tokens when Provider usage omits them."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        ticket = stat.add_msgs("request")
+        self.assertTrue(stat.wait(ticket, timeout=1.0))
+        usage = MagicMock(prompt_tokens=17, completion_tokens=None)
+        usage.prompt_tokens_details = None
+
+        with patch('topsailai.context.token.env_tool.get_session_id', return_value=""):
+            self.assertTrue(stat.finalize_usage(usage, ticket, "response text"))
+
+        self.assertEqual(stat.current_prompt_tokens, 17)
+        self.assertEqual(stat.current_completion_tokens, 5)
+        self.assertEqual(stat.current_total_tokens, 22)
+        self.assertEqual(stat.total_completion_tokens, 5)
+        self.assertEqual(mock_count_tokens.call_args_list[-1].args, ("response text",))
+        stat.flag_running = False
+
+    def test_invalid_completion_tokens_use_local_response_estimate(self):
+        """Estimate completion tokens for every invalid Provider count."""
+        for completion_tokens in (-1, 3.5, True, "5"):
+            stat = TokenStat(self.llm_id, lifetime=0)
+            usage = MagicMock(prompt_tokens=17, completion_tokens=completion_tokens)
+            usage.prompt_tokens_details = None
+
+            with patch('topsailai.context.token.count_tokens', return_value=5) as mock_count, \
+                 patch('topsailai.context.token.env_tool.get_session_id', return_value=""):
+                self.assertTrue(stat.finalize_usage(usage, completion_text="response text"))
+
+            self.assertEqual(stat.current_completion_tokens, 5)
+            mock_count.assert_called_once_with("response text")
+            stat.flag_running = False
+
+    def test_valid_completion_tokens_do_not_use_local_response_estimate(self):
+        """Keep valid Provider completion counts, including explicit zero."""
+        for completion_tokens in (0, 5):
+            stat = TokenStat(self.llm_id, lifetime=0)
+            usage = MagicMock(prompt_tokens=17, completion_tokens=completion_tokens)
+            usage.prompt_tokens_details = None
+
+            with patch('topsailai.context.token.count_tokens') as mock_count, \
+                 patch('topsailai.context.token.env_tool.get_session_id', return_value=""):
+                self.assertTrue(stat.finalize_usage(usage, completion_text="response text"))
+
+            self.assertEqual(stat.current_completion_tokens, completion_tokens)
+            mock_count.assert_not_called()
+            stat.flag_running = False
+
+    def test_missing_completion_tokens_without_text_estimate_zero(self):
+        """Use zero when neither Provider usage nor completion text is available."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+
+        with patch('topsailai.context.token.count_tokens') as mock_count, \
+             patch('topsailai.context.token.env_tool.get_session_id', return_value=""):
+            self.assertTrue(stat.finalize_usage(completion_text=None))
+
+        self.assertEqual(stat.current_completion_tokens, 0)
+        mock_count.assert_not_called()
+        stat.flag_running = False
+
     def test_token_stat_output_token_stat(self):
         """Test output_token_stat method."""
         stat = TokenStat(self.llm_id, lifetime=0)

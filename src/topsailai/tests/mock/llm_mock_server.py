@@ -25,6 +25,7 @@ class MockServerConfig:
     request_body_capacity: int = 32
     stream_chunks: tuple[str, ...] | None = None
     report_cache_usage: bool = True
+    report_usage: bool = True
     tool_call_responses: tuple[tuple[dict[str, Any], ...], ...] | None = None
 
     def __post_init__(self) -> None:
@@ -247,7 +248,7 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
                         "finish_reason": None,
                     }],
                 })
-            self._write_sse({
+            final_chunk = {
                 "id": completion_id,
                 "object": "chat.completion.chunk",
                 "created": created,
@@ -257,7 +258,9 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
                     "delta": {},
                     "finish_reason": "stop",
                 }],
-                "usage": {
+            }
+            if self.server.config.report_usage:
+                final_chunk["usage"] = {
                     "prompt_tokens": cache_result["prompt_tokens"],
                     "completion_tokens": completion_tokens,
                     "total_tokens": total_tokens,
@@ -266,8 +269,8 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
                             "cached_tokens": cache_result["cached_tokens"],
                         },
                     } if self.server.config.report_cache_usage else {}),
-                },
-            })
+                }
+            self._write_sse(final_chunk)
             self._write_sse("[DONE]")
         except (BrokenPipeError, ConnectionResetError):
             return
@@ -363,7 +366,9 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
                 "message": assistant_message,
                 "finish_reason": finish_reason,
             }],
-            "usage": {
+        }
+        if self.server.config.report_usage:
+            response["usage"] = {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
@@ -372,8 +377,7 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
                         "cached_tokens": cache_result["cached_tokens"],
                     },
                 } if self.server.config.report_cache_usage else {}),
-            },
-        }
+            }
         self._write_json(200, response)
 
 

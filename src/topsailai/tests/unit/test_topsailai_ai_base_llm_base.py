@@ -225,14 +225,20 @@ class TestLLMModelCallLLMModel(unittest.TestCase):
         events = []
         model = self._create_mock_model()
         model.model.create.return_value = mock_response
-        model.tokenStat.finalize_usage.side_effect = lambda usage, ticket: events.append("finalize")
+        model.tokenStat.finalize_usage.side_effect = (
+            lambda usage, ticket, completion_text: events.append("finalize")
+        )
         model.send_content = MagicMock(side_effect=lambda content: events.append("response"))
         model.tokenStat.print_token_stat.side_effect = lambda: events.append("print")
 
         model.call_llm_model(self.messages)
 
         model.tokenStat.add_msgs.assert_called_once()
-        model.tokenStat.finalize_usage.assert_called_once()
+        model.tokenStat.finalize_usage.assert_called_once_with(
+            model.get_response_usage(mock_response),
+            model.tokenStat.add_msgs.return_value,
+            "Token test",
+        )
         model.tokenStat.print_token_stat.assert_called_once()
         self.assertEqual(events, ["finalize", "response", "print"])
 
@@ -302,12 +308,14 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         mock_chunk1.choices = [MagicMock()]
         mock_chunk1.choices[0].delta.content = "Hello "
         mock_chunk1.choices[0].delta.tool_calls = None
-        
+        mock_chunk1.usage = None
+
         mock_chunk2 = MagicMock()
         mock_chunk2.choices = [MagicMock()]
         mock_chunk2.choices[0].delta.content = "World"
         mock_chunk2.choices[0].delta.tool_calls = None
-        
+        mock_chunk2.usage = None
+
         mock_response = iter([mock_chunk1, mock_chunk2])
         
         model = self._create_mock_model()
@@ -317,6 +325,11 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         
         self.assertIsInstance(result, tuple)
         self.assertEqual(result[1], "Hello World")
+        model.tokenStat.finalize_usage.assert_called_once_with(
+            None,
+            model.tokenStat.add_msgs.return_value,
+            "Hello World",
+        )
 
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)

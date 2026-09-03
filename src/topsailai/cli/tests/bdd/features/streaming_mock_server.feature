@@ -19,6 +19,13 @@ Feature: llm_mock_server streaming support over real HTTP/SSE
     And session CLI token fields distinguish prompt completion and combined usage
     And every streamed response chunk is output before the token summary
 
+  Scenario: Missing Provider usage falls back to completion text estimation
+    Given a streaming LLM mock server that omits usage
+    And the SSE chunks are "local ", "completion ", "estimate"
+    When the streaming mock chat is executed
+    Then completion tokens equal the local estimate of "local completion estimate"
+    And the mock server receives exactly one usage-enabled streaming request
+
   Scenario: Streaming usage chunk feeds cached tokens into TokenStat
     Given the SSE chunks are "alpha", "beta"
     When the streaming mock chat is executed twice with the same prompt

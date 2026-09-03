@@ -322,8 +322,13 @@ class TokenStat(threading.Thread):
             return value
         return None
 
-    def finalize_usage(self, usage: CompletionUsage = None, ticket: Optional[int] = None):
-        """Finalize and persist usage for the current request exactly once."""
+    def finalize_usage(
+        self,
+        usage: CompletionUsage = None,
+        ticket: Optional[int] = None,
+        completion_text: Optional[str] = None,
+    ):
+        """Finalize and persist usage, estimating missing completion tokens."""
         with self.rlock:
             ticket = self._current_batch_ticket if ticket is None else ticket
             if ticket is None:
@@ -361,7 +366,9 @@ class TokenStat(threading.Thread):
             else:
                 self.current_count_source = "local_estimate"
 
-            self.current_completion_count = response_completion_tokens or 0
+            if response_completion_tokens is None:
+                response_completion_tokens = count_tokens(completion_text) if completion_text else 0
+            self.current_completion_count = response_completion_tokens
             self.total_completion_count += self.current_completion_count
             if self.current_cached_tokens:
                 self.total_cached_tokens += self.current_cached_tokens
