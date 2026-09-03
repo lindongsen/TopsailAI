@@ -563,6 +563,12 @@ def prompt_selection(
                     return ("leave_scope", None)
                 return ("quit", None)
 
+            if user_input.startswith("!"):
+                from cli_topsailai.shell_commands import execute_shell_command
+
+                execute_shell_command(user_input)
+                continue
+
             # Restricted command set when workspace is showing the managed
             # project list. Only r/recent, p/projects, q/quit/cd, and
             # p agent <number> are accepted; everything else is rejected.

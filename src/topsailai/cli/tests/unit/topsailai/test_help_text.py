@@ -34,6 +34,13 @@ class TestPrintHelp(unittest.TestCase):
         self.assertIn("/refresh", output)
         self.assertIn("scopes", output)
 
+    def test_shell_command_is_listed_in_every_scope(self):
+        for scope in ("workspace", "runtime", "project", "session", "doc"):
+            with self.subTest(scope=scope):
+                output = self._capture(print_help, [], scope)
+                self.assertIn("!<command>", output)
+                self.assertIn("!git status", output)
+
     def test_print_scopes_describes_all_scopes_and_actions(self):
         output = self._capture(print_scopes)
         self.assertIn("Scope Guide", output)

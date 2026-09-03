@@ -30,6 +30,10 @@ references:
 - usage documentation list
 - read usage documentation
 
+## Commands Available in All Scopes
+
+- `!<command>` executes a command line in the CLI process working directory using the `/git` parsing and execution mechanism, then remains in the current scope; for example, `!git status`.
+
 ## Non-interactive subcommands
 
 - `project add|del|list|launch|resume`

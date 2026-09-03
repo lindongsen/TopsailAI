@@ -55,6 +55,14 @@ The CLI has five scopes, derived from the original design notes in `../../topsai
 - **`[session:<id>]`** — a focused scope for one session. It provides context retrieval and streaming, runtime messaging, agent2llm and persistent context injection, configured session commands, and return to workspace scope.
 - **`[doc]`** — a browser for Markdown documentation grouped under `docs/`. It provides numbered document reading, list refresh, help, and return to workspace scope.
 
+## Commands Available in All Scopes
+
+| Command | Description |
+|---------|-------------|
+| `!<command>` | Execute an arbitrary command line and remain in the current scope. Example: `!git status`. |
+
+The command uses the same parsing and execution mechanism as `/git`: `shlex.split`, the shared `run_external_command` helper, and `os.system`. Their working-directory behavior differs: `/git` resolves the active session's project workspace and runs `git -C <project_workspace> ...`, while `!` runs in the CLI process's current working directory and inherits its environment. The command writes its standard output and standard error directly to the terminal. In the curses runtime UI, child-process output is not captured into the output pane; only the helper's `Executing ...` and `Execution completed.` messages are captured there. A non-zero shell status is reported as `Command exited with code N.`; parsing or execution-boundary failures are also reported. Entering `!` without a command prints `Usage: !<command>` and does not execute a command.
+
 ## Workspace / Project Commands
 
 | Command | Description |

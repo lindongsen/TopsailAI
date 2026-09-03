@@ -399,6 +399,10 @@ You can also run the CLI in non-interactive documentation mode:
 
 The prompt `[workspace]>` indicates that the CLI is in workspace scope (the task list). Choosing a session switches to `[session:<session_id>]>` scope.
 
+## Commands Available in All Scopes
+
+Workspace, runtime, project, session, and doc scopes accept `!<command>` to execute a command line using the `/git` parsing and execution style. See `docs/usage/topsailai.md` for detailed behavior.
+
 ## Workspace Task List Commands
 
 When the CLI is showing the workspace task list (`[workspace]>`), the following commands are available:

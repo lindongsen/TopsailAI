@@ -40,6 +40,7 @@ from cli_topsailai.log_files import (
     get_file_pid,
 )
 from cli_topsailai.paths import get_topsailai_home
+from cli_topsailai.shell_commands import execute_shell_command
 from cli_topsailai.process import register_process, unregister_process
 from cli_topsailai import yaml_commands
 import cli_topsailai.state as state
@@ -423,7 +424,9 @@ def _build_stream_command_handler(
         if lower in ("q", "quit", "cd", "/cd"):
             return False
         with _CursesOutputCapture(ui):
-            if lower.startswith("/"):
+            if cmd_line.startswith("!"):
+                execute_shell_command(cmd_line)
+            elif lower.startswith("/"):
                 _handle_stream_command(
                     cmd_line,
                     task_dir,
@@ -1121,6 +1124,9 @@ def _dispatch_input(
             f"\n{Colors.YELLOW}[INFO] Return to workspace scope requested.{Colors.RESET}"
         )
         return False
+    if cmd_line.startswith("!"):
+        execute_shell_command(cmd_line)
+        return True
     if lower.startswith("/"):
         _handle_stream_command(
             cmd_line,
@@ -1351,7 +1357,9 @@ def _stream_file_legacy(
                                     f"\n{Colors.YELLOW}[INFO] Return to workspace scope requested.{Colors.RESET}"
                                 )
                                 break
-                            if lower.startswith("/"):
+                            if cmd_line.startswith("!"):
+                                execute_shell_command(cmd_line)
+                            elif lower.startswith("/"):
                                 _handle_stream_command(
                                     cmd_line,
                                     task_dir,

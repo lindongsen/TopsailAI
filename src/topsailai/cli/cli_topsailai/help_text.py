@@ -143,6 +143,12 @@ def print_help(
 
     commands = [
         {
+            "cmd": "!<command>",
+            "desc": "Execute a shell command line (like /git).",
+            "example": "Example: !git status",
+            "scopes": ["workspace", "runtime", "project", "session", "doc"],
+        },
+        {
             "cmd": "<number>",
             "desc": "Select a log file by its number to stream output in real-time.",
             "example": "Example: 3",

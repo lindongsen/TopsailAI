@@ -333,6 +333,17 @@ class TestBuildStreamCommandHandler(unittest.TestCase):
         self.assertEqual(mock_handle.call_args[0][0], "/help")
 
     @patch("cli_topsailai.streaming._prompt_send_as_message")
+    @patch("cli_topsailai.streaming.execute_shell_command")
+    def test_shell_command_routes_without_message_prompt(
+        self, mock_execute, mock_prompt
+    ):
+        result = self.handler("!git status")
+
+        self.assertTrue(result)
+        mock_execute.assert_called_once_with("!git status")
+        mock_prompt.assert_not_called()
+
+    @patch("cli_topsailai.streaming._prompt_send_as_message")
     def test_unknown_command_prompts_send_as_message(self, mock_prompt):
         result = self.handler("not-a-command")
         self.assertTrue(result)

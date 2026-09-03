@@ -30,6 +30,7 @@ from cli_topsailai.streaming import (
     _prompt_send_as_message,
     _read_input_line,
     _read_input_line_tty,
+    _stream_file_legacy,
     _stream_file_raw,
     _tail_file,
 )
@@ -168,6 +169,19 @@ class TestDispatchRawInput(unittest.TestCase):
             output_callback=None,
             input_callback=None,
         )
+
+    @patch("cli_topsailai.streaming._prompt_send_as_message")
+    @patch("cli_topsailai.streaming.execute_shell_command")
+    def test_shell_command_executes_without_message_prompt(
+        self, mock_execute, mock_prompt
+    ):
+        result = _dispatch_input(
+            "!git status", "/task", [], "s1", "/task/s.log", default_pid=None
+        )
+
+        self.assertTrue(result)
+        mock_execute.assert_called_once_with("!git status")
+        mock_prompt.assert_not_called()
 
 
 class TestStreamFileRaw(unittest.TestCase):
@@ -314,6 +328,49 @@ class TestStreamFileRaw(unittest.TestCase):
         self.assertTrue(
             any("File not found" in str(p) for p in printed)
         )
+
+class TestStreamFileLegacy(unittest.TestCase):
+    """Tests for shell-command routing in the legacy runtime mode."""
+
+    def setUp(self):
+        cli_state.running = True
+
+    def tearDown(self):
+        cli_state.running = True
+
+    @patch("cli_topsailai.streaming._maybe_exit_on_dead_session", return_value=True)
+    @patch("cli_topsailai.streaming._persist_runtime_command")
+    @patch("cli_topsailai.streaming._prompt_send_as_message")
+    @patch("cli_topsailai.streaming.execute_shell_command")
+    @patch("cli_topsailai.streaming._read_input_line")
+    @patch("cli_topsailai.streaming.select.select")
+    @patch("cli_topsailai.streaming.sys.stdin.isatty", return_value=True)
+    @patch("cli_topsailai.streaming.subprocess.run")
+    def test_shell_command_executes_without_message_prompt(
+        self,
+        mock_run,
+        mock_isatty,
+        mock_select,
+        mock_read,
+        mock_execute,
+        mock_prompt,
+        mock_persist,
+        mock_session_alive,
+    ):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "s1.1234.session.stdout")
+            with open(path, "w", encoding="utf-8") as stream_file:
+                stream_file.write("existing line\n")
+
+            mock_select.return_value = ([sys.stdin], [], [])
+            mock_read.side_effect = ["!git status", "q"]
+
+            _stream_file_legacy(path, tmpdir, [], "s1", path, default_pid=1234)
+
+        mock_execute.assert_called_once_with("!git status")
+        mock_prompt.assert_not_called()
+        mock_persist.assert_called_once()
+
 
 
 class TestHandleStreamMeta(unittest.TestCase):
