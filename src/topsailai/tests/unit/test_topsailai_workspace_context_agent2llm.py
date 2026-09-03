@@ -227,22 +227,42 @@ class TestIsNeedSummarizeForProcessing(TestContextRuntimeAgent2LLM):
             self.assertFalse(result)
 
     def test_token_usage_below_threshold_returns_false(self):
-        """Test token usage below threshold returns False."""
+        """Test pending-message token usage below threshold returns False."""
         self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
-        self.test_instance._ai_agent.llm_model.tokenStat.current_tokens = 1000
         with patch('topsailai.workspace.context.agent2llm.env_tool') as mock_env:
             mock_env.EnvReaderInstance.get.return_value = 128000
-            result = self.test_instance.is_need_summarize_for_processing()
-            self.assertFalse(result)
+            with patch.object(
+                self.test_instance, '_get_current_tokens', return_value=127999
+            ) as mock_tokens:
+                result = self.test_instance.is_need_summarize_for_processing()
+
+        self.assertFalse(result)
+        mock_tokens.assert_called_once_with(self.test_instance._ai_agent.messages)
+
+    def test_token_usage_at_threshold_returns_false(self):
+        """Test token usage equal to threshold returns False."""
+        self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
+        with patch('topsailai.workspace.context.agent2llm.env_tool') as mock_env:
+            mock_env.EnvReaderInstance.get.return_value = 128000
+            with patch.object(
+                self.test_instance, '_get_current_tokens', return_value=128000
+            ):
+                result = self.test_instance.is_need_summarize_for_processing()
+
+        self.assertFalse(result)
 
     def test_token_usage_above_threshold_returns_true(self):
-        """Test token usage above threshold returns True."""
+        """Test pending-message token usage above threshold returns True."""
         self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
-        self.test_instance._ai_agent.llm_model.tokenStat.current_tokens = 200000
         with patch('topsailai.workspace.context.agent2llm.env_tool') as mock_env:
             mock_env.EnvReaderInstance.get.return_value = 128000
-            result = self.test_instance.is_need_summarize_for_processing()
-            self.assertTrue(result)
+            with patch.object(
+                self.test_instance, '_get_current_tokens', return_value=128001
+            ) as mock_tokens:
+                result = self.test_instance.is_need_summarize_for_processing()
+
+        self.assertTrue(result)
+        mock_tokens.assert_called_once_with(self.test_instance._ai_agent.messages)
 
     def test_token_access_error_returns_false(self):
         """Test that token access errors are handled gracefully."""

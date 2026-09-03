@@ -301,14 +301,14 @@ class TestContextRuntimeAgent2LLM(unittest.TestCase):
         """Test summarization check when below threshold."""
         from topsailai.workspace.context.agent2llm import ContextRuntimeAgent2LLM
 
-        mock_env.EnvReaderInstance.get.return_value = 100
-
+        mock_env.EnvReaderInstance.get.return_value = 0
         self.mock_agent.messages = ["msg"] * 50
 
         runtime = ContextRuntimeAgent2LLM.__new__(ContextRuntimeAgent2LLM)
         runtime.ai_agent = self.mock_agent
 
-        result = runtime.is_need_summarize_for_processing()
+        with patch.object(runtime, "_get_quantity_threshold", return_value=100):
+            result = runtime.is_need_summarize_for_processing()
 
         self.assertFalse(result)
 

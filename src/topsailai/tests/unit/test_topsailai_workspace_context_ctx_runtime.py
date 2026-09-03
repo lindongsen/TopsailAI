@@ -355,26 +355,39 @@ class TestIsNeedSummarize(TestContextRuntimeData):
             self.assertFalse(result)
 
     def test_is_need_summarize_by_tokens_below_threshold(self):
-        """Test token check returns False when current tokens are below threshold."""
+        """Test pending-message token usage below threshold returns False."""
         with patch.dict(os.environ, {"TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "1000"}):
             with patch.object(self.runtime, '_get_quantity_threshold', return_value=0):
-                self.runtime.ai_agent = MagicMock()
-                self.runtime.ai_agent.llm_model.tokenStat.current_tokens = 500
+                with patch.object(
+                    self.runtime, '_get_current_tokens', return_value=999
+                ) as mock_tokens:
+                    result = self.runtime.is_need_summarize_for_processed()
 
-                result = self.runtime.is_need_summarize_for_processed()
+        self.assertFalse(result)
+        mock_tokens.assert_called_once_with(self.runtime.messages)
 
-                self.assertFalse(result)
+    def test_is_need_summarize_by_tokens_at_threshold(self):
+        """Test token usage equal to threshold returns False."""
+        with patch.dict(os.environ, {"TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "1000"}):
+            with patch.object(self.runtime, '_get_quantity_threshold', return_value=0):
+                with patch.object(
+                    self.runtime, '_get_current_tokens', return_value=1000
+                ):
+                    result = self.runtime.is_need_summarize_for_processed()
+
+        self.assertFalse(result)
 
     def test_is_need_summarize_by_tokens_exceeded(self):
-        """Test token check returns True when current tokens exceed threshold."""
+        """Test pending-message token usage above threshold returns True."""
         with patch.dict(os.environ, {"TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "1000"}):
             with patch.object(self.runtime, '_get_quantity_threshold', return_value=0):
-                self.runtime.ai_agent = MagicMock()
-                self.runtime.ai_agent.llm_model.tokenStat.current_tokens = 1500
+                with patch.object(
+                    self.runtime, '_get_current_tokens', return_value=1001
+                ) as mock_tokens:
+                    result = self.runtime.is_need_summarize_for_processed()
 
-                result = self.runtime.is_need_summarize_for_processed()
-
-                self.assertTrue(result)
+        self.assertTrue(result)
+        mock_tokens.assert_called_once_with(self.runtime.messages)
 
     def test_is_need_summarize_by_tokens_no_ai_agent(self):
         """Test token check returns False when ai_agent is not available."""
