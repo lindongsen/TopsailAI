@@ -62,6 +62,7 @@ class LLMRequestStat:
         self._clock = clock
         self._lock = threading.RLock()
         self._request_times = deque()
+        self._requests_per_minute_max = 0
         self._total_requests = 0
         self._request_successes = 0
         self._request_failures = 0
@@ -82,6 +83,10 @@ class LLMRequestStat:
         """Record one request while the caller holds ``_lock``."""
         self._discard_expired(now)
         self._request_times.append(now)
+        self._requests_per_minute_max = max(
+            self._requests_per_minute_max,
+            len(self._request_times),
+        )
         self._total_requests += 1
 
     def start_request(self) -> RequestTimingTicket:
@@ -177,6 +182,7 @@ class LLMRequestStat:
         return {
             "total_requests": self._total_requests,
             "requests_per_minute": len(self._request_times),
+            "requests_per_minute_max": self._requests_per_minute_max,
             "request_successes": self._request_successes,
             "request_failures": self._request_failures,
             "response_content_errors": self._response_content_errors,

@@ -46,6 +46,14 @@ def _make_request_model(create_result=None, create_error=None):
     return model
 
 
+def test_empty_history_reports_zero_requests_per_minute_max():
+    """An unused tracker should report zero current and maximum RPM."""
+    snapshot = LLMRequestStat(clock=lambda: 0.0).get_request_stat_info()
+
+    assert snapshot["requests_per_minute"] == 0
+    assert snapshot["requests_per_minute_max"] == 0
+
+
 def test_record_request_reports_total_and_rolling_minute():
     """Each request should increment both counters while inside the window."""
     clock = MutableClock(10.0)
@@ -54,6 +62,7 @@ def test_record_request_reports_total_and_rolling_minute():
     assert stat.record_request() == {
         "total_requests": 1,
         "requests_per_minute": 1,
+        "requests_per_minute_max": 1,
         "request_successes": 0,
         "request_failures": 0,
         "response_content_errors": 0,
@@ -63,6 +72,7 @@ def test_record_request_reports_total_and_rolling_minute():
     assert stat.record_request() == {
         "total_requests": 2,
         "requests_per_minute": 2,
+        "requests_per_minute_max": 2,
         "request_successes": 0,
         "request_failures": 0,
         "response_content_errors": 0,
@@ -81,6 +91,7 @@ def test_requests_at_sixty_seconds_expire_only_from_rpm():
     assert stat.get_request_stat_info() == {
         "total_requests": 1,
         "requests_per_minute": 0,
+        "requests_per_minute_max": 1,
         "request_successes": 0,
         "request_failures": 0,
         "response_content_errors": 0,
@@ -98,6 +109,7 @@ def test_concurrent_recording_loses_no_requests():
     assert stat.get_request_stat_info() == {
         "total_requests": 200,
         "requests_per_minute": 200,
+        "requests_per_minute_max": 200,
         "request_successes": 0,
         "request_failures": 0,
         "response_content_errors": 0,
@@ -117,6 +129,7 @@ def test_completed_requests_split_into_success_and_failure():
     assert snapshot == {
         "total_requests": 2,
         "requests_per_minute": 2,
+        "requests_per_minute_max": 2,
         "request_successes": 1,
         "request_failures": 1,
         "response_content_errors": 0,
@@ -136,6 +149,7 @@ def test_response_content_error_overlaps_success():
     assert snapshot == {
         "total_requests": 1,
         "requests_per_minute": 1,
+        "requests_per_minute_max": 1,
         "request_successes": 1,
         "request_failures": 0,
         "response_content_errors": 1,
