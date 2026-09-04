@@ -19,6 +19,7 @@ description: bbb
 ---
 '''
 import hashlib
+import html
 import logging
 import os
 import re
@@ -546,11 +547,38 @@ def _expand_preload_doc_entry(skill_folder: str, doc_entry: str) -> list[tuple[s
     return [(relative_entry, abs_path)]
 
 
+def _strip_skill_frontmatter(content: str) -> str:
+    """Remove complete YAML frontmatter from the start of SKILL.md."""
+    lines = content.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        return content
+
+    closing_index = None
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            closing_index = index
+            break
+    if closing_index is None:
+        return content
+
+    try:
+        metadata = yaml.safe_load("".join(lines[1:closing_index]))
+    except yaml.YAMLError:
+        return content
+    if metadata is not None and not isinstance(metadata, dict):
+        return content
+
+    return "".join(lines[closing_index + 1:])
+
+
+def _render_overview_file(relative_path: str, content: str) -> str:
+    """Render one skill document inside an XML file boundary."""
+    escaped_path = html.escape(relative_path, quote=True)
+    return f'<file path="{escaped_path}">\n{content}\n</file>'
+
+
 def overview_skill_native(folder_path: str) -> str:
-    """ Every time you want to use a skill you MUST call `overview_skill` for entire details.
-    Args:
-        folder_path (str): required, skill folder.
-    """
+    """Return the complete, compact overview for a skill folder."""
     if not folder_path:
         raise SkillHubToolError(
             "skill folder cannot be empty. Provide a valid skill folder path."
@@ -576,7 +604,7 @@ def overview_skill_native(folder_path: str) -> str:
 
     try:
         with open(file_skill_md, encoding="utf-8") as fd:
-            content_skill_md = fd.read()
+            content_skill_md = _strip_skill_frontmatter(fd.read())
     except PermissionError as exc:
         raise SkillHubToolError(
             f"Permission denied reading {file_skill_md!r}: {exc}. "
@@ -591,51 +619,60 @@ def overview_skill_native(folder_path: str) -> str:
     folder_list = file_tool.list_files(
         folder_path,
         to_exclude_dot_start=True,
-        excluded_starts=(
-            '__pycache__',
-        ),
+        excluded_starts=("__pycache__",),
     )
     folder_content = "\n".join(
-        [
-            ('- ' + _folder.replace(f"{folder_path}/", ""))
-            for _folder in folder_list
-        ]
+        "- " + os.path.relpath(item, folder_path)
+        for item in folder_list
+    )
+    skill_relative_path = os.path.relpath(file_skill_md, folder_path)
+    result = (
+        "\n"
+        + _render_overview_file(skill_relative_path, content_skill_md)
+        + f"\n\n## folder content\n{folder_content}\n"
     )
 
-    result = f"""
-# skill overview: folder={folder_path}
-
-## file content
-
-### {file_skill_md}
-{content_skill_md}
-
-## folder content
-{folder_content}
-"""
-
-    # preload_docs
     skill_info = get_skill_info_from_cache(folder_path)
+    seen_paths = {
+        os.path.normcase(os.path.normpath(os.path.abspath(file_skill_md)))
+    }
     if skill_info:
-        preload_docs = skill_info.all.get("preload_docs")
-        if preload_docs:
-            preload_docs = to_list(preload_docs)
-        else:
-            preload_docs = []
+        preload_docs = to_list(skill_info.all.get("preload_docs") or [])
         for doc_entry in preload_docs:
             try:
-                for doc_file, _ in _expand_preload_doc_entry(folder_path, doc_entry):
-                    doc_content = get_skill_file_content(folder_path, doc_file)
-                    if doc_content:
-                        result += f"""
-### file:{doc_file}
-{doc_content}
+                expanded_docs = _expand_preload_doc_entry(folder_path, doc_entry)
+            except Exception as exc:
+                print_tool.print_critical(
+                    f"failed to load doc: [{doc_entry}] [{exc}]"
+                )
+                continue
+            for _doc_file, doc_path in expanded_docs:
+                normalized_path = os.path.normcase(
+                    os.path.normpath(os.path.abspath(doc_path))
+                )
+                if normalized_path in seen_paths:
+                    continue
+                seen_paths.add(normalized_path)
+                relative_path = os.path.relpath(doc_path, folder_path)
+                try:
+                    doc_content = get_skill_file_content(folder_path, relative_path)
+                except Exception as exc:
+                    print_tool.print_critical(
+                        f"failed to load doc: [{relative_path}] [{exc}]"
+                    )
+                    continue
+                if doc_content:
+                    result += (
+                        "\n"
+                        + _render_overview_file(relative_path, doc_content)
+                        + "\n"
+                    )
 
-"""
-            except Exception as e:
-                print_tool.print_critical(f"failed to load doc: [{doc_entry}] [{e}]")
-
-    return f"\n>>> [SKILL_OVERVIEW_START:{folder_path}]\n" + result + f"\n<<< [SKILL_OVERVIEW_END:{folder_path}]\n"
+    return (
+        f"\n>>> [SKILL_OVERVIEW_START:{folder_path}]\n"
+        + result
+        + f"\n<<< [SKILL_OVERVIEW_END:{folder_path}]\n"
+    )
 
 def _is_path_inside_skill_folder(skill_folder: str, target_path: str) -> bool:
     """Return True if ``target_path`` resolves to a path inside ``skill_folder``.

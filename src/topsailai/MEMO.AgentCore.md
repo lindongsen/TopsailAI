@@ -866,7 +866,8 @@ flag_overview: 1
 
 ### Notes
 
-- `preload_docs` is processed by `_expand_preload_doc_entry()` and loaded in `overview_skill_native()`.
+- `preload_docs` is processed by `_expand_preload_doc_entry()` and loaded in `overview_skill_native()`; overlapping entries are deduplicated by normalized absolute path while preserving first-occurrence order.
+- Overview output omits the primary `SKILL.md` YAML frontmatter because its metadata is already represented in the registry, and each Markdown document is enclosed by `<file path="relative/path.md">` and `</file>` using a path relative to the skill folder.
 - `flag_overview` is parsed in `parse_skill_folder()` and checked in `SkillInfo.markdown`.
 - Any additional frontmatter fields are stored in `skill_info.all` but are not interpreted by the built-in skill hub unless custom code reads them.
 

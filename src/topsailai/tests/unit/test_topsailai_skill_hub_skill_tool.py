@@ -762,89 +762,157 @@ class TestOverviewSkillNativePreloadDocs(unittest.TestCase):
     def tearDown(self):
         g_skills.clear()
 
-    def test_overview_with_file_preload_doc(self):
-        """overview_skill_native keeps existing behavior for file preload_docs."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            skill_md = os.path.join(tmpdir, "SKILL.md")
-            with open(skill_md, "w", encoding="utf-8") as f:
-                f.write("""---
-name: test_skill
-description: "A test skill"
-preload_docs:
-  - "references/doc1.md"
----
-# Test Skill
-""")
-            doc_dir = os.path.join(tmpdir, "references")
-            os.makedirs(doc_dir)
-            with open(os.path.join(doc_dir, "doc1.md"), "w", encoding="utf-8") as f:
-                f.write("doc1 content")
+    def _write_skill(self, folder, preload_docs=None, content="# Test Skill\n"):
+        """Write and parse a test skill with optional preload documents."""
+        preload_yaml = ""
+        if preload_docs:
+            entries = "\n".join(f'  - "{entry}"' for entry in preload_docs)
+            preload_yaml = f"preload_docs:\n{entries}\n"
+        skill_md = os.path.join(folder, "SKILL.md")
+        with open(skill_md, "w", encoding="utf-8") as file_obj:
+            file_obj.write(
+                "---\n"
+                "name: test_skill\n"
+                'description: "A test skill"\n'
+                f"{preload_yaml}"
+                "flag_overview: 1\n"
+                "---\n"
+                f"{content}"
+            )
+        parse_skill_folder(folder)
+        return skill_md
 
-            parse_skill_folder(tmpdir)
+    def test_overview_uses_compact_format_and_strips_frontmatter(self):
+        """The overview keeps protocol anchors while omitting repeated metadata."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = self._write_skill(tmpdir, content="# Test Skill\n\nUse these instructions.\n")
+
             result = overview_skill_native(tmpdir)
 
-            self.assertIn("### file:" + os.path.join("references", "doc1.md"), result)
-            self.assertIn("doc1 content", result)
+            self.assertIn(f">>> [SKILL_OVERVIEW_START:{tmpdir}]", result)
+            self.assertIn(f"<<< [SKILL_OVERVIEW_END:{tmpdir}]", result)
+            self.assertIn('<file path="SKILL.md">', result)
+            self.assertIn("# Test Skill\n\nUse these instructions.\n\n</file>", result)
+            self.assertEqual(result.count("</file>"), 1)
+            self.assertIn("## folder content", result)
+            self.assertNotIn("name: test_skill", result)
+            self.assertNotIn('description: "A test skill"', result)
+            self.assertNotIn("preload_docs:", result)
+            self.assertNotIn("flag_overview:", result)
+            self.assertNotIn("# skill overview: folder=", result)
+            self.assertNotIn("## file content", result)
+            self.assertNotIn(f"### {skill_md}", result)
+            self.assertNotIn("### SKILL.md", result)
+            self.assertNotIn("### file:", result)
+
+    def test_overview_preserves_incomplete_frontmatter(self):
+        """An opening delimiter without a closing delimiter is preserved verbatim."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            content = "---\nname: incomplete\n# Body must remain\n"
+            with open(skill_md, "w", encoding="utf-8") as file_obj:
+                file_obj.write(content)
+
+            result = overview_skill_native(tmpdir)
+
+            self.assertIn(content, result)
+
+    def test_overview_preserves_malformed_frontmatter(self):
+        """Invalid YAML frontmatter is preserved verbatim."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            content = "---\nname: [invalid\n---\n# Body must remain\n"
+            with open(skill_md, "w", encoding="utf-8") as file_obj:
+                file_obj.write(content)
+
+            result = overview_skill_native(tmpdir)
+
+            self.assertIn(content, result)
 
     def test_overview_with_folder_preload_doc(self):
-        """overview_skill_native loads all .md files when preload_doc is a folder."""
+        """A preload directory emits Markdown files inside relative XML boundaries."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            skill_md = os.path.join(tmpdir, "SKILL.md")
-            with open(skill_md, "w", encoding="utf-8") as f:
-                f.write("""---
-name: test_skill
-description: "A test skill"
-preload_docs:
-  - "references"
----
-# Test Skill
-""")
+            self._write_skill(tmpdir, ["references"])
             refs_dir = os.path.join(tmpdir, "references")
             os.makedirs(refs_dir)
-            with open(os.path.join(refs_dir, "alpha.md"), "w", encoding="utf-8") as f:
-                f.write("alpha content")
-            with open(os.path.join(refs_dir, "beta.MD"), "w", encoding="utf-8") as f:
-                f.write("beta content")
-            with open(os.path.join(refs_dir, "ignore.txt"), "w", encoding="utf-8") as f:
-                f.write("ignored")
+            with open(os.path.join(refs_dir, "alpha.md"), "w", encoding="utf-8") as file_obj:
+                file_obj.write("alpha content")
+            with open(os.path.join(refs_dir, "beta.MD"), "w", encoding="utf-8") as file_obj:
+                file_obj.write("beta content")
+            with open(os.path.join(refs_dir, "ignore.txt"), "w", encoding="utf-8") as file_obj:
+                file_obj.write("ignored")
 
-            parse_skill_folder(tmpdir)
             result = overview_skill_native(tmpdir)
 
-            self.assertIn("### file:" + os.path.join("references", "alpha.md"), result)
-            self.assertIn("### file:" + os.path.join("references", "beta.MD"), result)
-            self.assertIn("alpha content", result)
-            self.assertIn("beta content", result)
-            self.assertNotIn("### file:" + os.path.join("references", "ignore.txt"), result)
-            self.assertNotIn("ignored", result)
+            alpha_tag = '<file path="' + os.path.join("references", "alpha.md") + '">'
+            beta_tag = '<file path="' + os.path.join("references", "beta.MD") + '">'
+            ignore_tag = '<file path="' + os.path.join("references", "ignore.txt") + '">'
+            self.assertIn(alpha_tag, result)
+            self.assertIn(beta_tag, result)
+            self.assertNotIn(ignore_tag, result)
+            self.assertEqual(result.count("</file>"), 3)
+            self.assertNotIn("\nignored\n", result)
 
-    def test_overview_with_mixed_preload_docs(self):
-        """overview_skill_native handles both file and folder preload_docs entries."""
+    def test_overlapping_and_aliased_preloads_are_deduplicated_in_order(self):
+        """Expanded documents appear once in first-configured order."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            skill_md = os.path.join(tmpdir, "SKILL.md")
-            with open(skill_md, "w", encoding="utf-8") as f:
-                f.write("""---
-name: test_skill
-description: "A test skill"
-preload_docs:
-  - "references"
-  - "extra.md"
----
-# Test Skill
-""")
+            self._write_skill(
+                tmpdir,
+                ["first.md", "references", "references/foo.md", "./first.md"],
+            )
             refs_dir = os.path.join(tmpdir, "references")
             os.makedirs(refs_dir)
-            with open(os.path.join(refs_dir, "ref.md"), "w", encoding="utf-8") as f:
-                f.write("ref content")
-            with open(os.path.join(tmpdir, "extra.md"), "w", encoding="utf-8") as f:
-                f.write("extra content")
+            with open(os.path.join(tmpdir, "first.md"), "w", encoding="utf-8") as file_obj:
+                file_obj.write("first content")
+            with open(os.path.join(refs_dir, "foo.md"), "w", encoding="utf-8") as file_obj:
+                file_obj.write("foo content")
 
-            parse_skill_folder(tmpdir)
             result = overview_skill_native(tmpdir)
 
-            self.assertIn("ref content", result)
-            self.assertIn("extra content", result)
+            first_tag = '<file path="first.md">'
+            foo_tag = '<file path="' + os.path.join("references", "foo.md") + '">'
+            self.assertEqual(result.count(first_tag), 1)
+            self.assertEqual(result.count(foo_tag), 1)
+            self.assertLess(result.index(first_tag), result.index(foo_tag))
 
+    def test_explicit_skill_md_preload_does_not_duplicate_primary_file(self):
+        """Explicitly preloading SKILL.md does not emit the primary file twice."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_skill(tmpdir, ["SKILL.md"])
+
+            result = overview_skill_native(tmpdir)
+
+            self.assertEqual(result.count('<file path="SKILL.md">'), 1)
+            self.assertEqual(result.count("</file>"), 1)
+            self.assertEqual(result.count("# Test Skill"), 1)
+
+    def test_unreadable_preload_file_does_not_block_other_files(self):
+        """A preload read failure does not prevent later documents from rendering."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_skill(tmpdir, ["broken.md", "valid.md"])
+            broken_path = os.path.join(tmpdir, "broken.md")
+            valid_path = os.path.join(tmpdir, "valid.md")
+            with open(broken_path, "w", encoding="utf-8") as file_obj:
+                file_obj.write("broken content")
+            with open(valid_path, "w", encoding="utf-8") as file_obj:
+                file_obj.write("valid content")
+
+            real_get_content = get_skill_file_content
+
+            def fail_one_file(folder_path, file_path):
+                if file_path == "broken.md":
+                    raise PermissionError("unreadable")
+                return real_get_content(folder_path, file_path)
+
+            with patch(
+                "topsailai.skill_hub.skill_tool.get_skill_file_content",
+                side_effect=fail_one_file,
+            ):
+                result = overview_skill_native(tmpdir)
+
+            self.assertNotIn('<file path="broken.md">', result)
+            self.assertIn('<file path="valid.md">', result)
+            self.assertIn("valid content\n</file>", result)
 
 
 class TestDuplicateSkillFolderBlocking(unittest.TestCase):
