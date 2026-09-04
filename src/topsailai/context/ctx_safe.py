@@ -71,8 +71,8 @@ def truncate_message(msg) -> str | bytes:
 
     # Check if truncation is needed based on message length
     if is_need_truncate(len(msg)):
-        # Print error message indicating truncation
-        print_tool.print_error(f"truncate message with the size: [{MAX_MSG_SIZE}]")
+        # Print warning message indicating truncation
+        print_tool.print_warning(f"truncate message with the size: [{MAX_MSG_SIZE}]")
         # Set truncation suffix
         suffix = SUFFIX_TRUNCATE
 
