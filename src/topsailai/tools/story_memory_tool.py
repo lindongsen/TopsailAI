@@ -314,29 +314,6 @@ Save only concise, durable, cross-project facts, preferences, identities, or con
 
 If the user asks to create a note, document, record, archive, or project-specific memory—or if the intended storage destination is materially ambiguous—use the appropriate storage mechanism or ask the user to clarify instead of calling `write_memory`.
 
-Memory Retrieval, You can read historical contextual information as needed.
-
-## Core Objective
-Proactively retrieve relevant memory whenever the user's input contains personal context, historical references, or specific preferences.
-
-## Trigger Scenarios
-- **Identity & Preferences**: When the user mentions "I", "my", or personal traits (e.g., "I'm allergic to peanuts", "I prefer dark mode").
-- **Task Continuity**: When a request implies past context (e.g., "Recommend a movie [like the ones I watched]", "Continue the coding project").
-- **Explicit References**: When the user refers to history (e.g., "Remember when...", "Last time we talked about...", "The file I uploaded").
-- **Personalized Feedback**: When the user expresses emotion or evaluation (e.g., "I hated that design", "This is exactly what I needed").
-
-## Retrieval Priority
-- **Direct Match**: Keywords matching stored memory tags.
-- **Recency**: More recent interactions take precedence.
-- **Critical Constraints**: Safety or hard constraints (e.g., allergies, budget limits) must always be retrieved.
-
-## Negative Constraints
-- **Do not** retrieve memory for general knowledge queries (e.g., "What is the capital of France?").
-- **Do not** retrieve memory if the user explicitly asks for a generic answer.
-
-## Action & Output
-- **Synthesize**: Seamlessly integrate retrieved memory into the response to provide a personalized answer.
-- **Verify**: If the memory is ambiguous, ask for clarification rather than assuming.
 """ + get_prompt_memory()
 
 OBSERVATION = ""
