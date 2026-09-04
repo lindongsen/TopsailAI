@@ -114,7 +114,9 @@ class TestTruncateMessage(unittest.TestCase):
         result = truncate_message(long_message)
         self.assertEqual(len(result), MAX_MSG_SIZE + len(SUFFIX_TRUNCATE))
         self.assertTrue(result.endswith(SUFFIX_TRUNCATE))
-        mock_print_tool.print_error.assert_called_once()
+        mock_print_tool.print_warning.assert_called_once_with(
+            f"truncate message with the size: [{MAX_MSG_SIZE}]"
+        )
 
     @patch('topsailai.context.ctx_safe.get_agent_name')
     @patch('topsailai.context.ctx_safe.print_tool')
