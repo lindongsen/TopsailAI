@@ -91,3 +91,17 @@ When a `--limit N` is applied, the sort direction determines which N records are
 - Distinguish between "fetch order" and "display order" when a limit is involved.
 - If the requirement is oldest-first UI but only the latest N records matter, fetch newest-first and reverse locally.
 - Verify ordering assumptions with tests that include both timestamps and row numbers.
+
+## 2026-09-05: Runtime commands must update every command-discovery surface
+
+### Trigger
+
+A new runtime `/control` command was implemented, but the first review found that the unrecognized-input prompt and the main stream-function documentation still listed only the older runtime commands.
+
+### Action taken
+
+Searched all runtime command help, fallback, and error strings and updated each relevant surface to include `/control`, then re-reviewed the complete file diff.
+
+### Why this prevents recurrence
+
+Treating parsing, dispatch, startup help, fallback help, error guidance, and usage documentation as one command contract prevents a working command from remaining undiscoverable or being incorrectly reported as unavailable in another runtime path.

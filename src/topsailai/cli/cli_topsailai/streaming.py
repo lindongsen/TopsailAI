@@ -256,8 +256,8 @@ def stream_file(
 
     Shows the last 100 lines, then follows new writes.  Supports ``q`` to
     quit, ``/send [message]`` to send a message to the watched session,
-    ``/ctx.btw [message]`` to inject an agent2llm message, or Ctrl+C for
-    graceful exit.
+    ``/ctx.btw [message]`` to inject an agent2llm message, ``/control`` to
+    send a control request to the watched PID, or Ctrl+C for graceful exit.
 
     When ``runtime_raw`` is True, a simple curses-free raw streaming mode is
     used instead of the two-pane curses UI or legacy single-pane fallback.
@@ -503,12 +503,12 @@ def _prompt_send_as_message(
     if output_callback is not None:
         output_callback(
             f"[ERROR] Unknown streaming command: {raw_input}. "
-            f"Use '/send [message]', '/ctx.btw [message]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'."
+            f"Use '/send [message]', '/ctx.btw [message]', '/control <command>', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'."
         )
     else:
         print(
             f"{Colors.RED}[ERROR] Unknown streaming command: {raw_input}. "
-            f"Use '/send [message]', '/ctx.btw [message]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
+            f"Use '/send [message]', '/ctx.btw [message]', '/control <command>', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
         )
     return True
 
@@ -1179,7 +1179,8 @@ def _stream_file_raw(
     print(
         f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
         f"type '/send [message]' to send a message, "
-        f"'/ctx.btw [message]' to inject an agent2llm message, or Ctrl+C to exit.{Colors.RESET}\n"
+        f"'/ctx.btw [message]' to inject an agent2llm message, "
+        f"'/control <command>' to send a control request, or Ctrl+C to exit.{Colors.RESET}\n"
     )
     prompt = _build_runtime_prompt(default_session_id)
     fd = None
@@ -1310,7 +1311,8 @@ def _stream_file_legacy(
     print(
         f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
         f"type '/send [message]' to send a message, "
-        f"'/ctx.btw [message]' to inject an agent2llm message, or Ctrl+C to exit.{Colors.RESET}\n"
+        f"'/ctx.btw [message]' to inject an agent2llm message, "
+        f"'/control <command>' to send a control request, or Ctrl+C to exit.{Colors.RESET}\n"
     )
 
     prompt = _build_runtime_prompt(default_session_id)
@@ -1416,8 +1418,9 @@ def _handle_stream_command(
     Execute a command entered while streaming a log file.
 
     Supports ``/send`` (defaulting to the watched session), ``/ctx.btw``
-    (inject an agent2llm message), ``/meta``, ``/help``, and any YAML-defined command
-    that is available in the ``runtime`` scope.
+    (inject an agent2llm message), ``/control`` (targeting the watched PID),
+    ``/meta``, ``/help``, and any YAML-defined command that is available in
+    the ``runtime`` scope.
 
     Args:
         input_provider: Optional callable used to collect multi-line input
@@ -1449,6 +1452,14 @@ def _handle_stream_command(
             input_provider=input_provider,
         )
         return
+    if cmd == "/control" or cmd.startswith("/control."):
+        _handle_stream_control(
+            cmd_line,
+            task_dir,
+            default_stdout_path,
+            default_pid,
+        )
+        return
     if cmd == "/meta":
         _handle_stream_meta(task_dir, default_session_id, default_session_pid)
         return
@@ -1466,8 +1477,38 @@ def _handle_stream_command(
 
     print(
         f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
-        f"Use '/send [message]', '/ctx.btw [message]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
+        f"Use '/send [message]', '/ctx.btw [message]', '/control <command>', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
     )
+
+
+def _handle_stream_control(
+    cmd_line: str,
+    task_dir: str,
+    default_stdout_path: Optional[str],
+    default_pid: Optional[int],
+) -> None:
+    """Dispatch a runtime control command to the PID from the watched file."""
+    matched = yaml_commands.match_yaml_command(cmd_line, task_dir)
+    if matched is None:
+        print(f"{Colors.RED}[ERROR] Could not match runtime control command.{Colors.RESET}")
+        return
+
+    pid = default_pid
+    if pid is None and default_stdout_path:
+        pid = get_file_pid(default_stdout_path)
+    if pid is None:
+        print(
+            f"{Colors.RED}[ERROR] Could not resolve the watched session PID from the log file.{Colors.RESET}"
+        )
+        return
+
+    instruction, variables = matched
+    instruction = dict(instruction)
+    instruction["shell"] = f"{instruction.get('shell', '')} -p '{{pid}}'"
+    variables = dict(variables)
+    variables["pid"] = str(pid)
+    yaml_commands.handle_yaml_command(instruction, variables)
+
 
 def _handle_stream_meta(
     task_dir: str,

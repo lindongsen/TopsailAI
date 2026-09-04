@@ -50,7 +50,7 @@ These options apply only to the default interactive mode (no subcommand). They c
 The CLI has five scopes, derived from the original design notes in `../../topsailai.md`. Run `scopes` from workspace scope to display these introductions and each scope's available actions:
 
 - **`[workspace]`** — the default task-watcher scope. It lists discovered session and task logs and provides actions to watch logs, retrieve context, clean or refresh files, send messages, launch agents, and enter other scopes.
-- **`[runtime:<id>]`** — the live log-streaming scope entered after selecting a workspace log. It provides `/send`, `/ctx.btw`, `/meta`, help, and commands for leaving the stream.
+- **`[runtime:<id>]`** — the live log-streaming scope entered after selecting a workspace log. It provides `/send`, `/ctx.btw`, `/control`, `/meta`, help, and commands for leaving the stream.
 - **`[project]`** — a navigation scope listing recent sessions with recorded project workspaces and running status. It provides session selection, context retrieval, refresh, agent launch and resume actions, and return to workspace scope.
 - **`[session:<id>]`** — a focused scope for one session. It provides context retrieval and streaming, runtime messaging, agent2llm and persistent context injection, configured session commands, and return to workspace scope.
 - **`[doc]`** — a browser for Markdown documentation grouped under `docs/`. It provides numbered document reading, list refresh, help, and return to workspace scope.
@@ -98,6 +98,7 @@ The selected configuration is resolved immediately before `/agent` or `/resume`.
 |---------|-------------|
 | `/send [message]` | Send a message to the running session through its named pipe. If no message is given, the input pane expands for multi-line input. |
 | `/ctx.btw [message]` | Inject a by-the-way message into the `agent2llm` context of the watched session. If no message is given, the input pane expands for multi-line input. |
+| `/control <command> [args_json]` or `/control.<subcommand>` | Send a control request through `topsailai_send_control`. Runtime scope passes `--pid` for the PID identified from the watched log entry or filename and reports an error if no PID can be resolved. |
 | `/meta` | Print `{task_dir}/{session_id}.{session_pid}.session.meta` for the watched parent session. When watching a task log, the parent session PID is used instead of the task PID. |
 | `/help` | Show the list of available streaming commands. |
 | `q` or `quit` | Leave runtime scope and return to the file list. |
