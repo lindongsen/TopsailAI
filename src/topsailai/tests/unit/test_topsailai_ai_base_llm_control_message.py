@@ -446,6 +446,38 @@ class TestFixLlmMistakes:
         assert result[0] is action
         warning.assert_not_called()
 
+    def test_fix_llm_mistakes_preserves_action_without_native_tool_calls(self):
+        """Verify no native tool calls leave an existing action unchanged."""
+        from topsailai.ai_base.llm_control.message import fix_llm_mistakes
+
+        action = {"step_name": "action"}
+        response = [action]
+        rsp_message = MagicMock()
+        rsp_message.tool_calls = None
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning") as warning:
+            result = fix_llm_mistakes(response, rsp_obj=rsp_message)
+
+        assert result is response
+        assert result == [action]
+        assert result[0] is action
+        warning.assert_not_called()
+
+    def test_fix_llm_mistakes_preserves_action_without_rsp_object(self):
+        """Verify a missing response object leaves an existing action unchanged."""
+        from topsailai.ai_base.llm_control.message import fix_llm_mistakes
+
+        action = {"step_name": "action"}
+        response = [action]
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning") as warning:
+            result = fix_llm_mistakes(response, rsp_obj=None)
+
+        assert result is response
+        assert result == [action]
+        assert result[0] is action
+        warning.assert_not_called()
+
 
 class TestParseXmlFunctionCall:
     """Test suite for _parse_xml_function_call helper."""
