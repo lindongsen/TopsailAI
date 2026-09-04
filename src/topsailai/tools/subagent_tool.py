@@ -314,28 +314,28 @@ I am Main-Agent(Manager)
         #       - read_files
         #   - story_memory_tool-* (persistent memory access)
         #   - subagent_tool-call_assistant (delegate work to sub-agents)
+        #   - skill_tool-* (Skill discovery and execution)
         #
         # Deliberately unavailable:
         #   - agent_tool is disabled via disabled_tools.
-        #   - cmd_tool, file_tool (write variants), skill_tool, time_tool, ctx_tool,
-        #     and all other internal tools are NOT in the allow-list, so the main
-        #     agent cannot execute commands, write files, call skills, etc. directly.
-        #     Any such action must be delegated to a sub-agent through
-        #     subagent_tool-call_assistant.
+        #   - cmd_tool, file_tool (write variants), time_tool, ctx_tool, and all
+        #     other internal tools are NOT in the allow-list, so the main agent
+        #     cannot execute commands or write files directly. Any such action must
+        #     be delegated to a sub-agent through subagent_tool-call_assistant.
         #
         # Determine whether to inject the read-only file tool map into the plan
         # agent. This is controlled by the TOPSAILAI_AGENT_PLAN_USE_TOOL_MAP
         # environment variable. When set to a truthy value (e.g. "1", "true", "yes",
         # "on", "enabled"), the file_readonly_tool-* handlers are passed via
         # tool_map. When unset or falsy, tool_map is omitted and the plan agent only
-        # has access to the story_memory_tool and subagent_tool kits.
+        # has access to the explicitly enabled tool kits.
         self.use_tool_map = EnvReaderInstance.check_bool("TOPSAILAI_AGENT_PLAN_USE_TOOL_MAP")
 
         self.plan_agent_kwargs = dict(
             system_prompt=self.system_prompt,
             session_id=get_session_id(),
             disabled_tools=["agent_tool"],
-            enabled_tools=["story_memory_tool", "subagent_tool", "human_tool"],
+            enabled_tools=["story_memory_tool", "subagent_tool", "human_tool", "skill_tool"],
             agent_type="plan_and_execute",
             agent_role="manager",
         )
@@ -389,14 +389,6 @@ def init_doc():
     models = EnvReaderInstance.get_list_str("TOPSAILAI_SUBAGENT_TOOL_AVAILABLE_LLMS", separator="")
     if models:
         call_assistant.__doc__ += f"\nSupported LLM: {models}\n"
-
-    from topsailai.tools import (
-        skill_tool,
-    )
-
-    skill_context = skill_tool.PROMPT.removeprefix(skill_tool.PROMPT_SKILL)
-    if skill_context:
-        call_assistant.__doc__ += "\n>>> SKILL START\n" + skill_context + "\n<<< SKILL END"
 
     return
 

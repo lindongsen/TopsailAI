@@ -233,60 +233,50 @@ class TestFlagToolEnabled:
         assert FLAG_TOOL_ENABLED is False
 
 
-class TestInitDocSkillPrompt:
-    """Test moved skill context used by the subagent tool contract."""
+class TestInitDoc:
+    """Test the subagent tool interface documentation initialization."""
 
-    def test_init_doc_reads_only_dynamic_skill_prompt_content(self):
-        """Verify the tool contract receives dynamic Skill context without the base prompt."""
+    def test_init_doc_does_not_append_skill_context(self):
+        """Verify Skill catalog content is not copied into the tool contract."""
         from topsailai.tools import skill_tool, subagent_tool
 
         marker = "SUBAGENT-SKILL-PROMPT-CONTEXT"
         original_prompt = skill_tool.PROMPT
-        original_observation = skill_tool.OBSERVATION
         original_doc = subagent_tool.call_assistant.__doc__
         try:
             skill_tool.PROMPT = skill_tool.PROMPT_SKILL + marker
-            skill_tool.OBSERVATION = ""
-            subagent_tool.init_doc()
-
-            added_doc = subagent_tool.call_assistant.__doc__[len(original_doc):]
-            assert marker in added_doc
-            assert skill_tool.PROMPT_SKILL not in added_doc
-            assert skill_tool.OBSERVATION == ""
-        finally:
-            skill_tool.PROMPT = original_prompt
-            skill_tool.OBSERVATION = original_observation
-            subagent_tool.call_assistant.__doc__ = original_doc
-
-    def test_init_doc_uses_refreshed_skill_prompt(self):
-        """Verify a later initialization reads the current dynamic Skill content."""
-        from topsailai.tools import skill_tool, subagent_tool
-
-        original_prompt = skill_tool.PROMPT
-        original_doc = subagent_tool.call_assistant.__doc__
-        try:
-            skill_tool.PROMPT = skill_tool.PROMPT_SKILL + "REFRESHED-SKILL-CONTEXT"
-            subagent_tool.init_doc()
-
-            added_doc = subagent_tool.call_assistant.__doc__[len(original_doc):]
-            assert "REFRESHED-SKILL-CONTEXT" in added_doc
-        finally:
-            skill_tool.PROMPT = original_prompt
-            subagent_tool.call_assistant.__doc__ = original_doc
-
-    def test_init_doc_omits_skill_block_when_dynamic_context_is_empty(self):
-        """Verify an empty dynamic Skill context does not append an empty block."""
-        from topsailai.tools import skill_tool, subagent_tool
-
-        original_prompt = skill_tool.PROMPT
-        original_doc = subagent_tool.call_assistant.__doc__
-        try:
-            skill_tool.PROMPT = skill_tool.PROMPT_SKILL
-            subagent_tool.init_doc()
+            with patch.object(
+                subagent_tool.EnvReaderInstance,
+                "get_list_str",
+                return_value=[],
+            ):
+                subagent_tool.init_doc()
 
             assert subagent_tool.call_assistant.__doc__ == original_doc
+            assert marker not in subagent_tool.call_assistant.__doc__
+            assert ">>> SKILL START" not in subagent_tool.call_assistant.__doc__
         finally:
             skill_tool.PROMPT = original_prompt
+            subagent_tool.call_assistant.__doc__ = original_doc
+
+    def test_init_doc_still_appends_supported_models(self):
+        """Verify supported model names remain part of the tool contract."""
+        from topsailai.tools import subagent_tool
+
+        original_doc = subagent_tool.call_assistant.__doc__
+        try:
+            with patch.object(
+                subagent_tool.EnvReaderInstance,
+                "get_list_str",
+                return_value=["model-a", "model-b"],
+            ):
+                subagent_tool.init_doc()
+
+            added_doc = subagent_tool.call_assistant.__doc__[len(original_doc):]
+            assert "Supported LLM" in added_doc
+            assert "model-a" in added_doc
+            assert "model-b" in added_doc
+        finally:
             subagent_tool.call_assistant.__doc__ = original_doc
 
 
@@ -634,7 +624,7 @@ class TestEdgeCases:
         assert call_kwargs["need_project_workspace_lock"] is False
 
 class TestMainAgent:
-    """Verify MainAgent constructs the manager plan agent with agent_role=manager."""
+    """Verify MainAgent constructs the manager plan agent with its required tools."""
 
     @patch("topsailai.workspace.agent_shell.get_agent_chat")
     def test_main_agent_plan_agent_role_is_manager(self, mock_get_agent_chat):
@@ -665,6 +655,19 @@ class TestMainAgent:
 
         assert main_agent.plan_agent_kwargs["agent_role"] == "manager"
         assert main_agent.plan_agent_kwargs["agent_type"] == "plan_and_execute"
+
+    @patch("topsailai.workspace.agent_shell.get_agent_chat")
+    def test_main_agent_enables_skill_tool(self, mock_get_agent_chat):
+        """Manager construction must enable Skill tools and their system prompt."""
+        from topsailai.tools.subagent_tool import MainAgent
+
+        mock_get_agent_chat.return_value = MagicMock()
+
+        main_agent = MainAgent(agent_name="TestManager")
+
+        assert "skill_tool" in main_agent.plan_agent_kwargs["enabled_tools"]
+        call_kwargs = mock_get_agent_chat.call_args.kwargs
+        assert "skill_tool" in call_kwargs["enabled_tools"]
 
 
 class TestSubagentReuseGating:
