@@ -34,6 +34,8 @@ class TestModuleConstants(unittest.TestCase):
         from topsailai.tools import story_memory_tool
         self.assertIsInstance(story_memory_tool.PROMPT, str)
         self.assertIn('story_memory_tool', story_memory_tool.PROMPT)
+        self.assertIn('# Current Memories', story_memory_tool.PROMPT)
+        self.assertEqual(story_memory_tool.OBSERVATION, '')
 
 
 class TestWriteMemory(unittest.TestCase):

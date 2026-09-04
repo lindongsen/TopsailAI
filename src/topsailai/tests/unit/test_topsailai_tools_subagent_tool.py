@@ -233,6 +233,63 @@ class TestFlagToolEnabled:
         assert FLAG_TOOL_ENABLED is False
 
 
+class TestInitDocSkillPrompt:
+    """Test moved skill context used by the subagent tool contract."""
+
+    def test_init_doc_reads_only_dynamic_skill_prompt_content(self):
+        """Verify the tool contract receives dynamic Skill context without the base prompt."""
+        from topsailai.tools import skill_tool, subagent_tool
+
+        marker = "SUBAGENT-SKILL-PROMPT-CONTEXT"
+        original_prompt = skill_tool.PROMPT
+        original_observation = skill_tool.OBSERVATION
+        original_doc = subagent_tool.call_assistant.__doc__
+        try:
+            skill_tool.PROMPT = skill_tool.PROMPT_SKILL + marker
+            skill_tool.OBSERVATION = ""
+            subagent_tool.init_doc()
+
+            added_doc = subagent_tool.call_assistant.__doc__[len(original_doc):]
+            assert marker in added_doc
+            assert skill_tool.PROMPT_SKILL not in added_doc
+            assert skill_tool.OBSERVATION == ""
+        finally:
+            skill_tool.PROMPT = original_prompt
+            skill_tool.OBSERVATION = original_observation
+            subagent_tool.call_assistant.__doc__ = original_doc
+
+    def test_init_doc_uses_refreshed_skill_prompt(self):
+        """Verify a later initialization reads the current dynamic Skill content."""
+        from topsailai.tools import skill_tool, subagent_tool
+
+        original_prompt = skill_tool.PROMPT
+        original_doc = subagent_tool.call_assistant.__doc__
+        try:
+            skill_tool.PROMPT = skill_tool.PROMPT_SKILL + "REFRESHED-SKILL-CONTEXT"
+            subagent_tool.init_doc()
+
+            added_doc = subagent_tool.call_assistant.__doc__[len(original_doc):]
+            assert "REFRESHED-SKILL-CONTEXT" in added_doc
+        finally:
+            skill_tool.PROMPT = original_prompt
+            subagent_tool.call_assistant.__doc__ = original_doc
+
+    def test_init_doc_omits_skill_block_when_dynamic_context_is_empty(self):
+        """Verify an empty dynamic Skill context does not append an empty block."""
+        from topsailai.tools import skill_tool, subagent_tool
+
+        original_prompt = skill_tool.PROMPT
+        original_doc = subagent_tool.call_assistant.__doc__
+        try:
+            skill_tool.PROMPT = skill_tool.PROMPT_SKILL
+            subagent_tool.init_doc()
+
+            assert subagent_tool.call_assistant.__doc__ == original_doc
+        finally:
+            skill_tool.PROMPT = original_prompt
+            subagent_tool.call_assistant.__doc__ = original_doc
+
+
 class TestPromptConstant:
     """Test PROMPT constant."""
 

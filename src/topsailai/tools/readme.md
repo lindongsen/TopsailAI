@@ -27,7 +27,8 @@ When a tool registers a function in `TOOLS`, its function `__doc__`, module-leve
   - Example: `subagent_tool.py` loads `{role_name}.member` role files and appends the discovered role catalog to `PROMPT`. The catalog has two parts:
     - `## Available Subagent Roles` lists the discovered role names.
     - `## Subagent Role Details` contains each role's full `{role}.member` content wrapped in a fenced code block (e.g. ```text ... ```). Wrapping prevents markdown in the role file from interfering with the main tool prompt's own markdown structure.
-- Put concise tool-specific user context in `OBSERVATION`. Each enabled tool module is identified with `<observation source="tool_module">...</observation>` in the first user observation message.
+- Put shared startup context such as Skill and Memory catalogs in the module-level `PROMPT`. Nested Manager and Subagent instances each build tool context; putting this shared content in `OBSERVATION` can copy it into inherited user messages and consume tokens twice.
+- Keep the generic `OBSERVATION` mechanism for one-time or runtime context that intentionally belongs in a user-role message; moving shared startup content does not disable that mechanism.
 - Use the function `__doc__` for **function-specific documentation**: signature, parameters, return value, and usage examples.
   - Example: `subagent_tool.py` keeps `call_assistant.__doc__` focused on the `role` parameter, explaining that a matching `{role}.member` file will prefix the message with `@{role}:` and inject the role definition into the sub-agent system prompt.
 - Treat the docstring of every function registered in `TOOLS` as an LLM-facing interface contract. Every such docstring MUST have corresponding unit-test coverage. Docstrings of internal helper functions not registered in `TOOLS` do not require unit-test coverage.

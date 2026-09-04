@@ -272,7 +272,7 @@ if not WORKSPACE:
 
 
 def get_prompt_memory():
-    """Build the bounded, non-counting startup memory observation."""
+    """Build the bounded, non-counting startup memory prompt."""
     max_tokens = _parse_max_tokens(os.getenv("TOPSAILAI_CONTEXT_MEMORY_LOAD_MAX_TOKENS"))
     all_memories = (
         _load_memories_lru(max_tokens) if max_tokens > 0 else get_all_memories()
@@ -331,7 +331,7 @@ Proactively retrieve relevant memory whenever the user's input contains personal
 ## Action & Output
 - **Synthesize**: Seamlessly integrate retrieved memory into the response to provide a personalized answer.
 - **Verify**: If the memory is ambiguous, ask for clarification rather than assuming.
-"""
+""" + get_prompt_memory()
 
-OBSERVATION = get_prompt_memory()
+OBSERVATION = ""
 

@@ -544,12 +544,14 @@ FLAG_TOOL_ENABLED = False
 
 
 def reload():
-    """Reload the plugin skill observation."""
-    global OBSERVATION
-    OBSERVATION = get_skill_markdown()
+    """Reload the plugin skill system prompt."""
+    skill_markdown = get_skill_markdown()
+
+    global PROMPT
+    PROMPT = PROMPT_SKILL + skill_markdown
 
     global FLAG_TOOL_ENABLED
-    FLAG_TOOL_ENABLED = True if OBSERVATION else False
+    FLAG_TOOL_ENABLED = True if skill_markdown else False
 
     return
 

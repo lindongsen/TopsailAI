@@ -695,45 +695,45 @@ class TestModuleConstants(unittest.TestCase):
 
 
 class TestReload(unittest.TestCase):
-    """Test reload function"""
+    """Test reload function."""
 
     @patch('topsailai.tools.skill_tool.get_skill_markdown')
-    def test_reload_updates_observation_and_flag(self, mock_get_markdown):
-        """Test reload updates OBSERVATION without changing PROMPT."""
+    def test_reload_updates_prompt_and_flag(self, mock_get_markdown):
+        """Test reload appends discovered skills to the system prompt."""
         import topsailai.tools.skill_tool as skill_tool_module
 
         mock_get_markdown.return_value = '## Skills\n- Skill 1\n- Skill 2'
 
-        original_observation = skill_tool_module.OBSERVATION
+        original_prompt = skill_tool_module.PROMPT
         original_flag = skill_tool_module.FLAG_TOOL_ENABLED
         try:
             skill_tool_module.reload()
 
             self.assertTrue(skill_tool_module.FLAG_TOOL_ENABLED)
-            self.assertIn('Skill 1', skill_tool_module.OBSERVATION)
-            self.assertEqual(skill_tool_module.PROMPT, skill_tool_module.PROMPT_SKILL)
-            self.assertFalse(hasattr(skill_tool_module, 'PROMPT_PLUGIN_SKILLS'))
+            self.assertIn('Skill 1', skill_tool_module.PROMPT)
+            self.assertTrue(skill_tool_module.PROMPT.startswith(skill_tool_module.PROMPT_SKILL))
+            self.assertEqual(skill_tool_module.OBSERVATION, '')
         finally:
-            skill_tool_module.OBSERVATION = original_observation
+            skill_tool_module.PROMPT = original_prompt
             skill_tool_module.FLAG_TOOL_ENABLED = original_flag
 
     @patch('topsailai.tools.skill_tool.get_skill_markdown')
     def test_reload_with_no_skills_disables_tool(self, mock_get_markdown):
-        """Test reload disables tool when no skills are available."""
+        """Test reload restores the base prompt when no skills are available."""
         import topsailai.tools.skill_tool as skill_tool_module
 
         mock_get_markdown.return_value = ''
 
-        original_observation = skill_tool_module.OBSERVATION
+        original_prompt = skill_tool_module.PROMPT
         original_flag = skill_tool_module.FLAG_TOOL_ENABLED
         try:
             skill_tool_module.reload()
 
             self.assertFalse(skill_tool_module.FLAG_TOOL_ENABLED)
-            self.assertEqual(skill_tool_module.OBSERVATION, '')
             self.assertEqual(skill_tool_module.PROMPT, skill_tool_module.PROMPT_SKILL)
+            self.assertEqual(skill_tool_module.OBSERVATION, '')
         finally:
-            skill_tool_module.OBSERVATION = original_observation
+            skill_tool_module.PROMPT = original_prompt
             skill_tool_module.FLAG_TOOL_ENABLED = original_flag
 
 class TestEdgeCases(unittest.TestCase):

@@ -394,8 +394,9 @@ def init_doc():
         skill_tool,
     )
 
-    if skill_tool.OBSERVATION:
-        call_assistant.__doc__ += "\n>>> SKILL START\n" + skill_tool.OBSERVATION + "\n<<< SKILL END"
+    skill_context = skill_tool.PROMPT.removeprefix(skill_tool.PROMPT_SKILL)
+    if skill_context:
+        call_assistant.__doc__ += "\n>>> SKILL START\n" + skill_context + "\n<<< SKILL END"
 
     return
 
