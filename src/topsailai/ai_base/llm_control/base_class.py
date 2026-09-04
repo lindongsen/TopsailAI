@@ -346,7 +346,7 @@ class LLMModelBase(object):
         message_tool.normalize_message_tool_calls(messages, logger=logger)
         messages = format_messages(messages, key_name="step_name", value_name="raw_text")
         message_tool.normalize_message_tool_calls(messages, logger=logger)
-        messages = message_tool.drop_orphaned_tool_messages(messages, logger=logger)
+        messages = message_tool.drop_unpaired_tool_calls(messages, logger=logger)
         params = dict(
             model=self.model_name,
             messages=messages,

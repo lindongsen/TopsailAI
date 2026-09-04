@@ -9,6 +9,7 @@ Author: DawsonLin
 Created: 2026-08-28
 """
 
+import json
 import os
 import unittest
 from unittest.mock import patch, MagicMock
@@ -262,6 +263,74 @@ class TestSharedHelper(unittest.TestCase):
 
         self.assertEqual(result, [messages[0], messages[3]])
 
+
+    def test_bidirectional_helper_converts_fully_dangling_calls_to_thought(self):
+        """An unexecuted assistant call reaches the wire only as thought content."""
+        owner = _assistant_with_tool_calls("call_dangling")
+        messages = [
+            {"role": "user", "content": "before"},
+            owner,
+            {"role": "user", "content": "continue"},
+        ]
+
+        result = message_tool.drop_unpaired_tool_calls(messages)
+
+        self.assertEqual(result[0], messages[0])
+        self.assertEqual(result[2], messages[2])
+        self.assertNotIn("tool_calls", result[1])
+        converted = json.loads(result[1]["content"])
+        self.assertEqual(converted[0]["step_name"], "thought")
+        self.assertEqual(
+            converted[0]["raw_text"]["tool_calls"], owner["tool_calls"]
+        )
+        self.assertIn("tool_calls", owner)
+
+    def test_bidirectional_helper_keeps_only_completed_parallel_calls(self):
+        """A completed parallel sibling remains paired when another call is dangling."""
+        owner = {
+            "role": "assistant",
+            "content": "working",
+            "tool_calls": [
+                {"id": "call_done", "function": {"name": "tool_a"}},
+                {"id": "call_dangling", "function": {"name": "tool_b"}},
+            ],
+        }
+        reply = {
+            "role": "tool",
+            "content": "done",
+            "tool_call_id": "call_done",
+        }
+
+        result = message_tool.drop_unpaired_tool_calls([owner, reply])
+
+        self.assertEqual(
+            result[0]["tool_calls"],
+            [{"id": "call_done", "function": {"name": "tool_a"}}],
+        )
+        converted = json.loads(result[0]["content"].split("topsailai.thought\n", 1)[1])
+        self.assertEqual(
+            converted["tool_calls"],
+            [{"id": "call_dangling", "function": {"name": "tool_b"}}],
+        )
+        self.assertEqual(result[1], reply)
+        self.assertEqual(len(owner["tool_calls"]), 2)
+
+    def test_bidirectional_helper_does_not_match_output_after_new_assistant(self):
+        """A tool output cannot satisfy a call after its response group has ended."""
+        owner = _assistant_with_tool_calls("call_late")
+        messages = [
+            owner,
+            {"role": "assistant", "content": "next response"},
+            {"role": "tool", "content": "late", "tool_call_id": "call_late"},
+        ]
+
+        result = message_tool.drop_unpaired_tool_calls(messages)
+
+        self.assertEqual(len(result), 2)
+        self.assertNotIn("tool_calls", result[0])
+        converted = json.loads(result[0]["content"])
+        self.assertEqual(converted[0]["step_name"], "thought")
+        self.assertEqual(result[1], messages[1])
 
     def test_helper_with_empty_input(self):
         """Empty input yields an empty list."""

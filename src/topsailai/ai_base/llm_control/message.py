@@ -172,23 +172,27 @@ def fix_llm_mistakes(response:list, rsp_obj=None):
 
     # case: tool_calls in rsp_obj
     if response and isinstance(response, list) and rsp_obj is not None:
-        if len(response) == 1:
-            item0 = response[0]
-            rsp_msg = get_response_message(rsp_obj)
+        rsp_msg = get_response_message(rsp_obj)
+        if rsp_msg is None or not rsp_msg.tool_calls:
+            return response
 
-            if rsp_msg is None:
-                return response
-
-            if not isinstance(item0, dict):
-                return response
-
-            # case: missing action
-            if "step_name" in item0 \
-                and item0["step_name"] != "action" \
-                and rsp_msg.tool_calls:
-                    response.append(
-                        {"step_name": "action"}
-                    )
+        has_action = any(
+            isinstance(item, dict) and item.get("step_name") == "action"
+            for item in response
+        )
+        converted_final_count = 0
+        for item in response:
+            if isinstance(item, dict) \
+                and item.get("step_name") in ("final", "final_answer"):
+                item["step_name"] = "thought"
+                converted_final_count += 1
+        if converted_final_count:
+            print_warning(
+                f"{LLM_KEYWORD_MISTAKE}: converted {converted_final_count} "
+                "final step(s) to thought because native tool calls must execute first"
+            )
+        if not has_action:
+            response.append({"step_name": "action"})
 
     return response
 

@@ -74,7 +74,11 @@ class ServerOwner:
     thread: threading.Thread
 
     @classmethod
-    def start(cls, tool_calls: tuple[dict[str, Any], ...] | None = None) -> "ServerOwner":
+    def start(
+        cls,
+        tool_calls: tuple[dict[str, Any], ...] | None = None,
+        tool_call_content: str | None = None,
+    ) -> "ServerOwner":
         """Start one mock server on an operating-system-assigned port."""
         scripted = (tool_calls,) if tool_calls is not None else None
         reply = json.dumps([{"step_name": "final_answer", "raw_text": "done"}])
@@ -84,6 +88,7 @@ class ServerOwner:
             request_body_capacity=16,
             stream_chunks=(reply,),
             tool_call_responses=scripted,
+            tool_call_response_content=tool_call_content,
         )
         server = create_server(config)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -122,6 +127,8 @@ class ToolCallsScenario:
         self.conn = f"sqlite:///{self.database_path}"
         self.server_owner = ServerOwner.start()
         self.scripted_tool_names: list[str] = []
+        self.tool_call_response_content: str | None = None
+        self.dangling_call_id: str | None = None
         self.seeded_malformed = False
         self.native_framework_produced = False
         self.native_legacy_repr: str | None = None
@@ -192,6 +199,27 @@ class ToolCallsScenario:
         )
         manager.add_session_message(
             {"role": "tool", "content": "seed-result", "tool_call_id": "call_bdd_seed"},
+            session_id=session_id,
+        )
+        manager.engine.dispose()
+
+    def seed_dangling_human_decision(self, session_id: str) -> None:
+        """Persist one native human decision call without its tool output."""
+        self.dangling_call_id = f"call_bdd_human_{session_id}"
+        manager = self.manager()
+        manager.add_session_message(
+            {
+                "role": "assistant",
+                "content": "Approval is required.",
+                "tool_calls": [SDKToolCallFixture({
+                    "id": self.dangling_call_id,
+                    "type": "function",
+                    "function": {
+                        "name": "human_tool-ask_decision",
+                        "arguments": json.dumps({"question": "Proceed?"}),
+                    },
+                })],
+            },
             session_id=session_id,
         )
         manager.engine.dispose()
@@ -352,6 +380,14 @@ class ToolCallsScenario:
         self.scripted_tool_names = [name.strip() for name in names.split(",") if name.strip()]
         assert self.scripted_tool_names
 
+    def script_mixed_tool_response(self) -> None:
+        """Configure native calls with thought and final-answer text in one response."""
+        self.script_tool_calls("safe_tool")
+        self.tool_call_response_content = json.dumps([
+            {"step_name": "thought", "raw_text": "approval analysis"},
+            {"step_name": "final_answer", "raw_text": "premature answer"},
+        ])
+
     def _restart_scripted_server(self) -> None:
         """Replace the scenario's plain server with its scripted tool-call server."""
         if not self.scripted_tool_names:
@@ -365,7 +401,10 @@ class ToolCallsScenario:
             for index, name in enumerate(self.scripted_tool_names, start=1)
         )
         self.server_owner.close()
-        self.server_owner = ServerOwner.start(calls)
+        self.server_owner = ServerOwner.start(
+            calls,
+            tool_call_content=self.tool_call_response_content,
+        )
         self._point_client_at_server()
 
     def _loaded_history(self, session_id: str) -> list[dict[str, Any]]:
@@ -490,6 +529,17 @@ class ToolCallsScenario:
             self._run_agent("bdd_tc_native_replay", "continue after persistence")
         except Exception as error:  # noqa: BLE001 - scenario asserts exact outcome
             self.error = error
+
+    def continue_with_model(self, session_id: str, message: str, model: str) -> None:
+        """Continue persisted dangling history after selecting another model."""
+        self.monkeypatch.setenv("OPENAI_MODEL", model)
+        self.continue_conversation(session_id, message)
+
+    def recover_session(self, session_id: str, message: str) -> None:
+        """Reload dangling history through a fresh manager before continuing."""
+        recovered = self._loaded_history(session_id)
+        assert any(message.get("tool_calls") for message in recovered), recovered
+        self.continue_conversation(session_id, message)
 
     def continue_conversation(self, session_id: str, message: str) -> None:
         """Drive either a normal chat or a native tool loop and retain failures."""

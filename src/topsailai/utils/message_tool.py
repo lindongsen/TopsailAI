@@ -365,6 +365,105 @@ def _message_view(msg):
     return view
 
 
+def _tool_call_id(tool_call):
+    """Return one tool-call id from a mapping or SDK object."""
+    if isinstance(tool_call, dict):
+        return tool_call.get("id")
+    return getattr(tool_call, "id", None)
+
+
+def _append_tool_calls_as_thought(content, tool_calls: list) -> str:
+    """Append unexecuted native tool calls as assistant thought content."""
+    thought = {
+        "step_name": "thought",
+        "raw_text": {"tool_calls": tool_calls},
+    }
+    if not content:
+        return json_tool.safe_json_dump([thought])
+
+    parsed = json_tool.safe_json_load(content) if isinstance(content, str) else None
+    if isinstance(parsed, list) and all(isinstance(item, dict) for item in parsed):
+        return json_tool.safe_json_dump([*parsed, thought])
+    if isinstance(parsed, dict):
+        return json_tool.safe_json_dump([parsed, thought])
+
+    thought_text = json_tool.safe_json_dump(thought["raw_text"])
+    return f"{content.rstrip()}\n\ntopsailai.thought\n{thought_text}"
+
+
+def drop_unpaired_tool_calls(messages: list, logger=None) -> list:
+    """Convert dangling assistant calls to thoughts and drop orphaned outputs.
+
+    A native assistant tool-call group is completed only by consecutive
+    ``role="tool"`` messages immediately following its owner. Completed calls
+    stay structured. Unexecuted calls are removed from ``tool_calls`` and
+    preserved in the same assistant message as ``thought`` content so history
+    remains informative without sending an invalid provider request. The
+    existing orphan-output helper then validates the reverse direction.
+
+    The input list and its nested message dictionaries are never mutated.
+
+    Args:
+        messages (list): Messages about to cross the provider request boundary.
+        logger: Optional logger for identifiers of converted calls.
+
+    Returns:
+        list: A copied message list containing valid native pairs and thoughts
+        representing calls that were never executed.
+    """
+    if not messages:
+        return []
+
+    copied = [dict(msg) if isinstance(msg, dict) else msg for msg in messages]
+    for index, msg in enumerate(copied):
+        view = _message_view(msg)
+        if not view or view.get("role") != ROLE_ASSISTANT:
+            continue
+        tool_calls = view.get("tool_calls")
+        if not tool_calls:
+            continue
+
+        completed_ids = set()
+        for reply_index in range(index + 1, len(copied)):
+            reply = _message_view(copied[reply_index])
+            if not reply or reply.get("role") != ROLE_TOOL:
+                break
+            tool_call_id = reply.get("tool_call_id")
+            if tool_call_id:
+                completed_ids.add(tool_call_id)
+
+        completed_calls = [
+            tool_call for tool_call in tool_calls
+            if _tool_call_id(tool_call) in completed_ids
+        ]
+        dangling_calls = [
+            tool_call for tool_call in tool_calls
+            if _tool_call_id(tool_call) not in completed_ids
+        ]
+        if not dangling_calls:
+            continue
+
+        normalized_dangling, malformed_type = normalize_tool_calls(dangling_calls)
+        thought_calls = normalized_dangling if not malformed_type else dangling_calls
+        copied[index]["content"] = _append_tool_calls_as_thought(
+            copied[index].get("content"),
+            thought_calls,
+        )
+        if completed_calls:
+            copied[index]["tool_calls"] = completed_calls
+        else:
+            copied[index].pop("tool_calls", None)
+        if logger:
+            logger.warning(
+                "convert dangling assistant tool calls to thought: "
+                "index=%s tool_call_ids=%s",
+                index,
+                [_tool_call_id(tool_call) or "" for tool_call in dangling_calls],
+            )
+
+    return drop_orphaned_tool_messages(copied, logger=logger)
+
+
 def _tool_call_owner_index(messages: list, tool_call_id, end_index: int, floor: int):
     """Find the latest assistant message before ``end_index`` declaring ``tool_call_id``.
 

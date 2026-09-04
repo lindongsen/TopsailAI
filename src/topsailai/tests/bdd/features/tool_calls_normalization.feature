@@ -109,3 +109,36 @@ Feature: Tool calls remain valid across persistence and request boundaries
     When the tool-calls normalization session "bdd_tc_nonnative_observation" continues the conversation with "continue the task"
     Then the non-native textual observation reaches the provider as a user message with its observation step
     And the non-native wire request carries no tool calls array and no tool result message
+
+  Scenario: Mixed thought final answer and native tool call executes before the turn ends
+    Given a tool-calls normalization environment with a private mock LLM server
+    And the tool-calls normalization mock server replies with thought final answer and a native tool call
+    When the tool-calls normalization session "bdd_tc_mixed_final" continues the conversation with "request approval"
+    Then the tool-calls normalization conversation completes without a bad request error
+    And the tool-calls normalization mock server received exactly 2 completion requests
+    And the mixed native response executes its tool before the final answer can end the turn
+
+  Scenario: Unexecuted human decision call is preserved as thought at the request boundary
+    Given a tool-calls normalization environment with a private mock LLM server
+    And the tool-calls normalization session "bdd_tc_human_dangling" is seeded with an unexecuted human decision call
+    When the tool-calls normalization session "bdd_tc_human_dangling" continues the conversation with "continue without the decision output"
+    Then the tool-calls normalization conversation completes without a bad request error
+    And the tool-calls normalization mock server received exactly 1 completion requests
+    And the dangling human decision reaches the provider as thought instead of a native tool call
+
+  Scenario: Model switching sanitizes dangling native history without discarding it
+    Given a tool-calls normalization environment with a private mock LLM server
+    And the tool-calls normalization session "bdd_tc_model_switch" is seeded with an unexecuted human decision call
+    When the tool-calls normalization session "bdd_tc_model_switch" continues with model "mock-model-after-switch"
+    Then the tool-calls normalization conversation completes without a bad request error
+    And the tool-calls normalization mock server received exactly 1 completion requests
+    And the selected tool-calls normalization model "mock-model-after-switch" reached the provider
+    And the dangling human decision reaches the provider as thought instead of a native tool call
+
+  Scenario: Session recovery sanitizes persisted dangling native history without discarding it
+    Given a tool-calls normalization environment with a private mock LLM server
+    And the tool-calls normalization session "bdd_tc_session_recovery" is seeded with an unexecuted human decision call
+    When the tool-calls normalization session "bdd_tc_session_recovery" is recovered and continues
+    Then the tool-calls normalization conversation completes without a bad request error
+    And the tool-calls normalization mock server received exactly 1 completion requests
+    And the dangling human decision reaches the provider as thought instead of a native tool call

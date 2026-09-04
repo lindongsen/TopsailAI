@@ -2110,7 +2110,30 @@ class TestLLMModelNonRetryableBadRequestError(unittest.TestCase):
         text = str(ctx.exception)
         self.assertIn("Non-retryable request-shape 400", text)
         self.assertIn("no tool call found", text)
-        self.assertIn("orphaned tool message", text)
+        self.assertIn("unpaired assistant tool call or tool output", text)
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_non_retryable_no_tool_output_found_raises_immediately(
+        self, mock_base_init, mock_logger, mock_format, mock_sleep
+    ):
+        """A missing tool output must fail on the first attempt without sleeping."""
+        model = self._create_mock_model()
+        model.model.create.side_effect = self._bad_request(
+            "Error code: 400 - No tool output found for function call "
+            "fc_chatcmpl-tool-ba7580367cdf0a76."
+        )
+
+        with self.assertRaises(openai.BadRequestError) as ctx:
+            model.chat(self.messages)
+
+        model.model.create.assert_called_once()
+        self.assertEqual(mock_sleep, [])
+        text = str(ctx.exception)
+        self.assertIn("Non-retryable request-shape 400", text)
+        self.assertIn("no tool output found for function call", text)
 
     @patch_llm_time
     @patch("topsailai.ai_base.llm_base.format_response")
@@ -2266,6 +2289,12 @@ class TestLLMModelNonRetryableBadRequestError(unittest.TestCase):
         self.assertEqual(
             _match_non_retryable_bad_request("no tool call found for ..."),
             "no tool call found",
+        )
+        self.assertEqual(
+            _match_non_retryable_bad_request(
+                "no tool output found for function call fc_example"
+            ),
+            "no tool output found for function call",
         )
         self.assertEqual(
             _match_non_retryable_bad_request(

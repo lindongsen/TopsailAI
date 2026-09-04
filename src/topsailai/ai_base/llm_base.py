@@ -28,6 +28,7 @@ _LLM_SERVICE_SPECIAL_RESPONSE_SLEEP_SECONDS = (
 # retryable because a gateway may echo them while reporting a transient failure.
 _LLM_NON_RETRYABLE_BAD_REQUEST_RULES = (
     ("no tool call found",),
+    ("no tool output found for function call",),
     ("function_call_output", "no matching function_call"),
     ("function_call_output", "no function call found"),
     ("tool_call_id", "not found"),
@@ -1134,8 +1135,8 @@ class LLMModel(LLMModelBase):
                         "Non-retryable request-shape 400 "
                         f"(matched marker: '{marker}'). The request payload is "
                         "malformed, most likely the Agent2LLM context contains an "
-                        "orphaned tool message whose assistant tool_calls message "
-                        "was removed by context summarization or pruning; "
+                        "unpaired assistant tool call or tool output after context "
+                        "summarization or pruning; "
                         f"retrying cannot recover. Original error: {e}",
                         response=e.response,
                         body=e.body,

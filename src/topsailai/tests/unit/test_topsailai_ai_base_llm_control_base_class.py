@@ -440,6 +440,36 @@ class TestLLMModelBase:
         }]
         assert params["messages"][2]["tool_call_id"] == "call_json"
 
+    def test_request_boundary_converts_dangling_calls_when_native_mode_is_disabled(
+            self, monkeypatch, request_model):
+        """Inherited native calls become thoughts independently of the current mode."""
+        monkeypatch.setenv("TOPSAILAI_USE_TOOL_CALLS", "0")
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "assistant",
+                "content": "unfinished decision",
+                "tool_calls": [{
+                    "id": "call_dangling",
+                    "type": "function",
+                    "function": {
+                        "name": "human_tool-ask_decision",
+                        "arguments": "{}",
+                    },
+                }],
+            },
+            {"role": "user", "content": "continue after model switch"},
+        ]
+
+        params = request_model.build_parameters_for_chat(messages)
+
+        assert "tool_calls" not in params["messages"][1]
+        content = params["messages"][1]["content"]
+        assert content.startswith("unfinished decision\n\ntopsailai.thought\n")
+        assert "human_tool-ask_decision" in content
+        assert '"arguments": "{}"' in content
+        assert "tool_calls" in messages[1]
+
     def test_hook_replacement_cannot_bypass_tool_call_normalization(
             self, monkeypatch, request_model):
         """Post-hook request normalization cannot be replaced by configuration."""

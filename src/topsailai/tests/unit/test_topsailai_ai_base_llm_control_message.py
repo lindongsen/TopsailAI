@@ -408,6 +408,44 @@ class TestFixLlmMistakes:
         result = fix_llm_mistakes(response)
         assert result[0].get("step_name") == "thought"
 
+    def test_fix_llm_mistakes_converts_native_final_answer_to_thought(self):
+        """Verify a native action converts a mixed final and emits a warning."""
+        from topsailai.ai_base.llm_control.message import fix_llm_mistakes
+
+        response = [
+            {"step_name": "thought", "raw_text": "I need approval."},
+            {"step_name": "final_answer", "raw_text": "Please decide."},
+        ]
+        rsp_message = MagicMock()
+        rsp_message.tool_calls = [MagicMock()]
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning") as warning:
+            result = fix_llm_mistakes(response, rsp_obj=rsp_message)
+
+        assert [item["step_name"] for item in result] == [
+            "thought",
+            "thought",
+            "action",
+        ]
+        warning.assert_called_once()
+        assert "converted 1 final step(s) to thought" in warning.call_args.args[0]
+
+    def test_fix_llm_mistakes_preserves_action_with_empty_native_content(self):
+        """Verify empty native content does not remove or duplicate an action."""
+        from topsailai.ai_base.llm_control.message import fix_llm_mistakes
+
+        action = {"step_name": "action"}
+        rsp_message = MagicMock()
+        rsp_message.content = None
+        rsp_message.tool_calls = [MagicMock()]
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning") as warning:
+            result = fix_llm_mistakes([action], rsp_obj=rsp_message)
+
+        assert result == [action]
+        assert result[0] is action
+        warning.assert_not_called()
+
 
 class TestParseXmlFunctionCall:
     """Test suite for _parse_xml_function_call helper."""

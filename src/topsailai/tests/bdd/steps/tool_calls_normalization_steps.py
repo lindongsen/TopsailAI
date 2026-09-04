@@ -331,3 +331,69 @@ def then_tc_norm_no_sentinel_leak(caplog):
     log_text = "\n".join(record.getMessage() for record in caplog.records)
     assert "ARGS-SENTINEL-XYZ" not in log_text
     assert RESULT_SENTINEL not in log_text
+
+
+@given("the tool-calls normalization mock server replies with thought final answer and a native tool call")
+def given_tc_norm_mixed_native_response(tc_norm_ctx):
+    """Script the production incident shape through the real provider boundary."""
+    tc_norm_ctx.script_mixed_tool_response()
+
+
+@given(parsers.parse('the tool-calls normalization session "{session_id}" is seeded with an unexecuted human decision call'))
+def given_tc_norm_seed_dangling_human(tc_norm_ctx, session_id: str):
+    """Persist a human decision call without creating its tool output."""
+    tc_norm_ctx.seed_dangling_human_decision(session_id)
+
+
+@when(parsers.parse('the tool-calls normalization session "{session_id}" continues with model "{model}"'))
+def when_tc_norm_continue_with_model(tc_norm_ctx, session_id: str, model: str):
+    """Continue dangling history after selecting a different provider model."""
+    tc_norm_ctx.continue_with_model(session_id, "continue after model switch", model)
+
+
+@when(parsers.parse('the tool-calls normalization session "{session_id}" is recovered and continues'))
+def when_tc_norm_recover_session(tc_norm_ctx, session_id: str):
+    """Reload persisted dangling history before issuing a real provider request."""
+    tc_norm_ctx.recover_session(session_id, "continue after session recovery")
+
+
+@then("the mixed native response executes its tool before the final answer can end the turn")
+def then_tc_norm_mixed_response_executes_tool(tc_norm_ctx):
+    """Prove the mixed response caused a follow-up request carrying its tool output."""
+    state = tc_norm_ctx.state()
+    assert len(state["request_bodies"]) == 2, state
+    follow_up = state["request_bodies"][1]["body"]["messages"]
+    assert any(message.get("tool_calls") for message in follow_up), follow_up
+    assert any(
+        message.get("role") == "tool"
+        and message.get("tool_call_id") == "call_bdd_runtime_1"
+        for message in follow_up
+    ), follow_up
+
+
+@then("the dangling human decision reaches the provider as thought instead of a native tool call")
+def then_tc_norm_dangling_human_is_thought(tc_norm_ctx):
+    """Assert the call remains readable but cannot violate provider pairing."""
+    assert tc_norm_ctx.dangling_call_id
+    messages = tc_norm_ctx.state()["request_bodies"][-1]["body"]["messages"]
+    matching = [
+        message
+        for message in messages
+        if tc_norm_ctx.dangling_call_id in str(message.get("content"))
+    ]
+    assert len(matching) == 1, messages
+    content = matching[0]["content"]
+    assert "topsailai.thought" in content
+    assert "human_tool-ask_decision" in content
+    assert "tool_calls" not in matching[0]
+    assert not any(
+        tc_norm_ctx.dangling_call_id in str(message.get("tool_calls"))
+        for message in messages
+    ), messages
+
+
+@then(parsers.parse('the selected tool-calls normalization model "{model}" reached the provider'))
+def then_tc_norm_selected_model_received(tc_norm_ctx, model: str):
+    """Assert the switched model name crossed the real HTTP request boundary."""
+    body = tc_norm_ctx.state()["request_bodies"][-1]["body"]
+    assert body["model"] == model, body

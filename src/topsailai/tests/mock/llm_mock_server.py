@@ -27,6 +27,7 @@ class MockServerConfig:
     report_cache_usage: bool = True
     report_usage: bool = True
     tool_call_responses: tuple[tuple[dict[str, Any], ...], ...] | None = None
+    tool_call_response_content: str | None = None
 
     def __post_init__(self) -> None:
         """Reject invalid numeric configuration."""
@@ -342,7 +343,11 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
         tool_calls = scripted_responses[response_index] if response_index < len(scripted_responses) else None
         assistant_message: dict[str, Any] = {
             "role": "assistant",
-            "content": None if tool_calls is not None else self.server.config.reply,
+            "content": (
+                self.server.config.tool_call_response_content
+                if tool_calls is not None
+                else self.server.config.reply
+            ),
         }
         finish_reason = "stop"
         completion_text = self.server.config.reply
