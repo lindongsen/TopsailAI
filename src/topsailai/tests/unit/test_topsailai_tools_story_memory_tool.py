@@ -30,11 +30,25 @@ class TestModuleConstants(unittest.TestCase):
         self.assertIsInstance(story_memory_tool.FLAG_TOOL_ENABLED, bool)
     
     def test_prompt_is_string(self):
-        """Test PROMPT is a non-empty string."""
+        """Test PROMPT defines explicit and bounded memory-save authorization."""
         from topsailai.tools import story_memory_tool
         self.assertIsInstance(story_memory_tool.PROMPT, str)
         self.assertIn('story_memory_tool', story_memory_tool.PROMPT)
         self.assertIn('# Current Memories', story_memory_tool.PROMPT)
+        self.assertIn('## Memory Save Authorization', story_memory_tool.PROMPT)
+        self.assertIn(
+            'only when the user gives a clear, direct instruction in the current request',
+            story_memory_tool.PROMPT,
+        )
+        self.assertIn('Do not infer authorization from praise', story_memory_tool.PROMPT)
+        self.assertIn('concise, durable, cross-project facts', story_memory_tool.PROMPT)
+        self.assertIn('Do not save transient task state', story_memory_tool.PROMPT)
+        self.assertIn('credentials, secrets', story_memory_tool.PROMPT)
+        self.assertIn('ask the user to clarify', story_memory_tool.PROMPT)
+        self.assertNotIn(
+            'Whenever the user explicitly asks you to remember something',
+            story_memory_tool.PROMPT,
+        )
         self.assertEqual(story_memory_tool.OBSERVATION, '')
 
 

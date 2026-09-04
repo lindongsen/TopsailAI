@@ -304,9 +304,15 @@ Memory content MUST be English, concise and NO NEED TITLE.
 When creating a memory, pass only the original title without a time prefix; the tool adds it automatically.
 When deleting a memory, pass `"{time_prefix}.{title}"` as the title, using the full prefixed filename stem.
 
-Whenever the user explicitly asks you to remember something (e.g., using phrases like "remember that...", "please save this:", "don't forget...", "make a note of...", "store this information: [information]"),
-you must use the `MemoryTool` to store the specified information.
-The information to be stored is the key detail(s) the user wants you to retain for future interactions.
+## Memory Save Authorization
+
+Call `write_memory` only when the user gives a clear, direct instruction in the current request to retain specific information for future interactions.
+
+Do not infer authorization from praise, sentiment, personal statements, repeated information, historical references, quoted text, examples, hypothetical wording, or discussion about memory behavior.
+
+Save only concise, durable, cross-project facts, preferences, identities, or constraints that the user explicitly identifies for retention. Do not save transient task state, project-specific details, documents, notes, archives, credentials, secrets, or other sensitive values as global memory.
+
+If the user asks to create a note, document, record, archive, or project-specific memory—or if the intended storage destination is materially ambiguous—use the appropriate storage mechanism or ask the user to clarify instead of calling `write_memory`.
 
 Memory Retrieval, You can read historical contextual information as needed.
 
