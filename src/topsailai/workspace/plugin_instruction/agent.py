@@ -296,6 +296,78 @@ def select_model(*args) -> str:
     return result
 
 
+def _format_estimated_tokens(token_count: int | None) -> str:
+    """Format an estimated token count for human-readable output."""
+    if token_count is None:
+        return "unavailable"
+    return f"{token_count:,}"
+
+
+def get_tokens(ctx_runtime_data=None) -> str:
+    """Report real-time token estimates for Agent2LLM and User2Agent messages."""
+    agent = getattr(ctx_runtime_data, "ai_agent", None) or get_ai_agent()
+    if not agent:
+        return "No active agent"
+
+    agent_messages = getattr(agent, "messages", None)
+    agent2llm_messages = list(agent_messages) if agent_messages is not None else []
+    user2agent_messages = None
+    session_id = ""
+    if ctx_runtime_data is not None:
+        runtime_messages = getattr(ctx_runtime_data, "messages", None)
+        user2agent_messages = list(runtime_messages) if runtime_messages is not None else []
+        session_id = getattr(ctx_runtime_data, "session_id", "") or ""
+
+    agent2llm_tokens = None
+    user2agent_tokens = None
+    if ctx_runtime_data is not None:
+        agent2llm_tokens = ctx_runtime_data._get_current_tokens(agent2llm_messages)
+        if user2agent_messages is not None:
+            user2agent_tokens = ctx_runtime_data._get_current_tokens(user2agent_messages)
+
+    llm_model = getattr(agent, "llm_model", None)
+    model_name = getattr(llm_model, "model_name", "") or "unavailable"
+    completion_reserve = getattr(llm_model, "max_tokens", 0) or 0
+
+    lines = [
+        f"Model: {model_name}",
+        "",
+        "Agent2LLM:",
+        f"  Messages: {len(agent2llm_messages)}",
+        f"  Estimated tokens: {_format_estimated_tokens(agent2llm_tokens)}",
+        "",
+        "User2Agent:" + (" (ephemeral/unsaved session)" if not session_id else ""),
+        f"  Messages: {len(user2agent_messages) if user2agent_messages is not None else 0}",
+        f"  Estimated tokens: {_format_estimated_tokens(user2agent_tokens)}",
+        "",
+        "Context:",
+    ]
+
+    watermark = None
+    if ctx_runtime_data is not None and agent2llm_tokens is not None:
+        watermark = ctx_runtime_data._classify_context_watermark(
+            current_tokens=agent2llm_tokens,
+            model_name=model_name,
+            max_tokens=completion_reserve,
+        )
+    if watermark is None:
+        lines.append("  Model maximum: unavailable")
+        return "\n".join(lines)
+
+    usage = (
+        agent2llm_tokens / watermark.send_limit * 100
+        if watermark.send_limit > 0 else 0
+    )
+    lines.extend([
+        f"  Model maximum: {watermark.model_max_context:,}",
+        f"  Completion reserve: {watermark.max_tokens:,}",
+        f"  Input send limit: {watermark.send_limit:,}",
+        f"  Agent2LLM usage: {usage:.1f}%",
+        f"  Watermark: {watermark.level}",
+    ])
+    return "\n".join(lines)
+
+
 INSTRUCTIONS = dict(
     system_prompt=get_system_prompt,
     env_prompt=get_env_prompt,
@@ -306,4 +378,5 @@ INSTRUCTIONS = dict(
     models=select_model,
     llm=get_llm,
     messages=get_messages,
+    tokens=get_tokens,
 )

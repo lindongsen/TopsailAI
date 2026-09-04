@@ -30,6 +30,7 @@ from topsailai.workspace.print_tool import (
     print_raw_messages,
 )
 from topsailai.workspace.context.agent import ContextRuntimeUtils
+from topsailai.workspace.plugin_instruction.agent import get_tokens
 
 
 class ContextRuntimeInstructions(ContextRuntimeUtils):
@@ -63,6 +64,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             "ctx.summarize": self.ctx_summarize,
             "ctx.search": self.ctx_search,
             "ctx.btw": self.ctx_btw,
+            "agent.tokens": self.agent_tokens,
         }
 
         # total
@@ -71,6 +73,10 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
 
         # result
         return instructions
+
+    def agent_tokens(self) -> str:
+        """Report token usage for the two current message layers."""
+        return get_tokens(self.ctx_runtime_data)
 
     ##############################################################################
     # Context, ctx

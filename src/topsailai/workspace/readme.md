@@ -156,7 +156,7 @@ Modular `/` commands registered via `INSTRUCTIONS` dict.
 | Module | Commands | Purpose |
 |--------|----------|---------|
 | `env.py` | `/set`, `/get`, `/print_step_mode` | Environment variable management; `/print_step_mode` lists supported step modes with `*` marking the current one and selects by index or name |
-| `agent.py` | `/system_prompt`, `/tool_prompt`, `/tools`, `/set_llm`, `/llm` | Agent introspection & LLM switching |
+| `agent.py` | `/system_prompt`, `/tool_prompt`, `/tools`, `/set_llm`, `/llm`, `/agent.tokens` | Agent introspection and LLM switching; `/agent.tokens` reports real-time estimated tokens for Agent2LLM and User2Agent messages plus available model-context capacity |
 | `skill.py` | `/show`, `/load`, `/unload`, `/hooks` | Skill hub management |
 | `skill_repo.py` | `/list`, `/install`, `/uninstall` | Skill repository operations |
 | `stat.py` | `/tool_call`, `/tool_call_errors`, `/tool_call_reset`, `/tool_call_log` | Tool call statistics |
