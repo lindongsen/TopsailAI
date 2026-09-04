@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any
@@ -339,6 +340,18 @@ def given_tc_norm_mixed_native_response(tc_norm_ctx):
     tc_norm_ctx.script_mixed_tool_response()
 
 
+@given("the tool-calls normalization mock server replies with action final answer and a native tool call")
+def given_tc_norm_existing_native_action(tc_norm_ctx):
+    """Script an existing action and premature final with one native call."""
+    tc_norm_ctx.script_existing_action_with_native_call()
+
+
+@given("the tool-calls normalization mock server replies with an action and no native tool call")
+def given_tc_norm_existing_plain_action(tc_norm_ctx):
+    """Script one action response without provider-native tool calls."""
+    tc_norm_ctx.script_existing_action_without_native_call()
+
+
 @given(parsers.parse('the tool-calls normalization session "{session_id}" is seeded with an unexecuted human decision call'))
 def given_tc_norm_seed_dangling_human(tc_norm_ctx, session_id: str):
     """Persist a human decision call without creating its tool output."""
@@ -369,6 +382,58 @@ def then_tc_norm_mixed_response_executes_tool(tc_norm_ctx):
         and message.get("tool_call_id") == "call_bdd_runtime_1"
         for message in follow_up
     ), follow_up
+
+
+@then("the existing action is preserved once while its premature final becomes thought")
+def then_tc_norm_existing_native_action_preserved(tc_norm_ctx):
+    """Assert the parsed native response has one action and no final step."""
+    response = tc_norm_ctx.first_parsed_response
+    assert response is not None
+    assert [item.get("step_name") for item in response].count("action") == 1, response
+    assert not any(
+        str(item.get("step_name", "")).startswith("final") for item in response
+    ), response
+    assert any(item.get("step_name") == "thought" for item in response), response
+
+
+@then("the existing native action produces one paired tool result before completion")
+def then_tc_norm_existing_native_action_paired(tc_norm_ctx):
+    """Assert one native declaration and one matching output reach the follow-up."""
+    follow_up = tc_norm_ctx.state()["request_bodies"][1]["body"]["messages"]
+    declarations = [
+        call
+        for message in follow_up
+        for call in message.get("tool_calls", [])
+        if call.get("id") == "call_bdd_runtime_1"
+    ]
+    results = [
+        message
+        for message in follow_up
+        if message.get("role") == "tool"
+        and message.get("tool_call_id") == "call_bdd_runtime_1"
+    ]
+    assert len(declarations) == 1, follow_up
+    assert len(results) == 1, follow_up
+
+
+@then("the action response without a native tool call remains unchanged")
+def then_tc_norm_plain_action_unchanged(tc_norm_ctx):
+    """Assert the real provider action returns without mutation or duplication."""
+    assert tc_norm_ctx.error is None, repr(tc_norm_ctx.error)
+    assert json.loads(tc_norm_ctx.result) == [
+        {"step_name": "action", "raw_text": "plain action"}
+    ]
+    body = tc_norm_ctx.state()["request_bodies"][0]["body"]
+    assert not any(message.get("tool_calls") for message in body["messages"])
+
+
+@then("no native final conversion warning is emitted")
+def then_tc_norm_no_native_final_warning(caplog):
+    """Assert the no-native early return does not report a native conversion."""
+    assert not any(
+        "because native tool calls must execute first" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 @then("the dangling human decision reaches the provider as thought instead of a native tool call")

@@ -118,6 +118,23 @@ Feature: Tool calls remain valid across persistence and request boundaries
     And the tool-calls normalization mock server received exactly 2 completion requests
     And the mixed native response executes its tool before the final answer can end the turn
 
+  Scenario: Existing action with a native tool call executes without duplication
+    Given a tool-calls normalization environment with a private mock LLM server
+    And the tool-calls normalization mock server replies with action final answer and a native tool call
+    When the tool-calls normalization session "bdd_tc_existing_native_action" continues the conversation with "run the existing action"
+    Then the tool-calls normalization conversation completes without a bad request error
+    And the tool-calls normalization mock server received exactly 2 completion requests
+    And the existing action is preserved once while its premature final becomes thought
+    And the existing native action produces one paired tool result before completion
+
+  Scenario: Existing action without a native tool call remains unchanged
+    Given a tool-calls normalization environment with a private mock LLM server
+    And the tool-calls normalization mock server replies with an action and no native tool call
+    When the tool-calls normalization session "bdd_tc_existing_plain_action" continues the conversation with "preserve the existing action"
+    Then the tool-calls normalization mock server received exactly 1 completion requests
+    And the action response without a native tool call remains unchanged
+    And no native final conversion warning is emitted
+
   Scenario: Unexecuted human decision call is preserved as thought at the request boundary
     Given a tool-calls normalization environment with a private mock LLM server
     And the tool-calls normalization session "bdd_tc_human_dangling" is seeded with an unexecuted human decision call

@@ -52,6 +52,28 @@ class SDKToolCallFixture:
 
 
 
+class RecordingStep4ReAct(Step4ReAct):
+    """Record the first parsed provider response before executing its steps."""
+
+    def __init__(self, scenario: "ToolCallsScenario"):
+        """Store the scenario that owns the observed parsed response."""
+        super().__init__()
+        self.scenario = scenario
+
+    def _execute(self, step, tools, response, index, rsp_msg_obj=None, **kwargs):
+        """Capture the first response and then execute normal ReAct behavior."""
+        if self.scenario.first_parsed_response is None:
+            self.scenario.first_parsed_response = json.loads(json.dumps(response))
+        return super()._execute(
+            step,
+            tools,
+            response,
+            index,
+            rsp_msg_obj=rsp_msg_obj,
+            **kwargs,
+        )
+
+
 class SummaryAgentFixture:
     """Provide the minimal real Agent2LLM summarization contract."""
 
@@ -78,10 +100,11 @@ class ServerOwner:
         cls,
         tool_calls: tuple[dict[str, Any], ...] | None = None,
         tool_call_content: str | None = None,
+        reply: str | None = None,
     ) -> "ServerOwner":
         """Start one mock server on an operating-system-assigned port."""
         scripted = (tool_calls,) if tool_calls is not None else None
-        reply = json.dumps([{"step_name": "final_answer", "raw_text": "done"}])
+        reply = reply or json.dumps([{"step_name": "final_answer", "raw_text": "done"}])
         config = MockServerConfig(
             port=0,
             reply=reply,
@@ -128,6 +151,7 @@ class ToolCallsScenario:
         self.server_owner = ServerOwner.start()
         self.scripted_tool_names: list[str] = []
         self.tool_call_response_content: str | None = None
+        self.first_parsed_response: list[dict[str, Any]] | None = None
         self.dangling_call_id: str | None = None
         self.seeded_malformed = False
         self.native_framework_produced = False
@@ -388,6 +412,21 @@ class ToolCallsScenario:
             {"step_name": "final_answer", "raw_text": "premature answer"},
         ])
 
+    def script_existing_action_with_native_call(self) -> None:
+        """Configure an existing action, premature final, and native tool call."""
+        self.script_tool_calls("safe_tool")
+        self.tool_call_response_content = json.dumps([
+            {"step_name": "action"},
+            {"step_name": "final_answer", "raw_text": "premature answer"},
+        ])
+
+    def script_existing_action_without_native_call(self) -> None:
+        """Configure a plain provider response containing one existing action."""
+        reply = json.dumps([{"step_name": "action", "raw_text": "plain action"}])
+        self.server_owner.close()
+        self.server_owner = ServerOwner.start(reply=reply)
+        self._point_client_at_server()
+
     def _restart_scripted_server(self) -> None:
         """Replace the scenario's plain server with its scripted tool-call server."""
         if not self.scripted_tool_names:
@@ -482,7 +521,7 @@ class ToolCallsScenario:
         )
         self.agent = agent
         self.agents.append(agent)
-        self.result = agent.run(Step4ReAct(), message)
+        self.result = agent.run(RecordingStep4ReAct(self), message)
         return agent
 
     def reproduce_native_incident(self) -> None:
