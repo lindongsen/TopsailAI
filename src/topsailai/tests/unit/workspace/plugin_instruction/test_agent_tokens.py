@@ -31,9 +31,17 @@ def _watermark(current_tokens=2500):
     )
 
 
-def test_instruction_map_registers_tokens():
-    """Expose the public command as `/agent.tokens`."""
-    assert INSTRUCTIONS["tokens"] is get_tokens
+def test_agent_tokens_is_registered_exactly_once():
+    """Register `/agent.tokens` only through the context-bound instruction map."""
+    runtime_instructions = ContextRuntimeInstructions(MagicMock()).instructions
+
+    registrations = int("tokens" in INSTRUCTIONS) + int(
+        "agent.tokens" in runtime_instructions
+    )
+
+    assert registrations == 1
+    assert "tokens" not in INSTRUCTIONS
+    assert runtime_instructions["agent.tokens"].__self__.__class__ is ContextRuntimeInstructions
 
 
 @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent", return_value=None)

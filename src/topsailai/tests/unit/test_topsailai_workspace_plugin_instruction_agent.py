@@ -750,15 +750,15 @@ class TestInstructions(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
         self.assertIn("messages", INSTRUCTIONS)
 
-    def test_has_tokens_key(self):
-        """Test INSTRUCTIONS has 'tokens' key."""
+    def test_does_not_register_context_bound_tokens_key(self):
+        """Keep context-bound `/agent.tokens` out of the plugin registry."""
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
-        self.assertIn("tokens", INSTRUCTIONS)
+        self.assertNotIn("tokens", INSTRUCTIONS)
 
     def test_correct_count(self):
         """Test INSTRUCTIONS has correct number of entries"""
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
-        self.assertEqual(len(INSTRUCTIONS), 10)
+        self.assertEqual(len(INSTRUCTIONS), 9)
 
     def test_values_are_callable(self):
         """Test all INSTRUCTIONS values are callable"""

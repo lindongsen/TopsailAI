@@ -378,5 +378,4 @@ INSTRUCTIONS = dict(
     models=select_model,
     llm=get_llm,
     messages=get_messages,
-    tokens=get_tokens,
 )
