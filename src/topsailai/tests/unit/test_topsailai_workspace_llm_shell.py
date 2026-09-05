@@ -779,5 +779,93 @@ class TestGetLLMChat(unittest.TestCase):
         chat.llm_model.release_all_llm_models()
 
 
+class TestGetLLMChatRealPoolIdentity(unittest.TestCase):
+    """Prove get_llm_chat and runtime models share the same real pooled SDK client.
+
+    These tests exercise the real process-global ``default_openai_client_pool``
+    (no mocking of ``acquire`` or ``LLMModel``) so the ``is`` identity assertions
+    prove the actual production sharing behavior.
+    """
+
+    def setUp(self):
+        """Configure a deterministic environment and reset the global pool."""
+        from topsailai.ai_base.llm_pool.openai_client_pool import default_openai_client_pool
+
+        self.test_session_id = "test-session-123"
+        self.test_message = "Hello, AI!"
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["OPENAI_API_BASE"] = "https://test.example.com/v1"
+        os.environ["OPENAI_MODEL"] = "test-model"
+        default_openai_client_pool.close_all()
+
+    def tearDown(self):
+        """Reset the global pool so no client leaks across tests."""
+        from topsailai.ai_base.llm_pool.openai_client_pool import default_openai_client_pool
+
+        default_openai_client_pool.close_all()
+
+    @patch('topsailai.workspace.llm_shell.record_project_history')
+    @patch('topsailai.workspace.llm_shell.PromptBase')
+    def test_get_llm_chat_and_runtime_model_share_real_pool_client(
+        self, mock_prompt_base, mock_record_project_history
+    ):
+        """get_llm_chat's model and a runtime model share the same real pooled client."""
+        from topsailai.workspace.llm_shell import get_llm_chat
+        from topsailai.ai_base.llm_base import LLMModel
+
+        mock_prompt_instance = MagicMock()
+        mock_prompt_instance.messages = []
+        mock_prompt_base.return_value = mock_prompt_instance
+
+        # Runtime (agent2llm) model acquires a real client from the global pool.
+        runtime_model = LLMModel()
+        runtime_chat = runtime_model.get_llm_model()
+
+        # get_llm_chat (used by summarize) creates its own LLMModel which acquires
+        # the same real client from the global pool.
+        chat = get_llm_chat(
+            message=self.test_message,
+            session_id="",
+            need_input_message=False,
+            need_print_session=False,
+        )
+        chat_chat = chat.llm_model.get_llm_model()
+
+        try:
+            self.assertIs(chat_chat, runtime_chat)
+        finally:
+            runtime_model.release_all_llm_models()
+            chat.llm_model.release_all_llm_models()
+
+    def test_get_llm_chat_different_models_share_same_client(self):
+        """Different model names with the same endpoint share one pooled client."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        model_a = LLMModel(model_name="model-a")
+        model_b = LLMModel(model_name="model-b")
+
+        try:
+            self.assertIs(model_a.get_llm_model(), model_b.get_llm_model())
+        finally:
+            model_a.release_all_llm_models()
+            model_b.release_all_llm_models()
+
+    def test_get_llm_chat_different_base_url_distinct_clients(self):
+        """Different base URLs produce distinct pooled clients."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        model_a = LLMModel()
+        client_a = model_a.get_llm_model()
+        os.environ["OPENAI_API_BASE"] = "https://other.example.com/v1"
+        model_b = LLMModel()
+        client_b = model_b.get_llm_model()
+
+        try:
+            self.assertIsNot(client_a, client_b)
+        finally:
+            model_a.release_all_llm_models()
+            model_b.release_all_llm_models()
+
+
 if __name__ == '__main__':
     unittest.main()
