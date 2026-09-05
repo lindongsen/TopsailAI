@@ -8,6 +8,11 @@ programming_language: python
 ---
 
 # AI-Added Features
+
+## Process-Global OpenAI SDK Client Pool
+
+OpenAI-compatible `LLMModel` instances now reuse process-global SDK clients by normalized connection identity while lease-based lifecycle handling, transactional replacement, targeted invalidation, and fork isolation prevent one model from closing or corrupting clients still shared by others.
+
 ## Memory CLI Workspace Resolution
 
 The delete, evict, reconcile, and top memory CLIs now interpret an explicit `--home` as a TOPSAILAI_HOME and use `{home}/memory`, while preserving paths that already contain a `story/` directory as existing memory roots.

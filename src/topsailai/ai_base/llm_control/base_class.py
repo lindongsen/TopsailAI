@@ -257,8 +257,45 @@ class LLMModelBase(object):
             sender.send(content)
         return
 
+    def snapshot_llm_model_leases(self):
+        """Return provider-owned lease identities for transactional replacement.
+
+        Providers without pooled resources use ``None`` as a no-op snapshot.
+        Pooled providers override this hook so lifecycle code can distinguish
+        leases even when several leases expose the same shared SDK resource.
+        """
+        return None
+
+    def release_llm_model_leases(self, handles) -> int:
+        """Release exact provider-owned leases when the provider supports them."""
+        return 0
+
+    def release_llm_model_leases_after(self, snapshot) -> int:
+        """Release leases acquired after a snapshot when supported."""
+        return 0
+
+    def release_all_llm_models(self) -> int:
+        """Release all provider-owned leases when the provider supports them."""
+        return 0
+
+    def invalidate_llm_model(self, chat_model) -> bool:
+        """Retire a specific provider client only during an explicit refresh.
+
+        Ordinary provider errors must not invalidate a process-global client:
+        another model may be using the same SDK object successfully. Pooled
+        providers may override this hook for confirmed local client corruption
+        or an explicitly requested forced configuration refresh.
+        """
+        return False
+
     def close(self) -> None:
-        """Stop context-local background workers; repeated calls are safe."""
+        """Release local leases and stop workers; repeated calls are safe.
+
+        Releasing a lease deliberately does not close the process-global SDK
+        client. The global pool keeps a valid idle client reusable and protects
+        clients that are still leased by other model instances.
+        """
+        self.release_all_llm_models()
         visualizer = getattr(self, "state_visualizer", None)
         if visualizer is not None:
             visualizer.stop()
@@ -285,49 +322,72 @@ class LLMModelBase(object):
             self.model = self.model_config["_model"]
         return self.model
 
-    def get_llm_models(self):
-        """
-        Initialize and add models to self.models from environment settings.
-
-        Parses model settings from environment variables and creates model
-        configurations for each available model endpoint.
-
-        Returns:
-            list: List of model configuration dictionaries
-
-        Note:
-            Each model configuration contains:
-            - api_key: API key for authentication
-            - api_base: Base URL for the API endpoint
-            - _model: The actual chat model object
-        """
-        model_settings = parse_model_settings()
-        if not model_settings:
-            return
-        for model_config in model_settings:
-            _model = self.get_llm_model(
+    def _build_llm_models(self, model_settings):
+        """Acquire all configured failover resources as one temporary set."""
+        built_models = []
+        for source_config in model_settings:
+            model_config = dict(source_config)
+            model_config["_model"] = self.get_llm_model(
                 api_key=model_config["api_key"],
                 api_base=model_config.get("api_base"),
             )
-            model_config["_model"] = _model
-            self.models.append(model_config)
+            built_models.append(model_config)
+        return built_models
+
+    def get_llm_models(self):
+        """Build and append failover models from the configured model routes."""
+        model_settings = parse_model_settings()
+        if not model_settings:
+            return None
+        lease_snapshot = self.snapshot_llm_model_leases()
+        try:
+            built_models = self._build_llm_models(model_settings)
+        except Exception:
+            # A failed initial failover build owns only leases acquired after
+            # this snapshot; exact handles avoid releasing an older lease that
+            # exposes the same process-global ``chat.completions`` resource.
+            self.release_llm_model_leases_after(lease_snapshot)
+            raise
+        self.models.extend(built_models)
         return self.models
 
-    def rebuild_llm_models(self):
-        """
-        Rebuild the model configurations.
+    def rebuild_llm_models(self, force_refresh=False, failed_model=None):
+        """Transactionally rebuild default and failover routes.
 
-        Attempts to rebuild the models list first. If no models are found,
-        falls back to rebuilding the default model.
+        Normal rebuilds deliberately acquire from the process-global pool and
+        therefore reuse matching SDK clients. ``force_refresh`` is only for a
+        confirmed local transport failure or explicit configuration refresh;
+        rate limits and ordinary provider 5xx responses must use the normal
+        path so one caller cannot unnecessarily retire a globally shared client.
         """
-        # self.models
-        self.models = []
-        if self.get_llm_models():
-            return
+        old_leases = self.snapshot_llm_model_leases()
+        if force_refresh:
+            # Generation invalidation is targeted to the client that actually
+            # failed. Existing leases keep that retired generation alive while
+            # replacement acquisition creates the next generation.
+            self.invalidate_llm_model(failed_model or self.model)
 
-        # self.model
-        self.model = self.get_llm_model()
-        return
+        model_settings = parse_model_settings()
+        try:
+            new_model = self.get_llm_model()
+            new_models = self._build_llm_models(model_settings)
+        except Exception:
+            # Keep the complete old state published and usable. Only temporary
+            # leases acquired by this attempt are released; other model owners
+            # and this instance's old generation remain untouched.
+            self.release_llm_model_leases_after(old_leases)
+            raise
+
+        # Acquire the complete replacement before publishing any field. This
+        # prevents readers from seeing a mixed default/failover model set.
+        self.model = new_model
+        self.model_config = {"api_key": "", "api_base": ""}
+        self.models = new_models
+
+        # Release exact old handles only after the replacement is visible.
+        # Releasing leases never closes a current globally shared SDK client.
+        self.release_llm_model_leases(old_leases)
+        return self.models or None
 
     def build_parameters_for_chat(self, messages, stream=False, tools=None, tool_choice="auto", **options):
         """

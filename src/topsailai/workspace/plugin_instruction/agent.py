@@ -56,12 +56,16 @@ def _load_models_registry() -> dict:
 
 
 def _apply_model_config(agent, config: dict) -> str:
-    """
-    Apply a model configuration to the active agent and process environment.
+    """Apply one model configuration without exposing partial client state.
+
+    A connection change acquires its replacement before publishing any model
+    fields. The concrete model then releases only its own leases; the shared
+    process-global SDK client remains available to every other model owner.
 
     Args:
         agent: The current agent instance.
-        config (dict): Model configuration containing model, endpoint, credentials, and environment.
+        config (dict): Model configuration containing model, endpoint,
+            credentials, and environment.
 
     Returns:
         str: Human-readable summary of the applied changes.
@@ -76,19 +80,35 @@ def _apply_model_config(agent, config: dict) -> str:
     api_key_env = config.get("api_key_env")
     configured_api_key = os.getenv(api_key_env) if api_key_env else config.get("api_key")
     new_api_key = configured_api_key if configured_api_key is not None else old_api_key
+    connection_changed = new_api_base != old_api_base or new_api_key != old_api_key
 
-    llm_model.model_name = new_model_name
-
-    # Rebuild the client when endpoint credentials change so the next LLM call
-    # uses the new configuration. Clear the failover model pool to prevent
-    # LLMModelBase.chat_model from randomly selecting an old endpoint.
-    if new_api_base != old_api_base or new_api_key != old_api_key:
-        llm_model.model = llm_model.get_llm_model(
+    if connection_changed:
+        old_model = llm_model.model
+        old_failover_models = [
+            route.get("_model")
+            for route in llm_model.models
+            if isinstance(route, dict) and route.get("_model") is not None
+        ]
+        # replace_llm_model acquires first and releases the exact old default
+        # lease second. This remains correct when both leases expose the same
+        # chat resource from the process-global SDK client pool.
+        new_model = llm_model.replace_llm_model(
+            old_model,
             api_key=new_api_key,
             api_base=new_api_base,
         )
+        llm_model.model = new_model
         llm_model.model_config = {"api_key": new_api_key, "api_base": new_api_base}
         llm_model.models = []
+        # Failover routes own independent leases even when their SDK object is
+        # globally shared. Release those leases only after the new default is
+        # published, rather than closing or invalidating the shared client.
+        for failover_model in old_failover_models:
+            llm_model.release_llm_model(failover_model)
+
+    # Model-only switches are request-scoped and deliberately retain the
+    # current SDK client and failover leases.
+    llm_model.model_name = new_model_name
 
     environment = config.get("environment")
     if isinstance(environment, dict):

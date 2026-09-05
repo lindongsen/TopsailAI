@@ -42,6 +42,7 @@ from openai.types.chat import (
 from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
 from topsailai.logger.log_chat import logger
+from topsailai.ai_base.llm_pool import OpenAIClientConfig, acquire, invalidate
 from topsailai.utils.print_tool import (
     print_error,
     print_info,
@@ -227,22 +228,107 @@ class LLMModel(LLMModelBase):
     def get_model_name(self, default="DeepSeek-V3.1-Terminus"):
         return os.getenv("OPENAI_MODEL", default)
 
+    def _get_llm_model_handles(self):
+        """Return lazily initialized ownership records for pooled clients."""
+        handles = getattr(self, "_llm_model_handles", None)
+        if handles is None:
+            handles = []
+            self._llm_model_handles = handles
+        return handles
+
     def get_llm_model(self, api_key=None, api_base=None):
-        """
-        Create an OpenAI-compatible chat model object.
+        """Return a pooled OpenAI-compatible chat completions resource."""
+        effective_api_key = api_key or os.getenv("OPENAI_API_KEY", "")
+        effective_api_base = api_base or os.getenv(
+            "OPENAI_API_BASE", "https://api.openai.com/v1"
+        )
+        logger.info("getting llm model [%s]: ...", self.model_name)
+        handle = acquire(
+            OpenAIClientConfig(
+                api_key=effective_api_key,
+                base_url=effective_api_base,
+                model=self.model_name,
+            )
+        )
+        chat_model = handle.client.chat.completions
+        self._get_llm_model_handles().append((chat_model, handle))
+        return chat_model
 
-        Args:
-            api_key (str, optional): API key for authentication. Defaults to environment variable.
-            api_base (str, optional): Base URL for API endpoint. Defaults to environment variable.
+    def snapshot_llm_model_leases(self):
+        """Return exact handles currently leased by this model instance.
 
-        Returns:
-            object: OpenAI chat completions object
+        Separate handles may expose the same ``chat.completions`` object when
+        they share one process-global SDK client. Snapshotting handles, rather
+        than resources, lets a transactional rebuild release only the old
+        leases after replacement leases have been acquired.
         """
-        logger.info("getting llm model [%s] [%s]: ...", self.model_name, api_key[:5] if api_key else None)
-        return openai.OpenAI(
-            api_key=api_key or os.getenv("OPENAI_API_KEY", ""),
-            base_url=api_base or os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1"),
-        ).chat.completions
+        return tuple(handle for _, handle in self._get_llm_model_handles())
+
+    def release_llm_model_leases(self, handles) -> int:
+        """Release the specified owned handles without touching other leases."""
+        owned_handles = self._get_llm_model_handles()
+        released = 0
+        for target_handle in handles:
+            for index, (_, owned_handle) in enumerate(owned_handles):
+                if owned_handle is not target_handle:
+                    continue
+                del owned_handles[index]
+                owned_handle.release()
+                released += 1
+                break
+        return released
+
+    def release_llm_model_leases_after(self, snapshot) -> int:
+        """Release leases acquired after an ownership snapshot."""
+        retained_handle_ids = {id(handle) for handle in snapshot}
+        acquired_handles = [
+            handle
+            for _, handle in self._get_llm_model_handles()
+            if id(handle) not in retained_handle_ids
+        ]
+        return self.release_llm_model_leases(acquired_handles)
+
+    def release_llm_model(self, chat_model) -> bool:
+        """Release one pooled-client lease associated with a chat resource."""
+        handles = self._get_llm_model_handles()
+        for index in range(len(handles) - 1, -1, -1):
+            owned_model, handle = handles[index]
+            if owned_model is not chat_model:
+                continue
+            del handles[index]
+            handle.release()
+            return True
+        return False
+
+    def release_all_llm_models(self) -> int:
+        """Release every pooled-client lease owned by this model instance."""
+        return self.release_llm_model_leases(self.snapshot_llm_model_leases())
+
+    def invalidate_llm_model(self, chat_model) -> bool:
+        """Retire only the global client generation behind one owned resource."""
+        for owned_model, handle in reversed(self._get_llm_model_handles()):
+            if owned_model is chat_model:
+                return invalidate(handle.key)
+        return False
+
+    def replace_llm_model(self, old_model, api_key=None, api_base=None):
+        """Acquire a replacement before releasing the exact old lease."""
+        old_handles = self._get_llm_model_handles()
+        old_handle = next(
+            (
+                handle
+                for owned_model, handle in reversed(old_handles)
+                if owned_model is old_model
+            ),
+            None,
+        )
+        new_model = self.get_llm_model(api_key=api_key, api_base=api_base)
+        # A cache hit can expose the same chat resource for both generations of
+        # ownership. Release the handle captured before acquire, never whichever
+        # equal resource was appended most recently.
+        if old_handle is not None:
+            self.release_llm_model_leases((old_handle,))
+        return new_model
 
     def get_response_message(self, response) -> ChatCompletionMessage:
         """

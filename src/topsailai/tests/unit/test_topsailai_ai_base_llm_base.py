@@ -83,61 +83,148 @@ class TestLLMModelGetModelName(unittest.TestCase):
 
 
 class TestLLMModelGetLLMModel(unittest.TestCase):
-    """Test cases for LLMModel.get_llm_model method."""
+    """Test cases for pooled LLMModel client acquisition and ownership."""
 
     def setUp(self):
         """Set up test fixtures."""
         self.api_key = "test-api-key-123"
         self.api_base = "https://custom.api.endpoint.com/v1"
 
-    @patch("topsailai.ai_base.llm_base.openai.OpenAI")
-    @patch("topsailai.ai_base.llm_base.os.getenv")
+    @staticmethod
+    def _make_handle():
+        """Return a mock pooled handle with a chat completions resource."""
+        handle = MagicMock()
+        handle.client.chat.completions = MagicMock()
+        return handle
+
+    @patch("topsailai.ai_base.llm_base.acquire")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
-    def test_get_llm_model_with_custom_credentials(self, mock_base_init, mock_logger, mock_getenv, mock_openai):
-        """Test get_llm_model creates client with custom credentials."""
-        mock_getenv.side_effect = lambda k, d=None: {
-            "OPENAI_API_KEY": self.api_key,
-            "OPENAI_API_BASE": self.api_base,
-        }.get(k, d)
-        
-        mock_chat = MagicMock()
-        mock_openai.return_value.chat = mock_chat
-        
+    def test_get_llm_model_with_custom_credentials(
+        self, mock_base_init, mock_logger, mock_acquire
+    ):
+        """Use explicit credentials and preserve the chat-resource contract."""
         from topsailai.ai_base.llm_base import LLMModel
+
+        handle = self._make_handle()
+        mock_acquire.return_value = handle
         model = LLMModel()
         model.model_name = "test-model"
-        
+
         result = model.get_llm_model(api_key=self.api_key, api_base=self.api_base)
-        
-        mock_openai.assert_called_once_with(
-            api_key=self.api_key,
-            base_url=self.api_base,
-        )
-        self.assertEqual(result, mock_chat.completions)
 
-    @patch("topsailai.ai_base.llm_base.openai.OpenAI")
+        config = mock_acquire.call_args.args[0]
+        self.assertEqual(config.api_key, self.api_key)
+        self.assertEqual(config.base_url, self.api_base)
+        self.assertEqual(config.model, "test-model")
+        self.assertIs(result, handle.client.chat.completions)
+
+    @patch("topsailai.ai_base.llm_base.acquire")
     @patch("topsailai.ai_base.llm_base.os.getenv")
-    @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
-    def test_get_llm_model_uses_env_defaults(self, mock_base_init, mock_logger, mock_getenv, mock_openai):
-        """Test get_llm_model uses environment variables as defaults."""
-        mock_getenv.side_effect = lambda k, d=None: {
+    def test_get_llm_model_uses_env_defaults(
+        self, mock_base_init, mock_getenv, mock_acquire
+    ):
+        """Resolve the existing environment defaults before pool acquisition."""
+        mock_getenv.side_effect = lambda key, default=None: {
             "OPENAI_API_KEY": "env-key",
-            "OPENAI_API_BASE": "https://api.openai.com/v1",
-        }.get(k, d)
-        
-        mock_chat = MagicMock()
-        mock_openai.return_value.chat = mock_chat
-        
+            "OPENAI_API_BASE": "https://env.example/v1",
+        }.get(key, default)
+        handle = self._make_handle()
+        mock_acquire.return_value = handle
+
         from topsailai.ai_base.llm_base import LLMModel
+
         model = LLMModel()
         model.model_name = "test-model"
-        
         result = model.get_llm_model()
-        
-        mock_openai.assert_called_once()
 
+        config = mock_acquire.call_args.args[0]
+        self.assertEqual(config.api_key, "env-key")
+        self.assertEqual(config.base_url, "https://env.example/v1")
+        self.assertIs(result, handle.client.chat.completions)
+
+    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_release_helpers_are_owned_and_idempotent(
+        self, mock_base_init, mock_acquire
+    ):
+        """Release one or all tracked handles without double releasing them."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        first_handle = self._make_handle()
+        second_handle = self._make_handle()
+        mock_acquire.side_effect = [first_handle, second_handle]
+        model = LLMModel()
+        model.model_name = "test-model"
+        first_model = model.get_llm_model("key", "https://example.test/v1")
+        model.get_llm_model("key", "https://example.test/v1")
+
+        self.assertTrue(model.release_llm_model(first_model))
+        self.assertFalse(model.release_llm_model(first_model))
+        self.assertEqual(model.release_all_llm_models(), 1)
+        self.assertEqual(model.release_all_llm_models(), 0)
+        first_handle.release.assert_called_once_with()
+        second_handle.release.assert_called_once_with()
+
+    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_exact_lease_snapshot_handles_shared_chat_resource(
+        self, mock_base_init, mock_acquire
+    ):
+        """Release an old handle without releasing a new shared-client lease."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        shared_resource = MagicMock()
+        old_handle = self._make_handle()
+        new_handle = self._make_handle()
+        old_handle.client.chat.completions = shared_resource
+        new_handle.client.chat.completions = shared_resource
+        mock_acquire.side_effect = [old_handle, new_handle]
+        model = LLMModel()
+        model.model_name = "test-model"
+
+        model.get_llm_model("key", "https://example.test/v1")
+        old_snapshot = model.snapshot_llm_model_leases()
+        model.get_llm_model("key", "https://example.test/v1")
+        released = model.release_llm_model_leases(old_snapshot)
+
+        self.assertEqual(released, 1)
+        self.assertEqual(model.snapshot_llm_model_leases(), (new_handle,))
+        old_handle.release.assert_called_once_with()
+        new_handle.release.assert_not_called()
+
+    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_replace_acquires_before_releasing_old_model(
+        self, mock_base_init, mock_acquire
+    ):
+        """Release the old lease when replacement shares the same resource."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        events = []
+        shared_resource = MagicMock()
+        old_handle = self._make_handle()
+        new_handle = self._make_handle()
+        old_handle.client.chat.completions = shared_resource
+        new_handle.client.chat.completions = shared_resource
+        old_handle.release.side_effect = lambda: events.append("release-old")
+        mock_acquire.return_value = old_handle
+        model = LLMModel()
+        model.model_name = "test-model"
+        old_model = model.get_llm_model("old", "https://old.test/v1")
+        mock_acquire.side_effect = lambda config: (
+            events.append("acquire-new") or new_handle
+        )
+
+        new_model = model.replace_llm_model(
+            old_model, api_key="new", api_base="https://new.test/v1"
+        )
+
+        self.assertIs(new_model, shared_resource)
+        self.assertEqual(events, ["acquire-new", "release-old"])
+        self.assertEqual(model.snapshot_llm_model_leases(), (new_handle,))
+        new_handle.release.assert_not_called()
 
 class TestLLMModelCallLLMModel(unittest.TestCase):
     """Test cases for LLMModel.call_llm_model method."""
