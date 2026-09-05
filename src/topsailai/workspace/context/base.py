@@ -1104,9 +1104,23 @@ Summarize Messages
         Returns:
             tuple: (llm_chat, answer) from the summarization chat.
         """
-        all_messages = self._get_token_calculation_messages()
+        runtime_messages = self._get_token_calculation_messages()
+        runtime_message_count = len(runtime_messages) if runtime_messages else 0
+        caller_message_count = len(messages) if messages else 0
+        all_messages = runtime_messages
         if not all_messages:
             print_tool.print_error("[summarize_runtime_messages] no found runtime-messages, fallback to passed-messages")
+            logger.warning(
+                "[_summarize_runtime_messages] runtime messages not used: "
+                "fallback_reason=runtime_messages_unavailable, "
+                "selected_source=caller_messages, runtime_message_count=%s, "
+                "caller_message_count=%s, session_id=%s, runtime_class=%s, "
+                "runtime_method=_summarize_runtime_messages",
+                runtime_message_count,
+                caller_message_count,
+                self.session_id or "",
+                type(self).__name__,
+            )
             all_messages = messages
         # Defensive fallback: if the runtime-derived message list is unexpectedly
         # shorter than the caller-supplied messages, prefer the passed-in messages.
@@ -1116,6 +1130,17 @@ Summarize Messages
         # the layer that triggered summarization.
         if all_messages and messages and len(all_messages) < len(messages):
             print_tool.print_info("[summarize_runtime_messages] use passed-messages due to larger length")
+            logger.warning(
+                "[_summarize_runtime_messages] runtime messages not used: "
+                "fallback_reason=runtime_messages_shorter_than_caller, "
+                "selected_source=caller_messages, runtime_message_count=%s, "
+                "caller_message_count=%s, session_id=%s, runtime_class=%s, "
+                "runtime_method=_summarize_runtime_messages",
+                runtime_message_count,
+                caller_message_count,
+                self.session_id or "",
+                type(self).__name__,
+            )
             all_messages = messages
         assert all_messages, "null of messages"
 

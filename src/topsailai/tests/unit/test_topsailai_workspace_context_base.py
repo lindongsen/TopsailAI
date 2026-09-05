@@ -769,11 +769,13 @@ class TestSummarizeRuntimeMessages(unittest.TestCase):
         # Simulate User2Agent override: _get_token_calculation_messages returns self.messages
         runtime._get_token_calculation_messages = lambda: runtime.messages
 
-        runtime._summarize_runtime_messages([])
+        with patch("topsailai.workspace.context.base.logger") as mock_logger:
+            runtime._summarize_runtime_messages([])
 
         # The LLM should receive self.messages, not the short ai_agent.messages
         self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 20)
         self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "msg0")
+        mock_logger.warning.assert_not_called()
 
     @patch('topsailai.workspace.context.base.AgentBase')
     @patch('topsailai.workspace.context.base.get_llm_chat')
@@ -803,16 +805,29 @@ class TestSummarizeRuntimeMessages(unittest.TestCase):
         mock_get_llm_chat.return_value = mock_llm_chat
 
         runtime = ContextRuntimeBase()
+        runtime.session_id = "session-shorter-runtime"
         runtime.ai_agent = self.mock_agent
         runtime.ai_agent.messages = [{"role": "user", "content": "agent-msg"}]
         runtime.messages = [{"role": "user", "content": f"session-msg-{i}"} for i in range(20)]
 
         fallback = [{"role": "user", "content": f"fallback-{i}"} for i in range(20)]
-        runtime._summarize_runtime_messages(fallback)
+        with patch("topsailai.workspace.context.base.logger") as mock_logger:
+            runtime._summarize_runtime_messages(fallback)
 
         # Defensive fallback chooses the longer caller-supplied messages.
         self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 20)
         self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "fallback-0")
+        mock_logger.warning.assert_called_once_with(
+            "[_summarize_runtime_messages] runtime messages not used: "
+            "fallback_reason=runtime_messages_shorter_than_caller, "
+            "selected_source=caller_messages, runtime_message_count=%s, "
+            "caller_message_count=%s, session_id=%s, runtime_class=%s, "
+            "runtime_method=_summarize_runtime_messages",
+            1,
+            20,
+            "session-shorter-runtime",
+            "ContextRuntimeBase",
+        )
 
     @patch('topsailai.workspace.context.base.AgentBase')
     @patch('topsailai.workspace.context.base.get_llm_chat')
@@ -870,16 +885,29 @@ class TestSummarizeRuntimeMessages(unittest.TestCase):
         mock_get_llm_chat.return_value = mock_llm_chat
 
         runtime = ContextRuntimeBase()
+        runtime.session_id = "session-empty-runtime"
         runtime.ai_agent = self.mock_agent
         runtime.ai_agent.messages = []
         runtime.messages = []
 
         fallback = [{"role": "user", "content": f"fallback-{i}"} for i in range(10)]
-        runtime._summarize_runtime_messages(fallback)
+        with patch("topsailai.workspace.context.base.logger") as mock_logger:
+            runtime._summarize_runtime_messages(fallback)
 
         # Should fall back to caller-provided messages
         self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 10)
         self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "fallback-0")
+        mock_logger.warning.assert_called_once_with(
+            "[_summarize_runtime_messages] runtime messages not used: "
+            "fallback_reason=runtime_messages_unavailable, "
+            "selected_source=caller_messages, runtime_message_count=%s, "
+            "caller_message_count=%s, session_id=%s, runtime_class=%s, "
+            "runtime_method=_summarize_runtime_messages",
+            0,
+            10,
+            "session-empty-runtime",
+            "ContextRuntimeBase",
+        )
 
 
 class TestMessageEqual(unittest.TestCase):

@@ -360,6 +360,16 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             return None
 
         print_info(f"!!! [Agent2LLM] [Summarization] Summarizing context messages for processing: msg_len=[{len(messages)}]")
+        logger.info(
+            "[summarize_messages_for_processing] summary input context: "
+            "agent2llm_message_count=%s, working_memory_message_count=%s, "
+            "working_memory_start_position=%s, summary_mode=%s, session_id=%s",
+            len(self.ai_agent.messages),
+            len(messages),
+            index,
+            env_tool.EnvReaderInstance.get("TOPSAILAI_CONTEXT_SUMMARY_MODE") or "message",
+            self.session_id or "",
+        )
         logger.info("[summarize_processing] before: messages=%s, tokens=%s", len(messages), _token_count_before)
 
         llm_chat, answer = self._summarize_messages(messages)

@@ -630,6 +630,40 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
                 self.assertIsNotNone(result)
                 self.assertEqual(result, "Summarized content")
 
+    def test_summarize_logs_runtime_and_working_memory_counts(self):
+        """Log the full Agent2LLM count and wrapper working-memory slice."""
+        prefix_messages = [
+            {"role": "system", "content": "system"},
+            {"role": "assistant", "content": "setup"},
+        ]
+        work_messages = [
+            {"role": "user", "content": f"Message {i}"}
+            for i in range(30)
+        ]
+        self.test_instance._ai_agent.messages = prefix_messages + work_messages
+        self.test_instance._first_position = 2
+
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime",
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
+        }):
+            with patch(
+                "topsailai.workspace.context.agent2llm.logger"
+            ) as mock_logger:
+                result = self.test_instance.summarize_messages_for_processing()
+
+        self.assertEqual(result, "Summarized content")
+        mock_logger.info.assert_any_call(
+            "[summarize_messages_for_processing] summary input context: "
+            "agent2llm_message_count=%s, working_memory_message_count=%s, "
+            "working_memory_start_position=%s, summary_mode=%s, session_id=%s",
+            32,
+            30,
+            2,
+            "runtime",
+            "test-session-123",
+        )
+
     def test_summarize_updates_ai_agent_messages(self):
         """Test that summarization updates ai_agent.messages."""
         self.test_instance._ai_agent.messages = [
