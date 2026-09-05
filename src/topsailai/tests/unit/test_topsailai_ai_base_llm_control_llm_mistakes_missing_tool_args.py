@@ -71,6 +71,11 @@ class TestFixRawText:
         result = fix_raw_text(raw_text)
         assert result is None
 
+    @pytest.mark.parametrize("raw_text", ['"text"', "[1]", "1", "true", "null"])
+    def test_valid_non_dict_json_string(self, raw_text):
+        """Test valid JSON values that are not objects return None."""
+        assert fix_raw_text(raw_text) is None
+
     def test_empty_dict(self):
         """Test empty dict returns None."""
         result = fix_raw_text({})

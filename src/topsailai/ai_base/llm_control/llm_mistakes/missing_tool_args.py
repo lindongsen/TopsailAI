@@ -49,7 +49,7 @@ def fix_raw_text(raw_text):
                 return None
     elif isinstance(raw_text, dict):
         d = raw_text
-    if not d:
+    if not isinstance(d, dict) or not d:
         return None
 
     if (
