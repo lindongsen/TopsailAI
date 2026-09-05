@@ -31,7 +31,8 @@ from topsailai.utils import (
     print_tool,
     message_tool,
 )
-from topsailai.workspace.llm_shell import get_llm_chat
+from topsailai.ai_base.prompt_base import PromptBase
+from topsailai.workspace.llm_shell import LLMChat, get_llm_chat
 from topsailai.workspace.context import summary_tool
 
 
@@ -1017,6 +1018,72 @@ class ContextRuntimeBase(object):
 
         return extra_prompt_content + prompt_content
 
+    def _get_summary_processor(self) -> str:
+        """Return the configured summary processor with a safe default."""
+        processor = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_CONTEXT_SUMMARY_PROCESSOR",
+            default="llm_chat",
+        )
+        processor = str(processor or "llm_chat").strip().lower()
+        if processor in ("llm_chat", "agent_llm_model"):
+            return processor
+
+        logger.warning(
+            "invalid TOPSAILAI_CONTEXT_SUMMARY_PROCESSOR=%s; using llm_chat",
+            processor,
+        )
+        return "llm_chat"
+
+    def _build_summary_chat(
+            self,
+            message: str,
+            system_prompt: str,
+        ) -> LLMChat:
+        """Build an isolated summary chat using the configured model processor."""
+        if self._get_summary_processor() != "agent_llm_model":
+            return self._build_independent_summary_chat(message, system_prompt)
+
+        llm_model = getattr(self.ai_agent, "llm_model", None) if self.ai_agent else None
+        if llm_model is None or not callable(getattr(llm_model, "chat", None)):
+            logger.warning(
+                "agent_llm_model summary processor unavailable; using llm_chat"
+            )
+            return self._build_independent_summary_chat(message, system_prompt)
+
+        pending_responses = getattr(
+            llm_model,
+            "_pending_native_tool_call_responses",
+            None,
+        )
+        if pending_responses:
+            logger.warning(
+                "agent_llm_model has pending native tool-call responses; using llm_chat"
+            )
+            return self._build_independent_summary_chat(message, system_prompt)
+
+        prompt_ctl = PromptBase(system_prompt or "You are a helpful assistant.")
+        prompt_ctl.new_session(message, need_print_message=False)
+        return LLMChat(
+            prompt_ctl,
+            llm_model,
+            owns_llm_model=False,
+        )
+
+    @staticmethod
+    def _build_independent_summary_chat(
+            message: str,
+            system_prompt: str,
+        ) -> LLMChat:
+        """Build the existing independently owned summary chat."""
+        return get_llm_chat(
+            message=message,
+            session_id="",
+            system_prompt=system_prompt,
+            need_stdout=env_tool.is_interactive_mode(),
+            need_input_message=False,
+            need_print_session=False,
+            need_print_message=False,
+        )
 
     def _summarize_messages(
             self,
@@ -1063,15 +1130,9 @@ Summarize Messages
 """
         one_msg = messages if isinstance(messages, str) else json_tool.json_dump(messages)
 
-        llm_chat = get_llm_chat(
+        llm_chat = self._build_summary_chat(
             message=message_title + one_msg,
-            session_id="",
             system_prompt=self._get_summary_prompt(prompt=prompt, extra_prompt=extra_prompt),
-
-            need_stdout=env_tool.is_interactive_mode(),
-            need_input_message=False,
-            need_print_session=False,
-            need_print_message=False,
         )
         answer = llm_chat.chat(
             need_print=env_tool.is_interactive_mode(),
@@ -1079,7 +1140,6 @@ Summarize Messages
         )
 
         return (llm_chat, answer)
-
 
     def _summarize_runtime_messages(
             self,
@@ -1148,15 +1208,9 @@ Summarize Messages
         all_messages = copy.deepcopy(all_messages)
         print_tool.print_info(f"[summarize_runtime_messages] All of messages: length=[{len(all_messages)}]")
 
-        llm_chat = get_llm_chat(
+        llm_chat = self._build_summary_chat(
             message="> SUMMARIZE MESSAGES",
-            session_id="",
             system_prompt="",
-
-            need_stdout=env_tool.is_interactive_mode(),
-            need_input_message=False,
-            need_print_session=False,
-            need_print_message=False,
         )
         llm_chat.prompt_ctl.messages = all_messages[:]
         TIPS = "\n> DONOT INVOKE ANY TOOLS, DIRECTLY OUTPUT FINAL_ANSWER!"

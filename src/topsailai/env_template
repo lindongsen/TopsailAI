@@ -502,6 +502,9 @@ TOPSAILAI_NEED_SYMBOL_FOR_ANSWER=0
 # runtime or message
 TOPSAILAI_CONTEXT_SUMMARY_MODE="runtime"
 
+# llm_chat or agent_llm_model
+TOPSAILAI_CONTEXT_SUMMARY_PROCESSOR="llm_chat"
+
 # Prompt for summary, file or content
 TOPSAILAI_SUMMARY_PROMPT=""
 

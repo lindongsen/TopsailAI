@@ -67,6 +67,19 @@ class TestLLMChat(unittest.TestCase):
 
         self.mock_llm_model.close.assert_called_once_with()
 
+    def test_close_does_not_close_borrowed_model(self):
+        """Closing a borrowing chat leaves the shared model running."""
+        from topsailai.workspace.llm_shell import LLMChat
+
+        chat = LLMChat(
+            self.mock_prompt_ctl,
+            self.mock_llm_model,
+            owns_llm_model=False,
+        )
+        chat.close()
+
+        self.mock_llm_model.close.assert_not_called()
+
     def test_chat_with_message(self):
         """Test chat method with a user message."""
         from topsailai.workspace.llm_shell import LLMChat

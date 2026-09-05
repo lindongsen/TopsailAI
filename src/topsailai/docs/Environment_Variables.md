@@ -183,6 +183,7 @@ These variables control when the agent archives or summarizes message history to
 | `TOPSAILAI_NEED_SYMBOL_FOR_ANSWER` | `0` | Runtime only. If `1` and `TOPSAILAI_SYMBOL_STARTSWITH_ANSWER` is unset, default symbol is the agent name. Also gates answer-prefix output in cli/team_chat.py and cli/team_agent.py (default off). |
 | `TOPSAILAI_SAVE_RESULT_TO_FILE` | `""` | Runtime only. A file path to save the answer. |
 | `TOPSAILAI_CONTEXT_SUMMARY_MODE` | `"runtime"` | Summary mode: `runtime` or `message`. |
+| `TOPSAILAI_CONTEXT_SUMMARY_PROCESSOR` | `"llm_chat"` | Summary request processor for both Agent2LLM and User2Agent summaries. `llm_chat` uses an independent model; `agent_llm_model` borrows the active agent model and falls back to `llm_chat` when unavailable or when native tool-call responses are pending. |
 | `TOPSAILAI_SUMMARY_PROMPT` | `""` | Prompt for summary, file or content. |
 | `TOPSAILAI_SYMBOL_STARTSWITH_ANSWER` | `""` | Runtime only. A symbol string prefixed to the answer. |
 | `TOPSAILAI_SUMMARY_PROMPT_EXTRA_MAP` | `"react_community=context/summary/memory.md;"` | Extra summary prompt map. Format: `key1=value1,value2;key2=value2`, where key is `agent_type` and value is a file path. |

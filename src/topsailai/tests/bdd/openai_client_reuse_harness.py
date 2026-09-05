@@ -106,3 +106,38 @@ class OpenAIClientReuseScenario:
         if self.server_thread.is_alive():
             raise AssertionError("OpenAI client-reuse mock-server thread did not stop")
         default_openai_client_pool.close_all()
+
+
+class AgentModelSummaryScenario(OpenAIClientReuseScenario):
+    """Exercise runtime summarization through the active Agent2LLM model."""
+
+    def __init__(self, monkeypatch: Any):
+        """Configure model borrowing after the shared HTTP harness is ready."""
+        super().__init__(monkeypatch)
+        monkeypatch.setenv(
+            "TOPSAILAI_CONTEXT_SUMMARY_PROCESSOR",
+            "agent_llm_model",
+        )
+        self.borrowed_model = None
+        self.borrowed_handle = None
+
+    def exercise_borrowed_summary_and_later_request(self) -> None:
+        """Summarize, close the borrowing wrapper, then reuse the agent model."""
+        self.agent.messages.append(
+            {"role": "user", "content": "runtime context to summarize"}
+        )
+        self.summary_chat, self.summary_answer = self.runtime._summarize_messages(
+            self.runtime.messages,
+            extra_prompt="Summarize this runtime context.",
+        )
+        self.borrowed_model = self.summary_chat.llm_model
+        self.borrowed_handle = self.summary_handle()
+        self.summary_chat.close()
+        self.agent_response = self.agent.llm_model.call_llm_model([
+            {"role": "user", "content": "agent2llm request after borrowed summary"},
+        ])
+
+    def close(self) -> None:
+        """Avoid duplicate wrapper cleanup before closing the owning agent."""
+        self.summary_chat = None
+        super().close()

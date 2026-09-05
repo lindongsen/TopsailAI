@@ -41,28 +41,37 @@ class LLMChat(object):
     Attributes:
         prompt_ctl (PromptBase): The prompt controller managing conversation messages.
         llm_model (LLMModelBase): The LLM model instance for generating responses.
+        owns_llm_model (bool): Whether this chat closes the model it uses.
         first_message (str): The first message in the conversation.
         last_message (str): The last response received from the LLM.
     """
 
-    def __init__(self, prompt_ctl: PromptBase, llm_model: LLMModelBase):
+    def __init__(
+            self,
+            prompt_ctl: PromptBase,
+            llm_model: LLMModelBase,
+            owns_llm_model: bool = True,
+        ):
         """
         Initialize the LLMChat instance.
 
         Args:
             prompt_ctl (PromptBase): The prompt controller for managing messages.
             llm_model (LLMModelBase): The LLM model instance for generating responses.
+            owns_llm_model (bool): Whether this chat owns and closes the model.
         """
         self.prompt_ctl: PromptBase = prompt_ctl
         self.llm_model: LLMModelBase = llm_model
+        self.owns_llm_model = owns_llm_model
 
         self.first_message = ""
         self.last_message = ""
         return
 
     def close(self) -> None:
-        """Close runtime components owned by this direct LLM chat."""
-        self.llm_model.close()
+        """Close the model only when this chat owns its lifecycle."""
+        if self.owns_llm_model:
+            self.llm_model.close()
 
     def __enter__(self):
         """Return this chat for context-managed direct LLM usage."""

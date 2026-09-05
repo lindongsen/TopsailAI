@@ -590,6 +590,96 @@ class TestSummarizeMessages(unittest.TestCase):
         self.assertEqual(answer, "Summarized string")
 
 
+class TestSummaryProcessor(unittest.TestCase):
+    """Test summary processor selection and shared-model safety."""
+
+    def setUp(self):
+        """Create a runtime with an active model."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        self.runtime = ContextRuntimeBase()
+        self.runtime.ai_agent = MagicMock()
+        self.runtime.ai_agent.llm_model = MagicMock()
+        self.runtime.ai_agent.llm_model._pending_native_tool_call_responses = []
+
+    @patch("topsailai.workspace.context.base.PromptBase")
+    @patch("topsailai.workspace.context.base.env_tool")
+    def test_agent_processor_borrows_active_model(self, mock_env_tool, mock_prompt_base):
+        """The agent processor wraps the active model without taking ownership."""
+        mock_env_tool.EnvReaderInstance.get.return_value = "agent_llm_model"
+        prompt_ctl = MagicMock()
+        mock_prompt_base.return_value = prompt_ctl
+
+        chat = self.runtime._build_summary_chat("summary input", "summary system")
+
+        self.assertIs(chat.llm_model, self.runtime.ai_agent.llm_model)
+        self.assertFalse(chat.owns_llm_model)
+        prompt_ctl.new_session.assert_called_once_with(
+            "summary input", need_print_message=False
+        )
+        chat.close()
+        self.runtime.ai_agent.llm_model.close.assert_not_called()
+
+    @patch("topsailai.workspace.context.base.get_llm_chat")
+    @patch("topsailai.workspace.context.base.env_tool")
+    def test_default_processor_uses_independent_chat(self, mock_env_tool, mock_get_llm_chat):
+        """The default processor preserves the independent-chat behavior."""
+        mock_env_tool.EnvReaderInstance.get.return_value = "llm_chat"
+        expected = MagicMock()
+        mock_get_llm_chat.return_value = expected
+
+        result = self.runtime._build_summary_chat("summary input", "summary system")
+
+        self.assertIs(result, expected)
+        mock_get_llm_chat.assert_called_once()
+
+    @patch("topsailai.workspace.context.base.get_llm_chat")
+    @patch("topsailai.workspace.context.base.env_tool")
+    def test_pending_native_responses_fall_back_without_mutation(
+        self, mock_env_tool, mock_get_llm_chat
+    ):
+        """Pending native responses remain untouched when reuse is unsafe."""
+        mock_env_tool.EnvReaderInstance.get.return_value = "agent_llm_model"
+        pending = [object()]
+        self.runtime.ai_agent.llm_model._pending_native_tool_call_responses = pending
+        expected = MagicMock()
+        mock_get_llm_chat.return_value = expected
+
+        result = self.runtime._build_summary_chat("summary input", "summary system")
+
+        self.assertIs(result, expected)
+        self.assertIs(
+            self.runtime.ai_agent.llm_model._pending_native_tool_call_responses,
+            pending,
+        )
+        self.assertEqual(len(pending), 1)
+
+    @patch("topsailai.workspace.context.base.get_llm_chat")
+    @patch("topsailai.workspace.context.base.env_tool")
+    def test_invalid_processor_falls_back(self, mock_env_tool, mock_get_llm_chat):
+        """An invalid processor value falls back to the independent chat."""
+        mock_env_tool.EnvReaderInstance.get.return_value = "unknown"
+        expected = MagicMock()
+        mock_get_llm_chat.return_value = expected
+
+        result = self.runtime._build_summary_chat("summary input", "summary system")
+
+        self.assertIs(result, expected)
+
+    @patch("topsailai.workspace.context.base.get_llm_chat")
+    @patch("topsailai.workspace.context.base.env_tool")
+    def test_missing_agent_model_falls_back(self, mock_env_tool, mock_get_llm_chat):
+        """A missing active model falls back to the independent chat."""
+        mock_env_tool.EnvReaderInstance.get.return_value = "agent_llm_model"
+        self.runtime.ai_agent = None
+        expected = MagicMock()
+        mock_get_llm_chat.return_value = expected
+
+        result = self.runtime._build_summary_chat("summary input", "summary system")
+
+        self.assertIs(result, expected)
+
+
 
 class TestGetCurrentTokens(unittest.TestCase):
     """Test suite for _get_current_tokens method."""
@@ -752,7 +842,10 @@ class TestSummarizeRuntimeMessages(unittest.TestCase):
         """Test that runtime summary uses _get_token_calculation_messages source."""
         from topsailai.workspace.context.base import ContextRuntimeBase
 
-        mock_env_tool.EnvReaderInstance.get.return_value = "runtime"
+        mock_env_tool.EnvReaderInstance.get.side_effect = lambda key, **kwargs: (
+            "runtime" if key == "TOPSAILAI_CONTEXT_SUMMARY_MODE"
+            else kwargs.get("default")
+        )
         mock_env_tool.is_interactive_mode.return_value = False
         mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
         mock_summary_tool.get_summary_prompt.return_value = None
@@ -795,7 +888,10 @@ class TestSummarizeRuntimeMessages(unittest.TestCase):
         """
         from topsailai.workspace.context.base import ContextRuntimeBase
 
-        mock_env_tool.EnvReaderInstance.get.return_value = "runtime"
+        mock_env_tool.EnvReaderInstance.get.side_effect = lambda key, **kwargs: (
+            "runtime" if key == "TOPSAILAI_CONTEXT_SUMMARY_MODE"
+            else kwargs.get("default")
+        )
         mock_env_tool.is_interactive_mode.return_value = False
         mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
         mock_summary_tool.get_summary_prompt.return_value = None
@@ -875,7 +971,10 @@ class TestSummarizeRuntimeMessages(unittest.TestCase):
         """Test fallback to caller-provided messages when runtime store is empty."""
         from topsailai.workspace.context.base import ContextRuntimeBase
 
-        mock_env_tool.EnvReaderInstance.get.return_value = "runtime"
+        mock_env_tool.EnvReaderInstance.get.side_effect = lambda key, **kwargs: (
+            "runtime" if key == "TOPSAILAI_CONTEXT_SUMMARY_MODE"
+            else kwargs.get("default")
+        )
         mock_env_tool.is_interactive_mode.return_value = False
         mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
         mock_summary_tool.get_summary_prompt.return_value = None
