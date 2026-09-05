@@ -41,5 +41,6 @@ references:
 
 ## Command Design Convention
 
-- Interactive parameters use option flags, for example `--agent-mode`.
+- Interactive parameters use option flags and may provide a short alias for frequently used options.
+- Main interactive aliases are `-t` / `--tui`, `-n` / `--tail-lines`, and `-m` / `--agent-mode`.
 - Non-interactive parameters use subcommands, for example `project list`.

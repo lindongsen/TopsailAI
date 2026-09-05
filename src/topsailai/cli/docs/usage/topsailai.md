@@ -23,8 +23,12 @@ Interactive task watcher and session manager for TopsailAI.
 
 ```bash
 ./topsailai.py
+./topsailai.py -t
 ./topsailai.py --tui
+./topsailai.py -n 200
 ./topsailai.py --tail-lines 200
+./topsailai.py -m raw
+./topsailai.py --agent-mode raw
 ```
 
 Because the script is registered in `../bin/` as `topsailai`, you can also run it from anywhere in the project as:
@@ -45,9 +49,9 @@ These options apply only to the default interactive mode (no subcommand). They c
 |--------|-------------|
 | `-h`, `--help` | Show help message and exit. |
 | `--version` | Show program version and exit. |
-| `--tui`, `--runtime-tui` | Use the two-pane curses UI when watching a log. |
-| `--tail-lines N` | Number of recent log lines to echo on startup in runtime mode (default: 300). |
-| `--agent-mode [MODE]` | raw \| dtach \| tmux. When omitted, auto-detect: tmux if available, else dtach if available, else raw. |
+| `-t`, `--tui`, `--runtime-tui` | Use the two-pane curses UI when watching a log. |
+| `-n N`, `--tail-lines N` | Number of recent log lines to echo on startup in runtime mode (default: 300). |
+| `-m [MODE]`, `--agent-mode [MODE]` | raw \| dtach \| tmux. When omitted, auto-detect: tmux if available, else dtach if available, else raw. |
 
 ## Scopes
 

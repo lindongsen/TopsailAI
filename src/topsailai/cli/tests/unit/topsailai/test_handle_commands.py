@@ -542,7 +542,7 @@ class TestRuntimeModeArguments(unittest.TestCase):
         mock_prompt: MagicMock,
         mock_stream: MagicMock,
     ) -> None:
-        """--tail-lines should be forwarded to stream_file()."""
+        """Long and short tail-lines options should behave identically."""
         from cli_topsailai.core import main
 
         log_file = {
@@ -551,14 +551,18 @@ class TestRuntimeModeArguments(unittest.TestCase):
             "session_id": "s1",
         }
         mock_discover.return_value = [log_file]
-        mock_prompt.side_effect = [("watch", 0), ("quit", None)]
 
-        main(["--tail-lines", "50"])
+        for option in ("--tail-lines", "-n"):
+            with self.subTest(option=option):
+                mock_prompt.side_effect = [("watch", 0), ("quit", None)]
 
-        mock_stream.assert_called_once()
-        _, kwargs = mock_stream.call_args
-        self.assertTrue(kwargs["runtime_raw"])
-        self.assertEqual(kwargs["tail_lines"], 50)
+                main([option, "50"])
+
+                mock_stream.assert_called_once()
+                _, kwargs = mock_stream.call_args
+                self.assertTrue(kwargs["runtime_raw"])
+                self.assertEqual(kwargs["tail_lines"], 50)
+                mock_stream.reset_mock()
 
     @patch("cli_topsailai.streaming.stream_file")
     @patch("cli_topsailai.core.prompt_selection")
@@ -581,7 +585,7 @@ class TestRuntimeModeArguments(unittest.TestCase):
         mock_prompt: MagicMock,
         mock_stream: MagicMock,
     ) -> None:
-        """With --tui, stream_file() receives False (curses UI)."""
+        """Long and short TUI options should behave identically."""
         from cli_topsailai.core import main
 
         log_file = {
@@ -590,13 +594,18 @@ class TestRuntimeModeArguments(unittest.TestCase):
             "session_id": "s1",
         }
         mock_discover.return_value = [log_file]
-        mock_prompt.side_effect = [("watch", 0), ("quit", None)]
 
-        main(["--tui"])
+        for option in ("--tui", "-t"):
+            with self.subTest(option=option):
+                mock_prompt.side_effect = [("watch", 0), ("quit", None)]
 
-        _, kwargs = mock_stream.call_args
-        self.assertFalse(kwargs["runtime_raw"])
-        self.assertEqual(kwargs["tail_lines"], 300)
+                main([option])
+
+                mock_stream.assert_called_once()
+                _, kwargs = mock_stream.call_args
+                self.assertFalse(kwargs["runtime_raw"])
+                self.assertEqual(kwargs["tail_lines"], 300)
+                mock_stream.reset_mock()
 
 
 class TestProjectScopeCommands(unittest.TestCase):
@@ -1001,7 +1010,7 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         mock_resolve: MagicMock,
         mock_launch: MagicMock,
     ) -> None:
-        """/agent with a folder path launches agent from workspace scope."""
+        """Long and short agent-mode options should launch identically."""
         from cli_topsailai.core import main
 
         log_file = {
@@ -1011,13 +1020,18 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
             "project_workspace": "/work/a",
         }
         mock_discover.return_value = [log_file]
-        mock_prompt.side_effect = [("agent", "/work/a"), ("quit", None)]
         mock_resolve.return_value = "/work/a"
 
-        main(["--agent-mode", "tmux"])
+        for option in ("--agent-mode", "-m"):
+            with self.subTest(option=option):
+                mock_prompt.side_effect = [("agent", "/work/a"), ("quit", None)]
 
-        mock_resolve.assert_called_once_with("/work/a", [log_file])
-        mock_launch.assert_called_once_with("/work/a", agent_mode="tmux")
+                main([option, "tmux"])
+
+                mock_resolve.assert_called_once_with("/work/a", [log_file])
+                mock_launch.assert_called_once_with("/work/a", agent_mode="tmux")
+                mock_resolve.reset_mock()
+                mock_launch.reset_mock()
 
     @patch("cli_topsailai.project_scope.launch_agent_in_folder")
     @patch("cli_topsailai.project_scope.resolve_agent_folder")

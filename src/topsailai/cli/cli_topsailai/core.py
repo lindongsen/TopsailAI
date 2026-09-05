@@ -222,13 +222,12 @@ def _detect_agent_mode() -> str:
 
 
 def _preprocess_agent_mode(argv: List[str]) -> List[str]:
-    """Normalize ``--agent-mode`` so it can be used without a value.
+    """Normalize agent-mode options so they can be used without a value.
 
-    When ``--agent-mode`` is passed alone, argparse with ``nargs="?"`` would
-    consume the next positional token (e.g. a subcommand) as the value.  To
-    avoid ambiguity, we rewrite the argument list so that a bare
-    ``--agent-mode`` becomes ``--agent-mode=auto`` and explicit values are
-    preserved.
+    When an agent-mode option is passed alone, argparse with ``nargs="?"``
+    would consume the next positional token (e.g. a subcommand) as the value.
+    To avoid ambiguity, we rewrite the argument list so that a bare option
+    becomes ``--agent-mode=auto`` and explicit values are preserved.
     """
     result: List[str] = []
     valid_modes = {"raw", "dtach", "tmux"}
@@ -236,7 +235,7 @@ def _preprocess_agent_mode(argv: List[str]) -> List[str]:
     i = 0
     while i < len(argv):
         arg = argv[i]
-        if arg == "--agent-mode":
+        if arg in ("-m", "--agent-mode"):
             if i + 1 < len(argv):
                 next_arg = argv[i + 1]
                 if next_arg.startswith("-") or next_arg in subcommands:
@@ -251,8 +250,9 @@ def _preprocess_agent_mode(argv: List[str]) -> List[str]:
                     i += 1
             else:
                 result.append("--agent-mode=auto")
-        elif arg.startswith("--agent-mode="):
-            result.append(arg)
+        elif arg.startswith(("-m=", "--agent-mode=")):
+            _, value = arg.split("=", 1)
+            result.append(f"--agent-mode={value}")
         else:
             result.append(arg)
         i += 1
@@ -944,7 +944,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     _TOP_LEVEL_COMMANDS = {"workspace", "docs", "project", "models"}
     _TOP_LEVEL_OPTIONS = {
         "-h", "--help", "--version", "-w", "--workspace",
-        "--list-docs", "--read-doc", "--tui", "--runtime-tui",
+        "--list-docs", "--read-doc", "-t", "--tui", "--runtime-tui",
+        "-n", "--tail-lines", "-m", "--agent-mode",
     }
 
     # Detect an unknown top-level subcommand before argparse tries to parse
@@ -958,7 +959,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             skip_next = False
             continue
         if arg.startswith("-"):
-            if arg in ("--read-doc", "--tail-lines", "--agent-mode"):
+            if arg in ("--read-doc", "-n", "--tail-lines", "-m", "--agent-mode"):
                 skip_next = True
             continue
         first_positional = arg
@@ -998,13 +999,13 @@ def main(argv: Optional[List[str]] = None) -> None:
             description="these options only apply when no subcommand is given",
         )
         interactive_group.add_argument(
-            "--tui", "--runtime-tui",
+            "-t", "--tui", "--runtime-tui",
             action="store_true",
             dest="runtime_tui",
             help="use the two-pane curses UI when watching a log",
         )
         interactive_group.add_argument(
-            "--tail-lines",
+            "-n", "--tail-lines",
             type=int,
             default=300,
             dest="tail_lines",
@@ -1012,7 +1013,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             help="number of recent log lines to echo on startup in runtime mode (default: 300)",
         )
         interactive_group.add_argument(
-            "--agent-mode",
+            "-m", "--agent-mode",
             type=str,
             choices=["raw", "dtach", "tmux", "auto"],
             default="auto",
@@ -1107,13 +1108,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         description="these options only apply when no subcommand is given",
     )
     interactive_group.add_argument(
-        "--tui", "--runtime-tui",
+        "-t", "--tui", "--runtime-tui",
         action="store_true",
         dest="runtime_tui",
         help="use the two-pane curses UI when watching a log",
     )
     interactive_group.add_argument(
-        "--tail-lines",
+        "-n", "--tail-lines",
         type=int,
         default=300,
         dest="tail_lines",
@@ -1121,7 +1122,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="number of recent log lines to echo on startup in runtime mode (default: 300)",
     )
     interactive_group.add_argument(
-        "--agent-mode",
+        "-m", "--agent-mode",
         type=str,
         choices=["raw", "dtach", "tmux", "auto"],
         default="auto",
