@@ -71,6 +71,10 @@ comma-separated names with wildcards), default and example values, and behaviora
 usage document. Each usage document is the single source of truth for its script, so do not duplicate this information in
 co-located side files or in the global environment-variable reference.
 
+Files used exclusively by one CLI command must be prefixed with that CLI's name so they remain distinguishable from
+other configuration or history files. For example, the `topsailai_cli` command uses `.topsailai_cli.history.jsonl`, not
+a generic `.history.jsonl`, which distinguishes it from `.input_history.jsonl` and `.project_history.jsonl`.
+
 ## Adding a New CLI Tool
 
 When you create a new CLI script under this directory, you must also register it as a command in the parent project's `bin/` folder so it can be invoked directly by name.
