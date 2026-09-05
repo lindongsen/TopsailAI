@@ -102,16 +102,16 @@ def agent_token_threshold(threshold_context, threshold: int) -> None:
 
 @given(parsers.parse("User2Agent token usage is {tokens:d} tokens"))
 def user_token_usage(threshold_context, tokens: int) -> None:
-    """Set cached User2Agent token usage."""
+    """Set deterministic real-time User2Agent token usage."""
     harness = _harness(threshold_context)
-    harness.set_cached_tokens(tokens)
+    harness.set_realtime_token_count(tokens)
     harness.runtime.llm_model = harness.agent.llm_model
 
 
 @given(parsers.parse("Agent2LLM token usage is {tokens:d} tokens"))
 def agent_token_usage(threshold_context, tokens: int) -> None:
-    """Set cached Agent2LLM token usage."""
-    _harness(threshold_context).set_cached_tokens(tokens)
+    """Set deterministic real-time Agent2LLM token usage."""
+    _harness(threshold_context).set_realtime_token_count(tokens)
 
 
 @given(parsers.parse("both layer and shared quantity thresholds are {threshold:d}"))
@@ -141,8 +141,8 @@ def both_layer_messages(threshold_context, count: int) -> None:
 
 @given(parsers.parse("both layers use {tokens:d} tokens"))
 def both_layer_tokens(threshold_context, tokens: int) -> None:
-    """Set cached token usage for both layers."""
-    _harness(threshold_context).set_cached_tokens(tokens)
+    """Set deterministic real-time token usage for both layers."""
+    _harness(threshold_context).set_realtime_token_count(tokens)
 
 
 @when("User2Agent summary need is evaluated")

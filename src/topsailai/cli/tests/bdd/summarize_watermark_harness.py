@@ -137,6 +137,18 @@ class SummarizeWatermarkHarness:
         """Set the cached TokenStat value used by non-realtime checks."""
         self.agent.llm_model.tokenStat.current_tokens = tokens
 
+    def set_realtime_token_count(self, tokens: int) -> None:
+        """Make explicit-message token checks return a deterministic value.
+
+        Production ``_get_current_tokens(messages=...)`` always counts the
+        explicitly passed messages in real time, ignoring the cached
+        ``TokenStat.current_tokens``. Patch the production ``count_tokens``
+        dependency so threshold scenarios can drive the exact token value.
+        """
+        import topsailai.workspace.context.base as base_module
+
+        self.monkeypatch.setattr(base_module, "count_tokens", lambda _: tokens)
+
     def evaluate_session_retention(self, agent_count: int, session_count: int) -> None:
         """Drive real Agent2LLM retention logic without invoking an LLM."""
         self.set_agent_messages(agent_count)
