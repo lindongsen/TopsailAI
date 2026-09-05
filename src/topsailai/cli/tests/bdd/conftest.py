@@ -17,6 +17,7 @@ pytest_plugins = [
     "tests.bdd.steps.summarize_watermark_steps",
     "tests.bdd.steps.summarize_head_retention_steps",
     "tests.bdd.steps.summarize_threshold_steps",
+    "tests.bdd.steps.summarize_runtime_messages_steps",
     "tests.bdd.steps.hard_interrupt_steps",
     "tests.bdd.steps.hard_interrupt_mock_server_steps",
     "tests.bdd.steps.streaming_mock_server_steps",
