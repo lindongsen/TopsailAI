@@ -66,6 +66,7 @@ class TestStreamFileCursesPath(unittest.TestCase):
                 default_session_id="s1",
                 default_stdout_path="/tmp/tasks/s1.123.session.stdout",
                 default_pid=123,
+                default_session_pid=456,
             )
         finally:
             os.unlink(path)
@@ -78,6 +79,7 @@ class TestStreamFileCursesPath(unittest.TestCase):
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
             123,
+            default_session_pid=456,
         )
         self.assertEqual(cli_state.current_scope, "workspace")
         self.assertIsNone(cli_state.current_session_id)
@@ -96,6 +98,7 @@ class TestStreamFileCursesPath(unittest.TestCase):
                 default_session_id="s1",
                 default_stdout_path="/tmp/tasks/s1.123.session.stdout",
                 default_pid=123,
+                default_session_pid=456,
             )
         finally:
             os.unlink(path)
@@ -108,6 +111,7 @@ class TestStreamFileCursesPath(unittest.TestCase):
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
             123,
+            default_session_pid=456,
         )
         self.assertEqual(cli_state.current_scope, "workspace")
         self.assertIsNone(cli_state.current_session_id)
@@ -131,6 +135,7 @@ class TestRunCursesUi(unittest.TestCase):
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
             default_pid=123,
+            default_session_pid=456,
         )
 
         call_kwargs = mock_ui_cls.call_args.kwargs
@@ -150,6 +155,7 @@ class TestRunCursesUi(unittest.TestCase):
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
             123,
+            default_session_pid=456,
         )
         mock_ui.run.assert_called_once_with()
 

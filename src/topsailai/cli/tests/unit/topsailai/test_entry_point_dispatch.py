@@ -13,6 +13,7 @@ Covers:
 import os
 import runpy
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -64,6 +65,91 @@ class TestEntryPointShim(unittest.TestCase):
         finally:
             sys.argv = original_argv
             os.chdir(original_cwd)
+
+    def _run_shim_for_environment(self, startup_cwd, environ):
+        """Run the shim from one startup directory with an isolated environment."""
+        original_argv = sys.argv
+        original_cwd = os.getcwd()
+        try:
+            sys.argv = ["topsailai_cli.py"]
+            os.chdir(startup_cwd)
+            with patch.dict(os.environ, environ, clear=True):
+                with patch("cli_topsailai.core.main"):
+                    runpy.run_path(self.shim_path, run_name="__main__")
+                return dict(os.environ)
+        finally:
+            sys.argv = original_argv
+            os.chdir(original_cwd)
+
+    def test_shim_loads_cli_environment_from_startup_directory(self):
+        """A startup-directory file loads variables before core main runs."""
+        with tempfile.TemporaryDirectory() as startup_dir:
+            with open(
+                os.path.join(startup_dir, ".topsailai_cli.env"),
+                "w",
+                encoding="utf-8",
+            ) as env_file:
+                env_file.write("TOPSAILAI_CLI_TEST_VALUE=from-cwd\n")
+
+            loaded = self._run_shim_for_environment(startup_dir, {"HOME": startup_dir})
+
+        self.assertEqual(loaded["TOPSAILAI_CLI_TEST_VALUE"], "from-cwd")
+
+    def test_shim_ignores_missing_cli_environment_file(self):
+        """Startup continues without error when neither candidate file exists."""
+        with tempfile.TemporaryDirectory() as startup_dir:
+            loaded = self._run_shim_for_environment(startup_dir, {"HOME": startup_dir})
+
+        self.assertNotIn("TOPSAILAI_CLI_TEST_VALUE", loaded)
+
+    def test_shim_preserves_existing_process_environment(self):
+        """Inherited process values take precedence over file values."""
+        with tempfile.TemporaryDirectory() as startup_dir:
+            with open(
+                os.path.join(startup_dir, ".topsailai_cli.env"),
+                "w",
+                encoding="utf-8",
+            ) as env_file:
+                env_file.write("TOPSAILAI_CLI_TEST_VALUE=from-file\n")
+
+            loaded = self._run_shim_for_environment(
+                startup_dir,
+                {
+                    "HOME": startup_dir,
+                    "TOPSAILAI_CLI_TEST_VALUE": "from-process",
+                },
+            )
+
+        self.assertEqual(loaded["TOPSAILAI_CLI_TEST_VALUE"], "from-process")
+
+    def test_shim_loads_home_file_after_startup_file(self):
+        """TOPSAILAI_HOME is the fallback and cannot override startup values."""
+        with tempfile.TemporaryDirectory() as startup_dir:
+            topsailai_home = os.path.join(startup_dir, "home")
+            os.mkdir(topsailai_home)
+            with open(
+                os.path.join(startup_dir, ".topsailai_cli.env"),
+                "w",
+                encoding="utf-8",
+            ) as env_file:
+                env_file.write("TOPSAILAI_CLI_SHARED=from-cwd\n")
+            with open(
+                os.path.join(topsailai_home, ".topsailai_cli.env"),
+                "w",
+                encoding="utf-8",
+            ) as env_file:
+                env_file.write(
+                    "TOPSAILAI_CLI_SHARED=from-home\n"
+                    "TOPSAILAI_CLI_HOME_ONLY=from-home\n"
+                )
+
+            loaded = self._run_shim_for_environment(
+                startup_dir,
+                {"HOME": startup_dir, "TOPSAILAI_HOME": topsailai_home},
+            )
+
+        self.assertEqual(loaded["TOPSAILAI_CLI_SHARED"], "from-cwd")
+        self.assertEqual(loaded["TOPSAILAI_CLI_HOME_ONLY"], "from-home")
 
 
 class TestBinDispatchWiring(unittest.TestCase):

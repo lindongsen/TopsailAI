@@ -33,6 +33,10 @@ Because the script is registered in `../bin/` as `topsailai`, you can also run i
 topsailai
 ```
 
+## Environment File
+
+At startup, `topsailai_cli.py` loads CLI-specific environment variables from `.topsailai_cli.env`. It checks the process startup directory first and then `{TOPSAILAI_HOME}/.topsailai_cli.env`; when `TOPSAILAI_HOME` is unset, the standard `~/.topsailai` default (or `/topsailai` without `HOME`) is used. Existing process environment variables have highest priority, and values loaded from the startup directory take priority over values in the TopsailAI home file. Missing files are ignored.
+
 ## Options
 
 These options apply only to the default interactive mode (no subcommand). They control the runtime/watch behavior when you start the CLI interactively.
