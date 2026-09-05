@@ -1,5 +1,8 @@
 """Unique BDD steps for OpenAI SDK client reuse."""
 
+import json
+import os
+
 import pytest
 from pytest_bdd import given, then, when
 
@@ -20,6 +23,24 @@ def given_openai_client_reuse_environment(openai_client_reuse_ctx):
     assert openai_client_reuse_ctx.server_thread.is_alive()
 
 
+@given("native Agent2LLM tool calls are explicitly enabled")
+def given_native_agent2llm_tool_calls_enabled(monkeypatch):
+    """Select the production native tool-call mode explicitly."""
+    monkeypatch.setenv("TOPSAILAI_USE_TOOL_CALLS", "1")
+    monkeypatch.setenv("TOPSAILAI_USE_TOOL_CALLS_MODEL_PREFIXES", "")
+    assert os.environ.get("TOPSAILAI_USE_TOOL_CALLS") == "1"
+    assert os.environ.get("TOPSAILAI_USE_TOOL_CALLS_MODEL_PREFIXES") == ""
+
+
+@given("native Agent2LLM tool calls are explicitly disabled")
+def given_native_agent2llm_tool_calls_disabled(monkeypatch):
+    """Select the production non-native tool-call mode explicitly."""
+    monkeypatch.setenv("TOPSAILAI_USE_TOOL_CALLS", "0")
+    monkeypatch.setenv("TOPSAILAI_USE_TOOL_CALLS_MODEL_PREFIXES", "")
+    assert os.environ.get("TOPSAILAI_USE_TOOL_CALLS") == "0"
+    assert os.environ.get("TOPSAILAI_USE_TOOL_CALLS_MODEL_PREFIXES") == ""
+
+
 @when("Agent2LLM and runtime summarization each send one real LLM request")
 def when_openai_client_reuse_paths_run(openai_client_reuse_ctx):
     """Exercise both production LLM paths against the loopback provider."""
@@ -35,6 +56,38 @@ def then_openai_client_reuse_server_count(openai_client_reuse_ctx):
     assert all(record["parsed"] for record in state["request_bodies"]), state
 
 
+@then("the enabled native Agent2LLM request carries the summary cache test tool")
+def then_native_agent2llm_request_carries_tool(request):
+    """Assert native mode injected the registered tool at the wire boundary."""
+    context = request.getfixturevalue(
+        "agent_model_summary_ctx"
+        if "agent_model_summary_ctx" in request.fixturenames
+        else "openai_client_reuse_ctx"
+    )
+    state = context.state()
+    agent_body = state["request_bodies"][0]["body"]
+    tool_names = [
+        tool["function"]["name"]
+        for tool in agent_body.get("tools", [])
+    ]
+    assert tool_names == ["summary_cache_tool"], state
+    assert agent_body.get("tool_choice") == "auto", state
+
+
+@then("the disabled native Agent2LLM request omits tools and tool choice")
+def then_non_native_agent2llm_request_omits_tools(request):
+    """Assert non-native mode omits tool parameters at the wire boundary."""
+    context = request.getfixturevalue(
+        "agent_model_summary_ctx"
+        if "agent_model_summary_ctx" in request.fixturenames
+        else "openai_client_reuse_ctx"
+    )
+    state = context.state()
+    agent_body = state["request_bodies"][0]["body"]
+    assert "tools" not in agent_body, state
+    assert "tool_choice" not in agent_body, state
+
+
 @then("the Agent2LLM and summary request bodies share the complete prompt prefix")
 def then_openai_client_reuse_complete_prefix(openai_client_reuse_ctx):
     """Assert summary preserves messages, ordered tools, and tool choice."""
@@ -46,8 +99,13 @@ def then_openai_client_reuse_complete_prefix(openai_client_reuse_ctx):
     summary_messages = summary_body["messages"]
 
     assert summary_messages[:len(agent_messages)] == agent_messages, state
-    assert summary_body["tools"] == agent_body["tools"], state
-    assert summary_body["tool_choice"] == agent_body["tool_choice"] == "auto", state
+    assert summary_body.get("tools") == agent_body.get("tools"), state
+    assert summary_body.get("tool_choice") == agent_body.get("tool_choice"), state
+    if agent_body.get("tools"):
+        assert agent_body.get("tool_choice") == "auto", state
+    else:
+        assert "tools" not in summary_body, state
+        assert "tool_choice" not in summary_body, state
     assert any(
         message.get("role") == "user"
         and "Summarize this runtime context." in str(message.get("content", ""))
@@ -143,8 +201,13 @@ def then_agent_model_summary_complete_prefix(agent_model_summary_ctx):
     summary_messages = summary_body["messages"]
 
     assert summary_messages[:len(agent_messages)] == agent_messages, state
-    assert summary_body["tools"] == agent_body["tools"], state
-    assert summary_body["tool_choice"] == agent_body["tool_choice"] == "auto", state
+    assert summary_body.get("tools") == agent_body.get("tools"), state
+    assert summary_body.get("tool_choice") == agent_body.get("tool_choice"), state
+    if agent_body.get("tools"):
+        assert agent_body.get("tool_choice") == "auto", state
+    else:
+        assert "tools" not in summary_body, state
+        assert "tool_choice" not in summary_body, state
     assert any(
         message.get("role") == "user"
         and "Summarize this runtime context." in str(message.get("content", ""))
@@ -185,4 +248,6 @@ def then_agent_model_summary_remains_usable(agent_model_summary_ctx):
     """Assert wrapper cleanup did not close the model used by the later request."""
     response, content = agent_model_summary_ctx.agent_response
     assert response is not None
-    assert content == "Agent2LLM response"
+    assert json.loads(content) == [
+        {"step_name": "final_answer", "raw_text": "Agent2LLM response"}
+    ]

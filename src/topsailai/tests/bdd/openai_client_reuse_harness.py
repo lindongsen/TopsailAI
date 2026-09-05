@@ -9,11 +9,11 @@ from typing import Any
 
 from tests.mock.llm_mock_server import MockServerConfig, create_server
 from topsailai.ai_base.agent_base import AgentRun
+from topsailai.ai_base.agent_types.react import Step4ReAct
 from topsailai.ai_base.llm_pool.openai_client_pool import (
     default_openai_client_pool,
 )
 from topsailai.tools.base import init as tool_registry
-from topsailai.tools.base.common import get_tools_for_chat
 from topsailai.workspace.context.base import ContextRuntimeBase
 
 
@@ -26,7 +26,9 @@ class OpenAIClientReuseScenario:
         default_openai_client_pool.close_all()
         self.server = create_server(MockServerConfig(
             port=0,
-            reply="Agent2LLM response",
+            reply=json.dumps([
+                {"step_name": "final_answer", "raw_text": "Agent2LLM response"}
+            ]),
             stream_chunks=("Runtime summary response",),
         ))
         self.server_thread = threading.Thread(
@@ -67,10 +69,7 @@ class OpenAIClientReuseScenario:
         )
         self.runtime = ContextRuntimeBase()
         self.runtime.ai_agent = self.agent
-        self.agent.messages.append(
-            {"role": "user", "content": "runtime context to summarize"}
-        )
-        self.runtime.messages = self.agent.messages[:]
+        self.runtime.messages = []
         self.agent_response = None
         self.summary_chat = None
         self.summary_answer = None
@@ -80,17 +79,13 @@ class OpenAIClientReuseScenario:
         self.tool_call_count += 1
         return "unexpected tool execution"
 
-    def _tools(self) -> list[dict[str, Any]]:
-        """Build tools through the same helper used by production Agent2LLM."""
-        return list(get_tools_for_chat(self.agent.available_tools).values())
-
     def _send_agent_prefix_request(self) -> None:
-        """Send the exact Agent2LLM prefix that runtime summary should reuse."""
-        self.agent_response = self.agent.llm_model.call_llm_model(
-            self.agent.messages,
-            tools=self._tools(),
-            tool_choice="auto",
+        """Send the cache prefix through the selected Agent2LLM tool mode."""
+        self.agent_response = self.agent.run(
+            Step4ReAct(),
+            "runtime context to summarize",
         )
+        self.runtime.messages = self.agent.messages[:]
 
     def exercise_both_paths(self) -> None:
         """Send one real Agent2LLM prefix and one runtime summary request."""
