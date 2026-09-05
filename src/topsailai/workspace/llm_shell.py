@@ -109,7 +109,7 @@ def get_llm_chat(
         system_prompt: str = "",
         more_prompt: str = "",
         max_tokens: int = 3000,
-        temperature: float = 0.3,
+        temperature: float = None,
         need_stdout: bool = True,
         need_input_message: bool = True,
         need_print_session: bool = True,
@@ -136,7 +136,9 @@ def get_llm_chat(
         max_tokens (int, optional): Maximum number of tokens in the LLM response.
             Defaults to 3000.
         temperature (float, optional): The temperature parameter for LLM generation.
-            Defaults to 0.3.
+            When None (default), the value from the TOPSAILAI_TEMPERATURE environment
+            variable (or the LLMModel default 0.3) is preserved. Pass an explicit value
+            to override it.
         need_stdout (bool, optional): Whether to enable stdout content sending.
             Defaults to True.
         need_input_message (bool, optional): Whether to prompt for user input if
@@ -198,7 +200,8 @@ def get_llm_chat(
     if need_stdout:
         llm_model.content_senders.append(ContentStdout())
     llm_model.max_tokens = max(3000, max_tokens, llm_model.max_tokens)
-    llm_model.temperature = temperature
+    if temperature is not None:
+        llm_model.temperature = temperature
 
     prompt_ctl = PromptBase(sys_prompt_content or "You are a helpful assistant.")
     if messages_from_session:

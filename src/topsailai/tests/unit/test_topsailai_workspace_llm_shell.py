@@ -556,20 +556,21 @@ class TestGetLLMChat(unittest.TestCase):
     @patch('topsailai.workspace.llm_shell.ctx_manager')
     @patch('topsailai.workspace.llm_shell.set_thread_var')
     @patch('topsailai.workspace.llm_shell.set_thread_name')
-    def test_get_llm_chat_default_temperature_is_0_3(
+    def test_get_llm_chat_default_preserves_env_temperature(
         self, mock_set_thread_name, mock_set_thread_var, mock_ctx, mock_env_tool,
         mock_file_tool, mock_prompt_base, mock_llm_model_class, mock_get_message
     ):
-        """Test get_llm_chat defaults temperature to 0.3 (matching runtime agent)."""
+        """Test get_llm_chat preserves the model's env-read temperature when not overridden."""
         from topsailai.workspace.llm_shell import get_llm_chat
 
         mock_get_message.return_value = "User input"
         mock_env_tool.get_session_id.return_value = self.test_session_id
         mock_file_tool.get_file_content_fuzzy.return_value = (True, self.test_system_prompt)
 
+        # LLMModel() reads TOPSAILAI_TEMPERATURE from env; simulate a user-set value.
         mock_llm_instance = MagicMock()
         mock_llm_instance.max_tokens = 4096
-        mock_llm_instance.temperature = 0.8
+        mock_llm_instance.temperature = 0.7  # Value read from TOPSAILAI_TEMPERATURE env
         mock_llm_instance.content_senders = []
         mock_llm_model_class.return_value = mock_llm_instance
 
@@ -587,7 +588,50 @@ class TestGetLLMChat(unittest.TestCase):
             need_print_session=False
         )
 
-        # Default temperature should be 0.3
+        # No explicit temperature: the env-read value must NOT be overwritten.
+        self.assertEqual(mock_llm_instance.temperature, 0.7)
+
+    @patch('topsailai.workspace.input_tool.get_message')
+    @patch('topsailai.workspace.llm_shell.LLMModel')
+    @patch('topsailai.workspace.llm_shell.PromptBase')
+    @patch('topsailai.workspace.llm_shell.file_tool')
+    @patch('topsailai.workspace.llm_shell.env_tool')
+    @patch('topsailai.workspace.llm_shell.ctx_manager')
+    @patch('topsailai.workspace.llm_shell.set_thread_var')
+    @patch('topsailai.workspace.llm_shell.set_thread_name')
+    def test_get_llm_chat_default_temperature_is_0_3_when_env_unset(
+        self, mock_set_thread_name, mock_set_thread_var, mock_ctx, mock_env_tool,
+        mock_file_tool, mock_prompt_base, mock_llm_model_class, mock_get_message
+    ):
+        """Test get_llm_chat keeps the LLMModel default 0.3 when env is unset."""
+        from topsailai.workspace.llm_shell import get_llm_chat
+
+        mock_get_message.return_value = "User input"
+        mock_env_tool.get_session_id.return_value = self.test_session_id
+        mock_file_tool.get_file_content_fuzzy.return_value = (True, self.test_system_prompt)
+
+        # LLMModel() default is 0.3 when TOPSAILAI_TEMPERATURE is unset.
+        mock_llm_instance = MagicMock()
+        mock_llm_instance.max_tokens = 4096
+        mock_llm_instance.temperature = 0.3
+        mock_llm_instance.content_senders = []
+        mock_llm_model_class.return_value = mock_llm_instance
+
+        mock_prompt_instance = MagicMock()
+        mock_prompt_instance.messages = []
+        mock_prompt_base.return_value = mock_prompt_instance
+
+        mock_ctx.get_messages_by_session.return_value = []
+        mock_ctx.create_session.return_value = None
+
+        chat = get_llm_chat(
+            message=self.test_message,
+            session_id=self.test_session_id,
+            need_input_message=False,
+            need_print_session=False
+        )
+
+        # No explicit temperature and env unset: stays at the LLMModel default 0.3.
         self.assertEqual(mock_llm_instance.temperature, 0.3)
 
     @patch('topsailai.workspace.input_tool.get_message')
