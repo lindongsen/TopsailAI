@@ -333,6 +333,54 @@ class TestContextRuntimeBaseEnvMethods:
 
         assert result == 0
 
+    @patch('topsailai.workspace.context.base.print_tool.print_warning')
+    @patch('topsailai.workspace.context.base.ctx_manager')
+    def test_summary_cached_tokens_do_not_warn_when_not_decreased(
+        self, mock_ctx_manager, mock_print_warning
+    ):
+        """Do not warn when the summary request preserves or increases cache use."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        runtime = ContextRuntimeBase()
+        token_stat = MagicMock(current_cached_tokens=10)
+        llm_chat = MagicMock()
+        llm_chat.llm_model.tokenStat = token_stat
+
+        def chat(**kwargs):
+            token_stat.current_cached_tokens = 20
+            return "summary"
+
+        llm_chat.chat.side_effect = chat
+
+        assert runtime._chat_for_summary(llm_chat, need_print=False) == "summary"
+        llm_chat.chat.assert_called_once_with(need_print=False)
+        mock_print_warning.assert_not_called()
+
+    @patch('topsailai.workspace.context.base.print_tool.print_warning')
+    @patch('topsailai.workspace.context.base.ctx_manager')
+    def test_summary_cached_tokens_warn_when_decreased(
+        self, mock_ctx_manager, mock_print_warning
+    ):
+        """Warn through print_tool when summary cache use decreases."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        runtime = ContextRuntimeBase()
+        token_stat = MagicMock(current_cached_tokens=20)
+        llm_chat = MagicMock()
+        llm_chat.llm_model.tokenStat = token_stat
+
+        def chat(**kwargs):
+            token_stat.current_cached_tokens = 10
+            return "summary"
+
+        llm_chat.chat.side_effect = chat
+
+        assert runtime._chat_for_summary(llm_chat, need_print=False) == "summary"
+        mock_print_warning.assert_called_once_with(
+            "[summarize] cached tokens decreased after summarization: "
+            "cached_tokens_before=20, cached_tokens_after=10"
+        )
+
 
 # ==============================================================================
 # Group C: ContextRuntimeAgent2LLM Tests

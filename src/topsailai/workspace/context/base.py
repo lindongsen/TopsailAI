@@ -1086,6 +1086,24 @@ class ContextRuntimeBase(object):
             need_print_message=False,
         )
 
+    def _chat_for_summary(self, llm_chat: LLMChat, *args, **kwargs):
+        """Run one summary request and warn if its cached-token count decreases."""
+        token_stat = getattr(llm_chat.llm_model, "tokenStat", None)
+        cached_tokens_before = getattr(token_stat, "current_cached_tokens", None)
+        answer = llm_chat.chat(*args, **kwargs)
+        cached_tokens_after = getattr(token_stat, "current_cached_tokens", None)
+        if (
+                cached_tokens_before is not None
+                and cached_tokens_after is not None
+                and cached_tokens_before > cached_tokens_after
+            ):
+            print_tool.print_warning(
+                "[summarize] cached tokens decreased after summarization: "
+                f"cached_tokens_before={cached_tokens_before}, "
+                f"cached_tokens_after={cached_tokens_after}"
+            )
+        return answer
+
     def _summarize_messages(
             self,
             messages,
@@ -1135,7 +1153,7 @@ Summarize Messages
             message=message_title + one_msg,
             system_prompt=self._get_summary_prompt(prompt=prompt, extra_prompt=extra_prompt),
         )
-        answer = llm_chat.chat(
+        answer = self._chat_for_summary(llm_chat,
             need_print=env_tool.is_interactive_mode(),
             need_env_message=False,
         )
@@ -1221,7 +1239,7 @@ Summarize Messages
             tools = list(tools_for_chat.values()) or None
 
         TIPS = "\n> DONOT INVOKE ANY TOOLS, DIRECTLY OUTPUT FINAL_ANSWER!"
-        answer = llm_chat.chat(
+        answer = self._chat_for_summary(llm_chat,
             self._get_summary_prompt(prompt=prompt, extra_prompt=extra_prompt) + TIPS,
             need_print=env_tool.is_interactive_mode(),
             need_env_message=False,
