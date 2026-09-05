@@ -139,7 +139,7 @@ The CLI and agent processes share a single workspace root referred to as `TOPSAI
 ├── skill/                 # Skill storage (local skill cache)
 ├── workspace/
 │   └── task/              # Session/task stdout, stderr, pipe, and inject files
-├── .history.jsonl         # CLI command history (from topsailai.py)
+├── .topsailai_cli.history.jsonl # CLI command history (from topsailai.py)
 ├── .input_history.jsonl   # Agent process input history
 ├── .input_completions.json # TAB completion definitions for interactive input
 ├── .project_history.jsonl # Project/workspace navigation history
@@ -154,7 +154,7 @@ The CLI and agent processes share a single workspace root referred to as `TOPSAI
 
 | File | Purpose | Produced By |
 |------|---------|-------------|
-| `.history.jsonl` | CLI command history (scope, session_id, timestamp, text) | `cli/topsailai.py` |
+| `.topsailai_cli.history.jsonl` | CLI command history (scope, session_id, timestamp, text) | `cli/topsailai.py` |
 | `.input_history.jsonl` | Agent input history in JSONL format (`{"ts", "session_id", "text"}`) | Agent processes (e.g., `topsailai_agent_chats`, `topsailai_llm_chats`) |
 | `.input_completions.json` | TAB completion items for interactive input | Agent processes |
 | `.project_history.jsonl` | Project/workspace navigation history (`{"ts", "session_id", "project_workspace", "pwd"}`) | Agent processes |
@@ -176,9 +176,9 @@ Registry entries must reference credentials by environment-variable name through
 
 ### History Rotation
 
-JSONL history files (`.history.jsonl`, `.input_history.jsonl`, `.project_history.jsonl`) are size-bounded and rotated automatically:
+JSONL history files (`.topsailai_cli.history.jsonl`, `.input_history.jsonl`, `.project_history.jsonl`) are size-bounded and rotated automatically:
 
-- `TOPSAILAI_HISTORY_MAX_SIZE_MB` / `TOPSAILAI_HISTORY_MAX_ENTRIES` / `TOPSAILAI_HISTORY_MAX_BACKUPS` control `.history.jsonl` rotation in `topsailai.py`.
+- `TOPSAILAI_HISTORY_MAX_SIZE_MB` / `TOPSAILAI_HISTORY_MAX_ENTRIES` / `TOPSAILAI_HISTORY_MAX_BACKUPS` control `.topsailai_cli.history.jsonl` rotation in `topsailai.py`.
 - `TOPSAILAI_INPUT_HISTORY_MAX_SIZE` controls `.input_history.jsonl` rotation.
 - `TOPSAILAI_PROJECT_HISTORY_MAX_SIZE` controls `.project_history.jsonl` rotation.
 - `TOPSAILAI_HISTORY_LOAD_MAX_ENTRIES` limits how many recent records are loaded into memory from `.input_history.jsonl` and `.project_history.jsonl`.

@@ -1324,7 +1324,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     task_dir = os.path.join(topsailai_home, "workspace", "task")
 
     # Initialize command history
-    history_path = os.path.join(topsailai_home, ".history.jsonl")
+    history_path = os.path.join(topsailai_home, ".topsailai_cli.history.jsonl")
     state.history_manager = HistoryManager(history_path)
     state.history_manager.load_all()
     load_readline_history(

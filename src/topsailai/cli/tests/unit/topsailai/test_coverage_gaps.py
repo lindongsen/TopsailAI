@@ -1609,6 +1609,9 @@ class TestMainRefresh(unittest.TestCase):
             cli_state.yaml_commands = []
             cli_state.history_manager = None
             cli_core.main()
+            mock_history_cls.assert_called_once_with(
+                os.path.join(home, ".topsailai_cli.history.jsonl")
+            )
             self.assertEqual(mock_discover.call_count, 2)
             mock_print_table.assert_called()
         finally:

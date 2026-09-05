@@ -165,7 +165,7 @@ class TestHistoryManagerRotation(unittest.TestCase):
     def test_rotation_triggered_when_size_exceeded(self):
         """The active file is rotated when it exceeds the size threshold."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = os.path.join(tmpdir, "history.jsonl")
+            path = os.path.join(tmpdir, ".topsailai_cli.history.jsonl")
             self._write_oversized_file(path)
             manager = HistoryManager(path)
             with patch.dict(
@@ -177,18 +177,21 @@ class TestHistoryManagerRotation(unittest.TestCase):
             ):
                 manager.add("after-rotation")
 
+            backup_path = os.path.join(
+                tmpdir, ".topsailai_cli.history.jsonl.1"
+            )
             self.assertTrue(os.path.exists(path))
-            self.assertTrue(os.path.exists(path + ".1"))
+            self.assertTrue(os.path.exists(backup_path))
             with open(path, "r", encoding="utf-8") as f:
                 current = f.read()
             self.assertIn("after-rotation", current)
-            with open(path + ".1", "rb") as f:
+            with open(backup_path, "rb") as f:
                 self.assertGreater(len(f.read()), 1024 * 1024)
 
     def test_only_one_backup_kept(self):
         """Only one backup is kept; the previous backup is overwritten."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = os.path.join(tmpdir, "history.jsonl")
+            path = os.path.join(tmpdir, ".topsailai_cli.history.jsonl")
             manager = HistoryManager(path)
             with patch.dict(
                 os.environ,
@@ -209,7 +212,7 @@ class TestHistoryManagerRotation(unittest.TestCase):
     def test_no_data_loss_during_rotation(self):
         """Existing entries are preserved in the rotated backup file."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = os.path.join(tmpdir, "history.jsonl")
+            path = os.path.join(tmpdir, ".topsailai_cli.history.jsonl")
             with open(path, "w", encoding="utf-8") as f:
                 f.write('{"text": "first", "scope": "workspace"}\n')
                 f.write('{"text": "second", "scope": "workspace"}\n')
@@ -237,7 +240,7 @@ class TestHistoryManagerRotation(unittest.TestCase):
     def test_rotation_not_triggered_below_threshold(self):
         """No rotation occurs when the file is below the size threshold."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = os.path.join(tmpdir, "history.jsonl")
+            path = os.path.join(tmpdir, ".topsailai_cli.history.jsonl")
             with open(path, "w", encoding="utf-8") as f:
                 f.write('{"text": "small", "scope": "workspace"}\n')
             manager = HistoryManager(path)
