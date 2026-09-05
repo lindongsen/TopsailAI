@@ -13,9 +13,9 @@ programming_language: python
 
 ## Cache Model
 
-The server canonicalizes each message and compares complete messages from the beginning of the current request with every retained historical request. `usage.prompt_tokens_details.cached_tokens` is the token estimate for the best exact common message prefix. The estimate uses `ceil(canonical_message_characters / chars_per_token)` per message.
+The server canonicalizes each message and compares complete messages from the beginning of the current request with every retained historical request whose ordered `tools` schema and `tool_choice` are identical. `usage.prompt_tokens_details.cached_tokens` is the token estimate for the best exact common message prefix plus the matching tools and tool-choice components. The estimate uses `ceil(canonical_component_characters / chars_per_token)` for each message and request component.
 
-This is an intentionally idealized KV-cache model. The cache key includes only the canonicalized `messages`; request fields such as `model`, `tools`, and `tool_choice` are intentionally ignored. Real providers can impose token-block minimums, TTLs, routing constraints, model-specific cache policies, and broader cache-key scopes.
+This is an intentionally idealized KV-cache model. Its cache identity includes canonicalized `messages`, ordered `tools`, and `tool_choice`; a tools or tool-choice mismatch produces no cache hit. Fields such as `model` remain intentionally ignored. Real providers can impose token-block minimums, TTLs, routing constraints, model-specific cache policies, serialization-order requirements, and broader cache-key scopes.
 
 ## Start
 

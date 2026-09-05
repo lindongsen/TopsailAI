@@ -12,6 +12,8 @@ from topsailai.ai_base.agent_base import AgentRun
 from topsailai.ai_base.llm_pool.openai_client_pool import (
     default_openai_client_pool,
 )
+from topsailai.tools.base import init as tool_registry
+from topsailai.tools.base.common import get_tools_for_chat
 from topsailai.workspace.context.base import ContextRuntimeBase
 
 
@@ -45,6 +47,8 @@ class OpenAIClientReuseScenario:
             "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT": "0",
             "TOPSAILAI_LLM_RESPONSE_EVENTS_ENABLED": "0",
             "TOPSAILAI_MODEL_SETTINGS": "",
+            "TOPSAILAI_USE_TOOL_CALLS": "1",
+            "TOPSAILAI_USE_TOOL_CALLS_MODEL_PREFIXES": "",
         }
         for key, value in values.items():
             monkeypatch.setenv(key, value)
@@ -53,28 +57,44 @@ class OpenAIClientReuseScenario:
             "topsailai.workspace.llm_shell.record_project_history",
             lambda _session_id: None,
         )
+        self.tool_call_count = 0
+        self._previous_tool = tool_registry.TOOLS.get("summary_cache_tool")
+        tool_registry.TOOLS["summary_cache_tool"] = self._summary_cache_tool
         self.agent = AgentRun(
             system_prompt="You are the Agent2LLM client-reuse test agent.",
-            tools={},
+            tools={"summary_cache_tool": self._summary_cache_tool},
             agent_name="BDDOpenAIClientReuse",
         )
         self.runtime = ContextRuntimeBase()
         self.runtime.ai_agent = self.agent
-        self.runtime.messages = [
-            {"role": "user", "content": "runtime context to summarize"},
-        ]
+        self.agent.messages.append(
+            {"role": "user", "content": "runtime context to summarize"}
+        )
+        self.runtime.messages = self.agent.messages[:]
         self.agent_response = None
         self.summary_chat = None
         self.summary_answer = None
 
-    def exercise_both_paths(self) -> None:
-        """Send one real request from Agent2LLM and one from summarization."""
-        self.agent_response = self.agent.llm_model.call_llm_model([
-            {"role": "user", "content": "agent2llm identity request"},
-        ])
-        self.agent.messages.append(
-            {"role": "user", "content": "runtime context to summarize"}
+    def _summary_cache_tool(self) -> str:
+        """Record any forbidden local execution of the summary test tool."""
+        self.tool_call_count += 1
+        return "unexpected tool execution"
+
+    def _tools(self) -> list[dict[str, Any]]:
+        """Build tools through the same helper used by production Agent2LLM."""
+        return list(get_tools_for_chat(self.agent.available_tools).values())
+
+    def _send_agent_prefix_request(self) -> None:
+        """Send the exact Agent2LLM prefix that runtime summary should reuse."""
+        self.agent_response = self.agent.llm_model.call_llm_model(
+            self.agent.messages,
+            tools=self._tools(),
+            tool_choice="auto",
         )
+
+    def exercise_both_paths(self) -> None:
+        """Send one real Agent2LLM prefix and one runtime summary request."""
+        self._send_agent_prefix_request()
         self.summary_chat, self.summary_answer = self.runtime._summarize_messages(
             self.runtime.messages,
             extra_prompt="Summarize this runtime context.",
@@ -100,6 +120,10 @@ class OpenAIClientReuseScenario:
         if self.summary_chat is not None:
             self.summary_chat.close()
         self.agent.close()
+        if self._previous_tool is None:
+            tool_registry.TOOLS.pop("summary_cache_tool", None)
+        else:
+            tool_registry.TOOLS["summary_cache_tool"] = self._previous_tool
         self.server.shutdown()
         self.server.server_close()
         self.server_thread.join(timeout=5)
@@ -122,10 +146,8 @@ class AgentModelSummaryScenario(OpenAIClientReuseScenario):
         self.borrowed_handle = None
 
     def exercise_borrowed_summary_and_later_request(self) -> None:
-        """Summarize, close the borrowing wrapper, then reuse the agent model."""
-        self.agent.messages.append(
-            {"role": "user", "content": "runtime context to summarize"}
-        )
+        """Warm the prefix, summarize, close the wrapper, then reuse the model."""
+        self._send_agent_prefix_request()
         self.summary_chat, self.summary_answer = self.runtime._summarize_messages(
             self.runtime.messages,
             extra_prompt="Summarize this runtime context.",

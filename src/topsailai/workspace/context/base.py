@@ -19,6 +19,7 @@ from topsailai.ai_base.constants import (
 from topsailai.ai_base.agent_base import (
     AgentBase,
 )
+from topsailai.tools.base.common import get_tools_for_chat
 from topsailai.context import ctx_manager
 from topsailai.context.token import count_tokens
 from topsailai.tools import (
@@ -1213,11 +1214,19 @@ Summarize Messages
             system_prompt="",
         )
         llm_chat.prompt_ctl.messages = all_messages[:]
+
+        tools = None
+        if self.ai_agent and env_tool.is_use_tool_calls():
+            tools_for_chat = get_tools_for_chat(self.ai_agent.available_tools)
+            tools = list(tools_for_chat.values()) or None
+
         TIPS = "\n> DONOT INVOKE ANY TOOLS, DIRECTLY OUTPUT FINAL_ANSWER!"
         answer = llm_chat.chat(
             self._get_summary_prompt(prompt=prompt, extra_prompt=extra_prompt) + TIPS,
             need_print=env_tool.is_interactive_mode(),
             need_env_message=False,
+            tools=tools,
+            tool_choice="auto",
         )
 
         return (llm_chat, answer)

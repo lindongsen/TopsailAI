@@ -1009,6 +1009,45 @@ class TestSummarizeRuntimeMessages(unittest.TestCase):
         )
 
 
+    @patch("topsailai.workspace.context.base.get_tools_for_chat")
+    @patch("topsailai.workspace.context.base.env_tool")
+    def test_runtime_summary_forwards_active_agent_tools_for_any_processor(
+        self, mock_env_tool, mock_get_tools_for_chat
+    ):
+        """The common runtime send path preserves Agent2LLM tool schema order."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        available_tools = {"first": MagicMock(), "second": MagicMock()}
+        ordered_schemas = {
+            "first": {"type": "function", "function": {"name": "first"}},
+            "second": {"type": "function", "function": {"name": "second"}},
+        }
+        mock_env_tool.is_use_tool_calls.return_value = True
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_get_tools_for_chat.return_value = ordered_schemas
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = MagicMock()
+        runtime.ai_agent.available_tools = available_tools
+        runtime.ai_agent.messages = [{"role": "user", "content": "original"}]
+        runtime._get_summary_prompt = MagicMock(return_value="summary prompt")
+        summary_chat = MagicMock()
+        summary_chat.chat.return_value = "summary"
+        runtime._build_summary_chat = MagicMock(return_value=summary_chat)
+
+        runtime._summarize_runtime_messages(runtime.ai_agent.messages)
+
+        mock_get_tools_for_chat.assert_called_once_with(available_tools)
+        self.assertEqual(
+            summary_chat.chat.call_args.kwargs["tools"],
+            list(ordered_schemas.values()),
+        )
+        self.assertEqual(
+            summary_chat.chat.call_args.kwargs["tool_choice"],
+            "auto",
+        )
+
+
 class TestMessageEqual(unittest.TestCase):
     """Test suite for _message_equal semantic comparison helper."""
 

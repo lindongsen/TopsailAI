@@ -35,33 +35,41 @@ def then_openai_client_reuse_server_count(openai_client_reuse_ctx):
     assert all(record["parsed"] for record in state["request_bodies"]), state
 
 
-@then("the Agent2LLM and summary request bodies reached the mock server")
-def then_openai_client_reuse_request_bodies(openai_client_reuse_ctx):
-    """Assert the provider observed messages unique to both production paths."""
+@then("the Agent2LLM and summary request bodies share the complete prompt prefix")
+def then_openai_client_reuse_complete_prefix(openai_client_reuse_ctx):
+    """Assert summary preserves messages, ordered tools, and tool choice."""
     state = openai_client_reuse_ctx.state()
-    request_messages = [
-        record["body"]["messages"] for record in state["request_bodies"]
+    agent_body, summary_body = [
+        record["body"] for record in state["request_bodies"]
     ]
+    agent_messages = agent_body["messages"]
+    summary_messages = summary_body["messages"]
+
+    assert summary_messages[:len(agent_messages)] == agent_messages, state
+    assert summary_body["tools"] == agent_body["tools"], state
+    assert summary_body["tool_choice"] == agent_body["tool_choice"] == "auto", state
     assert any(
-        {"role": "user", "content": "agent2llm identity request"} in messages
-        for messages in request_messages
+        message.get("role") == "user"
+        and "Summarize this runtime context." in str(message.get("content", ""))
+        for message in summary_messages[len(agent_messages):]
     ), state
-    assert any(
-        any(
-            message.get("role") == "user"
-            and "runtime context to summarize" in str(message.get("content", ""))
-            for message in messages
-        )
-        for messages in request_messages
-    ), state
-    assert any(
-        any(
-            message.get("role") == "user"
-            and "Summarize this runtime context." in str(message.get("content", ""))
-            for message in messages
-        )
-        for messages in request_messages
-    ), state
+
+
+@then("the runtime summary receives cached tokens for the Agent2LLM prompt prefix")
+def then_openai_client_reuse_cached_prefix(openai_client_reuse_ctx):
+    """Assert the provider reuses the complete first request as cache prefix."""
+    state = openai_client_reuse_ctx.state()
+    agent_usage, summary_usage = state["requests"]
+
+    assert summary_usage["cached_tokens"] > 0, state
+    assert summary_usage["cached_tokens"] == agent_usage["prompt_tokens"], state
+    assert summary_usage["cached_messages"] == agent_usage["message_count"], state
+
+
+@then("runtime summarization does not execute the summary cache test tool")
+def then_openai_client_reuse_does_not_execute_tool(openai_client_reuse_ctx):
+    """Assert carrying the schema does not dispatch its local callable."""
+    assert openai_client_reuse_ctx.tool_call_count == 0
 
 
 @then("runtime summarization uses a distinct OpenAI client lease")
@@ -115,39 +123,54 @@ def when_agent_model_summary_paths_run(agent_model_summary_ctx):
     agent_model_summary_ctx.exercise_borrowed_summary_and_later_request()
 
 
-@then("the agent model summary mock server received exactly 2 completion requests")
+@then("the agent model summary mock server received exactly 3 completion requests")
 def then_agent_model_summary_server_count(agent_model_summary_ctx):
-    """Assert the summary and later request each crossed the provider boundary."""
+    """Assert warm-up, summary, and later request crossed the provider boundary."""
     state = agent_model_summary_ctx.state()
-    assert state["total_requests"] == 2, state
-    assert len(state["request_bodies"]) == 2, state
+    assert state["total_requests"] == 3, state
+    assert len(state["request_bodies"]) == 3, state
     assert all(record["parsed"] for record in state["request_bodies"]), state
 
 
-@then("the borrowed summary and later Agent2LLM request bodies reached the mock server")
-def then_agent_model_summary_request_bodies(agent_model_summary_ctx):
-    """Assert both distinctive messages reached the real HTTP request bodies."""
+@then("the borrowed summary request shares the complete Agent2LLM prompt prefix")
+def then_agent_model_summary_complete_prefix(agent_model_summary_ctx):
+    """Assert borrowed summary preserves messages, ordered tools, and choice."""
     state = agent_model_summary_ctx.state()
-    request_messages = [
-        record["body"]["messages"] for record in state["request_bodies"]
+    agent_body, summary_body, later_body = [
+        record["body"] for record in state["request_bodies"]
     ]
+    agent_messages = agent_body["messages"]
+    summary_messages = summary_body["messages"]
+
+    assert summary_messages[:len(agent_messages)] == agent_messages, state
+    assert summary_body["tools"] == agent_body["tools"], state
+    assert summary_body["tool_choice"] == agent_body["tool_choice"] == "auto", state
     assert any(
-        any(
-            message.get("role") == "user"
-            and "runtime context to summarize" in str(message.get("content", ""))
-            for message in messages
-        )
-        for messages in request_messages
+        message.get("role") == "user"
+        and "Summarize this runtime context." in str(message.get("content", ""))
+        for message in summary_messages[len(agent_messages):]
     ), state
-    assert any(
-        any(
-            message.get("role") == "user"
-            and "agent2llm request after borrowed summary"
-            in str(message.get("content", ""))
-            for message in messages
-        )
-        for messages in request_messages
-    ), state
+    assert {
+        "role": "user",
+        "content": "agent2llm request after borrowed summary",
+    } in later_body["messages"], state
+
+
+@then("the borrowed runtime summary receives cached tokens for the Agent2LLM prompt prefix")
+def then_agent_model_summary_cached_prefix(agent_model_summary_ctx):
+    """Assert the borrowed summary reuses the complete warm-up request."""
+    state = agent_model_summary_ctx.state()
+    agent_usage, summary_usage, _later_usage = state["requests"]
+
+    assert summary_usage["cached_tokens"] > 0, state
+    assert summary_usage["cached_tokens"] == agent_usage["prompt_tokens"], state
+    assert summary_usage["cached_messages"] == agent_usage["message_count"], state
+
+
+@then("borrowed runtime summarization does not execute the summary cache test tool")
+def then_agent_model_summary_does_not_execute_tool(agent_model_summary_ctx):
+    """Assert the borrowed LLMChat path cannot dispatch the test callable."""
+    assert agent_model_summary_ctx.tool_call_count == 0
 
 
 @then("runtime summarization uses the same LLMModel and OpenAI client lease")

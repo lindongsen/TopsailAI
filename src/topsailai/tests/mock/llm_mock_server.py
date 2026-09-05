@@ -40,23 +40,36 @@ class MockServerConfig:
         if self.request_body_capacity <= 0:
             raise ValueError("request_body_capacity must be positive")
 
+def _canonical_value(value: Any) -> str:
+    """Serialize one request value deterministically for cache comparisons."""
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
 
 def _canonical_message(message: dict[str, Any]) -> str:
     """Serialize one message deterministically for cache comparisons."""
-    return json.dumps(message, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return _canonical_value(message)
 
 
 def _message_tokens(message: str, chars_per_token: int) -> int:
-    """Estimate tokens for one canonical message."""
+    """Estimate tokens for one canonical request component."""
     return max(1, (len(message) + chars_per_token - 1) // chars_per_token)
 
 
-def prompt_token_count(messages: list[dict[str, Any]], chars_per_token: int) -> int:
-    """Return the deterministic estimated prompt-token count."""
-    return sum(
+def prompt_token_count(
+    messages: list[dict[str, Any]],
+    chars_per_token: int,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: Any = None,
+) -> int:
+    """Return the deterministic estimated complete prompt-token count."""
+    token_count = sum(
         _message_tokens(_canonical_message(message), chars_per_token)
         for message in messages
     )
+    if tools:
+        token_count += _message_tokens(_canonical_value(tools), chars_per_token)
+        token_count += _message_tokens(_canonical_value(tool_choice), chars_per_token)
+    return token_count
 
 
 def common_prefix_tokens(
@@ -83,27 +96,44 @@ class PromptCache:
         """Initialize an empty prompt history."""
         self.capacity = capacity
         self.chars_per_token = chars_per_token
-        self._prompts: deque[list[dict[str, Any]]] = deque(maxlen=capacity)
+        self._prompts: deque[dict[str, Any]] = deque(maxlen=capacity)
         self._requests: deque[dict[str, Any]] = deque(maxlen=capacity)
         self._total_requests = 0
         self._lock = threading.Lock()
 
-    def record(self, messages: list[dict[str, Any]]) -> dict[str, int]:
-        """Record a prompt and return its best historical prefix match."""
+    def record(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any = None,
+    ) -> dict[str, int]:
+        """Record a complete prompt and return its best historical prefix match."""
         with self._lock:
             best_tokens = 0
             best_messages = 0
             for previous in self._prompts:
+                if _canonical_value(tools) != _canonical_value(previous["tools"]):
+                    continue
+                if _canonical_value(tool_choice) != _canonical_value(previous["tool_choice"]):
+                    continue
                 tokens, message_count = common_prefix_tokens(
                     messages,
-                    previous,
+                    previous["messages"],
                     self.chars_per_token,
                 )
+                if tools:
+                    tokens += _message_tokens(_canonical_value(tools), self.chars_per_token)
+                    tokens += _message_tokens(_canonical_value(tool_choice), self.chars_per_token)
                 if tokens > best_tokens:
                     best_tokens = tokens
                     best_messages = message_count
 
-            prompt_tokens = prompt_token_count(messages, self.chars_per_token)
+            prompt_tokens = prompt_token_count(
+                messages,
+                self.chars_per_token,
+                tools=tools,
+                tool_choice=tool_choice,
+            )
             self._total_requests += 1
             request = {
                 "request_number": self._total_requests,
@@ -112,7 +142,11 @@ class PromptCache:
                 "cached_messages": best_messages,
                 "message_count": len(messages),
             }
-            self._prompts.append(json.loads(json.dumps(messages)))
+            self._prompts.append(json.loads(json.dumps({
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": tool_choice,
+            })))
             self._requests.append(request)
             return dict(request)
 
@@ -333,7 +367,11 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
             self._error(400, "streaming is not supported")
             return
 
-        cache_result = self.server.prompt_cache.record(messages)
+        cache_result = self.server.prompt_cache.record(
+            messages,
+            tools=payload.get("tools"),
+            tool_choice=payload.get("tool_choice"),
+        )
         if payload.get("stream"):
             self._write_stream(payload, cache_result)
             return

@@ -7,7 +7,9 @@ Feature: OpenAI SDK client reuse across LLM runtimes
     Given an OpenAI client reuse environment with a private mock LLM server
     When Agent2LLM and runtime summarization each send one real LLM request
     Then the OpenAI client reuse mock server received exactly 2 completion requests
-    And the Agent2LLM and summary request bodies reached the mock server
+    And the Agent2LLM and summary request bodies share the complete prompt prefix
+    And the runtime summary receives cached tokens for the Agent2LLM prompt prefix
+    And runtime summarization does not execute the summary cache test tool
     And runtime summarization uses a distinct OpenAI client lease
     But runtime summarization reuses the Agent2LLM root OpenAI SDK client instance
     And runtime summarization reuses the Agent2LLM chat completions instance
@@ -15,7 +17,9 @@ Feature: OpenAI SDK client reuse across LLM runtimes
   Scenario: Runtime summarization borrows the active Agent2LLM model
     Given an agent model summary environment with a private mock LLM server
     When runtime summarization borrows the active model and the Agent2LLM sends a later request
-    Then the agent model summary mock server received exactly 2 completion requests
-    And the borrowed summary and later Agent2LLM request bodies reached the mock server
+    Then the agent model summary mock server received exactly 3 completion requests
+    And the borrowed summary request shares the complete Agent2LLM prompt prefix
+    And the borrowed runtime summary receives cached tokens for the Agent2LLM prompt prefix
+    And borrowed runtime summarization does not execute the summary cache test tool
     And runtime summarization uses the same LLMModel and OpenAI client lease
     And closing the borrowed summary chat leaves the Agent2LLM model usable

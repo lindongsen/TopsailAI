@@ -157,6 +157,33 @@ class TestLLMChat(unittest.TestCase):
         chat.chat(message="Hello")
         self.assertEqual(chat.last_message, "Test response")
 
+    def test_chat_forwards_ordered_tools_and_tool_choice(self):
+        """LLMChat preserves ordered schemas and the provider selection mode."""
+        from topsailai.workspace.llm_shell import LLMChat
+
+        tools = [
+            {"type": "function", "function": {"name": "first"}},
+            {"type": "function", "function": {"name": "second"}},
+        ]
+        self.mock_llm_model.chat.return_value = "summary"
+
+        chat = LLMChat(self.mock_prompt_ctl, self.mock_llm_model)
+        response = chat.chat(
+            message="summarize",
+            tools=tools,
+            tool_choice="auto",
+        )
+
+        self.assertEqual(response, "summary")
+        self.assertIs(
+            self.mock_llm_model.chat.call_args.kwargs["tools"],
+            tools,
+        )
+        self.assertEqual(
+            self.mock_llm_model.chat.call_args.kwargs["tool_choice"],
+            "auto",
+        )
+
 
 class TestGetLLMChat(unittest.TestCase):
     """Test cases for the get_llm_chat factory function."""

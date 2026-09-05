@@ -143,6 +143,30 @@ def test_identical_request_reports_full_cache_hit():
     assert second["usage"]["prompt_tokens_details"]["cached_tokens"] == second["usage"]["prompt_tokens"]
 
 
+
+def test_prompt_cache_identity_includes_tools_and_tool_choice():
+    """Cache reuse must require matching tool schemas and selection mode."""
+    messages = [_message("system", "stable"), _message("user", "hello")]
+    first_tools = [{"type": "function", "function": {"name": "first_tool"}}]
+    second_tools = [{"type": "function", "function": {"name": "second_tool"}}]
+    with running_server() as (_, base_url):
+        first = _completion(
+            base_url, messages, tools=first_tools, tool_choice="auto"
+        )
+        changed = _completion(
+            base_url, messages, tools=second_tools, tool_choice="auto"
+        )
+        matching = _completion(
+            base_url, messages, tools=first_tools, tool_choice="auto"
+        )
+
+    assert first["usage"]["prompt_tokens_details"]["cached_tokens"] == 0
+    assert changed["usage"]["prompt_tokens_details"]["cached_tokens"] == 0
+    assert (
+        matching["usage"]["prompt_tokens_details"]["cached_tokens"]
+        == matching["usage"]["prompt_tokens"]
+    )
+
 def test_cache_usage_details_can_be_omitted_without_hiding_known_usage():
     """An opt-out Provider response must retain prompt and completion usage."""
     messages = [_message("user", "usage without cache details")]

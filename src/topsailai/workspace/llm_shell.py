@@ -81,22 +81,25 @@ class LLMChat(object):
         """Close the model when leaving a direct LLM chat context."""
         self.close()
 
-    def chat(self, message: str = "", need_print: bool = True, need_env_message: bool = True) -> str:
-        """
-        Send a message to the LLM and receive a response.
-
-        This method adds the user's message to the prompt controller, updates
-        the environment variables, sends the conversation to the LLM, and
-        returns the assistant's response.
+    def chat(
+            self,
+            message: str = "",
+            need_print: bool = True,
+            need_env_message: bool = True,
+            tools: list = None,
+            tool_choice: str = "auto",
+        ) -> str:
+        """Send a message to the LLM and receive a response.
 
         Args:
-            message (str, optional): The user's message to send to the LLM.
-                Defaults to empty string.
-            need_print (bool, optional): Whether to print the message before
-                sending. Defaults to True.
+            message: The user's message to send to the LLM.
+            need_print: Whether to print the message before sending.
+            need_env_message: Whether to refresh the environment message.
+            tools: Ordered provider tool schemas to include in the request.
+            tool_choice: Provider tool-selection mode.
 
         Returns:
-            str: The LLM's response message, or empty string if no response.
+            The LLM response message, or an empty value if no response.
         """
         if message:
             self.prompt_ctl.add_user_message(message, need_print=need_print)
@@ -104,7 +107,13 @@ class LLMChat(object):
         if need_env_message:
             self.prompt_ctl.update_message_for_env()
 
-        answer = self.llm_model.chat(self.prompt_ctl.messages, for_raw=True, for_stream=True)
+        answer = self.llm_model.chat(
+            self.prompt_ctl.messages,
+            for_raw=True,
+            for_stream=True,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
         if answer:
             answer = str(answer).strip()
         self.prompt_ctl.add_assistant_message(answer)
