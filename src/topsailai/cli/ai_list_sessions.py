@@ -89,6 +89,17 @@ def _relative_time(create_time):
     return f"{years} year{'s' if years != 1 else ''} ago"
 
 
+def _cache_hit_rate(cached_tokens, total_tokens):
+    """Return the cache hit rate as a percentage string.
+
+    The cache hit rate is computed as ``cached_tokens / total_tokens``.
+    Returns an empty string when *total_tokens* is zero to avoid a
+    division-by-zero error.
+    """
+    if not total_tokens:
+        return ""
+    return f"{cached_tokens / total_tokens * 100:.1f}%"
+
 def _format_session(session, index, total_width, color_enabled):
     """Format a single session as a card-style block."""
     cyan = "\033[36m"
@@ -163,6 +174,9 @@ def _format_session(session, index, total_width, color_enabled):
     cached_tokens_label = _color("Cached Prompt Tokens:".ljust(label_width), yellow, color_enabled)
     lines.append(f"{indent}{cached_tokens_label} {total_cached_tokens}")
 
+    cache_hit_label = _color("Cache Hit Rate:".ljust(label_width), yellow, color_enabled)
+    lines.append(f"{indent}{cache_hit_label} {_cache_hit_rate(total_cached_tokens, total_prompt_tokens)}")
+
     if topsailai_home:
         home_label = _color("Home:".ljust(label_width), yellow, color_enabled)
         lines.append(f"{indent}{home_label} {topsailai_home}")
@@ -229,6 +243,7 @@ def _session_to_dict(session):
         getattr(session, "total_prompt_tokens", getattr(session, "total_tokens", 0)) or 0
     )
     total_completion_tokens = int(getattr(session, "total_completion_tokens", 0) or 0)
+    total_cached_tokens = int(getattr(session, "total_cached_tokens", 0) or 0)
     return {
         "session_id": str(session.session_id) if session.session_id else "",
         "session_name": str(session.session_name) if session.session_name else "",
@@ -240,7 +255,8 @@ def _session_to_dict(session):
         "total_prompt_tokens": total_prompt_tokens,
         "total_completion_tokens": total_completion_tokens,
         "total_usage_tokens": total_prompt_tokens + total_completion_tokens,
-        "total_cached_tokens": int(getattr(session, "total_cached_tokens", 0) or 0),
+        "total_cached_tokens": total_cached_tokens,
+        "cache_hit_rate": _cache_hit_rate(total_cached_tokens, total_prompt_tokens),
     }
 
 

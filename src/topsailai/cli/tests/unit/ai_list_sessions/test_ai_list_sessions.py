@@ -76,6 +76,23 @@ class TestRelativeTime(unittest.TestCase):
         self.assertEqual(ai_list_sessions._relative_time(None), "")
 
 
+class TestCacheHitRate(unittest.TestCase):
+    """Tests for _cache_hit_rate helper."""
+
+    def test_full_hit(self):
+        self.assertEqual(ai_list_sessions._cache_hit_rate(100, 100), "100.0%")
+
+    def test_partial_hit(self):
+        self.assertEqual(ai_list_sessions._cache_hit_rate(50, 200), "25.0%")
+
+    def test_no_hit(self):
+        self.assertEqual(ai_list_sessions._cache_hit_rate(0, 200), "0.0%")
+
+    def test_zero_total_returns_empty(self):
+        self.assertEqual(ai_list_sessions._cache_hit_rate(0, 0), "")
+        self.assertEqual(ai_list_sessions._cache_hit_rate(100, 0), "")
+
+
 class TestColorSupport(unittest.TestCase):
     """Tests for _supports_color helper."""
 
@@ -195,6 +212,7 @@ class TestFormatSessions(unittest.TestCase):
         self.assertIn("Completion Tokens: 56", output)
         self.assertIn("Usage Tokens:    1290", output)
         self.assertIn("Cached Prompt Tokens: 567", output)
+        self.assertIn("Cache Hit Rate:  45.9%", output)
         self.assertNotIn("Total Tokens:", output)
 
     @mock.patch.object(ai_list_sessions, "_supports_color", return_value=False)
@@ -310,6 +328,8 @@ class TestJsonAndFilterFlags(unittest.TestCase):
         self.assertIn("total_completion_tokens", data[0])
         self.assertIn("total_usage_tokens", data[0])
         self.assertIn("total_cached_tokens", data[0])
+        self.assertIn("cache_hit_rate", data[0])
+        self.assertEqual(data[0]["cache_hit_rate"], "")
 
     @mock.patch.object(sys.stdout, "isatty", return_value=False)
     def test_has_project_filter(self, _mock_tty):
