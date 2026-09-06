@@ -363,7 +363,7 @@ class TestSetLlm(unittest.TestCase):
         mock_agent.llm_model.replace_llm_model.assert_called_once_with(
             "old_client",
             api_key="env_secret",
-            api_base="",
+            api_base="https://api.openai.com/v1",
         )
         self.assertEqual(mock_agent.llm_model.model, "new_client")
 
@@ -592,6 +592,83 @@ class TestSelectModel(unittest.TestCase):
         self.assertEqual(mock_agent.llm_model.model, "new_client")
         self.assertEqual(mock_agent.llm_model.models, [])
         self.assertIn("ModelA", result)
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_first_switch_uses_matching_environment_connection_without_rebuild(
+        self, mock_load_registry, mock_get_agent
+    ):
+        """Test the first switch reuses a matching environment connection."""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "OldModel"
+        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.llm_model.model = "old_client"
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {
+            "ModelA": {
+                "name": "ModelA",
+                "api_base": "https://current.example.com/v1",
+                "api_key": "current_key",
+            },
+        }
+
+        environment = {
+            "OPENAI_API_BASE": "https://current.example.com/v1",
+            "OPENAI_API_KEY": "current_key",
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            from topsailai.workspace.plugin_instruction.agent import select_model
+
+            result = select_model("ModelA")
+
+            mock_agent.llm_model.replace_llm_model.assert_not_called()
+            self.assertEqual(mock_agent.llm_model.model_name, "ModelA")
+            self.assertEqual(mock_agent.llm_model.model, "old_client")
+            self.assertIn(
+                "api_base: https://current.example.com/v1 -> https://current.example.com/v1",
+                result,
+            )
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_first_switch_rebuilds_when_environment_connection_differs(
+        self, mock_load_registry, mock_get_agent
+    ):
+        """Test the first switch replaces a different environment connection."""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "OldModel"
+        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.llm_model.model = "old_client"
+        mock_agent.llm_model.replace_llm_model.return_value = "new_client"
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {
+            "ModelA": {
+                "name": "ModelA",
+                "api_base": "https://new.example.com/v1",
+                "api_key": "new_key",
+            },
+        }
+
+        environment = {
+            "OPENAI_API_BASE": "https://old.example.com/v1",
+            "OPENAI_API_KEY": "old_key",
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            from topsailai.workspace.plugin_instruction.agent import select_model
+
+            result = select_model("ModelA")
+
+            mock_agent.llm_model.replace_llm_model.assert_called_once_with(
+                "old_client",
+                api_key="new_key",
+                api_base="https://new.example.com/v1",
+            )
+            self.assertEqual(mock_agent.llm_model.model, "new_client")
+            self.assertEqual(mock_agent.llm_model.models, [])
+            self.assertIn(
+                "api_base: https://old.example.com/v1 -> https://new.example.com/v1",
+                result,
+            )
 
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")

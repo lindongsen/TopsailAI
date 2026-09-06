@@ -72,8 +72,16 @@ def _apply_model_config(agent, config: dict) -> str:
     """
     llm_model = agent.llm_model
     old_model_name = llm_model.model_name
-    old_api_base = getattr(llm_model.model_config, "api_base", "") or llm_model.model_config.get("api_base", "")
-    old_api_key = getattr(llm_model.model_config, "api_key", "") or llm_model.model_config.get("api_key", "")
+    old_api_base = (
+        getattr(llm_model.model_config, "api_base", "")
+        or llm_model.model_config.get("api_base", "")
+        or os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+    )
+    old_api_key = (
+        getattr(llm_model.model_config, "api_key", "")
+        or llm_model.model_config.get("api_key", "")
+        or os.getenv("OPENAI_API_KEY", "")
+    )
 
     new_model_name = config.get("model_name") or config.get("model") or config.get("name") or old_model_name
     new_api_base = config.get("api_base") or config.get("base_url") or old_api_base
