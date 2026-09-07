@@ -83,6 +83,39 @@ def test_low_runs_ordinary_summarization_at_current_checkpoint():
     assert runtime._classify_context_watermark.call_count == 2
 
 
+def test_skipped_dynamic_summarization_does_not_log_reduction_error():
+    """An unchanged token count is normal when both summarizers skip."""
+    agent_chat, runtime, ai_agent = _build_agent_chat(
+        [_watermark(CONTEXT_WATERMARK_LOW, 600), _watermark(CONTEXT_WATERMARK_LOW, 600)],
+        processing_answer=None,
+    )
+    runtime.summarize_messages_for_processed.return_value = None
+
+    with patch("topsailai.workspace.agent.agent_chat_base.logger.error") as log_error:
+        ai_agent.hooks_pre_chat[0](ai_agent)
+
+    log_error.assert_not_called()
+
+
+def test_completed_dynamic_summarization_still_logs_when_tokens_do_not_decrease():
+    """An ineffective completed summary remains an error."""
+    agent_chat, runtime, ai_agent = _build_agent_chat(
+        [_watermark(CONTEXT_WATERMARK_LOW, 600), _watermark(CONTEXT_WATERMARK_LOW, 600)],
+        processing_answer="summary",
+    )
+    runtime.summarize_messages_for_processed.return_value = None
+
+    with patch("topsailai.workspace.agent.agent_chat_base.logger.error") as log_error:
+        ai_agent.hooks_pre_chat[0](ai_agent)
+
+    log_error.assert_called_once_with(
+        "Context summarization did not reduce tokens: before=%s after=%s level=%s",
+        600,
+        600,
+        CONTEXT_WATERMARK_LOW,
+    )
+
+
 def test_high_runs_forced_summarization_and_bypasses_disabled_legacy_thresholds():
     """HIGH forces summarization even when both legacy triggers are disabled."""
     agent_chat, runtime, ai_agent = _build_agent_chat(
