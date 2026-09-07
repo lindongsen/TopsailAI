@@ -6,9 +6,11 @@ Unit tests for project scope support in cli_topsailai.
 import io
 import json
 import os
+import re
 import shlex
 import sys
 import tempfile
+import unicodedata
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -348,28 +350,79 @@ class TestPrintProjectTable(unittest.TestCase):
         self.assertIn("session one", output)
 
     @patch("sys.stdout", new_callable=io.StringIO)
+    def test_project_table_column_order(self, mock_stdout):
+        """Project Workspace is last while Session Name follows No."""
+        entries = [
+            {
+                "no": 1,
+                "session_id": "session-id",
+                "session_name": "session-name",
+                "project_workspace": "/work/project-a",
+                "modified_time": "07-06 10:00",
+                "status": "Idle",
+            }
+        ]
+
+        project_scope.print_project_table(entries)
+        header, _, row = mock_stdout.getvalue().splitlines()[:3]
+        ansi_escape = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+        header_columns = [
+            column.strip() for column in ansi_escape.sub("", header).split("|")
+        ]
+        row_columns = [
+            column.strip() for column in ansi_escape.sub("", row).split("|")
+        ]
+
+        self.assertEqual(header_columns, [
+            "No", "Session Name", "Session ID", "Modified", "Project Workspace"
+        ])
+        self.assertEqual(row_columns, [
+            "1", "session-name", "session-id", "07-06 10:00", "/work/project-a"
+        ])
+
+    @patch("sys.stdout", new_callable=io.StringIO)
     def test_print_project_table_empty(self, mock_stdout):
         project_scope.print_project_table([])
         output = mock_stdout.getvalue()
         self.assertIn("No sessions with project_workspace found", output)
 
     @patch("sys.stdout", new_callable=io.StringIO)
-    def test_print_project_table_truncates_long_fields(self, mock_stdout):
+    def test_project_table_matches_workspace_text_column_formatting(self, mock_stdout):
+        """Name and workspace match workspace-scope widths and truncation."""
         entries = [
             {
                 "no": 1,
-                "session_id": "s" * 50,
-                "session_name": "n" * 50,
-                "project_workspace": "/work/" + "p" * 50,
+                "session_id": "session-id",
+                "session_name": "session-name-prefix-中文-tail",
+                "project_workspace": "/discarded/中文/path/project-tail",
                 "modified_time": "07-06 10:00",
-                "modified_time_raw": "2026-07-06T10:00:00",
-                "task": "task",
                 "status": "Idle",
             }
         ]
+
         project_scope.print_project_table(entries)
-        output = mock_stdout.getvalue()
-        self.assertIn("...", output)
+        header, _, row = mock_stdout.getvalue().splitlines()[:3]
+        ansi_escape = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+        def display_width(value):
+            return sum(
+                2 if unicodedata.east_asian_width(character) in ("F", "W") else 1
+                for character in value
+                if not unicodedata.combining(character)
+            )
+
+        header_columns = ansi_escape.sub("", header).split("|")
+        row_columns = ansi_escape.sub("", row).split("|")
+        self.assertEqual(display_width(header_columns[1]), 25)
+        self.assertEqual(display_width(row_columns[1]), 25)
+        self.assertEqual(display_width(header_columns[-1]), 26)
+        self.assertEqual(display_width(row_columns[-1]), 26)
+        self.assertIn("session-name-prefix", row_columns[1])
+        self.assertNotIn("tail", row_columns[1])
+        self.assertIn("...", row_columns[1])
+        self.assertNotIn("/discarded", row_columns[-1])
+        self.assertIn("path/project-tail", row_columns[-1])
+        self.assertIn("...", row_columns[-1])
 
     @patch("sys.stdout", new_callable=io.StringIO)
     def test_running_row_is_green(self, mock_stdout):

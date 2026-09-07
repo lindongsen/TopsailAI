@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from typing import Any, Dict, Optional
 
 from cli_topsailai.colors import Colors
+from cli_topsailai.formatting import _fit_table_cell
 from cli_topsailai.log_files import _find_session_stdout_file, _get_pid_from_stdout_path
 from cli_topsailai.paths import get_topsailai_home
 from cli_topsailai.projects import (
@@ -309,26 +310,26 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
 
     w_no = 4
     w_session = 20
-    w_project = 30
+    w_project = 24
     w_modified = 14
-    w_name = 16
+    w_name = 23
 
     header = (
         f"{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE}"
         f" {'No':^{w_no}} |"
+        f" {_fit_table_cell('Session Name', w_name, 'center')} |"
         f" {'Session ID':^{w_session}} |"
-        f" {'Project Workspace':^{w_project}} |"
         f" {'Modified':^{w_modified}} |"
-        f" {'Session Name':^{w_name}} "
+        f" {_fit_table_cell('Project Workspace', w_project, 'center')} "
         f"{Colors.RESET}"
     )
     sep = (
         f"{Colors.CYAN}"
         f"{'-' * (w_no + 1)}+"
+        f"{'-' * (w_name + 2)}+"
         f"{'-' * (w_session + 2)}+"
-        f"{'-' * (w_project + 2)}+"
         f"{'-' * (w_modified + 2)}+"
-        f"{'-' * (w_name + 1)}"
+        f"{'-' * (w_project + 1)}"
         f"{Colors.RESET}"
     )
 
@@ -341,13 +342,8 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
             session_id = session_id[: w_session - 3] + "..."
 
         project = entry.get("project_workspace") or "-"
-        if len(project) > w_project:
-            project = project[: w_project - 3] + "..."
-
         modified = entry.get("modified_time") or "-"
         session_name = entry.get("session_name") or "-"
-        if len(session_name) > w_name:
-            session_name = session_name[: w_name - 3] + "..."
 
         status = entry.get("status") or "Idle"
         row_color = Colors.GREEN if status == "Running" else Colors.RESET
@@ -355,10 +351,10 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
         row = (
             f"{row_color}"
             f" {entry['no']:^{w_no}} |"
+            f" {_fit_table_cell(session_name, w_name)} |"
             f" {session_id:<{w_session}} |"
-            f" {project:<{w_project}} |"
             f" {modified:^{w_modified}} |"
-            f" {session_name:<{w_name}} "
+            f" {_fit_table_cell(project, w_project, truncate_from='head')} "
             f"{Colors.RESET}"
         )
         print(row)
