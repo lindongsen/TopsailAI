@@ -124,6 +124,7 @@ class TestCallInstructionHandler:
 
     def test_handle_success(self, handler):
         mock_instruction = MagicMock()
+        mock_instruction.exist_hook.return_value = True
         mock_instruction.call_instruction.return_value = {"count": 3}
 
         class FakeAgentChat:
@@ -142,19 +143,63 @@ class TestCallInstructionHandler:
 
         assert response.status == "ok"
         assert response.result == {"count": 3}
+        mock_instruction.exist_hook.assert_called_once_with("/ctx.history")
         mock_instruction.call_instruction.assert_called_once_with(
             "/ctx.history", "arg1", key="value"
         )
 
-    def test_handle_instruction_raises(self, handler):
+    def test_handle_success_normalizes_instruction_for_lookup(self, handler):
         mock_instruction = MagicMock()
-        mock_instruction.call_instruction.side_effect = RuntimeError("boom")
+        mock_instruction.exist_hook.return_value = True
+        mock_instruction.call_instruction.return_value = None
 
         class FakeAgentChat:
             hook_instruction = mock_instruction
 
         request = ControlRequest(
             request_id="c9",
+            action="call_instruction",
+            payload={"instruction": "ctx.history"},
+        )
+        response = handler.handle(request, ControlContext(agent_chat=FakeAgentChat()))
+
+        assert response.status == "ok"
+        assert response.result is None
+        mock_instruction.exist_hook.assert_called_once_with("/ctx.history")
+        mock_instruction.call_instruction.assert_called_once_with("ctx.history")
+
+    def test_handle_unknown_instruction(self, handler):
+        mock_instruction = MagicMock()
+        mock_instruction.exist_hook.return_value = False
+
+        class FakeAgentChat:
+            hook_instruction = mock_instruction
+
+        request = ControlRequest(
+            request_id="c10",
+            action="call_instruction",
+            payload={"instruction": "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD"},
+        )
+        response = handler.handle(request, ControlContext(agent_chat=FakeAgentChat()))
+
+        assert response.status == "error"
+        assert "unknown instruction" in response.error
+        assert "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD" in response.error
+        mock_instruction.exist_hook.assert_called_once_with(
+            "/TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD"
+        )
+        mock_instruction.call_instruction.assert_not_called()
+
+    def test_handle_instruction_raises(self, handler):
+        mock_instruction = MagicMock()
+        mock_instruction.exist_hook.return_value = True
+        mock_instruction.call_instruction.side_effect = RuntimeError("boom")
+
+        class FakeAgentChat:
+            hook_instruction = mock_instruction
+
+        request = ControlRequest(
+            request_id="c11",
             action="call_instruction",
             payload={"instruction": "/ctx.history"},
         )

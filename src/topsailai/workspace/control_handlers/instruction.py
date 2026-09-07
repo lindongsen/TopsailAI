@@ -76,6 +76,22 @@ class CallInstructionHandler(ControlHandler):
                 status="error",
                 error="hook instruction does not support call_instruction",
             )
+        if not hasattr(hook_instruction, "exist_hook"):
+            return ControlResponse(
+                request_id=request.request_id,
+                status="error",
+                error="hook instruction does not support instruction lookup",
+            )
+
+        lookup_name = instruction.strip()
+        if not lookup_name.startswith("/"):
+            lookup_name = f"/{lookup_name}"
+        if not hook_instruction.exist_hook(lookup_name):
+            return ControlResponse(
+                request_id=request.request_id,
+                status="error",
+                error=f"unknown instruction: {instruction}",
+            )
 
         try:
             result = hook_instruction.call_instruction(instruction, *args, **kwargs)
