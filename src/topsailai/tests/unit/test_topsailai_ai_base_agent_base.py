@@ -7,6 +7,8 @@ Tests AgentBase and AgentRun classes.
 import unittest
 from unittest.mock import MagicMock, patch
 
+from topsailai.ai_base.llm_base import LLMModel as RealLLMModel
+
 
 class TestAgentBaseInitialization(unittest.TestCase):
     """Test AgentBase initialization."""
@@ -428,6 +430,92 @@ class TestAgentRunRunEdgeCases(unittest.TestCase):
         agent._run(self.step_call_mock, "test input")
 
         self.assertEqual(call_order, ["inject", "chat"])
+
+    @patch("topsailai.ai_base.llm_base.time.sleep")
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    def test_request_retry_stays_inside_one_agent_run(
+        self, mock_is_main_thread, mock_sleep
+    ):
+        """LLM request retries do not restart the Agent loop or rerun tools."""
+        from topsailai.ai_base.agent_base import AgentRun
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        from topsailai.ai_base import agent_base as agent_base_module
+
+        agent_base_module.env_tool.EnvReaderInstance.check_bool.return_value = False
+        tool_schema = {"type": "function", "function": {"name": "tool"}}
+        agent_base_module.get_tools_for_chat.return_value = {"tool": tool_schema}
+
+        tool = MagicMock()
+        agent = AgentRun(
+            system_prompt="You are a helpful assistant",
+            tools={"tool": tool},
+            agent_name="TestAgent",
+        )
+        agent.available_tools = {"tool": tool}
+        agent.messages = [{"role": "user", "content": "same request"}]
+        agent.new_session = MagicMock()
+        agent._inject_runtime_messages = MagicMock()
+        agent._check_hard_interrupt = MagicMock()
+
+        model = object.__new__(RealLLMModel)
+        model.tokenStat = MagicMock(current_tokens=0, current_cached_tokens=0)
+        model.call_llm_model = MagicMock(
+            side_effect=[
+                ValueError("temporary one"),
+                ValueError("temporary two"),
+                (MagicMock(), "recovered"),
+            ]
+        )
+        model.call_llm_model_by_stream = MagicMock()
+        response_object = MagicMock()
+        response_object.tool_calls = None
+        model._split_native_tool_call_response = MagicMock(
+            return_value=(response_object, "recovered", 1, 1)
+        )
+        model._return_chat_response = MagicMock(
+            return_value=(response_object, ["final"])
+        )
+        model.get_response_message = MagicMock(return_value=response_object)
+        model.clear_pending_native_tool_call_responses = MagicMock()
+        agent.llm_model = model
+
+        from topsailai.ai_base.tool_call import StepCallBase
+
+        class FinalStepCall(StepCallBase):
+            """Return one final result without executing an available tool."""
+
+            def __init__(self, retry_policy):
+                super().__init__(llm_retry_policy=retry_policy)
+                self.execution_count = 0
+
+            def _execute(self, *args, **kwargs):
+                self.execution_count += 1
+                self.code = self.CODE_TASK_FINAL
+                self.result = "done"
+
+        step_call = FinalStepCall(LLMRetryInteractionPolicy())
+        agent.add_assistant_message = MagicMock()
+        original_run = agent.run
+        agent.run = MagicMock(wraps=original_run)
+
+        result = agent.run(step_call, "same request")
+
+        self.assertEqual(result, "done")
+        agent.run.assert_called_once_with(step_call, "same request")
+        agent.new_session.assert_called_once()
+        agent._inject_runtime_messages.assert_called_once_with()
+        self.assertEqual(model.call_llm_model.call_count, 3)
+        request_calls = model.call_llm_model.call_args_list
+        request_messages = [call.args[0] for call in request_calls]
+        request_tools = [call.kwargs["tools"] for call in request_calls]
+        self.assertTrue(all(messages is agent.messages for messages in request_messages))
+        self.assertTrue(all(tools is request_tools[0] for tools in request_tools))
+        self.assertEqual(request_tools[0], [tool_schema])
+        self.assertTrue(all(call.kwargs["tool_choice"] == "auto" for call in request_calls))
+        model.call_llm_model_by_stream.assert_not_called()
+        tool.assert_not_called()
+        self.assertEqual(step_call.execution_count, 1)
 
 
 if __name__ == '__main__':

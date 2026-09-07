@@ -24,6 +24,7 @@ class MockServerConfig:
     cache_capacity: int = 32
     request_body_capacity: int = 32
     stream_chunks: tuple[str, ...] | None = None
+    stream_response_chunks: tuple[tuple[str, ...], ...] | None = None
     report_cache_usage: bool = True
     report_usage: bool = True
     tool_call_responses: tuple[tuple[dict[str, Any], ...], ...] | None = None
@@ -254,11 +255,17 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def _write_stream(self, payload: dict[str, Any], cache_result: dict[str, int]) -> None:
-        """Write an OpenAI-compatible scripted streaming completion."""
+        """Write an OpenAI-compatible request-indexed streaming completion."""
         completion_id = f"chatcmpl-mock-{uuid.uuid4().hex}"
         created = int(time.time())
         model = payload.get("model") or self.server.config.model
-        stream_chunks = self.server.config.stream_chunks or ()
+        scripted_responses = self.server.config.stream_response_chunks or ()
+        response_index = cache_result["request_number"] - 1
+        stream_chunks = (
+            scripted_responses[response_index]
+            if response_index < len(scripted_responses)
+            else self.server.config.stream_chunks or ()
+        )
         completion_tokens = max(
             1,
             (sum(len(content) for content in stream_chunks) + self.server.config.chars_per_token - 1)
@@ -363,7 +370,11 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(messages, list) or not all(isinstance(item, dict) for item in messages):
             self._error(400, "messages must be a list of objects")
             return
-        if payload.get("stream") and self.server.config.stream_chunks is None:
+        if (
+            payload.get("stream")
+            and self.server.config.stream_chunks is None
+            and self.server.config.stream_response_chunks is None
+        ):
             self._error(400, "streaming is not supported")
             return
 

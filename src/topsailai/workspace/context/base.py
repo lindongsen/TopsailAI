@@ -1093,8 +1093,8 @@ class ContextRuntimeBase(object):
         answer = llm_chat.chat(*args, **kwargs)
         cached_tokens_after = getattr(token_stat, "current_cached_tokens", None)
         if (
-                cached_tokens_before is not None
-                and cached_tokens_after is not None
+                isinstance(cached_tokens_before, int)
+                and isinstance(cached_tokens_after, int)
                 and cached_tokens_before > cached_tokens_after
             ):
             print_tool.print_warning(

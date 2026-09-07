@@ -281,10 +281,13 @@ class AgentRun(AgentBase):
             # Check again right before the LLM call.
             self._check_hard_interrupt()
 
+            # LLM chat retries remain inside this one call. They resend these
+            # same messages and must never restart this Agent loop.
             rsp_obj, response = self.llm_model.chat(
                 self.messages, for_response=True,
                 for_stream=env_tool.EnvReaderInstance.check_bool("LLM_RESPONSE_STREAM"),
                 tools=list(tools_for_chat.values()),
+                retry_interaction_policy=getattr(step_call, "llm_retry_policy", None),
             )
             if not response:
                 print_critical("No response from LLM.")

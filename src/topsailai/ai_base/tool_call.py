@@ -40,12 +40,17 @@ class StepCallBase(object):
     CODE_STEP_FINAL = 1  # Step completed, ready for next step
     CODE_TASK_FAILED = -1  # Task failed with error
 
-    def __init__(self, flag_interactive:bool=False):
-        """
-        Initialize StepCallBase instance.
+    def __init__(
+            self,
+            flag_interactive: bool = False,
+            llm_retry_policy=None,
+        ):
+        """Initialize the step-call state and its LLM request retry policy.
 
         Args:
-            flag_interactive (bool): Whether this step call is interactive
+            flag_interactive: Whether Agent steps may request user input.
+            llm_retry_policy: Policy for retrying one LLM chat request. This
+                never authorizes restarting or retrying the Agent loop.
         """
         # for result, refer to self.__reset
         # Status code indicating the execution result
@@ -63,6 +68,10 @@ class StepCallBase(object):
 
         if env_tool.EnvReaderInstance.get("TOPSAILAI_CHAT_INTERACTIVE_MODE") is not None:
             self.flag_interactive = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CHAT_INTERACTIVE_MODE")
+
+        # LLM retry resends the same messages inside LLMModel.chat; it must not
+        # be confused with retrying ai_agent.run() or the Agent loop.
+        self.llm_retry_policy = llm_retry_policy
         logger.info("chat interactive mode (TOPSAILAI_CHAT_INTERACTIVE_MODE): [%s]", self.flag_interactive)
 
         # internal variables, self._xxx

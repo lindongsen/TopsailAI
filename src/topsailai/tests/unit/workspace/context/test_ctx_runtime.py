@@ -358,6 +358,22 @@ class TestContextRuntimeBaseEnvMethods:
 
     @patch('topsailai.workspace.context.base.print_tool.print_warning')
     @patch('topsailai.workspace.context.base.ctx_manager')
+    def test_summary_cached_tokens_ignore_unavailable_metric(
+        self, mock_ctx_manager, mock_print_warning
+    ):
+        """Ignore non-integer cache metrics without changing the summary result."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        runtime = ContextRuntimeBase()
+        llm_chat = MagicMock()
+        llm_chat.chat.return_value = "summary"
+
+        assert runtime._chat_for_summary(llm_chat, need_print=False) == "summary"
+        llm_chat.chat.assert_called_once_with(need_print=False)
+        mock_print_warning.assert_not_called()
+
+    @patch('topsailai.workspace.context.base.print_tool.print_warning')
+    @patch('topsailai.workspace.context.base.ctx_manager')
     def test_summary_cached_tokens_warn_when_decreased(
         self, mock_ctx_manager, mock_print_warning
     ):

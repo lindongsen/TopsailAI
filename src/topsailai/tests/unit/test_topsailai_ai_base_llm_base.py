@@ -1435,11 +1435,23 @@ class TestLLMModelErrorHandling(unittest.TestCase):
         model = self._create_mock_model()
         model.model.create.return_value = mock_response
 
-        result = model.chat(self.messages)
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        input_func = MagicMock(return_value="yes")
+        policy = LLMRetryInteractionPolicy(
+            interactive_enabled=True,
+            input_func=input_func,
+        )
+        result = model.chat(
+            self.messages,
+            retry_interaction_policy=policy,
+        )
 
         self.assertEqual(result, ["success"])
         self.assertEqual(mock_sleep, [5, 10, 5])
-        mock_input_yes_or_no.assert_called_once()
+        mock_input_yes_or_no.assert_called_once_with(
+            ">>> LLM Retry [yes/no] ", input_func
+        )
 
     @patch("topsailai.ai_base.llm_base.input_yes_or_no", return_value=True)
     @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
@@ -1947,26 +1959,7 @@ class TestLLMModelResponseEvents(unittest.TestCase):
 
 
 class TestLLMModelChatAgentRuntimeInput(unittest.TestCase):
-    """Tests demonstrating that LLMModel.chat() uses only the plain
-    agent-runtime input function, ignoring the timeout-aware variant.
-
-    The pre_run hook registers both ``input_on_agent_runtime`` (plain) and
-    ``input_on_agent_runtime_with_timeout`` (timeout-aware) in thread-local
-    storage. However, ``LLMModel.chat()`` only calls
-    ``get_agent_runtime_input()`` and never consults
-    ``get_agent_runtime_input_with_timeout()``. As a result, the timeout
-    wrapper has no effect on LLM retry prompts.
-    """
-
-    def setUp(self):
-        """Clear thread-local input state."""
-        from topsailai.utils.thread_local_tool import rid_all_thread_vars
-        rid_all_thread_vars()
-
-    def tearDown(self):
-        """Clear thread-local input state."""
-        from topsailai.utils.thread_local_tool import rid_all_thread_vars
-        rid_all_thread_vars()
+    """Test explicit input policy for prompts inside one LLM chat request."""
 
     def _create_mock_model(self):
         """Create a mock LLMModel with all required attributes."""
@@ -1985,86 +1978,73 @@ class TestLLMModelChatAgentRuntimeInput(unittest.TestCase):
         model.hooks = {}
         return model
 
-    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread")
-    @patch("topsailai.ai_base.llm_base.get_agent_runtime_input")
-    @patch("topsailai.utils.thread_local_tool.get_agent_runtime_input_with_timeout")
-    def test_chat_keyboard_interrupt_uses_plain_input_not_timeout_variant(
-        self, mock_get_with_timeout, mock_get_input, mock_is_main_thread
+    @patch("topsailai.ai_base.llm_base.input_yes_or_no", return_value=False)
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    def test_chat_keyboard_interrupt_uses_policy_input(
+        self, mock_is_main_thread, mock_input_yes_or_no
     ):
-        """LLMModel.chat() must use get_agent_runtime_input(), not the
-        timeout-aware variant, when handling KeyboardInterrupt.
-        """
-        from topsailai.ai_base.llm_base import LLMModel
+        """Interactive KeyboardInterrupt handling uses the explicit input callback."""
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
-        mock_is_main_thread.return_value = True
         plain_input = MagicMock(return_value="no")
-        timeout_input = MagicMock(return_value="no")
-        mock_get_input.return_value = plain_input
-        mock_get_with_timeout.return_value = timeout_input
-
+        policy = LLMRetryInteractionPolicy(True, False, plain_input)
         model = self._create_mock_model()
         model.call_llm_model = MagicMock(side_effect=KeyboardInterrupt("interrupted"))
 
         with self.assertRaises(KeyboardInterrupt):
-            model.chat([{"role": "user", "content": "test"}])
+            model.chat(
+                [{"role": "user", "content": "test"}],
+                retry_interaction_policy=policy,
+            )
 
-        mock_get_input.assert_called_once()
-        mock_get_with_timeout.assert_not_called()
-        plain_input.assert_called_once_with(">>> LLM Retry [yes/no] ")
-        timeout_input.assert_not_called()
+        mock_input_yes_or_no.assert_called_once_with(
+            ">>> LLM Retry [yes/no] ", plain_input
+        )
 
-    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread")
-    @patch("topsailai.ai_base.llm_base.get_agent_runtime_input")
-    @patch("topsailai.utils.thread_local_tool.get_agent_runtime_input_with_timeout")
-    def test_chat_internal_exception_uses_plain_input_not_timeout_variant(
-        self, mock_get_with_timeout, mock_get_input, mock_is_main_thread
+    @patch("topsailai.ai_base.llm_base.input_yes_or_no", return_value=False)
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    def test_chat_internal_exception_uses_policy_input(
+        self, mock_is_main_thread, mock_input_yes_or_no
     ):
-        """LLMModel.chat() must use get_agent_runtime_input(), not the
-        timeout-aware variant, when handling an internal exception in the
-        main thread.
-        """
-        from topsailai.ai_base.llm_base import LLMModel
+        """Interactive generic failures preserve the existing yes/no prompt."""
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
-        mock_is_main_thread.return_value = True
         plain_input = MagicMock(return_value="no")
-        timeout_input = MagicMock(return_value="no")
-        mock_get_input.return_value = plain_input
-        mock_get_with_timeout.return_value = timeout_input
-
+        policy = LLMRetryInteractionPolicy(True, False, plain_input)
         model = self._create_mock_model()
         model.call_llm_model = MagicMock(side_effect=ValueError("internal error"))
 
         with self.assertRaises(ValueError):
-            model.chat([{"role": "user", "content": "test"}])
+            model.chat(
+                [{"role": "user", "content": "test"}],
+                retry_interaction_policy=policy,
+            )
 
-        mock_get_input.assert_called_once()
-        mock_get_with_timeout.assert_not_called()
-        plain_input.assert_called_once_with(">>> LLM Retry [yes/no] ")
-        timeout_input.assert_not_called()
+        mock_input_yes_or_no.assert_called_once_with(
+            ">>> LLM Retry [yes/no] ", plain_input
+        )
 
-    @patch("topsailai.ai_base.llm_base.get_agent_runtime_input")
-    @patch("topsailai.utils.thread_local_tool.get_agent_runtime_input_with_timeout")
-    def test_chat_falls_back_to_builtin_input(
-        self, mock_get_with_timeout, mock_get_input
+    @patch("topsailai.ai_base.llm_base.input_yes_or_no")
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    def test_chat_without_input_capability_does_not_prompt(
+        self, mock_is_main_thread, mock_input_yes_or_no
     ):
-        """When no agent-runtime input is registered, LLMModel.chat() falls
-        back to the builtin input() function.
-        """
-        from topsailai.ai_base.llm_base import LLMModel
-
-        mock_get_input.return_value = None
-        mock_get_with_timeout.return_value = None
+        """Missing input capability fails closed instead of reading builtin stdin."""
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         model = self._create_mock_model()
         model.call_llm_model = MagicMock(side_effect=KeyboardInterrupt("interrupted"))
+        policy = LLMRetryInteractionPolicy(interactive_enabled=True)
 
-        with patch("builtins.input", return_value="no") as mock_builtin:
+        with patch("builtins.input") as mock_builtin:
             with self.assertRaises(KeyboardInterrupt):
-                model.chat([{"role": "user", "content": "test"}])
+                model.chat(
+                    [{"role": "user", "content": "test"}],
+                    retry_interaction_policy=policy,
+                )
 
-        mock_get_input.assert_called_once()
-        mock_get_with_timeout.assert_not_called()
-        mock_builtin.assert_called_once_with(">>> LLM Retry [yes/no] ")
+        mock_input_yes_or_no.assert_not_called()
+        mock_builtin.assert_not_called()
 
 
 class TestLLMModelAfterResponseHook(unittest.TestCase):
@@ -2429,6 +2409,251 @@ class TestLLMModelNonRetryableBadRequestError(unittest.TestCase):
                 "no tool call found",
             )
             self.assertEqual(_match_non_retryable_bad_request("custom marker"), "")
+
+
+class TestLLMModelRequestRetryPolicy(unittest.TestCase):
+    """Verify that LLM retry resends one request and never retries the Agent loop."""
+
+    def _create_mock_model(self):
+        """Create a minimal model whose request method is controlled by each test."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        model = LLMModel()
+        model.models = []
+        model.model = MagicMock()
+        model.tokenStat = MagicMock()
+        model.model_config = {"api_key": "test-key"}
+        model.model_name = "test-model"
+        model.temperature = 0.7
+        model.max_tokens = 4096
+        model.top_p = 1.0
+        model.frequency_penalty = 0.0
+        model.content_senders = []
+        model.hooks = {}
+        return model
+
+    @staticmethod
+    def _response(content="recovered"):
+        """Return one OpenAI-shaped non-streaming response."""
+        response = MagicMock()
+        response.choices = [MagicMock()]
+        response.choices[0].message.content = content
+        return response
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response", return_value=["recovered"])
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_exhausted_retry_resends_same_messages_inside_same_chat(
+        self, mock_base_init, mock_is_main_thread, mock_format, mock_sleep
+    ):
+        """Retry starts another LLM request cycle without re-entering the Agent loop."""
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        messages = [{"role": "user", "content": "same request"}]
+        original_snapshot = json.loads(json.dumps(messages))
+        observed_messages = []
+        call_count = 0
+
+        def request(current_messages, tools=None, tool_choice="auto"):
+            nonlocal call_count
+            call_count += 1
+            observed_messages.append(current_messages)
+            if call_count <= 18:
+                raise ValueError("temporary failure")
+            return self._response(), "recovered"
+
+        choices = iter(["yes"] * 18 + ["1"])
+        policy = LLMRetryInteractionPolicy(True, True, lambda _prompt: next(choices))
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(side_effect=request)
+
+        result = model.chat(messages, retry_interaction_policy=policy)
+
+        self.assertEqual(result, ["recovered"])
+        self.assertEqual(model.call_llm_model.call_count, 19)
+        self.assertEqual(messages, original_snapshot)
+        self.assertTrue(all(item is messages for item in observed_messages))
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.input_yes_or_no")
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_non_interactive_generic_failures_auto_retry_without_prompt(
+        self, mock_base_init, mock_is_main_thread, mock_yes_or_no, mock_sleep
+    ):
+        """Explicit non-interactive policy bypasses prompts and exhausts bounded retries."""
+        from topsailai.ai_base.exception import LLMRetryExhaustedError
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(side_effect=ValueError("temporary failure"))
+
+        with self.assertRaises(LLMRetryExhaustedError) as context:
+            model.chat(
+                [{"role": "user", "content": "test"}],
+                retry_interaction_policy=LLMRetryInteractionPolicy(),
+            )
+
+        self.assertEqual(context.exception.attempts, 18)
+        self.assertEqual(model.call_llm_model.call_count, 18)
+        mock_yes_or_no.assert_not_called()
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response", return_value=["recovered"])
+    @patch("topsailai.ai_base.llm_base.input_yes_or_no", return_value=True)
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_generic_prompt_yes_retries_same_messages(
+        self, mock_base_init, mock_is_main_thread, mock_yes_or_no, mock_format, mock_sleep
+    ):
+        """The retained yes/no prompt retries the same LLM request messages."""
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        messages = [{"role": "user", "content": "same request"}]
+        observed_messages = []
+        model = self._create_mock_model()
+
+        def request(current_messages, tools=None, tool_choice="auto"):
+            observed_messages.append(current_messages)
+            if len(observed_messages) == 1:
+                raise ValueError("temporary failure")
+            return self._response(), "recovered"
+
+        model.call_llm_model = MagicMock(side_effect=request)
+        input_func = MagicMock(return_value="yes")
+        result = model.chat(
+            messages,
+            retry_interaction_policy=LLMRetryInteractionPolicy(True, False, input_func),
+        )
+
+        self.assertEqual(result, ["recovered"])
+        self.assertEqual(len(observed_messages), 2)
+        self.assertIs(observed_messages[0], messages)
+        self.assertIs(observed_messages[1], messages)
+        mock_yes_or_no.assert_called_once_with(
+            ">>> LLM Retry [yes/no] ", input_func
+        )
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.input_yes_or_no", return_value=True)
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_default_manual_retry_cycles_stop_at_absolute_request_bound(
+        self, mock_base_init, mock_is_main_thread, mock_yes_or_no, mock_sleep
+    ):
+        """The default 7 manual cycles cannot exceed 144 provider requests."""
+        from topsailai.ai_base.exception import LLMRetryExhaustedError
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(side_effect=TypeError("temporary failure"))
+        input_func = MagicMock(side_effect=["1"] * 7)
+        policy = LLMRetryInteractionPolicy(True, False, input_func)
+
+        with self.assertRaises(LLMRetryExhaustedError) as context:
+            model.chat(
+                [{"role": "user", "content": "test"}],
+                retry_interaction_policy=policy,
+            )
+
+        self.assertEqual(policy.max_manual_retry_cycles, 7)
+        self.assertEqual(context.exception.attempts, 144)
+        self.assertEqual(context.exception.manual_cycle_count, 7)
+        self.assertEqual(model.call_llm_model.call_count, 144)
+        self.assertEqual(input_func.call_count, 7)
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.print_warning")
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_invalid_exhaustion_choices_are_bounded_and_exit(
+        self, mock_base_init, mock_is_main_thread, mock_warning, mock_sleep
+    ):
+        """Three invalid menu choices fail closed without another request cycle."""
+        from topsailai.ai_base.exception import LLMRetryExhaustedError
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(side_effect=TypeError("temporary failure"))
+        input_func = MagicMock(side_effect=["invalid-1", "invalid-2", "invalid-3"])
+        policy = LLMRetryInteractionPolicy(True, False, input_func)
+
+        with self.assertRaises(LLMRetryExhaustedError) as context:
+            model.chat(
+                [{"role": "user", "content": "test"}],
+                retry_interaction_policy=policy,
+            )
+
+        self.assertEqual(context.exception.attempts, 18)
+        self.assertEqual(model.call_llm_model.call_count, 18)
+        self.assertEqual(input_func.call_count, 3)
+        self.assertEqual(mock_warning.call_count, 3)
+
+    def test_retry_policy_rejects_unbounded_limits(self):
+        """Retry policy accepts only finite integer cycle and choice limits."""
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        for value in (-1, True, 1.5, "37"):
+            with self.subTest(max_manual_retry_cycles=value):
+                with self.assertRaises(ValueError):
+                    LLMRetryInteractionPolicy(max_manual_retry_cycles=value)
+        for value in (0, -1, False, 1.5, "3"):
+            with self.subTest(max_invalid_choices=value):
+                with self.assertRaises(ValueError):
+                    LLMRetryInteractionPolicy(max_invalid_choices=value)
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_exhausted_back_raises_control_signal(
+        self, mock_base_init, mock_is_main_thread, mock_sleep
+    ):
+        """Back leaves LLM chat through its dedicated User2Agent control signal."""
+        from topsailai.ai_base.exception import LLMBackToChatError
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(side_effect=TypeError("temporary failure"))
+        input_func = MagicMock(return_value="2")
+
+        with self.assertRaises(LLMBackToChatError):
+            model.chat(
+                [{"role": "user", "content": "test"}],
+                retry_interaction_policy=LLMRetryInteractionPolicy(
+                    True, True, input_func
+                ),
+            )
+
+        self.assertEqual(model.call_llm_model.call_count, 18)
+        self.assertIn("2. Back to chat", input_func.call_args.args[0])
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_finite_interactive_exhaustion_offers_retry_and_exit_only(
+        self, mock_base_init, mock_is_main_thread, mock_sleep
+    ):
+        """A finite task cannot choose Back because it has no next chat turn."""
+        from topsailai.ai_base.exception import LLMRetryExhaustedError
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(side_effect=TypeError("temporary failure"))
+        input_func = MagicMock(return_value="2")
+
+        with self.assertRaises(LLMRetryExhaustedError):
+            model.chat(
+                [{"role": "user", "content": "test"}],
+                retry_interaction_policy=LLMRetryInteractionPolicy(
+                    True, False, input_func
+                ),
+            )
+
+        prompt = input_func.call_args.args[0]
+        self.assertNotIn("Back to chat", prompt)
+        self.assertIn("2. Exit", prompt)
+
 
 
 if __name__ == "__main__":

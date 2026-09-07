@@ -36,7 +36,10 @@ from topsailai.ai_base.exception import (
     ContextWindowLimitError,
     HardInterruptError,
     HeavyTaskError,
+    LLMBackToChatError,
 )
+from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+from topsailai.utils.thread_local_tool import get_agent_runtime_input
 from topsailai.workspace.control_channel import ControlServer
 from topsailai.workspace.control_channel.handler import ControlHandlerRegistry
 from topsailai.workspace.control_channel.protocol import ControlContext
@@ -177,6 +180,15 @@ class AgentChat(AgentChatBase):
         except OSError as e:
             logger.warning("Failed to clear hard interrupt flag %s: %s", flag_path, e)
 
+    def _read_next_user_message(self, func_print_pre_input_message):
+        """Read a fresh non-empty message after an abandoned User2Agent turn."""
+        func_print_pre_input_message()
+        while True:
+            message = input_message(hook=self.hook_instruction).strip()
+            message = self.format_message(message)
+            if message:
+                return message
+
     def _start_control_server(self):
         """Acquire the shared per-process control channel server if available.
 
@@ -280,29 +292,40 @@ class AgentChat(AgentChatBase):
         self.call_hooks_pre_run()
         self._start_control_server()
 
-        if not func_print_pre_input_message or not env_tool.is_interactive_mode():
-            # noop
+        # Resolve interactivity once for this User2Agent run. An explicit False
+        # must override the process environment for every input decision,
+        # including prompts used by LLM chat request retries.
+        if need_interactive is None:
+            need_interactive = env_tool.EnvReaderInstance.check_bool(
+                "TOPSAILAI_INTERACTIVE_MODE", True
+            )
+        interactive_enabled = bool(need_interactive)
+
+        if not func_print_pre_input_message or not interactive_enabled:
             func_print_pre_input_message = lambda *args, **kwargs: None
 
         # first message
-        if not message:
-            if self.first_message:
-                message = self.first_message
+        if not message and self.first_message:
+            message = self.first_message
 
         if message is None:
-            # show session messages
-            if env_tool.is_interactive_mode():
+            if interactive_enabled:
                 self.ctx_rt_instruction.ctx_history()
 
             func_print_pre_input_message()
-            message = get_message(self.hook_instruction, need_input=env_tool.is_interactive_mode())
+            message = get_message(
+                self.hook_instruction,
+                need_input=interactive_enabled,
+            )
 
         if not self.first_message:
             self.first_message = message
 
-        # env
-        if need_interactive is None:
-            need_interactive = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_INTERACTIVE_MODE", True)
+        retry_policy = LLMRetryInteractionPolicy(
+            interactive_enabled=interactive_enabled,
+            allow_back_to_chat=interactive_enabled and times == 0,
+            input_func=get_agent_runtime_input() if interactive_enabled else None,
+        )
 
         if need_symbol_for_answer is None:
             need_symbol_for_answer = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER", False)
@@ -353,6 +376,7 @@ class AgentChat(AgentChatBase):
                         break
                 continue
             flag_abort = False
+            back_to_chat_requested = False
             # reset answer to null string
             answer = ""
 
@@ -395,13 +419,16 @@ class AgentChat(AgentChatBase):
                         # refresh session messages
                         #self.ctx_runtime_data.reset_messages()
 
-                    answer = self.ai_agent.run(
-                        get_agent_step_call(
-                            args=(need_interactive,),
-                            agent_type=self.ai_agent.agent_type,
-                        ),
-                        message,
+                    # LLM request retries remain inside LLMModel.chat and reuse
+                    # the same messages; this never retries ai_agent.run().
+                    step_call = get_agent_step_call(
+                        kwargs={
+                            "flag_interactive": need_interactive,
+                            "llm_retry_policy": retry_policy,
+                        },
+                        agent_type=self.ai_agent.agent_type,
                     )
+                    answer = self.ai_agent.run(step_call, message)
 
                     # task
                     if task:
@@ -420,6 +447,19 @@ class AgentChat(AgentChatBase):
                             task.tool_call_count = 0
                         task.executor = getattr(self.ai_agent, "agent_name", "") or ""
 
+            except LLMBackToChatError as e:
+                # Back abandons this User2Agent turn. It is not an LLM Retry:
+                # Retry stays inside LLMModel.chat and resends the same request.
+                back_to_chat_requested = True
+                answer = ""
+                self.call_hooks_post_fail_run(e)
+                message = self._read_next_user_message(
+                    func_print_pre_input_message
+                )
+                # An abandoned turn is not a completed scheduled turn. The loop
+                # naturally starts again with the fresh message; do not use a
+                # continue that could accidentally replay the old request.
+                curr_count -= 1
             except HardInterruptError as e:
                 self.interrupted = True
                 answer = ""
@@ -450,103 +490,105 @@ class AgentChat(AgentChatBase):
                     self.call_hooks_post_fail_run(KeyboardInterrupt())
                     break
 
-            if answer:
-                answer = self.hook_build_answer(
-                    answer,
-                    need_symbol=need_symbol_for_answer,
-                )
+            if not back_to_chat_requested:
+                if answer:
+                    answer = self.hook_build_answer(
+                        answer,
+                        need_symbol=need_symbol_for_answer,
+                    )
 
-                # task
-                if task:
-                    answer = task.manifest + answer
-                    if (
-                        env_tool.EnvReaderInstance.check_bool(
-                            "TOPSAILAI_ENABLE_TOOL_STAT", True
-                        )
-                        and task.tool_call_count == 0
-                    ):
-                        answer += LAZY_EXECUTION_WARNING
-                    need_save_answer = True
-                    only_save_final = True
+                    # task
+                    if task:
+                        answer = task.manifest + answer
+                        if (
+                            env_tool.EnvReaderInstance.check_bool(
+                                "TOPSAILAI_ENABLE_TOOL_STAT", True
+                            )
+                            and task.tool_call_count == 0
+                        ):
+                            answer += LAZY_EXECUTION_WARNING
+                        need_save_answer = True
+                        only_save_final = True
 
-                if need_save_answer:
-                    if only_save_final:
-                        self.ctx_runtime_data.add_session_message(ROLE_ASSISTANT, answer)
+                    if need_save_answer:
+                        if only_save_final:
+                            self.ctx_runtime_data.add_session_message(ROLE_ASSISTANT, answer)
+                        else:
+                            if not flag_abort:
+                                self.ctx_rt_aiagent.add_session_message()
+                    self.last_message = answer
+
+                self.call_hook_for_final_answer()
+                self.call_hooks_post_succ_run()
+
+                # Use the interactivity resolved once for this run. An explicit
+                # need_interactive=False must not be overridden by process state.
+                if not env_tool.is_debug_mode() or not interactive_enabled:
+                    print(answer)
+
+                reached_times_limit = times > 0 and curr_count >= times
+                if not reached_times_limit:
+                    self.ctx_runtime_data.reset_messages()
+                    if interactive_enabled:
+                        self.ctx_rt_instruction.ctx_history()
+
+                # end time
+                end_time = int(time.time())
+
+                if env_tool.is_need_print():
+                    total_tokens, total_cached_tokens = _get_session_token_totals(
+                        self.ctx_runtime_data.session_id, self.ai_agent
+                    )
+                    # Cache hit rate: cached tokens / total tokens. Guard against
+                    # zero or missing totals so we never divide by zero.
+                    if total_tokens:
+                        cache_hit_rate = f"{total_cached_tokens / total_tokens * 100:.3f}%"
                     else:
-                        if not flag_abort:
-                            self.ctx_rt_aiagent.add_session_message()
-                self.last_message = answer
+                        cache_hit_rate = "N/A"
 
-            self.call_hook_for_final_answer()
-            self.call_hooks_post_succ_run()
+                    session_id = self.ctx_runtime_data.session_id or ""
+                    session_name = ""
+                    session_data = self.ctx_runtime_data.session_data
+                    if session_data is not None:
+                        session_name = session_data.session_name or ""
 
-            # it is not interactive mode
-            if not env_tool.is_debug_mode() or not env_tool.is_interactive_mode():
-                print(answer)
+                    print()
+                    print(SPLIT_LINE)
+                    print(f"[{self.agent_name}] have scheduled tasks [{curr_count}] times")
+                    print(f"session_id          : {session_id}")
+                    print(f"session_name        : {session_name}")
+                    print(f"start_time          : {time_tool.parse_time_seconds(start_time)}")
+                    print(f"end_time(now)       : {time_tool.parse_time_seconds(end_time)}")
+                    print(f"elapsed_time        : {end_time-start_time}")
+                    print(f"total_prompt_tokens : {total_tokens}")
+                    print(f"total_cached_tokens : {total_cached_tokens}")
+                    print(f"cache_hit_rate      : {cache_hit_rate}")
+                    sys.stdout.flush()
 
-            reached_times_limit = times > 0 and curr_count >= times
-            if not reached_times_limit:
-                self.ctx_runtime_data.reset_messages()
-                if env_tool.is_interactive_mode():
-                    self.ctx_rt_instruction.ctx_history()
+                if env_tool.is_debug_mode() or env_tool.EnvReaderInstance.check_bool("TOPSAILAI_PRINT_TOOL_STAT", True):
+                    tool_call_stat = tool_stat.get_agent_tool_stat(self.ai_agent)
+                    __content = tool_call_stat.export_json()
+                    logger.info("ToolStat of tool_calls:\n [%s]", __content)
 
-            # end time
-            end_time = int(time.time())
-
-            if env_tool.is_need_print():
-                total_tokens, total_cached_tokens = _get_session_token_totals(
-                    self.ctx_runtime_data.session_id, self.ai_agent
-                )
-                # Cache hit rate: cached tokens / total tokens. Guard against
-                # zero or missing totals so we never divide by zero.
-                if total_tokens:
-                    cache_hit_rate = f"{total_cached_tokens / total_tokens * 100:.3f}%"
-                else:
-                    cache_hit_rate = "N/A"
-
-                session_id = self.ctx_runtime_data.session_id or ""
-                session_name = ""
-                session_data = self.ctx_runtime_data.session_data
-                if session_data is not None:
-                    session_name = session_data.session_name or ""
-
-                print()
-                print(SPLIT_LINE)
-                print(f"[{self.agent_name}] have scheduled tasks [{curr_count}] times")
-                print(f"session_id          : {session_id}")
-                print(f"session_name        : {session_name}")
-                print(f"start_time          : {time_tool.parse_time_seconds(start_time)}")
-                print(f"end_time(now)       : {time_tool.parse_time_seconds(end_time)}")
-                print(f"elapsed_time        : {end_time-start_time}")
-                print(f"total_prompt_tokens : {total_tokens}")
-                print(f"total_cached_tokens : {total_cached_tokens}")
-                print(f"cache_hit_rate      : {cache_hit_rate}")
-                sys.stdout.flush()
-
-            if env_tool.is_debug_mode() or env_tool.EnvReaderInstance.check_bool("TOPSAILAI_PRINT_TOOL_STAT", True):
-                tool_call_stat = tool_stat.get_agent_tool_stat(self.ai_agent)
-                __content = tool_call_stat.export_json()
-                logger.info("ToolStat of tool_calls:\n [%s]", __content)
-
-            # check times after the completed-turn summary is emitted
-            if reached_times_limit:
-                break
-
-            # next time
-            try:
-                terminal_title.refresh_terminal_title(
-                    session_id=self.ctx_runtime_data.session_id,
-                )
-            except Exception as e:
-                logger.debug("Failed to refresh terminal title: %s", e)
-
-            func_print_pre_input_message()
-            while True:
-                message = input_message(hook=self.hook_instruction)
-                message = message.strip()
-                if message:
-                    message = self.format_message(message)
+                # check times after the completed-turn summary is emitted
+                if reached_times_limit:
                     break
+
+                # next time
+                try:
+                    terminal_title.refresh_terminal_title(
+                        session_id=self.ctx_runtime_data.session_id,
+                    )
+                except Exception as e:
+                    logger.debug("Failed to refresh terminal title: %s", e)
+
+                func_print_pre_input_message()
+                while True:
+                    message = input_message(hook=self.hook_instruction)
+                    message = message.strip()
+                    if message:
+                        message = self.format_message(message)
+                        break
 
         # hook answer
         self.hook_for_answer(answer)

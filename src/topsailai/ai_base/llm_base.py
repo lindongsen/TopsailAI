@@ -59,7 +59,6 @@ from topsailai.context.llm_state_visualizer import visualize_model_state
 from topsailai.utils.state_visualizer import VisualizationState
 from topsailai.utils.thread_local_tool import (
     get_agent_object,
-    get_agent_runtime_input,
 )
 
 from .constants import (
@@ -69,6 +68,8 @@ from .constants import (
 )
 from .exception import (
     HardInterruptError,
+    LLMBackToChatError,
+    LLMRetryExhaustedError,
 )
 from .llm_control.exception import (
     JsonError,
@@ -143,6 +144,38 @@ def _record_llm_request_outcome(method):
             _llm_request_started.reset(started_token)
 
     return wrapper
+
+
+def _read_retry_exhaustion_action(policy, *, allow_retry):
+    """Read one bounded retry-exhaustion action from the interactive user."""
+    action_lines = []
+    if allow_retry:
+        action_lines.append("1. Retry the same LLM request")
+    back_number = None
+    if policy.allow_back_to_chat:
+        back_number = len(action_lines) + 1
+        action_lines.append(f"{back_number}. Back to chat")
+    exit_number = len(action_lines) + 1
+    action_lines.append(f"{exit_number}. Exit")
+    prompt = (
+        "LLM retry attempts exhausted.\n"
+        + "\n".join(action_lines)
+        + f"\nSelect [1-{exit_number}]: "
+    )
+
+    for _ in range(policy.max_invalid_choices):
+        try:
+            choice = str(policy.input_func(prompt)).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return "exit"
+        if allow_retry and choice in {"1", "retry"}:
+            return "retry"
+        if policy.allow_back_to_chat and choice in {str(back_number), "back"}:
+            return "back"
+        if choice in {str(exit_number), "exit", "abort"}:
+            return "exit"
+        print_warning("Please select a valid LLM retry action.")
+    return "exit"
 
 
 class LLMModel(LLMModelBase):
@@ -1033,31 +1066,30 @@ class LLMModel(LLMModelBase):
             for_response=False,
             tools=None,
             tool_choice="auto",
+            retry_interaction_policy=None,
         ):
         """
         Main chat method with comprehensive error handling and retry logic.
 
-        Args:
-            messages (list): List of message dictionaries
-            for_raw (bool, optional): Return raw response content. Defaults to False.
-            for_stream (bool, optional): Use streaming mode. Defaults to False.
-            for_response (bool, optional): Return response object along with content. Defaults to False.
-            tools (list, optional): List of available tools. Defaults to None.
-            tool_choice (str, optional): Tool choice strategy. Defaults to "auto".
+        LLM retries stay inside this method and resend the same ``messages``
+        with the same request options. They never retry ``ai_agent.run()`` or
+        repeat Agent-loop message injection and tool execution.
 
-        Returns:
-            Various formats based on parameters:
-            - for_raw=True: Raw content string
-            - for_response=True: Tuple (response object, formatted content list)
-            - Default: Formatted content list
+        Args:
+            messages (list): List of message dictionaries.
+            for_raw (bool, optional): Return raw response content.
+            for_stream (bool, optional): Use streaming mode.
+            for_response (bool, optional): Return response object with content.
+            tools (list, optional): List of available tools.
+            tool_choice (str, optional): Tool choice strategy.
+            retry_interaction_policy: Per-run LLM retry interaction policy.
 
         Raises:
-            Exception: If chat fails after maximum retry attempts
-
-        Note:
-            Implements exponential backoff and specific error handling for
-            various OpenAI API errors including rate limiting, timeouts, etc.
+            LLMBackToChatError: If an interactive user abandons this turn.
+            LLMRetryExhaustedError: If bounded request retries are exhausted.
         """
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
         pending_responses = self._get_pending_native_tool_call_responses()
         if pending_responses:
             rsp_obj, rsp_content, sequence, total = pending_responses.popleft()
@@ -1074,33 +1106,58 @@ class LLMModel(LLMModelBase):
                 for_response=for_response,
             )
 
-        retry_times = 17
-        err_count_map = {}
+        policy = retry_interaction_policy or LLMRetryInteractionPolicy()
+        prompt_allowed = policy.can_prompt() and thread_tool.is_main_thread()
+        attempts_per_cycle = 18
+        max_total_attempts = attempts_per_cycle * (
+            policy.max_manual_retry_cycles + 1
+        )
+        manual_cycle_count = 0
+        last_error = None
+        retry_reason = "unknown"
         manual_retry_requested = False
 
-        rsp_content = None
-        rsp_obj = None
-
-        for i in range(100):
-            # Cooperative hard-interrupt check before each retry attempt so a
-            # pending interrupt can stop a long retry/sleep wait.
+        loop_attempts = max_total_attempts if prompt_allowed else attempts_per_cycle
+        for total_attempt in range(1, loop_attempts + 1):
+            attempt_in_cycle = (total_attempt - 1) % attempts_per_cycle + 1
+            i = attempt_in_cycle - 1
+            if attempt_in_cycle == 1:
+                err_count_map = {}
+                if total_attempt > 1:
+                    exhausted_error = LLMRetryExhaustedError(
+                        attempts=total_attempt - 1,
+                        manual_cycle_count=manual_cycle_count,
+                        last_error=last_error,
+                        retry_reason=retry_reason,
+                    )
+                    action = _read_retry_exhaustion_action(
+                        policy,
+                        allow_retry=(
+                            manual_cycle_count < policy.max_manual_retry_cycles
+                        ),
+                    )
+                    if action == "retry":
+                        manual_cycle_count += 1
+                    elif action == "back":
+                        raise LLMBackToChatError(
+                            attempts=total_attempt - 1,
+                            manual_cycle_count=manual_cycle_count,
+                            last_error=last_error,
+                            retry_reason=retry_reason,
+                        ) from last_error
+                    else:
+                        raise exhausted_error from last_error
             try:
                 agent = get_agent_object()
                 if agent is not None and hasattr(agent, "_check_hard_interrupt"):
                     agent._check_hard_interrupt()
             except HardInterruptError:
-                # Re-raise immediately so the ReAct loop can stop cleanly.
                 raise
             except Exception:
-                # Any other problem with the interrupt check must not break
-                # the retry flow.
                 pass
 
-            if i > retry_times:
-                break
-
-            if i > 0:
-                sec = 5 if manual_retry_requested else (i%retry_times)*5
+            if attempt_in_cycle > 1:
+                sec = 5 if manual_retry_requested else (i % attempts_per_cycle) * 5
                 manual_retry_requested = False
                 if sec <= 0:
                     sec = 3
@@ -1129,7 +1186,6 @@ class LLMModel(LLMModelBase):
                             tools=tools, tool_choice=tool_choice,
                         )
 
-                    # set qos info
                     _info["current_tokens"] = self.tokenStat.current_tokens
                     _info["cached_tokens"] = self.tokenStat.current_cached_tokens
 
@@ -1154,67 +1210,67 @@ class LLMModel(LLMModelBase):
                     for_response=for_response,
                 )
             except KeyboardInterrupt:
-                # The LLM service has been stuck for a long time, we can proactively retry
-                input_func = get_agent_runtime_input()
-                if input_func is None:
-                    input_func = input
-                if input_yes_or_no(">>> LLM Retry [yes/no] ", input_func):
+                if not prompt_allowed:
+                    raise
+                if input_yes_or_no(
+                        ">>> LLM Retry [yes/no] ", policy.input_func
+                    ):
+                    # This retries only the same LLM chat request. It does
+                    # not restart the Agent loop or repeat any tool call.
                     manual_retry_requested = True
                     continue
-                raise KeyboardInterrupt()
+                raise
             except JsonError as e:
+                last_error = e
+                retry_reason = "json"
                 print_error(f"!!! [{i}] JsonError, {e}")
                 continue
             except openai.RateLimitError as e:
-                print_error(f"!!! [{i}] RateLimitError, {self.model_config["api_key"][:7]}, {e}")
-                if i > 7:
-                    retry_times += 1
+                last_error = e
+                retry_reason = "rate_limit"
+                print_error(
+                    f"!!! [{i}] RateLimitError, "
+                    f"{self.model_config['api_key'][:7]}, {e}"
+                )
                 continue
             except TypeError as e:
+                last_error = e
+                retry_reason = "type_error"
                 print_error(f"!!! [{i}] TypeError, {e}")
                 continue
             except openai.InternalServerError as e:
+                last_error = e
+                retry_reason = "internal_server"
                 print_error(f"!!! [{i}] InternalServerError, {e}")
-                if i > 7:
-                    retry_times += 1
-
-                if 'InternalServerError' not in err_count_map:
-                    err_count_map["InternalServerError"] = 0
-                err_count_map["InternalServerError"] += 1
-
+                err_count_map["InternalServerError"] = (
+                    err_count_map.get("InternalServerError", 0) + 1
+                )
                 if err_count_map["InternalServerError"] > 5:
                     self.rebuild_llm_models()
-
                 continue
             except openai.APIConnectionError as e:
+                last_error = e
+                retry_reason = "connection"
                 print_error(f"!!! [{i}] APIConnectionError, {e}")
-                if i > 7:
-                    retry_times += 1
                 continue
             except openai.APITimeoutError as e:
+                last_error = e
+                retry_reason = "timeout"
                 print_error(f"!!! [{i}] APITimeoutError, {e}")
-                if i > 7:
-                    retry_times += 1
                 continue
             except openai.PermissionDeniedError as e:
+                last_error = e
+                retry_reason = "permission_denied"
                 print_error(f"!!! [{i}] PermissionDeniedError, {e}")
                 continue
             except openai.BadRequestError as e:
-                # I don't know why some large model services return this issue, but retrying usually resolves it.
+                last_error = e
+                retry_reason = "bad_request"
                 print_error(f"!!! [{i}] BadRequestError, {e}")
-
-                # case: Requested token count exceeds the model's maximum context length
                 e_str = str(e).lower()
-                for key in [
-                    "exceed",
-                    "maximum context",
-                ]:
-                    if key in e_str:
-                        raise e
+                if "exceed" in e_str or "maximum context" in e_str:
+                    raise
 
-                # case: deterministic request-shape error, e.g. a tool message whose
-                # assistant tool_calls message was removed. Retrying re-sends a
-                # byte-identical payload, so it can never succeed.
                 marker = _match_non_retryable_bad_request(e_str)
                 if marker:
                     raise openai.BadRequestError(
@@ -1222,12 +1278,11 @@ class LLMModel(LLMModelBase):
                         f"(matched marker: '{marker}'). The request payload is "
                         "malformed, most likely the Agent2LLM context contains an "
                         "unpaired assistant tool call or tool output after context "
-                        "summarization or pruning; "
-                        f"retrying cannot recover. Original error: {e}",
+                        "summarization or pruning; retrying cannot recover. "
+                        f"Original error: {e}",
                         response=e.response,
                         body=e.body,
                     ) from e
-
                 continue
             except (
                     httpx.ReadError,
@@ -1236,53 +1291,58 @@ class LLMModel(LLMModelBase):
                     httpx.ReadTimeout,
                     httpcore.ReadTimeout,
                 ) as e:
-                # This problem often occurs with streaming response
+                last_error = e
+                retry_reason = "read_error"
                 print_error(f"!!! [{i}] ReadError, {e}")
                 continue
-
             except ModelServiceError as e:
+                last_error = e
+                retry_reason = (
+                    "special_response"
+                    if isinstance(e, LLMServiceSpecialResponseError)
+                    else "model_service"
+                )
                 e_str = str(e).lower()
-                for key in [
-                    "token exceed",
-                ]:
-                    if key in e_str:
-                        raise e
+                if "token exceed" in e_str:
+                    raise
 
                 sec = 30
-                # set seconds to sleep
-                for key in [
-                    "bad_request",
-                    "bad request",
-                ]:
-                    if key in e_str:
-                        sec = 1
-
-                # special responses (e.g. "服务器繁忙") should retry quickly
+                if "bad_request" in e_str or "bad request" in e_str:
+                    sec = 1
                 if isinstance(e, LLMServiceSpecialResponseError):
-                    sec = random.choice(_LLM_SERVICE_SPECIAL_RESPONSE_SLEEP_SECONDS)
+                    sec = random.choice(
+                        _LLM_SERVICE_SPECIAL_RESPONSE_SLEEP_SECONDS
+                    )
 
                 print_error(f"!!! [{i}] {LLM_KEYWORD_SERVICE}: {e}")
                 print_error(f"blocking chat {sec}s ...")
                 time.sleep(sec)
                 continue
-
-            # Hard interrupts are control-flow signals, never retryable LLM errors.
-            except HardInterruptError:
+            except (HardInterruptError, LLMBackToChatError, LLMRetryExhaustedError):
+                # These signals control a higher-level flow and must never
+                # be mistaken for retryable provider failures.
                 raise
-            # internal error or bug
-            except (
-                KeyError,
-                Exception,
-            ) as e:
-                if thread_tool.is_main_thread():
-                    print_error(f"Some errors have occurred: [{e}]")
-                    logger.exception("some errors have occurred: %s", e)
-                    input_func = get_agent_runtime_input()
-                    if input_func is None:
-                        input_func = input
-                    if input_yes_or_no(">>> LLM Retry [yes/no] ", input_func):
+            except (KeyError, Exception) as e:
+                last_error = e
+                retry_reason = "unknown"
+                print_error(f"Some errors have occurred: [{e}]")
+                logger.exception("some errors have occurred: %s", e)
+                if prompt_allowed:
+                    if input_yes_or_no(
+                            ">>> LLM Retry [yes/no] ", policy.input_func
+                        ):
+                        # Continue this LLM chat request with the same
+                        # messages; never retry the Agent loop here.
                         manual_retry_requested = True
                         continue
-                raise e
+                    raise
+                # Non-interactive callers must never block for input. The
+                # same LLM chat request continues its bounded auto-retries.
+                continue
 
-        raise Exception("chat to LLM is failed")
+        raise LLMRetryExhaustedError(
+            attempts=loop_attempts,
+            manual_cycle_count=manual_cycle_count,
+            last_error=last_error,
+            retry_reason=retry_reason,
+        ) from last_error

@@ -147,3 +147,6 @@ Lessons:
 
 When the LLM request-statistics feature caused `utils.StateVisualizer` to import, instantiate, and invoke `context.LLMRequestStat`, the trigger was a review request to keep utility methods generic. The correction moved statistics coordination into `context.LLMStateVisualizer`, a subclass of the generic utility visualizer, and moved the LLM model-specific decorator into the context layer. This prevents recurrence by requiring dependency direction to remain business/context to utility and by keeping both runtime dependencies and examples in utility modules free of domain-specific concepts.
 
+## Abandoned User2Agent turns must bypass completion side effects and restore turn accounting
+
+When `LLMBackToChatError` abandons a failed User2Agent turn, reading a replacement message is not sufficient: falling through normal completion handling can run success/final hooks, persist a fake answer, reset session state, or consume the finite-turn budget. Handle Back with explicit local state, invoke the failure hook once, normalize and revalidate fresh input, guard all completion-only effects, and restore `curr_count` before naturally starting the next iteration. This prevents old-message replay, false completion records, and premature finite-run termination without confusing Back with the request-level retry that remains inside `LLMModel.chat()`.

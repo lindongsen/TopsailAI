@@ -375,6 +375,28 @@ def test_openai_client_can_consume_opt_in_sse_stream():
     assert server.prompt_cache.state()["total_requests"] == 1
 
 
+def test_sse_stream_can_script_each_request_then_use_legacy_fallback():
+    """Request-indexed SSE replies must preserve the legacy fallback response."""
+    with running_server(
+        stream_chunks=("fallback",),
+        stream_response_chunks=(("first",), ("second",)),
+    ) as (_, base_url):
+        client = OpenAI(api_key="mock", base_url=base_url + "/v1")
+        contents = []
+        for _ in range(3):
+            stream = client.chat.completions.create(
+                model="topsailai-mock",
+                messages=[_message("user", "same request")],
+                stream=True,
+            )
+            contents.append("".join(
+                chunk.choices[0].delta.content or ""
+                for chunk in stream
+                if chunk.choices
+            ))
+    assert contents == ["first", "second", "fallback"]
+
+
 @pytest.mark.parametrize(
     "payload,error_text",
     [
