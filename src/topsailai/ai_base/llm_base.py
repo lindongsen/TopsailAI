@@ -5,13 +5,9 @@
   Purpose:
 '''
 
-import contextvars
-import functools
 import os
 import random
 import time
-import threading
-from collections import deque
 
 import httpx
 import httpcore
@@ -22,24 +18,11 @@ import openai
 _LLM_SERVICE_SPECIAL_RESPONSE_SLEEP_SECONDS = (
     5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97
 )
-
-# Case-insensitive contextual rules for deterministic request-shape 400 errors.
-# Every phrase in one rule must match; generic protocol field names alone remain
-# retryable because a gateway may echo them while reporting a transient failure.
-_LLM_NON_RETRYABLE_BAD_REQUEST_RULES = (
-    ("no tool call found",),
-    ("no tool output found for function call",),
-    ("function_call_output", "no matching function_call"),
-    ("function_call_output", "no function call found"),
-    ("tool_call_id", "not found"),
-    ("tool_call_id", "preceding message"),
-)
-
 from openai.types.chat import (
     ChatCompletionMessage,
     ChatCompletionMessageToolCall,
 )
-from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
+from openai.types.completion_usage import CompletionUsage
 
 from topsailai.logger.log_chat import logger
 from topsailai.ai_base.llm_pool import OpenAIClientConfig, acquire, invalidate
@@ -76,198 +59,92 @@ from .llm_control.exception import (
     ModelServiceError,
     LLMServiceSpecialResponseError,
 )
-from .llm_control.message import (
-    get_response_message,
-    format_response,
+from .llm_control.message import get_response_message, format_response
+from .llm_control.configuration import (
+    get_first_byte_timeout_config as _get_first_byte_timeout_config,
 )
 from .llm_control.base_class import (
     LLMModelBase,
 )
 from .llm_hooks.executor import hook_execute
-
-def _match_non_retryable_bad_request(e_str: str) -> str:
-    """Return the first non-retryable request-shape rule matching the error text.
-
-    Built-in contextual rules are always active. The semicolon-separated
-    ``TOPSAILAI_LLM_NON_RETRYABLE_BAD_REQUEST_MARKERS`` value adds optional
-    provider-specific substring markers without disabling the built-ins.
-
-    Args:
-        e_str (str): Provider error text.
-
-    Returns:
-        str: The matched rule description or marker, or an empty string.
-    """
-    e_str = str(e_str).lower()
-    for phrases in _LLM_NON_RETRYABLE_BAD_REQUEST_RULES:
-        if all(phrase in e_str for phrase in phrases):
-            return " + ".join(phrases)
-
-    extra = env_tool.EnvReaderInstance.get_list_str(
-        "TOPSAILAI_LLM_NON_RETRYABLE_BAD_REQUEST_MARKERS", separator=";"
-    )
-    for marker in extra or []:
-        marker = str(marker).lower()
-        if marker and marker in e_str:
-            return marker
-    return ""
-
-
-_llm_request_started = contextvars.ContextVar(
-    "topsailai_llm_request_started", default=False
+from .llm_control.model_handles import LLMModelHandleLifecycleMixin
+from .llm_control.native_tool_calls import NativeToolCallResponseMixin
+from .llm_control.llm_retry import (
+    LLMRetryInteractionPolicy,
+    read_retry_exhaustion_action as _read_retry_exhaustion_action,
 )
-_llm_request_timing_ticket = contextvars.ContextVar(
-    "topsailai_llm_request_timing_ticket", default=None
+from .llm_control.retry_classification import (
+    match_non_retryable_bad_request as _match_non_retryable_bad_request,
 )
 
-
-def _record_llm_request_outcome(method):
-    """Record one outcome and finish timing for each started provider request."""
-    @functools.wraps(method)
-    def wrapper(self, *args, **kwargs):
-        started_token = _llm_request_started.set(False)
-        ticket_token = _llm_request_timing_ticket.set(None)
-        try:
-            result = method(self, *args, **kwargs)
-            if _llm_request_started.get():
-                self._record_llm_request_success()
-            return result
-        except BaseException:
-            if _llm_request_started.get():
-                self._record_llm_request_failure()
-                ticket = _llm_request_timing_ticket.get()
-                if ticket is not None:
-                    self._finish_llm_request(ticket)
-            raise
-        finally:
-            _llm_request_timing_ticket.reset(ticket_token)
-            _llm_request_started.reset(started_token)
-
-    return wrapper
+from .llm_control.first_byte_timeout import (
+    FirstByteTimeoutMixin,
+    iter_with_first_byte_timeout as _iter_with_first_byte_timeout,
+)
+from .llm_control.request_tracking import (
+    _llm_request_started,
+    _llm_request_timing_ticket,
+    iter_stream_for_request_timing as _iter_stream_for_request_timing,
+    log_first_byte_timeout as _log_first_byte_timeout,
+    record_llm_request_outcome as _record_llm_request_outcome,
+)
+from .llm_control.response_events import LLMResponseEventMixin
 
 
-def _read_retry_exhaustion_action(policy, *, allow_retry):
-    """Read one bounded retry-exhaustion action from the interactive user."""
-    action_lines = []
-    if allow_retry:
-        action_lines.append("1. Retry the same LLM request")
-    back_number = None
-    if policy.allow_back_to_chat:
-        back_number = len(action_lines) + 1
-        action_lines.append(f"{back_number}. Back to chat")
-    exit_number = len(action_lines) + 1
-    action_lines.append(f"{exit_number}. Exit")
-    prompt = (
-        "LLM retry attempts exhausted.\n"
-        + "\n".join(action_lines)
-        + f"\nSelect [1-{exit_number}]: "
-    )
-
-    for _ in range(policy.max_invalid_choices):
-        try:
-            choice = str(policy.input_func(prompt)).strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            return "exit"
-        if allow_retry and choice in {"1", "retry"}:
-            return "retry"
-        if policy.allow_back_to_chat and choice in {str(back_number), "back"}:
-            return "back"
-        if choice in {str(exit_number), "exit", "abort"}:
-            return "exit"
-        print_warning("Please select a valid LLM retry action.")
-    return "exit"
-
-
-class LLMModel(LLMModelBase):
+class LLMModel(
+    NativeToolCallResponseMixin,
+    LLMResponseEventMixin,
+    FirstByteTimeoutMixin,
+    LLMModelHandleLifecycleMixin,
+    LLMModelBase,
+):
     """OpenAI-compatible model with context-local runtime components."""
 
-
     def _get_pending_native_tool_call_responses(self):
-        """Return the per-model FIFO for synthetic native tool-call responses."""
-        queue = getattr(self, "_pending_native_tool_call_responses", None)
-        if queue is None:
-            queue = deque()
-            self._pending_native_tool_call_responses = queue
-        return queue
+        """Retain the native pending-response FIFO compatibility seam."""
+        return super()._get_pending_native_tool_call_responses()
 
     def clear_pending_native_tool_call_responses(self):
-        """Discard synthetic native tool-call responses not yet consumed."""
-        queue = self._get_pending_native_tool_call_responses()
-        pending_count = len(queue)
-        queue.clear()
-        if pending_count:
-            logger.debug("cleared %s pending native tool-call responses", pending_count)
+        """Retain the native pending-response cleanup compatibility seam."""
+        return super().clear_pending_native_tool_call_responses()
 
     def _split_native_tool_call_response(self, rsp_obj, rsp_content):
-        """Split a native multi-tool-call response into ordered single-call units."""
-        rsp_msg = self.get_response_message(rsp_obj)
-        tool_calls = getattr(rsp_msg, "tool_calls", None) or []
-        if len(tool_calls) <= 1:
-            return rsp_obj, rsp_content, 1, 1
+        """Retain the native tool-call split compatibility seam."""
+        return super()._split_native_tool_call_response(rsp_obj, rsp_content)
 
-        total_tool_calls = len(tool_calls)
-        responses = []
-        for index, tool_call in enumerate(tool_calls):
-            # Keep all raw content in the first unit so response hooks observe it once.
-            synthetic_content = rsp_content if index == 0 else ""
-            synthetic_rsp_msg = ChatCompletionMessage(
-                role=ROLE_ASSISTANT,
-                content=synthetic_content,
-                tool_calls=[tool_call],
-            )
-            synthetic_content = self.fix_response_content(
-                rsp_obj=synthetic_rsp_msg,
-                rsp_content=synthetic_content,
-            )
-            responses.append((
-                synthetic_rsp_msg,
-                synthetic_content,
-                index + 1,
-                total_tool_calls,
-            ))
+    def _build_single_native_tool_call_response(self, *, content, tool_call):
+        """Build one OpenAI-compatible response for a native tool call."""
+        return ChatCompletionMessage(
+            role=ROLE_ASSISTANT,
+            content=content,
+            tool_calls=[tool_call],
+        )
 
-        queue = self._get_pending_native_tool_call_responses()
-        queue.extend(responses[1:])
+    def _on_native_tool_call_responses_cleared(self, pending_count):
+        """Log cleanup of pending native tool-call responses."""
+        logger.debug(
+            "cleared %s pending native tool-call responses",
+            pending_count,
+        )
+
+    def _on_native_tool_call_response_split(self, total_tool_calls):
+        """Report splitting of one native multi-tool-call response."""
         logger.debug(
             "split %s native tool calls into sequential responses",
-            len(responses),
+            total_tool_calls,
         )
         print_info(f"Detected {total_tool_calls} native tool calls")
-        return responses[0]
-
-    def _return_chat_response(
-            self,
-            rsp_obj,
-            rsp_content,
-            messages,
-            for_raw=False,
-            for_response=False,
-        ):
-        """Format and return one real or synthetic chat response."""
-        if for_raw:
-            return rsp_content
-
-        if get_agent_object() is not None:
-            rsp_content = hook_execute(
-                "TOPSAILAI_HOOK_AFTER_LLM_RESPONSE", rsp_content
-            )
-        result = format_response(rsp_content, rsp_obj, messages=messages)
-        if not result:
-            raise TypeError("null of response content: [%s]" % rsp_content)
-        if for_response:
-            return rsp_obj, result
-        return result
 
     def get_model_name(self, default="DeepSeek-V3.1-Terminus"):
         return os.getenv("OPENAI_MODEL", default)
 
     def _get_llm_model_handles(self):
-        """Return lazily initialized ownership records for pooled clients."""
-        handles = getattr(self, "_llm_model_handles", None)
-        if handles is None:
-            handles = []
-            self._llm_model_handles = handles
-        return handles
+        """Retain the OpenAI model ownership-record compatibility seam."""
+        return super()._get_llm_model_handles()
+
+    def _get_llm_model_handle_registry(self):
+        """Retain the OpenAI model handle-registry compatibility seam."""
+        return super()._get_llm_model_handle_registry()
 
     def get_llm_model(self, api_key=None, api_base=None):
         """Return a pooled OpenAI-compatible chat completions resource."""
@@ -284,77 +161,43 @@ class LLMModel(LLMModelBase):
             )
         )
         chat_model = handle.client.chat.completions
-        self._get_llm_model_handles().append((chat_model, handle))
+        self._register_llm_model_handle(chat_model, handle)
         return chat_model
 
     def snapshot_llm_model_leases(self):
-        """Return exact handles currently leased by this model instance.
-
-        Separate handles may expose the same ``chat.completions`` object when
-        they share one process-global SDK client. Snapshotting handles, rather
-        than resources, lets a transactional rebuild release only the old
-        leases after replacement leases have been acquired.
-        """
-        return tuple(handle for _, handle in self._get_llm_model_handles())
+        """Retain the OpenAI model lease-snapshot compatibility seam."""
+        return super().snapshot_llm_model_leases()
 
     def release_llm_model_leases(self, handles) -> int:
-        """Release the specified owned handles without touching other leases."""
-        owned_handles = self._get_llm_model_handles()
-        released = 0
-        for target_handle in handles:
-            for index, (_, owned_handle) in enumerate(owned_handles):
-                if owned_handle is not target_handle:
-                    continue
-                del owned_handles[index]
-                owned_handle.release()
-                released += 1
-                break
-        return released
+        """Retain the OpenAI model exact-release compatibility seam."""
+        return super().release_llm_model_leases(handles)
 
     def release_llm_model_leases_after(self, snapshot) -> int:
-        """Release leases acquired after an ownership snapshot."""
-        retained_handle_ids = {id(handle) for handle in snapshot}
-        acquired_handles = [
-            handle
-            for _, handle in self._get_llm_model_handles()
-            if id(handle) not in retained_handle_ids
-        ]
-        return self.release_llm_model_leases(acquired_handles)
+        """Retain the OpenAI model post-snapshot release compatibility seam."""
+        return super().release_llm_model_leases_after(snapshot)
 
     def release_llm_model(self, chat_model) -> bool:
-        """Release one pooled-client lease associated with a chat resource."""
-        handles = self._get_llm_model_handles()
-        for index in range(len(handles) - 1, -1, -1):
-            owned_model, handle = handles[index]
-            if owned_model is not chat_model:
-                continue
-            del handles[index]
-            handle.release()
-            return True
-        return False
+        """Retain the OpenAI model single-release compatibility seam."""
+        return super().release_llm_model(chat_model)
 
     def release_all_llm_models(self) -> int:
-        """Release every pooled-client lease owned by this model instance."""
-        return self.release_llm_model_leases(self.snapshot_llm_model_leases())
+        """Retain the OpenAI model release-all compatibility seam."""
+        return super().release_all_llm_models()
+
+    def _find_llm_model_handle(self, chat_model):
+        """Retain the OpenAI model handle-lookup compatibility seam."""
+        return super()._find_llm_model_handle(chat_model)
 
     def invalidate_llm_model(self, chat_model) -> bool:
         """Retire only the global client generation behind one owned resource."""
-        for owned_model, handle in reversed(self._get_llm_model_handles()):
-            if owned_model is chat_model:
-                return invalidate(handle.key)
-        return False
+        handle = self._find_llm_model_handle(chat_model)
+        if handle is None:
+            return False
+        return invalidate(handle.key)
 
     def replace_llm_model(self, old_model, api_key=None, api_base=None):
         """Acquire a replacement before releasing the exact old lease."""
-        old_handles = self._get_llm_model_handles()
-        old_handle = next(
-            (
-                handle
-                for owned_model, handle in reversed(old_handles)
-                if owned_model is old_model
-            ),
-            None,
-        )
+        old_handle = self._find_llm_model_handle(old_model)
         new_model = self.get_llm_model(api_key=api_key, api_base=api_base)
         # A cache hit can expose the same chat resource for both generations of
         # ownership. Release the handle captured before acquire, never whichever
@@ -389,32 +232,35 @@ class LLMModel(LLMModelBase):
         return get_response_message(response)
 
     def get_response_usage(self, response) -> CompletionUsage:
-        try:
-            return response.usage
-        except Exception:
-            pass
-        return None
+        """Retain the provider usage compatibility seam."""
+        return super().get_response_usage(response)
+
+    def _return_chat_response(
+            self,
+            rsp_obj,
+            rsp_content,
+            messages,
+            for_raw=False,
+            for_response=False,
+        ):
+        """Retain response compatibility through legacy module adapters."""
+        return super()._return_chat_response_with_adapters(
+            rsp_obj,
+            rsp_content,
+            messages,
+            for_raw=for_raw,
+            for_response=for_response,
+            get_agent_object_fn=get_agent_object,
+            hook_execute_fn=hook_execute,
+            format_response_fn=format_response,
+        )
+
     def _get_first_byte_timeout_config(self):
         """Read first-byte timeout configuration from environment variables.
 
-        Returns:
-            tuple: (first_byte_timeout, raise_on_timeout)
-                first_byte_timeout (float): threshold in seconds; ``<= 0`` disables.
-                raise_on_timeout (bool): whether to raise ``openai.APITimeoutError``.
+        Thin wrapper around the provider-neutral helper in ``llm_control``.
         """
-        first_byte_timeout = env_tool.EnvReaderInstance.get(
-            "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT",
-            default=180,
-            formatter=float,
-        )
-        if first_byte_timeout is None:
-            first_byte_timeout = 180
-
-        raise_on_first_byte_timeout = env_tool.EnvReaderInstance.check_bool(
-            "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE",
-            default=False,
-        )
-        return first_byte_timeout, raise_on_first_byte_timeout
+        return _get_first_byte_timeout_config(env_tool.EnvReaderInstance)
 
     def _make_first_byte_timeout_error(self, first_byte_timeout):
         """Construct an ``openai.APITimeoutError`` for first-byte timeout.
@@ -432,9 +278,11 @@ class LLMModel(LLMModelBase):
 
     def _log_first_byte_timeout(self, elapsed, first_byte_timeout):
         """Log a first-byte timeout warning using project conventions."""
-        print_warning(
-            f"{LLM_KEYWORD_SERVICE}: first byte timeout threshold reached/exceeded: "
-            f"elapsed {elapsed:.1f}s >= threshold {first_byte_timeout}s"
+        return _log_first_byte_timeout(
+            elapsed,
+            first_byte_timeout,
+            warning_func=print_warning,
+            service_keyword=LLM_KEYWORD_SERVICE,
         )
 
     def _create_with_first_byte_timeout(
@@ -446,171 +294,59 @@ class LLMModel(LLMModelBase):
         first_byte_timeout=180,
         raise_on_timeout=False,
     ):
-        """Call ``chat_model.create()`` with an optional first-byte timeout.
-
-        For non-streaming requests the timeout covers the blocking period before
-        the response object is returned. For streaming requests it covers the
-        blocking period before the ``Stream`` object is returned; the caller
-        should still wrap the returned iterator with
-        ``iter_stream_with_first_byte_timeout`` to enforce a timeout on the
-        first chunk.
-
-        Args:
-            messages (list): List of message dictionaries.
-            tools (list, optional): List of available tools. Defaults to None.
-            tool_choice (str, optional): Tool choice strategy. Defaults to "auto".
-            stream (bool, optional): Whether to request a streaming response.
-            first_byte_timeout (float): Threshold in seconds. ``<= 0`` disables.
-            raise_on_timeout (bool): If True, raise ``openai.APITimeoutError``
-                when the first byte exceeds the threshold.
-
-        Returns:
-            For ``stream=False``: the response object.
-            For ``stream=True``: tuple ``(response, create_timed_out)`` where
-            ``create_timed_out`` indicates that the create() blocking period
-            already exceeded the threshold.
-        """
-        params = self.build_parameters_for_chat(
-            messages, stream=stream, tools=tools, tool_choice=tool_choice
+        """Retain the request-creation first-byte timeout compatibility seam."""
+        return super()._create_with_first_byte_timeout(
+            messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            stream=stream,
+            first_byte_timeout=first_byte_timeout,
+            raise_on_timeout=raise_on_timeout,
         )
 
-        if first_byte_timeout is None or first_byte_timeout <= 0:
-            ticket = self._start_llm_request()
-            _llm_request_started.set(True)
-            _llm_request_timing_ticket.set(ticket)
-            try:
-                response = self.chat_model.create(timeout=(5, 300), **params)
-            except BaseException:
-                self._finish_llm_request(ticket)
-                raise
-            if stream:
-                self._pause_llm_request(ticket)
-                return response, False
-            self._finish_llm_request(ticket)
-            return response
+    def _build_first_byte_request_parameters(
+        self, messages, *, tools, tool_choice, stream
+    ):
+        """Build OpenAI-compatible provider request parameters."""
+        return self.build_parameters_for_chat(
+            messages,
+            stream=stream,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
 
-        result = [None]
-        first_exc = [None]
-        timing_ticket = [None]
-        ticket_started = threading.Event()
-        got_result = threading.Event()
+    def _create_first_byte_response(self, params):
+        """Create one OpenAI-compatible provider response."""
+        return self.chat_model.create(timeout=(5, 300), **params)
 
-        def _create():
-            ticket = None
-            try:
-                ticket = self._start_llm_request()
-                timing_ticket[0] = ticket
-                ticket_started.set()
-                result[0] = self.chat_model.create(timeout=(5, 300), **params)
-                if stream:
-                    self._pause_llm_request(ticket)
-                else:
-                    self._finish_llm_request(ticket)
-            except BaseException as error:
-                if ticket is not None:
-                    self._finish_llm_request(ticket)
-                first_exc[0] = error
-            finally:
-                ticket_started.set()
-                got_result.set()
+    def _start_first_byte_request(self):
+        """Start request timing for one provider attempt."""
+        return self._start_llm_request()
 
-        start_time = time.monotonic()
-        create_thread = threading.Thread(target=_create, daemon=True)
-        create_thread.start()
-        ticket_started.wait()
-        if timing_ticket[0] is not None:
-            _llm_request_started.set(True)
-            _llm_request_timing_ticket.set(timing_ticket[0])
+    def _pause_first_byte_request(self, ticket):
+        """Pause request timing after provider stream creation."""
+        return self._pause_llm_request(ticket)
 
-        timed_out = not got_result.wait(timeout=first_byte_timeout)
-        elapsed = time.monotonic() - start_time
+    def _finish_first_byte_request(self, ticket):
+        """Finish request timing after a provider attempt."""
+        return self._finish_llm_request(ticket)
 
-        if timed_out:
-            self._log_first_byte_timeout(elapsed, first_byte_timeout)
-            if raise_on_timeout:
-                raise self._make_first_byte_timeout_error(first_byte_timeout)
-            # Timeout without raise: wait for the actual result so the caller
-            # still receives a valid response. The timeout acts as a monitoring
-            # signal rather than a hard deadline in this mode.
-            got_result.wait()
-            if first_exc[0] is not None:
-                raise first_exc[0]
-            if stream:
-                return result[0], True
-            return result[0]
+    def _publish_first_byte_request_ticket(self, ticket):
+        """Publish request timing context in the calling thread."""
+        _llm_request_started.set(True)
+        _llm_request_timing_ticket.set(ticket)
 
-        if first_exc[0] is not None:
-            raise first_exc[0]
-
-        if stream:
-            return result[0], False
-        return result[0]
+    def _iter_first_byte_timeout(self, stream, *args, **kwargs):
+        """Apply the stream timeout helper through the legacy module seam."""
+        return _iter_with_first_byte_timeout(stream, *args, **kwargs)
 
 
     def _truncate_event_payload(self, payload, max_bytes):
-        """Truncate an event payload so its JSON representation fits ``max_bytes``.
-
-        Truncation is applied defensively without mutating caller state: the
-        payload is copied before any modification. Large ``raw_response`` and
-        ``content`` fields are reduced first; if the payload is still too large,
-        a minimal fallback record is returned.
-        """
-        import json
-
-        try:
-            data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
-        except Exception:
-            return {"_error": "payload not serializable"}
-
-        if len(data.encode("utf-8")) <= max_bytes:
-            return payload
-
-        # Copy so the caller's dict is never mutated.
-        payload = dict(payload)
-
-        # First drop the raw response, which is usually the largest part.
-        if "raw_response" in payload:
-            payload["raw_response"] = {"_truncated": True}
-            data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
-            if len(data.encode("utf-8")) <= max_bytes:
-                return payload
-
-        # Then truncate textual content.
-        if isinstance(payload.get("content"), str):
-            payload["content"] = payload["content"][: max_bytes // 10]
-            data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
-            if len(data.encode("utf-8")) <= max_bytes:
-                return payload
-
-        # Then truncate tool-call arguments.
-        if payload.get("tool_calls"):
-            payload["tool_calls"] = [
-                dict(tc) for tc in payload["tool_calls"]
-            ]
-            for tc in payload["tool_calls"]:
-                func = tc.get("function") or {}
-                if isinstance(func.get("arguments"), str):
-                    func["arguments"] = func["arguments"][: max_bytes // 10]
-                tc["function"] = func
-            data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
-            if len(data.encode("utf-8")) <= max_bytes:
-                return payload
-
-        # Final fallback: keep only safe metadata.
-        return {
-            "_truncated": True,
-            "model": payload.get("model"),
-            "is_stream": payload.get("is_stream"),
-            "content_length": len(payload.get("content", "") or ""),
-            "tool_call_count": len(payload.get("tool_calls") or []),
-        }
+        """Retain the response-event truncation compatibility seam."""
+        return super()._truncate_event_payload(payload, max_bytes)
 
     def _record_llm_response_event(self, response, is_stream=False, sampled_chunks=None):
-        """Record a raw LLM response event if response-event recording is enabled.
-
-        This is a safe hook: any exception is swallowed and no shared state is
-        mutated, so recording failures can never break the LLM call.
-        """
+        """Retain the response-event configuration and patch compatibility seam."""
         try:
             enabled = env_tool.EnvReaderInstance.check_bool(
                 "TOPSAILAI_LLM_RESPONSE_EVENTS_ENABLED",
@@ -632,58 +368,35 @@ class LLMModel(LLMModelBase):
                 default=True,
             )
 
-            message = self.get_response_message(response)
-            content = getattr(message, "content", None) or ""
-
-            tool_calls = None
-            raw_tool_calls = getattr(message, "tool_calls", None)
-            if raw_tool_calls:
-                tool_calls = []
-                for tc in raw_tool_calls:
-                    function = getattr(tc, "function", None)
-                    tool_calls.append({
-                        "id": getattr(tc, "id", None),
-                        "type": getattr(tc, "type", "function"),
-                        "function": {
-                            "name": getattr(function, "name", None) if function else None,
-                            "arguments": getattr(function, "arguments", None) if function else None,
-                        },
-                    })
-
-            payload = {
-                "model": self.model_name,
-                "is_stream": is_stream,
-                "content": content,
-                "tool_calls": tool_calls,
-            }
-
-            if include_raw:
-                raw_response = None
-                try:
-                    if hasattr(response, "to_dict"):
-                        raw_response = response.to_dict()
-                    elif hasattr(response, "model_dump"):
-                        raw_response = response.model_dump()
-                    else:
-                        raw_response = {"_repr": repr(response)}
-                except Exception:
-                    raw_response = {"_error": "failed to serialize raw response"}
-                payload["raw_response"] = raw_response
-
-            if sampled_chunks:
-                payload["sampled_chunks"] = sampled_chunks
-
-            payload = self._truncate_event_payload(payload, max_payload_bytes)
-
             from topsailai.events import record_event
-            record_event(
-                "llm.response.raw",
-                payload=payload,
-                source="ai_base.llm_base",
+
+            def recorder(payload):
+                record_event(
+                    "llm.response.raw",
+                    payload=payload,
+                    source="ai_base.llm_base",
+                )
+
+            return super()._record_llm_response_event(
+                response,
+                is_stream=is_stream,
+                sampled_chunks=sampled_chunks,
+                enabled=enabled,
+                max_payload_bytes=max_payload_bytes,
+                include_raw=include_raw,
+                recorder=recorder,
             )
         except Exception:
             # Safe hook: never re-raise; never mutate shared state.
-            pass
+            return None
+
+    def _get_llm_response_event_message(self, response):
+        """Adapt an OpenAI-compatible response for event serialization."""
+        return self.get_response_message(response)
+
+    def _get_llm_response_event_model_name(self):
+        """Return the OpenAI-compatible model name for event payloads."""
+        return self.model_name
 
     @visualize_model_state(VisualizationState.THINKING)
     @_record_llm_request_outcome
@@ -741,98 +454,25 @@ class LLMModel(LLMModelBase):
         raise_on_timeout=False,
         create_timed_out=False,
     ):
-        """Wrap a stream iterator to enforce a first-byte timeout.
-
-        The timeout is applied only to the first chunk. Subsequent chunks are
-        yielded without additional timeout logic. When the timeout is disabled
-        (``first_byte_timeout <= 0``), the stream is passed through unchanged.
-
-        Args:
-            stream: The stream iterator to wrap.
-            first_byte_timeout (float): Threshold in seconds for the first chunk.
-                Values of ``0`` or less disable the timeout.
-            raise_on_timeout (bool): If True, raise openai.APITimeoutError when
-                the first chunk exceeds the threshold so the caller can retry.
-            create_timed_out (bool): If True, the blocking period before the
-                stream was returned already exceeded the threshold and was
-                logged. This avoids double-warning for the same slow event.
-
-        Yields:
-            Chunks from the wrapped stream.
-
-        Raises:
-            openai.APITimeoutError: If raise_on_timeout is True and the first
-                chunk takes longer than first_byte_timeout seconds.
-        """
-        if first_byte_timeout is None or first_byte_timeout <= 0:
-            yield from stream
-            return
-
-        first_chunk = [None]
-        first_exc = [None]
-        got_result = threading.Event()
-
-        def _fetch_first():
-            try:
-                first_chunk[0] = next(stream)
-            except StopIteration:
-                pass
-            except Exception as e:
-                first_exc[0] = e
-            finally:
-                got_result.set()
-
-        start_time = time.monotonic()
-        fetch_thread = threading.Thread(target=_fetch_first, daemon=True)
-        fetch_thread.start()
-
-        timed_out = not got_result.wait(timeout=first_byte_timeout)
-        elapsed = time.monotonic() - start_time
-
-        if timed_out:
-            if hasattr(stream, "close"):
-                try:
-                    stream.close()
-                except Exception:
-                    pass
-            if not create_timed_out:
-                self._log_first_byte_timeout(elapsed, first_byte_timeout)
-            if raise_on_timeout:
-                raise self._make_first_byte_timeout_error(first_byte_timeout)
-            # Timeout without raise: stop iteration so the caller does not
-            # block indefinitely waiting for a response that already missed
-            # its deadline.
-            return
-
-        if first_exc[0] is not None:
-            raise first_exc[0]
-
-        if first_chunk[0] is None:
-            # Empty stream or StopIteration before any chunk.
-            return
-
-        if elapsed > first_byte_timeout and not create_timed_out:
-            self._log_first_byte_timeout(elapsed, first_byte_timeout)
-
-        yield first_chunk[0]
-        for chunk in stream:
-            yield chunk
+        """Retain the stream first-byte timeout compatibility seam."""
+        yield from super().iter_stream_with_first_byte_timeout(
+            stream,
+            first_byte_timeout=first_byte_timeout,
+            raise_on_timeout=raise_on_timeout,
+            create_timed_out=create_timed_out,
+        )
 
     def _iter_stream_for_request_timing(self, stream, ticket):
-        """Time only blocking provider iterator operations, not chunk processing."""
-        iterator = iter(stream)
-        while True:
-            self._resume_llm_request(ticket)
-            try:
-                chunk = next(iterator)
-            except StopIteration:
-                self._pause_llm_request(ticket)
-                return
-            except BaseException:
-                self._pause_llm_request(ticket)
-                raise
-            self._pause_llm_request(ticket)
-            yield chunk
+        """Time only blocking provider iterator operations, not chunk processing.
+
+        Thin wrapper around the provider-neutral helper in ``llm_control``.
+        """
+        return _iter_stream_for_request_timing(
+            stream,
+            ticket,
+            resume=self._resume_llm_request,
+            pause=self._pause_llm_request,
+        )
 
     @visualize_model_state(VisualizationState.THINKING)
     @_record_llm_request_outcome
@@ -1088,8 +728,6 @@ class LLMModel(LLMModelBase):
             LLMBackToChatError: If an interactive user abandons this turn.
             LLMRetryExhaustedError: If bounded request retries are exhausted.
         """
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
-
         pending_responses = self._get_pending_native_tool_call_responses()
         if pending_responses:
             rsp_obj, rsp_content, sequence, total = pending_responses.popleft()
@@ -1135,6 +773,7 @@ class LLMModel(LLMModelBase):
                         allow_retry=(
                             manual_cycle_count < policy.max_manual_retry_cycles
                         ),
+                        warning_func=print_warning,
                     )
                     if action == "retry":
                         manual_cycle_count += 1

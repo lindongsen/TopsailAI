@@ -38,7 +38,7 @@ from topsailai.ai_base.exception import (
     HeavyTaskError,
     LLMBackToChatError,
 )
-from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+from topsailai.ai_base.llm_control.llm_retry import LLMRetryInteractionPolicy
 from topsailai.utils.thread_local_tool import get_agent_runtime_input
 from topsailai.workspace.control_channel import ControlServer
 from topsailai.workspace.control_channel.handler import ControlHandlerRegistry

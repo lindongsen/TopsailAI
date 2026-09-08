@@ -5,9 +5,12 @@ Created: 2026-04-19
 Purpose: Unit tests for ai_base/llm_control/base_class.py
 """
 
-import pytest
+import ast
 import os
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
+
+import pytest
 
 from topsailai.ai_base.llm_control.base_class import (
     parse_model_settings,
@@ -237,6 +240,37 @@ class TestLLMModelBase:
 
         model.state_visualizer.stop.assert_called_once_with()
         assert model.tokenStat.flag_running is False
+
+    def test_module_has_no_openai_import(self):
+        """Keep the provider-neutral base module independent of OpenAI."""
+        source_path = os.path.abspath(LLMModelBase.__init__.__code__.co_filename)
+        with open(source_path, encoding="utf-8") as source_file:
+            tree = ast.parse(source_file.read())
+
+        imports = [
+            node.names[0].name if isinstance(node, ast.Import) else node.module
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+        ]
+
+        assert all(name != "openai" and not name.startswith("openai.") for name in imports)
+
+    def test_get_response_usage_is_provider_neutral(self):
+        """Return any provider usage object unchanged without SDK typing."""
+        usage = object()
+        response = SimpleNamespace(usage=usage)
+
+        assert LLMModelBase.get_response_usage(object(), response) is usage
+
+    def test_get_response_usage_returns_none_when_usage_is_unavailable(self):
+        """Return None when a response does not expose readable usage."""
+        class RaisingResponse:
+            @property
+            def usage(self):
+                raise RuntimeError("usage unavailable")
+
+        assert LLMModelBase.get_response_usage(object(), object()) is None
+        assert LLMModelBase.get_response_usage(object(), RaisingResponse()) is None
 
 
     @staticmethod

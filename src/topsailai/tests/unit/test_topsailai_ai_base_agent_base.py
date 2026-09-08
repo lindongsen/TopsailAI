@@ -7,6 +7,7 @@ Tests AgentBase and AgentRun classes.
 import unittest
 from unittest.mock import MagicMock, patch
 
+from topsailai.ai_base.llm_control.llm_retry import LLMRetryInteractionPolicy
 from topsailai.ai_base.llm_base import LLMModel as RealLLMModel
 
 
@@ -438,8 +439,6 @@ class TestAgentRunRunEdgeCases(unittest.TestCase):
     ):
         """LLM request retries do not restart the Agent loop or rerun tools."""
         from topsailai.ai_base.agent_base import AgentRun
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
-
         from topsailai.ai_base import agent_base as agent_base_module
 
         agent_base_module.env_tool.EnvReaderInstance.check_bool.return_value = False

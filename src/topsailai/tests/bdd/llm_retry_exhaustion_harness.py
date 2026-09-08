@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 from topsailai.ai_base.exception import LLMRetryExhaustedError
 from topsailai.ai_base.llm_base import LLMModel
-from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+from topsailai.ai_base.llm_control.llm_retry import LLMRetryInteractionPolicy
 from topsailai.tests.mock.llm_mock_server import MockServerConfig, create_server
 from topsailai.utils.env_tool import resolve_python_interpreter
 from topsailai.workspace.agent.agent_shell_base import AgentChat

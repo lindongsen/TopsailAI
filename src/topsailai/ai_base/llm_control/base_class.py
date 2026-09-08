@@ -18,6 +18,7 @@ from topsailai.utils import (
     text_tool,
 )
 from topsailai.utils.env_tool import EnvReaderInstance  # For test compatibility
+from topsailai.utils.thread_local_tool import get_agent_object
 from topsailai.utils.print_tool import (
     print_debug,
     print_error,
@@ -35,45 +36,20 @@ from topsailai.context.token import (
 
 from .message import (
     format_messages,
+    format_response,
 )
 from .exception import (
     ModelServiceError,
     LLMServiceSpecialResponseError,
 )
-from .content_endpoint import (
-    ContentSender,
-    ContentStdout,
+from ..llm_hooks.executor import hook_execute
+from .configuration import (
+    parse_model_settings,
+    merge_dicts,
+    get_configured_extra_body,
+    get_configured_model_extra_body,
 )
 
-
-def parse_model_settings():
-    """Parse model settings from the MODEL_SETTINGS environment variable.
-
-    The variable should contain settings in the format: key1=value1,key2=value2;key3=value3,key4=value4
-
-    Items are separated by ';', and within each item, key-value pairs are separated by ','.
-
-    Each key-value pair is separated by '='.
-
-    Returns a list of dictionaries, where each dictionary represents one item.
-
-    Example:
-
-        MODEL_SETTINGS="k1_a=v1_a,k2_a=v2_a;k1_b=v1_b,k2_b=v2_b"
-
-        Returns: [{"k1_a": "v1_a", "k2_a": "v2_a"}, {"k1_b": "v1_b", "k2_b": "v2_b"}]
-
-    """
-    items = EnvReaderInstance.get_list_str("TOPSAILAI_MODEL_SETTINGS", separator=';') or \
-        EnvReaderInstance.get_list_str("MODEL_SETTINGS", separator=';')
-    result = []
-    if not items:
-        return result
-    for item in items:
-        d = format_tool.parse_str_to_dict(item, item_separator=',', kv_separator='=', kv_strip=True)
-        if d:
-            result.append(d)
-    return result
 
 class LLMModelBase(object):
     """
@@ -245,6 +221,61 @@ class LLMModelBase(object):
     #################################################################################
     # base functions
     #################################################################################
+
+    def get_response_usage(self, response):
+        """Return provider usage metadata when the response exposes it."""
+        try:
+            return response.usage
+        except Exception:
+            pass
+        return None
+
+    def _return_chat_response(
+            self,
+            rsp_obj,
+            rsp_content,
+            messages,
+            for_raw=False,
+            for_response=False,
+        ):
+        """Format a response with the base module's default adapters."""
+        return self._return_chat_response_with_adapters(
+            rsp_obj,
+            rsp_content,
+            messages,
+            for_raw=for_raw,
+            for_response=for_response,
+            get_agent_object_fn=get_agent_object,
+            hook_execute_fn=hook_execute,
+            format_response_fn=format_response,
+        )
+
+    def _return_chat_response_with_adapters(
+            self,
+            rsp_obj,
+            rsp_content,
+            messages,
+            for_raw=False,
+            for_response=False,
+            *,
+            get_agent_object_fn,
+            hook_execute_fn,
+            format_response_fn,
+        ):
+        """Format and return one response through caller-provided adapters."""
+        if for_raw:
+            return rsp_content
+
+        if get_agent_object_fn() is not None:
+            rsp_content = hook_execute_fn(
+                "TOPSAILAI_HOOK_AFTER_LLM_RESPONSE", rsp_content
+            )
+        result = format_response_fn(rsp_content, rsp_obj, messages=messages)
+        if not result:
+            raise TypeError("null of response content: [%s]" % rsp_content)
+        if for_response:
+            return rsp_obj, result
+        return result
 
     def send_content(self, content):
         """
@@ -439,67 +470,18 @@ class LLMModelBase(object):
         extra_body = options.get("extra_body")
         if extra_body is not None:
             params["extra_body"] = copy.deepcopy(extra_body)
-        configured_extra_body = self._get_configured_extra_body()
+        configured_extra_body = get_configured_extra_body()
         if configured_extra_body:
-            params["extra_body"] = self._merge_dicts(
+            params["extra_body"] = merge_dicts(
                 params.get("extra_body", {}), configured_extra_body
             )
-        model_extra_body = self._get_configured_model_extra_body(self.model_name)
+        model_extra_body = get_configured_model_extra_body(self.model_name)
         if model_extra_body:
-            params["extra_body"] = self._merge_dicts(
+            params["extra_body"] = merge_dicts(
                 params.get("extra_body", {}), model_extra_body
             )
 
         return params
-
-    @staticmethod
-    def _merge_dicts(base, override):
-        """Recursively merge dictionaries, giving override values precedence."""
-        merged = copy.deepcopy(base)
-        for key, value in override.items():
-            if isinstance(merged.get(key), dict) and isinstance(value, dict):
-                merged[key] = LLMModelBase._merge_dicts(merged[key], value)
-                continue
-            merged[key] = copy.deepcopy(value)
-        return merged
-
-    @staticmethod
-    def _get_json_object_from_env(key):
-        """Parse an optional JSON object from an environment variable."""
-        raw = EnvReaderInstance.get(key, default="")
-        if not raw or not raw.strip():
-            return {}
-        try:
-            parsed = simplejson.loads(raw.strip())
-        except Exception:
-            logger.warning("invalid JSON in %s: %s", key, raw)
-            return {}
-        if not isinstance(parsed, dict):
-            logger.warning("%s must be a JSON object", key)
-            return {}
-        return parsed
-
-    @staticmethod
-    def _get_configured_extra_body():
-        """Parse provider-specific fields from TOPSAILAI_LLM_EXTRA_BODY."""
-        return LLMModelBase._get_json_object_from_env("TOPSAILAI_LLM_EXTRA_BODY")
-
-    @staticmethod
-    def _get_configured_model_extra_body(model_name):
-        """Return provider-specific fields configured for an exact model name."""
-        configured_map = LLMModelBase._get_json_object_from_env(
-            "TOPSAILAI_LLM_EXTRA_BODY_MAP"
-        )
-        model_extra_body = configured_map.get(model_name)
-        if model_extra_body is None:
-            return {}
-        if not isinstance(model_extra_body, dict):
-            logger.warning(
-                "TOPSAILAI_LLM_EXTRA_BODY_MAP value for model %s must be a JSON object",
-                model_name,
-            )
-            return {}
-        return model_extra_body
 
     def debug_response(self, response, content):
         """

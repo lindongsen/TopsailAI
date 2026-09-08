@@ -16,3 +16,7 @@ class ModelServiceError(Exception):
 class LLMServiceSpecialResponseError(ModelServiceError):
     """Raised when the LLM returns a configured special response that should be retried."""
     pass
+
+
+class APITimeoutError(Exception):
+    pass

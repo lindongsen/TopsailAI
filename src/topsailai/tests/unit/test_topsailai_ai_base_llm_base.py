@@ -5,11 +5,14 @@ This module contains unit tests for the LLMModel class which provides
 OpenAI-compatible LLM interaction capabilities.
 """
 
+import inspect
 import json
 import unittest
 from unittest.mock import MagicMock, call, patch, PropertyMock
 
 import openai
+
+from topsailai.ai_base.llm_control.llm_retry import LLMRetryInteractionPolicy
 
 
 def patch_llm_time(func):
@@ -225,6 +228,253 @@ class TestLLMModelGetLLMModel(unittest.TestCase):
         self.assertEqual(events, ["acquire-new", "release-old"])
         self.assertEqual(model.snapshot_llm_model_leases(), (new_handle,))
         new_handle.release.assert_not_called()
+
+    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_replace_acquire_failure_preserves_old_lease(
+        self, mock_base_init, mock_acquire
+    ):
+        """Keep the old lease owned when replacement acquisition fails."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        old_handle = self._make_handle()
+        mock_acquire.return_value = old_handle
+        model = LLMModel()
+        model.model_name = "test-model"
+        old_model = model.get_llm_model("old", "https://old.test/v1")
+        mock_acquire.side_effect = RuntimeError("acquire failed")
+
+        with self.assertRaisesRegex(RuntimeError, "acquire failed"):
+            model.replace_llm_model(
+                old_model, api_key="new", api_base="https://new.test/v1"
+            )
+
+        self.assertEqual(model.snapshot_llm_model_leases(), (old_handle,))
+        old_handle.release.assert_not_called()
+
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_release_after_delegates_through_release_wrapper(self, mock_base_init):
+        """Post-snapshot cleanup preserves the release wrapper seam."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        old_handle = self._make_handle()
+        new_handle = self._make_handle()
+        model = LLMModel()
+        model._get_llm_model_handles().extend([
+            (object(), old_handle),
+            (object(), new_handle),
+        ])
+        model.release_llm_model_leases = MagicMock(return_value=1)
+
+        result = model.release_llm_model_leases_after((old_handle,))
+
+        self.assertEqual(result, 1)
+        model.release_llm_model_leases.assert_called_once_with((new_handle,))
+
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_release_all_composes_snapshot_and_release_wrappers(self, mock_base_init):
+        """Release-all preserves the snapshot and release wrapper seams."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        snapshot = (self._make_handle(),)
+        model = LLMModel()
+        model.snapshot_llm_model_leases = MagicMock(return_value=snapshot)
+        model.release_llm_model_leases = MagicMock(return_value=1)
+
+        result = model.release_all_llm_models()
+
+        self.assertEqual(result, 1)
+        model.snapshot_llm_model_leases.assert_called_once_with()
+        model.release_llm_model_leases.assert_called_once_with(snapshot)
+
+    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_ownership_uses_overridden_handle_list_seam(
+        self, mock_base_init, mock_acquire
+    ):
+        """All registry ownership operations honor an overridden record list."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        records = []
+        handle = self._make_handle()
+        mock_acquire.return_value = handle
+        model = LLMModel()
+        model.model_name = "test-model"
+        model._get_llm_model_handles = MagicMock(return_value=records)
+
+        chat_model = model.get_llm_model("key", "https://example.test/v1")
+
+        self.assertEqual(records, [(chat_model, handle)])
+        self.assertEqual(model.snapshot_llm_model_leases(), (handle,))
+        self.assertTrue(model.release_llm_model(chat_model))
+        self.assertEqual(records, [])
+        handle.release.assert_called_once_with()
+
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_lifecycle_compatibility_methods_remain_defined_on_llm_model(
+        self, mock_base_init
+    ):
+        """Existing class-level lifecycle patch and introspection seams remain."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        expected_methods = {
+            "_get_llm_model_handles",
+            "_get_llm_model_handle_registry",
+            "snapshot_llm_model_leases",
+            "release_llm_model_leases",
+            "release_llm_model_leases_after",
+            "release_llm_model",
+            "release_all_llm_models",
+            "_find_llm_model_handle",
+        }
+
+        self.assertTrue(expected_methods.issubset(LLMModel.__dict__))
+
+    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_get_llm_model_uses_provider_neutral_registration_seam(
+        self, mock_base_init, mock_acquire
+    ):
+        """OpenAI acquisition registers ownership without registry internals."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        handle = self._make_handle()
+        mock_acquire.return_value = handle
+        model = LLMModel()
+        model.model_name = "test-model"
+        model._register_llm_model_handle = MagicMock()
+
+        result = model.get_llm_model("key", "https://example.test/v1")
+
+        self.assertIs(result, handle.client.chat.completions)
+        model._register_llm_model_handle.assert_called_once_with(result, handle)
+
+
+class TestLLMModelResponseCompatibility(unittest.TestCase):
+    """Verify response helpers retain their established public seams."""
+
+    def test_response_methods_remain_direct_with_exact_signatures(self):
+        """Response helper introspection and class-patch seams remain stable."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        expected_signatures = {
+            "get_response_usage": "(self, response) -> openai.types.completion_usage.CompletionUsage",
+            "_return_chat_response": (
+                "(self, rsp_obj, rsp_content, messages, for_raw=False, "
+                "for_response=False)"
+            ),
+            "_truncate_event_payload": "(self, payload, max_bytes)",
+        }
+
+        for method_name, expected_signature in expected_signatures.items():
+            self.assertIn(method_name, LLMModel.__dict__)
+            self.assertEqual(
+                str(inspect.signature(LLMModel.__dict__[method_name])),
+                expected_signature,
+            )
+
+    @patch(
+        "topsailai.ai_base.llm_control.base_class."
+        "LLMModelBase._return_chat_response_with_adapters"
+    )
+    def test_return_chat_response_delegates_to_shared_algorithm(self, shared_return):
+        """The direct compatibility method remains a thin adapter wrapper."""
+        from topsailai.ai_base import llm_base
+
+        response = object()
+        messages = [{"role": "user", "content": "hello"}]
+        shared_return.return_value = "formatted"
+
+        result = llm_base.LLMModel.__new__(llm_base.LLMModel)._return_chat_response(
+            response, "answer", messages, for_response=True
+        )
+
+        self.assertEqual(result, "formatted")
+        shared_return.assert_called_once()
+        args, kwargs = shared_return.call_args
+        self.assertEqual(args, (response, "answer", messages))
+        self.assertFalse(kwargs["for_raw"])
+        self.assertTrue(kwargs["for_response"])
+        self.assertIs(kwargs["get_agent_object_fn"], llm_base.get_agent_object)
+        self.assertIs(kwargs["hook_execute_fn"], llm_base.hook_execute)
+        self.assertIs(kwargs["format_response_fn"], llm_base.format_response)
+
+    @patch("topsailai.ai_base.llm_base.format_response")
+    def test_legacy_format_response_patch_intercepts_real_response_path(
+        self, mock_format_response
+    ):
+        """The historical llm_base formatter patch controls real responses."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        response = object()
+        messages = [{"role": "user", "content": "hello"}]
+        mock_format_response.return_value = "formatted"
+
+        result = LLMModel.__new__(LLMModel)._return_chat_response(
+            response, "answer", messages
+        )
+
+        self.assertEqual(result, "formatted")
+        mock_format_response.assert_called_once_with(
+            "answer", response, messages=messages
+        )
+
+    @patch("topsailai.ai_base.llm_base.get_agent_object", return_value=object())
+    @patch("topsailai.ai_base.llm_base.hook_execute", return_value="hooked")
+    @patch("topsailai.ai_base.llm_base.format_response", return_value="formatted")
+    def test_legacy_hook_execute_patch_intercepts_real_response_path(
+        self, mock_format_response, mock_hook_execute, mock_get_agent_object
+    ):
+        """The historical llm_base hook patch controls agent responses."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        response = object()
+        messages = [{"role": "user", "content": "hello"}]
+
+        result = LLMModel.__new__(LLMModel)._return_chat_response(
+            response, "answer", messages
+        )
+
+        self.assertEqual(result, "formatted")
+        mock_get_agent_object.assert_called_once_with()
+        mock_hook_execute.assert_called_once_with(
+            "TOPSAILAI_HOOK_AFTER_LLM_RESPONSE", "answer"
+        )
+        mock_format_response.assert_called_once_with(
+            "hooked", response, messages=messages
+        )
+
+    @patch("topsailai.events.record_event")
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    def test_class_truncation_patch_intercepts_real_event_path(
+        self, mock_env_tool, mock_record_event
+    ):
+        """The direct class truncation seam controls recorded event payloads."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        model = LLMModel.__new__(LLMModel)
+        model._get_llm_response_event_message = MagicMock(
+            return_value=MagicMock(content="answer", tool_calls=None)
+        )
+        model._get_llm_response_event_model_name = MagicMock(
+            return_value="test-model"
+        )
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = [True, False]
+        mock_env_tool.EnvReaderInstance.get.return_value = 100
+        bounded_payload = {"_truncated": True}
+
+        with patch.object(
+            LLMModel, "_truncate_event_payload", return_value=bounded_payload
+        ) as truncate:
+            model._record_llm_response_event(object())
+
+        truncate.assert_called_once()
+        mock_record_event.assert_called_once_with(
+            "llm.response.raw",
+            payload=bounded_payload,
+            source="ai_base.llm_base",
+        )
+
 
 class TestLLMModelCallLLMModel(unittest.TestCase):
     """Test cases for LLMModel.call_llm_model method."""
@@ -698,6 +948,42 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         
         self.assertIsInstance(result, tuple)
 
+    @patch(
+        "topsailai.ai_base.llm_base._iter_with_first_byte_timeout"
+    )
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_iter_stream_timeout_remains_class_level_composition_wrapper(
+        self, mock_base_init, mock_timeout_helper
+    ):
+        """Delegate through the class-level seam with provider callbacks."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        stream = object()
+        model = self._create_mock_model()
+        model._log_first_byte_timeout = MagicMock()
+        model._make_first_byte_timeout_error = MagicMock()
+        mock_timeout_helper.return_value = iter(("chunk",))
+
+        result = list(
+            model.iter_stream_with_first_byte_timeout(
+                stream,
+                first_byte_timeout=7,
+                raise_on_timeout=True,
+                create_timed_out=True,
+            )
+        )
+
+        self.assertIn("iter_stream_with_first_byte_timeout", LLMModel.__dict__)
+        self.assertEqual(result, ["chunk"])
+        mock_timeout_helper.assert_called_once_with(
+            stream,
+            7,
+            True,
+            True,
+            on_timeout=model._log_first_byte_timeout,
+            make_timeout_error=model._make_first_byte_timeout_error,
+        )
+
     @patch("topsailai.ai_base.llm_base.print_warning")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_iter_stream_with_first_byte_timeout_logs_warning_on_slow_first_byte(
@@ -1015,6 +1301,126 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         model.call_llm_model_by_stream(self.messages)
 
         mock_print_warning.assert_called_once()
+
+
+class TestLLMModelFirstByteTimeoutCompatibility(unittest.TestCase):
+    """Protect established first-byte timeout class-level seams."""
+
+    def test_methods_remain_directly_defined_with_exact_signatures(self):
+        """All established methods remain visible with unchanged signatures."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        expected_signatures = {
+            "_get_first_byte_timeout_config": "(self)",
+            "_make_first_byte_timeout_error": "(self, first_byte_timeout)",
+            "_log_first_byte_timeout": "(self, elapsed, first_byte_timeout)",
+            "_create_with_first_byte_timeout": (
+                "(self, messages, tools=None, tool_choice='auto', stream=False, "
+                "first_byte_timeout=180, raise_on_timeout=False)"
+            ),
+            "iter_stream_with_first_byte_timeout": (
+                "(self, stream, first_byte_timeout=180, raise_on_timeout=False, "
+                "create_timed_out=False)"
+            ),
+        }
+
+        for method_name, expected_signature in expected_signatures.items():
+            self.assertIn(method_name, LLMModel.__dict__)
+            self.assertEqual(
+                str(inspect.signature(LLMModel.__dict__[method_name])),
+                expected_signature,
+            )
+
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    def test_configuration_wrapper_keeps_llm_base_env_patch_seam(self, env_tool):
+        """The llm_base env global still controls first-byte configuration."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        env_tool.EnvReaderInstance.get.return_value = 2.5
+        env_tool.EnvReaderInstance.check_bool.return_value = True
+
+        result = LLMModel.__new__(LLMModel)._get_first_byte_timeout_config()
+
+        self.assertEqual(result, (2.5, True))
+        env_tool.EnvReaderInstance.get.assert_called_once_with(
+            "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT", default=180, formatter=float
+        )
+        env_tool.EnvReaderInstance.check_bool.assert_called_once_with(
+            "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE", default=False
+        )
+
+    def test_non_stream_call_path_uses_patchable_create_wrapper(self):
+        """A class patch intercepts the concrete non-stream create call path."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        model = LLMModel.__new__(LLMModel)
+        response = MagicMock()
+        response.choices = [MagicMock()]
+        response.choices[0].message.content = "answer"
+        model.tokenStat = MagicMock()
+        model.get_response_usage = MagicMock(return_value=None)
+        model.fix_response_content = MagicMock(return_value="answer")
+        model.check_response_content = MagicMock()
+        model.send_content = MagicMock()
+        model._record_llm_response_event = MagicMock()
+        model._get_first_byte_timeout_config = MagicMock(return_value=(3, True))
+
+        with patch.object(
+            LLMModel, "_create_with_first_byte_timeout", return_value=response
+        ) as create:
+            result = LLMModel.call_llm_model.__wrapped__.__wrapped__(model, [])
+
+        self.assertEqual(result, (response, "answer"))
+        create.assert_called_once_with(
+            [],
+            tools=None,
+            tool_choice="auto",
+            stream=False,
+            first_byte_timeout=3,
+            raise_on_timeout=True,
+        )
+
+    def test_stream_call_path_uses_patchable_timeout_wrappers(self):
+        """Class patches intercept create and first-item stream call paths."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        model = LLMModel.__new__(LLMModel)
+        model.tokenStat = MagicMock()
+        model.content_senders = []
+        model._record_llm_response_event = MagicMock()
+        model._get_first_byte_timeout_config = MagicMock(return_value=(4, False))
+        model._iter_stream_for_request_timing = MagicMock(return_value=iter(()))
+        model.fix_response_content = MagicMock(return_value="")
+        model.check_response_content = MagicMock()
+
+        with patch.object(
+            LLMModel,
+            "_create_with_first_byte_timeout",
+            return_value=(object(), True),
+        ) as create, patch.object(
+            LLMModel,
+            "iter_stream_with_first_byte_timeout",
+            return_value=iter(()),
+        ) as iterate:
+            result = LLMModel.call_llm_model_by_stream.__wrapped__.__wrapped__(
+                model, []
+            )
+
+        self.assertEqual(result[1], "")
+        create.assert_called_once_with(
+            [],
+            tools=None,
+            tool_choice="auto",
+            stream=True,
+            first_byte_timeout=4,
+            raise_on_timeout=False,
+        )
+        iterate.assert_called_once()
+        self.assertEqual(iterate.call_args.args[1], 4)
+        self.assertEqual(iterate.call_args.kwargs, {
+            "raise_on_timeout": False,
+            "create_timed_out": True,
+        })
 
 class TestLLMModelChat(unittest.TestCase):
     """Test cases for LLMModel.chat method."""
@@ -1435,7 +1841,6 @@ class TestLLMModelErrorHandling(unittest.TestCase):
         model = self._create_mock_model()
         model.model.create.return_value = mock_response
 
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         input_func = MagicMock(return_value="yes")
         policy = LLMRetryInteractionPolicy(
@@ -1905,6 +2310,35 @@ class TestLLMModelResponseEvents(unittest.TestCase):
         self.assertLessEqual(len(serialized.encode("utf-8")), 200)
         self.assertTrue(payload.get("_truncated") or len(payload.get("content", "")) < 10000)
 
+    def test_truncate_event_payload_does_not_mutate_input(self):
+        """Truncation must not mutate the caller's original payload.
+
+        Both oversized textual content and nested tool-call ``function``
+        arguments must leave the input payload unchanged.
+        """
+        from topsailai.ai_base.llm_control.response_events import truncate_event_payload
+
+        # Oversized textual content.
+        content_payload = {"content": "x" * 10000, "model": "m"}
+        content_snapshot = json.dumps(content_payload, sort_keys=True)
+        truncate_event_payload(content_payload, 200)
+        self.assertEqual(json.dumps(content_payload, sort_keys=True), content_snapshot)
+
+        # Oversized nested tool-call arguments.
+        tool_payload = {
+            "model": "m",
+            "tool_calls": [
+                {"id": "call_1", "type": "function",
+                 "function": {"name": "f", "arguments": "y" * 10000}}
+            ],
+        }
+        tool_snapshot = json.dumps(tool_payload, sort_keys=True)
+        result = truncate_event_payload(tool_payload, 200)
+        self.assertEqual(json.dumps(tool_payload, sort_keys=True), tool_snapshot)
+        # The returned payload is truncated but the original is untouched.
+        self.assertLess(len(result["tool_calls"][0]["function"]["arguments"]), 10000)
+        self.assertEqual(len(tool_payload["tool_calls"][0]["function"]["arguments"]), 10000)
+
     @patch("topsailai.events.record_event")
     @patch("topsailai.ai_base.llm_base.get_response_message")
     @patch("topsailai.ai_base.llm_base.env_tool")
@@ -1984,7 +2418,6 @@ class TestLLMModelChatAgentRuntimeInput(unittest.TestCase):
         self, mock_is_main_thread, mock_input_yes_or_no
     ):
         """Interactive KeyboardInterrupt handling uses the explicit input callback."""
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         plain_input = MagicMock(return_value="no")
         policy = LLMRetryInteractionPolicy(True, False, plain_input)
@@ -2007,7 +2440,6 @@ class TestLLMModelChatAgentRuntimeInput(unittest.TestCase):
         self, mock_is_main_thread, mock_input_yes_or_no
     ):
         """Interactive generic failures preserve the existing yes/no prompt."""
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         plain_input = MagicMock(return_value="no")
         policy = LLMRetryInteractionPolicy(True, False, plain_input)
@@ -2030,7 +2462,6 @@ class TestLLMModelChatAgentRuntimeInput(unittest.TestCase):
         self, mock_is_main_thread, mock_input_yes_or_no
     ):
         """Missing input capability fails closed instead of reading builtin stdin."""
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         model = self._create_mock_model()
         model.call_llm_model = MagicMock(side_effect=KeyboardInterrupt("interrupted"))
@@ -2452,7 +2883,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
         self, mock_base_init, mock_is_main_thread, mock_format, mock_sleep
     ):
         """Retry starts another LLM request cycle without re-entering the Agent loop."""
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         messages = [{"role": "user", "content": "same request"}]
         original_snapshot = json.loads(json.dumps(messages))
@@ -2488,7 +2918,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
     ):
         """Explicit non-interactive policy bypasses prompts and exhausts bounded retries."""
         from topsailai.ai_base.exception import LLMRetryExhaustedError
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         model = self._create_mock_model()
         model.call_llm_model = MagicMock(side_effect=ValueError("temporary failure"))
@@ -2512,7 +2941,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
         self, mock_base_init, mock_is_main_thread, mock_yes_or_no, mock_format, mock_sleep
     ):
         """The retained yes/no prompt retries the same LLM request messages."""
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         messages = [{"role": "user", "content": "same request"}]
         observed_messages = []
@@ -2547,7 +2975,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
     ):
         """Zero manual cycles stop at 18 requests without showing a menu."""
         from topsailai.ai_base.exception import LLMRetryExhaustedError
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         persistent_error = TypeError("temporary failure")
         model = self._create_mock_model()
@@ -2576,7 +3003,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
     ):
         """One accepted manual cycle permits 36 requests and one menu only."""
         from topsailai.ai_base.exception import LLMRetryExhaustedError
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         persistent_error = TypeError("temporary failure")
         model = self._create_mock_model()
@@ -2616,7 +3042,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
                 raise TypeError("temporary failure")
             return self._response(), "recovered"
 
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         model.call_llm_model = MagicMock(side_effect=request)
         input_func = MagicMock()
@@ -2649,7 +3074,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
                 raise TypeError("temporary failure")
             return self._response(), "recovered"
 
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         model.call_llm_model = MagicMock(side_effect=request)
         input_func = MagicMock(side_effect=["1"] * 7)
@@ -2672,7 +3096,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
     ):
         """Default exhaustion stops at request 144 with complete terminal state."""
         from topsailai.ai_base.exception import LLMRetryExhaustedError
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         persistent_error = TypeError("temporary failure")
         model = self._create_mock_model()
@@ -2709,7 +3132,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
     ):
         """Three invalid menu choices fail closed without another request cycle."""
         from topsailai.ai_base.exception import LLMRetryExhaustedError
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         model = self._create_mock_model()
         model.call_llm_model = MagicMock(side_effect=TypeError("temporary failure"))
@@ -2735,7 +3157,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
     ):
         """EOF and Ctrl+C at the exhaustion menu map to bounded Exit."""
         from topsailai.ai_base.exception import LLMRetryExhaustedError
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         for interruption in (EOFError("stdin closed"), KeyboardInterrupt("ctrl-c")):
             with self.subTest(interruption=type(interruption).__name__):
@@ -2769,7 +3190,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
         """Ctrl+C during retry backoff stops before a second provider request."""
         import time as real_time
 
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         class _InterruptingTime:
             """Raise the terminal interrupt instead of performing a real sleep."""
@@ -2808,7 +3228,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
         import httpx
 
         from topsailai.ai_base.exception import LLMRetryExhaustedError
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         response = httpx.Response(
             status_code=400,
@@ -2861,7 +3280,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
         from topsailai.ai_base.llm_control.exception import (
             LLMServiceSpecialResponseError,
         )
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         model = self._create_mock_model()
         model.call_llm_model = MagicMock(
@@ -2896,7 +3314,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
         """Six internal-server failures rebuild once before automatic recovery."""
         import httpx
 
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         response = httpx.Response(
             status_code=500,
@@ -2930,7 +3347,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
 
     def test_retry_policy_rejects_unbounded_limits(self):
         """Retry policy accepts only finite integer cycle and choice limits."""
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         for value in (-1, True, 1.5, "37"):
             with self.subTest(max_manual_retry_cycles=value):
@@ -2949,7 +3365,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
     ):
         """Back leaves LLM chat through its dedicated User2Agent control signal."""
         from topsailai.ai_base.exception import LLMBackToChatError
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         model = self._create_mock_model()
         model.call_llm_model = MagicMock(side_effect=TypeError("temporary failure"))
@@ -2974,7 +3389,6 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
     ):
         """A finite task cannot choose Back because it has no next chat turn."""
         from topsailai.ai_base.exception import LLMRetryExhaustedError
-        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
         model = self._create_mock_model()
         model.call_llm_model = MagicMock(side_effect=TypeError("temporary failure"))
