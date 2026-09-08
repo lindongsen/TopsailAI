@@ -6,19 +6,20 @@ import atexit
 import hashlib
 import json
 import os
-import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
 import openai
 
-from topsailai.logger.log_chat import logger
+from topsailai.ai_base.llm_pool.base_client_pool import (
+    BaseClientPool,
+    ClientPoolHandle,
+)
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_OPENAI_CLIENT_POOL_CAPACITY = 32
 _CLIENT_KIND_SYNC = "sync"
-_POOL_LOCK = threading.RLock()
 
 
 def normalize_base_url(base_url: str | None) -> str:
@@ -112,61 +113,93 @@ class OpenAIClientConfig:
         return kwargs
 
 
-@dataclass
-class _OpenAIClientEntry:
-    """Mutable pool-owned state for one client generation."""
+class OpenAIResponseAdapter:
+    """Contain OpenAI response parsing and SDK object construction."""
 
-    client: Any
-    key: OpenAIClientKey
-    generation: int
-    creator_pid: int
-    ref_count: int
-    last_used: float
-    invalidated: bool = False
-    closed: bool = False
+    @staticmethod
+    def get_response_content(response):
+        """Return content from the first OpenAI chat-completion message."""
+        return response.choices[0].message.content
 
+    @staticmethod
+    def get_stream_delta(chunk):
+        """Return the first OpenAI stream delta when present."""
+        if not chunk.choices:
+            return None
+        return chunk.choices[0].delta
 
-@dataclass
-class _HandleReleaseState:
-    """Mutable synchronization state retained inside an immutable handle."""
+    @staticmethod
+    def get_delta_content(delta):
+        """Return text content from an OpenAI stream delta."""
+        return delta.content
 
-    released: bool = False
-    lock: threading.Lock = field(default_factory=threading.Lock)
+    @staticmethod
+    def merge_delta_tool_calls(full_tool_calls, delta):
+        """Merge OpenAI tool-call deltas into accumulated plain data."""
+        for tool_call in delta.tool_calls or []:
+            current = full_tool_calls.setdefault(
+                tool_call.index,
+                {"id": "", "function": {"name": "", "arguments": ""}},
+            )
+            if tool_call.id:
+                current["id"] = tool_call.id
+            if not tool_call.function:
+                continue
+            if tool_call.function.name:
+                current["function"]["name"] = tool_call.function.name
+            if tool_call.function.arguments:
+                current["function"]["arguments"] += tool_call.function.arguments
+
+    @staticmethod
+    def build_tool_calls(full_tool_calls):
+        """Build final OpenAI tool-call objects from accumulated deltas."""
+        from openai.types.chat import ChatCompletionMessageToolCall
+
+        result = []
+        for index in sorted(full_tool_calls):
+            tool_call = full_tool_calls[index]
+            tool_call["type"] = "function"
+            result.append(ChatCompletionMessageToolCall(**tool_call))
+        return result
+
+    @staticmethod
+    def build_assistant_message(content, tool_calls):
+        """Build the final OpenAI assistant response message."""
+        from openai.types.chat import ChatCompletionMessage
+
+        return ChatCompletionMessage(
+            role="assistant",
+            content=content,
+            tool_calls=tool_calls,
+        )
+
+    @staticmethod
+    def make_first_byte_timeout_error(first_byte_timeout):
+        """Construct an OpenAI timeout error for a first-byte timeout."""
+        message = f"First byte timeout after {first_byte_timeout}s"
+        error = openai.APITimeoutError(request=None)
+        if hasattr(error, "message"):
+            error.message = message
+        if hasattr(error, "args"):
+            error.args = (message,)
+        return error
+
+    @staticmethod
+    def create_response(chat_model, params):
+        """Create one OpenAI-compatible provider response."""
+        return chat_model.create(timeout=(5, 300), **params)
 
 
 @dataclass(frozen=True)
-class OpenAIClientHandle:
+class OpenAIClientHandle(ClientPoolHandle):
     """Immutable caller lease for a pooled root OpenAI client."""
 
-    client: Any
-    key: OpenAIClientKey
-    generation: int
-    _release_callback: Callable[[], None] = field(repr=False, compare=False)
-    _release_state: _HandleReleaseState = field(
-        default_factory=_HandleReleaseState,
-        repr=False,
-        compare=False,
-    )
 
-    def release(self) -> None:
-        """Release this lease exactly once, including under concurrent calls."""
-        with self._release_state.lock:
-            if self._release_state.released:
-                return
-            self._release_state.released = True
-        self._release_callback()
-
-    def __enter__(self) -> "OpenAIClientHandle":
-        """Return this handle for deterministic context-managed ownership."""
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
-        """Release this handle when leaving a context manager."""
-        self.release()
-
-
-class OpenAIClientPool:
+class OpenAIClientPool(BaseClientPool):
     """Thread-safe, process-local pool of reusable root OpenAI clients."""
+
+    handle_class = OpenAIClientHandle
+    pool_name = "OpenAI client"
 
     def __init__(
         self,
@@ -175,182 +208,17 @@ class OpenAIClientPool:
         clock: Callable[[], float] = time.monotonic,
         pid_getter: Callable[[], int] = os.getpid,
     ) -> None:
-        """Initialize an isolated pool with injectable deterministic dependencies."""
-        if capacity < 1:
-            raise ValueError("capacity must be at least 1")
-        self._capacity = capacity
-        self._client_factory = client_factory
-        self._clock = clock
-        self._pid_getter = pid_getter
-        self._pid = pid_getter()
-        self._entries: dict[OpenAIClientKey, _OpenAIClientEntry] = {}
-        self._retired_entries: dict[int, _OpenAIClientEntry] = {}
-        self._next_generation = 0
-        self._closed = False
-
-    def get_or_create(self, config: OpenAIClientConfig) -> OpenAIClientHandle:
-        """Acquire a lease for the current client matching the configuration."""
-        return self.acquire(config)
-
-    def acquire(self, config: OpenAIClientConfig) -> OpenAIClientHandle:
-        """Acquire a reference-counted handle, creating one client when absent."""
-        key = config.to_key()
-        clients_to_close: list[_OpenAIClientEntry] = []
-        with _POOL_LOCK:
-            self._ensure_current_process_locked()
-            if self._closed:
-                self._closed = False
-
-            entry = self._entries.get(key)
-            if entry is None:
-                client = self._client_factory(**config.constructor_kwargs())
-                generation = self._next_generation
-                self._next_generation += 1
-                entry = _OpenAIClientEntry(
-                    client=client,
-                    key=key,
-                    generation=generation,
-                    creator_pid=self._pid,
-                    ref_count=0,
-                    last_used=self._clock(),
-                )
-                self._entries[key] = entry
-                logger.debug("OpenAI client pool miss: %s", self._log_identity(key))
-            else:
-                logger.debug("OpenAI client pool hit: %s", self._log_identity(key))
-
-            entry.ref_count += 1
-            entry.last_used = self._clock()
-            clients_to_close.extend(self._evict_to_capacity_locked())
-            handle = OpenAIClientHandle(
-                client=entry.client,
-                key=entry.key,
-                generation=entry.generation,
-                _release_callback=lambda entry=entry: self._release_entry(entry),
-            )
-
-        self._close_entries(clients_to_close)
-        return handle
-
-    def release(self, handle: OpenAIClientHandle) -> None:
-        """Release a handle idempotently."""
-        handle.release()
-
-    def invalidate(
-        self,
-        config_or_key: OpenAIClientConfig | OpenAIClientKey,
-    ) -> bool:
-        """Retire the current generation so the next acquire creates a new one."""
-        key = (
-            config_or_key.to_key()
-            if isinstance(config_or_key, OpenAIClientConfig)
-            else config_or_key
+        """Initialize an isolated OpenAI pool using the common lifecycle."""
+        super().__init__(
+            capacity=capacity,
+            client_factory=client_factory,
+            clock=clock,
+            pid_getter=pid_getter,
         )
-        clients_to_close: list[_OpenAIClientEntry] = []
-        with _POOL_LOCK:
-            self._ensure_current_process_locked()
-            entry = self._entries.pop(key, None)
-            if entry is None:
-                return False
-            entry.invalidated = True
-            if entry.ref_count == 0:
-                clients_to_close.append(entry)
-            else:
-                self._retired_entries[id(entry)] = entry
-            logger.debug("OpenAI client pool invalidated: %s", self._log_identity(key))
-
-        self._close_entries(clients_to_close)
-        return True
-
-    def close_idle(self, idle_seconds: float = 0.0) -> int:
-        """Close current clients that are unleased and idle for the given duration."""
-        if idle_seconds < 0:
-            raise ValueError("idle_seconds must not be negative")
-        clients_to_close: list[_OpenAIClientEntry] = []
-        with _POOL_LOCK:
-            self._ensure_current_process_locked()
-            now = self._clock()
-            for key, entry in list(self._entries.items()):
-                if entry.ref_count != 0 or now - entry.last_used < idle_seconds:
-                    continue
-                del self._entries[key]
-                clients_to_close.append(entry)
-
-        self._close_entries(clients_to_close)
-        return len(clients_to_close)
-
-    def close_all(self) -> int:
-        """Remove and close every client owned by the current process exactly once."""
-        with _POOL_LOCK:
-            self._ensure_current_process_locked()
-            entries = list(self._entries.values()) + list(self._retired_entries.values())
-            self._entries.clear()
-            self._retired_entries.clear()
-            self._closed = True
-
-        self._close_entries(entries)
-        return len(entries)
-
-    def _release_entry(self, entry: _OpenAIClientEntry) -> None:
-        """Release one entry and close it when its retired generation becomes idle."""
-        clients_to_close: list[_OpenAIClientEntry] = []
-        with _POOL_LOCK:
-            self._ensure_current_process_locked()
-            if entry.creator_pid != self._pid or entry.closed or entry.ref_count == 0:
-                return
-            entry.ref_count -= 1
-            entry.last_used = self._clock()
-            if entry.invalidated and entry.ref_count == 0:
-                self._retired_entries.pop(id(entry), None)
-                clients_to_close.append(entry)
-            clients_to_close.extend(self._evict_to_capacity_locked())
-
-        self._close_entries(clients_to_close)
-
-    def _ensure_current_process_locked(self) -> None:
-        """Abandon inherited transports after fork without closing parent resources."""
-        current_pid = self._pid_getter()
-        if current_pid == self._pid:
-            return
-        self._entries = {}
-        self._retired_entries = {}
-        self._next_generation = 0
-        self._pid = current_pid
-        self._closed = False
-        logger.debug("OpenAI client pool reset after PID change")
-
-    def _evict_to_capacity_locked(self) -> list[_OpenAIClientEntry]:
-        """Remove least-recent idle entries until the configured capacity is met."""
-        evicted: list[_OpenAIClientEntry] = []
-        while len(self._entries) > self._capacity:
-            idle_entries = [entry for entry in self._entries.values() if entry.ref_count == 0]
-            if not idle_entries:
-                break
-            entry = min(idle_entries, key=lambda candidate: candidate.last_used)
-            self._entries.pop(entry.key, None)
-            evicted.append(entry)
-            logger.debug("OpenAI client pool evicted: %s", self._log_identity(entry.key))
-        return evicted
-
-    def _close_entries(self, entries: list[_OpenAIClientEntry]) -> None:
-        """Close removed clients without holding the registry lock."""
-        for entry in entries:
-            with _POOL_LOCK:
-                if entry.closed or entry.creator_pid != self._pid:
-                    continue
-                entry.closed = True
-            try:
-                entry.client.close()
-            except Exception as error:
-                logger.warning(
-                    "failed to close OpenAI client (%s); error_type=%s",
-                    self._log_identity(entry.key),
-                    type(error).__name__,
-                )
 
     @staticmethod
     def _log_identity(key: OpenAIClientKey) -> str:
-        """Return safe, concise cache identity text for diagnostics."""
+        """Return safe, concise OpenAI cache identity text for diagnostics."""
         return (
             f"type={key.client_type} base_url={key.normalized_base_url} "
             f"api_key_sha256={key.api_key_fingerprint[:8]}"

@@ -1,5 +1,11 @@
 """Reusable LLM SDK client pools."""
 
+from topsailai.ai_base.llm_pool.base_client_pool import (
+    DEFAULT_CLIENT_POOL_CAPACITY,
+    BaseClientPool,
+    ClientPoolEntry,
+    ClientPoolHandle,
+)
 from topsailai.ai_base.llm_pool.openai_client_pool import (
     DEFAULT_OPENAI_BASE_URL,
     DEFAULT_OPENAI_CLIENT_POOL_CAPACITY,
@@ -18,8 +24,12 @@ from topsailai.ai_base.llm_pool.openai_client_pool import (
 )
 
 __all__ = [
+    "DEFAULT_CLIENT_POOL_CAPACITY",
     "DEFAULT_OPENAI_BASE_URL",
     "DEFAULT_OPENAI_CLIENT_POOL_CAPACITY",
+    "BaseClientPool",
+    "ClientPoolEntry",
+    "ClientPoolHandle",
     "OpenAIClientConfig",
     "OpenAIClientHandle",
     "OpenAIClientKey",

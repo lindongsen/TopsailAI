@@ -18,14 +18,12 @@ import openai
 _LLM_SERVICE_SPECIAL_RESPONSE_SLEEP_SECONDS = (
     5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97
 )
-from openai.types.chat import (
-    ChatCompletionMessage,
-    ChatCompletionMessageToolCall,
-)
+from openai.types.chat import ChatCompletionMessage
 from openai.types.completion_usage import CompletionUsage
 
 from topsailai.logger.log_chat import logger
 from topsailai.ai_base.llm_pool import OpenAIClientConfig, acquire, invalidate
+from topsailai.ai_base.llm_pool.openai_client_pool import OpenAIResponseAdapter
 from topsailai.utils.print_tool import (
     print_error,
     print_info,
@@ -263,18 +261,8 @@ class LLMModel(
         return _get_first_byte_timeout_config(env_tool.EnvReaderInstance)
 
     def _make_first_byte_timeout_error(self, first_byte_timeout):
-        """Construct an ``openai.APITimeoutError`` for first-byte timeout.
-
-        The OpenAI exception constructor only accepts a ``request`` argument,
-        so the message is attached after construction in a defensive way.
-        """
-        message = f"First byte timeout after {first_byte_timeout}s"
-        exc = openai.APITimeoutError(request=None)
-        if hasattr(exc, "message"):
-            exc.message = message
-        if hasattr(exc, "args"):
-            exc.args = (message,)
-        return exc
+        """Construct the provider timeout error through the OpenAI adapter."""
+        return OpenAIResponseAdapter.make_first_byte_timeout_error(first_byte_timeout)
 
     def _log_first_byte_timeout(self, elapsed, first_byte_timeout):
         """Log a first-byte timeout warning using project conventions."""
@@ -316,8 +304,8 @@ class LLMModel(
         )
 
     def _create_first_byte_response(self, params):
-        """Create one OpenAI-compatible provider response."""
-        return self.chat_model.create(timeout=(5, 300), **params)
+        """Create one provider response through the OpenAI adapter."""
+        return OpenAIResponseAdapter.create_response(self.chat_model, params)
 
     def _start_first_byte_request(self):
         """Start request timing for one provider attempt."""
@@ -430,7 +418,7 @@ class LLMModel(
             raise_on_timeout=raise_on_first_byte_timeout,
         )
         self.tokenStat.wait(token_stat_ticket)
-        full_content = response.choices[0].message.content
+        full_content = OpenAIResponseAdapter.get_response_content(response)
         self.tokenStat.finalize_usage(
             self.get_response_usage(response),
             token_stat_ticket,
@@ -536,9 +524,7 @@ class LLMModel(
             raise_on_timeout=raise_on_first_byte_timeout,
             create_timed_out=create_timed_out,
         ):
-            delta_obj = None
-            if len(chunk.choices):
-                delta_obj = chunk.choices[0].delta
+            delta_obj = OpenAIResponseAdapter.get_stream_delta(chunk)
             try:
                 delta_usage = self.get_response_usage(chunk)
                 delta_prompt_tokens_details = None
@@ -597,38 +583,16 @@ class LLMModel(
                 pass
 
             # content
-            delta_content = delta_obj.content
+            delta_content = OpenAIResponseAdapter.get_delta_content(delta_obj)
             if delta_content:
                 full_content += delta_content
                 self.send_content(delta_content)
 
             # tool_calls
-            for tool_call in delta_obj.tool_calls or []:
-                # place object
-                _index = tool_call.index
-                if _index not in full_tool_calls_dict:
-                    full_tool_calls_dict[_index] = {
-                        "id": "",
-                        "function": {
-                            "name": "",
-                            "arguments": "",
-                        },
-                    }
-                curr_tool_call = full_tool_calls_dict[_index]
-
-                # pass value
-                if tool_call.id:
-                    curr_tool_call["id"] = tool_call.id
-                if tool_call.function:
-                    if "function" not in curr_tool_call:
-                        curr_tool_call["function"] = {
-                            "name": "",
-                            "arguments": "",
-                        }
-                    if tool_call.function.name:
-                        curr_tool_call["function"]["name"] = tool_call.function.name
-                    if tool_call.function.arguments:
-                        curr_tool_call["function"]["arguments"] += tool_call.function.arguments
+            OpenAIResponseAdapter.merge_delta_tool_calls(
+                full_tool_calls_dict,
+                delta_obj,
+            )
         # enf for chunk
 
         timing_ticket = _llm_request_timing_ticket.get()
@@ -646,14 +610,9 @@ class LLMModel(
                 sender.finish()
 
         # generate tool_calls
-        full_tool_calls_list = []
-        if full_tool_calls_dict:
-            for _index in sorted(full_tool_calls_dict.keys()):
-                tool_call = full_tool_calls_dict[_index]
-                tool_call["type"] = "function"
-                full_tool_calls_list.append(
-                    ChatCompletionMessageToolCall(**tool_call)
-                )
+        full_tool_calls_list = OpenAIResponseAdapter.build_tool_calls(
+            full_tool_calls_dict,
+        )
 
         if env_tool.is_debug_mode():
             print()
@@ -684,11 +643,9 @@ class LLMModel(
 
         full_content = full_content.strip()
 
-        # ChatCompletionMessage
-        response_ccm = ChatCompletionMessage(
-            role=ROLE_ASSISTANT,
-            content=full_content,
-            tool_calls=full_tool_calls_list,
+        response_ccm = OpenAIResponseAdapter.build_assistant_message(
+            full_content,
+            full_tool_calls_list,
         )
 
         full_content = self.fix_response_content(rsp_obj=response_ccm, rsp_content=full_content)

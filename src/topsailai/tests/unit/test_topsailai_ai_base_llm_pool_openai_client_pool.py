@@ -1,13 +1,15 @@
 """Unit tests for the reusable OpenAI SDK client pool."""
 
 import threading
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from topsailai.ai_base.llm_pool.openai_client_pool import (
     OpenAIClientConfig,
     OpenAIClientPool,
+    OpenAIResponseAdapter,
     normalize_base_url,
 )
 
@@ -307,7 +309,7 @@ def test_api_key_is_absent_from_representations_and_logs():
     config = make_config(api_key=secret)
 
     with patch(
-        "topsailai.ai_base.llm_pool.openai_client_pool.logger.debug"
+        "topsailai.ai_base.llm_pool.base_client_pool.logger.debug"
     ) as debug_log:
         first = pool.acquire(config)
         second = pool.acquire(config)
@@ -319,3 +321,75 @@ def test_api_key_is_absent_from_representations_and_logs():
     captured = rendered_logs + repr(config) + repr(first.key) + repr(first)
     assert secret not in captured
     assert first.key.api_key_fingerprint[:8] in rendered_logs
+
+
+def test_response_adapter_extracts_chat_content_and_stream_delta():
+    """The adapter owns OpenAI response and stream field traversal."""
+    message = MagicMock(content="answer")
+    response = MagicMock(choices=[MagicMock(message=message)])
+    delta = MagicMock(content="chunk")
+    chunk = MagicMock(choices=[MagicMock(delta=delta)])
+
+    assert OpenAIResponseAdapter.get_response_content(response) == "answer"
+    assert OpenAIResponseAdapter.get_stream_delta(chunk) is delta
+    assert OpenAIResponseAdapter.get_stream_delta(MagicMock(choices=[])) is None
+    assert OpenAIResponseAdapter.get_delta_content(delta) == "chunk"
+
+
+def test_response_adapter_merges_and_builds_stream_tool_calls():
+    """The adapter accumulates fragmented OpenAI tool calls in index order."""
+    first = SimpleNamespace(
+        index=1,
+        id="call-b",
+        function=SimpleNamespace(name="second", arguments='{"b":'),
+    )
+    second = SimpleNamespace(
+        index=0,
+        id="call-a",
+        function=SimpleNamespace(name="first", arguments='{"a":1}'),
+    )
+    continuation = SimpleNamespace(
+        index=1,
+        id=None,
+        function=SimpleNamespace(name=None, arguments="2}"),
+    )
+    accumulated = {}
+
+    OpenAIResponseAdapter.merge_delta_tool_calls(
+        accumulated,
+        MagicMock(tool_calls=[first, second]),
+    )
+    OpenAIResponseAdapter.merge_delta_tool_calls(
+        accumulated,
+        MagicMock(tool_calls=[continuation]),
+    )
+    tool_calls = OpenAIResponseAdapter.build_tool_calls(accumulated)
+
+    assert [tool_call.id for tool_call in tool_calls] == ["call-a", "call-b"]
+    assert tool_calls[1].function.name == "second"
+    assert tool_calls[1].function.arguments == '{"b":2}'
+
+
+def test_response_adapter_builds_message_timeout_and_request():
+    """The adapter owns OpenAI message, timeout, and request construction."""
+    message = OpenAIResponseAdapter.build_assistant_message("answer", [])
+    error = OpenAIResponseAdapter.make_first_byte_timeout_error(7)
+    chat_model = MagicMock()
+    expected_response = object()
+    chat_model.create.return_value = expected_response
+
+    response = OpenAIResponseAdapter.create_response(
+        chat_model,
+        {"model": "provider-model", "stream": False},
+    )
+
+    assert message.role == "assistant"
+    assert message.content == "answer"
+    assert message.tool_calls == []
+    assert error.args == ("First byte timeout after 7s",)
+    assert response is expected_response
+    chat_model.create.assert_called_once_with(
+        timeout=(5, 300),
+        model="provider-model",
+        stream=False,
+    )
