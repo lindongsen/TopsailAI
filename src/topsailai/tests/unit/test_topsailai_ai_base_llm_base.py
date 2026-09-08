@@ -12,6 +12,12 @@ from unittest.mock import MagicMock, call, patch, PropertyMock
 
 import openai
 
+from topsailai.ai_base.llm_control.exception import (
+    LLMProviderBadRequestError,
+    LLMProviderConnectionError,
+    LLMProviderInternalServerError,
+    LLMProviderTimeoutError,
+)
 from topsailai.ai_base.llm_control.llm_retry import LLMRetryInteractionPolicy
 
 
@@ -1048,7 +1054,7 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
             yield MagicMock()
 
         model = self._create_mock_model()
-        with self.assertRaises(openai.APITimeoutError) as ctx:
+        with self.assertRaises(LLMProviderTimeoutError) as ctx:
             list(model.iter_stream_with_first_byte_timeout(blocking_stream(), 0.1, raise_on_timeout=True))
 
         self.assertIn("First byte timeout", str(ctx.exception))
@@ -1126,7 +1132,7 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         model = self._create_mock_model()
         model.model.create.side_effect = slow_create
 
-        with self.assertRaises(openai.APITimeoutError) as ctx:
+        with self.assertRaises(LLMProviderTimeoutError) as ctx:
             model.call_llm_model_by_stream(self.messages)
 
         self.assertIn("First byte timeout", str(ctx.exception))
@@ -1188,7 +1194,7 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         model = self._create_mock_model()
         model.model.create.side_effect = slow_create
 
-        with self.assertRaises(openai.APITimeoutError) as ctx:
+        with self.assertRaises(LLMProviderTimeoutError) as ctx:
             model.call_llm_model(self.messages)
 
         self.assertIn("First byte timeout", str(ctx.exception))
@@ -1775,7 +1781,7 @@ class TestLLMModelErrorHandling(unittest.TestCase):
         
         # APIConnectionError requires a request parameter
         mock_format.side_effect = [
-            openai.APIConnectionError(request=MagicMock()),
+            LLMProviderConnectionError("connection failed"),
             ["success"]
         ]
         
@@ -1800,7 +1806,7 @@ class TestLLMModelErrorHandling(unittest.TestCase):
         
         # APITimeoutError requires a request parameter
         mock_format.side_effect = [
-            openai.APITimeoutError(request=MagicMock()),
+            LLMProviderTimeoutError("request timed out"),
             ["success"]
         ]
         
@@ -1959,7 +1965,7 @@ class TestLLMModelErrorHandling(unittest.TestCase):
         # First call raises APIConnectionError (triggers retry), then the
         # hard-interrupt check fires before the next attempt.
         mock_format.side_effect = [
-            openai.APIConnectionError(request=MagicMock()),
+            LLMProviderConnectionError("connection failed"),
         ]
 
         agent = MagicMock()
@@ -1998,7 +2004,7 @@ class TestLLMModelErrorHandling(unittest.TestCase):
 
         # First call raises APIConnectionError (triggers retry), then succeeds.
         mock_format.side_effect = [
-            openai.APIConnectionError(request=MagicMock()),
+            LLMProviderConnectionError("connection failed"),
             ["success"],
         ]
 
@@ -2599,7 +2605,7 @@ class TestLLMModelNonRetryableBadRequestError(unittest.TestCase):
             "with call_id fc_sJRQx5pXlYGYW7c6yqkUeUeB."
         )
 
-        with self.assertRaises(openai.BadRequestError) as ctx:
+        with self.assertRaises(LLMProviderBadRequestError) as ctx:
             model.chat(self.messages)
 
         model.model.create.assert_called_once()
@@ -2624,7 +2630,7 @@ class TestLLMModelNonRetryableBadRequestError(unittest.TestCase):
             "fc_chatcmpl-tool-ba7580367cdf0a76."
         )
 
-        with self.assertRaises(openai.BadRequestError) as ctx:
+        with self.assertRaises(LLMProviderBadRequestError) as ctx:
             model.chat(self.messages)
 
         model.model.create.assert_called_once()
@@ -2647,7 +2653,7 @@ class TestLLMModelNonRetryableBadRequestError(unittest.TestCase):
             "matching function_call."
         )
 
-        with self.assertRaises(openai.BadRequestError) as ctx:
+        with self.assertRaises(LLMProviderBadRequestError) as ctx:
             model.chat(self.messages)
 
         model.model.create.assert_called_once()
@@ -2668,7 +2674,7 @@ class TestLLMModelNonRetryableBadRequestError(unittest.TestCase):
             "preceding message with tool_call_id."
         )
 
-        with self.assertRaises(openai.BadRequestError) as ctx:
+        with self.assertRaises(LLMProviderBadRequestError) as ctx:
             model.chat(self.messages)
 
         model.model.create.assert_called_once()
@@ -2690,7 +2696,7 @@ class TestLLMModelNonRetryableBadRequestError(unittest.TestCase):
         )
         model.model.create.side_effect = self._bad_request(original)
 
-        with self.assertRaises(openai.BadRequestError) as ctx:
+        with self.assertRaises(LLMProviderBadRequestError) as ctx:
             model.chat(self.messages)
 
         model.model.create.assert_called_once()
@@ -3225,23 +3231,15 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
         self, mock_base_init, mock_is_main_thread, mock_sleep
     ):
         """Retryable provider failures exhaust once with branch-specific metadata."""
-        import httpx
-
         from topsailai.ai_base.exception import LLMRetryExhaustedError
 
-        response = httpx.Response(
-            status_code=400,
-            request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
-        )
         cases = (
             (
                 "bad_request",
-                openai.BadRequestError(
-                    "ordinary transient bad request", response=response, body=None
-                ),
+                LLMProviderBadRequestError("ordinary transient bad request"),
             ),
-            ("connection", openai.APIConnectionError(request=MagicMock())),
-            ("timeout", openai.APITimeoutError(request=MagicMock())),
+            ("connection", LLMProviderConnectionError("connection failed")),
+            ("timeout", LLMProviderTimeoutError("request timed out")),
         )
 
         for expected_reason, provider_error in cases:
@@ -3312,17 +3310,8 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
         self, mock_base_init, mock_is_main_thread, mock_format, mock_sleep
     ):
         """Six internal-server failures rebuild once before automatic recovery."""
-        import httpx
-
-
-        response = httpx.Response(
-            status_code=500,
-            request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
-        )
         failures = [
-            openai.InternalServerError(
-                "temporary provider failure", response=response, body=None
-            )
+            LLMProviderInternalServerError("temporary provider failure")
             for _ in range(6)
         ]
         model = self._create_mock_model()

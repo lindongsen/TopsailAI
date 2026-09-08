@@ -9,10 +9,6 @@ import os
 import random
 import time
 
-import httpx
-import httpcore
-import openai
-
 # Fixed prime sleep durations (seconds) used when retrying after
 # LLMServiceSpecialResponseError (e.g. "服务器繁忙").
 _LLM_SERVICE_SPECIAL_RESPONSE_SLEEP_SECONDS = (
@@ -56,6 +52,13 @@ from .llm_control.exception import (
     JsonError,
     ModelServiceError,
     LLMServiceSpecialResponseError,
+    LLMProviderBadRequestError,
+    LLMProviderConnectionError,
+    LLMProviderInternalServerError,
+    LLMProviderPermissionDeniedError,
+    LLMProviderRateLimitError,
+    LLMProviderReadError,
+    LLMProviderTimeoutError,
 )
 from .llm_control.message import get_response_message, format_response
 from .llm_control.configuration import (
@@ -717,7 +720,7 @@ class LLMModel(
                 retry_reason = "json"
                 print_error(f"!!! [{i}] JsonError, {e}")
                 continue
-            except openai.RateLimitError as e:
+            except LLMProviderRateLimitError as e:
                 last_error = e
                 retry_reason = "rate_limit"
                 print_error(
@@ -730,7 +733,7 @@ class LLMModel(
                 retry_reason = "type_error"
                 print_error(f"!!! [{i}] TypeError, {e}")
                 continue
-            except openai.InternalServerError as e:
+            except LLMProviderInternalServerError as e:
                 last_error = e
                 retry_reason = "internal_server"
                 print_error(f"!!! [{i}] InternalServerError, {e}")
@@ -740,22 +743,22 @@ class LLMModel(
                 if err_count_map["InternalServerError"] > 5:
                     self.rebuild_llm_models()
                 continue
-            except openai.APITimeoutError as e:
+            except LLMProviderTimeoutError as e:
                 last_error = e
                 retry_reason = "timeout"
                 print_error(f"!!! [{i}] APITimeoutError, {e}")
                 continue
-            except openai.APIConnectionError as e:
+            except LLMProviderConnectionError as e:
                 last_error = e
                 retry_reason = "connection"
                 print_error(f"!!! [{i}] APIConnectionError, {e}")
                 continue
-            except openai.PermissionDeniedError as e:
+            except LLMProviderPermissionDeniedError as e:
                 last_error = e
                 retry_reason = "permission_denied"
                 print_error(f"!!! [{i}] PermissionDeniedError, {e}")
                 continue
-            except openai.BadRequestError as e:
+            except LLMProviderBadRequestError as e:
                 last_error = e
                 retry_reason = "bad_request"
                 print_error(f"!!! [{i}] BadRequestError, {e}")
@@ -765,7 +768,7 @@ class LLMModel(
 
                 marker = _match_non_retryable_bad_request(e_str)
                 if marker:
-                    raise openai.BadRequestError(
+                    raise LLMProviderBadRequestError(
                         "Non-retryable request-shape 400 "
                         f"(matched marker: '{marker}'). The request payload is "
                         "malformed, most likely the Agent2LLM context contains an "
@@ -776,13 +779,7 @@ class LLMModel(
                         body=e.body,
                     ) from e
                 continue
-            except (
-                    httpx.ReadError,
-                    httpcore.ReadError,
-                    httpx.RemoteProtocolError,
-                    httpx.ReadTimeout,
-                    httpcore.ReadTimeout,
-                ) as e:
+            except LLMProviderReadError as e:
                 last_error = e
                 retry_reason = "read_error"
                 print_error(f"!!! [{i}] ReadError, {e}")

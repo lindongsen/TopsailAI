@@ -6,6 +6,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import httpcore
+import httpx
+import openai
+
+from topsailai.ai_base.llm_control.exception import (
+    LLMProviderBadRequestError,
+    LLMProviderConnectionError,
+    LLMProviderInternalServerError,
+    LLMProviderPermissionDeniedError,
+    LLMProviderRateLimitError,
+    LLMProviderReadError,
+    LLMProviderTimeoutError,
+)
+
 from topsailai.ai_base.llm_pool.openai_client_pool import (
     OpenAIClientConfig,
     OpenAIClientPool,
@@ -393,3 +407,112 @@ def test_response_adapter_builds_message_timeout_and_request():
         model="provider-model",
         stream=False,
     )
+
+
+def _make_openai_status_error(error_type, message):
+    """Build an OpenAI status error with diagnostic response metadata."""
+    response = httpx.Response(
+        status_code=400,
+        request=httpx.Request("POST", "https://provider.example/v1/chat/completions"),
+    )
+    return error_type(message, response=response, body={"detail": message})
+
+
+@pytest.mark.parametrize(
+    ("source_error", "target_type"),
+    [
+        (
+            _make_openai_status_error(openai.RateLimitError, "rate limited"),
+            LLMProviderRateLimitError,
+        ),
+        (
+            _make_openai_status_error(
+                openai.InternalServerError, "internal failure"
+            ),
+            LLMProviderInternalServerError,
+        ),
+        (
+            openai.APITimeoutError(
+                request=httpx.Request("POST", "https://provider.example/v1")
+            ),
+            LLMProviderTimeoutError,
+        ),
+        (
+            openai.APIConnectionError(
+                request=httpx.Request("POST", "https://provider.example/v1")
+            ),
+            LLMProviderConnectionError,
+        ),
+        (
+            _make_openai_status_error(
+                openai.PermissionDeniedError, "permission denied"
+            ),
+            LLMProviderPermissionDeniedError,
+        ),
+        (
+            _make_openai_status_error(openai.BadRequestError, "bad request"),
+            LLMProviderBadRequestError,
+        ),
+        (httpx.ReadError("read failed"), LLMProviderReadError),
+        (httpcore.ReadError("core read failed"), LLMProviderReadError),
+        (httpx.RemoteProtocolError("protocol failed"), LLMProviderReadError),
+        (httpx.ReadTimeout("read timed out"), LLMProviderReadError),
+        (httpcore.ReadTimeout("core read timed out"), LLMProviderReadError),
+    ],
+)
+def test_response_adapter_translates_provider_errors(source_error, target_type):
+    """Every consumed OpenAI transport category maps to a project error."""
+    translated = OpenAIResponseAdapter.translate_error(source_error)
+
+    assert isinstance(translated, target_type)
+    assert str(source_error) == str(translated)
+    assert translated.response is getattr(source_error, "response", None)
+    assert translated.body is getattr(source_error, "body", None)
+
+
+def test_response_adapter_preserves_unrecognized_errors():
+    """Unknown failures retain their original type and identity."""
+    source_error = RuntimeError("unknown failure")
+
+    assert OpenAIResponseAdapter.translate_error(source_error) is source_error
+
+
+def test_response_adapter_translates_create_error():
+    """Synchronous SDK request failures cross the boundary as project errors."""
+    chat_model = MagicMock()
+    source_error = _make_openai_status_error(
+        openai.BadRequestError, "invalid request"
+    )
+    chat_model.create.side_effect = source_error
+
+    with pytest.raises(LLMProviderBadRequestError) as captured:
+        OpenAIResponseAdapter.create_response(chat_model, {"stream": False})
+
+    assert captured.value.__cause__ is source_error
+    assert captured.value.response is source_error.response
+    assert captured.value.body is source_error.body
+
+
+def test_response_adapter_translates_deferred_stream_error():
+    """Failures raised after stream creation are translated during iteration."""
+    source_error = openai.APIConnectionError(
+        request=httpx.Request("POST", "https://provider.example/v1")
+    )
+
+    def failing_stream():
+        """Yield one item before the provider stream fails."""
+        yield "first"
+        raise source_error
+
+    chat_model = MagicMock()
+    chat_model.create.return_value = failing_stream()
+    response = OpenAIResponseAdapter.create_response(
+        chat_model, {"stream": True}
+    )
+    iterator = iter(response)
+
+    assert next(iterator) == "first"
+    with pytest.raises(LLMProviderConnectionError) as captured:
+        next(iterator)
+
+    assert captured.value.__cause__ is source_error

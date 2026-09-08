@@ -10,8 +10,19 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
+import httpcore
+import httpx
 import openai
 
+from topsailai.ai_base.llm_control.exception import (
+    LLMProviderBadRequestError,
+    LLMProviderConnectionError,
+    LLMProviderInternalServerError,
+    LLMProviderPermissionDeniedError,
+    LLMProviderRateLimitError,
+    LLMProviderReadError,
+    LLMProviderTimeoutError,
+)
 from topsailai.ai_base.llm_pool.base_client_pool import (
     BaseClientPool,
     ClientPoolHandle,
@@ -114,7 +125,26 @@ class OpenAIClientConfig:
 
 
 class OpenAIResponseAdapter:
-    """Contain OpenAI response parsing and SDK object construction."""
+    """Contain OpenAI response parsing, construction, and error translation."""
+
+    _ERROR_MAP = (
+        (openai.RateLimitError, LLMProviderRateLimitError),
+        (openai.InternalServerError, LLMProviderInternalServerError),
+        (openai.APITimeoutError, LLMProviderTimeoutError),
+        (openai.APIConnectionError, LLMProviderConnectionError),
+        (openai.PermissionDeniedError, LLMProviderPermissionDeniedError),
+        (openai.BadRequestError, LLMProviderBadRequestError),
+        (
+            (
+                httpx.ReadError,
+                httpcore.ReadError,
+                httpx.RemoteProtocolError,
+                httpx.ReadTimeout,
+                httpcore.ReadTimeout,
+            ),
+            LLMProviderReadError,
+        ),
+    )
 
     @staticmethod
     def get_response_content(response):
@@ -175,19 +205,47 @@ class OpenAIResponseAdapter:
 
     @staticmethod
     def make_first_byte_timeout_error(first_byte_timeout):
-        """Construct an OpenAI timeout error for a first-byte timeout."""
-        message = f"First byte timeout after {first_byte_timeout}s"
-        error = openai.APITimeoutError(request=None)
-        if hasattr(error, "message"):
-            error.message = message
-        if hasattr(error, "args"):
-            error.args = (message,)
+        """Construct a project-owned timeout for a first-byte timeout."""
+        return LLMProviderTimeoutError(
+            f"First byte timeout after {first_byte_timeout}s"
+        )
+
+    @classmethod
+    def translate_error(cls, error):
+        """Translate one recognized OpenAI or transport error."""
+        for source_type, target_type in cls._ERROR_MAP:
+            if isinstance(error, source_type):
+                return target_type(
+                    str(error),
+                    response=getattr(error, "response", None),
+                    body=getattr(error, "body", None),
+                )
         return error
 
-    @staticmethod
-    def create_response(chat_model, params):
-        """Create one OpenAI-compatible provider response."""
-        return chat_model.create(timeout=(5, 300), **params)
+    @classmethod
+    def iter_response(cls, response):
+        """Yield stream items while translating deferred transport errors."""
+        try:
+            yield from response
+        except Exception as error:
+            translated = cls.translate_error(error)
+            if translated is error:
+                raise
+            raise translated from error
+
+    @classmethod
+    def create_response(cls, chat_model, params):
+        """Create a response and translate errors at the OpenAI boundary."""
+        try:
+            response = chat_model.create(timeout=(5, 300), **params)
+        except Exception as error:
+            translated = cls.translate_error(error)
+            if translated is error:
+                raise
+            raise translated from error
+        if params.get("stream"):
+            return cls.iter_response(response)
+        return response
 
 
 @dataclass(frozen=True)
