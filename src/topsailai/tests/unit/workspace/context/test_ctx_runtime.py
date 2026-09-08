@@ -333,21 +333,60 @@ class TestContextRuntimeBaseEnvMethods:
 
         assert result == 0
 
+    @pytest.mark.parametrize(
+        ("cached_tokens_before", "cached_tokens_after"),
+        [(10, 10), (10, 20)],
+    )
     @patch('topsailai.workspace.context.base.print_tool.print_warning')
     @patch('topsailai.workspace.context.base.ctx_manager')
     def test_summary_cached_tokens_do_not_warn_when_not_decreased(
-        self, mock_ctx_manager, mock_print_warning
+        self,
+        mock_ctx_manager,
+        mock_print_warning,
+        cached_tokens_before,
+        cached_tokens_after,
     ):
-        """Do not warn when the summary request preserves or increases cache use."""
+        """Do not warn when valid integer cache use is equal or increases."""
         from topsailai.workspace.context.base import ContextRuntimeBase
 
         runtime = ContextRuntimeBase()
-        token_stat = MagicMock(current_cached_tokens=10)
+        token_stat = MagicMock(current_cached_tokens=cached_tokens_before)
         llm_chat = MagicMock()
         llm_chat.llm_model.tokenStat = token_stat
 
         def chat(**kwargs):
-            token_stat.current_cached_tokens = 20
+            token_stat.current_cached_tokens = cached_tokens_after
+            return "summary"
+
+        llm_chat.chat.side_effect = chat
+
+        assert runtime._chat_for_summary(llm_chat, need_print=False) == "summary"
+        llm_chat.chat.assert_called_once_with(need_print=False)
+        mock_print_warning.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("cached_tokens_before", "cached_tokens_after"),
+        [(None, None), ("20", "10"), (20.0, 10.0), (True, False)],
+    )
+    @patch('topsailai.workspace.context.base.print_tool.print_warning')
+    @patch('topsailai.workspace.context.base.ctx_manager')
+    def test_summary_cached_tokens_ignore_invalid_metric_types(
+        self,
+        mock_ctx_manager,
+        mock_print_warning,
+        cached_tokens_before,
+        cached_tokens_after,
+    ):
+        """Ignore invalid cache metric types without changing the summary result."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        runtime = ContextRuntimeBase()
+        token_stat = MagicMock(current_cached_tokens=cached_tokens_before)
+        llm_chat = MagicMock()
+        llm_chat.llm_model.tokenStat = token_stat
+
+        def chat(**kwargs):
+            token_stat.current_cached_tokens = cached_tokens_after
             return "summary"
 
         llm_chat.chat.side_effect = chat
@@ -358,10 +397,10 @@ class TestContextRuntimeBaseEnvMethods:
 
     @patch('topsailai.workspace.context.base.print_tool.print_warning')
     @patch('topsailai.workspace.context.base.ctx_manager')
-    def test_summary_cached_tokens_ignore_unavailable_metric(
+    def test_summary_cached_tokens_ignore_unconfigured_magic_mock(
         self, mock_ctx_manager, mock_print_warning
     ):
-        """Ignore non-integer cache metrics without changing the summary result."""
+        """Ignore an unconfigured MagicMock metric and preserve the summary result."""
         from topsailai.workspace.context.base import ContextRuntimeBase
 
         runtime = ContextRuntimeBase()
@@ -377,7 +416,7 @@ class TestContextRuntimeBaseEnvMethods:
     def test_summary_cached_tokens_warn_when_decreased(
         self, mock_ctx_manager, mock_print_warning
     ):
-        """Warn through print_tool when summary cache use decreases."""
+        """Warn through print_tool when valid integer summary cache use decreases."""
         from topsailai.workspace.context.base import ContextRuntimeBase
 
         runtime = ContextRuntimeBase()
@@ -392,6 +431,7 @@ class TestContextRuntimeBaseEnvMethods:
         llm_chat.chat.side_effect = chat
 
         assert runtime._chat_for_summary(llm_chat, need_print=False) == "summary"
+        llm_chat.chat.assert_called_once_with(need_print=False)
         mock_print_warning.assert_called_once_with(
             "[summarize] cached tokens decreased after summarization: "
             "cached_tokens_before=20, cached_tokens_after=10"

@@ -45,6 +45,13 @@ Feature: Interactive recovery after LLM retry exhaustion
     Then the retry scenario terminates with a bounded exhaustion error
     And the retry scenario sent exactly 18 completion requests
 
+  Scenario: Operating-system SIGINT exits the real retry menu without replay
+    Given a subprocess LLM retry scenario whose bounded cycle returns busy SSE responses
+    When SIGINT is sent to the exact child blocked at the retry menu
+    Then the SIGINT retry scenario exits with bounded exhaustion
+    And the SIGINT retry scenario sent 18 unchanged requests without replay
+    And the SIGINT retry scenario cleaned up its child and mock server resources
+
   Scenario: Missing runtime input exhausts without blocking
     Given an LLM retry scenario whose bounded request cycle returns only busy SSE responses
     When retry exhaustion has no runtime input capability
@@ -52,8 +59,32 @@ Feature: Interactive recovery after LLM retry exhaustion
     And no retry exhaustion prompt was attempted
     And the retry scenario sent exactly 18 completion requests
 
+  Scenario: Zero manual retry cycles stop after the initial request cycle
+    Given an LLM retry scenario with zero manual retry cycles and only busy SSE responses
+    When the configured retry boundary is exercised
+    Then the configured retry boundary stops after 18 requests and zero menu prompts
+    And every configured-boundary request body is identical
+
+  Scenario: One manual retry cycle stops after exactly two request cycles
+    Given an LLM retry scenario with one manual retry cycle and only busy SSE responses
+    When the configured retry boundary is exercised
+    Then the configured retry boundary stops after 36 requests and one menu prompt
+    And every configured-boundary request body is identical
+
+  Scenario: One manual retry cycle succeeds on its final permitted request
+    Given an LLM retry scenario with one manual retry cycle that succeeds on request 36
+    When the configured retry boundary is exercised
+    Then the configured retry boundary succeeds on request 36 after one menu prompt
+    And every configured-boundary request body is identical
+
   Scenario: Repeated Retry choices stop at the absolute request bound
     Given an LLM retry scenario whose configured retry budget returns busy SSE responses
     When the user repeatedly chooses Retry through every permitted manual cycle
     Then the retry scenario reaches its configured absolute request bound
     And every bounded retry request body is identical
+
+  Scenario: Production default stops after seven manual retry cycles
+    Given an LLM retry scenario using the default policy and only busy SSE responses
+    When all seven default Retry choices are supplied
+    Then the default retry policy stops after exactly 144 requests and seven menu prompts
+    And every default-policy request body is parsed and identical

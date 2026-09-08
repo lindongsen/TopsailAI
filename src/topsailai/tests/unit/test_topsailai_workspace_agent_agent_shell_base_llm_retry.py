@@ -154,6 +154,59 @@ def test_back_discards_old_message_and_runs_only_fresh_non_empty_input(agent_cha
     agent_chat.ctx_runtime_data.del_session_messages.assert_not_called()
 
 
+@pytest.mark.parametrize("interruption", [EOFError(), KeyboardInterrupt()])
+def test_back_fresh_input_interruption_terminates_without_replaying_old_turn(
+    agent_chat, interruption
+):
+    """Fresh-input interruption after Back terminates without success effects."""
+    back_error = LLMBackToChatError(
+        attempts=18,
+        manual_cycle_count=0,
+        last_error=RuntimeError("busy"),
+        retry_reason="busy",
+    )
+    agent_chat.ai_agent.run.side_effect = back_error
+    patches = _run_patches(
+        runtime_input=MagicMock(),
+        input_messages=(interruption,),
+    )
+    with (
+        patches[0], patches[1], patches[2], patches[3],
+        patches[4] as input_mock, patches[5], patches[6], patches[7],
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.get_agent_step_call",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "topsailai.workspace.agent.agent_shell_base.input_yes",
+            return_value=False,
+        ) as confirm_abort,
+    ):
+        result = agent_chat._run(
+            message="old request",
+            times=0,
+            need_interactive=True,
+        )
+
+    assert result == "failed due to abort by Human"
+    agent_chat.ai_agent.run.assert_called_once()
+    assert agent_chat.ai_agent.run.call_args.args[1] == "old request"
+    input_mock.assert_called_once_with(hook=agent_chat.hook_instruction)
+    confirm_abort.assert_called_once_with("Agent Session Continue [yes/no] ")
+    assert agent_chat.call_hooks_post_fail_run.call_count == 2
+    assert agent_chat.call_hooks_post_fail_run.call_args_list[0] == call(back_error)
+    assert isinstance(
+        agent_chat.call_hooks_post_fail_run.call_args_list[1].args[0],
+        KeyboardInterrupt,
+    )
+    agent_chat.call_hooks_post_succ_run.assert_not_called()
+    agent_chat.call_hook_for_final_answer.assert_not_called()
+    agent_chat.hook_build_answer.assert_not_called()
+    agent_chat.ctx_rt_aiagent.add_session_message.assert_not_called()
+    agent_chat.ctx_runtime_data.add_session_message.assert_not_called()
+    agent_chat.ctx_runtime_data.reset_messages.assert_not_called()
+
+
 def test_retry_policy_enables_back_only_for_interactive_continuous_chat(agent_chat):
     """Only a resolved interactive continuous run may expose Back to chat."""
     captured_policies = []

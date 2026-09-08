@@ -1248,15 +1248,15 @@ class LLMModel(LLMModelBase):
                 if err_count_map["InternalServerError"] > 5:
                     self.rebuild_llm_models()
                 continue
-            except openai.APIConnectionError as e:
-                last_error = e
-                retry_reason = "connection"
-                print_error(f"!!! [{i}] APIConnectionError, {e}")
-                continue
             except openai.APITimeoutError as e:
                 last_error = e
                 retry_reason = "timeout"
                 print_error(f"!!! [{i}] APITimeoutError, {e}")
+                continue
+            except openai.APIConnectionError as e:
+                last_error = e
+                retry_reason = "connection"
+                print_error(f"!!! [{i}] APIConnectionError, {e}")
                 continue
             except openai.PermissionDeniedError as e:
                 last_error = e

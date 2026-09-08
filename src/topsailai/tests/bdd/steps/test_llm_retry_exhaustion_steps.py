@@ -6,6 +6,7 @@ from pytest_bdd import given, then, when
 from topsailai.ai_base.exception import LLMRetryExhaustedError
 from tests.bdd.llm_retry_exhaustion_harness import (
     MAX_ATTEMPTS,
+    MAX_MANUAL_RETRY_CYCLES,
     BDD_MAX_MANUAL_RETRY_CYCLES,
     BDD_MAX_TOTAL_ATTEMPTS,
     SUCCESS_RESPONSE,
@@ -47,6 +48,52 @@ def given_total_retry_budget_exhaustion(llm_retry_ctx):
     """Script busy responses through the injected finite request budget."""
     llm_retry_ctx.script_total_bound_exhaustion()
     assert llm_retry_ctx.server_owner.thread.is_alive()
+
+
+@given(
+    "an LLM retry scenario using the default policy and only busy SSE responses"
+)
+def given_default_boundary_exhaustion(llm_retry_ctx):
+    """Script all 144 busy responses allowed by the production default."""
+    llm_retry_ctx.script_default_boundary_exhaustion()
+    assert llm_retry_ctx.server_owner.thread.is_alive()
+
+
+@given(
+    "an LLM retry scenario with zero manual retry cycles and only busy SSE responses"
+)
+def given_zero_cycle_boundary_exhaustion(llm_retry_ctx):
+    """Script only the initial automatic request cycle."""
+    llm_retry_ctx.script_configured_boundary(0)
+    assert llm_retry_ctx.server_owner.thread.is_alive()
+
+
+@given(
+    "an LLM retry scenario with one manual retry cycle and only busy SSE responses"
+)
+def given_one_cycle_boundary_exhaustion(llm_retry_ctx):
+    """Script the initial and one manually requested automatic cycle."""
+    llm_retry_ctx.script_configured_boundary(1)
+    assert llm_retry_ctx.server_owner.thread.is_alive()
+
+
+@given("an LLM retry scenario with one manual retry cycle that succeeds on request 36")
+def given_one_cycle_final_attempt_success(llm_retry_ctx):
+    """Script success only on the final request allowed by one manual cycle."""
+    llm_retry_ctx.script_configured_boundary(1, succeeds_on_final_attempt=True)
+    assert llm_retry_ctx.server_owner.thread.is_alive()
+
+
+@when("all seven default Retry choices are supplied")
+def when_default_retry_boundary_is_exercised(llm_retry_ctx):
+    """Run with a policy whose max-cycle field is left at its default."""
+    llm_retry_ctx.run_default_boundary()
+
+
+@when("the configured retry boundary is exercised")
+def when_configured_retry_boundary_is_exercised(llm_retry_ctx):
+    """Run the request through every cycle allowed by the injected policy."""
+    llm_retry_ctx.run_configured_boundary()
 
 
 @when("the user enters an invalid exhaustion choice and then chooses Retry")
@@ -113,6 +160,113 @@ def then_retry_exhausted(llm_retry_ctx):
     assert isinstance(llm_retry_ctx.error, LLMRetryExhaustedError)
     assert llm_retry_ctx.error.attempts == MAX_ATTEMPTS
     assert llm_retry_ctx.result is None
+
+
+def _assert_configured_boundary_evidence(
+    llm_retry_ctx,
+    *,
+    expected_requests: int,
+    expected_prompts: int,
+) -> None:
+    """Assert provider and menu cardinality for an injected retry boundary."""
+    assert llm_retry_ctx.boundary_total_attempts == expected_requests
+    assert llm_retry_ctx.input_script is not None
+    assert len(llm_retry_ctx.input_script.prompts) == expected_prompts
+    state = llm_retry_ctx.state()
+    assert state["total_requests"] == expected_requests, state
+    assert len(state["request_bodies"]) == expected_requests, state
+    assert state["dropped_request_body_count"] == 0, state
+    assert all(record["parsed"] for record in state["request_bodies"]), state
+
+
+@then(
+    "the default retry policy stops after exactly 144 requests and seven menu prompts"
+)
+def then_default_retry_boundary_stops(llm_retry_ctx):
+    """Assert default exhaustion exposes no eighth menu or 145th request."""
+    expected_requests = MAX_ATTEMPTS * (MAX_MANUAL_RETRY_CYCLES + 1)
+    _assert_configured_boundary_evidence(
+        llm_retry_ctx,
+        expected_requests=expected_requests,
+        expected_prompts=MAX_MANUAL_RETRY_CYCLES,
+    )
+    assert isinstance(llm_retry_ctx.error, LLMRetryExhaustedError)
+    assert llm_retry_ctx.error.attempts == expected_requests
+    assert llm_retry_ctx.error.manual_cycle_count == MAX_MANUAL_RETRY_CYCLES
+    assert llm_retry_ctx.result is None
+    assert llm_retry_ctx.input_script is not None
+    assert llm_retry_ctx.input_script.values == []
+
+
+@then("every default-policy request body is parsed and identical")
+def then_default_retry_request_bodies_are_identical(llm_retry_ctx):
+    """Prove every default-policy HTTP body is retained and unchanged."""
+    expected_requests = MAX_ATTEMPTS * (MAX_MANUAL_RETRY_CYCLES + 1)
+    state = llm_retry_ctx.state()
+    assert state["dropped_request_body_count"] == 0, state
+    assert all(record["parsed"] for record in state["request_bodies"]), state
+    bodies = [record["body"] for record in state["request_bodies"]]
+    assert len(bodies) == expected_requests
+    assert all(body == bodies[0] for body in bodies[1:])
+    assert bodies[0]["messages"][-1] == {
+        "role": "user",
+        "content": "original request",
+    }
+
+
+@then("the configured retry boundary stops after 18 requests and zero menu prompts")
+def then_zero_cycle_boundary_stops(llm_retry_ctx):
+    """Assert a zero-cycle policy cannot enter a manual Retry cycle."""
+    _assert_configured_boundary_evidence(
+        llm_retry_ctx,
+        expected_requests=MAX_ATTEMPTS,
+        expected_prompts=0,
+    )
+    assert isinstance(llm_retry_ctx.error, LLMRetryExhaustedError)
+    assert llm_retry_ctx.error.attempts == MAX_ATTEMPTS
+    assert llm_retry_ctx.error.manual_cycle_count == 0
+    assert llm_retry_ctx.result is None
+
+
+@then("the configured retry boundary stops after 36 requests and one menu prompt")
+def then_one_cycle_boundary_stops(llm_retry_ctx):
+    """Assert one manual cycle permits exactly one more automatic cycle."""
+    expected_requests = MAX_ATTEMPTS * 2
+    _assert_configured_boundary_evidence(
+        llm_retry_ctx,
+        expected_requests=expected_requests,
+        expected_prompts=1,
+    )
+    assert isinstance(llm_retry_ctx.error, LLMRetryExhaustedError)
+    assert llm_retry_ctx.error.attempts == expected_requests
+    assert llm_retry_ctx.error.manual_cycle_count == 1
+    assert llm_retry_ctx.result is None
+
+
+@then("the configured retry boundary succeeds on request 36 after one menu prompt")
+def then_one_cycle_final_attempt_succeeds(llm_retry_ctx):
+    """Assert success on the final permitted request does not overrun the bound."""
+    expected_requests = MAX_ATTEMPTS * 2
+    _assert_configured_boundary_evidence(
+        llm_retry_ctx,
+        expected_requests=expected_requests,
+        expected_prompts=1,
+    )
+    assert llm_retry_ctx.error is None
+    assert llm_retry_ctx.result == SUCCESS_RESPONSE
+
+
+@then("every configured-boundary request body is identical")
+def then_configured_boundary_request_bodies_are_identical(llm_retry_ctx):
+    """Prove every request at the policy boundary preserves its wire body."""
+    assert llm_retry_ctx.boundary_total_attempts is not None
+    bodies = llm_retry_ctx.request_bodies()
+    assert len(bodies) == llm_retry_ctx.boundary_total_attempts
+    assert all(body == bodies[0] for body in bodies[1:])
+    assert bodies[0]["messages"][-1] == {
+        "role": "user",
+        "content": "original request",
+    }
 
 
 @then("the retry scenario reaches its configured absolute request bound")
@@ -235,3 +389,67 @@ def then_finite_menu_omits_back(llm_retry_ctx):
 def then_no_retry_prompt_was_attempted(llm_retry_ctx):
     """Assert unavailable input fails closed instead of reading another source."""
     assert llm_retry_ctx.input_script is None
+
+
+@given("a subprocess LLM retry scenario whose bounded cycle returns busy SSE responses")
+def given_subprocess_sigint_retry_scenario():
+    """Require POSIX signal delivery for the real child-process scenario."""
+    import os
+
+    if os.name != "posix":
+        pytest.skip("real SIGINT delivery requires a POSIX process")
+
+
+@when("SIGINT is sent to the exact child blocked at the retry menu")
+def when_sigint_reaches_real_retry_menu(llm_retry_ctx):
+    """Wait for the real menu marker, then signal only the captured child PID."""
+    llm_retry_ctx.run_subprocess_sigint_at_retry_menu()
+
+
+@then("the SIGINT retry scenario exits with bounded exhaustion")
+def then_sigint_exits_with_bounded_exhaustion(llm_retry_ctx):
+    """Assert Ctrl+C selects Exit and reports the production request bound."""
+    assert llm_retry_ctx.child_returncode == 0, llm_retry_ctx.child_stderr
+    assert llm_retry_ctx.child_result == {
+        "answer": None,
+        "error": {
+            "type": "LLMRetryExhaustedError",
+            "attempts": MAX_ATTEMPTS,
+            "manual_cycle_count": 0,
+        },
+        "run_messages": ["original request"],
+        "fail_hooks": 0,
+        "success_hooks": 0,
+        "final_hooks": 0,
+    }
+    assert "BDD_SIGINT_RETRY_MENU_READY" in llm_retry_ctx.child_stdout
+    assert "Traceback" not in llm_retry_ctx.child_stderr
+
+
+@then("the SIGINT retry scenario sent 18 unchanged requests without replay")
+def then_sigint_does_not_replay_stale_request(llm_retry_ctx):
+    """Assert signal handling adds neither an Agent turn nor a provider request."""
+    state = llm_retry_ctx.sigint_server_state
+    assert state is not None
+    assert state["total_requests"] == MAX_ATTEMPTS, state
+    assert len(state["request_bodies"]) == MAX_ATTEMPTS, state
+    assert state["dropped_request_body_count"] == 0, state
+    bodies = [record["body"] for record in state["request_bodies"]]
+    assert all(record["parsed"] for record in state["request_bodies"]), state
+    assert all(body == bodies[0] for body in bodies[1:])
+    assert bodies[0]["messages"][-1] == {
+        "role": "user",
+        "content": "original request",
+    }
+
+
+@then("the SIGINT retry scenario cleaned up its child and mock server resources")
+def then_sigint_resources_are_cleaned_up(llm_retry_ctx):
+    """Assert the exact child, pipes, server thread, and socket are closed."""
+    assert llm_retry_ctx.child_process is not None
+    assert llm_retry_ctx.child_reaped
+    assert llm_retry_ctx.child_process.poll() == 0
+    assert llm_retry_ctx.child_pipes_closed
+    assert llm_retry_ctx.sigint_server_closed
+    assert llm_retry_ctx.sigint_server_socket_closed
+    assert llm_retry_ctx.server_owner is None

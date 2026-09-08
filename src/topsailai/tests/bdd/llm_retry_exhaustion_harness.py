@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
+import select
+import signal
+import subprocess
+import sys
 import threading
+import time
 import urllib.request
 from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
@@ -14,6 +20,7 @@ from topsailai.ai_base.exception import LLMRetryExhaustedError
 from topsailai.ai_base.llm_base import LLMModel
 from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 from topsailai.tests.mock.llm_mock_server import MockServerConfig, create_server
+from topsailai.utils.env_tool import resolve_python_interpreter
 from topsailai.workspace.agent.agent_shell_base import AgentChat
 
 BUSY_RESPONSE = "服务器繁忙，请稍后再试。"
@@ -22,6 +29,8 @@ MAX_ATTEMPTS = 18
 MAX_MANUAL_RETRY_CYCLES = 7
 BDD_MAX_MANUAL_RETRY_CYCLES = 2
 BDD_MAX_TOTAL_ATTEMPTS = MAX_ATTEMPTS * (BDD_MAX_MANUAL_RETRY_CYCLES + 1)
+SIGINT_RETRY_MENU_READY = "BDD_SIGINT_RETRY_MENU_READY"
+SIGINT_CHILD_RESULT = "BDD_SIGINT_CHILD_RESULT="
 
 
 class _ScenarioComplete(Exception):
@@ -142,6 +151,18 @@ class LLMRetryScenario:
         self.agent: RealTransportAgent | None = None
         self.back_input_calls = 0
         self.server_thread_stopped = False
+        self.boundary_manual_cycles: int | None = None
+        self.boundary_total_attempts: int | None = None
+        self.child_process: subprocess.Popen[str] | None = None
+        self.child_stdout = ""
+        self.child_stderr = ""
+        self.child_result: dict[str, Any] | None = None
+        self.child_returncode: int | None = None
+        self.child_reaped = False
+        self.child_pipes_closed = False
+        self.sigint_server_state: dict[str, Any] | None = None
+        self.sigint_server_closed = False
+        self.sigint_server_socket_closed = False
         self._configure_environment()
 
     def _configure_environment(self) -> None:
@@ -182,6 +203,58 @@ class LLMRetryScenario:
     def script_total_bound_exhaustion(self) -> None:
         """Return busy content through the injected finite retry budget."""
         self.start_server((BUSY_RESPONSE,) * BDD_MAX_TOTAL_ATTEMPTS)
+
+    def script_default_boundary_exhaustion(self) -> None:
+        """Return busy content through the production default retry budget."""
+        self.boundary_manual_cycles = MAX_MANUAL_RETRY_CYCLES
+        self.boundary_total_attempts = MAX_ATTEMPTS * (MAX_MANUAL_RETRY_CYCLES + 1)
+        self.start_server((BUSY_RESPONSE,) * self.boundary_total_attempts)
+
+    def script_configured_boundary(
+        self,
+        manual_cycles: int,
+        *,
+        succeeds_on_final_attempt: bool = False,
+    ) -> None:
+        """Script one injected retry policy through its final permitted request."""
+        total_attempts = MAX_ATTEMPTS * (manual_cycles + 1)
+        responses = [BUSY_RESPONSE] * total_attempts
+        if succeeds_on_final_attempt:
+            responses[-1] = SUCCESS_RESPONSE
+        self.boundary_manual_cycles = manual_cycles
+        self.boundary_total_attempts = total_attempts
+        self.start_server(tuple(responses))
+
+    def run_configured_boundary(self) -> None:
+        """Exercise the scripted policy using every configured Retry choice."""
+        assert self.boundary_manual_cycles is not None
+        self.run_direct(
+            ["1"] * self.boundary_manual_cycles,
+            max_manual_retry_cycles=self.boundary_manual_cycles,
+        )
+
+    def run_default_boundary(self) -> None:
+        """Exercise every cycle from an unmodified production-default policy."""
+        assert self.model is not None
+        self.input_script = ScriptedInput(["1"] * MAX_MANUAL_RETRY_CYCLES)
+        policy = LLMRetryInteractionPolicy(
+            interactive_enabled=True,
+            input_func=self.input_script,
+        )
+        messages = [
+            {"role": "system", "content": "You are a retry BDD assistant."},
+            {"role": "user", "content": "original request"},
+        ]
+        try:
+            with patch("topsailai.ai_base.llm_base.time.sleep", return_value=None):
+                self.result = self.model.chat(
+                    messages,
+                    for_raw=True,
+                    for_stream=True,
+                    retry_interaction_policy=policy,
+                )
+        except BaseException as error:  # noqa: BLE001 - scenario asserts control signals
+            self.error = error
 
     def run_direct(
         self,
@@ -291,6 +364,105 @@ class LLMRetryScenario:
         except BaseException as error:  # noqa: BLE001 - scenario asserts exact outcome
             self.error = error
 
+    def run_subprocess_sigint_at_retry_menu(self) -> None:
+        """Deliver SIGINT to an exact child blocked in the real Retry menu."""
+        assert os.name == "posix"
+        owner = ServerOwner.start((BUSY_RESPONSE,) * MAX_ATTEMPTS)
+        self.server_owner = owner
+        environment = os.environ.copy()
+        environment.update({
+            "OPENAI_API_KEY": "bdd-test-key",
+            "OPENAI_MODEL": "bdd-retry-model",
+            "OPENAI_API_BASE": owner.base_url,
+            "OPENAI_BASE_URL": owner.base_url,
+            "LLM_RESPONSE_STREAM": "1",
+            "TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY": json.dumps(
+                [BUSY_RESPONSE], ensure_ascii=False
+            ),
+            "TOPSAILAI_LLM_RESPONSE_EVENTS_ENABLED": "0",
+            "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT": "0",
+            "TOPSAILAI_PRINT_TOOL_STAT": "0",
+            "TOPSAILAI_ENABLE_SESSION_LOCK": "0",
+            "TOPSAILAI_INTERACTIVE_MODE": "1",
+            "TOPSAILAI_NEED_SYMBOL_FOR_ANSWER": "0",
+            "DEBUG": "0",
+        })
+        process = subprocess.Popen(
+            [resolve_python_interpreter(), os.path.abspath(__file__), "--sigint-child"],
+            cwd=os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            ),
+            env=environment,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        self.child_process = process
+        output_chunks: list[str] = []
+        try:
+            assert process.stdout is not None
+            deadline = time.monotonic() + 15
+            marker_seen = False
+            while time.monotonic() < deadline:
+                ready, _, _ = select.select([process.stdout], [], [], 0.2)
+                if not ready:
+                    if process.poll() is not None:
+                        break
+                    continue
+                chunk = os.read(process.stdout.fileno(), 4096).decode(
+                    errors="replace"
+                )
+                if not chunk:
+                    break
+                output_chunks.append(chunk)
+                if SIGINT_RETRY_MENU_READY in "".join(output_chunks):
+                    marker_seen = True
+                    break
+            if not marker_seen:
+                if process.poll() is not None:
+                    remaining_stdout, self.child_stderr = process.communicate(timeout=5)
+                    self.child_stdout = "".join(output_chunks) + remaining_stdout
+                    self.child_returncode = process.returncode
+                    self.child_reaped = process.poll() is not None
+                    raise AssertionError(
+                        "child exited before reaching the Retry menu: "
+                        f"{self.child_stderr.strip()}"
+                    )
+                raise AssertionError("child did not reach the Retry menu readiness marker")
+
+            os.kill(process.pid, signal.SIGINT)
+            remaining_stdout, self.child_stderr = process.communicate(timeout=10)
+            self.child_stdout = "".join(output_chunks) + remaining_stdout
+            self.child_returncode = process.returncode
+            self.child_reaped = process.poll() is not None
+        except BaseException:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            raise
+        finally:
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None and not stream.closed:
+                    stream.close()
+            self.child_pipes_closed = all(
+                stream is None or stream.closed
+                for stream in (process.stdin, process.stdout, process.stderr)
+            )
+            self.sigint_server_state = owner.state()
+            owner.close()
+            self.sigint_server_closed = not owner.thread.is_alive()
+            self.sigint_server_socket_closed = owner.server.socket.fileno() == -1
+            self.server_owner = None
+
+        result_lines = [
+            line for line in self.child_stdout.splitlines()
+            if line.startswith(SIGINT_CHILD_RESULT)
+        ]
+        if len(result_lines) == 1:
+            self.child_result = json.loads(result_lines[0][len(SIGINT_CHILD_RESULT):])
+
     def state(self) -> dict[str, Any]:
         """Return current provider-side request evidence."""
         assert self.server_owner is not None
@@ -307,3 +479,91 @@ class LLMRetryScenario:
         if self.server_owner is not None:
             self.server_owner.close()
             self.server_thread_stopped = not self.server_owner.thread.is_alive()
+
+
+def _run_sigint_retry_menu_child() -> int:
+    """Run the real Agent/HTTP retry path until the parent delivers SIGINT."""
+    model = LLMModel()
+    agent = RealTransportAgent(model)
+    hook_instruction = MagicMock()
+    ctx_rt_aiagent = MagicMock()
+    ctx_rt_instruction = MagicMock()
+    ctx_runtime_data = MagicMock()
+    ctx_runtime_data.session_id = "bdd-sigint-child"
+    ctx_runtime_data.session_data = None
+    ctx_rt_aiagent.ai_agent = agent
+    ctx_rt_aiagent.ctx_runtime_data = ctx_runtime_data
+
+    def retry_menu_input(prompt: str) -> str:
+        """Expose readiness only after production requests the Retry action."""
+        if "LLM retry attempts exhausted." not in prompt:
+            raise AssertionError(f"unexpected runtime input prompt: {prompt}")
+        print(SIGINT_RETRY_MENU_READY, flush=True)
+        return input()
+
+    try:
+        with ExitStack() as stack:
+            stack.enter_context(patch(
+                "topsailai.workspace.agent.hooks.base.init.get_hooks",
+                return_value=[],
+            ))
+            stack.enter_context(patch(
+                "topsailai.workspace.agent.agent_chat_base.set_ai_agent"
+            ))
+            chat = AgentChat(hook_instruction, ctx_rt_aiagent, ctx_rt_instruction)
+            chat._start_control_server = MagicMock()
+            chat.call_hooks_pre_run = MagicMock()
+            chat.call_hooks_post_fail_run = MagicMock()
+            chat.call_hooks_post_succ_run = MagicMock()
+            chat.call_hook_for_final_answer = MagicMock()
+            chat.hook_for_answer = MagicMock()
+            chat.hook_build_answer = MagicMock(side_effect=lambda answer, **_: answer)
+            stack.enter_context(patch(
+                "topsailai.workspace.agent.agent_shell_base.get_agent_runtime_input",
+                return_value=retry_menu_input,
+            ))
+            stack.enter_context(patch(
+                "topsailai.workspace.agent.agent_shell_base.task_tool.ctxm_process_task",
+                side_effect=lambda _task: nullcontext(),
+            ))
+            stack.enter_context(patch(
+                "topsailai.workspace.agent.agent_shell_base.lock_tool.ctxm_void",
+                side_effect=lambda **_: nullcontext({}),
+            ))
+            stack.enter_context(patch(
+                "topsailai.workspace.agent.agent_shell_base.terminal_title.refresh_terminal_title"
+            ))
+            stack.enter_context(patch(
+                "topsailai.ai_base.llm_base.time.sleep", return_value=None
+            ))
+            answer = None
+            error_result = None
+            try:
+                answer = chat._run(
+                    message="original request",
+                    times=0,
+                    need_interactive=True,
+                    need_confirm_abort=False,
+                )
+            except LLMRetryExhaustedError as error:
+                error_result = {
+                    "type": type(error).__name__,
+                    "attempts": error.attempts,
+                    "manual_cycle_count": error.manual_cycle_count,
+                }
+            result = {
+                "answer": answer,
+                "error": error_result,
+                "run_messages": agent.run_messages,
+                "fail_hooks": chat.call_hooks_post_fail_run.call_count,
+                "success_hooks": chat.call_hooks_post_succ_run.call_count,
+                "final_hooks": chat.call_hook_for_final_answer.call_count,
+            }
+            print(SIGINT_CHILD_RESULT + json.dumps(result), flush=True)
+            return 0
+    finally:
+        model.close()
+
+
+if __name__ == "__main__" and sys.argv[1:] == ["--sigint-child"]:
+    raise SystemExit(_run_sigint_retry_menu_child())

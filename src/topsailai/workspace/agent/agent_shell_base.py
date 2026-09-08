@@ -453,9 +453,17 @@ class AgentChat(AgentChatBase):
                 back_to_chat_requested = True
                 answer = ""
                 self.call_hooks_post_fail_run(e)
-                message = self._read_next_user_message(
-                    func_print_pre_input_message
-                )
+                try:
+                    message = self._read_next_user_message(
+                        func_print_pre_input_message
+                    )
+                except (KeyboardInterrupt, EOFError):
+                    back_to_chat_requested = False
+                    flag_abort = True
+                    answer = "failed due to abort by Human"
+                    if need_confirm_abort and not input_yes("Agent Session Continue [yes/no] "):
+                        self.call_hooks_post_fail_run(KeyboardInterrupt())
+                        break
                 # An abandoned turn is not a completed scheduled turn. The loop
                 # naturally starts again with the fresh message; do not use a
                 # continue that could accidentally replay the old request.

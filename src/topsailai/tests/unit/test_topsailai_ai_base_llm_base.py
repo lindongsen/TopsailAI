@@ -2414,6 +2414,10 @@ class TestLLMModelNonRetryableBadRequestError(unittest.TestCase):
 class TestLLMModelRequestRetryPolicy(unittest.TestCase):
     """Verify that LLM retry resends one request and never retries the Agent loop."""
 
+    def setUp(self):
+        """Set up the shared provider request messages."""
+        self.messages = [{"role": "user", "content": "retry test"}]
+
     def _create_mock_model(self):
         """Create a minimal model whose request method is controlled by each test."""
         from topsailai.ai_base.llm_base import LLMModel
@@ -2536,18 +2540,143 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
         )
 
     @patch_llm_time
-    @patch("topsailai.ai_base.llm_base.input_yes_or_no", return_value=True)
     @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
-    def test_default_manual_retry_cycles_stop_at_absolute_request_bound(
-        self, mock_base_init, mock_is_main_thread, mock_yes_or_no, mock_sleep
+    def test_zero_manual_retry_cycles_stop_at_initial_request_bound(
+        self, mock_base_init, mock_is_main_thread, mock_sleep
     ):
-        """The default 7 manual cycles cannot exceed 144 provider requests."""
+        """Zero manual cycles stop at 18 requests without showing a menu."""
         from topsailai.ai_base.exception import LLMRetryExhaustedError
         from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
 
+        persistent_error = TypeError("temporary failure")
         model = self._create_mock_model()
-        model.call_llm_model = MagicMock(side_effect=TypeError("temporary failure"))
+        model.call_llm_model = MagicMock(side_effect=persistent_error)
+        input_func = MagicMock()
+        policy = LLMRetryInteractionPolicy(
+            True, False, input_func, max_manual_retry_cycles=0
+        )
+
+        with self.assertRaises(LLMRetryExhaustedError) as context:
+            model.chat(
+                [{"role": "user", "content": "test"}],
+                retry_interaction_policy=policy,
+            )
+
+        self.assertEqual(context.exception.attempts, 18)
+        self.assertEqual(context.exception.manual_cycle_count, 0)
+        self.assertEqual(model.call_llm_model.call_count, 18)
+        input_func.assert_not_called()
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_one_manual_retry_cycle_stops_at_36_request_bound(
+        self, mock_base_init, mock_is_main_thread, mock_sleep
+    ):
+        """One accepted manual cycle permits 36 requests and one menu only."""
+        from topsailai.ai_base.exception import LLMRetryExhaustedError
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        persistent_error = TypeError("temporary failure")
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(side_effect=persistent_error)
+        input_func = MagicMock(return_value="1")
+        policy = LLMRetryInteractionPolicy(
+            True, False, input_func, max_manual_retry_cycles=1
+        )
+
+        with self.assertRaises(LLMRetryExhaustedError) as context:
+            model.chat(
+                [{"role": "user", "content": "test"}],
+                retry_interaction_policy=policy,
+            )
+
+        self.assertEqual(context.exception.attempts, 36)
+        self.assertEqual(context.exception.manual_cycle_count, 1)
+        self.assertEqual(model.call_llm_model.call_count, 36)
+        input_func.assert_called_once()
+        self.assertIn("1. Retry", input_func.call_args.args[0])
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response", return_value=["recovered"])
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_success_on_attempt_18_does_not_show_retry_menu(
+        self, mock_base_init, mock_is_main_thread, mock_format, mock_sleep
+    ):
+        """Success at the initial cycle boundary returns before any retry menu."""
+        model = self._create_mock_model()
+        call_count = 0
+
+        def request(messages, tools=None, tool_choice="auto"):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 18:
+                raise TypeError("temporary failure")
+            return self._response(), "recovered"
+
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        model.call_llm_model = MagicMock(side_effect=request)
+        input_func = MagicMock()
+        result = model.chat(
+            [{"role": "user", "content": "test"}],
+            retry_interaction_policy=LLMRetryInteractionPolicy(
+                True, False, input_func
+            ),
+        )
+
+        self.assertEqual(result, ["recovered"])
+        self.assertEqual(model.call_llm_model.call_count, 18)
+        input_func.assert_not_called()
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response", return_value=["recovered"])
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_default_policy_can_succeed_exactly_on_attempt_144(
+        self, mock_base_init, mock_is_main_thread, mock_format, mock_sleep
+    ):
+        """The last request allowed by the default policy may still succeed."""
+        model = self._create_mock_model()
+        call_count = 0
+
+        def request(messages, tools=None, tool_choice="auto"):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 144:
+                raise TypeError("temporary failure")
+            return self._response(), "recovered"
+
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        model.call_llm_model = MagicMock(side_effect=request)
+        input_func = MagicMock(side_effect=["1"] * 7)
+        result = model.chat(
+            [{"role": "user", "content": "test"}],
+            retry_interaction_policy=LLMRetryInteractionPolicy(
+                True, False, input_func
+            ),
+        )
+
+        self.assertEqual(result, ["recovered"])
+        self.assertEqual(model.call_llm_model.call_count, 144)
+        self.assertEqual(input_func.call_count, 7)
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_default_manual_retry_cycles_stop_at_absolute_request_bound(
+        self, mock_base_init, mock_is_main_thread, mock_sleep
+    ):
+        """Default exhaustion stops at request 144 with complete terminal state."""
+        from topsailai.ai_base.exception import LLMRetryExhaustedError
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        persistent_error = TypeError("temporary failure")
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(side_effect=persistent_error)
         input_func = MagicMock(side_effect=["1"] * 7)
         policy = LLMRetryInteractionPolicy(True, False, input_func)
 
@@ -2557,11 +2686,19 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
                 retry_interaction_policy=policy,
             )
 
+        exhausted = context.exception
         self.assertEqual(policy.max_manual_retry_cycles, 7)
-        self.assertEqual(context.exception.attempts, 144)
-        self.assertEqual(context.exception.manual_cycle_count, 7)
+        self.assertEqual(exhausted.attempts, 144)
+        self.assertEqual(exhausted.manual_cycle_count, 7)
+        self.assertIs(exhausted.last_error, persistent_error)
+        self.assertEqual(exhausted.retry_reason, "type_error")
+        self.assertIs(exhausted.__cause__, persistent_error)
+        self.assertEqual(str(exhausted), "chat to LLM is failed")
         self.assertEqual(model.call_llm_model.call_count, 144)
         self.assertEqual(input_func.call_count, 7)
+        self.assertTrue(
+            all("1. Retry" in item.args[0] for item in input_func.call_args_list)
+        )
 
     @patch_llm_time
     @patch("topsailai.ai_base.llm_base.print_warning")
@@ -2589,6 +2726,207 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
         self.assertEqual(model.call_llm_model.call_count, 18)
         self.assertEqual(input_func.call_count, 3)
         self.assertEqual(mock_warning.call_count, 3)
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_exhaustion_menu_input_interruptions_fail_closed(
+        self, mock_base_init, mock_is_main_thread, mock_sleep
+    ):
+        """EOF and Ctrl+C at the exhaustion menu map to bounded Exit."""
+        from topsailai.ai_base.exception import LLMRetryExhaustedError
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        for interruption in (EOFError("stdin closed"), KeyboardInterrupt("ctrl-c")):
+            with self.subTest(interruption=type(interruption).__name__):
+                persistent_error = TypeError("temporary failure")
+                model = self._create_mock_model()
+                model.call_llm_model = MagicMock(side_effect=persistent_error)
+                input_func = MagicMock(side_effect=interruption)
+
+                with self.assertRaises(LLMRetryExhaustedError) as context:
+                    model.chat(
+                        [{"role": "user", "content": "test"}],
+                        retry_interaction_policy=LLMRetryInteractionPolicy(
+                            True, True, input_func
+                        ),
+                    )
+
+                exhausted = context.exception
+                self.assertEqual(exhausted.attempts, 18)
+                self.assertEqual(exhausted.manual_cycle_count, 0)
+                self.assertIs(exhausted.last_error, persistent_error)
+                self.assertIs(exhausted.__cause__, persistent_error)
+                self.assertEqual(model.call_llm_model.call_count, 18)
+                input_func.assert_called_once()
+                self.assertIn("Back to chat", input_func.call_args.args[0])
+
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_keyboard_interrupt_during_retry_backoff_propagates(
+        self, mock_base_init, mock_is_main_thread
+    ):
+        """Ctrl+C during retry backoff stops before a second provider request."""
+        import time as real_time
+
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        class _InterruptingTime:
+            """Raise the terminal interrupt instead of performing a real sleep."""
+
+            monotonic = staticmethod(real_time.monotonic)
+
+            @staticmethod
+            def sleep(seconds):
+                raise KeyboardInterrupt(f"ctrl-c during {seconds}s backoff")
+
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(side_effect=TypeError("temporary failure"))
+        input_func = MagicMock()
+
+        with patch("topsailai.ai_base.llm_base.time", new=_InterruptingTime):
+            with self.assertRaisesRegex(
+                KeyboardInterrupt, "ctrl-c during 5s backoff"
+            ):
+                model.chat(
+                    [{"role": "user", "content": "test"}],
+                    retry_interaction_policy=LLMRetryInteractionPolicy(
+                        True, True, input_func
+                    ),
+                )
+
+        model.call_llm_model.assert_called_once()
+        input_func.assert_not_called()
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_retryable_provider_errors_exhaust_with_precise_classification(
+        self, mock_base_init, mock_is_main_thread, mock_sleep
+    ):
+        """Retryable provider failures exhaust once with branch-specific metadata."""
+        import httpx
+
+        from topsailai.ai_base.exception import LLMRetryExhaustedError
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        response = httpx.Response(
+            status_code=400,
+            request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
+        )
+        cases = (
+            (
+                "bad_request",
+                openai.BadRequestError(
+                    "ordinary transient bad request", response=response, body=None
+                ),
+            ),
+            ("connection", openai.APIConnectionError(request=MagicMock())),
+            ("timeout", openai.APITimeoutError(request=MagicMock())),
+        )
+
+        for expected_reason, provider_error in cases:
+            with self.subTest(retry_reason=expected_reason):
+                mock_sleep.clear()
+                model = self._create_mock_model()
+                model.call_llm_model = MagicMock(side_effect=provider_error)
+                input_func = MagicMock()
+
+                with self.assertRaises(LLMRetryExhaustedError) as context:
+                    model.chat(
+                        self.messages,
+                        retry_interaction_policy=LLMRetryInteractionPolicy(
+                            True, False, input_func, max_manual_retry_cycles=0
+                        ),
+                    )
+
+                exhausted = context.exception
+                self.assertEqual(exhausted.attempts, 18)
+                self.assertEqual(exhausted.manual_cycle_count, 0)
+                self.assertEqual(exhausted.retry_reason, expected_reason)
+                self.assertIs(exhausted.last_error, provider_error)
+                self.assertIs(exhausted.__cause__, provider_error)
+                self.assertEqual(model.call_llm_model.call_count, 18)
+                self.assertEqual(len(mock_sleep), 17)
+                input_func.assert_not_called()
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response", return_value=["recovered"])
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_special_response_uses_its_backoff_then_automatic_retry(
+        self, mock_base_init, mock_is_main_thread, mock_format, mock_sleep
+    ):
+        """A configured special response uses its dedicated bounded backoff."""
+        from topsailai.ai_base.llm_control.exception import (
+            LLMServiceSpecialResponseError,
+        )
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(
+            side_effect=[
+                LLMServiceSpecialResponseError("provider busy"),
+                (self._response(), "recovered"),
+            ]
+        )
+        input_func = MagicMock()
+
+        with patch("topsailai.ai_base.llm_base.random.choice", return_value=11) as choice:
+            result = model.chat(
+                self.messages,
+                retry_interaction_policy=LLMRetryInteractionPolicy(
+                    True, False, input_func, max_manual_retry_cycles=0
+                ),
+            )
+
+        self.assertEqual(result, ["recovered"])
+        self.assertEqual(model.call_llm_model.call_count, 2)
+        choice.assert_called_once()
+        self.assertEqual(mock_sleep, [11, 5])
+        input_func.assert_not_called()
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response", return_value=["recovered"])
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_internal_server_error_rebuilds_after_sixth_failure(
+        self, mock_base_init, mock_is_main_thread, mock_format, mock_sleep
+    ):
+        """Six internal-server failures rebuild once before automatic recovery."""
+        import httpx
+
+        from topsailai.ai_base.llm_retry import LLMRetryInteractionPolicy
+
+        response = httpx.Response(
+            status_code=500,
+            request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
+        )
+        failures = [
+            openai.InternalServerError(
+                "temporary provider failure", response=response, body=None
+            )
+            for _ in range(6)
+        ]
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(
+            side_effect=failures + [(self._response(), "recovered")]
+        )
+        model.rebuild_llm_models = MagicMock()
+        input_func = MagicMock()
+
+        result = model.chat(
+            self.messages,
+            retry_interaction_policy=LLMRetryInteractionPolicy(
+                True, False, input_func, max_manual_retry_cycles=0
+            ),
+        )
+
+        self.assertEqual(result, ["recovered"])
+        self.assertEqual(model.call_llm_model.call_count, 7)
+        model.rebuild_llm_models.assert_called_once_with()
+        self.assertEqual(mock_sleep, [5, 10, 15, 20, 25, 30])
+        input_func.assert_not_called()
 
     def test_retry_policy_rejects_unbounded_limits(self):
         """Retry policy accepts only finite integer cycle and choice limits."""
