@@ -22,6 +22,7 @@ class _HarnessAgent:
         self.llm_model = model
         self.messages = list(messages)
         self.agent_type = "react"
+        self.available_tools = {}
 
     @staticmethod
     def get_work_memory_first_position() -> int:

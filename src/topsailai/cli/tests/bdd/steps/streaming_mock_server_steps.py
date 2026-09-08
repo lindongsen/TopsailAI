@@ -7,9 +7,8 @@ from typing import Any
 import pytest
 from pytest_bdd import given, parsers, then, when
 
-import openai
-
 from tests.bdd.streaming_mock_server_harness import StreamingMockServerHarness
+from topsailai.ai_base.llm_control.exception import LLMProviderBadRequestError
 from topsailai.context.session_manager import SessionData
 from topsailai.context.token import count_tokens
 
@@ -190,9 +189,9 @@ def bad_request_error_surfaces(
     streaming_mock_server_context: dict[str, Any],
     message_part: str,
 ) -> None:
-    """Require the 400 response to surface as openai.BadRequestError."""
+    """Require the 400 response to surface as a provider-neutral bad request."""
     error = streaming_mock_server_context["harness"].error
-    assert isinstance(error, openai.BadRequestError), repr(error)
+    assert isinstance(error, LLMProviderBadRequestError), repr(error)
     assert message_part in str(error), str(error)
 
 
