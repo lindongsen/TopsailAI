@@ -65,6 +65,7 @@ from .llm_control.base_class import (
     LLMModelBase,
 )
 from .llm_hooks.executor import hook_execute
+from .llm_control.llm_call_mixin import LLMCallMixin
 from .llm_control.model_handles import LLMModelHandleLifecycleMixin
 from .llm_control.native_tool_calls import NativeToolCallResponseMixin
 from .llm_control.llm_retry import (
@@ -94,6 +95,7 @@ class LLMModel(
     LLMResponseEventMixin,
     FirstByteTimeoutMixin,
     LLMModelHandleLifecycleMixin,
+    LLMCallMixin,
     LLMModelBase,
 ):
     """OpenAI-compatible model with context-local runtime components."""
@@ -386,54 +388,135 @@ class LLMModel(
         """Return the OpenAI-compatible model name for event payloads."""
         return self.model_name
 
+    def _extract_response_content(self, response):
+        """Extract content through the OpenAI response adapter."""
+        return OpenAIResponseAdapter.get_response_content(response)
+
+    def _extract_stream_part(self, chunk):
+        """Extract a stream delta through the OpenAI response adapter."""
+        return OpenAIResponseAdapter.get_stream_delta(chunk)
+
+    def _extract_stream_content(self, stream_part):
+        """Extract stream content through the OpenAI response adapter."""
+        return OpenAIResponseAdapter.get_delta_content(stream_part)
+
+    def _merge_stream_calls(self, accumulated_calls, stream_part):
+        """Merge stream tool calls through the OpenAI response adapter."""
+        return OpenAIResponseAdapter.merge_delta_tool_calls(
+            accumulated_calls,
+            stream_part,
+        )
+
+    def _build_stream_calls(self, accumulated_calls):
+        """Build tool calls through the OpenAI response adapter."""
+        return OpenAIResponseAdapter.build_tool_calls(accumulated_calls)
+
+    def _build_stream_response(self, content, completed_calls):
+        """Build a response message through the OpenAI response adapter."""
+        return OpenAIResponseAdapter.build_assistant_message(
+            content,
+            completed_calls,
+        )
+
+    def _get_stream_chunk_sample_limit(self):
+        """Return the configured response-event stream sample limit."""
+        sample_limit = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_LLM_RESPONSE_EVENTS_STREAM_CHUNK_SAMPLE",
+            default=0,
+            formatter=int,
+        )
+        if sample_limit is None or sample_limit < 0:
+            return 0
+        return sample_limit
+
+    def _get_llm_request_timing_ticket(self):
+        """Return the request timing ticket for the current context."""
+        return _llm_request_timing_ticket.get()
+
+    def _observe_stream_usage(self, usage, diagnostics):
+        """Record provider usage diagnostics without changing call behavior."""
+        prompt_details = None
+        cached_tokens = None
+        if usage is not None:
+            diagnostics["usage_chunks"] = diagnostics.get("usage_chunks", 0) + 1
+            prompt_details = getattr(usage, "prompt_tokens_details", None)
+            if prompt_details is not None:
+                diagnostics["prompt_details_chunks"] = (
+                    diagnostics.get("prompt_details_chunks", 0) + 1
+                )
+                cached_tokens = getattr(prompt_details, "cached_tokens", None)
+                if cached_tokens is not None:
+                    diagnostics["cached_value_chunks"] = (
+                        diagnostics.get("cached_value_chunks", 0) + 1
+                    )
+        logger.debug(
+            "stream usage chunk: has_usage=%s has_prompt_tokens_details=%s cached_tokens=%r",
+            usage is not None,
+            prompt_details is not None,
+            cached_tokens,
+        )
+
+    def _warn_stream_usage_error(self, error):
+        """Report a non-fatal streaming usage inspection error."""
+        logger.warning("failed to read streaming usage: %s", error, exc_info=True)
+
+    def _serialize_stream_chunk(self, chunk):
+        """Serialize one sampled provider stream chunk for diagnostics."""
+        if hasattr(chunk, "to_dict"):
+            return chunk.to_dict()
+        if hasattr(chunk, "model_dump"):
+            return chunk.model_dump()
+        return {"_repr": repr(chunk)}
+
+    def _check_stream_interrupt(self):
+        """Check for a cooperative hard interrupt during streaming."""
+        try:
+            agent = get_agent_object()
+            if agent is not None and hasattr(agent, "_check_hard_interrupt"):
+                agent._check_hard_interrupt(throttle_stream=True)
+        except HardInterruptError:
+            raise
+        except Exception:
+            return
+
+    def _finish_stream_debug_output(self):
+        """Finish debug-mode stream output formatting."""
+        if env_tool.is_debug_mode():
+            print()
+
+    def _log_final_stream_usage(self, usage, diagnostics):
+        """Log final streaming usage and diagnostic chunk cardinalities."""
+        prompt_details = (
+            getattr(usage, "prompt_tokens_details", None)
+            if usage is not None
+            else None
+        )
+        cached_tokens = (
+            getattr(prompt_details, "cached_tokens", None)
+            if prompt_details is not None
+            else None
+        )
+        logger.debug(
+            "final streaming usage before TokenStat: prompt_tokens=%r completion_tokens=%r "
+            "cached_tokens=%r usage_chunks=%s prompt_details_chunks=%s "
+            "cached_value_chunks=%s",
+            getattr(usage, "prompt_tokens", None) if usage is not None else None,
+            getattr(usage, "completion_tokens", None) if usage is not None else None,
+            cached_tokens,
+            diagnostics.get("usage_chunks", 0),
+            diagnostics.get("prompt_details_chunks", 0),
+            diagnostics.get("cached_value_chunks", 0),
+        )
+
     @visualize_model_state(VisualizationState.THINKING)
     @_record_llm_request_outcome
     def call_llm_model(self, messages, tools=None, tool_choice="auto"):
-        """
-        Call the LLM model with the provided messages and tools.
-
-        Args:
-            messages (list): List of message dictionaries
-            tools (list, optional): List of available tools. Defaults to None.
-            tool_choice (str, optional): Tool choice strategy. Defaults to "auto".
-
-        Returns:
-            tuple: (response object, content string)
-
-        Raises:
-            TypeError: If no response or empty response is received
-            openai.APITimeoutError: If TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE is
-                enabled and the first byte exceeds the configured threshold.
-        """
-        token_stat_ticket = self.tokenStat.add_msgs(messages)
-
-        first_byte_timeout, raise_on_first_byte_timeout = self._get_first_byte_timeout_config()
-
-        response = self._create_with_first_byte_timeout(
+        """Retain the decorated complete-call compatibility seam."""
+        return super().call_llm_model(
             messages,
             tools=tools,
             tool_choice=tool_choice,
-            stream=False,
-            first_byte_timeout=first_byte_timeout,
-            raise_on_timeout=raise_on_first_byte_timeout,
         )
-        self.tokenStat.wait(token_stat_ticket)
-        full_content = OpenAIResponseAdapter.get_response_content(response)
-        self.tokenStat.finalize_usage(
-            self.get_response_usage(response),
-            token_stat_ticket,
-            full_content,
-        )
-
-        full_content = self.fix_response_content(rsp_obj=response, rsp_content=full_content)
-        self.check_response_content(rsp_obj=response, rsp_content=full_content)
-
-        self.send_content(full_content)
-        self.tokenStat.print_token_stat()
-
-        self._record_llm_response_event(response, is_stream=False)
-
-        return (response, full_content)
 
     def iter_stream_with_first_byte_timeout(
         self,
@@ -451,10 +534,7 @@ class LLMModel(
         )
 
     def _iter_stream_for_request_timing(self, stream, ticket):
-        """Time only blocking provider iterator operations, not chunk processing.
-
-        Thin wrapper around the provider-neutral helper in ``llm_control``.
-        """
+        """Time only blocking provider iterator operations, not chunk processing."""
         return _iter_stream_for_request_timing(
             stream,
             ticket,
@@ -465,196 +545,12 @@ class LLMModel(
     @visualize_model_state(VisualizationState.THINKING)
     @_record_llm_request_outcome
     def call_llm_model_by_stream(self, messages, tools=None, tool_choice="auto"):
-        """
-        Call the LLM model with streaming response.
-
-        Args:
-            messages (list): List of message dictionaries
-            tools (list, optional): List of available tools. Defaults to None.
-            tool_choice (str, optional): Tool choice strategy. Defaults to "auto".
-
-        Returns:
-            tuple: (response object, concatenated content string)
-
-        Raises:
-            openai.APITimeoutError: If TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE is
-                enabled and the first byte exceeds the configured threshold.
-        """
-        token_stat_ticket = self.tokenStat.add_msgs(messages)
-
-        first_byte_timeout, raise_on_first_byte_timeout = self._get_first_byte_timeout_config()
-
-        # Capture the stream start time before creating the request so that
-        # first-byte latency includes request creation + streaming startup.
-        stream_start_time = time.monotonic()
-
-        response, create_timed_out = self._create_with_first_byte_timeout(
+        """Retain the decorated streaming-call compatibility seam."""
+        return super().call_llm_model_by_stream(
             messages,
             tools=tools,
             tool_choice=tool_choice,
-            stream=True,
-            first_byte_timeout=first_byte_timeout,
-            raise_on_timeout=raise_on_first_byte_timeout,
         )
-
-        full_content = ""
-        full_tool_calls_dict = {}
-
-        usage = None
-        usage_chunk_count = 0
-        usage_details_chunk_count = 0
-        cached_tokens_chunk_count = 0
-
-        first_byte_ms = None
-
-        stream_chunk_sample = env_tool.EnvReaderInstance.get(
-            "TOPSAILAI_LLM_RESPONSE_EVENTS_STREAM_CHUNK_SAMPLE",
-            default=0,
-            formatter=int,
-        )
-        if stream_chunk_sample is None or stream_chunk_sample < 0:
-            stream_chunk_sample = 0
-        sampled_chunks = [] if stream_chunk_sample > 0 else None
-
-        timing_ticket = _llm_request_timing_ticket.get()
-        timed_response = self._iter_stream_for_request_timing(response, timing_ticket)
-        for chunk in self.iter_stream_with_first_byte_timeout(
-            timed_response,
-            first_byte_timeout,
-            raise_on_timeout=raise_on_first_byte_timeout,
-            create_timed_out=create_timed_out,
-        ):
-            delta_obj = OpenAIResponseAdapter.get_stream_delta(chunk)
-            try:
-                delta_usage = self.get_response_usage(chunk)
-                delta_prompt_tokens_details = None
-                delta_cached_tokens = None
-                if delta_usage is not None:
-                    usage = delta_usage
-                    usage_chunk_count += 1
-                    delta_prompt_tokens_details = getattr(delta_usage, "prompt_tokens_details", None)
-                    if delta_prompt_tokens_details is not None:
-                        usage_details_chunk_count += 1
-                        delta_cached_tokens = getattr(delta_prompt_tokens_details, "cached_tokens", None)
-                        if delta_cached_tokens is not None:
-                            cached_tokens_chunk_count += 1
-                logger.debug(
-                    "stream usage chunk: has_usage=%s has_prompt_tokens_details=%s cached_tokens=%r",
-                    delta_usage is not None,
-                    delta_prompt_tokens_details is not None,
-                    delta_cached_tokens,
-                )
-            except Exception as e:
-                logger.warning("failed to read streaming usage: %s", e, exc_info=True)
-            if delta_obj is None:
-                continue
-            if sampled_chunks is not None and len(sampled_chunks) < stream_chunk_sample:
-                try:
-                    chunk_data = None
-                    if hasattr(chunk, "to_dict"):
-                        chunk_data = chunk.to_dict()
-                    elif hasattr(chunk, "model_dump"):
-                        chunk_data = chunk.model_dump()
-                    else:
-                        chunk_data = {"_repr": repr(chunk)}
-                    sampled_chunks.append(chunk_data)
-                except Exception:
-                    pass
-
-
-            # Record first-byte timing on the first chunk that carries content
-            # or tool-call data. This measures the time from stream start to the
-            # first useful response byte.
-            if first_byte_ms is None:
-                first_byte_ms = (time.monotonic() - stream_start_time) * 1000
-
-            # Cooperative hard-interrupt check during streaming. The check is
-            # throttled so it does not add I/O overhead on every chunk.
-            try:
-                agent = get_agent_object()
-                if agent is not None and hasattr(agent, "_check_hard_interrupt"):
-                    agent._check_hard_interrupt(throttle_stream=True)
-            except HardInterruptError:
-                # Re-raise immediately so the ReAct loop can stop cleanly.
-                raise
-            except Exception:
-                # Any other problem with the interrupt check must not break
-                # the streaming response.
-                pass
-
-            # content
-            delta_content = OpenAIResponseAdapter.get_delta_content(delta_obj)
-            if delta_content:
-                full_content += delta_content
-                self.send_content(delta_content)
-
-            # tool_calls
-            OpenAIResponseAdapter.merge_delta_tool_calls(
-                full_tool_calls_dict,
-                delta_obj,
-            )
-        # enf for chunk
-
-        timing_ticket = _llm_request_timing_ticket.get()
-        if timing_ticket is not None:
-            self._finish_llm_request(timing_ticket)
-
-        # Record first-byte timing for stream responses.
-        if first_byte_ms is not None:
-            self.tokenStat.add_first_byte(first_byte_ms)
-
-        # Notify all content senders that the stream has finished so they can
-        # emit a final newline or release any in-progress rendering state.
-        for sender in self.content_senders:
-            if hasattr(sender, "finish"):
-                sender.finish()
-
-        # generate tool_calls
-        full_tool_calls_list = OpenAIResponseAdapter.build_tool_calls(
-            full_tool_calls_dict,
-        )
-
-        if env_tool.is_debug_mode():
-            print()
-
-        self.tokenStat.wait(token_stat_ticket)
-        final_prompt_tokens_details = (
-            getattr(usage, "prompt_tokens_details", None)
-            if usage is not None
-            else None
-        )
-        final_cached_tokens = (
-            getattr(final_prompt_tokens_details, "cached_tokens", None)
-            if final_prompt_tokens_details is not None
-            else None
-        )
-        logger.debug(
-            "final streaming usage before TokenStat: prompt_tokens=%r completion_tokens=%r "
-            "cached_tokens=%r usage_chunks=%s prompt_details_chunks=%s "
-            "cached_value_chunks=%s",
-            getattr(usage, "prompt_tokens", None) if usage is not None else None,
-            getattr(usage, "completion_tokens", None) if usage is not None else None,
-            final_cached_tokens,
-            usage_chunk_count,
-            usage_details_chunk_count,
-            cached_tokens_chunk_count,
-        )
-        self.tokenStat.finalize_usage(usage, token_stat_ticket, full_content)
-
-        full_content = full_content.strip()
-
-        response_ccm = OpenAIResponseAdapter.build_assistant_message(
-            full_content,
-            full_tool_calls_list,
-        )
-
-        full_content = self.fix_response_content(rsp_obj=response_ccm, rsp_content=full_content)
-        self.check_response_content(rsp_obj=response_ccm, rsp_content=full_content)
-        self.tokenStat.print_token_stat()
-
-        self._record_llm_response_event(response_ccm, is_stream=True, sampled_chunks=sampled_chunks)
-
-        return (response_ccm, full_content)
 
     def chat(
             self, messages,
