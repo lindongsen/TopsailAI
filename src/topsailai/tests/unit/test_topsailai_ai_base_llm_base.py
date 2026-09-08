@@ -3396,6 +3396,98 @@ class TestLLMModelRequestRetryPolicy(unittest.TestCase):
         self.assertIn("2. Exit", prompt)
 
 
+class TestLLMModelProviderRouting(unittest.TestCase):
+    """Verify LLMModel selects one provider pool and adapter at entry."""
+
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_omitted_provider_defaults_to_openai(self, mock_base_init):
+        """Omitting provider selects the registered OpenAI backend."""
+        from topsailai.ai_base.llm_base import LLMModel
+        from topsailai.ai_base.llm_pool.openai_client_pool import (
+            OPENAI_PROVIDER_BACKEND,
+        )
+
+        model = LLMModel()
+
+        self.assertEqual(model.provider, "openai")
+        self.assertIs(model.provider_backend, OPENAI_PROVIDER_BACKEND)
+
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_explicit_openai_provider_selects_openai_backend(self, mock_base_init):
+        """An explicit normalized OpenAI name selects the same default backend."""
+        from topsailai.ai_base.llm_base import LLMModel
+        from topsailai.ai_base.llm_pool.openai_client_pool import (
+            OPENAI_PROVIDER_BACKEND,
+        )
+
+        model = LLMModel(provider=" OpenAI ")
+
+        self.assertEqual(model.provider, "openai")
+        self.assertIs(model.provider_backend, OPENAI_PROVIDER_BACKEND)
+
+    @patch("topsailai.ai_base.llm_base.acquire")
+    def test_unknown_provider_fails_before_client_acquisition(self, mock_acquire):
+        """Unsupported providers fail before base initialization can acquire a client."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "unsupported LLM provider: missing",
+        ):
+            LLMModel(provider="missing")
+
+        mock_acquire.assert_not_called()
+
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_future_provider_routes_pool_resource_and_adapter(self, mock_base_init):
+        """A registered future provider uses only its injected backend contract."""
+        from types import SimpleNamespace
+
+        from topsailai.ai_base.llm_base import LLMModel
+        from topsailai.ai_base.llm_pool.provider_registry import (
+            LLMProviderBackend,
+            LLMProviderRegistry,
+        )
+
+        config_factory = MagicMock(return_value="future-config")
+        handle = SimpleNamespace(client="future-client", key="future-key")
+        acquire_backend = MagicMock(return_value=handle)
+        invalidate_backend = MagicMock(return_value=True)
+        chat_resource = object()
+        adapter = MagicMock()
+        adapter.get_response_content.return_value = "future-content"
+        registry = LLMProviderRegistry()
+        registry.register(
+            LLMProviderBackend(
+                name="future",
+                config_factory=config_factory,
+                acquire=acquire_backend,
+                invalidate=invalidate_backend,
+                get_chat_model=MagicMock(return_value=chat_resource),
+                response_adapter=adapter,
+            )
+        )
+        model = LLMModel(provider="future", provider_registry=registry)
+        model.model_name = "future-model"
+        model._register_llm_model_handle = MagicMock()
+
+        result = model.get_llm_model("future-key", "https://future.test/v1")
+
+        self.assertIs(result, chat_resource)
+        config_factory.assert_called_once_with(
+            api_key="future-key",
+            base_url="https://future.test/v1",
+            model="future-model",
+        )
+        acquire_backend.assert_called_once_with("future-config")
+        model._register_llm_model_handle.assert_called_once_with(
+            chat_resource,
+            handle,
+        )
+        self.assertEqual(model._extract_response_content(object()), "future-content")
+        self.assertTrue(model._invalidate_provider_key("future-key"))
+        invalidate_backend.assert_called_once_with("future-key")
+
 
 if __name__ == "__main__":
     unittest.main()

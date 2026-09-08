@@ -27,6 +27,10 @@ from topsailai.ai_base.llm_pool.base_client_pool import (
     BaseClientPool,
     ClientPoolHandle,
 )
+from topsailai.ai_base.llm_pool.provider_registry import (
+    LLMProviderBackend,
+    default_provider_registry,
+)
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_OPENAI_CLIENT_POOL_CAPACITY = 32
@@ -314,6 +318,22 @@ def close_idle(idle_seconds: float = 0.0) -> int:
 def close_all() -> int:
     """Close all clients in the process-wide default pool."""
     return default_openai_client_pool.close_all()
+
+
+def get_chat_model(client):
+    """Return the OpenAI chat-completions resource from one root client."""
+    return client.chat.completions
+
+
+OPENAI_PROVIDER_BACKEND = LLMProviderBackend(
+    name="openai",
+    config_factory=OpenAIClientConfig,
+    acquire=acquire,
+    invalidate=invalidate,
+    get_chat_model=get_chat_model,
+    response_adapter=OpenAIResponseAdapter,
+)
+default_provider_registry.register(OPENAI_PROVIDER_BACKEND)
 
 
 atexit.register(close_all)

@@ -19,7 +19,13 @@ from openai.types.completion_usage import CompletionUsage
 
 from topsailai.logger.log_chat import logger
 from topsailai.ai_base.llm_pool import OpenAIClientConfig, acquire, invalidate
-from topsailai.ai_base.llm_pool.openai_client_pool import OpenAIResponseAdapter
+from topsailai.ai_base.llm_pool.openai_client_pool import (
+    OPENAI_PROVIDER_BACKEND,
+)
+from topsailai.ai_base.llm_pool.provider_registry import (
+    DEFAULT_LLM_PROVIDER,
+    default_provider_registry,
+)
 from topsailai.utils.print_tool import (
     print_error,
     print_info,
@@ -101,7 +107,23 @@ class LLMModel(
     LLMCallMixin,
     LLMModelBase,
 ):
-    """OpenAI-compatible model with context-local runtime components."""
+    """Unified LLM entry point with provider-owned pools and adapters."""
+
+    provider_backend = OPENAI_PROVIDER_BACKEND
+    provider = DEFAULT_LLM_PROVIDER
+
+    def __init__(
+        self,
+        *args,
+        provider=DEFAULT_LLM_PROVIDER,
+        provider_registry=None,
+        **kwargs,
+    ):
+        """Resolve the provider backend before acquiring any model resource."""
+        registry = provider_registry or default_provider_registry
+        self.provider_backend = registry.resolve(provider)
+        self.provider = self.provider_backend.name
+        super().__init__(*args, **kwargs)
 
     def _get_pending_native_tool_call_responses(self):
         """Retain the native pending-response FIFO compatibility seam."""
@@ -116,11 +138,10 @@ class LLMModel(
         return super()._split_native_tool_call_response(rsp_obj, rsp_content)
 
     def _build_single_native_tool_call_response(self, *, content, tool_call):
-        """Build one OpenAI-compatible response for a native tool call."""
-        return ChatCompletionMessage(
-            role=ROLE_ASSISTANT,
-            content=content,
-            tool_calls=[tool_call],
+        """Build one provider-compatible response for a native tool call."""
+        return self.provider_backend.response_adapter.build_assistant_message(
+            content,
+            [tool_call],
         )
 
     def _on_native_tool_call_responses_cleared(self, pending_count):
@@ -142,28 +163,47 @@ class LLMModel(
         return os.getenv("OPENAI_MODEL", default)
 
     def _get_llm_model_handles(self):
-        """Retain the OpenAI model ownership-record compatibility seam."""
+        """Retain the provider model ownership-record compatibility seam."""
         return super()._get_llm_model_handles()
 
     def _get_llm_model_handle_registry(self):
-        """Retain the OpenAI model handle-registry compatibility seam."""
+        """Retain the provider model handle-registry compatibility seam."""
         return super()._get_llm_model_handle_registry()
 
+    def _acquire_provider_handle(self, config):
+        """Acquire through the selected provider while preserving OpenAI patches."""
+        if self.provider_backend is OPENAI_PROVIDER_BACKEND:
+            return acquire(config)
+        return self.provider_backend.acquire(config)
+
+    def _invalidate_provider_key(self, key):
+        """Invalidate through the selected provider while preserving OpenAI patches."""
+        if self.provider_backend is OPENAI_PROVIDER_BACKEND:
+            return invalidate(key)
+        return self.provider_backend.invalidate(key)
+
     def get_llm_model(self, api_key=None, api_base=None):
-        """Return a pooled OpenAI-compatible chat completions resource."""
+        """Return a pooled chat resource from the selected provider backend."""
         effective_api_key = api_key or os.getenv("OPENAI_API_KEY", "")
         effective_api_base = api_base or os.getenv(
             "OPENAI_API_BASE", "https://api.openai.com/v1"
         )
-        logger.info("getting llm model [%s]: ...", self.model_name)
-        handle = acquire(
-            OpenAIClientConfig(
+        logger.info(
+            "getting llm model [%s] provider=%s: ...",
+            self.model_name,
+            self.provider,
+        )
+        config_factory = self.provider_backend.config_factory
+        if self.provider_backend is OPENAI_PROVIDER_BACKEND:
+            config_factory = OpenAIClientConfig
+        handle = self._acquire_provider_handle(
+            config_factory(
                 api_key=effective_api_key,
                 base_url=effective_api_base,
                 model=self.model_name,
             )
         )
-        chat_model = handle.client.chat.completions
+        chat_model = self.provider_backend.get_chat_model(handle.client)
         self._register_llm_model_handle(chat_model, handle)
         return chat_model
 
@@ -196,7 +236,7 @@ class LLMModel(
         handle = self._find_llm_model_handle(chat_model)
         if handle is None:
             return False
-        return invalidate(handle.key)
+        return self._invalidate_provider_key(handle.key)
 
     def replace_llm_model(self, old_model, api_key=None, api_base=None):
         """Acquire a replacement before releasing the exact old lease."""
@@ -267,7 +307,9 @@ class LLMModel(
 
     def _make_first_byte_timeout_error(self, first_byte_timeout):
         """Construct the provider timeout error through the OpenAI adapter."""
-        return OpenAIResponseAdapter.make_first_byte_timeout_error(first_byte_timeout)
+        return self.provider_backend.response_adapter.make_first_byte_timeout_error(
+            first_byte_timeout
+        )
 
     def _log_first_byte_timeout(self, elapsed, first_byte_timeout):
         """Log a first-byte timeout warning using project conventions."""
@@ -310,7 +352,9 @@ class LLMModel(
 
     def _create_first_byte_response(self, params):
         """Create one provider response through the OpenAI adapter."""
-        return OpenAIResponseAdapter.create_response(self.chat_model, params)
+        return self.provider_backend.response_adapter.create_response(
+            self.chat_model, params
+        )
 
     def _start_first_byte_request(self):
         """Start request timing for one provider attempt."""
@@ -393,30 +437,30 @@ class LLMModel(
 
     def _extract_response_content(self, response):
         """Extract content through the OpenAI response adapter."""
-        return OpenAIResponseAdapter.get_response_content(response)
+        return self.provider_backend.response_adapter.get_response_content(response)
 
     def _extract_stream_part(self, chunk):
         """Extract a stream delta through the OpenAI response adapter."""
-        return OpenAIResponseAdapter.get_stream_delta(chunk)
+        return self.provider_backend.response_adapter.get_stream_delta(chunk)
 
     def _extract_stream_content(self, stream_part):
         """Extract stream content through the OpenAI response adapter."""
-        return OpenAIResponseAdapter.get_delta_content(stream_part)
+        return self.provider_backend.response_adapter.get_delta_content(stream_part)
 
     def _merge_stream_calls(self, accumulated_calls, stream_part):
         """Merge stream tool calls through the OpenAI response adapter."""
-        return OpenAIResponseAdapter.merge_delta_tool_calls(
+        return self.provider_backend.response_adapter.merge_delta_tool_calls(
             accumulated_calls,
             stream_part,
         )
 
     def _build_stream_calls(self, accumulated_calls):
         """Build tool calls through the OpenAI response adapter."""
-        return OpenAIResponseAdapter.build_tool_calls(accumulated_calls)
+        return self.provider_backend.response_adapter.build_tool_calls(accumulated_calls)
 
     def _build_stream_response(self, content, completed_calls):
         """Build a response message through the OpenAI response adapter."""
-        return OpenAIResponseAdapter.build_assistant_message(
+        return self.provider_backend.response_adapter.build_assistant_message(
             content,
             completed_calls,
         )
