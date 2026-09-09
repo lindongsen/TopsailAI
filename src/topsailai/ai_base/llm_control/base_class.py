@@ -5,7 +5,6 @@
   Purpose:
 '''
 
-import os
 import copy
 import random
 import simplejson
@@ -184,8 +183,8 @@ class LLMModelBase(object):
         parts = {
             # basic config
             "model_name": self.model_name,
-            "api_base": self.model_config.get("api_base") or os.getenv("OPENAI_API_BASE"),
-            "api_key": (self.model_config.get("api_key") or os.getenv("OPENAI_API_KEY") or "")[:7] + "...",
+            "api_base": self.model_config.get("api_base") or self.get_api_base(),
+            "api_key": (self.model_config.get("api_key") or self.get_api_key() or "")[:7] + "...",
             "models_count": len(self.models),
 
             # advance config
@@ -205,6 +204,14 @@ class LLMModelBase(object):
     #################################################################################
     def get_model_name(self, default=""):
         """ return a model name """
+        raise NotImplementedError
+
+    def get_api_base(self, default=None):
+        """ return the provider API base URL """
+        raise NotImplementedError
+
+    def get_api_key(self, default=""):
+        """ return the provider API key """
         raise NotImplementedError
 
     def get_llm_model(self, api_key=None, api_base=None):

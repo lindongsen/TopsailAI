@@ -268,10 +268,8 @@ class TestLLMModelBase:
             @property
             def usage(self):
                 raise RuntimeError("usage unavailable")
-
         assert LLMModelBase.get_response_usage(object(), object()) is None
         assert LLMModelBase.get_response_usage(object(), RaisingResponse()) is None
-
 
     @staticmethod
     def _make_environment_model(**kwargs):
@@ -287,6 +285,51 @@ class TestLLMModelBase:
                 pass
 
         return TestModel(**kwargs)
+
+    def test_str_uses_provider_api_base_and_key(self):
+        """Render __str__ through provider getters instead of base os.getenv."""
+        class TestModel(LLMModelBase):
+            def get_model_name(self, default=""):
+                return "test-model"
+            def get_api_base(self, default=None):
+                return "https://provider.example/v1"
+            def get_api_key(self, default=""):
+                return "secret-key-1234567890"
+            def get_llm_model(self, api_key=None, api_base=None):
+                return MagicMock()
+            def get_response_message(self, response):
+                return MagicMock()
+            def chat(self, *args, **kwargs):
+                pass
+
+        model = TestModel()
+        rendered = str(model)
+        assert "model_name=test-model" in rendered
+        assert "api_base=https://provider.example/v1" in rendered
+        assert "api_key=secret-" in rendered
+        assert "models_count=0" in rendered
+
+    def test_str_falls_back_to_model_config_when_present(self):
+        """Prefer model_config api_base/api_key over provider getters."""
+        class TestModel(LLMModelBase):
+            def get_model_name(self, default=""):
+                return "test-model"
+            def get_api_base(self, default=None):
+                return "https://provider.example/v1"
+            def get_api_key(self, default=""):
+                return "provider-key-1234567890"
+            def get_llm_model(self, api_key=None, api_base=None):
+                return MagicMock()
+            def get_response_message(self, response):
+                return MagicMock()
+            def chat(self, *args, **kwargs):
+                pass
+
+        model = TestModel()
+        model.model_config = {"api_base": "https://config.example/v1", "api_key": "config-key-1234567890"}
+        rendered = str(model)
+        assert "api_base=https://config.example/v1" in rendered
+        assert "api_key=config-" in rendered
 
     def test_init_falls_back_to_legacy_llm_parameter_variables(self, monkeypatch):
         """Legacy variables remain effective when preferred variables are unset."""

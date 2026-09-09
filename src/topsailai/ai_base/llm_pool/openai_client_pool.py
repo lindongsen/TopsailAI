@@ -330,6 +330,16 @@ def _resolve_openai_model_name(default: str) -> str:
     return os.getenv("OPENAI_MODEL", default)
 
 
+def _resolve_openai_api_base(default: str | None = None) -> str | None:
+    """Resolve the default OpenAI API base URL from its environment variable."""
+    return os.getenv("OPENAI_API_BASE", default)
+
+
+def _resolve_openai_api_key(default: str = "") -> str:
+    """Resolve the default OpenAI API key from its environment variable."""
+    return os.getenv("OPENAI_API_KEY", default)
+
+
 def _make_openai_config(
     api_key: str | None = None,
     base_url: str | None = None,
@@ -357,7 +367,11 @@ OPENAI_PROVIDER_BACKEND = LLMProviderBackend(
     get_chat_model=get_chat_model,
     response_adapter=OpenAIResponseAdapter,
     model_name_resolver=_resolve_openai_model_name,
+    api_base_resolver=_resolve_openai_api_base,
+    api_key_resolver=_resolve_openai_api_key,
 )
+
+
 default_provider_registry.register(OPENAI_PROVIDER_BACKEND)
 
 

@@ -155,6 +155,14 @@ class LLMModel(
     def get_model_name(self, default="DeepSeek-V3.1-Terminus"):
         return self.provider_backend.model_name_resolver(default)
 
+    def get_api_base(self, default=None):
+        """Return the provider API base URL resolved through the backend."""
+        return self.provider_backend.api_base_resolver(default)
+
+    def get_api_key(self, default=""):
+        """Return the provider API key resolved through the backend."""
+        return self.provider_backend.api_key_resolver(default)
+
     def _get_llm_model_handles(self):
         """Retain the provider model ownership-record compatibility seam."""
         return super()._get_llm_model_handles()

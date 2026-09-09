@@ -20,6 +20,8 @@ class LLMProviderBackend:
     get_chat_model: Callable[[Any], Any]
     response_adapter: Any
     model_name_resolver: Callable[[str], str] = lambda default: default
+    api_base_resolver: Callable[[str | None], str | None] = lambda default: default
+    api_key_resolver: Callable[[str], str] = lambda default: default
 
 
 class LLMProviderRegistry:
