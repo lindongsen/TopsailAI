@@ -364,12 +364,11 @@ class TestLLMModelResponseCompatibility(unittest.TestCase):
         from topsailai.ai_base.llm_base import LLMModel
 
         expected_signatures = {
-            "get_response_usage": "(self, response) -> openai.types.completion_usage.CompletionUsage",
+            "get_response_usage": "(self, response) -> 'CompletionUsage'",
             "_return_chat_response": (
                 "(self, rsp_obj, rsp_content, messages, for_raw=False, "
                 "for_response=False)"
             ),
-            "_truncate_event_payload": "(self, payload, max_bytes)",
         }
 
         for method_name, expected_signature in expected_signatures.items():
@@ -451,7 +450,7 @@ class TestLLMModelResponseCompatibility(unittest.TestCase):
         )
 
     @patch("topsailai.events.record_event")
-    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_control.response_events.env_tool")
     def test_class_truncation_patch_intercepts_real_event_path(
         self, mock_env_tool, mock_record_event
     ):
@@ -2090,7 +2089,7 @@ class TestLLMModelResponseEvents(unittest.TestCase):
 
     @patch("topsailai.events.record_event")
     @patch("topsailai.ai_base.llm_base.get_response_message")
-    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_control.response_events.env_tool")
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -2121,7 +2120,7 @@ class TestLLMModelResponseEvents(unittest.TestCase):
 
     @patch("topsailai.events.record_event")
     @patch("topsailai.ai_base.llm_base.get_response_message")
-    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_control.response_events.env_tool")
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -2162,7 +2161,7 @@ class TestLLMModelResponseEvents(unittest.TestCase):
 
     @patch("topsailai.events.record_event")
     @patch("topsailai.ai_base.llm_base.get_response_message")
-    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_control.response_events.env_tool")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_response_event_streaming_emits_once_after_trunk(
@@ -2206,7 +2205,7 @@ class TestLLMModelResponseEvents(unittest.TestCase):
 
     @patch("topsailai.events.record_event")
     @patch("topsailai.ai_base.llm_base.get_response_message")
-    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_control.response_events.env_tool")
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -2239,7 +2238,7 @@ class TestLLMModelResponseEvents(unittest.TestCase):
 
     @patch("topsailai.events.record_event")
     @patch("topsailai.ai_base.llm_base.get_response_message")
-    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_control.response_events.env_tool")
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -2282,7 +2281,7 @@ class TestLLMModelResponseEvents(unittest.TestCase):
 
     @patch("topsailai.events.record_event")
     @patch("topsailai.ai_base.llm_base.get_response_message")
-    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_control.response_events.env_tool")
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -2347,7 +2346,7 @@ class TestLLMModelResponseEvents(unittest.TestCase):
 
     @patch("topsailai.events.record_event")
     @patch("topsailai.ai_base.llm_base.get_response_message")
-    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_control.response_events.env_tool")
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)

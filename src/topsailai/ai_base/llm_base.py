@@ -14,8 +14,6 @@ import time
 _LLM_SERVICE_SPECIAL_RESPONSE_SLEEP_SECONDS = (
     5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97
 )
-from openai.types.chat import ChatCompletionMessage
-from openai.types.completion_usage import CompletionUsage
 
 from topsailai.logger.log_chat import logger
 from topsailai.ai_base.llm_pool import OpenAIClientConfig, acquire, invalidate
@@ -249,7 +247,7 @@ class LLMModel(
             self.release_llm_model_leases((old_handle,))
         return new_model
 
-    def get_response_message(self, response) -> ChatCompletionMessage:
+    def get_response_message(self, response) -> "ChatCompletionMessage":
         """
         Extract the message from the API response.
 
@@ -274,7 +272,7 @@ class LLMModel(
         """
         return get_response_message(response)
 
-    def get_response_usage(self, response) -> CompletionUsage:
+    def get_response_usage(self, response) -> "CompletionUsage":
         """Retain the provider usage compatibility seam."""
         return super().get_response_usage(response)
 
@@ -378,62 +376,6 @@ class LLMModel(
         return _iter_with_first_byte_timeout(stream, *args, **kwargs)
 
 
-    def _truncate_event_payload(self, payload, max_bytes):
-        """Retain the response-event truncation compatibility seam."""
-        return super()._truncate_event_payload(payload, max_bytes)
-
-    def _record_llm_response_event(self, response, is_stream=False, sampled_chunks=None):
-        """Retain the response-event configuration and patch compatibility seam."""
-        try:
-            enabled = env_tool.EnvReaderInstance.check_bool(
-                "TOPSAILAI_LLM_RESPONSE_EVENTS_ENABLED",
-                default=True,
-            )
-            if not enabled:
-                return
-
-            max_payload_bytes = env_tool.EnvReaderInstance.get(
-                "TOPSAILAI_LLM_RESPONSE_EVENTS_MAX_PAYLOAD_BYTES",
-                default=100000,
-                formatter=int,
-            )
-            if max_payload_bytes is None or max_payload_bytes <= 0:
-                max_payload_bytes = 100000
-
-            include_raw = env_tool.EnvReaderInstance.check_bool(
-                "TOPSAILAI_LLM_RESPONSE_EVENTS_INCLUDE_RAW",
-                default=True,
-            )
-
-            from topsailai.events import record_event
-
-            def recorder(payload):
-                record_event(
-                    "llm.response.raw",
-                    payload=payload,
-                    source="ai_base.llm_base",
-                )
-
-            return super()._record_llm_response_event(
-                response,
-                is_stream=is_stream,
-                sampled_chunks=sampled_chunks,
-                enabled=enabled,
-                max_payload_bytes=max_payload_bytes,
-                include_raw=include_raw,
-                recorder=recorder,
-            )
-        except Exception:
-            # Safe hook: never re-raise; never mutate shared state.
-            return None
-
-    def _get_llm_response_event_message(self, response):
-        """Adapt an OpenAI-compatible response for event serialization."""
-        return self.get_response_message(response)
-
-    def _get_llm_response_event_model_name(self):
-        """Return the OpenAI-compatible model name for event payloads."""
-        return self.model_name
 
     def _extract_response_content(self, response):
         """Extract content through the OpenAI response adapter."""

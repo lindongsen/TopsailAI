@@ -1,13 +1,13 @@
-"""Deterministic response-event payload truncation.
+"""Provider-neutral LLM response event recording.
 
-This module owns the pure payload-size/truncation helper used to bound the
-serialized size of an LLM response event. It is intentionally provider-neutral
-and side-effect free: it does not import OpenAI, HTTPX, HTTPCore, or the events
-subsystem. ``LLMModel`` remains responsible for response adaptation and for
-orchestrating ``record_event()``.
+The mixin in this module owns response adaptation, payload serialization,
+size bounding, configuration, and event dispatch. It intentionally contains
+no provider SDK imports or provider-specific response types.
 """
 
 import json
+
+from topsailai.utils import env_tool
 
 
 def truncate_event_payload(payload, max_bytes):
@@ -70,22 +70,28 @@ def truncate_event_payload(payload, max_bytes):
 class LLMResponseEventMixin:
     """Build and record provider-neutral LLM response event payloads."""
 
-    def _record_llm_response_event(
-        self,
-        response,
-        is_stream=False,
-        sampled_chunks=None,
-        *,
-        enabled=True,
-        max_payload_bytes=100000,
-        include_raw=True,
-        recorder=None,
-    ):
+    def _record_llm_response_event(self, response, is_stream=False, sampled_chunks=None):
         """Safely build, truncate, and dispatch one LLM response event."""
-        if not enabled or recorder is None:
-            return
-
         try:
+            enabled = env_tool.EnvReaderInstance.check_bool(
+                "TOPSAILAI_LLM_RESPONSE_EVENTS_ENABLED",
+                default=True,
+            )
+            if not enabled:
+                return
+
+            max_payload_bytes = env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_LLM_RESPONSE_EVENTS_MAX_PAYLOAD_BYTES",
+                default=100000,
+                formatter=int,
+            )
+            if max_payload_bytes is None or max_payload_bytes <= 0:
+                max_payload_bytes = 100000
+
+            include_raw = env_tool.EnvReaderInstance.check_bool(
+                "TOPSAILAI_LLM_RESPONSE_EVENTS_INCLUDE_RAW",
+                default=True,
+            )
             message = self._get_llm_response_event_message(response)
             content = getattr(message, "content", None) or ""
             payload = {
@@ -102,10 +108,16 @@ class LLMResponseEventMixin:
             if sampled_chunks:
                 payload["sampled_chunks"] = sampled_chunks
 
-            recorder(self._truncate_event_payload(payload, max_payload_bytes))
+            from topsailai.events import record_event
+
+            record_event(
+                "llm.response.raw",
+                payload=self._truncate_event_payload(payload, max_payload_bytes),
+                source="ai_base.llm_base",
+            )
         except Exception:
             # Observability must never interrupt an LLM request.
-            pass
+            return None
 
     def _truncate_event_payload(self, payload, max_bytes):
         """Return a bounded response-event payload."""
@@ -113,11 +125,11 @@ class LLMResponseEventMixin:
 
     def _get_llm_response_event_message(self, response):
         """Return the provider response message used by event serialization."""
-        raise NotImplementedError
+        return self.get_response_message(response)
 
     def _get_llm_response_event_model_name(self):
         """Return the model identifier included in response event payloads."""
-        raise NotImplementedError
+        return self.model_name
 
     @staticmethod
     def _serialize_llm_response_event_tool_calls(message):
