@@ -16,9 +16,6 @@ _LLM_SERVICE_SPECIAL_RESPONSE_SLEEP_SECONDS = (
 )
 
 from topsailai.logger.log_chat import logger
-from topsailai.ai_base.llm_pool.openai_client_pool import (
-    OPENAI_PROVIDER_BACKEND,
-)
 from topsailai.ai_base.llm_pool.provider_registry import (
     DEFAULT_LLM_PROVIDER,
     default_provider_registry,
@@ -106,7 +103,7 @@ class LLMModel(
 ):
     """Unified LLM entry point with provider-owned pools and adapters."""
 
-    provider_backend = OPENAI_PROVIDER_BACKEND
+    provider_backend = default_provider_registry.resolve(DEFAULT_LLM_PROVIDER)
     provider = DEFAULT_LLM_PROVIDER
 
     def __init__(
