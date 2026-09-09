@@ -106,7 +106,7 @@ class TestLLMModelGetLLMModel(unittest.TestCase):
         handle.client.chat.completions = MagicMock()
         return handle
 
-    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_pool.openai_client_pool.default_openai_client_pool.acquire")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_get_llm_model_with_custom_credentials(
@@ -128,7 +128,7 @@ class TestLLMModelGetLLMModel(unittest.TestCase):
         self.assertEqual(config.model, "test-model")
         self.assertIs(result, handle.client.chat.completions)
 
-    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_pool.openai_client_pool.default_openai_client_pool.acquire")
     @patch("topsailai.ai_base.llm_base.os.getenv")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_get_llm_model_uses_env_defaults(
@@ -153,7 +153,7 @@ class TestLLMModelGetLLMModel(unittest.TestCase):
         self.assertEqual(config.base_url, "https://env.example/v1")
         self.assertIs(result, handle.client.chat.completions)
 
-    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_pool.openai_client_pool.default_openai_client_pool.acquire")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_release_helpers_are_owned_and_idempotent(
         self, mock_base_init, mock_acquire
@@ -176,7 +176,7 @@ class TestLLMModelGetLLMModel(unittest.TestCase):
         first_handle.release.assert_called_once_with()
         second_handle.release.assert_called_once_with()
 
-    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_pool.openai_client_pool.default_openai_client_pool.acquire")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_exact_lease_snapshot_handles_shared_chat_resource(
         self, mock_base_init, mock_acquire
@@ -203,7 +203,7 @@ class TestLLMModelGetLLMModel(unittest.TestCase):
         old_handle.release.assert_called_once_with()
         new_handle.release.assert_not_called()
 
-    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_pool.openai_client_pool.default_openai_client_pool.acquire")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_replace_acquires_before_releasing_old_model(
         self, mock_base_init, mock_acquire
@@ -235,7 +235,7 @@ class TestLLMModelGetLLMModel(unittest.TestCase):
         self.assertEqual(model.snapshot_llm_model_leases(), (new_handle,))
         new_handle.release.assert_not_called()
 
-    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_pool.openai_client_pool.default_openai_client_pool.acquire")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_replace_acquire_failure_preserves_old_lease(
         self, mock_base_init, mock_acquire
@@ -293,7 +293,7 @@ class TestLLMModelGetLLMModel(unittest.TestCase):
         model.snapshot_llm_model_leases.assert_called_once_with()
         model.release_llm_model_leases.assert_called_once_with(snapshot)
 
-    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_pool.openai_client_pool.default_openai_client_pool.acquire")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_ownership_uses_overridden_handle_list_seam(
         self, mock_base_init, mock_acquire
@@ -336,7 +336,7 @@ class TestLLMModelGetLLMModel(unittest.TestCase):
 
         self.assertTrue(expected_methods.issubset(LLMModel.__dict__))
 
-    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_pool.openai_client_pool.default_openai_client_pool.acquire")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_get_llm_model_uses_provider_neutral_registration_seam(
         self, mock_base_init, mock_acquire
@@ -3424,7 +3424,7 @@ class TestLLMModelProviderRouting(unittest.TestCase):
         self.assertEqual(model.provider, "openai")
         self.assertIs(model.provider_backend, OPENAI_PROVIDER_BACKEND)
 
-    @patch("topsailai.ai_base.llm_base.acquire")
+    @patch("topsailai.ai_base.llm_pool.openai_client_pool.default_openai_client_pool.acquire")
     def test_unknown_provider_fails_before_client_acquisition(self, mock_acquire):
         """Unsupported providers fail before base initialization can acquire a client."""
         from topsailai.ai_base.llm_base import LLMModel

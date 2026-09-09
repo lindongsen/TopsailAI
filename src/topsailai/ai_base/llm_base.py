@@ -16,7 +16,6 @@ _LLM_SERVICE_SPECIAL_RESPONSE_SLEEP_SECONDS = (
 )
 
 from topsailai.logger.log_chat import logger
-from topsailai.ai_base.llm_pool import OpenAIClientConfig, acquire, invalidate
 from topsailai.ai_base.llm_pool.openai_client_pool import (
     OPENAI_PROVIDER_BACKEND,
 )
@@ -169,15 +168,11 @@ class LLMModel(
         return super()._get_llm_model_handle_registry()
 
     def _acquire_provider_handle(self, config):
-        """Acquire through the selected provider while preserving OpenAI patches."""
-        if self.provider_backend is OPENAI_PROVIDER_BACKEND:
-            return acquire(config)
+        """Acquire a client handle through the selected provider backend."""
         return self.provider_backend.acquire(config)
 
     def _invalidate_provider_key(self, key):
-        """Invalidate through the selected provider while preserving OpenAI patches."""
-        if self.provider_backend is OPENAI_PROVIDER_BACKEND:
-            return invalidate(key)
+        """Invalidate a client key through the selected provider backend."""
         return self.provider_backend.invalidate(key)
 
     def get_llm_model(self, api_key=None, api_base=None):
@@ -191,11 +186,8 @@ class LLMModel(
             self.model_name,
             self.provider,
         )
-        config_factory = self.provider_backend.config_factory
-        if self.provider_backend is OPENAI_PROVIDER_BACKEND:
-            config_factory = OpenAIClientConfig
         handle = self._acquire_provider_handle(
-            config_factory(
+            self.provider_backend.config_factory(
                 api_key=effective_api_key,
                 base_url=effective_api_base,
                 model=self.model_name,

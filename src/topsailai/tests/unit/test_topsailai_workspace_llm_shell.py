@@ -764,7 +764,7 @@ class TestGetLLMChat(unittest.TestCase):
         # Should use default "You are a helpful assistant."
         mock_prompt_base.assert_called_once_with("You are a helpful assistant.")
 
-    @patch('topsailai.ai_base.llm_base.acquire')
+    @patch('topsailai.ai_base.llm_pool.openai_client_pool.default_openai_client_pool.acquire')
     @patch('topsailai.workspace.input_tool.get_message')
     @patch('topsailai.workspace.llm_shell.PromptBase')
     @patch('topsailai.workspace.llm_shell.file_tool')
