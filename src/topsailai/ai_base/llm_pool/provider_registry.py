@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass
 from typing import Any, Callable
 
 
 DEFAULT_LLM_PROVIDER = "openai"
+
+# Map a normalized provider name to the module that registers its backend.
+# The module is imported lazily on first resolve so that importing the
+# provider-neutral core never pulls in a provider SDK (e.g. openai).
+_PROVIDER_MODULE_MAP = {
+    "openai": "topsailai.ai_base.llm_pool.openai_client_pool",
+}
 
 
 @dataclass(frozen=True)
@@ -39,9 +47,14 @@ class LLMProviderRegistry:
         self._backends[name] = backend
 
     def resolve(self, provider: str = DEFAULT_LLM_PROVIDER) -> LLMProviderBackend:
-        """Return one backend or fail before any provider client is acquired."""
+        """Return one backend, lazily importing its provider module on first use."""
         name = self._normalize_name(provider)
         backend = self._backends.get(name)
+        if backend is None:
+            module_path = _PROVIDER_MODULE_MAP.get(name)
+            if module_path:
+                importlib.import_module(module_path)
+                backend = self._backends.get(name)
         if backend is None:
             raise ValueError(f"unsupported LLM provider: {name}")
         return backend

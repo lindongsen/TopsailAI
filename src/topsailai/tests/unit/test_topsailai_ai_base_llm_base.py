@@ -3486,5 +3486,46 @@ class TestLLMModelProviderRouting(unittest.TestCase):
         invalidate_backend.assert_called_once_with("future-key")
 
 
+class TestLLMModelProviderNeutralImport(unittest.TestCase):
+    """Verify importing ``llm_base`` does not transitively import the openai SDK.
+
+    The provider-neutral refactor makes ``from ai_base import llm_base`` free of
+    openai/httpx/httpcore imports. Because the shared test process may already
+    have imported openai, this check runs in a clean subprocess.
+    """
+
+    _PROBE = (
+        "import sys\n"
+        "from ai_base import llm_base\n"
+        "assert 'openai' not in sys.modules, 'openai should not be imported by llm_base'\n"
+        "assert 'httpx' not in sys.modules, 'httpx should not be imported by llm_base'\n"
+        "assert 'httpcore' not in sys.modules, 'httpcore should not be imported by llm_base'\n"
+        "from ai_base.llm_base import LLMModel\n"
+        "m = LLMModel()\n"
+        "assert m.provider == 'openai', m.provider\n"
+        "assert m.provider_backend.name == 'openai', m.provider_backend.name\n"
+        "assert 'openai' in sys.modules, 'openai should load on demand'\n"
+        "print('OK')\n"
+    )
+
+    def test_llm_base_import_does_not_load_openai(self):
+        """A clean subprocess importing llm_base must not load openai/httpx/httpcore."""
+        import subprocess
+        import sys
+
+        proc = subprocess.run(
+            [sys.executable, "-c", self._PROBE],
+            capture_output=True,
+            text=True,
+            cwd="/TopsailAI/src/topsailai",
+        )
+        self.assertEqual(
+            proc.returncode,
+            0,
+            msg=f"subprocess failed\nstdout={proc.stdout}\nstderr={proc.stderr}",
+        )
+        self.assertIn("OK", proc.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

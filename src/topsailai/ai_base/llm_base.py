@@ -92,6 +92,23 @@ from .llm_control.request_tracking import (
 from .llm_control.response_events import LLMResponseEventMixin
 
 
+class _LazyProviderBackend:
+    """Non-data descriptor resolving the provider backend on first access.
+
+    A non-data descriptor (only ``__get__``, no ``__set__``) lets ``__init__``
+    shadow it with a real instance attribute, while instances created via
+    ``__new__`` (bypassing ``__init__``) lazily resolve the backend on first
+    read without importing the provider SDK at module load time.
+    """
+
+    def __get__(self, instance, owner=None):
+        if instance is None:
+            return self
+        backend = default_provider_registry.resolve(DEFAULT_LLM_PROVIDER)
+        instance.provider_backend = backend
+        return backend
+
+
 class LLMModel(
     NativeToolCallResponseMixin,
     LLMResponseEventMixin,
@@ -102,8 +119,8 @@ class LLMModel(
 ):
     """Unified LLM entry point with provider-owned pools and adapters."""
 
-    provider_backend = default_provider_registry.resolve(DEFAULT_LLM_PROVIDER)
     provider = DEFAULT_LLM_PROVIDER
+    provider_backend = _LazyProviderBackend()
 
     def __init__(
         self,
