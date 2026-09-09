@@ -2,16 +2,58 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from topsailai.logger.log_chat import logger
 
 DEFAULT_CLIENT_POOL_CAPACITY = 32
 _POOL_LOCK = threading.RLock()
+
+
+def normalize_base_url(
+    base_url: str | None,
+    default: str = "",
+) -> str:
+    """Return the effective base URL with conservative trailing-slash cleanup."""
+    normalized = (base_url or default).strip()
+    while normalized.endswith("/") and not normalized.endswith("://"):
+        normalized = normalized[:-1]
+    return normalized or default
+
+
+def _fingerprint(value: str) -> str:
+    """Return a stable SHA-256 fingerprint without retaining the input in a key."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _options_fingerprint(options: tuple[tuple[str, Any], ...]) -> str:
+    """Return a deterministic fingerprint for client-construction options."""
+    encoded = json.dumps(
+        options,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=lambda value: {
+            "type": f"{type(value).__module__}.{type(value).__qualname__}",
+            "repr": repr(value),
+        },
+    )
+    return _fingerprint(encoded)
+
+
+def _normalize_options(
+    options: Mapping[str, Any] | tuple[tuple[str, Any], ...] | None,
+) -> tuple[tuple[str, Any], ...]:
+    """Convert supported option collections into an immutable ordered tuple."""
+    if options is None:
+        return ()
+    items = options.items() if isinstance(options, Mapping) else options
+    return tuple(sorted(items, key=lambda item: item[0]))
 
 
 @dataclass

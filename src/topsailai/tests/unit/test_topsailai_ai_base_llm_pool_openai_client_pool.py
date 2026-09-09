@@ -20,11 +20,11 @@ from topsailai.ai_base.llm_control.exception import (
     LLMProviderTimeoutError,
 )
 
+from topsailai.ai_base.llm_pool.base_client_pool import normalize_base_url
 from topsailai.ai_base.llm_pool.openai_client_pool import (
     OpenAIClientConfig,
     OpenAIClientPool,
     OpenAIResponseAdapter,
-    normalize_base_url,
 )
 
 

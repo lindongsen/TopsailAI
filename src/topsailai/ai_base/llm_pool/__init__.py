@@ -5,6 +5,7 @@ from topsailai.ai_base.llm_pool.base_client_pool import (
     BaseClientPool,
     ClientPoolEntry,
     ClientPoolHandle,
+    normalize_base_url,
 )
 from topsailai.ai_base.llm_pool.provider_registry import (
     DEFAULT_LLM_PROVIDER,
@@ -26,7 +27,6 @@ from topsailai.ai_base.llm_pool.openai_client_pool import (
     default_openai_client_pool,
     get_or_create,
     invalidate,
-    normalize_base_url,
     release,
 )
 

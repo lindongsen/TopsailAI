@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import atexit
-import hashlib
-import json
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping
+from typing import Any, Callable
 
 import httpcore
 import httpx
@@ -26,6 +24,10 @@ from topsailai.ai_base.llm_control.exception import (
 from topsailai.ai_base.llm_pool.base_client_pool import (
     BaseClientPool,
     ClientPoolHandle,
+    _fingerprint,
+    _normalize_options,
+    _options_fingerprint,
+    normalize_base_url,
 )
 from topsailai.ai_base.llm_pool.provider_registry import (
     LLMProviderBackend,
@@ -35,43 +37,6 @@ from topsailai.ai_base.llm_pool.provider_registry import (
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_OPENAI_CLIENT_POOL_CAPACITY = 32
 _CLIENT_KIND_SYNC = "sync"
-
-
-def normalize_base_url(base_url: str | None) -> str:
-    """Return the effective base URL with conservative trailing-slash cleanup."""
-    normalized = (base_url or DEFAULT_OPENAI_BASE_URL).strip()
-    while normalized.endswith("/") and not normalized.endswith("://"):
-        normalized = normalized[:-1]
-    return normalized or DEFAULT_OPENAI_BASE_URL
-
-
-def _fingerprint(value: str) -> str:
-    """Return a stable SHA-256 fingerprint without retaining the input in a key."""
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _options_fingerprint(options: tuple[tuple[str, Any], ...]) -> str:
-    """Return a deterministic fingerprint for client-construction options."""
-    encoded = json.dumps(
-        options,
-        sort_keys=True,
-        separators=(",", ":"),
-        default=lambda value: {
-            "type": f"{type(value).__module__}.{type(value).__qualname__}",
-            "repr": repr(value),
-        },
-    )
-    return _fingerprint(encoded)
-
-
-def _normalize_options(
-    options: Mapping[str, Any] | tuple[tuple[str, Any], ...] | None,
-) -> tuple[tuple[str, Any], ...]:
-    """Convert supported option collections into an immutable ordered tuple."""
-    if options is None:
-        return ()
-    items = options.items() if isinstance(options, Mapping) else options
-    return tuple(sorted(items, key=lambda item: item[0]))
 
 
 @dataclass(frozen=True)
@@ -100,7 +65,7 @@ class OpenAIClientConfig:
 
     def __post_init__(self) -> None:
         """Normalize immutable configuration fields at construction time."""
-        object.__setattr__(self, "base_url", normalize_base_url(self.base_url))
+        object.__setattr__(self, "base_url", normalize_base_url(self.base_url, DEFAULT_OPENAI_BASE_URL))
         object.__setattr__(self, "client_options", _normalize_options(self.client_options))
         if self.client_type != _CLIENT_KIND_SYNC:
             raise ValueError(f"unsupported OpenAI client type: {self.client_type}")
