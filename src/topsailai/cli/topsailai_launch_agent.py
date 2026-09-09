@@ -82,10 +82,32 @@ def _reset_tmp_dir(workspace):
     Fresh files are preserved so ongoing work is not lost on relaunch. Empty
     subdirectories left behind after removing stale files are pruned, and the
     .tmp/ directory itself is recreated if missing.
+
+    Symlinks are handled safely so cleanup never overreaches: if the .tmp/
+    directory itself is a symlink, only the symlink is removed (never the data
+    it points to), and if any entry inside .tmp/ is a symlink, only the symlink
+    itself is removed, never its target. This prevents deleting files that live
+    outside the workspace.
     """
     tmp_dir = os.path.join(workspace, ".tmp")
     max_age_days = _resolve_tmp_cleanup_max_age_days()
     cutoff = time.time() - (max_age_days * 86400)
+
+    # If .tmp/ itself is a symlink, remove only the link and recreate a real
+    # directory below. Never walk into the symlink target, which may live
+    # outside the workspace.
+    if os.path.islink(tmp_dir):
+        try:
+            os.remove(tmp_dir)
+            print(
+                f"[TopsailAI-Launcher] Removed stale temporary directory symlink: {tmp_dir}"
+            )
+        except OSError as exc:
+            print(
+                f"[TopsailAI-Launcher] Warning: Failed to remove temporary directory symlink '{tmp_dir}': {exc}",
+                file=sys.stderr,
+            )
+
     if os.path.isdir(tmp_dir):
         print(
             f"[TopsailAI-Launcher] Cleaning stale files in temporary directory: {tmp_dir}"
@@ -94,7 +116,9 @@ def _reset_tmp_dir(workspace):
             for name in files:
                 file_path = os.path.join(root, name)
                 try:
-                    if os.path.getmtime(file_path) < cutoff:
+                    # For a symlink, remove only the link itself (never its
+                    # target); for a regular file, remove it when stale.
+                    if os.path.islink(file_path) or os.path.getmtime(file_path) < cutoff:
                         os.remove(file_path)
                         print(
                             f"[TopsailAI-Launcher] Removed stale temporary file: {file_path}"
@@ -107,7 +131,14 @@ def _reset_tmp_dir(workspace):
             for name in dirs:
                 dir_path = os.path.join(root, name)
                 try:
-                    os.rmdir(dir_path)
+                    if os.path.islink(dir_path):
+                        # Remove only the directory symlink, never its target.
+                        os.remove(dir_path)
+                        print(
+                            f"[TopsailAI-Launcher] Removed stale temporary directory symlink: {dir_path}"
+                        )
+                    else:
+                        os.rmdir(dir_path)
                 except OSError:
                     # Directory is not empty; keep it.
                     pass

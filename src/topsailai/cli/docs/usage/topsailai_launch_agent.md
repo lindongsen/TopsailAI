@@ -351,7 +351,7 @@ topsailai_launch_agent --scan ./src/topsailai/cli
 ## Notes
 
 - A temporary context message file is written under `{workspace}/.tmp/` and cleaned up on exit, uncaught exceptions, and `SIGINT`/`SIGTERM`.
-- On launch, the launcher clears stale files in `{workspace}/.tmp/`. Only files older than the configured age threshold are removed; fresher files are preserved so ongoing work is not lost on relaunch. Empty subdirectories left behind are pruned and the `.tmp/` directory is recreated if missing. See `TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS` under "Environment Variables".
+- On launch, the launcher clears stale files in `{workspace}/.tmp/`. Only files older than the configured age threshold are removed; fresher files are preserved so ongoing work is not lost on relaunch. Empty subdirectories left behind are pruned and the `.tmp/` directory is recreated if missing. Symlinks are handled safely: if the `.tmp/` directory itself is a symlink, only the symlink is removed (never the data it points to), and any symlink entry inside `.tmp/` is removed as a link only, never its target, so cleanup never deletes files outside the workspace. See `TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS` under "Environment Variables".
 - The launcher changes to the configured `workspace` before running the driver.
 - In `--dry-run` mode, command context sources are listed but not executed.
 - In `--dry-run` mode, the launcher prints `[TopsailAI-Launcher] Context token count: N` for the assembled context message. The count is informational only; when it cannot be computed the launcher prints a warning and continues. Use it to check how much of the first-turn context the folder tree consumes before raising `TOPSAILAI_SCAN_MAX_TOKENS`.

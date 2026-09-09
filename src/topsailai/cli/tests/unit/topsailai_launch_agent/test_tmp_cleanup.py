@@ -144,6 +144,61 @@ class TestResetTmpDir(unittest.TestCase):
         self.assertTrue(os.path.exists(kept))
         self.assertFalse(os.path.exists(removed))
 
+    def test_tmp_dir_itself_symlink_only_link_removed(self):
+        # .tmp/ is a symlink to an external directory. Cleanup must remove only
+        # the symlink and recreate a real .tmp/ directory, never delete the
+        # external data the link points to.
+        outside = os.path.join(self.workspace, "outside")
+        os.makedirs(outside, exist_ok=True)
+        external_file = os.path.join(outside, "real.txt")
+        with open(external_file, "w", encoding="utf-8") as fh:
+            fh.write("x")
+        now = 1500.0
+        os.utime(external_file, (now - 345600, now - 345600))  # stale target
+        os.symlink(outside, self.tmp_dir)
+        self._run(fake_now=now)
+        # The external data must be preserved.
+        self.assertTrue(os.path.exists(external_file))
+        # The symlink itself must be gone and replaced by a real directory.
+        self.assertFalse(os.path.islink(self.tmp_dir))
+        self.assertTrue(os.path.isdir(self.tmp_dir))
+
+    def test_file_symlink_only_link_removed(self):
+        # A file inside .tmp/ is a symlink to an external file. Cleanup must
+        # remove only the link, never the external target.
+        os.makedirs(self.tmp_dir, exist_ok=True)
+        outside = os.path.join(self.workspace, "outside")
+        os.makedirs(outside, exist_ok=True)
+        external_file = os.path.join(outside, "real.txt")
+        with open(external_file, "w", encoding="utf-8") as fh:
+            fh.write("x")
+        now = 1500.0
+        os.utime(external_file, (now - 345600, now - 345600))  # stale target
+        link = os.path.join(self.tmp_dir, "link.txt")
+        os.symlink(external_file, link)
+        self._run(fake_now=now)
+        # The external target must be preserved; only the link is removed.
+        self.assertTrue(os.path.exists(external_file))
+        self.assertFalse(os.path.islink(link))
+
+    def test_dir_symlink_only_link_removed(self):
+        # A directory inside .tmp/ is a symlink to an external directory.
+        # Cleanup must remove only the link, never the external data.
+        os.makedirs(self.tmp_dir, exist_ok=True)
+        outside = os.path.join(self.workspace, "outside")
+        os.makedirs(outside, exist_ok=True)
+        external_file = os.path.join(outside, "real.txt")
+        with open(external_file, "w", encoding="utf-8") as fh:
+            fh.write("x")
+        now = 1500.0
+        os.utime(external_file, (now - 345600, now - 345600))  # stale target
+        link = os.path.join(self.tmp_dir, "dirlink")
+        os.symlink(outside, link)
+        self._run(fake_now=now)
+        # The external data must be preserved; only the link is removed.
+        self.assertTrue(os.path.exists(external_file))
+        self.assertFalse(os.path.islink(link))
+
 
 if __name__ == "__main__":
     unittest.main()
