@@ -59,7 +59,7 @@ class TestLLMModelGetModelName(unittest.TestCase):
         """Set up test fixtures."""
         self.default_model = "DeepSeek-V3.1-Terminus"
 
-    @patch("topsailai.ai_base.llm_base.os.getenv")
+    @patch("topsailai.ai_base.llm_pool.openai_client_pool.os.getenv")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_get_model_name_returns_env_value(self, mock_base_init, mock_logger, mock_getenv):
@@ -75,7 +75,7 @@ class TestLLMModelGetModelName(unittest.TestCase):
         mock_getenv.assert_called_with("OPENAI_MODEL", self.default_model)
         self.assertEqual(result, "gpt-4")
 
-    @patch("topsailai.ai_base.llm_base.os.getenv")
+    @patch("topsailai.ai_base.llm_pool.openai_client_pool.os.getenv")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_get_model_name_returns_default_when_env_empty(self, mock_base_init, mock_logger, mock_getenv):
@@ -129,7 +129,7 @@ class TestLLMModelGetLLMModel(unittest.TestCase):
         self.assertIs(result, handle.client.chat.completions)
 
     @patch("topsailai.ai_base.llm_pool.openai_client_pool.default_openai_client_pool.acquire")
-    @patch("topsailai.ai_base.llm_base.os.getenv")
+    @patch("topsailai.ai_base.llm_pool.openai_client_pool.os.getenv")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_get_llm_model_uses_env_defaults(
         self, mock_base_init, mock_getenv, mock_acquire
@@ -1258,16 +1258,14 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         self.assertIn("elapsed", warning_msg)
         self.assertIn(">= threshold", warning_msg)
         self.assertIn("0.1s", warning_msg)
-    @patch("topsailai.ai_base.llm_base.os.getenv")
     @patch("topsailai.ai_base.llm_base.env_tool")
     @patch("topsailai.ai_base.llm_base.print_warning")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_first_byte_timeout_invalid_value_falls_back_to_default(
-        self, mock_base_init, mock_print_warning, mock_env_tool, mock_getenv
+        self, mock_base_init, mock_print_warning, mock_env_tool
     ):
         """Test that invalid env value falls back to default 180."""
 
-        mock_getenv.return_value = "not-a-number"
         mock_env_tool.EnvReaderInstance.get.side_effect = lambda name, default=None, formatter=None: default
         mock_env_tool.EnvReaderInstance.check_bool.return_value = False
 

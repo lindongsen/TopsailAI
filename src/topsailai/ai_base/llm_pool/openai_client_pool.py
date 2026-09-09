@@ -325,13 +325,38 @@ def get_chat_model(client):
     return client.chat.completions
 
 
+def _resolve_openai_model_name(default: str) -> str:
+    """Resolve the default OpenAI model name from its environment variable."""
+    return os.getenv("OPENAI_MODEL", default)
+
+
+def _make_openai_config(
+    api_key: str | None = None,
+    base_url: str | None = None,
+    model: str | None = None,
+    **kwargs: Any,
+) -> OpenAIClientConfig:
+    """Build an OpenAI client config, resolving environment defaults."""
+    effective_api_key = api_key or os.getenv("OPENAI_API_KEY", "")
+    effective_api_base = base_url or os.getenv(
+        "OPENAI_API_BASE", DEFAULT_OPENAI_BASE_URL
+    )
+    return OpenAIClientConfig(
+        api_key=effective_api_key,
+        base_url=effective_api_base,
+        model=model,
+        **kwargs,
+    )
+
+
 OPENAI_PROVIDER_BACKEND = LLMProviderBackend(
     name="openai",
-    config_factory=OpenAIClientConfig,
+    config_factory=_make_openai_config,
     acquire=acquire,
     invalidate=invalidate,
     get_chat_model=get_chat_model,
     response_adapter=OpenAIResponseAdapter,
+    model_name_resolver=_resolve_openai_model_name,
 )
 default_provider_registry.register(OPENAI_PROVIDER_BACKEND)
 

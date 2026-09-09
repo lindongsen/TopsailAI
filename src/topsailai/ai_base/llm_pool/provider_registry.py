@@ -19,6 +19,7 @@ class LLMProviderBackend:
     invalidate: Callable[[Any], bool]
     get_chat_model: Callable[[Any], Any]
     response_adapter: Any
+    model_name_resolver: Callable[[str], str] = lambda default: default
 
 
 class LLMProviderRegistry:

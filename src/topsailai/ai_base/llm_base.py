@@ -5,7 +5,6 @@
   Purpose:
 '''
 
-import os
 import random
 import time
 
@@ -154,7 +153,7 @@ class LLMModel(
         print_info(f"Detected {total_tool_calls} native tool calls")
 
     def get_model_name(self, default="DeepSeek-V3.1-Terminus"):
-        return os.getenv("OPENAI_MODEL", default)
+        return self.provider_backend.model_name_resolver(default)
 
     def _get_llm_model_handles(self):
         """Retain the provider model ownership-record compatibility seam."""
@@ -174,10 +173,6 @@ class LLMModel(
 
     def get_llm_model(self, api_key=None, api_base=None):
         """Return a pooled chat resource from the selected provider backend."""
-        effective_api_key = api_key or os.getenv("OPENAI_API_KEY", "")
-        effective_api_base = api_base or os.getenv(
-            "OPENAI_API_BASE", "https://api.openai.com/v1"
-        )
         logger.info(
             "getting llm model [%s] provider=%s: ...",
             self.model_name,
@@ -185,8 +180,8 @@ class LLMModel(
         )
         handle = self._acquire_provider_handle(
             self.provider_backend.config_factory(
-                api_key=effective_api_key,
-                base_url=effective_api_base,
+                api_key=api_key,
+                base_url=api_base,
                 model=self.model_name,
             )
         )
