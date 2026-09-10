@@ -74,14 +74,20 @@ class TestBuildProjectList(unittest.TestCase):
         self.assertEqual(entries[0]["task"], "task one")
         self.assertEqual(entries[1]["session_id"], "s2")
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
-        self.assertIn("--json", call_args)
-        self.assertIn("--has-project", call_args)
-        self.assertIn("--sort", call_args)
-        self.assertIn("desc", call_args)
-        self.assertIn("--limit", call_args)
-        self.assertIn("10", call_args)
+        mock_run.assert_called_once_with(
+            [
+                "topsailai_list_sessions",
+                "--json",
+                "--has-project",
+                "--sort",
+                "desc",
+                "--limit",
+                "10",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
     @patch("cli_topsailai.project_scope._resolve_session_mtime")
     @patch("cli_topsailai.project_scope.subprocess.run")

@@ -1,7 +1,7 @@
 """Project scope support for the TopsailAI CLI.
 
 This module builds the list of recent sessions that have a project workspace
-by invoking ``ai_list_sessions.py`` with JSON output, and renders the list as
+by invoking ``topsailai_list_sessions`` with JSON output, and renders the list as
 a table compatible with the interactive selection loop.
 """
 
@@ -28,7 +28,6 @@ from cli_topsailai.projects import (
     build_managed_project_list as _build_managed_project_list,
     print_project_table as _print_managed_project_table,
 )
-from topsailai.utils.env_tool import resolve_python_interpreter
 
 
 # Maximum number of concurrent running-status checks per refresh.
@@ -40,13 +39,6 @@ _RESUME_DRIVER_OPTIONS = [
     "topsailai_agent_plan_tasks",
     "ai-team-flow-dev",
 ]
-
-
-def _script_path() -> str:
-    """Return the absolute path to ``ai_list_sessions.py``."""
-    module_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(module_dir)
-    return os.path.join(project_root, "ai_list_sessions.py")
 
 
 def _is_pid_alive(pid: int) -> bool:
@@ -182,7 +174,7 @@ def build_project_list(
 ) -> List[Dict[str, Any]]:
     """Build the list of recent sessions with a project workspace.
 
-    Runs ``ai_list_sessions.py --json --has-project --sort desc`` with an
+    Runs ``topsailai_list_sessions --json --has-project --sort desc`` with an
     optional session ID and limit, then parses the JSON output. Sessions are
     then re-sorted by the modification time of their most recent
     ``*.session.stdout`` file (oldest first, newest last). When a session has
@@ -202,10 +194,8 @@ def build_project_list(
         ``session_name``, ``project_workspace``, ``modified_time``,
         ``modified_time_raw``, ``task``, and ``status``.
     """
-    script = _script_path()
     cmd = [
-        resolve_python_interpreter(),
-        script,
+        "topsailai_list_sessions",
         "--json",
         "--has-project",
         "--sort",
@@ -225,14 +215,14 @@ def build_project_list(
         )
     except Exception as exc:
         print(
-            f"{Colors.RED}[ERROR] Failed to run ai_list_sessions.py: {exc}{Colors.RESET}"
+            f"{Colors.RED}[ERROR] Failed to run topsailai_list_sessions: {exc}{Colors.RESET}"
         )
         return []
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
         print(
-            f"{Colors.RED}[ERROR] ai_list_sessions.py failed: {stderr}{Colors.RESET}"
+            f"{Colors.RED}[ERROR] topsailai_list_sessions failed: {stderr}{Colors.RESET}"
         )
         return []
 
