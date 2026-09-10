@@ -25,6 +25,7 @@ class MockServerConfig:
     request_body_capacity: int = 32
     stream_chunks: tuple[str, ...] | None = None
     stream_response_chunks: tuple[tuple[str, ...], ...] | None = None
+    stream_error_messages: tuple[str | None, ...] | None = None
     report_cache_usage: bool = True
     report_usage: bool = True
     tool_call_responses: tuple[tuple[dict[str, Any], ...], ...] | None = None
@@ -260,11 +261,17 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
         created = int(time.time())
         model = payload.get("model") or self.server.config.model
         scripted_responses = self.server.config.stream_response_chunks or ()
+        scripted_errors = self.server.config.stream_error_messages or ()
         response_index = cache_result["request_number"] - 1
         stream_chunks = (
             scripted_responses[response_index]
             if response_index < len(scripted_responses)
             else self.server.config.stream_chunks or ()
+        )
+        stream_error = (
+            scripted_errors[response_index]
+            if response_index < len(scripted_errors)
+            else None
         )
         completion_tokens = max(
             1,
@@ -277,6 +284,10 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "close")
         self.end_headers()
+        if stream_error is not None:
+            self._write_sse({"error": {"message": stream_error}})
+            self.close_connection = True
+            return
         try:
             for content in stream_chunks:
                 self._write_sse({

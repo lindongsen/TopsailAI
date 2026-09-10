@@ -33,6 +33,26 @@ def given_retry_cycle_then_success(llm_retry_ctx):
 
 
 @given(
+    "an LLM retry scenario whose first SSE response is a LiteLLM connection error "
+    "and then succeeds"
+)
+def given_litellm_connection_error_then_success(llm_retry_ctx):
+    """Script one deferred LiteLLM connection error followed by success."""
+    llm_retry_ctx.script_litellm_connection_error_then_success()
+    assert llm_retry_ctx.server_owner.thread.is_alive()
+
+
+@given(
+    "an LLM retry scenario whose bounded request cycle returns only LiteLLM "
+    "connection errors"
+)
+def given_litellm_connection_error_exhaustion(llm_retry_ctx):
+    """Script one automatic retry cycle of deferred LiteLLM connection errors."""
+    llm_retry_ctx.script_litellm_connection_error_exhaustion()
+    assert llm_retry_ctx.server_owner.thread.is_alive()
+
+
+@given(
     "an LLM retry scenario whose bounded request cycle returns only busy SSE responses"
 )
 def given_exhausted_retry_cycle(llm_retry_ctx):
@@ -89,6 +109,17 @@ def when_default_retry_boundary_is_exercised(llm_retry_ctx):
     """Run with a policy whose max-cycle field is left at its default."""
     llm_retry_ctx.run_default_boundary()
 
+
+@when("the LiteLLM connection-error retry is exercised")
+def when_litellm_connection_error_retry_is_exercised(llm_retry_ctx):
+    """Run the real deferred SSE failure through the production retry loop."""
+    llm_retry_ctx.run_direct([])
+
+
+@when("the user chooses Exit after LiteLLM connection-error exhaustion")
+def when_litellm_connection_error_exhaustion_exits(llm_retry_ctx):
+    """Select Exit only after the automatic connection-error cycle completes."""
+    llm_retry_ctx.run_direct(["2"])
 
 @when("the configured retry boundary is exercised")
 def when_configured_retry_boundary_is_exercised(llm_retry_ctx):
@@ -152,6 +183,48 @@ def then_retry_succeeds(llm_retry_ctx):
     """Assert the second bounded cycle returned its first successful SSE body."""
     assert llm_retry_ctx.error is None
     assert llm_retry_ctx.result == SUCCESS_RESPONSE
+
+
+@then("the LiteLLM recovery sent exactly 2 completion requests")
+def then_litellm_recovery_sent_two_requests(llm_retry_ctx):
+    """Assert one deferred provider failure was retried without a menu."""
+    state = llm_retry_ctx.state()
+    assert state["total_requests"] == 2, state
+    assert len(state["request_bodies"]) == 2, state
+    assert all(record["parsed"] for record in state["request_bodies"]), state
+
+
+@then("every LiteLLM recovery request body is identical")
+def then_litellm_recovery_request_bodies_are_identical(llm_retry_ctx):
+    """Prove automatic provider retry preserves the request payload."""
+    bodies = llm_retry_ctx.request_bodies()
+    assert len(bodies) == 2
+    assert bodies[0] == bodies[1]
+
+
+@then("no retry prompt was attempted before LiteLLM recovery")
+def then_litellm_recovery_did_not_prompt(llm_retry_ctx):
+    """Assert the automatic recovery never consulted runtime input."""
+    assert llm_retry_ctx.input_script is not None
+    assert llm_retry_ctx.input_script.prompts == []
+
+
+@then("the LiteLLM connection-error scenario sent exactly 18 completion requests")
+def then_litellm_connection_error_sent_eighteen_requests(llm_retry_ctx):
+    """Assert no prompt or request occurs before automatic exhaustion."""
+    state = llm_retry_ctx.state()
+    assert state["total_requests"] == MAX_ATTEMPTS, state
+    assert len(state["request_bodies"]) == MAX_ATTEMPTS, state
+    assert all(record["parsed"] for record in state["request_bodies"]), state
+
+
+@then("one exhaustion menu prompt was attempted after LiteLLM connection-error exhaustion")
+def then_litellm_connection_error_prompted_after_exhaustion(llm_retry_ctx):
+    """Assert only the existing bounded exhaustion menu requests input."""
+    assert llm_retry_ctx.input_script is not None
+    assert len(llm_retry_ctx.input_script.prompts) == 1
+    assert "LLM retry attempts exhausted." in llm_retry_ctx.input_script.prompts[0]
+    assert ">>> LLM Retry [yes/no]" not in llm_retry_ctx.input_script.prompts[0]
 
 
 @then("the retry scenario terminates with a bounded exhaustion error")

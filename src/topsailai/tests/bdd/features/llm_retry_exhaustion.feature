@@ -3,6 +3,21 @@ Feature: Interactive recovery after LLM retry exhaustion
   I want a bounded LLM request failure to offer explicit recovery actions
   So that I can retry the same request, return to chat, or exit safely
 
+
+  Scenario: LiteLLM streaming connection error retries automatically and recovers
+    Given an LLM retry scenario whose first SSE response is a LiteLLM connection error and then succeeds
+    When the LiteLLM connection-error retry is exercised
+    Then the retry scenario returns the successful provider response
+    And the LiteLLM recovery sent exactly 2 completion requests
+    And every LiteLLM recovery request body is identical
+    And no retry prompt was attempted before LiteLLM recovery
+
+  Scenario: Persistent LiteLLM streaming connection errors prompt only after automatic exhaustion
+    Given an LLM retry scenario whose bounded request cycle returns only LiteLLM connection errors
+    When the user chooses Exit after LiteLLM connection-error exhaustion
+    Then the retry scenario terminates with a bounded exhaustion error
+    And the LiteLLM connection-error scenario sent exactly 18 completion requests
+    And one exhaustion menu prompt was attempted after LiteLLM connection-error exhaustion
   Scenario: Retry resends the identical LLM request inside one chat call
     Given an LLM retry scenario whose first request cycle returns busy SSE responses and then succeeds
     When the user enters an invalid exhaustion choice and then chooses Retry

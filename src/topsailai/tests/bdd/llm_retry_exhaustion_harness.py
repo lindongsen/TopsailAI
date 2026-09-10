@@ -45,13 +45,18 @@ class ServerOwner:
     thread: threading.Thread
 
     @classmethod
-    def start(cls, responses: tuple[str, ...]) -> "ServerOwner":
+    def start(
+        cls,
+        responses: tuple[str, ...],
+        stream_errors: tuple[str | None, ...] | None = None,
+    ) -> "ServerOwner":
         """Start a request-indexed SSE server on an ephemeral loopback port."""
         config = MockServerConfig(
             port=0,
             request_body_capacity=max(64, len(responses) + 1),
             stream_chunks=(SUCCESS_RESPONSE,),
             stream_response_chunks=tuple((response,) for response in responses),
+            stream_error_messages=stream_errors,
         )
         server = create_server(config)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -185,9 +190,13 @@ class LLMRetryScenario:
         for key, value in values.items():
             self.monkeypatch.setenv(key, value)
 
-    def start_server(self, responses: tuple[str, ...]) -> None:
+    def start_server(
+        self,
+        responses: tuple[str, ...],
+        stream_errors: tuple[str | None, ...] | None = None,
+    ) -> None:
         """Start the scenario server and point the production client at it."""
-        self.server_owner = ServerOwner.start(responses)
+        self.server_owner = ServerOwner.start(responses, stream_errors)
         self.monkeypatch.setenv("OPENAI_API_BASE", self.server_owner.base_url)
         self.monkeypatch.setenv("OPENAI_BASE_URL", self.server_owner.base_url)
         self.model = LLMModel()
@@ -195,6 +204,28 @@ class LLMRetryScenario:
     def script_exhaustion_then_success(self) -> None:
         """Return one busy cycle and then one successful SSE response."""
         self.start_server((BUSY_RESPONSE,) * MAX_ATTEMPTS + (SUCCESS_RESPONSE,))
+
+    def script_litellm_connection_error_then_success(self) -> None:
+        """Return one LiteLLM SSE connection error followed by a completion."""
+        self.start_server(
+            (SUCCESS_RESPONSE, SUCCESS_RESPONSE),
+            (
+                "litellm.APIConnectionError: APIConnectionError: "
+                "OpenAIException - 服务器繁忙，请稍后再试。",
+                None,
+            ),
+        )
+
+    def script_litellm_connection_error_exhaustion(self) -> None:
+        """Return a LiteLLM SSE connection error for one automatic cycle."""
+        message = (
+            "litellm.APIConnectionError: APIConnectionError: "
+            "OpenAIException - 服务器繁忙，请稍后再试。"
+        )
+        self.start_server(
+            (SUCCESS_RESPONSE,) * MAX_ATTEMPTS,
+            (message,) * MAX_ATTEMPTS,
+        )
 
     def script_exhaustion(self) -> None:
         """Return busy content for every request in one bounded cycle."""

@@ -470,6 +470,44 @@ def test_response_adapter_translates_provider_errors(source_error, target_type):
     assert translated.body is getattr(source_error, "body", None)
 
 
+def _make_openai_api_error(message):
+    """Build a base OpenAI API error with response and body diagnostics."""
+    response = httpx.Response(
+        status_code=503,
+        request=httpx.Request("POST", "https://provider.example/v1/chat/completions"),
+    )
+    return openai.APIError(message, response.request, body={"detail": message})
+
+
+def test_response_adapter_translates_litellm_wrapped_connection_error():
+    """A base SDK error with the precise LiteLLM marker becomes retryable."""
+    source_error = _make_openai_api_error(
+        "litellm.APIConnectionError: APIConnectionError: OpenAIException - busy"
+    )
+
+    translated = OpenAIResponseAdapter.translate_error(source_error)
+
+    assert isinstance(translated, LLMProviderConnectionError)
+    assert str(translated) == str(source_error)
+    assert translated.response is getattr(source_error, "response", None)
+    assert translated.body is getattr(source_error, "body", None)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "服务器繁忙，请稍后再试。",
+        "APIConnectionError: incidental provider error",
+        "litellm.APIError: unrelated provider error",
+    ],
+)
+def test_response_adapter_preserves_unrelated_base_openai_api_errors(message):
+    """Only the LiteLLM connection-error marker receives compatibility retrying."""
+    source_error = _make_openai_api_error(message)
+
+    assert OpenAIResponseAdapter.translate_error(source_error) is source_error
+
+
 def test_response_adapter_preserves_unrecognized_errors():
     """Unknown failures retain their original type and identity."""
     source_error = RuntimeError("unknown failure")
@@ -516,3 +554,22 @@ def test_response_adapter_translates_deferred_stream_error():
         next(iterator)
 
     assert captured.value.__cause__ is source_error
+
+
+def test_response_adapter_translates_deferred_litellm_connection_error():
+    """A deferred LiteLLM-wrapped base error retains its retryable cause chain."""
+    source_error = _make_openai_api_error(
+        "litellm.APIConnectionError: APIConnectionError: OpenAIException - busy"
+    )
+
+    def failing_stream():
+        """Raise the provider error only while consuming the response stream."""
+        raise source_error
+        yield  # pragma: no cover - makes this helper an iterator
+
+    with pytest.raises(LLMProviderConnectionError) as captured:
+        next(OpenAIResponseAdapter.iter_response(failing_stream()))
+
+    assert captured.value.__cause__ is source_error
+    assert captured.value.response is getattr(source_error, "response", None)
+    assert captured.value.body is getattr(source_error, "body", None)

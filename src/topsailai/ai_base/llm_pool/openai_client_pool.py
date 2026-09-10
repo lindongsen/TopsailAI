@@ -179,6 +179,14 @@ class OpenAIResponseAdapter:
             f"First byte timeout after {first_byte_timeout}s"
         )
 
+    @staticmethod
+    def _is_litellm_connection_error(error):
+        """Return whether a base SDK API error wraps a LiteLLM connection error."""
+        return (
+            type(error) is openai.APIError
+            and "litellm.APIConnectionError:" in str(error)
+        )
+
     @classmethod
     def translate_error(cls, error):
         """Translate one recognized OpenAI or transport error."""
@@ -189,6 +197,12 @@ class OpenAIResponseAdapter:
                     response=getattr(error, "response", None),
                     body=getattr(error, "body", None),
                 )
+        if cls._is_litellm_connection_error(error):
+            return LLMProviderConnectionError(
+                str(error),
+                response=getattr(error, "response", None),
+                body=getattr(error, "body", None),
+            )
         return error
 
     @classmethod
