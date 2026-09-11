@@ -206,8 +206,15 @@ func printObjectTree(objectName, dir string) error {
 
 // printObjectTreeEntries recursively prints directory entries with tree connectors.
 func printObjectTreeEntries(dir string, entries []os.DirEntry, prefix string) error {
-	for i, entry := range entries {
-		isLast := i == len(entries)-1
+	visible := make([]os.DirEntry, 0, len(entries))
+	for _, entry := range entries {
+		if isMetadataMarkerName(entry.Name()) {
+			continue
+		}
+		visible = append(visible, entry)
+	}
+	for i, entry := range visible {
+		isLast := i == len(visible)-1
 		connector := "├── "
 		if isLast {
 			connector = "└── "
@@ -234,7 +241,7 @@ func printObjectTreeEntries(dir string, entries []os.DirEntry, prefix string) er
 
 // isMetadataMarkerName reports whether name is a reserved metadata marker.
 func isMetadataMarkerName(name string) bool {
-	if name == "metadata.json" || name == ".stat.json" {
+	if name == "metadata.json" || name == ".stat.json" || strings.HasPrefix(name, ".topsailai-data-write-") {
 		return true
 	}
 	for _, suffix := range []string{".tags", ".lock", ".deleted", ".ceased"} {

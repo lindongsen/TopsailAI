@@ -435,6 +435,42 @@ func TestRecoverRestoresDeletedWithFrom(t *testing.T) {
 	}
 }
 
+func TestRecoverRejectsOverlappingArchiveWithoutMutation(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+	obj := createTestObject(t, ctx, mgr, "recover-overlap-cli")
+	if err := Run(ctx, mgr, []string{"delete", string(obj.ID)}); err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(obj.DataRef, obj.Name+".md")
+	before, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(obj.DataRef, "recover.tar")
+	if err := os.WriteFile(archivePath, buildTarArchive(t, map[string][]byte{obj.Name + ".md": []byte("replacement")}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(ctx, mgr, []string{"recover", string(obj.ID), "--from", archivePath})
+	if !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+		t.Fatalf("expected overlap error, got %v", err)
+	}
+	got, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, before) {
+		t.Fatalf("marker changed after rejected recovery: got %q want %q", got, before)
+	}
+	current, err := mgr.GetObject(ctx, obj.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != models.ObjectStatusDeleted {
+		t.Fatalf("expected deleted status, got %s", current.Status)
+	}
+}
+
 func TestRecoverRejectsActiveObject(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
@@ -1195,6 +1231,34 @@ func TestPutArchiveSuccess(t *testing.T) {
 		t.Fatalf("expected extra %q, got %q", extra, got2)
 	}
 }
+func TestPutArchiveRejectsOverlappingSourceWithoutMutation(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+	obj := createTestObject(t, ctx, mgr, "putarch-overlap")
+	markerPath := filepath.Join(obj.DataRef, obj.Name+".md")
+	before, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(obj.DataRef, "input.tar")
+	if err := os.WriteFile(archivePath, buildTarArchive(t, map[string][]byte{obj.Name + ".md": []byte("replacement")}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(ctx, mgr, []string{"put-archive", string(obj.ID), archivePath})
+	if !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+		t.Fatalf("expected overlap error, got %v", err)
+	}
+	got, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, before) {
+		t.Fatalf("marker changed after rejected archive update: got %q want %q", got, before)
+	}
+	if _, err := os.Stat(archivePath); err != nil {
+		t.Fatalf("overlapping archive source was removed: %v", err)
+	}
+}
 
 func TestPutArchiveMissingFile(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
@@ -1740,5 +1804,134 @@ func TestPutObjectMDFile(t *testing.T) {
 	}
 	if !bytes.Equal(got, content) {
 		t.Fatalf("expected marker %q, got %q", content, got)
+	}
+}
+
+func TestPutRejectsSameFileWithoutDataLoss(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+	obj := createTestObject(t, ctx, mgr, "same-file-cli")
+
+	destination := filepath.Join(obj.DataRef, obj.Name+".md")
+	before, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatalf("read destination before put: %v", err)
+	}
+
+	err = Run(ctx, mgr, []string{"put", string(obj.ID), obj.Name + ".md", "--from", destination})
+	if !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+		t.Fatalf("expected ErrSourceDestinationSameFile, got %v", err)
+	}
+	got, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatalf("read destination after put: %v", err)
+	}
+	if !bytes.Equal(got, before) {
+		t.Fatalf("destination changed: got %q, want %q", got, before)
+	}
+}
+
+func TestPrintObjectTreeHidesNestedWriteTemporaryFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range map[string]string{
+		filepath.Join(dir, "obj.md"):                                  "marker",
+		filepath.Join(dir, "nested", "visible.txt"):                   "visible",
+		filepath.Join(dir, "nested", ".topsailai-data-write-partial"): "partial",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = writer
+	printErr := printObjectTree("obj", dir)
+	_ = writer.Close()
+	os.Stdout = old
+	output, readErr := io.ReadAll(reader)
+	_ = reader.Close()
+	if printErr != nil {
+		t.Fatal(printErr)
+	}
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if strings.Contains(string(output), ".topsailai-data-write-") {
+		t.Fatalf("nested temporary file exposed in tree: %s", output)
+	}
+	if !strings.Contains(string(output), "visible.txt") {
+		t.Fatalf("visible nested file missing from tree: %s", output)
+	}
+}
+
+func TestPutArchiveRejectsObjectDirectorySourceWithoutMutation(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+	obj := createTestObject(t, ctx, mgr, "putarch-directory")
+	markerPath := filepath.Join(obj.DataRef, obj.Name+".md")
+	before, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controlPath := filepath.Join(obj.DataRef, "control.txt")
+	if err := os.WriteFile(controlPath, []byte("control"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(ctx, mgr, []string{"put-archive", string(obj.ID), obj.DataRef}); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+		t.Fatalf("expected overlap error, got %v", err)
+	}
+	assertCLIFileBytes(t, markerPath, before)
+	assertCLIFileBytes(t, controlPath, []byte("control"))
+}
+
+func TestPutArchiveRejectsSymlinkToObjectDirectoryWithoutMutation(t *testing.T) {
+	if filepath.Separator != '/' {
+		t.Skip("directory symlinks are not portable on this platform")
+	}
+	mgr, _, ctx := setupManager(t)
+	obj := createTestObject(t, ctx, mgr, "putarch-directory-alias")
+	markerPath := filepath.Join(obj.DataRef, obj.Name+".md")
+	before, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(filepath.Dir(obj.DataRef), "object-directory-alias")
+	if err := os.Symlink(obj.DataRef, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(ctx, mgr, []string{"put-archive", string(obj.ID), alias}); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+		t.Fatalf("expected overlap error, got %v", err)
+	}
+	assertCLIFileBytes(t, markerPath, before)
+}
+
+func TestPutArchiveMissingSourceDoesNotMutateObject(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+	obj := createTestObject(t, ctx, mgr, "putarch-missing-source")
+	markerPath := filepath.Join(obj.DataRef, obj.Name+".md")
+	before, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(filepath.Dir(obj.DataRef), "missing-source.tar")
+	err = Run(ctx, mgr, []string{"put-archive", string(obj.ID), missing})
+	if err == nil {
+		t.Fatal("expected missing source error")
+	}
+	assertCLIFileBytes(t, markerPath, before)
+}
+
+func assertCLIFileBytes(t *testing.T, path string, want []byte) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("%s changed: got %q, want %q", path, got, want)
 	}
 }

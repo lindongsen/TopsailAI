@@ -193,6 +193,44 @@ func commandFailsWith(ctx context.Context, fragment string) error {
 	return nil
 }
 
+// putObjectMarkerFromItself invokes put with an object's own marker as the source.
+func putObjectMarkerFromItself(ctx context.Context, name string) error {
+	state, err := scenarioFrom(ctx)
+	if err != nil {
+		return err
+	}
+	objects, err := listObjects(ctx)
+	if err != nil {
+		return err
+	}
+	for _, object := range objects {
+		if object["id"] != name {
+			continue
+		}
+		dataRef, ok := object["data_ref"].(string)
+		if !ok {
+			return fmt.Errorf("object %q has no data reference", name)
+		}
+		source := filepath.Join(dataRef, name+".md")
+		runCLI(ctx, state, []string{"put", name, name + ".md", "--from", source}, strings.NewReader(""))
+		return nil
+	}
+	return fmt.Errorf("object %q not found", name)
+}
+
+// getObjectMarker reads an object's marker through the public CLI.
+func getObjectMarker(ctx context.Context, name string) error {
+	state, err := scenarioFrom(ctx)
+	if err != nil {
+		return err
+	}
+	runCLI(ctx, state, []string{"get", name, name + ".md"}, strings.NewReader(""))
+	if state.result.code != 0 {
+		return fmt.Errorf("get marker failed: %s", state.result.stderr)
+	}
+	return nil
+}
+
 // stdoutContains verifies a human-readable output fragment.
 func stdoutContains(ctx context.Context, fragment string) error {
 	state, err := scenarioFrom(ctx)
@@ -705,5 +743,59 @@ func putGeneratedArchive(ctx context.Context, name, markerMode string) error {
 		return fmt.Errorf("close generated archive: %w", err)
 	}
 	runCLI(ctx, state, []string{"put-archive", name, archivePath}, strings.NewReader(""))
+	return nil
+}
+
+// putOverlappingArchive invokes an archive command with a source inside the target object.
+func putOverlappingArchive(ctx context.Context, command, name string) error {
+	state, err := scenarioFrom(ctx)
+	if err != nil {
+		return err
+	}
+	runCLI(ctx, state, []string{"list", "--include-deleted", "--format", "json"}, strings.NewReader(""))
+	if state.result.code != 0 {
+		return fmt.Errorf("list including deleted failed: %s", state.result.stderr)
+	}
+	var objects []map[string]any
+	if err := json.Unmarshal(state.result.stdout, &objects); err != nil {
+		return fmt.Errorf("decode list including deleted JSON: %w", err)
+	}
+	var dataRef string
+	for _, object := range objects {
+		if object["id"] == name {
+			dataRef, _ = object["data_ref"].(string)
+			break
+		}
+	}
+	if dataRef == "" {
+		return fmt.Errorf("object %q has no data reference", name)
+	}
+	archivePath := filepath.Join(dataRef, "overlap.tar")
+	archive, err := os.Create(archivePath)
+	if err != nil {
+		return fmt.Errorf("create overlapping archive: %w", err)
+	}
+	tw := tar.NewWriter(archive)
+	content := []byte("overlapping replacement")
+	if err := tw.WriteHeader(&tar.Header{Name: name + ".md", Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
+		_ = archive.Close()
+		return err
+	}
+	if _, err := tw.Write(content); err != nil {
+		_ = archive.Close()
+		return err
+	}
+	if err := tw.Close(); err != nil {
+		_ = archive.Close()
+		return err
+	}
+	if err := archive.Close(); err != nil {
+		return err
+	}
+	args := []string{command, name, archivePath}
+	if command == "recover" {
+		args = []string{"recover", name, "--from", archivePath}
+	}
+	runCLI(ctx, state, args, strings.NewReader(""))
 	return nil
 }

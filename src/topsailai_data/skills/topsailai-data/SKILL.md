@@ -755,3 +755,11 @@ locate, read, and modify objects. Do NOT use shell commands such as `find`,
 `ls`, or direct filesystem access to probe the storage backend, adapter
 directories, or object paths. If the CLI location or data root is unclear,
 read this skill documentation first rather than exploring the filesystem.
+
+
+## Write-source safety
+
+- `put` rejects a source that is the same file as the destination, including symlink and hard-link aliases. Single-file writes use a same-directory temporary file followed by an atomic rename, so failed writes preserve the previous destination.
+- `put-archive` and `recover --from` reject file-backed archive sources located inside or aliased into the target object directory before cleanup or extraction. The object data and lifecycle status remain unchanged after rejection.
+- `.topsailai-data-write-*` is reserved for internal temporary files. These files are excluded from archive output, `show` folder trees, `exists` checks, and move copies.
+- Expired reserved temporary files are cleaned recursively at object cleanup/GC boundaries after 24 hours. Fresh temporary files, unrelated files, and directory symlinks are preserved.

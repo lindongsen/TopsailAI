@@ -96,6 +96,8 @@ func registerSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^I delete object "([^"]+)" (once|twice) times$`, deleteObjectRepeated)
 	ctx.Step(`^the command succeeds$`, commandSucceeds)
 	ctx.Step(`^the command fails$`, commandFails)
+	ctx.Step(`^I put object "([^"]+)" using its own marker as the source$`, putObjectMarkerFromItself)
+	ctx.Step(`^I get object "([^"]+)" marker$`, getObjectMarker)
 	ctx.Step(`^the command fails with "([^"]+)"$`, commandFailsWith)
 	ctx.Step(`^stdout contains "([^"]+)"$`, stdoutContains)
 	ctx.Step(`^stdout does not contain "([^"]+)"$`, stdoutDoesNotContain)
@@ -145,6 +147,12 @@ func registerSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the JSON list contains object "([^"]+)" with data reference matching path classify "([^"]+)"$`, jsonObjectDataRefMatchesPath)
 	ctx.Step(`^I put a generated archive (with marker|without marker) into object "([^"]+)"$`, func(ctx context.Context, markerMode, name string) error {
 		return putGeneratedArchive(ctx, name, markerMode)
+	})
+	ctx.Step(`^I put an overlapping archive into object "([^"]+)"$`, func(ctx context.Context, name string) error {
+		return putOverlappingArchive(ctx, "put-archive", name)
+	})
+	ctx.Step(`^I recover object "([^"]+)" from an overlapping archive$`, func(ctx context.Context, name string) error {
+		return putOverlappingArchive(ctx, "recover", name)
 	})
 	ctx.Step(`^the object "([^"]+)" retains recorded identity and creation metadata$`, recordedPublicMetadataMatches)
 }

@@ -1938,3 +1938,102 @@ func TestStatLifecycleCleanupRemovesStatFiles(t *testing.T) {
 		}
 	})
 }
+
+func TestWriteActualFileRejectsSameFileWithoutMutation(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+	obj := createTestObject(t, mgr, "same-file-manager")
+
+	destination := filepath.Join(obj.DataRef, obj.Name+".md")
+	before, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatalf("read destination before write: %v", err)
+	}
+	source, err := os.Open(destination)
+	if err != nil {
+		t.Fatalf("open source: %v", err)
+	}
+	defer source.Close()
+
+	err = mgr.WriteActualFile(ctx, obj.ID, obj.Name+".md", source)
+	if !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+		t.Fatalf("expected ErrSourceDestinationSameFile, got %v", err)
+	}
+	got, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatalf("read destination after write: %v", err)
+	}
+	if !bytes.Equal(got, before) {
+		t.Fatalf("destination changed: got %q, want %q", got, before)
+	}
+}
+
+func TestUpdateActualDataRejectsArchiveInsideObjectWithoutMutation(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+	obj := createTestObject(t, mgr, "archive-overlap")
+	markerPath := filepath.Join(obj.DataRef, obj.Name+".md")
+	before, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(obj.DataRef, "input.tar")
+	if err := os.WriteFile(archivePath, buildTarArchive(t, map[string][]byte{obj.Name + ".md": []byte("replacement")}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	if err := mgr.UpdateActualData(ctx, obj.ID, source); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+		t.Fatalf("expected overlap error, got %v", err)
+	}
+	after, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("marker changed after rejected archive update")
+	}
+}
+
+func TestRestoreObjectRejectsArchiveInsideDeletedObjectWithoutMutation(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+	obj := createTestObject(t, mgr, "recover-overlap")
+	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(obj.DataRef, obj.Name+".md")
+	before, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(obj.DataRef, "recover.tar")
+	if err := os.WriteFile(archivePath, buildTarArchive(t, map[string][]byte{obj.Name + ".md": []byte("replacement")}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	if err := mgr.RestoreObject(ctx, obj.ID, source); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+		t.Fatalf("expected overlap error, got %v", err)
+	}
+	got, err := mgr.GetObject(ctx, obj.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != models.ObjectStatusDeleted {
+		t.Fatalf("expected deleted status after rejection, got %s", got.Status)
+	}
+	after, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("marker changed after rejected recovery")
+	}
+}

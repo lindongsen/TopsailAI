@@ -712,3 +712,12 @@ Integration tests verify CLI commands against a temporary root directory configu
 ## 18. Summary
 
 `topsailai_data` separates metadata from actual data through adapter interfaces, enabling flexible backend combinations. The local adapter uses a time-based directory layout, mandatory `object.md` files as actual-data carriers, optional tag files, and recursive classify tag inheritance. Object creation requires non-empty markdown content and a description, which may be supplied explicitly or extracted from YAML frontmatter. Object boundaries are detected by the presence of a same-named `.md` file, and scanning stops at those boundaries. The metadata model includes `ID`, `Name`, `Path`, `Description`, `CreatedAt`, `UpdatedAt`, `Status`, `SchemaVersion`, and `Tags`, with `ObjectID` stable across moves. A database metadata adapter can implement the same interface using an `objects` table, an `object_tags` table, and a `classify_tag` relationship table. The design prioritizes extensibility, clear conventions, and testability.
+
+
+## 19. Write-source safety
+
+Single-file `put` rejects a source that is the same file as the destination, including filesystem aliases such as symlinks and hard links. The existing destination is replaced atomically through a temporary file in the destination directory followed by rename; failed writes leave the previous destination unchanged.
+
+`put-archive` and `recover --from` reject file-backed archive sources that overlap the target object directory or any file that the archive write may clear or replace. The rejection occurs before cleanup, extraction, or lifecycle metadata updates, preserving the original object data and status.
+
+The local adapter reserves the `.topsailai-data-write-*` namespace for temporary replacements. Reserved temporary files are excluded from archive reads, folder-tree output, existence checks, and move copies. Expired reserved temporary files are removed recursively at object cleanup/GC boundaries after 24 hours; fresh and unrelated files are preserved, and directory symlinks are not traversed.

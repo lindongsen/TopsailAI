@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	apperrors "github.com/topsailai/topsailai_data/pkg/errors"
 )
@@ -705,5 +706,571 @@ func TestActualDataAdapterMovePreservesMetadataMarkers(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(newRef, name)); err != nil {
 			t.Fatalf("%s not copied: %v", name, err)
 		}
+	}
+}
+
+func TestActualDataAdapterWriteFileRejectsSameFileAliases(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	if err := adapter.Init(ctx); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	ref := filepath.Join(root, "obj")
+	if err := os.MkdirAll(ref, 0o755); err != nil {
+		t.Fatalf("mkdir object: %v", err)
+	}
+	destination := filepath.Join(ref, "obj.md")
+	original := []byte("original marker content\n")
+	if err := os.WriteFile(destination, original, 0o644); err != nil {
+		t.Fatalf("write destination: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		prepareSrc func(t *testing.T) string
+	}{
+		{
+			name: "exact path",
+			prepareSrc: func(t *testing.T) string {
+				return destination
+			},
+		},
+		{
+			name: "symlink alias",
+			prepareSrc: func(t *testing.T) string {
+				alias := filepath.Join(t.TempDir(), "source-link")
+				if err := os.Symlink(destination, alias); err != nil {
+					t.Skipf("symlinks unsupported: %v", err)
+				}
+				return alias
+			},
+		},
+		{
+			name: "hard-link alias",
+			prepareSrc: func(t *testing.T) string {
+				alias := filepath.Join(t.TempDir(), "source-hard-link")
+				if err := os.Link(destination, alias); err != nil {
+					t.Skipf("hard links unsupported: %v", err)
+				}
+				return alias
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sourcePath := tc.prepareSrc(t)
+			source, err := os.Open(sourcePath)
+			if err != nil {
+				t.Fatalf("open source: %v", err)
+			}
+			defer source.Close()
+
+			_, err = adapter.WriteFile(ctx, ref, "obj.md", source)
+			if !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+				t.Fatalf("expected ErrSourceDestinationSameFile, got %v", err)
+			}
+			got, readErr := os.ReadFile(destination)
+			if readErr != nil {
+				t.Fatalf("read destination: %v", readErr)
+			}
+			if !bytes.Equal(got, original) {
+				t.Fatalf("destination changed: got %q, want %q", got, original)
+			}
+		})
+	}
+}
+
+func TestActualDataAdapterWriteFileDistinctSourceSucceeds(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	if err := adapter.Init(ctx); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	ref := filepath.Join(root, "obj")
+	if err := os.MkdirAll(ref, 0o755); err != nil {
+		t.Fatalf("mkdir object: %v", err)
+	}
+	destination := filepath.Join(ref, "obj.md")
+	original := []byte("original\n")
+	replacement := []byte{0x00, 0x01, 0xff, 0xfe}
+	if err := os.WriteFile(destination, original, 0o644); err != nil {
+		t.Fatalf("write destination: %v", err)
+	}
+	sourcePath := filepath.Join(root, "source.bin")
+	if err := os.WriteFile(sourcePath, replacement, 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		t.Fatalf("open source: %v", err)
+	}
+	defer source.Close()
+
+	if _, err := adapter.WriteFile(ctx, ref, "obj.md", source); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	got, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatalf("read destination: %v", err)
+	}
+	if !bytes.Equal(got, replacement) {
+		t.Fatalf("destination content: got %v, want %v", got, replacement)
+	}
+	sourceBytes, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if !bytes.Equal(sourceBytes, replacement) {
+		t.Fatalf("source content changed: got %v, want %v", sourceBytes, replacement)
+	}
+}
+
+type failingReader struct {
+	data []byte
+	read bool
+}
+
+func (r *failingReader) Read(p []byte) (int, error) {
+	if r.read {
+		return 0, errors.New("injected read failure")
+	}
+	r.read = true
+	n := copy(p, r.data)
+	return n, errors.New("injected read failure")
+}
+
+func TestActualDataAdapterWriteFileFailureCleansTemporaryFile(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	ref := filepath.Join(root, "obj")
+	if err := os.MkdirAll(ref, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(ref, "data.txt")
+	original := []byte("original")
+	if err := os.WriteFile(destination, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := adapter.WriteFile(ctx, ref, "data.txt", &failingReader{data: []byte("partial")})
+	if err == nil {
+		t.Fatal("expected injected read failure")
+	}
+	got, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatalf("destination changed: got %q, want %q", got, original)
+	}
+	entries, err := os.ReadDir(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), writeTempPrefix) {
+			t.Fatalf("temporary artifact remains: %s", entry.Name())
+		}
+	}
+}
+
+func TestActualDataAdapterReadArchiveAndExistsHideWriteTemporaryFiles(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	ref := filepath.Join(root, "obj")
+	if err := os.MkdirAll(ref, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ref, "obj.md"), []byte("marker"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tmpPath := filepath.Join(ref, writeTempPrefix+"visible-partial")
+	if err := os.WriteFile(tmpPath, []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	exists, err := adapter.Exists(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("object.md should count as actual data")
+	}
+	reader, err := adapter.ReadArchive(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	tr := tar.NewReader(reader)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(hdr.Name, writeTempPrefix) {
+			t.Fatalf("temporary artifact exposed in archive: %s", hdr.Name)
+		}
+	}
+}
+
+func TestCleanupStaleWriteTempsRemovesOnlyExpiredReservedFiles(t *testing.T) {
+	dir := t.TempDir()
+	stale := filepath.Join(dir, writeTempPrefix+"stale")
+	fresh := filepath.Join(dir, writeTempPrefix+"fresh")
+	unrelated := filepath.Join(dir, "user-file")
+	for _, path := range []string{stale, fresh, unrelated} {
+		if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-writeTempMaxAge - time.Minute)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanupStaleWriteTemps(dir, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale temporary file was not removed: %v", err)
+	}
+	for _, path := range []string{fresh, unrelated} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("unexpected removal of %s: %v", path, err)
+		}
+	}
+}
+
+func TestActualDataAdapterExistsIgnoresOnlyWriteTemporaryFiles(t *testing.T) {
+	ctx := context.Background()
+	adapter := NewActualDataAdapter(t.TempDir())
+	ref := filepath.Join(t.TempDir(), "obj")
+	if err := os.MkdirAll(ref, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{writeTempPrefix + "root", "metadata.json", "obj.tags"} {
+		if err := os.WriteFile(filepath.Join(ref, name), []byte("internal"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exists, err := adapter.Exists(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("metadata and temporary files alone must not count as actual data")
+	}
+}
+
+func TestActualDataAdapterMoveSkipsWriteTemporaryFiles(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	oldRef := filepath.Join(root, "old", "obj")
+	if err := os.MkdirAll(filepath.Join(oldRef, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		filepath.Join(oldRef, "obj.md"),
+		filepath.Join(oldRef, writeTempPrefix+"root"),
+		filepath.Join(oldRef, "nested", writeTempPrefix+"nested"),
+	} {
+		if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	newRef := filepath.Join(root, "new", "obj")
+	if _, err := adapter.Move(ctx, oldRef, newRef); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		filepath.Join(newRef, writeTempPrefix+"root"),
+		filepath.Join(newRef, "nested", writeTempPrefix+"nested"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("temporary artifact was copied: %s", path)
+		}
+	}
+}
+
+func TestCleanupStaleWriteTempsRecursiveRemovesRootAndNestedFiles(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "nested", "deeper")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staleRoot := filepath.Join(root, writeTempPrefix+"root")
+	staleNested := filepath.Join(nested, writeTempPrefix+"nested")
+	freshNested := filepath.Join(nested, writeTempPrefix+"fresh")
+	unrelated := filepath.Join(nested, "keep.txt")
+	for _, path := range []string{staleRoot, staleNested, freshNested, unrelated} {
+		if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-writeTempMaxAge - time.Minute)
+	for _, path := range []string{staleRoot, staleNested} {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cleanupStaleWriteTempsRecursive(root, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{staleRoot, staleNested} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("stale temporary file remains: %s", path)
+		}
+	}
+	for _, path := range []string{freshNested, unrelated} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("unexpected removal of %s: %v", path, err)
+		}
+	}
+}
+
+func TestActualDataAdapterWriteArchiveRejectsOverlappingSource(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	ref := filepath.Join(root, "obj")
+	if err := os.MkdirAll(ref, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(ref, "obj.md")
+	control := filepath.Join(ref, "control.txt")
+	if err := os.WriteFile(marker, []byte("original marker"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(control, []byte("original control"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	archivePath := filepath.Join(ref, "input.tar")
+	var archive bytes.Buffer
+	tw := tar.NewWriter(&archive)
+	content := []byte("replacement")
+	if err := tw.WriteHeader(&tar.Header{Name: "obj.md", Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archivePath, archive.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	beforeArchive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	source, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	if _, err := adapter.WriteArchive(ctx, ref, source); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+		t.Fatalf("expected ErrSourceDestinationSameFile, got %v", err)
+	}
+
+	for path, want := range map[string][]byte{
+		marker:  []byte("original marker"),
+		control: []byte("original control"),
+	} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("%s changed: got %q, want %q", path, got, want)
+		}
+	}
+	afterArchive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(afterArchive, beforeArchive) {
+		t.Fatal("overlapping archive source changed")
+	}
+}
+
+func TestActualDataAdapterWriteArchiveRejectsObjectDirectorySource(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	ref := filepath.Join(root, "obj")
+	if err := os.MkdirAll(ref, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(ref, "obj.md")
+	control := filepath.Join(ref, "control.txt")
+	if err := os.WriteFile(marker, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(control, []byte("control"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	if _, err := adapter.WriteArchive(ctx, ref, source); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+		t.Fatalf("expected overlap error, got %v", err)
+	}
+	assertFileBytes(t, marker, []byte("original"))
+	assertFileBytes(t, control, []byte("control"))
+}
+
+func TestActualDataAdapterWriteArchiveRejectsSymlinkToObjectDirectory(t *testing.T) {
+	if filepath.Separator != '/' {
+		t.Skip("directory symlinks are not portable on this platform")
+	}
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	ref := filepath.Join(root, "obj")
+	if err := os.MkdirAll(ref, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(ref, "obj.md")
+	if err := os.WriteFile(marker, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "object-alias")
+	if err := os.Symlink(ref, alias); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	if _, err := adapter.WriteArchive(ctx, ref, source); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+		t.Fatalf("expected overlap error, got %v", err)
+	}
+	assertFileBytes(t, marker, []byte("original"))
+}
+
+func TestActualDataAdapterWriteArchiveRejectsNonRegularSourceBeforeMutation(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	ref := filepath.Join(root, "obj")
+	if err := os.MkdirAll(ref, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(ref, "obj.md")
+	if err := os.WriteFile(marker, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sourceDir := filepath.Join(root, "source")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(sourceDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	if _, err := adapter.WriteArchive(ctx, ref, source); !errors.Is(err, apperrors.ErrInvalidArgument) {
+		t.Fatalf("expected invalid source error, got %v", err)
+	}
+	assertFileBytes(t, marker, []byte("original"))
+}
+
+func TestActualDataAdapterWriteArchiveAcceptsRegularFileAliases(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	ref := filepath.Join(root, "obj")
+	if err := os.MkdirAll(ref, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(ref, "obj.md")
+	if err := os.WriteFile(marker, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(ref, "input.tar")
+	archive := buildLocalTar(t, map[string][]byte{"obj.md": []byte("replacement")})
+	if err := os.WriteFile(archivePath, archive, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	aliases := []struct {
+		name  string
+		setup func(string) error
+	}{
+		{name: "symlink", setup: func(path string) error { return os.Symlink(archivePath, path) }},
+		{name: "hard link", setup: func(path string) error { return os.Link(archivePath, path) }},
+	}
+	for _, alias := range aliases {
+		t.Run(alias.name, func(t *testing.T) {
+			aliasPath := filepath.Join(root, alias.name+".tar")
+			if err := alias.setup(aliasPath); err != nil {
+				t.Skipf("alias unsupported: %v", err)
+			}
+			source, err := os.Open(aliasPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer source.Close()
+			if _, err := adapter.WriteArchive(ctx, ref, source); !errors.Is(err, apperrors.ErrSourceDestinationSameFile) {
+				t.Fatalf("expected overlap error, got %v", err)
+			}
+			assertFileBytes(t, marker, []byte("original"))
+		})
+	}
+}
+
+func TestActualDataAdapterWriteArchiveCreatesMissingTargetRef(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	ref := filepath.Join(root, "new-object")
+	archive := bytes.NewReader(buildLocalTar(t, map[string][]byte{"new-object.md": []byte("created")}))
+	if _, err := adapter.WriteArchive(ctx, ref, archive); err != nil {
+		t.Fatalf("expected missing target ref to be created, got %v", err)
+	}
+	assertFileBytes(t, filepath.Join(ref, "new-object.md"), []byte("created"))
+}
+
+func buildLocalTar(t *testing.T, files map[string][]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := tar.NewWriter(&buf)
+	for name, data := range files {
+		if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(data)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func assertFileBytes(t *testing.T, path string, want []byte) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("%s changed: got %q, want %q", path, got, want)
 	}
 }

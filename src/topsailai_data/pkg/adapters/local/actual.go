@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/topsailai/topsailai_data/pkg/errors"
 )
@@ -20,6 +21,11 @@ var metadataMarkerNames = map[string]bool{
 	"metadata.json": true,
 	statFileName:    true,
 }
+
+const (
+	writeTempPrefix = ".topsailai-data-write-"
+	writeTempMaxAge = 24 * time.Hour
+)
 
 // metadataMarkerSuffixes lists name suffixes that identify reserved marker
 // files. A name matching any suffix is treated as metadata and excluded from
@@ -100,6 +106,9 @@ func (a *actualDataAdapter) WriteArchive(ctx context.Context, ref string, r io.R
 	if ref == "" {
 		return "", fmt.Errorf("%w: ref is empty", errors.ErrInvalidArgument)
 	}
+	if err := rejectArchiveSourceOverlap(ref, r); err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(ref, 0o755); err != nil {
 		return "", fmt.Errorf("create object directory %q: %w", ref, err)
 	}
@@ -121,6 +130,66 @@ func (a *actualDataAdapter) WriteArchive(ctx context.Context, ref string, r io.R
 		return "", fmt.Errorf("%w: archive must leave regular file %s", errors.ErrMissingMarkdown, markerName)
 	}
 	return ref, nil
+}
+
+// rejectArchiveSourceOverlap rejects file-backed archive sources that are part
+// of the object directory being cleared or replaced.
+func rejectArchiveSourceOverlap(ref string, r io.Reader) error {
+	source, ok := r.(interface {
+		Stat() (os.FileInfo, error)
+		Name() string
+	})
+	if !ok {
+		return nil
+	}
+	sourceInfo, err := source.Stat()
+	if err != nil {
+		return fmt.Errorf("stat archive source: %w", err)
+	}
+	refInfo, refErr := os.Stat(ref)
+	if refErr != nil && !os.IsNotExist(refErr) {
+		return fmt.Errorf("stat object directory %q: %w", ref, refErr)
+	}
+	cleanSource, sourcePathErr := filepath.Abs(filepath.Clean(source.Name()))
+	cleanRef, refPathErr := filepath.Abs(filepath.Clean(ref))
+	if sourcePathErr == nil && refPathErr == nil {
+		rel, relErr := filepath.Rel(cleanRef, cleanSource)
+		if relErr == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))) {
+			return fmt.Errorf("%w: archive source overlaps object data", errors.ErrSourceDestinationSameFile)
+		}
+	}
+	if refErr == nil && os.SameFile(sourceInfo, refInfo) {
+		return fmt.Errorf("%w: archive source overlaps object data", errors.ErrSourceDestinationSameFile)
+	}
+	if !sourceInfo.Mode().IsRegular() {
+		return fmt.Errorf("%w: archive source must be a regular file", errors.ErrInvalidArgument)
+	}
+	if refErr != nil {
+		return nil
+	}
+	err = filepath.WalkDir(ref, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == ref || entry.IsDir() {
+			return nil
+		}
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				return nil
+			}
+			return statErr
+		}
+		if os.SameFile(sourceInfo, info) {
+			return fmt.Errorf("%w: archive source overlaps object data", errors.ErrSourceDestinationSameFile)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // ReadArchive returns a tar archive stream of the object's actual data.
@@ -155,17 +224,57 @@ func (a *actualDataAdapter) WriteFile(ctx context.Context, ref string, filename 
 		return "", err
 	}
 	fullPath := filepath.Join(ref, filename)
+	if source, ok := r.(interface{ Stat() (os.FileInfo, error) }); ok {
+		sourceInfo, err := source.Stat()
+		if err != nil {
+			return "", fmt.Errorf("stat source for %q: %w", fullPath, err)
+		}
+		destinationInfo, err := os.Stat(fullPath)
+		if err == nil && os.SameFile(sourceInfo, destinationInfo) {
+			return "", fmt.Errorf("%w: %q", errors.ErrSourceDestinationSameFile, fullPath)
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("stat destination %q: %w", fullPath, err)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return "", fmt.Errorf("create parent directories for %q: %w", fullPath, err)
 	}
-	f, err := os.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		return "", fmt.Errorf("create file %q: %w", fullPath, err)
+
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(fullPath); err == nil {
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat destination %q: %w", fullPath, err)
 	}
-	defer f.Close()
-	if _, err := io.Copy(f, r); err != nil {
+	if err := cleanupStaleWriteTemps(filepath.Dir(fullPath), time.Now()); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(fullPath), writeTempPrefix)
+	if err != nil {
+		return "", fmt.Errorf("create temporary file for %q: %w", fullPath, err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		_ = tmp.Close()
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(mode); err != nil {
+		return "", fmt.Errorf("set temporary file mode for %q: %w", fullPath, err)
+	}
+	if _, err := io.Copy(tmp, r); err != nil {
 		return "", fmt.Errorf("write file %q: %w", fullPath, err)
 	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("close temporary file for %q: %w", fullPath, err)
+	}
+	if err := os.Rename(tmpPath, fullPath); err != nil {
+		return "", fmt.Errorf("replace file %q: %w", fullPath, err)
+	}
+	cleanup = false
 	return ref, nil
 }
 
@@ -243,6 +352,9 @@ func copyDir(src, dst string) error {
 		return fmt.Errorf("read source directory %q: %w", src, err)
 	}
 	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), writeTempPrefix) {
+			continue
+		}
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
 		info, err := entry.Info()
@@ -336,6 +448,9 @@ func (a *actualDataAdapter) Delete(ctx context.Context, ref string) error {
 // The mandatory object marker file ({folder-name}.md) in the root directory is
 // preserved because the metadata scanner uses it to identify object folders.
 func (a *actualDataAdapter) clearActualData(dir string) error {
+	if err := cleanupStaleWriteTempsRecursive(dir, time.Now()); err != nil {
+		return err
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -359,6 +474,61 @@ func (a *actualDataAdapter) clearActualData(dir string) error {
 	return nil
 }
 
+// cleanupStaleWriteTemps removes only expired temporary files created by this adapter.
+// cleanupStaleWriteTempsRecursive removes expired adapter temporary files
+// throughout an object directory without following symbolic-link directories.
+func cleanupStaleWriteTempsRecursive(root string, now time.Time) error {
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root || entry.IsDir() {
+			return nil
+		}
+		if !strings.HasPrefix(entry.Name(), writeTempPrefix) {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("stat temporary file %q: %w", path, err)
+		}
+		if now.Sub(info.ModTime()) < writeTempMaxAge {
+			return nil
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale temporary file %q: %w", path, err)
+		}
+		return nil
+	})
+}
+
+func cleanupStaleWriteTemps(dir string, now time.Time) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read temporary files in %q: %w", dir, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), writeTempPrefix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("stat temporary file %q: %w", entry.Name(), err)
+		}
+		if now.Sub(info.ModTime()) < writeTempMaxAge {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale temporary file %q: %w", path, err)
+		}
+	}
+	return nil
+}
+
 // Close releases resources held by the adapter. For the local adapter this is
 // a no-op.
 func (a *actualDataAdapter) Close() error {
@@ -367,7 +537,7 @@ func (a *actualDataAdapter) Close() error {
 
 // isMetadataMarker reports whether name is a reserved metadata marker.
 func isMetadataMarker(name string) bool {
-	if metadataMarkerNames[name] {
+	if metadataMarkerNames[name] || strings.HasPrefix(name, writeTempPrefix) {
 		return true
 	}
 	for _, suffix := range metadataMarkerSuffixes {

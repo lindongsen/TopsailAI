@@ -58,6 +58,9 @@ var (
 
 	// ErrMissingDescription is returned when creating an object without a description.
 	ErrMissingDescription = errors.New("description is required")
+
+	// ErrSourceDestinationSameFile is returned when a source and destination identify the same file.
+	ErrSourceDestinationSameFile = errors.New("source and destination are the same file")
 )
 
 // Adapter errors.
