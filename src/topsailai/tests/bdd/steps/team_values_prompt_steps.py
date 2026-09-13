@@ -113,6 +113,18 @@ def when_plugin_precomposed_member_sends(team_values_prompt_ctx):
     team_values_prompt_ctx["scenario"].send_plugin_precomposed_agent()
 
 
+@when("the Member sends one real LLM request with precomposed explicitly false")
+def when_explicit_false_member_sends(team_values_prompt_ctx):
+    """Exercise explicit direct composition despite matching plugin provenance."""
+    team_values_prompt_ctx["scenario"].send_explicit_false_agent()
+
+
+@when("independent prompt segments with the same AI Team heading are sent")
+def when_same_heading_segments_are_sent(team_values_prompt_ctx):
+    """Exercise distinct user prompt segments without content deduplication."""
+    team_values_prompt_ctx["scenario"].send_same_heading_segments_agent()
+
+
 @when("Team Agent and Team Chat each send one real LLM request")
 def when_team_agent_and_chat_send(team_values_prompt_ctx):
     """Exercise canonical Member context through Agent and Chat LLM clients."""
@@ -148,6 +160,38 @@ def then_system_prompt_contains_ai_team_heading_once(team_values_prompt_ctx):
     prompts = team_values_prompt_ctx["scenario"].system_prompts()
     assert len(prompts) == 1
     assert prompts[0].count(AI_TEAM_HEADING) == 1
+
+
+@then(parsers.parse("the captured system prompt contains the AI Team heading exactly {count:d} times"))
+def then_system_prompt_contains_ai_team_heading_count(
+    team_values_prompt_ctx,
+    count: int,
+):
+    """Assert the exact count of a same-named user-controlled heading."""
+    prompts = team_values_prompt_ctx["scenario"].system_prompts()
+    assert len(prompts) == 1
+    headings = [line for line in prompts[0].splitlines() if line.startswith("# ")]
+    assert headings.count(AI_TEAM_HEADING) == count, headings
+
+
+@then("every captured level-one heading is unique")
+def then_every_level_one_heading_is_unique(team_values_prompt_ctx):
+    """Assert framework composition emits no duplicate Markdown H1 headings."""
+    prompts = team_values_prompt_ctx["scenario"].system_prompts()
+    assert prompts
+    for prompt in prompts:
+        headings = [line for line in prompt.splitlines() if line.startswith("# ")]
+        assert headings
+        assert len(headings) == len(set(headings)), headings
+
+
+@then("the captured system prompt contains both same-heading policy markers")
+def then_same_heading_policy_markers_are_preserved(team_values_prompt_ctx):
+    """Assert no independent user-controlled prompt segment was deleted."""
+    prompts = team_values_prompt_ctx["scenario"].system_prompts()
+    assert len(prompts) == 1
+    assert "BDD_BASE_SAME_HEADING_POLICY" in prompts[0]
+    assert "BDD_SHARED_SAME_HEADING_POLICY" in prompts[0]
 
 
 @then("both captured system prompts contain the same shared Team marker once")

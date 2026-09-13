@@ -19,11 +19,11 @@ from topsailai.ai_team import manager, member_agent
 from topsailai.ai_team.role import get_member_prompt
 from topsailai.workspace.llm_shell import get_llm_chat
 
-BASE_MARKER = "BDD_BASE_SYSTEM_MARKER"
+BASE_MARKER = "# BDD Base System\nBDD_BASE_SYSTEM_MARKER"
 AI_TEAM_HEADING = "# AI Team"
 RUNTIME_MARKER = f"{AI_TEAM_HEADING}\nBDD_RUNTIME_TEAM_MARKER"
-TEAM_MARKER = "BDD_SHARED_TEAM_VALUES_MARKER"
-MEMBER_MARKER = "BDD_MEMBER_PRIVATE_MARKER"
+TEAM_MARKER = "# BDD Shared Team Values\nBDD_SHARED_TEAM_VALUES_MARKER"
+MEMBER_MARKER = "# BDD Member Private Values\nBDD_MEMBER_PRIVATE_MARKER"
 USER_MESSAGE = "Verify the Team prompt over the provider boundary."
 OUTPUT_REQUIREMENT = "Directly output the content without any formatting."
 
@@ -153,6 +153,38 @@ class TeamValuesPromptScenario:
         self.monkeypatch.setattr(team_agent, "get_member_name", lambda: "member-a")
         self.monkeypatch.setattr(team_agent, "get_agent_chat", self._get_agent_chat)
         team_agent.main()
+
+    def send_explicit_false_agent(self) -> None:
+        """Override matching plugin provenance and compose Team layers directly."""
+        prompt_file = self.team_path / "explicit-false-system-prompt.md"
+        prompt_file.write_text(BASE_MARKER, encoding="utf-8")
+        self.monkeypatch.setenv("SYSTEM_PROMPT", str(prompt_file))
+        self.monkeypatch.setenv("TOPSAILAI_SYSTEM_PROMPT", str(prompt_file))
+        self.monkeypatch.setenv(
+            "TOPSAILAI_TEAM_PROMPT_CONTENT", "PRECOMPOSED_PROVENANCE_MARKER"
+        )
+        prompt = member_agent.get_system_prompt(
+            "member-a", team_prompt_precomposed=False
+        )
+        self._send_agent_prompt(prompt)
+
+    def send_same_heading_segments_agent(self) -> None:
+        """Send distinct user-controlled segments that share one heading text."""
+        base_prompt = self.team_path / "same-heading-base.md"
+        base_prompt.write_text(
+            f"{AI_TEAM_HEADING}\nBDD_BASE_SAME_HEADING_POLICY",
+            encoding="utf-8",
+        )
+        (self.team_path / "team.values").write_text(
+            f"{AI_TEAM_HEADING}\nBDD_SHARED_SAME_HEADING_POLICY",
+            encoding="utf-8",
+        )
+        self.monkeypatch.setenv("SYSTEM_PROMPT", str(base_prompt))
+        self.monkeypatch.setenv("TOPSAILAI_TEAM_PROMPT", "")
+        prompt = member_agent.get_system_prompt(
+            "member-a", team_prompt_precomposed=False
+        )
+        self._send_agent_prompt(prompt)
 
     def send_agent_and_chat(self) -> None:
         """Drive Team Agent and Team Chat prompt semantics over real HTTP."""
