@@ -448,7 +448,8 @@ class TestMemberAgentFunctions(unittest.TestCase):
 
         from topsailai.ai_team.member_agent import get_system_prompt
         result = get_system_prompt("TestAgent")
-        self.assertIn(member_prompt, result)
+        self.assertLess(result.index("Base"), result.index("YOUR ROLE IS Member"))
+        self.assertIn("---\nYOUR ROLE IS Member\n---", result)
 
     @patch('topsailai.ai_team.member_agent.file_tool')
     @patch('topsailai.ai_team.member_agent.get_member_prompt')

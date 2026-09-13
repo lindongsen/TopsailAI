@@ -13,6 +13,7 @@ from topsailai.utils import (
     file_tool,
 )
 from topsailai.prompt_hub import prompt_tool
+from topsailai.ai_team import prompt as team_prompt
 from topsailai.ai_team.role import (
     get_manager_prompt,
 )
@@ -149,61 +150,55 @@ def build_manager_message(message: str) -> str:
     return message
 
 
-def generate_system_prompt():
-    """
-    Generate the complete system prompt by combining multiple sources.
+def generate_system_prompt(*, team_prompt_precomposed: bool = False) -> str:
+    """Generate the Manager prompt and publish the team-wide plugin prompt.
 
-    Combines:
-    - Team information from get_team_list() and generate_team_prompt()
-    - System prompt from environment variable or file
-    - Team prompt from environment variable or default file
+    The Manager prompt follows the canonical order of base system prompt,
+    runtime team prompt, shared team values, generated inventory, Manager role,
+    and extra Manager prompts. ``team_prompt_precomposed`` is explicit caller
+    provenance for a base prompt that already contains the two team-wide text
+    segments.
 
     Returns:
-        str: The complete system prompt content
-
-    Environment Variables Used:
-        SYSTEM_PROMPT: File path or content for system prompt
-        TOPSAILAI_TEAM_PROMPT: File path for team prompt (defaults to PROMPT_FILE_AI_TEAM)
-        TOPSAILAI_TEAM_PATH: Path to team member directory (used by get_team_list())
+        str: The complete Manager system prompt.
     """
-    # team info
+    team_path = os.getenv("TOPSAILAI_TEAM_PATH")
     team_list = get_team_list()
     team_info = generate_team_prompt(team_list, g_flag_only_agent)
 
-    # system prompt
     env_sys_prompt = os.getenv("SYSTEM_PROMPT")
     _, sys_prompt_content = file_tool.get_file_content_fuzzy(env_sys_prompt)
 
-    # team prompt
     if not os.getenv("TOPSAILAI_TEAM_PROMPT"):
         os.environ["TOPSAILAI_TEAM_PROMPT"] = PROMPT_FILE_AI_TEAM
-    env_team_prompt = os.getenv("TOPSAILAI_TEAM_PROMPT")
-    _, team_prompt_content = file_tool.get_file_content_fuzzy(env_team_prompt)
-    if team_prompt_content:
-        sys_prompt_content += "\n" + team_prompt_content.strip()
+    runtime_team_prompt = team_prompt.resolve_runtime_team_prompt(
+        os.getenv("TOPSAILAI_TEAM_PROMPT")
+    )
+    team_values = team_prompt.load_team_values(team_path)
 
-    team_prompt_content += team_info
+    team_wide_content = team_prompt.compose_team_prompt(
+        team_prompt.TeamPromptSegments(
+            runtime_team_prompt=runtime_team_prompt,
+            team_values=team_values,
+            team_inventory=team_info,
+        )
+    )
+    os.environ["TOPSAILAI_TEAM_PROMPT_CONTENT"] = team_wide_content
 
-    # team info
-    sys_prompt_content += team_info
-
-    # agent will use this
-    os.environ["TOPSAILAI_TEAM_PROMPT_CONTENT"] = team_prompt_content
-
-    # print(team_prompt_content)
-
-    # manager prompt
-    _, manager_prompt_content = file_tool.get_file_content_fuzzy(PROMPT_FILE_AI_TEAM_MANAGER)
-
-    # collaboration prompt
+    _, manager_prompt_content = file_tool.get_file_content_fuzzy(
+        PROMPT_FILE_AI_TEAM_MANAGER
+    )
     collaboration_prompt = prompt_tool.read_prompt("work_mode/sop/collaboration.md")
+    manager_role_prompt = get_manager_prompt() + manager_prompt_content
 
-    # team role info
-    sys_prompt_content += (
-        get_manager_prompt() +
-        manager_prompt_content +
-        "\n---\n" +
-        collaboration_prompt
+    return team_prompt.compose_team_prompt(
+        team_prompt.TeamPromptSegments(
+            base_system_prompt=sys_prompt_content,
+            runtime_team_prompt=runtime_team_prompt,
+            team_values=team_values,
+            team_inventory=team_info,
+            role_prompt=manager_role_prompt,
+            extra_prompts="\n---\n" + collaboration_prompt,
+        ),
+        team_prompt_precomposed=team_prompt_precomposed,
     ) + "\n"
-
-    return sys_prompt_content

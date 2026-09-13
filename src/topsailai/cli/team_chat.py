@@ -23,10 +23,11 @@ import _import_topsailai
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
 
 from topsailai.ai_base.prompt_base import ROLE_USER
-from topsailai.ai_team.role import (
-    get_member_name,
-    get_member_prompt,
+from topsailai.ai_team.member_agent import (
+    get_system_prompt,
+    is_team_prompt_precomposed_launch,
 )
+from topsailai.ai_team.role import get_member_name
 from topsailai.utils import (
     env_tool,
     json_tool,
@@ -95,10 +96,15 @@ def main():
     # resolve whether to prepend the symbol start prefix (default off)
     enable_symbol_start = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER")
 
-    # member prompt
-    member_prompt = get_member_prompt(team_member_name) + """\n# Output Required\nDirectly output the content without any formatting.\n"""
+    # canonical Member prompt plus chat-specific output requirement
+    system_prompt = get_system_prompt(
+        team_member_name,
+        team_prompt_precomposed=is_team_prompt_precomposed_launch(),
+    )
+    output_prompt = "\n# Output Required\nDirectly output the content without any formatting.\n"
     llm_chat = get_llm_chat(
-        more_prompt=member_prompt,
+        system_prompt=system_prompt,
+        more_prompt=output_prompt,
         need_input_message=False,
         need_print_session=env_tool.is_debug_mode(),
         func_formatter_messages=format_messages,

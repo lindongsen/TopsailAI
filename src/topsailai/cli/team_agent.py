@@ -41,6 +41,7 @@ from topsailai.ai_team.role import (
 )
 from topsailai.ai_team.member_agent import (
     get_system_prompt,
+    is_team_prompt_precomposed_launch,
 )
 from topsailai.utils import (
     env_tool,
@@ -111,7 +112,10 @@ def main():
     agent_name = get_member_name()
 
     # system prompt
-    system_prompt = get_system_prompt(agent_name)
+    system_prompt = get_system_prompt(
+        agent_name,
+        team_prompt_precomposed=is_team_prompt_precomposed_launch(),
+    )
 
     # agent chat
     agent_chat = get_agent_chat(

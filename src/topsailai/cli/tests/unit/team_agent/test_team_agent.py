@@ -21,11 +21,14 @@ import team_agent
 
 
 @pytest.fixture(autouse=True)
-def clear_env() -> None:
-    """Ensure the gate variable starts unset for every test."""
-    os.environ.pop("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER", None)
-    yield
-    os.environ.pop("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER", None)
+def clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure prompt and symbol launch state starts unset for every test."""
+    for key in (
+        "TOPSAILAI_NEED_SYMBOL_FOR_ANSWER",
+        "TOPSAILAI_SYSTEM_PROMPT",
+        "TOPSAILAI_TEAM_PROMPT_CONTENT",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
 
 @mock.patch.object(team_agent, "get_member_name", return_value="member-a")
@@ -39,6 +42,11 @@ def test_gate_disabled_when_unset(mock_offset, mock_prompt, mock_name) -> None:
 
     _, kwargs = chat_instance.run.call_args
     assert kwargs["need_symbol_for_answer"] is False
+    mock_prompt.assert_called_once_with(
+        "member-a", team_prompt_precomposed=False
+    )
+    _, chat_kwargs = mock_get_chat.call_args
+    assert chat_kwargs["system_prompt"] == "system-prompt"
 
 
 @mock.patch.object(team_agent, "get_member_name", return_value="member-a")

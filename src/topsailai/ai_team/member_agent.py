@@ -7,13 +7,14 @@
 
 import os
 
+from topsailai.ai_team import prompt as team_prompt
 from topsailai.ai_team.role import (
     get_member_prompt,
 )
 from topsailai.utils import (
-
     file_tool,
 )
+
 
 def extend_system_prompt():
     """
@@ -35,41 +36,69 @@ def extend_system_prompt():
     return
 
 
-def get_system_prompt(agent_name:str) -> str:
-    """
-    Get and extend the system prompt for the agent.
+def is_team_prompt_precomposed_launch() -> bool:
+    """Return whether existing plugin launch state identifies a precomposed prompt."""
+    system_prompt = os.getenv("SYSTEM_PROMPT")
+    return bool(
+        os.getenv("TOPSAILAI_TEAM_PROMPT_CONTENT")
+        and system_prompt
+        and os.getenv("TOPSAILAI_SYSTEM_PROMPT") == system_prompt
+    )
 
-    This function retrieves the system prompt from environment variables or files,
-    then extends it with the team member prompt specific to the given agent.
+
+def get_system_prompt(
+    agent_name: str,
+    *,
+    team_prompt_precomposed: bool | None = None,
+) -> str:
+    """Build the canonical system prompt for a team Member Agent.
+
+    Direct launches append the runtime team prompt and ``team.values`` before
+    the selected Member role and values. An explicit ``team_prompt_precomposed``
+    value takes precedence; when omitted, structured plugin launch state is
+    used to detect whether the base prompt already contains the team-wide
+    layers.
 
     Args:
-        agent_name (str): The name of the team member/agent. Used to retrieve
-                         the appropriate member prompt.
+        agent_name: Name of the selected team Member.
+        team_prompt_precomposed: Explicitly state whether the base prompt
+            already contains the runtime team prompt and shared team values.
+            ``None`` detects the state from structured plugin launch signals.
 
     Returns:
-        str: The complete system prompt content including:
-             - Base system prompt from SYSTEM_PROMPT environment variable
-             - Team member prompt from get_member_prompt()
-             - Extra system prompt files (set by extend_system_prompt())
-
-    Environment Variables Used:
-        SYSTEM_PROMPT: File path or content for base system prompt
-
-    Example:
-        >>> prompt = get_system_prompt("mm-m25")
-        >>> print(prompt[:100])
-        You are a helpful AI assistant...
+        The complete Member system prompt.
     """
-    # system prompt
+    if team_prompt_precomposed is None:
+        team_prompt_precomposed = is_team_prompt_precomposed_launch()
+
     env_sys_prompt = os.getenv("SYSTEM_PROMPT")
     _, sys_prompt_content = file_tool.get_file_content_fuzzy(env_sys_prompt)
 
-    # team role
+    runtime_team_prompt = ""
+    team_values = ""
+    if not team_prompt_precomposed:
+        runtime_team_source = os.getenv("TOPSAILAI_TEAM_PROMPT")
+        if runtime_team_source:
+            runtime_team_prompt = team_prompt.resolve_runtime_team_prompt(
+                runtime_team_source
+            )
+        team_values = team_prompt.load_team_values(
+            os.getenv("TOPSAILAI_TEAM_PATH")
+        )
+
     member_prompt = get_member_prompt(agent_name)
-    if member_prompt not in sys_prompt_content:
-        sys_prompt_content += member_prompt
+    if member_prompt in sys_prompt_content:
+        member_prompt = ""
 
-    # extra system prompt
+    sys_prompt_content = team_prompt.compose_team_prompt(
+        team_prompt.TeamPromptSegments(
+            base_system_prompt=sys_prompt_content,
+            runtime_team_prompt=runtime_team_prompt,
+            team_values=team_values,
+            role_prompt=member_prompt,
+        ),
+        team_prompt_precomposed=team_prompt_precomposed,
+    )
+
     extend_system_prompt()
-
     return sys_prompt_content

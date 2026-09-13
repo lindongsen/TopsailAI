@@ -368,5 +368,110 @@ class TestGenerateSystemPrompt(unittest.TestCase):
         self.assertIn("Team Detail", result)
 
 
+    @patch('topsailai.ai_team.manager.get_team_list')
+    @patch('topsailai.ai_team.manager.generate_team_prompt')
+    @patch('topsailai.ai_team.manager.file_tool.get_file_content_fuzzy')
+    @patch('topsailai.ai_team.manager.prompt_tool.read_prompt')
+    @patch('topsailai.ai_team.manager.get_manager_prompt')
+    @patch('topsailai.ai_team.manager.team_prompt.load_team_values')
+    @patch('topsailai.ai_team.manager.team_prompt.resolve_runtime_team_prompt')
+    def test_generate_system_prompt_composes_shared_values_in_canonical_order(
+        self,
+        mock_runtime_prompt,
+        mock_team_values,
+        mock_get_manager,
+        mock_read_prompt,
+        mock_get_file,
+        mock_gen_prompt,
+        mock_get_list,
+    ):
+        """Test shared values reach Manager and plugin content once and in order."""
+        import os
+        from topsailai.ai_team.manager import generate_system_prompt
+
+        mock_get_list.return_value = [{"member_id": "member", "member_info": "info"}]
+        mock_gen_prompt.return_value = "INVENTORY_MARKER"
+        mock_get_file.side_effect = [
+            (None, "BASE_MARKER"),
+            (None, "MANAGER_EXTRA_MARKER"),
+        ]
+        mock_read_prompt.return_value = "COLLABORATION_MARKER"
+        mock_get_manager.return_value = "MANAGER_ROLE_MARKER"
+        mock_runtime_prompt.return_value = "RUNTIME_TEAM_MARKER"
+        mock_team_values.return_value = "TEAM_VALUES_MARKER"
+
+        with patch.dict(os.environ, {"TOPSAILAI_TEAM_PATH": "/team", "TOPSAILAI_TEAM_PROMPT": "runtime"}):
+            result = generate_system_prompt()
+            plugin_content = os.environ["TOPSAILAI_TEAM_PROMPT_CONTENT"]
+
+        expected_manager_order = [
+            "BASE_MARKER",
+            "RUNTIME_TEAM_MARKER",
+            "TEAM_VALUES_MARKER",
+            "INVENTORY_MARKER",
+            "MANAGER_ROLE_MARKER",
+            "MANAGER_EXTRA_MARKER",
+            "COLLABORATION_MARKER",
+        ]
+        positions = [result.index(marker) for marker in expected_manager_order]
+        self.assertEqual(positions, sorted(positions))
+        self.assertEqual(result.count("TEAM_VALUES_MARKER"), 1)
+        self.assertEqual(
+            plugin_content,
+            "RUNTIME_TEAM_MARKER\nTEAM_VALUES_MARKER\nINVENTORY_MARKER",
+        )
+        self.assertNotIn("MANAGER_ROLE_MARKER", plugin_content)
+        mock_team_values.assert_called_once_with("/team")
+
+    @patch('topsailai.ai_team.manager.get_team_list', return_value=[])
+    @patch('topsailai.ai_team.manager.generate_team_prompt', return_value="INVENTORY")
+    @patch('topsailai.ai_team.manager.file_tool.get_file_content_fuzzy')
+    @patch('topsailai.ai_team.manager.prompt_tool.read_prompt', return_value="")
+    @patch('topsailai.ai_team.manager.get_manager_prompt', return_value="ROLE")
+    @patch('topsailai.ai_team.manager.team_prompt.load_team_values', return_value="")
+    @patch('topsailai.ai_team.manager.team_prompt.resolve_runtime_team_prompt', return_value="RUNTIME")
+    def test_generate_system_prompt_preserves_empty_team_values_behavior(
+        self,
+        _mock_runtime_prompt,
+        _mock_team_values,
+        _mock_get_manager,
+        _mock_read_prompt,
+        mock_get_file,
+        _mock_gen_prompt,
+        _mock_get_list,
+    ):
+        """Test empty shared values add no segment to either Manager output."""
+        import os
+        from topsailai.ai_team.manager import generate_system_prompt
+
+        mock_get_file.side_effect = [(None, "BASE"), (None, "MANAGER")]
+        with patch.dict(os.environ, {"TOPSAILAI_TEAM_PATH": "/team", "TOPSAILAI_TEAM_PROMPT": "runtime"}):
+            result = generate_system_prompt()
+            plugin_content = os.environ["TOPSAILAI_TEAM_PROMPT_CONTENT"]
+
+        self.assertEqual(plugin_content, "RUNTIME\nINVENTORY")
+        self.assertEqual(result, "BASE\nRUNTIME\nINVENTORY\nROLEMANAGER\n---\n")
+
+    @patch('topsailai.ai_team.manager.get_team_list', return_value=[])
+    @patch('topsailai.ai_team.manager.generate_team_prompt', return_value="INVENTORY")
+    @patch('topsailai.ai_team.manager.file_tool.get_file_content_fuzzy', return_value=(None, "BASE"))
+    @patch('topsailai.ai_team.manager.team_prompt.resolve_runtime_team_prompt', return_value="RUNTIME")
+    @patch('topsailai.ai_team.manager.team_prompt.load_team_values', side_effect=PermissionError("denied"))
+    def test_generate_system_prompt_fails_closed_for_unreadable_team_values(
+        self,
+        _mock_team_values,
+        _mock_runtime_prompt,
+        _mock_get_file,
+        _mock_gen_prompt,
+        _mock_get_list,
+    ):
+        """Test unreadable shared values abort Manager composition."""
+        import os
+        from topsailai.ai_team.manager import generate_system_prompt
+
+        with patch.dict(os.environ, {"TOPSAILAI_TEAM_PATH": "/team", "TOPSAILAI_TEAM_PROMPT": "runtime"}):
+            with self.assertRaises(PermissionError):
+                generate_system_prompt()
+
 if __name__ == '__main__':
     unittest.main()

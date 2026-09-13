@@ -20,30 +20,61 @@ import team_chat
 
 
 @pytest.fixture(autouse=True)
-def clear_env(tmp_path: Path) -> None:
-    """Reset relevant variables and point result saving at a temp file."""
-    os.environ.pop("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER", None)
-    os.environ.pop("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER", None)
+def clear_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """Reset prompt state and point result saving at a temporary file."""
+    for key in (
+        "TOPSAILAI_NEED_SYMBOL_FOR_ANSWER",
+        "TOPSAILAI_SYMBOL_STARTSWITH_ANSWER",
+        "TOPSAILAI_SYSTEM_PROMPT",
+        "TOPSAILAI_TEAM_PROMPT_CONTENT",
+    ):
+        monkeypatch.delenv(key, raising=False)
     out_file = tmp_path / "out.txt"
-    os.environ["TOPSAILAI_SAVE_RESULT_TO_FILE"] = str(out_file)
-    yield out_file
-    os.environ.pop("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER", None)
-    os.environ.pop("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER", None)
-    os.environ.pop("TOPSAILAI_SAVE_RESULT_TO_FILE", None)
+    monkeypatch.setenv("TOPSAILAI_SAVE_RESULT_TO_FILE", str(out_file))
+    return out_file
 
 
 def _patch_deps(name: str, answer: str):
-    """Patch team_chat dependencies and return the saved-output reader."""
+    """Patch team_chat dependencies and return the active patches."""
     chat_instance = mock.MagicMock()
     chat_instance.chat.return_value = answer
     patches = [
         mock.patch.object(team_chat, "get_member_name", return_value=name),
-        mock.patch.object(team_chat, "get_member_prompt", return_value="prompt\n"),
+        mock.patch.object(
+            team_chat,
+            "get_system_prompt",
+            return_value="canonical-member-prompt",
+        ),
         mock.patch.object(team_chat, "get_llm_chat", return_value=chat_instance),
     ]
-    for p in patches:
-        p.start()
+    for patcher in patches:
+        patcher.start()
     return patches
+
+
+def test_main_uses_canonical_member_prompt_with_chat_output_requirement(
+    clear_env: Path,
+) -> None:
+    """Pass canonical Member content as the base and chat output text last."""
+    patches = _patch_deps("member-a", "answer")
+    try:
+        team_chat.main()
+        team_chat.get_system_prompt.assert_called_once_with(
+            "member-a", team_prompt_precomposed=False
+        )
+        _, kwargs = team_chat.get_llm_chat.call_args
+    finally:
+        for patcher in patches:
+            patcher.stop()
+
+    assert kwargs["system_prompt"] == "canonical-member-prompt"
+    assert kwargs["more_prompt"] == (
+        "\n# Output Required\n"
+        "Directly output the content without any formatting.\n"
+    )
 
 
 def test_flag_off_no_prefix_even_with_explicit_symbol(clear_env: Path) -> None:

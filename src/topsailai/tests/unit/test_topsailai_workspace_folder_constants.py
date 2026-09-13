@@ -10,9 +10,11 @@ Created: 2026-04-18
 """
 
 import os
+import runpy
 import unittest
 from unittest.mock import patch
 
+from topsailai.workspace import folder_constants as folder_constants_module
 from topsailai.workspace.folder_constants import (
     FOLDER_ROOT,
     FOLDER_WORKSPACE,
@@ -42,11 +44,13 @@ class TestFolderConstantsRoot(unittest.TestCase):
         self.assertTrue(len(FOLDER_ROOT) > 0)
 
     def test_folder_root_value(self):
-        """Verify FOLDER_ROOT resolves from TOPSAILAI_HOME or defaults to ~/.topsailai."""
-        expected = os.environ.get("TOPSAILAI_HOME") or os.path.join(
-            os.environ.get("HOME", ""), ".topsailai"
-        )
-        self.assertEqual(FOLDER_ROOT, expected)
+        """Verify FOLDER_ROOT defaults to ~/.topsailai without TOPSAILAI_HOME."""
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TOPSAILAI_HOME", None)
+            values = runpy.run_path(folder_constants_module.__file__)
+
+        expected = os.path.join(os.environ.get("HOME", ""), ".topsailai")
+        self.assertEqual(values["FOLDER_ROOT"], expected)
 
     def test_topsailai_home_matches_folder_root(self):
         """Verify TOPSAILAI_HOME alias matches FOLDER_ROOT."""
