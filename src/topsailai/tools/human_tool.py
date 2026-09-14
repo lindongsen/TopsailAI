@@ -289,7 +289,7 @@ def ask_decision(
         question: Required. The blocking question presented to the user.
         options: Optional predefined choices, as a list or a JSON-array string; the user may pick an index or matching text, and custom free-text answers are always accepted.
         timeout_seconds: Integer seconds to wait; a value <= 0 waits indefinitely.
-        default: Fallback answer used on timeout/no-input/cancellation and for an empty answer.
+        default: Fallback answer used on timeout/no-input/cancellation.
 
     Returns:
         dict: status (answered|timeout|cancelled|unavailable|invalid_request), answer, option_index, elapsed, asked_at.
@@ -329,31 +329,35 @@ def ask_decision(
     prompt = _build_prompt(question, options, default)
 
     # Try reading input through available channels.
-    raw_answer = None
-    status = "answered"
-    try:
-        if with_timeout:
-            raw_answer = with_timeout(prompt, timeout_seconds)
-        elif plain:
-            raw_answer = _read_with_timeout(plain, timeout_seconds, prompt)
-        else:
-            raw_answer = _read_with_timeout(input, timeout_seconds, prompt)
-    except KeyboardInterrupt:
-        status = "cancelled"
-    except EOFError:
-        status = "cancelled"
-    except TimeoutError:
-        status = "timeout"
+    while True:
+        raw_answer = None
+        status = "answered"
+        try:
+            if with_timeout:
+                raw_answer = with_timeout(prompt, timeout_seconds)
+            elif plain:
+                raw_answer = _read_with_timeout(plain, timeout_seconds, prompt)
+            else:
+                raw_answer = _read_with_timeout(input, timeout_seconds, prompt)
+        except KeyboardInterrupt:
+            status = "cancelled"
+        except EOFError:
+            status = "cancelled"
+        except TimeoutError:
+            status = "timeout"
 
-    if status != "answered":
-        return build_result(status, default, -1)
+        if status != "answered":
+            return build_result(status, default, -1)
 
-    if raw_answer is None:
-        return build_result("timeout", default, -1)
+        if raw_answer is None:
+            return build_result("timeout", default, -1)
 
-    ans_raw = _normalize_answer(str(raw_answer))
-    if ans_raw.lower() in _CANCEL_WORDS:
-        return build_result("cancelled", default, -1)
+        ans_raw = _normalize_answer(str(raw_answer))
+        if not ans_raw:
+            continue
+        if ans_raw.lower() in _CANCEL_WORDS:
+            return build_result("cancelled", default, -1)
+        break
 
     final_answer, opt_idx = _validate_and_resolve(ans_raw, options, default)
 

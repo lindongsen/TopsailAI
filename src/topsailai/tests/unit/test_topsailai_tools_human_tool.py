@@ -233,13 +233,16 @@ class TestAskDecisionAnswered(unittest.TestCase):
         self.assertNotIn('elapsed_ms', result)
 
     @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
-    @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(lambda p, t: '   ', None))
-    def test_blank_answer_without_default_is_answered_empty(self, _mock_resolve, _mock_build):
-        """A blank reply without a default remains an answered empty string."""
-        result = human_tool.ask_decision('q')
+    @patch('topsailai.tools.human_tool._resolve_input_funcs')
+    def test_blank_answer_reprompts_until_non_empty(self, mock_resolve, _mock_build):
+        """A blank reply is ignored and the user is prompted again."""
+        reader = MagicMock(side_effect=['   ', 'next answer'])
+        mock_resolve.return_value = (reader, None)
+        result = human_tool.ask_decision('q', default='fallback')
         self.assertEqual(result['status'], 'answered')
-        self.assertEqual(result['answer'], '')
+        self.assertEqual(result['answer'], 'next answer')
         self.assertEqual(result['option_index'], -1)
+        self.assertEqual(reader.call_count, 2)
 
     @patch('topsailai.tools.human_tool.datetime')
     @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
