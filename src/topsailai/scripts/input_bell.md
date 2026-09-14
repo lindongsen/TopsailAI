@@ -25,6 +25,16 @@ The script loops forever, checking every `TOPSAILAI_INPUT_BELL_INTERVAL_SEC`
 seconds. Stop it with Ctrl+C. To run a single check (useful for testing),
 set `TOPSAILAI_INPUT_BELL_ONCE=true`.
 
+To verify that the bell sound actually plays, run a one-shot sound test:
+
+```text
+python scripts/input_bell.py --test-sound
+```
+
+The sound test plays the bell once and exits: exit code `0` means the sound
+played successfully, `1` means no usable audio output was found. It does not
+query `topsailai workspace`.
+
 ## Environment Variables
 
 Script-owned variables are read from the process environment first, then from

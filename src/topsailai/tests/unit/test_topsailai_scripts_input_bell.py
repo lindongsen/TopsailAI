@@ -1,5 +1,6 @@
 """Unit tests for automatic ffplay output selection in input_bell."""
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import TestCase, mock
@@ -201,3 +202,51 @@ class TestInputBellAudioDetection(TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         return directory.name
+
+class TestInputBellTestSound(TestCase):
+    """Verify the one-shot --test-sound parameter."""
+
+    def setUp(self):
+        """Clear the process-local probe cache between tests."""
+        input_bell._AUTO_SOUND_COMMAND = None
+
+    def tearDown(self):
+        """Leave the module cache empty for unrelated tests."""
+        input_bell._AUTO_SOUND_COMMAND = None
+
+    def test_parse_args_accepts_test_sound_flag(self):
+        """--test-sound parses into a True flag and defaults to False."""
+        self.assertTrue(input_bell._parse_args(["--test-sound"]).test_sound)
+        self.assertFalse(input_bell._parse_args([]).test_sound)
+
+    def test_main_test_sound_returns_zero_when_bell_plays(self):
+        """A successful one-shot sound test exits with code 0."""
+        with mock.patch.object(input_bell, "_ring_bell", return_value=True) as ring:
+            self.assertEqual(input_bell.main(["--test-sound"]), 0)
+
+        ring.assert_called_once_with(None)
+
+    def test_main_test_sound_returns_one_when_bell_fails(self):
+        """A failed one-shot sound test exits with code 1."""
+        with mock.patch.object(input_bell, "_ring_bell", return_value=False) as ring:
+            self.assertEqual(input_bell.main(["--test-sound"]), 1)
+
+        ring.assert_called_once_with(None)
+
+    def test_main_test_sound_bypasses_input_session_check(self):
+        """The sound test never queries `topsailai workspace`."""
+        with mock.patch.object(input_bell, "_ring_bell", return_value=True), mock.patch.object(
+            input_bell, "_has_input_sessions"
+        ) as sessions:
+            self.assertEqual(input_bell.main(["--test-sound"]), 0)
+
+        sessions.assert_not_called()
+
+    def test_main_test_sound_uses_configured_sound_command(self):
+        """The configured sound command is honored during the sound test."""
+        with mock.patch.dict(
+            os.environ, {"TOPSAILAI_INPUT_BELL_SOUND": "ffplay -custom"}
+        ), mock.patch.object(input_bell, "_ring_bell", return_value=True) as ring:
+            self.assertEqual(input_bell.main(["--test-sound"]), 0)
+
+        ring.assert_called_once_with("ffplay -custom")

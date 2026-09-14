@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Periodically check `topsailai workspace` for INPUT sessions and ring a bell."""
 
+import argparse
 import logging
 import os
 import shlex
@@ -262,12 +263,34 @@ def _run_once(
     return True, _ring_bell(sound_cmd)
 
 
-def main() -> int:
-    """Run the periodic INPUT check loop."""
+def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    """Parse command-line arguments for the input bell script."""
+    parser = argparse.ArgumentParser(
+        prog="input_bell.py",
+        description="Periodically check `topsailai workspace` for INPUT sessions and ring a bell.",
+    )
+    parser.add_argument(
+        "--test-sound",
+        action="store_true",
+        help="Play the bell sound once and exit to verify audio output.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Run the periodic INPUT check loop or a one-shot sound test."""
+    args = _parse_args(argv)
+    sound_cmd = os.environ.get(SOUND_CMD_ENV, "").strip() or None
+    if args.test_sound:
+        if _ring_bell(sound_cmd):
+            logger.info("sound test passed: bell played")
+            return 0
+        logger.warning("sound test failed: no usable audio output")
+        return 1
+
     interval = _env_int(INTERVAL_SEC_ENV, DEFAULT_INTERVAL_SEC)
     once = _env_bool(ONCE_ENV, False)
     topsailai_cmd = os.environ.get(TOPSAILAI_CMD_ENV, "").strip() or DEFAULT_TOPSAILAI_CMD
-    sound_cmd = os.environ.get(SOUND_CMD_ENV, "").strip() or None
 
     logger.info(
         "input bell started: interval=%ss once=%s topsailai_cmd=%s",
