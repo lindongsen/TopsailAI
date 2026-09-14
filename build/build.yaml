@@ -19,6 +19,10 @@ topsailai:
     template: 'build/data/template/prerm'
     params:
       lib_home: '/TopsailAI/src'
+  postinst:
+    template: 'build/data/template/postinst'
+    params:
+      lib_home: '/TopsailAI/src'
 
 topsailai-data:
   version: '1.0'

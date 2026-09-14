@@ -1,0 +1,12 @@
+#!/bin/sh
+
+case "$1" in
+    configure)
+        # Keep bundled skills available through the standard user skill location.
+        SKILL_HOME="${HOME:-/root}/skill"
+        mkdir -p "$SKILL_HOME"
+        ln -sfn '${lib_home}/topsailai/skills' "$SKILL_HOME/topsailai-skills"
+    ;;
+esac
+
+exit 0
