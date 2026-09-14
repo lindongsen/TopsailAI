@@ -35,7 +35,7 @@ harmless.
 |---|---|---|
 | `TOPSAILAI_INPUT_BELL_INTERVAL_SEC` | `30` | Polling interval in seconds between checks. Must be a positive integer. |
 | `TOPSAILAI_INPUT_BELL_ONCE` | `false` | When `true`, run a single check and exit; exit code `0` when INPUT sessions were found, `1` otherwise. |
-| `TOPSAILAI_INPUT_BELL_SOUND` | `ffplay -nodisp -autoexit -loglevel quiet -f lavfi -i sine=frequency=880:duration=0.3` | Shell command that plays the bell sound. Override with any command that produces an audible alert. |
+| `TOPSAILAI_INPUT_BELL_SOUND` | automatic ffplay output detection | Optional shell command that plays the bell sound. When set, it is run unchanged; when unset, the script probes active desktop PulseAudio sessions, ffplay's normal output, and available direct ALSA `plughw` playback devices. |
 | `TOPSAILAI_INPUT_BELL_TOPSAILAI_CMD` | `topsailai` | Command used to query the workspace task list. |
 
 ## Behavior
@@ -43,6 +43,10 @@ harmless.
 - Runs `topsailai workspace` and looks for lines containing the `INPUT` status.
 - When at least one INPUT session is found, plays the configured bell sound once
   per check cycle.
+- With no sound override, synthesizes a short 880 Hz tone with `ffplay`, trying
+  active desktop PulseAudio sessions first, normal system routing second, and
+  direct ALSA playback devices discovered from `/proc/asound/pcm` last. A route
+  is accepted only when ffplay exits cleanly and does not report
+  audio-initialization failure; the first accepted route is cached for the
+  process.
 - Playback and query failures are logged as warnings and do not stop the loop.
-- The default sound uses `ffplay` to synthesize a short 880 Hz sine tone, so no
-  audio file or display is required.
