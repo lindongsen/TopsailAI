@@ -10,20 +10,18 @@ programming_language: python
 
 # input_bell
 
-Periodically checks `topsailai workspace` for sessions in the `INPUT` state and
-plays a bell sound whenever at least one INPUT session is present.
-
-## Usage
-
-Run the script directly:
-
-```text
-python scripts/input_bell.py
-```
-
 The script loops forever, checking every `TOPSAILAI_INPUT_BELL_INTERVAL_SEC`
 seconds. Stop it with Ctrl+C. To run a single check (useful for testing),
 set `TOPSAILAI_INPUT_BELL_ONCE=true`.
+
+To set the polling interval from the command line, pass `--interval`:
+
+```text
+python scripts/input_bell.py --interval 10
+```
+
+The `--interval` value overrides `TOPSAILAI_INPUT_BELL_INTERVAL_SEC` and must be
+a positive integer (in seconds).
 
 To verify that the bell sound actually plays, run a one-shot sound test:
 

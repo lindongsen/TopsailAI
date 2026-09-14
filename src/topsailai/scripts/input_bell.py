@@ -263,6 +263,17 @@ def _run_once(
     return True, _ring_bell(sound_cmd)
 
 
+def _positive_int(value: str) -> int:
+    """Parse a positive integer for argparse, rejecting non-positive values."""
+    try:
+        parsed = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid positive integer: {value!r}")
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"interval must be a positive integer, got {parsed}")
+    return parsed
+
+
 def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     """Parse command-line arguments for the input bell script."""
     parser = argparse.ArgumentParser(
@@ -273,6 +284,13 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--test-sound",
         action="store_true",
         help="Play the bell sound once and exit to verify audio output.",
+    )
+    parser.add_argument(
+        "--interval",
+        type=_positive_int,
+        default=None,
+        metavar="SECONDS",
+        help="Polling interval in seconds between checks (overrides %s)." % INTERVAL_SEC_ENV,
     )
     return parser.parse_args(argv)
 
@@ -288,7 +306,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         logger.warning("sound test failed: no usable audio output")
         return 1
 
-    interval = _env_int(INTERVAL_SEC_ENV, DEFAULT_INTERVAL_SEC)
+    interval = (
+        args.interval
+        if args.interval is not None
+        else _env_int(INTERVAL_SEC_ENV, DEFAULT_INTERVAL_SEC)
+    )
     once = _env_bool(ONCE_ENV, False)
     topsailai_cmd = os.environ.get(TOPSAILAI_CMD_ENV, "").strip() or DEFAULT_TOPSAILAI_CMD
 
