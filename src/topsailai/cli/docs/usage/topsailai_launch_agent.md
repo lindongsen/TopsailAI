@@ -121,12 +121,15 @@ The variables below are consumed only by `topsailai_launch_agent`. They are inte
 
 | Variable | Applies to | Accepted format | Default | Example |
 |----------|------------|-----------------|---------|---------|
+| `TOPSAILAI_SESSION_ID` / `SESSION_ID` | launched agent session identity | non-empty string | current local time as `YYYYMMDDHHMMSS` when both are unset or empty | `my-session` |
 | `TOPSAILAI_SCAN_EXCLUDE` | both files and directories | comma-separated names, fnmatch wildcards | unset (filter disabled) | `node_modules,.cache,tmp` |
 | `TOPSAILAI_SCAN_EXCLUDE_DIRS` | directory names only | comma-separated names, fnmatch wildcards | unset (filter disabled) | `vendor,build,dist` |
 | `TOPSAILAI_SCAN_EXCLUDE_FILES` | file names only | comma-separated names, fnmatch wildcards | unset (filter disabled) | `*.log,*.tmp,Makefile` |
 | `TOPSAILAI_SCAN_MAX_TOKENS` | size of the scanned folder tree | integer | `20000` | `5000` |
 | `TOPSAILAI_SCAN_INCLUDE_FILES` | whether the scanned folder tree lists files | boolean-like string (`1`/`true`/`yes`/`on`, `0`/`false`/`no`/`off`) | unset (folders only) | `true` |
 | `TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS` | stale-file cleanup in `{workspace}/.tmp/` on launch | float greater than zero | `1` | `0.5` |
+
+When either session variable is supplied, the launcher uses its value and passes the same value through both variables. When neither is supplied, it creates one before launching the driver.
 
 ### Scan Exclusion Filters
 

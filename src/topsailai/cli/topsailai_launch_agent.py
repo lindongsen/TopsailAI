@@ -1656,6 +1656,16 @@ def _driver_exists(driver):
     return shutil.which(executable) is not None
 
 
+def _ensure_session_id(environ):
+    """Ensure both supported session-id environment variables share one value."""
+    session_id = environ.get("TOPSAILAI_SESSION_ID") or environ.get("SESSION_ID")
+    if not session_id:
+        session_id = time.strftime("%Y%m%d%H%M%S", time.localtime())
+    environ["TOPSAILAI_SESSION_ID"] = session_id
+    environ["SESSION_ID"] = session_id
+    return session_id
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Launch AI Agent Driver based on .topsailai/settings.yaml"
@@ -1886,6 +1896,7 @@ def main():
     merged_env = os.environ.copy()
     merged_env.update(base_env)
     merged_env.update(item_env)
+    session_id = _ensure_session_id(merged_env)
 
     # 3.5 Append context file contents and workspace folder structure to
     # TOPSAILAI_CONTEXT_USER_MESSAGE. When TOPSAILAI_PROJECT_FOLDER is set
@@ -1952,6 +1963,7 @@ def main():
     # 5. Print execution info
     print(f"[TopsailAI-Launcher] Command: {' '.join(cmd)}")
     print(f"[TopsailAI-Launcher] Workspace: {workspace}")
+    print(f"[TopsailAI-Launcher] Session ID: {session_id}")
     print(
         f"[TopsailAI-Launcher] Merged env keys: {sorted(set(list(base_env.keys()) + list(item_env.keys())))}"
     )
