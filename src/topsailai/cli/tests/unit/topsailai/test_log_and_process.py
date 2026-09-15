@@ -7,7 +7,7 @@ import os
 import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 sys.path.insert(
     0,
@@ -141,15 +141,50 @@ class TestSessionPipeDetection(unittest.TestCase):
             self.assertTrue(is_process_holding_file(1234, "/tmp/s1.1234.session.pipe"))
         mock_in_use.assert_called_once_with("/tmp/s1.1234.session.pipe")
 
-    @patch("cli_topsailai.log_files.is_process_holding_file", return_value=True)
-    def test_session_pipe_path_is_derived_from_log_row(self, mock_holding):
+    @patch("cli_topsailai.log_files.is_process_holding_file")
+    def test_session_pipe_path_uses_row_pid_or_session_pid(self, mock_holding):
         file_info = {
-            "path": "/tmp/s1.1234.session.stdout",
+            "path": "/tmp/s1.5678.worker.task.stdout",
             "session_id": "s1",
-            "pid": 1234,
+            "pid": 5678,
+            "session_pid": 1234,
         }
+        mock_holding.side_effect = [False, True]
+
         self.assertTrue(is_session_pipe_open(file_info))
-        mock_holding.assert_called_once_with(1234, "/tmp/s1.1234.session.pipe")
+        self.assertEqual(
+            mock_holding.call_args_list,
+            [
+                call(5678, "/tmp/s1.5678.session.pipe"),
+                call(1234, "/tmp/s1.1234.session.pipe"),
+            ],
+        )
+
+    @patch("cli_topsailai.log_files.is_process_holding_file", return_value=True)
+    def test_session_pipe_path_uses_row_pid_when_task_owns_pipe(self, mock_holding):
+        file_info = {
+            "path": "/tmp/s1.5678.worker.task.stdout",
+            "session_id": "s1",
+            "pid": 5678,
+            "session_pid": 1234,
+        }
+
+        self.assertTrue(is_session_pipe_open(file_info))
+        mock_holding.assert_called_once_with(5678, "/tmp/s1.5678.session.pipe")
+
+    @patch("cli_topsailai.log_files.is_process_holding_file", return_value=False)
+    def test_session_pipe_path_returns_false_when_no_candidate_is_open(
+        self, mock_holding
+    ):
+        file_info = {
+            "path": "/tmp/s1.5678.session.stdout",
+            "session_id": "s1",
+            "pid": 5678,
+            "session_pid": 5678,
+        }
+
+        self.assertFalse(is_session_pipe_open(file_info))
+        mock_holding.assert_called_once_with(5678, "/tmp/s1.5678.session.pipe")
 
 
 class TestResolveLiteralSessionId(unittest.TestCase):

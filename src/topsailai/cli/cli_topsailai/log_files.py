@@ -400,14 +400,24 @@ def is_process_holding_file(pid: int, filepath: str) -> bool:
 
 
 def is_session_pipe_open(file_info: dict) -> bool:
-    """Return whether the session process for a log row holds its named pipe."""
-    pid = file_info.get("session_pid") or file_info.get("pid")
+    """Return whether a discovered process holds an existing session pipe."""
+    row_pid = file_info.get("pid")
+    session_pid = file_info.get("session_pid")
     path = file_info.get("path")
     session_id = file_info.get("session_id")
-    if not pid or not path or not session_id:
+    if not path or not session_id:
         return False
-    pipe_path = _build_pipe_path(os.path.dirname(path), session_id, pid)
-    return is_process_holding_file(pid, pipe_path)
+
+    task_dir = os.path.dirname(path)
+    checked = set()
+    for pid in (row_pid, session_pid):
+        if not pid or pid in checked:
+            continue
+        checked.add(pid)
+        pipe_path = _build_pipe_path(task_dir, session_id, pid)
+        if is_process_holding_file(pid, pipe_path):
+            return True
+    return False
 
 
 def is_file_in_use(filepath: str) -> bool:
