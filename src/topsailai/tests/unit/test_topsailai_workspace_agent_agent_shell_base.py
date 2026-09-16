@@ -910,16 +910,22 @@ class TestCacheHitRate(unittest.TestCase):
         mock_task_tool, mock_lock_tool, mock_env_tool, mock_set_ai_agent,
         mock_get_hooks, mock_input_message
     ):
-        """Cache hit rate is printed with 3 decimal places after the first turn."""
+        """Cache and project environment fields are printed after a turn."""
         mock_get_totals.return_value = (1000, 250)
         mock_input_message.return_value = "continue"
 
         agent_chat = self._make_agent_chat(mock_env_tool, mock_lock_tool, mock_get_hooks)
         agent_chat.ai_agent.run.return_value = "Response"
 
-        agent_chat.run(message="Hello", times=2)
+        with patch.dict(os.environ, {
+            "TOPSAILAI_PROJECT_WORKSPACE": "/workspace/project",
+            "TOPSAILAI_PWD": "/workspace/project/current",
+        }):
+            agent_chat.run(message="Hello", times=2)
 
         printed = "\n".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+        self.assertIn("project_workspace   : /workspace/project", printed)
+        self.assertIn("pwd                 : /workspace/project/current", printed)
         self.assertIn("cache_hit_rate      : 25.000%", printed)
 
     @patch(

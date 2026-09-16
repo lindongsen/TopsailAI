@@ -565,6 +565,8 @@ class AgentChat(AgentChatBase):
                     print(f"[{self.agent_name}] have scheduled tasks [{curr_count}] times")
                     print(f"session_id          : {session_id}")
                     print(f"session_name        : {session_name}")
+                    print(f"project_workspace   : {os.environ.get('TOPSAILAI_PROJECT_WORKSPACE', '')}")
+                    print(f"pwd                 : {os.environ.get('TOPSAILAI_PWD', '')}")
                     print(f"start_time          : {time_tool.parse_time_seconds(start_time)}")
                     print(f"end_time(now)       : {time_tool.parse_time_seconds(end_time)}")
                     print(f"elapsed_time        : {end_time-start_time}")
