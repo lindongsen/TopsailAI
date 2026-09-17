@@ -105,6 +105,40 @@ class TestExecCmd:
             time.sleep(0.01)
         pytest.fail("Timed-out command did not record its child PID")
 
+    def test_exec_cmd_string_prefers_bash_when_available(self):
+        """Test string commands use Bash when it is available."""
+        process = MagicMock(returncode=0)
+        process.communicate.return_value = (b"", b"")
+        with patch("topsailai.utils.cmd_tool.shutil.which", return_value="/usr/bin/bash"), \
+                patch("topsailai.utils.cmd_tool.subprocess.Popen", return_value=process) as popen:
+            exec_cmd("echo hello")
+
+        assert popen.call_args.kwargs["shell"] is True
+        assert popen.call_args.kwargs["executable"] == "/usr/bin/bash"
+
+    def test_exec_cmd_string_preserves_default_when_bash_unavailable(self):
+        """Test string commands retain the platform default without Bash."""
+        process = MagicMock(returncode=0)
+        process.communicate.return_value = (b"", b"")
+        with patch("topsailai.utils.cmd_tool.shutil.which", return_value=None), \
+                patch("topsailai.utils.cmd_tool.subprocess.Popen", return_value=process) as popen:
+            exec_cmd("echo hello")
+
+        assert popen.call_args.kwargs["shell"] is True
+        assert "executable" not in popen.call_args.kwargs
+
+    def test_exec_cmd_list_does_not_select_shell(self):
+        """Test list commands remain direct executions without Bash selection."""
+        process = MagicMock(returncode=0)
+        process.communicate.return_value = (b"", b"")
+        with patch("topsailai.utils.cmd_tool.shutil.which") as which, \
+                patch("topsailai.utils.cmd_tool.subprocess.Popen", return_value=process) as popen:
+            exec_cmd(["echo", "hello"])
+
+        which.assert_not_called()
+        assert popen.call_args.kwargs["shell"] is False
+        assert "executable" not in popen.call_args.kwargs
+
     def test_exec_cmd_string_success(self):
         """Test executing command as string successfully."""
         code, stdout, stderr = exec_cmd("echo 'hello world'")

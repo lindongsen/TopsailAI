@@ -6,6 +6,7 @@
 '''
 
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -91,6 +92,15 @@ def _kill_process_tree(process):
         process.kill()
 
 
+def _set_preferred_shell(cmd, options):
+    """Prefer Bash for string commands while preserving the default fallback."""
+    if not isinstance(cmd, str) or "executable" in options:
+        return
+    bash_path = shutil.which("bash")
+    if bash_path:
+        options["executable"] = bash_path
+
+
 def exec_cmd(
         cmd:str|list,
         no_need_stderr:bool=False,
@@ -136,6 +146,7 @@ def exec_cmd(
             raise ValueError("stdin and input arguments may not both be used.")
         options["stdin"] = subprocess.PIPE
     _set_process_group_options(options)
+    _set_preferred_shell(cmd, options)
     process = subprocess.Popen(
         cmd,
         env=env,
