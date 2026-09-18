@@ -63,17 +63,17 @@ class ToolStat:
         self._call_sequence = 0  # Unique sequence number for each call
         self.consecutive_duplicate_count = 0
         self._execution_duration_count = 0
-        self._execution_duration_sum_ms = 0.0
+        self._execution_duration_sum_sec = 0.0
         self._execution_duration_by_tool = defaultdict(
-            lambda: {"count": 0, "sum_ms": 0.0}
+            lambda: {"count": 0, "sum_sec": 0.0}
         )
 
     @staticmethod
-    def _validate_duration_ms(duration_ms: Any) -> Optional[float]:
+    def _validate_duration_sec(duration_sec: Any) -> Optional[float]:
         """Return a valid finite non-negative duration, otherwise ``None``."""
-        if isinstance(duration_ms, bool) or not isinstance(duration_ms, numbers.Real):
+        if isinstance(duration_sec, bool) or not isinstance(duration_sec, numbers.Real):
             return None
-        duration = float(duration_ms)
+        duration = float(duration_sec)
         if duration < 0 or not math.isfinite(duration):
             return None
         return duration
@@ -101,24 +101,24 @@ class ToolStat:
         """Build duration metrics while the caller holds ``_lock``."""
         if tool_call is None:
             count = self._execution_duration_count
-            duration_sum_ms = self._execution_duration_sum_ms
+            duration_sum_sec = self._execution_duration_sum_sec
         else:
             duration_state = self._execution_duration_by_tool.get(tool_call)
             count = duration_state["count"] if duration_state else 0
-            duration_sum_ms = duration_state["sum_ms"] if duration_state else 0.0
+            duration_sum_sec = duration_state["sum_sec"] if duration_state else 0.0
 
         samples = [
-            call["duration_ms"]
+            call["duration_sec"]
             for call in self._tool_calls
-            if "duration_ms" in call
+            if "duration_sec" in call
             and (tool_call is None or call["tool_call"] == tool_call)
         ]
-        duration_avg_ms = duration_sum_ms / count if count else None
+        duration_avg_sec = duration_sum_sec / count if count else None
         return {
             "execution_duration_count": count,
-            "execution_duration_sum_ms": self._rounded_duration(duration_sum_ms),
-            "execution_duration_avg_ms": self._rounded_duration(duration_avg_ms),
-            "execution_duration_p95_ms": self._rounded_duration(
+            "execution_duration_sum_sec": self._rounded_duration(duration_sum_sec),
+            "execution_duration_avg_sec": self._rounded_duration(duration_avg_sec),
+            "execution_duration_p95_sec": self._rounded_duration(
                 self._duration_p95(samples)
             ),
             "execution_duration_p95_sample_count": len(samples),
@@ -296,7 +296,7 @@ class ToolStat:
         error: Optional[str] = None,
         result: Any = None,
         metadata: Optional[Dict[str, Any]] = None,
-        duration_ms: Optional[float] = None,
+        duration_sec: Optional[float] = None,
     ) -> int:
         """
         Record a tool call invocation.
@@ -307,7 +307,7 @@ class ToolStat:
             error: Error message if the call failed, None otherwise
             result: Result returned by the tool if the call succeeded, None otherwise
             metadata: Optional additional metadata to store with the call
-            duration_ms: Optional measured tool execution duration in milliseconds
+            duration_sec: Optional measured tool execution duration in seconds
 
         Returns:
             The sequence number assigned to this call
@@ -323,14 +323,14 @@ class ToolStat:
                 "sequence": self._call_sequence,
             }
 
-            valid_duration_ms = self._validate_duration_ms(duration_ms)
-            if valid_duration_ms is not None:
-                record["duration_ms"] = valid_duration_ms
+            valid_duration_sec = self._validate_duration_sec(duration_sec)
+            if valid_duration_sec is not None:
+                record["duration_sec"] = valid_duration_sec
                 self._execution_duration_count += 1
-                self._execution_duration_sum_ms += valid_duration_ms
+                self._execution_duration_sum_sec += valid_duration_sec
                 duration_state = self._execution_duration_by_tool[tool_call]
                 duration_state["count"] += 1
-                duration_state["sum_ms"] += valid_duration_ms
+                duration_state["sum_sec"] += valid_duration_sec
 
             if metadata:
                 record["metadata"] = metadata
@@ -517,7 +517,7 @@ class ToolStat:
                 self._call_sequence = 0
                 self.consecutive_duplicate_count = 0
                 self._execution_duration_count = 0
-                self._execution_duration_sum_ms = 0.0
+                self._execution_duration_sum_sec = 0.0
                 self._execution_duration_by_tool.clear()
             else:
                 self._tool_calls = [
@@ -526,7 +526,7 @@ class ToolStat:
                 duration_state = self._execution_duration_by_tool.pop(tool_call, None)
                 if duration_state:
                     self._execution_duration_count -= duration_state["count"]
-                    self._execution_duration_sum_ms -= duration_state["sum_ms"]
+                    self._execution_duration_sum_sec -= duration_state["sum_sec"]
 
     def reset(self):
         """Reset the tracker to initial state (clears all data and resets timing)."""
@@ -536,7 +536,7 @@ class ToolStat:
             self._start_time = datetime.now()
             self.consecutive_duplicate_count = 0
             self._execution_duration_count = 0
-            self._execution_duration_sum_ms = 0.0
+            self._execution_duration_sum_sec = 0.0
             self._execution_duration_by_tool.clear()
 
     def export(self) -> Dict[str, Any]:
@@ -721,7 +721,7 @@ def record_tool_call(
     error: Optional[str] = None,
     result: Any = None,
     metadata: Any = None,
-    duration_ms: Optional[float] = None,
+    duration_sec: Optional[float] = None,
 ) -> int:
     """
     Record a tool call using the agent-bound ToolStat instance.
@@ -734,7 +734,7 @@ def record_tool_call(
         error: Error message if the call failed
         result: Result returned by the tool if the call succeeded
         metadata: Optional additional metadata to store with the call
-        duration_ms: Optional measured tool execution duration in milliseconds
+        duration_sec: Optional measured tool execution duration in seconds
 
     Returns:
         The sequence number assigned to this call
@@ -749,12 +749,12 @@ def record_tool_call(
     stat = get_agent_tool_stat()
     with stat._lock:
         sequence = stat.record(
-            tool_call, tool_args, error, result, metadata, duration_ms
+            tool_call, tool_args, error, result, metadata, duration_sec
         )
-        valid_duration_ms = stat._validate_duration_ms(duration_ms)
+        valid_duration_sec = stat._validate_duration_sec(duration_sec)
         snapshot = (
             stat._duration_snapshot_locked(tool_call)
-            if valid_duration_ms is not None
+            if valid_duration_sec is not None
             else None
         )
 
@@ -767,9 +767,9 @@ def record_tool_call(
                 "[ToolStat] "
                 f"tool={tool_call} "
                 f"count={snapshot['execution_duration_count']} "
-                f"sum_ms={snapshot['execution_duration_sum_ms']} "
-                f"avg_ms={snapshot['execution_duration_avg_ms']} "
-                f"p95_ms={snapshot['execution_duration_p95_ms']}"
+                f"sum_sec={snapshot['execution_duration_sum_sec']} "
+                f"avg_sec={snapshot['execution_duration_avg_sec']} "
+                f"p95_sec={snapshot['execution_duration_p95_sec']}"
             )
         except Exception:
             logger.warning("Failed to print ToolStat duration metrics", exc_info=True)

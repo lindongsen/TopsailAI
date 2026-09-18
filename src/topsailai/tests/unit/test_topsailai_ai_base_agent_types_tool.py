@@ -283,7 +283,7 @@ class TestExecToolFunc(unittest.TestCase):
 
         core_exec_tool_func = inspect.unwrap(exec_tool_func)
         self.assertEqual(core_exec_tool_func(lambda: "ok", {}, "tool"), "ok")
-        self.assertEqual(mock_record.call_args.kwargs["duration_ms"], 125.0)
+        self.assertEqual(mock_record.call_args.kwargs["duration_sec"], 0.125)
 
     @patch("topsailai.ai_base.agent_types.tool.print_tool.print_error")
     @patch("topsailai.ai_base.agent_types.tool._record_llm_response_content_error")
@@ -302,7 +302,7 @@ class TestExecToolFunc(unittest.TestCase):
         core_exec_tool_func = inspect.unwrap(exec_tool_func)
         self.assertEqual(core_exec_tool_func(failing_tool, {}, "tool"), "failed")
         self.assertEqual(mock_record.call_count, 1)
-        self.assertEqual(mock_record.call_args.kwargs["duration_ms"], 250.0)
+        self.assertEqual(mock_record.call_args.kwargs["duration_sec"], 0.25)
 
     @patch("topsailai.ai_base.agent_types.tool.tool_stat.record_tool_call")
     @patch("topsailai.ai_base.agent_types.tool.time.perf_counter", side_effect=[30.0, 30.5])
@@ -319,7 +319,7 @@ class TestExecToolFunc(unittest.TestCase):
         with self.assertRaises(AgentEndProcess):
             core_exec_tool_func(ending_tool, {}, "tool")
         self.assertEqual(mock_record.call_count, 1)
-        self.assertEqual(mock_record.call_args.kwargs["duration_ms"], 500.0)
+        self.assertEqual(mock_record.call_args.kwargs["duration_sec"], 0.5)
 
 
 class TestToolResponseContentErrorStat(unittest.TestCase):

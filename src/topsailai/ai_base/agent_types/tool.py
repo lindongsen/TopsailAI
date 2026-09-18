@@ -169,30 +169,30 @@ def exec_tool_func(tool_func, args, tool_name:str=None):
 
     error = None
     result = None
-    duration_ms = None
+    duration_sec = None
     started_at = time.perf_counter()
     try:
         result = tool_func(**args)
     except (agent_exception.AgentToolCallException) as e:
-        duration_ms = (time.perf_counter() - started_at) * 1000.0
+        duration_sec = time.perf_counter() - started_at
         raise e
     except Exception as e:
-        duration_ms = (time.perf_counter() - started_at) * 1000.0
+        duration_sec = time.perf_counter() - started_at
         error = e
         result = str(e)
         _record_llm_response_content_error()
         print_tool.print_error(e, exception=True)
     else:
-        duration_ms = (time.perf_counter() - started_at) * 1000.0
+        duration_sec = time.perf_counter() - started_at
     finally:
-        if duration_ms is None:
-            duration_ms = (time.perf_counter() - started_at) * 1000.0
+        if duration_sec is None:
+            duration_sec = time.perf_counter() - started_at
         tool_stat.record_tool_call(
             tool_call=tool_name,
             tool_args=args,
             error=error,
             result=result,
-            duration_ms=duration_ms,
+            duration_sec=duration_sec,
         )
 
     if result is None:

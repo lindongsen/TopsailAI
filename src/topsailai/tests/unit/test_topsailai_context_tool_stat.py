@@ -146,60 +146,60 @@ class TestToolStatDurationMetrics(TestCase):
     def test_duration_metrics_by_tool_and_global_summary(self):
         """Aggregate lifetime count/sum/avg and linear-interpolated P95."""
         stat = ToolStat()
-        for duration_ms in [1, 2, 3, 4, 5]:
-            stat.record("tool_a", duration_ms=duration_ms)
-        stat.record("tool_b", duration_ms=10)
+        for duration_sec in [1, 2, 3, 4, 5]:
+            stat.record("tool_a", duration_sec=duration_sec)
+        stat.record("tool_b", duration_sec=10)
 
         tool_metrics = stat.stat["tool_a"]
         self.assertEqual(tool_metrics["execution_duration_count"], 5)
-        self.assertEqual(tool_metrics["execution_duration_sum_ms"], 15.0)
-        self.assertEqual(tool_metrics["execution_duration_avg_ms"], 3.0)
-        self.assertEqual(tool_metrics["execution_duration_p95_ms"], 4.8)
+        self.assertEqual(tool_metrics["execution_duration_sum_sec"], 15.0)
+        self.assertEqual(tool_metrics["execution_duration_avg_sec"], 3.0)
+        self.assertEqual(tool_metrics["execution_duration_p95_sec"], 4.8)
         self.assertEqual(tool_metrics["execution_duration_p95_sample_count"], 5)
 
         summary = stat.export()["summary"]
         self.assertEqual(summary["execution_duration_count"], 6)
-        self.assertEqual(summary["execution_duration_sum_ms"], 25.0)
-        self.assertEqual(summary["execution_duration_avg_ms"], 4.167)
+        self.assertEqual(summary["execution_duration_sum_sec"], 25.0)
+        self.assertEqual(summary["execution_duration_avg_sec"], 4.167)
 
     def test_p95_matches_llm_request_stat_interpolation(self):
         """Use the same interpolation vector as LLMRequestStat."""
         stat = ToolStat()
-        for duration_ms in [1, 2, 3, 4]:
-            stat.record("tool", duration_ms=duration_ms)
+        for duration_sec in [1, 2, 3, 4]:
+            stat.record("tool", duration_sec=duration_sec)
         self.assertEqual(
-            stat.get_duration_stats("tool")["execution_duration_p95_ms"],
+            stat.get_duration_stats("tool")["execution_duration_p95_sec"],
             3.85,
         )
 
     def test_retention_only_bounds_p95_samples(self):
         """Keep lifetime sum/avg while P95 uses retained records only."""
         stat = ToolStat(max_records=3)
-        for duration_ms in [1, 2, 3, 4, 5]:
-            stat.record("tool", duration_ms=duration_ms)
+        for duration_sec in [1, 2, 3, 4, 5]:
+            stat.record("tool", duration_sec=duration_sec)
 
         metrics = stat.get_duration_stats("tool")
         self.assertEqual(metrics["execution_duration_count"], 5)
-        self.assertEqual(metrics["execution_duration_sum_ms"], 15.0)
-        self.assertEqual(metrics["execution_duration_avg_ms"], 3.0)
-        self.assertEqual(metrics["execution_duration_p95_ms"], 4.9)
+        self.assertEqual(metrics["execution_duration_sum_sec"], 15.0)
+        self.assertEqual(metrics["execution_duration_avg_sec"], 3.0)
+        self.assertEqual(metrics["execution_duration_p95_sec"], 4.9)
         self.assertEqual(metrics["execution_duration_p95_sample_count"], 3)
 
     def test_invalid_and_omitted_durations_are_ignored(self):
         """Ignore invalid durations without dropping ordinary call records."""
         stat = ToolStat()
         invalid_values = [None, -1, True, "1", math.nan, math.inf, -math.inf]
-        for duration_ms in invalid_values:
-            stat.record("tool", duration_ms=duration_ms)
+        for duration_sec in invalid_values:
+            stat.record("tool", duration_sec=duration_sec)
 
         self.assertEqual(stat.total_calls, len(invalid_values))
         self.assertEqual(
             stat.get_duration_stats("tool"),
             {
                 "execution_duration_count": 0,
-                "execution_duration_sum_ms": 0.0,
-                "execution_duration_avg_ms": None,
-                "execution_duration_p95_ms": None,
+                "execution_duration_sum_sec": 0.0,
+                "execution_duration_avg_sec": None,
+                "execution_duration_p95_sec": None,
                 "execution_duration_p95_sample_count": 0,
             },
         )
@@ -207,20 +207,20 @@ class TestToolStatDurationMetrics(TestCase):
     def test_clear_and_reset_remove_duration_state(self):
         """Clear selected or all cumulative duration state consistently."""
         stat = ToolStat()
-        stat.record("tool_a", duration_ms=2)
-        stat.record("tool_b", duration_ms=3)
+        stat.record("tool_a", duration_sec=2)
+        stat.record("tool_b", duration_sec=3)
 
         stat.clear("tool_a")
         self.assertEqual(stat.get_duration_stats("tool_a")["execution_duration_count"], 0)
-        self.assertEqual(stat.get_duration_stats()["execution_duration_sum_ms"], 3.0)
+        self.assertEqual(stat.get_duration_stats()["execution_duration_sum_sec"], 3.0)
         stat.reset()
         self.assertEqual(stat.get_duration_stats()["execution_duration_count"], 0)
 
     def test_duration_does_not_change_duplicate_identity(self):
         """Treat calls with different durations as duplicates when content matches."""
         stat = ToolStat()
-        stat.record("tool", {"x": 1}, result="ok", duration_ms=1)
-        stat.record("tool", {"x": 1}, result="ok", duration_ms=2)
+        stat.record("tool", {"x": 1}, result="ok", duration_sec=1)
+        stat.record("tool", {"x": 1}, result="ok", duration_sec=2)
         self.assertTrue(stat.is_last_call_duplicate())
 
 
@@ -485,13 +485,13 @@ class TestToolStatGlobalFunctions(TestCase):
     @patch("topsailai.context.tool_stat.print_tool.print_info")
     def test_record_tool_call_prints_current_tool_duration_metrics(self, mock_print_info):
         """Print one concise aggregate after every measured call."""
-        record_tool_call("test_tool", duration_ms=10)
-        record_tool_call("test_tool", duration_ms=20)
+        record_tool_call("test_tool", duration_sec=10)
+        record_tool_call("test_tool", duration_sec=20)
 
         self.assertEqual(mock_print_info.call_count, 2)
         self.assertEqual(
             mock_print_info.call_args.args[0],
-            "[ToolStat] tool=test_tool count=2 sum_ms=30.0 avg_ms=15.0 p95_ms=19.5",
+            "[ToolStat] tool=test_tool count=2 sum_sec=30.0 avg_sec=15.0 p95_sec=19.5",
         )
 
     @patch.dict(
@@ -501,7 +501,7 @@ class TestToolStatGlobalFunctions(TestCase):
     @patch("topsailai.context.tool_stat.print_tool.print_info")
     def test_record_tool_call_collects_when_printing_disabled(self, mock_print_info):
         """Keep collecting duration metrics without per-call output."""
-        record_tool_call("test_tool", duration_ms=10)
+        record_tool_call("test_tool", duration_sec=10)
         mock_print_info.assert_not_called()
         self.assertEqual(
             get_default_stat().get_duration_stats("test_tool")["execution_duration_count"],
@@ -515,7 +515,7 @@ class TestToolStatGlobalFunctions(TestCase):
     @patch("topsailai.context.tool_stat.print_tool.print_info")
     def test_record_tool_call_does_not_print_when_collection_disabled(self, mock_print_info):
         """Do not fabricate output when duration collection is disabled."""
-        self.assertEqual(record_tool_call("test_tool", duration_ms=10), 0)
+        self.assertEqual(record_tool_call("test_tool", duration_sec=10), 0)
         mock_print_info.assert_not_called()
 
     @patch.dict(
@@ -528,7 +528,7 @@ class TestToolStatGlobalFunctions(TestCase):
     )
     def test_record_tool_call_survives_print_failure(self, _mock_print_info):
         """Keep the recorded result when observability output fails."""
-        self.assertEqual(record_tool_call("test_tool", duration_ms=10), 1)
+        self.assertEqual(record_tool_call("test_tool", duration_sec=10), 1)
         self.assertEqual(get_default_stat().total_calls, 1)
 
 
@@ -660,7 +660,7 @@ class TestToolStatThreadSafety(TestCase):
         def record_durations():
             """Record a fixed number of duration samples."""
             for _ in range(100):
-                stat.record("tool", duration_ms=1.5)
+                stat.record("tool", duration_sec=1.5)
 
         threads = [threading.Thread(target=record_durations) for _ in range(5)]
         for thread in threads:
@@ -670,7 +670,7 @@ class TestToolStatThreadSafety(TestCase):
 
         metrics = stat.get_duration_stats("tool")
         self.assertEqual(metrics["execution_duration_count"], 500)
-        self.assertEqual(metrics["execution_duration_sum_ms"], 750.0)
+        self.assertEqual(metrics["execution_duration_sum_sec"], 750.0)
 
 
 if __name__ == "__main__":

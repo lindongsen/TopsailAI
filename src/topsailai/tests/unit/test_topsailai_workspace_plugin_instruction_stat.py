@@ -49,16 +49,16 @@ class TestShowToolCallStat(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.stat import show_tool_call_stat
 
         stat = ToolStat()
-        stat.record("api_call", duration_ms=12.5)
+        stat.record("api_call", duration_sec=12.5)
         mock_get_ai_agent.return_value = MagicMock(llm_model=MagicMock(tool_stat=stat))
 
         show_tool_call_stat("api_call")
 
         payload = json.loads(mock_print.call_args.args[0])
         self.assertEqual(payload["execution_duration_count"], 1)
-        self.assertEqual(payload["execution_duration_sum_ms"], 12.5)
-        self.assertEqual(payload["execution_duration_avg_ms"], 12.5)
-        self.assertEqual(payload["execution_duration_p95_ms"], 12.5)
+        self.assertEqual(payload["execution_duration_sum_sec"], 12.5)
+        self.assertEqual(payload["execution_duration_avg_sec"], 12.5)
+        self.assertEqual(payload["execution_duration_p95_sec"], 12.5)
         self.assertEqual(payload["execution_duration_p95_sample_count"], 1)
 
     @patch("topsailai.workspace.plugin_instruction.stat.get_ai_agent")
