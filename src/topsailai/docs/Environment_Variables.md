@@ -433,8 +433,8 @@ These variables are for runtime use only and should not be set manually.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TOPSAILAI_ENABLE_TOOL_STAT` | `1` | Enable tool call statistics. `1` = enabled. The task completion frontmatter field `tool_call_count` depends on this setting and is `0` when disabled. |
-| `TOPSAILAI_PRINT_TOOL_STAT` | `1` | When `1`, print/log JSON-exported tool-call statistics at the end of each agent turn. When `0`, tool-call statistics are still printed if debug mode is active. Set to `0` to suppress when not in debug mode. |
+| `TOPSAILAI_ENABLE_TOOL_STAT` | `1` | Enable tool-call records and execution duration metrics. `1` = enabled. The task completion frontmatter field `tool_call_count` depends on this setting and is `0` when disabled. |
+| `TOPSAILAI_PRINT_TOOL_STAT` | `1` | When `1`, print each measured tool's updated duration count, sum, average, and P95 after execution, and print/log JSON-exported tool-call statistics at the end of each agent turn. When `0`, per-call duration collection continues without per-call output; the existing end-of-turn JSON can still print in debug mode. |
 | `TOPSAILAI_MEMORY_REFERENCE_SCAN_ENABLED` | `1` | Scan LLM responses for `@memory[TITLE]` references and record cite statistics. `1` = enabled, `0` = disabled. |
 | `TOPSAILAI_MEMORY_REF_BARE_TITLE_ENABLED` | `1` | Resolve unique `@memory[TITLE]` references without the timestamp prefix or `.md` extension. `1` = enabled, `0` = require canonical titles. |
 | `TOPSAILAI_LLM_SLOW_CHAT_THRESHOLD` | `60` | Threshold in seconds for detecting slow LLM chats. |

@@ -870,7 +870,10 @@ TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_COUNT=100
 # =============================================================================
 # Observation Configuration
 # =============================================================================
+# Collect tool-call records and execution duration metrics.
 TOPSAILAI_ENABLE_TOOL_STAT=1
+# Print each measured tool's updated count/sum/average/P95 metrics and the
+# JSON-exported tool statistics at the end of each agent turn.
 TOPSAILAI_PRINT_TOOL_STAT=1
 
 # Scan LLM responses for @memory[TITLE] references and record cite statistics.

@@ -274,6 +274,54 @@ class TestExecToolFunc(unittest.TestCase):
         self.assertEqual(result, "None")
 
 
+    @patch("topsailai.ai_base.agent_types.tool.tool_stat.record_tool_call")
+    @patch("topsailai.ai_base.agent_types.tool.time.perf_counter", side_effect=[10.0, 10.125])
+    def test_records_success_duration_at_tool_boundary(self, _mock_clock, mock_record):
+        """Measure only the successful tool function execution boundary."""
+        import inspect
+        from topsailai.ai_base.agent_types.tool import exec_tool_func
+
+        core_exec_tool_func = inspect.unwrap(exec_tool_func)
+        self.assertEqual(core_exec_tool_func(lambda: "ok", {}, "tool"), "ok")
+        self.assertEqual(mock_record.call_args.kwargs["duration_ms"], 125.0)
+
+    @patch("topsailai.ai_base.agent_types.tool.print_tool.print_error")
+    @patch("topsailai.ai_base.agent_types.tool._record_llm_response_content_error")
+    @patch("topsailai.ai_base.agent_types.tool.tool_stat.record_tool_call")
+    @patch("topsailai.ai_base.agent_types.tool.time.perf_counter", side_effect=[20.0, 20.25])
+    def test_records_failure_duration_before_error_formatting(
+        self, _mock_clock, mock_record, _mock_error_stat, _mock_print_error
+    ):
+        """Record ordinary failed execution duration exactly once."""
+        import inspect
+        from topsailai.ai_base.agent_types.tool import exec_tool_func
+
+        def failing_tool():
+            raise ValueError("failed")
+
+        core_exec_tool_func = inspect.unwrap(exec_tool_func)
+        self.assertEqual(core_exec_tool_func(failing_tool, {}, "tool"), "failed")
+        self.assertEqual(mock_record.call_count, 1)
+        self.assertEqual(mock_record.call_args.kwargs["duration_ms"], 250.0)
+
+    @patch("topsailai.ai_base.agent_types.tool.tool_stat.record_tool_call")
+    @patch("topsailai.ai_base.agent_types.tool.time.perf_counter", side_effect=[30.0, 30.5])
+    def test_records_propagated_control_flow_duration(self, _mock_clock, mock_record):
+        """Record duration once before propagating AgentToolCallException."""
+        import inspect
+        from topsailai.ai_base.agent_types.exception import AgentEndProcess
+        from topsailai.ai_base.agent_types.tool import exec_tool_func
+
+        def ending_tool():
+            raise AgentEndProcess("done")
+
+        core_exec_tool_func = inspect.unwrap(exec_tool_func)
+        with self.assertRaises(AgentEndProcess):
+            core_exec_tool_func(ending_tool, {}, "tool")
+        self.assertEqual(mock_record.call_count, 1)
+        self.assertEqual(mock_record.call_args.kwargs["duration_ms"], 500.0)
+
+
 class TestToolResponseContentErrorStat(unittest.TestCase):
     """Tool response errors are routed to the current agent only."""
 

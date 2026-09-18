@@ -4,6 +4,7 @@ Author: mm-m25
 Purpose: Test instruction handlers for displaying tool call statistics and errors
 """
 
+import json
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -39,6 +40,26 @@ class TestShowToolCallStat(unittest.TestCase):
 
         mock_print.assert_called_once()
         mock_tool_stat.get_agent_tool_stat.assert_called_once_with(mock_agent)
+
+    @patch("topsailai.workspace.plugin_instruction.stat.get_ai_agent")
+    @patch("builtins.print")
+    def test_show_tool_call_stat_exposes_duration_metrics(self, mock_print, mock_get_ai_agent):
+        """Expose ToolStat execution duration fields through /tool_call JSON."""
+        from topsailai.context.tool_stat import ToolStat
+        from topsailai.workspace.plugin_instruction.stat import show_tool_call_stat
+
+        stat = ToolStat()
+        stat.record("api_call", duration_ms=12.5)
+        mock_get_ai_agent.return_value = MagicMock(llm_model=MagicMock(tool_stat=stat))
+
+        show_tool_call_stat("api_call")
+
+        payload = json.loads(mock_print.call_args.args[0])
+        self.assertEqual(payload["execution_duration_count"], 1)
+        self.assertEqual(payload["execution_duration_sum_ms"], 12.5)
+        self.assertEqual(payload["execution_duration_avg_ms"], 12.5)
+        self.assertEqual(payload["execution_duration_p95_ms"], 12.5)
+        self.assertEqual(payload["execution_duration_p95_sample_count"], 1)
 
     @patch("topsailai.workspace.plugin_instruction.stat.get_ai_agent")
     @patch("topsailai.workspace.plugin_instruction.stat.tool_stat")

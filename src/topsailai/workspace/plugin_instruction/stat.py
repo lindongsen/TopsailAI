@@ -29,7 +29,8 @@ def show_tool_call_stat(tool_name: str = None) -> None:
     Display tool call statistics from the current agent's ToolStat instance.
 
     This function retrieves and prints statistics about tool calls that have been
-    recorded. It can show statistics for all tools or filter by a specific tool name.
+    recorded, including execution duration count, sum, average, and P95 metrics. It
+    can show statistics for all tools or filter by a specific tool name.
 
     Args:
         tool_name (str, optional):

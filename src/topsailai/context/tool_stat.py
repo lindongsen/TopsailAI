@@ -16,6 +16,8 @@
 
 import functools
 import logging
+import math
+import numbers
 
 from typing import Dict, List, Optional, Any, Callable
 from datetime import datetime
@@ -24,7 +26,7 @@ from contextlib import contextmanager
 import threading
 import json
 
-from topsailai.utils import env_tool, thread_local_tool
+from topsailai.utils import env_tool, print_tool, thread_local_tool
 
 
 logger = logging.getLogger(__name__)
@@ -60,6 +62,72 @@ class ToolStat:
         self._start_time = datetime.now()
         self._call_sequence = 0  # Unique sequence number for each call
         self.consecutive_duplicate_count = 0
+        self._execution_duration_count = 0
+        self._execution_duration_sum_ms = 0.0
+        self._execution_duration_by_tool = defaultdict(
+            lambda: {"count": 0, "sum_ms": 0.0}
+        )
+
+    @staticmethod
+    def _validate_duration_ms(duration_ms: Any) -> Optional[float]:
+        """Return a valid finite non-negative duration, otherwise ``None``."""
+        if isinstance(duration_ms, bool) or not isinstance(duration_ms, numbers.Real):
+            return None
+        duration = float(duration_ms)
+        if duration < 0 or not math.isfinite(duration):
+            return None
+        return duration
+
+    @staticmethod
+    def _rounded_duration(value: Optional[float]) -> Optional[float]:
+        """Round a duration for stable human-facing snapshots."""
+        return round(value, 3) if value is not None else None
+
+    @staticmethod
+    def _duration_p95(samples: List[float]) -> Optional[float]:
+        """Return linear-interpolated P95 for the supplied samples."""
+        if not samples:
+            return None
+        sorted_samples = sorted(samples)
+        rank = (len(sorted_samples) - 1) * 0.95
+        lower_index = int(rank)
+        upper_index = min(lower_index + 1, len(sorted_samples) - 1)
+        fraction = rank - lower_index
+        return sorted_samples[lower_index] + (
+            sorted_samples[upper_index] - sorted_samples[lower_index]
+        ) * fraction
+
+    def _duration_snapshot_locked(self, tool_call: Optional[str] = None) -> Dict[str, Any]:
+        """Build duration metrics while the caller holds ``_lock``."""
+        if tool_call is None:
+            count = self._execution_duration_count
+            duration_sum_ms = self._execution_duration_sum_ms
+        else:
+            duration_state = self._execution_duration_by_tool.get(tool_call)
+            count = duration_state["count"] if duration_state else 0
+            duration_sum_ms = duration_state["sum_ms"] if duration_state else 0.0
+
+        samples = [
+            call["duration_ms"]
+            for call in self._tool_calls
+            if "duration_ms" in call
+            and (tool_call is None or call["tool_call"] == tool_call)
+        ]
+        duration_avg_ms = duration_sum_ms / count if count else None
+        return {
+            "execution_duration_count": count,
+            "execution_duration_sum_ms": self._rounded_duration(duration_sum_ms),
+            "execution_duration_avg_ms": self._rounded_duration(duration_avg_ms),
+            "execution_duration_p95_ms": self._rounded_duration(
+                self._duration_p95(samples)
+            ),
+            "execution_duration_p95_sample_count": len(samples),
+        }
+
+    def get_duration_stats(self, tool_call: Optional[str] = None) -> Dict[str, Any]:
+        """Return duration metrics globally or for one tool."""
+        with self._lock:
+            return self._duration_snapshot_locked(tool_call)
 
     @staticmethod
     def _normalize(value: Any) -> str:
@@ -128,7 +196,7 @@ class ToolStat:
             return self._tool_calls.copy()
 
     @property
-    def stat(self) -> Dict[str, Dict[str, int]]:
+    def stat(self) -> Dict[str, Dict[str, Any]]:
         """
         Get aggregated statistics grouped by tool name.
 
@@ -154,6 +222,9 @@ class ToolStat:
                     stats[tool_name]["error_count"] += 1
                 else:
                     stats[tool_name]["success_count"] += 1
+
+            for tool_name, tool_stats in stats.items():
+                tool_stats.update(self._duration_snapshot_locked(tool_name))
 
             return dict(stats)
 
@@ -224,7 +295,8 @@ class ToolStat:
         tool_args: Any = None,
         error: Optional[str] = None,
         result: Any = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        duration_ms: Optional[float] = None,
     ) -> int:
         """
         Record a tool call invocation.
@@ -235,6 +307,7 @@ class ToolStat:
             error: Error message if the call failed, None otherwise
             result: Result returned by the tool if the call succeeded, None otherwise
             metadata: Optional additional metadata to store with the call
+            duration_ms: Optional measured tool execution duration in milliseconds
 
         Returns:
             The sequence number assigned to this call
@@ -249,6 +322,15 @@ class ToolStat:
                 "timestamp": datetime.now().isoformat(),
                 "sequence": self._call_sequence,
             }
+
+            valid_duration_ms = self._validate_duration_ms(duration_ms)
+            if valid_duration_ms is not None:
+                record["duration_ms"] = valid_duration_ms
+                self._execution_duration_count += 1
+                self._execution_duration_sum_ms += valid_duration_ms
+                duration_state = self._execution_duration_by_tool[tool_call]
+                duration_state["count"] += 1
+                duration_state["sum_ms"] += valid_duration_ms
 
             if metadata:
                 record["metadata"] = metadata
@@ -346,7 +428,7 @@ class ToolStat:
             tool_calls = [c for c in self._tool_calls if c["tool_call"] == tool_call]
 
             if not tool_calls:
-                return {
+                empty_stats = {
                     "total_count": 0,
                     "success_count": 0,
                     "error_count": 0,
@@ -354,10 +436,12 @@ class ToolStat:
                     "last_called": None,
                     "last_error": None
                 }
+                empty_stats.update(self._duration_snapshot_locked(tool_call))
+                return empty_stats
 
             error_calls = [c for c in tool_calls if c.get("error")]
 
-            return {
+            tool_stats = {
                 "total_count": len(tool_calls),
                 "success_count": len(tool_calls) - len(error_calls),
                 "error_count": len(error_calls),
@@ -365,6 +449,8 @@ class ToolStat:
                 "last_called": tool_calls[-1]["timestamp"],
                 "last_error": error_calls[-1]["error"] if error_calls else None
             }
+            tool_stats.update(self._duration_snapshot_locked(tool_call))
+            return tool_stats
 
     def get_most_called(self, limit: int = 5) -> List[tuple]:
         """
@@ -430,10 +516,17 @@ class ToolStat:
                 self._tool_calls.clear()
                 self._call_sequence = 0
                 self.consecutive_duplicate_count = 0
+                self._execution_duration_count = 0
+                self._execution_duration_sum_ms = 0.0
+                self._execution_duration_by_tool.clear()
             else:
                 self._tool_calls = [
                     c for c in self._tool_calls if c["tool_call"] != tool_call
                 ]
+                duration_state = self._execution_duration_by_tool.pop(tool_call, None)
+                if duration_state:
+                    self._execution_duration_count -= duration_state["count"]
+                    self._execution_duration_sum_ms -= duration_state["sum_ms"]
 
     def reset(self):
         """Reset the tracker to initial state (clears all data and resets timing)."""
@@ -442,6 +535,10 @@ class ToolStat:
             self._call_sequence = 0
             self._start_time = datetime.now()
             self.consecutive_duplicate_count = 0
+            self._execution_duration_count = 0
+            self._execution_duration_sum_ms = 0.0
+            self._execution_duration_by_tool.clear()
+
     def export(self) -> Dict[str, Any]:
         """
         Export all statistics and records to a dictionary.
@@ -465,7 +562,8 @@ class ToolStat:
                     "total_calls": len(self._tool_calls),
                     "total_errors": self.total_errors,
                     "success_rate": self.success_rate,
-                    "unique_tools": len(set(c["tool_call"] for c in self._tool_calls))
+                    "unique_tools": len(set(c["tool_call"] for c in self._tool_calls)),
+                    **self._duration_snapshot_locked(),
                 },
                 "stats": self.stat,
                 "errors": self.errors,
@@ -623,6 +721,7 @@ def record_tool_call(
     error: Optional[str] = None,
     result: Any = None,
     metadata: Any = None,
+    duration_ms: Optional[float] = None,
 ) -> int:
     """
     Record a tool call using the agent-bound ToolStat instance.
@@ -635,14 +734,46 @@ def record_tool_call(
         error: Error message if the call failed
         result: Result returned by the tool if the call succeeded
         metadata: Optional additional metadata to store with the call
+        duration_ms: Optional measured tool execution duration in milliseconds
 
     Returns:
         The sequence number assigned to this call
     """
-    if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_ENABLE_TOOL_STAT") or \
-        env_tool.is_debug_mode():
-        return get_agent_tool_stat().record(tool_call, tool_args, error, result, metadata)
-    return 0
+    enabled = (
+        env_tool.EnvReaderInstance.check_bool("TOPSAILAI_ENABLE_TOOL_STAT")
+        or env_tool.is_debug_mode()
+    )
+    if not enabled:
+        return 0
+
+    stat = get_agent_tool_stat()
+    with stat._lock:
+        sequence = stat.record(
+            tool_call, tool_args, error, result, metadata, duration_ms
+        )
+        valid_duration_ms = stat._validate_duration_ms(duration_ms)
+        snapshot = (
+            stat._duration_snapshot_locked(tool_call)
+            if valid_duration_ms is not None
+            else None
+        )
+
+    should_print = env_tool.EnvReaderInstance.check_bool(
+        "TOPSAILAI_PRINT_TOOL_STAT", True
+    )
+    if snapshot is not None and should_print:
+        try:
+            print_tool.print_info(
+                "[ToolStat] "
+                f"tool={tool_call} "
+                f"count={snapshot['execution_duration_count']} "
+                f"sum_ms={snapshot['execution_duration_sum_ms']} "
+                f"avg_ms={snapshot['execution_duration_avg_ms']} "
+                f"p95_ms={snapshot['execution_duration_p95_ms']}"
+            )
+        except Exception:
+            logger.warning("Failed to print ToolStat duration metrics", exc_info=True)
+    return sequence
 
 
 def detect_duplicate_tool_call(func: Callable) -> Callable:
