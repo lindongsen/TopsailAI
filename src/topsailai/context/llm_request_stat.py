@@ -209,7 +209,11 @@ class LLMRequestStat:
     def print_request_stat(self, snapshot: Optional[dict] = None) -> None:
         """Print a supplied or current request-statistics snapshot."""
         request_stat_info = snapshot or self.get_request_stat_info()
-        print_info(f"[LLMRequestStat] {request_stat_info}")
+        formatted_stat = " ".join(
+            f"{key}={'null' if value is None else value}"
+            for key, value in request_stat_info.items()
+        )
+        print_info(f"[LLMRequestStat] {formatted_stat}")
 
 
 def record_current_agent_response_content_error() -> None:

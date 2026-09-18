@@ -316,7 +316,7 @@ def test_models_create_independent_request_trackers(monkeypatch):
 
 
 def test_print_request_stat_uses_supplied_snapshot(monkeypatch):
-    """Printing a snapshot should expose request and duration metric names."""
+    """Print a supplied snapshot as ordered k=v fields."""
     print_info = MagicMock()
     monkeypatch.setattr(request_stat_module, "print_info", print_info)
     stat = LLMRequestStat()
@@ -329,10 +329,24 @@ def test_print_request_stat_uses_supplied_snapshot(monkeypatch):
 
     stat.print_request_stat(snapshot)
 
+    print_info.assert_called_once_with(
+        "[LLMRequestStat] total_requests=7 requests_per_minute=3 "
+        "request_duration_avg_sec=2.5 request_duration_p95_sec=4.75"
+    )
+
+
+def test_print_request_stat_renders_none_as_null(monkeypatch):
+    """Render missing duration values as null rather than Python None."""
+    print_info = MagicMock()
+    monkeypatch.setattr(request_stat_module, "print_info", print_info)
+
+    LLMRequestStat(clock=lambda: 0.0).print_request_stat()
+
     output = print_info.call_args.args[0]
-    assert "LLMRequestStat" in output
-    for name, value in snapshot.items():
-        assert f"'{name}': {value}" in output
+    assert output.startswith("[LLMRequestStat] total_requests=0 ")
+    assert "request_duration_avg_sec=null" in output
+    assert output.endswith("request_duration_p95_sec=null")
+    assert "{'" not in output
 
 
 @pytest.mark.parametrize("stream", [False, True])

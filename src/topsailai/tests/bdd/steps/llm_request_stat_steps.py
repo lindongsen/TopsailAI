@@ -88,6 +88,9 @@ def then_llm_request_stat_output_precedes_thinking(llm_request_stat_ctx):
     assert thinking_indexes, outputs
     assert stat_indexes == [index - 1 for index in thinking_indexes], outputs
     for index in stat_indexes:
+        stat_output = outputs[index]
+        assert stat_output.startswith("[LLMRequestStat] total_requests=")
+        assert "{'" not in stat_output
         for field in (
             "total_requests",
             "requests_per_minute",
@@ -100,7 +103,7 @@ def then_llm_request_stat_output_precedes_thinking(llm_request_stat_ctx):
             "request_duration_max_sec",
             "request_duration_p95_sec",
         ):
-            assert field in outputs[index]
+            assert f"{field}=" in stat_output
 
 
 @when("one invalid non-streaming LLM response is received through the real client")

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import threading
 from dataclasses import replace
 from types import MethodType, SimpleNamespace
@@ -130,14 +129,33 @@ class CachedTokensHarness:
         return answer
 
     def emit_snapshot(self, token_stat: TokenStat | None = None) -> dict[str, Any]:
-        """Capture and parse the dictionary emitted by display-only TokenStat output."""
+        """Capture and parse display-only TokenStat k=v output."""
         stat = token_stat or self.model.tokenStat
+        expected_snapshot = stat.get_token_stat_info()
         with patch("topsailai.context.token.print_info") as mock_print:
             stat.print_token_stat()
         message = mock_print.call_args.args[0]
         prefix = "[TokenStat] "
         assert message.startswith(prefix)
-        self.last_snapshot = ast.literal_eval(message[len(prefix):])
+        fields = message[len(prefix):].split()
+        assert len(fields) == len(expected_snapshot)
+        parsed_snapshot = {}
+        for field, (expected_key, expected_value) in zip(
+            fields, expected_snapshot.items()
+        ):
+            key, raw_value = field.split("=", 1)
+            assert key == expected_key
+            if raw_value == "null":
+                value = None
+            elif isinstance(expected_value, int):
+                value = int(raw_value)
+            elif isinstance(expected_value, float):
+                value = float(raw_value)
+            else:
+                value = raw_value
+            parsed_snapshot[key] = value
+        assert parsed_snapshot == expected_snapshot
+        self.last_snapshot = parsed_snapshot
         return self.last_snapshot
 
     def feed_first_byte(self, samples: list[float]) -> None:

@@ -430,9 +430,14 @@ class TokenStat(threading.Thread):
 
     def print_token_stat(self):
         """Print the latest finalized token statistics without mutating them."""
+        token_stat_info = self.get_token_stat_info()
+        formatted_stat = " ".join(
+            f"{key}={'null' if value is None else value}"
+            for key, value in token_stat_info.items()
+        )
         if env_tool.is_need_print():
             print(flush=True)
-        print_info(f"[TokenStat] {self.get_token_stat_info()}")
+        print_info(f"[TokenStat] {formatted_stat}")
         if env_tool.is_need_print():
             print(flush=True)
 

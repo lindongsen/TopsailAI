@@ -532,9 +532,9 @@ class TestTokenStat(unittest.TestCase):
         self.assertIn("first_byte_avg_sec", logged_msg)
         self.assertIn("first_byte_max_sec", logged_msg)
         self.assertIn("first_byte_min_sec", logged_msg)
-        self.assertIn("'first_byte_avg_sec': 0.15", logged_msg)
-        self.assertIn("'first_byte_max_sec': 0.2", logged_msg)
-        self.assertIn("'first_byte_min_sec': 0.1", logged_msg)
+        self.assertIn("first_byte_avg_sec=0.15", logged_msg)
+        self.assertIn("first_byte_max_sec=0.2", logged_msg)
+        self.assertIn("first_byte_min_sec=0.1", logged_msg)
         stat.flag_running = False
 
     def test_output_token_stat_rounds_to_three_decimals(self):
@@ -548,9 +548,9 @@ class TestTokenStat(unittest.TestCase):
              patch('topsailai.context.token.logger') as mock_logger:
             stat.output_token_stat()
         logged_msg = mock_print.call_args[0][0]
-        self.assertIn("'first_byte_avg_sec': 0.117", logged_msg)
-        self.assertIn("'first_byte_max_sec': 0.201", logged_msg)
-        self.assertIn("'first_byte_min_sec': 0.051", logged_msg)
+        self.assertIn("first_byte_avg_sec=0.117", logged_msg)
+        self.assertIn("first_byte_max_sec=0.201", logged_msg)
+        self.assertIn("first_byte_min_sec=0.051", logged_msg)
         stat.flag_running = False
     def test_output_token_stat_accumulates_total_cached_tokens(self):
         """Test output_token_stat accumulates total_cached_tokens from usage."""
@@ -639,20 +639,22 @@ class TestTokenStat(unittest.TestCase):
 
         logged_msg = mock_print.call_args[0][0]
         self.assertIn("total_cached_tokens", logged_msg)
-        self.assertIn("'total_cached_tokens': 123", logged_msg)
+        self.assertIn("total_cached_tokens=123", logged_msg)
         stat.flag_running = False
 
     def test_output_token_stat_first_byte_none_when_empty(self):
-        """Test output_token_stat reports None first-byte metrics when empty."""
+        """Render empty first-byte metrics as ordered k=v fields with null values."""
         stat = TokenStat(self.llm_id, lifetime=0)
 
         with patch('topsailai.context.token.print_info') as mock_print:
             stat.output_token_stat()
 
         logged_msg = mock_print.call_args[0][0]
-        self.assertIn("'first_byte_avg_sec': None", logged_msg)
-        self.assertIn("'first_byte_max_sec': None", logged_msg)
-        self.assertIn("'first_byte_min_sec': None", logged_msg)
+        self.assertTrue(logged_msg.startswith("[TokenStat] current_prompt_tokens="))
+        self.assertIn("first_byte_avg_sec=null", logged_msg)
+        self.assertIn("first_byte_max_sec=null", logged_msg)
+        self.assertTrue(logged_msg.endswith("first_byte_min_sec=null"))
+        self.assertNotIn("{'", logged_msg)
         stat.flag_running = False
 
     def test_output_token_stat_calls_accumulate_session_tokens(self):
