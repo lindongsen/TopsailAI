@@ -45,8 +45,8 @@ class TestGetAIAgent(unittest.TestCase):
         
         # Setup mock agent instance
         self.mock_agent_instance = MagicMock()
-        self.mock_agent_instance.llm_model = MagicMock()
-        self.mock_agent_instance.llm_model.content_senders = []
+        self.mock_agent_instance.runtime.llm_model = MagicMock()
+        self.mock_agent_instance.runtime.llm_model.content_senders = []
         self.mock_agent_instance.flag_dump_messages = False
         self.mock_agent_run.return_value = self.mock_agent_instance
 
@@ -177,7 +177,7 @@ class TestGetAIAgent(unittest.TestCase):
         
         agent = get_ai_agent()
         
-        self.assertIn(self.mock_content_progress.return_value, agent.llm_model.content_senders)
+        self.assertIn(self.mock_content_progress.return_value, agent.runtime.llm_model.content_senders)
 
     def test_get_ai_agent_debug_mode_without_stream(self):
         """Test get_ai_agent does not add ContentProgress without stream."""
@@ -188,7 +188,7 @@ class TestGetAIAgent(unittest.TestCase):
         
         agent = get_ai_agent()
         
-        self.assertEqual(len(agent.llm_model.content_senders), 0)
+        self.assertEqual(len(agent.runtime.llm_model.content_senders), 0)
 
     def test_get_ai_agent_with_custom_agent_type(self):
         """Test get_ai_agent with custom agent type."""
@@ -300,13 +300,13 @@ class TestGetAgentChat(unittest.TestCase):
         
         # Setup mock agent instance
         self.mock_agent_instance = MagicMock()
-        self.mock_agent_instance.llm_model = MagicMock()
-        self.mock_agent_instance.llm_model.content_senders = []
-        self.mock_agent_instance.llm_model.max_tokens = 1000
-        self.mock_agent_instance.llm_model.temperature = 0.5
+        self.mock_agent_instance.runtime.llm_model = MagicMock()
+        self.mock_agent_instance.runtime.llm_model.content_senders = []
+        self.mock_agent_instance.runtime.llm_model.max_tokens = 1000
+        self.mock_agent_instance.runtime.llm_model.temperature = 0.5
         self.mock_agent_instance.flag_dump_messages = False
         self.mock_agent_run.return_value = self.mock_agent_instance
-        
+
         # Setup mock context runtime data
         self.mock_ctx_data_instance = MagicMock()
         self.mock_ctx_data_instance.messages = []
@@ -501,23 +501,23 @@ class TestGetAgentChat(unittest.TestCase):
         """Test get_agent_chat enforces max_tokens minimum of 3000."""
         from topsailai.workspace.agent_shell import get_agent_chat
         
-        self.mock_agent_instance.llm_model.max_tokens = 1000  # Below minimum
+        self.mock_agent_instance.runtime.llm_model.max_tokens = 1000  # Below minimum
         
         agent_chat = get_agent_chat(session_id="test-session")
         
         # Should be increased to 3000
-        self.assertEqual(self.mock_agent_instance.llm_model.max_tokens, 3000)
+        self.assertEqual(self.mock_agent_instance.runtime.llm_model.max_tokens, 3000)
 
     def test_get_agent_chat_temperature_enforcement(self):
         """Test get_agent_chat enforces temperature maximum of 0.97."""
         from topsailai.workspace.agent_shell import get_agent_chat
         
-        self.mock_agent_instance.llm_model.temperature = 1.5  # Above maximum
+        self.mock_agent_instance.runtime.llm_model.temperature = 1.5  # Above maximum
         
         agent_chat = get_agent_chat(session_id="test-session")
         
         # Should be capped at 0.97
-        self.assertEqual(self.mock_agent_instance.llm_model.temperature, 0.97)
+        self.assertEqual(self.mock_agent_instance.runtime.llm_model.temperature, 0.97)
 
     def test_get_agent_chat_with_disabled_tools(self):
         """Test get_agent_chat passes disabled tools to agent."""
@@ -745,10 +745,10 @@ class TestGetAgentChatProjectWorkspaceLock(unittest.TestCase):
 
         # Setup mock agent instance
         self.mock_agent_instance = MagicMock()
-        self.mock_agent_instance.llm_model = MagicMock()
-        self.mock_agent_instance.llm_model.content_senders = []
-        self.mock_agent_instance.llm_model.max_tokens = 1000
-        self.mock_agent_instance.llm_model.temperature = 0.5
+        self.mock_agent_instance.runtime.llm_model = MagicMock()
+        self.mock_agent_instance.runtime.llm_model.content_senders = []
+        self.mock_agent_instance.runtime.llm_model.max_tokens = 1000
+        self.mock_agent_instance.runtime.llm_model.temperature = 0.5
         self.mock_agent_instance.flag_dump_messages = False
         self.mock_agent_run.return_value = self.mock_agent_instance
 

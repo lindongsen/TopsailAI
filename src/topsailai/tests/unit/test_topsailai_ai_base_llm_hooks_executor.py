@@ -63,11 +63,11 @@ class TestGetHooksRuntime(unittest.TestCase):
     def test_with_agent_object(self):
         """Test hook selection when agent object is available"""
         rid_all_thread_vars()
-        
+
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "kimi-v1"
+        mock_agent.runtime.llm_model.model_name = "kimi-v1"
         set_thread_var(KEY_AGENT_OBJECT, mock_agent)
-        
+
         try:
             result = get_hooks_runtime("TOPSAILAI_HOOK_AFTER_LLM_CHAT", "test content")
             self.assertEqual(result, ["topsailai.ai_base.llm_hooks.hook_after_chat.kimi"])

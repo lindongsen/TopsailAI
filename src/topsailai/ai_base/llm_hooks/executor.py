@@ -18,7 +18,7 @@ def get_hooks_runtime(key:str, content) -> list[str]:
     if agent is None:
         model_name = env_tool.EnvReaderInstance.get("OPENAI_MODEL") or env_tool.EnvReaderInstance.get("AI_MODEL")
     else:
-        model_name = agent.llm_model.model_name
+        model_name = agent.runtime.llm_model.model_name
 
     if not model_name:
         return []

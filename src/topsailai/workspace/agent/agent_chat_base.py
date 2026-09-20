@@ -499,6 +499,6 @@ class AgentChatBase(object):
         self.heavy_task.reset_count()
 
         if model_name:
-            self.ai_agent.llm_model.model_name = model_name
+            self.ai_agent.runtime.llm_model.model_name = model_name
 
         return

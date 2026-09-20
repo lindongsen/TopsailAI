@@ -578,5 +578,27 @@ class TestAgentChatBaseHookForAnswer(unittest.TestCase):
         mock_open.return_value.__enter__.return_value.write.assert_called_once_with(answer)
 
 
+class TestAgentChatBaseReset(unittest.TestCase):
+    """Test cases for AgentChatBase reset behavior."""
+
+    def test_reset_updates_runtime_llm_model(self):
+        """Reset should update the model exposed by the agent runtime."""
+        from topsailai.workspace.agent.agent_chat_base import AgentChatBase
+
+        agent_chat = AgentChatBase.__new__(AgentChatBase)
+        agent_chat.first_message = "old task"
+        agent_chat.heavy_task = MagicMock()
+        agent_chat.ai_agent = MagicMock()
+
+        agent_chat.reset("new task", "new-model")
+
+        self.assertEqual(agent_chat.first_message, "new task")
+        self.assertEqual(
+            agent_chat.ai_agent.runtime.llm_model.model_name,
+            "new-model",
+        )
+        agent_chat.heavy_task.reset_count.assert_called_once_with()
+
+
 if __name__ == "__main__":
     unittest.main()

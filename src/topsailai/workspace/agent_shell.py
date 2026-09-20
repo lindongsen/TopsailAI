@@ -125,7 +125,7 @@ def get_ai_agent(
 
     if env_tool.is_need_print():
         if env_tool.EnvReaderInstance.check_bool("LLM_RESPONSE_STREAM"):
-            agent.llm_model.content_senders.append(ContentProgress())
+            agent.runtime.llm_model.content_senders.append(ContentProgress())
 
     # set flags
     if to_dump_messages:
@@ -258,7 +258,7 @@ def _get_agent_chat_impl(
         ai_agent.agent_name = agent_name
 
     # llm model
-    llm_model = ai_agent.llm_model
+    llm_model = ai_agent.runtime.llm_model
     llm_model.max_tokens = max(3000, llm_model.max_tokens)
     llm_model.temperature = min(0.97, llm_model.temperature)
 
