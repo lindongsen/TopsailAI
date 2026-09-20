@@ -447,7 +447,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         )
         self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
 
-        self.ai_agent.llm_model.tokenStat.add_msgs(
+        self.ai_agent.runtime.token_stat.add_msgs(
             self.ai_agent.messages,
             reset_cached_tokens=False,
         )

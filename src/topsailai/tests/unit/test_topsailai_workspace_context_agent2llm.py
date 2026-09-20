@@ -28,7 +28,7 @@ class TestContextRuntimeAgent2LLM(unittest.TestCase):
         class TestableAgent2LLM(ContextRuntimeAgent2LLM):
             def __init__(self):
                 self._ai_agent = MagicMock()
-                self._ai_agent.llm_model.tokenStat.current_tokens = 0
+                self._ai_agent.runtime.token_stat.current_tokens = 0
                 self._messages = []
                 self._session_id = "test-session-123"
                 self._first_position = 0
@@ -220,7 +220,7 @@ class TestIsNeedSummarizeForProcessing(TestContextRuntimeAgent2LLM):
     def test_token_threshold_disabled_returns_false(self):
         """Test that token check is disabled when threshold is 0."""
         self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
-        self.test_instance._ai_agent.llm_model.tokenStat.current_tokens = 999999
+        self.test_instance._ai_agent.runtime.token_stat.current_tokens = 999999
         with patch('topsailai.workspace.context.agent2llm.env_tool') as mock_env:
             mock_env.EnvReaderInstance.get.return_value = 0
             result = self.test_instance.is_need_summarize_for_processing()
@@ -380,6 +380,10 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             {"role": "assistant", "content": "large observation"},
         ]
         self.test_instance._first_position = 0
+        runtime_token_stat = self.test_instance._ai_agent.runtime.token_stat
+        self.test_instance._ai_agent.llm_model.tokenStat.add_msgs.side_effect = (
+            AssertionError("legacy TokenStat path must not be used")
+        )
 
         with patch.dict(os.environ, {
             "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
@@ -396,6 +400,10 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
 
         self.assertEqual(result, "Summarized content")
         mock_summary.assert_called_once()
+        runtime_token_stat.add_msgs.assert_called_once_with(
+            self.test_instance._ai_agent.messages,
+            reset_cached_tokens=False,
+        )
 
     def _budget_messages(self):
         """Return Agent2LLM messages with overlapping preserved partitions."""
@@ -1199,8 +1207,8 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
     def test_duplicate_count_disabled_returns_false(self):
         """Test duplicate count check disabled when threshold is 0."""
         self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
-        self.test_instance._ai_agent.llm_model.tokenStat.current_tokens = 0
-        self.test_instance._ai_agent.llm_model.tool_stat.get_consecutive_duplicate_count.return_value = 5
+        self.test_instance._ai_agent.runtime.token_stat.current_tokens = 0
+        self.test_instance._ai_agent.runtime.tool_stat.get_consecutive_duplicate_count.return_value = 5
         with patch.dict(os.environ, {
             "TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD": "0",
         }):
@@ -1273,8 +1281,8 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
     def test_duplicate_count_equal_threshold_returns_false(self):
         """Test count equal to threshold returns False (strictly greater)."""
         self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
-        self.test_instance._ai_agent.llm_model.tokenStat.current_tokens = 0
-        self.test_instance._ai_agent.llm_model.tool_stat.get_consecutive_duplicate_count.return_value = 3
+        self.test_instance._ai_agent.runtime.token_stat.current_tokens = 0
+        self.test_instance._ai_agent.runtime.tool_stat.get_consecutive_duplicate_count.return_value = 3
         with patch.dict(os.environ, {
             "TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD": "3",
         }):
@@ -1284,8 +1292,8 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
     def test_duplicate_count_above_threshold_returns_true(self):
         """Test count above threshold returns True."""
         self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
-        self.test_instance._ai_agent.llm_model.tokenStat.current_tokens = 0
-        self.test_instance._ai_agent.llm_model.tool_stat.get_consecutive_duplicate_count.return_value = 4
+        self.test_instance._ai_agent.runtime.token_stat.current_tokens = 0
+        self.test_instance._ai_agent.runtime.tool_stat.get_consecutive_duplicate_count.return_value = 4
         with patch.dict(os.environ, {
             "TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD": "3",
         }):
@@ -1295,7 +1303,8 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
     def test_duplicate_count_missing_tool_stat_returns_false(self):
         """Test missing tool_stat falls back to 0 and returns False."""
         self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
-        self.test_instance._ai_agent.llm_model.tokenStat.current_tokens = 0
+        self.test_instance._ai_agent.runtime.token_stat.current_tokens = 0
+        self.test_instance._ai_agent.runtime.tool_stat = None
         self.test_instance._ai_agent.llm_model.tool_stat = None
         self.test_instance._ai_agent._tool_stat = None
         with patch.dict(os.environ, {
@@ -1307,8 +1316,8 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
     def test_duplicate_count_default_threshold(self):
         """Test default threshold 3 triggers at count 4."""
         self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
-        self.test_instance._ai_agent.llm_model.tokenStat.current_tokens = 0
-        self.test_instance._ai_agent.llm_model.tool_stat.get_consecutive_duplicate_count.return_value = 4
+        self.test_instance._ai_agent.runtime.token_stat.current_tokens = 0
+        self.test_instance._ai_agent.runtime.tool_stat.get_consecutive_duplicate_count.return_value = 4
         result = self.test_instance.is_need_summarize_for_processing()
         self.assertTrue(result)
 

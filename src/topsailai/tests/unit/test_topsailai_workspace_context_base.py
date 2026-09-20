@@ -687,7 +687,8 @@ class TestGetCurrentTokens(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.mock_agent = MagicMock()
-        self.mock_agent.llm_model.tokenStat.current_tokens = 1234
+        self.mock_agent.runtime.token_stat.current_tokens = 1234
+        self.mock_agent.llm_model.tokenStat.current_tokens = 4321
 
     @patch('topsailai.workspace.context.base.AgentBase')
     @patch('topsailai.workspace.context.base.env_tool')
@@ -775,7 +776,7 @@ class TestGetCurrentTokens(unittest.TestCase):
 
         runtime = ContextRuntimeBase()
         runtime.ai_agent = MagicMock()
-        runtime.ai_agent.llm_model = None
+        runtime.ai_agent.runtime = None
 
         result = runtime._get_current_tokens()
 
@@ -793,7 +794,7 @@ class TestGetCurrentTokens(unittest.TestCase):
 
         runtime = ContextRuntimeBase()
         runtime.ai_agent = MagicMock()
-        runtime.ai_agent.llm_model.tokenStat = None
+        runtime.ai_agent.runtime.token_stat = None
 
         result = runtime._get_current_tokens()
 
@@ -2257,7 +2258,7 @@ class TestCachedTokensRuntimeSummarySource(unittest.TestCase):
         runtime.ai_agent = MagicMock()
         runtime.ai_agent.agent_type = "test_agent"
         runtime.ai_agent.get_work_memory_first_position.return_value = 0
-        runtime.ai_agent.llm_model.tokenStat.current_tokens = 0
+        runtime.ai_agent.runtime.token_stat.current_tokens = 0
         runtime.ai_agent.messages = self._make_messages(2, "agent")
         caller = self._make_messages(40, "caller")
         runtime._can_summarize_agent2llm_messages = MagicMock(return_value=(True, 0))

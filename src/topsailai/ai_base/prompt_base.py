@@ -203,8 +203,8 @@ class ThresholdContextHistory(object):
 
         if agent:
             try:
-                current_tokens = agent.llm_model.tokenStat.current_tokens
-                uncached_tokens = agent.llm_model.tokenStat.uncached_tokens
+                current_tokens = agent.runtime.token_stat.current_tokens
+                uncached_tokens = agent.runtime.token_stat.uncached_tokens
 
                 if current_tokens and uncached_tokens:
                     _v_exceed_uncached_tokens = self.exceed_ratio(uncached_tokens, max_count=self.uncached_token_max)

@@ -213,8 +213,8 @@ class TestThresholdContextHistory(unittest.TestCase):
 
         # uncached_tokens below threshold should prevent link_message
         mock_agent = MagicMock()
-        mock_agent.llm_model.tokenStat.current_tokens = 100
-        mock_agent.llm_model.tokenStat.uncached_tokens = 100
+        mock_agent.runtime.token_stat.current_tokens = 100
+        mock_agent.runtime.token_stat.uncached_tokens = 100
         mock_thread_local_tool.get_agent_object.return_value = mock_agent
 
         result = instance.is_exceeded(messages)
@@ -252,8 +252,9 @@ class TestThresholdContextHistory(unittest.TestCase):
         messages = [{"role": "user", "content": "test"} for _ in range(10)]
 
         mock_agent = MagicMock()
-        mock_agent.llm_model.tokenStat.current_tokens = 50000
-        mock_agent.llm_model.tokenStat.uncached_tokens = 30000  # exceeds default 27000
+        mock_agent.runtime.token_stat.current_tokens = 50000
+        mock_agent.runtime.token_stat.uncached_tokens = 30000  # exceeds default 27000
+        mock_agent.llm_model.tokenStat.uncached_tokens = 100
         mock_thread_local_tool.get_agent_object.return_value = mock_agent
 
         result = instance.is_exceeded(messages)
@@ -269,8 +270,9 @@ class TestThresholdContextHistory(unittest.TestCase):
         messages = [{"role": "user", "content": "test"} for _ in range(10)]
 
         mock_agent = MagicMock()
-        mock_agent.llm_model.tokenStat.current_tokens = 50000
-        mock_agent.llm_model.tokenStat.uncached_tokens = 10000  # below default 27000
+        mock_agent.runtime.token_stat.current_tokens = 50000
+        mock_agent.runtime.token_stat.uncached_tokens = 10000  # below default 27000
+        mock_agent.llm_model.tokenStat.uncached_tokens = 30000
         mock_thread_local_tool.get_agent_object.return_value = mock_agent
 
         result = instance.is_exceeded(messages)

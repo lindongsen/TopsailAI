@@ -946,8 +946,8 @@ class ContextRuntimeBase(object):
                 return None
 
         try:
-            if self.ai_agent and self.ai_agent.llm_model and self.ai_agent.llm_model.tokenStat:
-                return int(self.ai_agent.llm_model.tokenStat.current_tokens)
+            if self.ai_agent and self.ai_agent.runtime.token_stat:
+                return int(self.ai_agent.runtime.token_stat.current_tokens)
         except Exception:
             pass
         return None
