@@ -238,6 +238,7 @@ class TestGetCountOfAction:
 
         mock_agent = MagicMock()
         mock_agent.llm_model.tool_stat = stat
+        mock_agent.runtime.tool_stat = stat
 
         messages = [
             {"role": "system", "content": "You are a helpful assistant"},

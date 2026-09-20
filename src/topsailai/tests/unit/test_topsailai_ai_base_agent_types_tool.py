@@ -772,6 +772,9 @@ class TestExecToolFuncToolCallWarning(unittest.TestCase):
         self.agent.llm_model = MagicMock()
         self.agent.llm_model.max_tokens = 30000
         self.agent.llm_model.tool_stat = ToolStat()
+        self.agent.runtime.llm_model = self.agent.llm_model
+        self.agent.runtime.max_tokens = self.agent.llm_model.max_tokens
+        self.agent.runtime.tool_stat = self.agent.llm_model.tool_stat
         self.agent.agent_role = "worker"
         self.agent._tool_stat = None
 

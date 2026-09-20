@@ -50,7 +50,9 @@ class TestShowToolCallStat(unittest.TestCase):
 
         stat = ToolStat()
         stat.record("api_call", duration_sec=12.5)
-        mock_get_ai_agent.return_value = MagicMock(llm_model=MagicMock(tool_stat=stat))
+        mock_agent = MagicMock()
+        mock_agent.runtime.tool_stat = stat
+        mock_get_ai_agent.return_value = mock_agent
 
         show_tool_call_stat("api_call")
 

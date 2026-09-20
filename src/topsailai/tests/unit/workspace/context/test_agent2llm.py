@@ -286,7 +286,7 @@ class TestSummarizeMessagesForProcessing:
             with patch.object(mock_agent2llm, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
                 result = mock_agent2llm.summarize_messages_for_processing()
                 assert result == "summarized answer"
-                mock_agent2llm.ai_agent.llm_model.tokenStat.add_msgs.assert_called_once_with(
+                mock_agent2llm.ai_agent.runtime.token_stat.add_msgs.assert_called_once_with(
                     mock_agent2llm.ai_agent.messages,
                     reset_cached_tokens=False,
                 )

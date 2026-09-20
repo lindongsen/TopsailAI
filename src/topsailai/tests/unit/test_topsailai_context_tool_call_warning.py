@@ -496,6 +496,7 @@ class TestDetectToolCallWarningDecorator(TestCase):
         agent.agent_role = "worker"
         agent.llm_model = None
         agent._tool_stat = ToolStat()
+        agent.runtime.tool_stat = agent._tool_stat
         wrapped = self._make_wrapped(result="ok")
 
         with patch("topsailai.utils.thread_local_tool.get_agent_object", return_value=agent):
@@ -523,6 +524,7 @@ class TestDetectToolCallWarningDecorator(TestCase):
         agent.agent_role = "manager"
         agent.llm_model = None
         agent._tool_stat = ToolStat()
+        agent.runtime.tool_stat = agent._tool_stat
         wrapped = self._make_wrapped(result="ok")
 
         with patch("topsailai.utils.thread_local_tool.get_agent_object", return_value=agent):
@@ -544,6 +546,7 @@ class TestDetectToolCallWarningDecorator(TestCase):
         agent.agent_role = "worker"
         agent.llm_model = None
         agent._tool_stat = ToolStat()
+        agent.runtime.tool_stat = agent._tool_stat
         wrapped = self._make_wrapped(result="ok")
 
         with patch("topsailai.utils.thread_local_tool.get_agent_object", return_value=agent):
@@ -570,6 +573,7 @@ class TestDetectToolCallWarningDecorator(TestCase):
         agent.agent_role = "worker"
         agent.llm_model = None
         agent._tool_stat = ToolStat()
+        agent.runtime.tool_stat = agent._tool_stat
         wrapped = self._make_wrapped(result="ok")
 
         with patch("topsailai.utils.thread_local_tool.get_agent_object", return_value=agent):
@@ -592,10 +596,12 @@ class TestDetectToolCallWarningDecorator(TestCase):
         agent_a.agent_role = "worker"
         agent_a.llm_model = None
         agent_a._tool_stat = ToolStat()
+        agent_a.runtime.tool_stat = agent_a._tool_stat
         agent_b = MagicMock()
         agent_b.agent_role = "worker"
         agent_b.llm_model = None
         agent_b._tool_stat = ToolStat()
+        agent_b.runtime.tool_stat = agent_b._tool_stat
         wrapped = self._make_wrapped(result="ok")
 
         with patch("topsailai.utils.thread_local_tool.get_agent_object", return_value=agent_a):

@@ -310,7 +310,7 @@ class TestGetCurrentTokens(TestContextRuntimeData):
         """Test default behavior returns cached tokenStat.current_tokens."""
         with patch.dict(os.environ, {"TOPSAILAI_REALTIME_TOKEN_CALCULATION": "0"}):
             self.runtime.ai_agent = MagicMock()
-            self.runtime.ai_agent.llm_model.tokenStat.current_tokens = 777
+            self.runtime.ai_agent.runtime.token_stat.current_tokens = 777
             result = self.runtime._get_current_tokens()
             self.assertEqual(result, 777)
 
