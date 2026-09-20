@@ -1290,10 +1290,11 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.assertFalse(result)
 
     def test_duplicate_count_above_threshold_returns_true(self):
-        """Test count above threshold returns True."""
+        """Test count above threshold reads the runtime ToolStat directly."""
         self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
         self.test_instance._ai_agent.runtime.token_stat.current_tokens = 0
         self.test_instance._ai_agent.runtime.tool_stat.get_consecutive_duplicate_count.return_value = 4
+        self.test_instance._ai_agent.llm_model.tool_stat.get_consecutive_duplicate_count.return_value = 0
         with patch.dict(os.environ, {
             "TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD": "3",
         }):

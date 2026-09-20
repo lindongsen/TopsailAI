@@ -28,9 +28,6 @@ from topsailai.utils import (
     env_tool,
     message_tool,
 )
-from topsailai.context.tool_stat import (
-    get_agent_tool_stat,
-)
 from topsailai.workspace.context.base import (
     ContextRuntimeBase,
 )
@@ -537,9 +534,10 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         """
         Get the current consecutive duplicate tool call count from the agent.
 
-        Resolves the agent's ToolStat instance, preferring the one attached to
-        ``ai_agent.llm_model.tool_stat`` and falling back to ``ai_agent._tool_stat``.
-        If no agent or ToolStat is available, returns ``0``.
+        ToolStat resolution is runtime-first: ``agent.runtime.tool_stat``, then
+        ``agent.llm_model.tool_stat``, ``agent._tool_stat``, and the module default.
+        This explicit Agent path uses ``agent.runtime.tool_stat`` directly. If no
+        agent or ToolStat is available, returns ``0``.
 
         Returns:
             int: The current consecutive duplicate count, or ``0`` if unavailable.
@@ -547,7 +545,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         if not self.ai_agent:
             return 0
 
-        tool_stat = get_agent_tool_stat(self.ai_agent)
+        tool_stat = self.ai_agent.runtime.tool_stat
         if tool_stat is None:
             return 0
 
