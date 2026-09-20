@@ -294,38 +294,38 @@ class TestSetLlm(unittest.TestCase):
     def test_set_llm_by_positional_arg(self, mock_get_agent):
         """Test /set_llm <model_name>"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
         mock_get_agent.return_value = mock_agent
 
         from topsailai.workspace.plugin_instruction.agent import set_llm
         result = set_llm("NewModel")
 
-        self.assertEqual(mock_agent.llm_model.model_name, "NewModel")
+        self.assertEqual(mock_agent.runtime.llm_model.model_name, "NewModel")
         self.assertIn("OldModel -> NewModel", result)
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     def test_set_llm_by_key_value(self, mock_get_agent):
         """Test /set_llm model=<model_name>"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
         mock_get_agent.return_value = mock_agent
 
         from topsailai.workspace.plugin_instruction.agent import set_llm
         result = set_llm("model=NewModel")
 
-        self.assertEqual(mock_agent.llm_model.model_name, "NewModel")
+        self.assertEqual(mock_agent.runtime.llm_model.model_name, "NewModel")
         self.assertIn("OldModel -> NewModel", result)
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     def test_set_llm_with_endpoint(self, mock_get_agent):
         """Test /set_llm model=<model_name> base_url=<api_base> api_key=<api_key>"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
-        mock_agent.llm_model.model = "old_client"
-        mock_agent.llm_model.replace_llm_model.return_value = "new_client"
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.runtime.llm_model.model = "old_client"
+        mock_agent.runtime.llm_model.replace_llm_model.return_value = "new_client"
         mock_get_agent.return_value = mock_agent
 
         from topsailai.workspace.plugin_instruction.agent import set_llm
@@ -335,78 +335,78 @@ class TestSetLlm(unittest.TestCase):
             "api_key=secret",
         )
 
-        self.assertEqual(mock_agent.llm_model.model_name, "NewModel")
-        mock_agent.llm_model.replace_llm_model.assert_called_once_with(
+        self.assertEqual(mock_agent.runtime.llm_model.model_name, "NewModel")
+        mock_agent.runtime.llm_model.replace_llm_model.assert_called_once_with(
             "old_client",
             api_key="secret",
             api_base="https://example.com/v1",
         )
-        self.assertEqual(mock_agent.llm_model.model, "new_client")
-        self.assertEqual(mock_agent.llm_model.models, [])
+        self.assertEqual(mock_agent.runtime.llm_model.model, "new_client")
+        self.assertEqual(mock_agent.runtime.llm_model.models, [])
         self.assertIn("NewModel", result)
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     def test_set_llm_api_key_env(self, mock_get_agent):
         """Test /set_llm model=<model_name> api_key_env=MY_API_KEY"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
-        mock_agent.llm_model.model = "old_client"
-        mock_agent.llm_model.replace_llm_model.return_value = "new_client"
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.runtime.llm_model.model = "old_client"
+        mock_agent.runtime.llm_model.replace_llm_model.return_value = "new_client"
         mock_get_agent.return_value = mock_agent
 
         with patch.dict(os.environ, {"MY_API_KEY": "env_secret"}):
             from topsailai.workspace.plugin_instruction.agent import set_llm
             result = set_llm("model=NewModel", "api_key_env=MY_API_KEY")
 
-        self.assertEqual(mock_agent.llm_model.model_name, "NewModel")
-        mock_agent.llm_model.replace_llm_model.assert_called_once_with(
+        self.assertEqual(mock_agent.runtime.llm_model.model_name, "NewModel")
+        mock_agent.runtime.llm_model.replace_llm_model.assert_called_once_with(
             "old_client",
             api_key="env_secret",
             api_base="https://api.openai.com/v1",
         )
-        self.assertEqual(mock_agent.llm_model.model, "new_client")
+        self.assertEqual(mock_agent.runtime.llm_model.model, "new_client")
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     def test_model_only_switch_retains_existing_client_and_failovers(self, mock_get_agent):
         """Test changing only the request model retains all global client leases."""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model = "shared_client"
-        mock_agent.llm_model.model_config = {"api_key": "key", "api_base": "base"}
-        mock_agent.llm_model.models = [{"_model": "failover_client"}]
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model = "shared_client"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "key", "api_base": "base"}
+        mock_agent.runtime.llm_model.models = [{"_model": "failover_client"}]
         mock_get_agent.return_value = mock_agent
 
         from topsailai.workspace.plugin_instruction.agent import set_llm
         set_llm("NewModel")
 
-        self.assertEqual(mock_agent.llm_model.model_name, "NewModel")
-        self.assertEqual(mock_agent.llm_model.model, "shared_client")
-        self.assertEqual(mock_agent.llm_model.models, [{"_model": "failover_client"}])
-        mock_agent.llm_model.replace_llm_model.assert_not_called()
-        mock_agent.llm_model.release_llm_model.assert_not_called()
+        self.assertEqual(mock_agent.runtime.llm_model.model_name, "NewModel")
+        self.assertEqual(mock_agent.runtime.llm_model.model, "shared_client")
+        self.assertEqual(mock_agent.runtime.llm_model.models, [{"_model": "failover_client"}])
+        mock_agent.runtime.llm_model.replace_llm_model.assert_not_called()
+        mock_agent.runtime.llm_model.release_llm_model.assert_not_called()
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     def test_connection_switch_releases_failover_leases_after_swap(self, mock_get_agent):
         """Test old failover leases are released after publishing a replacement."""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model = "old_client"
-        mock_agent.llm_model.model_config = {"api_key": "old_key", "api_base": "old_base"}
-        mock_agent.llm_model.models = [
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model = "old_client"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "old_key", "api_base": "old_base"}
+        mock_agent.runtime.llm_model.models = [
             {"_model": "failover_a"},
             {"_model": "failover_b"},
         ]
-        mock_agent.llm_model.replace_llm_model.return_value = "new_client"
+        mock_agent.runtime.llm_model.replace_llm_model.return_value = "new_client"
         mock_get_agent.return_value = mock_agent
 
         from topsailai.workspace.plugin_instruction.agent import set_llm
         set_llm("model=NewModel", "api_base=new_base", "api_key=new_key")
 
-        self.assertEqual(mock_agent.llm_model.model, "new_client")
-        self.assertEqual(mock_agent.llm_model.models, [])
+        self.assertEqual(mock_agent.runtime.llm_model.model, "new_client")
+        self.assertEqual(mock_agent.runtime.llm_model.models, [])
         self.assertEqual(
-            mock_agent.llm_model.release_llm_model.call_args_list,
+            mock_agent.runtime.llm_model.release_llm_model.call_args_list,
             [unittest.mock.call("failover_a"), unittest.mock.call("failover_b")],
         )
 
@@ -414,12 +414,12 @@ class TestSetLlm(unittest.TestCase):
     def test_failed_connection_switch_preserves_model_state_and_environment(self, mock_get_agent):
         """Test failed acquire leaves model state and process settings unchanged."""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model = "old_client"
-        mock_agent.llm_model.model_config = {"api_key": "old_key", "api_base": "old_base"}
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model = "old_client"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "old_key", "api_base": "old_base"}
         old_models = [{"_model": "failover_client"}]
-        mock_agent.llm_model.models = old_models
-        mock_agent.llm_model.replace_llm_model.side_effect = RuntimeError("acquire failed")
+        mock_agent.runtime.llm_model.models = old_models
+        mock_agent.runtime.llm_model.replace_llm_model.side_effect = RuntimeError("acquire failed")
         mock_get_agent.return_value = mock_agent
 
         environment = {
@@ -434,10 +434,10 @@ class TestSetLlm(unittest.TestCase):
                 set_llm("model=NewModel", "api_base=new_base", "api_key=new_key")
             self.assertEqual(dict(os.environ), environment)
 
-        self.assertEqual(mock_agent.llm_model.model_name, "OldModel")
-        self.assertEqual(mock_agent.llm_model.model, "old_client")
-        self.assertIs(mock_agent.llm_model.models, old_models)
-        mock_agent.llm_model.release_llm_model.assert_not_called()
+        self.assertEqual(mock_agent.runtime.llm_model.model_name, "OldModel")
+        self.assertEqual(mock_agent.runtime.llm_model.model, "old_client")
+        self.assertIs(mock_agent.runtime.llm_model.models, old_models)
+        mock_agent.runtime.llm_model.release_llm_model.assert_not_called()
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     def test_set_llm_no_agent(self, mock_get_agent):
@@ -453,7 +453,7 @@ class TestSetLlm(unittest.TestCase):
     def test_set_llm_no_args(self, mock_get_agent):
         """Test /set_llm with no arguments returns current model"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "CurrentModel"
+        mock_agent.runtime.llm_model.model_name = "CurrentModel"
         mock_get_agent.return_value = mock_agent
 
         from topsailai.workspace.plugin_instruction.agent import set_llm
@@ -470,7 +470,7 @@ class TestSelectModel(unittest.TestCase):
     def test_list_models(self, mock_load_registry, mock_get_agent):
         """Test /models lists available models with indices and marks current model"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "ModelA"
+        mock_agent.runtime.llm_model.model_name = "ModelA"
         mock_get_agent.return_value = mock_agent
         mock_load_registry.return_value = {
             "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
@@ -490,10 +490,10 @@ class TestSelectModel(unittest.TestCase):
     def test_select_model_by_index(self, mock_load_registry, mock_get_agent):
         """Test /models <number> selects model by 1-based index"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
-        mock_agent.llm_model.model = "old_client"
-        mock_agent.llm_model.replace_llm_model.return_value = "new_client"
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.runtime.llm_model.model = "old_client"
+        mock_agent.runtime.llm_model.replace_llm_model.return_value = "new_client"
         mock_get_agent.return_value = mock_agent
         mock_load_registry.return_value = {
             "ModelA": {"name": "ModelA", "api_base": "https://a.example.com", "api_key": "key_a"},
@@ -503,14 +503,14 @@ class TestSelectModel(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.agent import select_model
         result = select_model("2")
 
-        self.assertEqual(mock_agent.llm_model.model_name, "ModelB")
-        mock_agent.llm_model.replace_llm_model.assert_called_once_with(
+        self.assertEqual(mock_agent.runtime.llm_model.model_name, "ModelB")
+        mock_agent.runtime.llm_model.replace_llm_model.assert_called_once_with(
             "old_client",
             api_key="key_b",
             api_base="https://b.example.com",
         )
-        self.assertEqual(mock_agent.llm_model.model, "new_client")
-        self.assertEqual(mock_agent.llm_model.models, [])
+        self.assertEqual(mock_agent.runtime.llm_model.model, "new_client")
+        self.assertEqual(mock_agent.runtime.llm_model.models, [])
         self.assertIn("ModelB", result)
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
@@ -518,7 +518,7 @@ class TestSelectModel(unittest.TestCase):
     def test_select_model_by_invalid_index(self, mock_load_registry, mock_get_agent):
         """Test /models with out-of-range numeric index returns error"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_name = "OldModel"
         mock_get_agent.return_value = mock_agent
         mock_load_registry.return_value = {
             "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
@@ -528,14 +528,14 @@ class TestSelectModel(unittest.TestCase):
         result = select_model("5")
 
         self.assertEqual(result, "Invalid model index: 5. Valid range: 1-1")
-        mock_agent.llm_model.get_llm_model.assert_not_called()
+        mock_agent.runtime.llm_model.get_llm_model.assert_not_called()
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
     def test_select_model_by_zero_index(self, mock_load_registry, mock_get_agent):
         """Test /models with 0 index returns error"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_name = "OldModel"
         mock_get_agent.return_value = mock_agent
         mock_load_registry.return_value = {
             "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
@@ -551,7 +551,7 @@ class TestSelectModel(unittest.TestCase):
     def test_list_models_current_not_in_registry(self, mock_load_registry, mock_get_agent):
         """Test /models prints current model when it is not in the registry"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "CustomModel"
+        mock_agent.runtime.llm_model.model_name = "CustomModel"
         mock_get_agent.return_value = mock_agent
         mock_load_registry.return_value = {
             "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
@@ -571,10 +571,10 @@ class TestSelectModel(unittest.TestCase):
     def test_select_model_by_name(self, mock_load_registry, mock_get_agent):
         """Test /models <model_name> applies the selected model"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
-        mock_agent.llm_model.model = "old_client"
-        mock_agent.llm_model.replace_llm_model.return_value = "new_client"
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.runtime.llm_model.model = "old_client"
+        mock_agent.runtime.llm_model.replace_llm_model.return_value = "new_client"
         mock_get_agent.return_value = mock_agent
         mock_load_registry.return_value = {
             "ModelA": {"name": "ModelA", "api_base": "https://a.example.com", "api_key": "key_a"},
@@ -583,14 +583,14 @@ class TestSelectModel(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.agent import select_model
         result = select_model("ModelA")
 
-        self.assertEqual(mock_agent.llm_model.model_name, "ModelA")
-        mock_agent.llm_model.replace_llm_model.assert_called_once_with(
+        self.assertEqual(mock_agent.runtime.llm_model.model_name, "ModelA")
+        mock_agent.runtime.llm_model.replace_llm_model.assert_called_once_with(
             "old_client",
             api_key="key_a",
             api_base="https://a.example.com",
         )
-        self.assertEqual(mock_agent.llm_model.model, "new_client")
-        self.assertEqual(mock_agent.llm_model.models, [])
+        self.assertEqual(mock_agent.runtime.llm_model.model, "new_client")
+        self.assertEqual(mock_agent.runtime.llm_model.models, [])
         self.assertIn("ModelA", result)
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
@@ -600,9 +600,9 @@ class TestSelectModel(unittest.TestCase):
     ):
         """Test the first switch reuses a matching environment connection."""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
-        mock_agent.llm_model.model = "old_client"
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.runtime.llm_model.model = "old_client"
         mock_get_agent.return_value = mock_agent
         mock_load_registry.return_value = {
             "ModelA": {
@@ -621,9 +621,9 @@ class TestSelectModel(unittest.TestCase):
 
             result = select_model("ModelA")
 
-            mock_agent.llm_model.replace_llm_model.assert_not_called()
-            self.assertEqual(mock_agent.llm_model.model_name, "ModelA")
-            self.assertEqual(mock_agent.llm_model.model, "old_client")
+            mock_agent.runtime.llm_model.replace_llm_model.assert_not_called()
+            self.assertEqual(mock_agent.runtime.llm_model.model_name, "ModelA")
+            self.assertEqual(mock_agent.runtime.llm_model.model, "old_client")
             self.assertIn(
                 "api_base: https://current.example.com/v1 -> https://current.example.com/v1",
                 result,
@@ -636,10 +636,10 @@ class TestSelectModel(unittest.TestCase):
     ):
         """Test the first switch replaces a different environment connection."""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
-        mock_agent.llm_model.model = "old_client"
-        mock_agent.llm_model.replace_llm_model.return_value = "new_client"
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.runtime.llm_model.model = "old_client"
+        mock_agent.runtime.llm_model.replace_llm_model.return_value = "new_client"
         mock_get_agent.return_value = mock_agent
         mock_load_registry.return_value = {
             "ModelA": {
@@ -658,13 +658,13 @@ class TestSelectModel(unittest.TestCase):
 
             result = select_model("ModelA")
 
-            mock_agent.llm_model.replace_llm_model.assert_called_once_with(
+            mock_agent.runtime.llm_model.replace_llm_model.assert_called_once_with(
                 "old_client",
                 api_key="new_key",
                 api_base="https://new.example.com/v1",
             )
-            self.assertEqual(mock_agent.llm_model.model, "new_client")
-            self.assertEqual(mock_agent.llm_model.models, [])
+            self.assertEqual(mock_agent.runtime.llm_model.model, "new_client")
+            self.assertEqual(mock_agent.runtime.llm_model.models, [])
             self.assertIn(
                 "api_base: https://old.example.com/v1 -> https://new.example.com/v1",
                 result,
@@ -676,10 +676,10 @@ class TestSelectModel(unittest.TestCase):
     def test_select_model_uses_model_field_over_name(self, mock_load_registry, mock_get_agent):
         """Test /models uses the model field (API ID) over the display name"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
-        mock_agent.llm_model.model = "old_client"
-        mock_agent.llm_model.replace_llm_model.return_value = "new_client"
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.runtime.llm_model.model = "old_client"
+        mock_agent.runtime.llm_model.replace_llm_model.return_value = "new_client"
         mock_get_agent.return_value = mock_agent
         mock_load_registry.return_value = {
             "gpt56luna-tester": {"name": "gpt56luna-tester", "model": "gpt-5.6-luna", "api_base": "https://a.example.com", "api_key": "key_a"},
@@ -688,14 +688,14 @@ class TestSelectModel(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.agent import select_model
         result = select_model("gpt56luna-tester")
 
-        self.assertEqual(mock_agent.llm_model.model_name, "gpt-5.6-luna")
-        mock_agent.llm_model.replace_llm_model.assert_called_once_with(
+        self.assertEqual(mock_agent.runtime.llm_model.model_name, "gpt-5.6-luna")
+        mock_agent.runtime.llm_model.replace_llm_model.assert_called_once_with(
             "old_client",
             api_key="key_a",
             api_base="https://a.example.com",
         )
-        self.assertEqual(mock_agent.llm_model.model, "new_client")
-        self.assertEqual(mock_agent.llm_model.models, [])
+        self.assertEqual(mock_agent.runtime.llm_model.model, "new_client")
+        self.assertEqual(mock_agent.runtime.llm_model.models, [])
         self.assertIn("gpt-5.6-luna", result)
 
     @patch("topsailai.workspace.plugin_instruction.agent.print_info")
@@ -704,10 +704,10 @@ class TestSelectModel(unittest.TestCase):
     def test_select_model_applies_environment(self, mock_load_registry, mock_get_agent, mock_print_info):
         """Test /models applies environment variables from the model config"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
-        mock_agent.llm_model.model = "old_client"
-        mock_agent.llm_model.replace_llm_model.return_value = "new_client"
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.runtime.llm_model.model = "old_client"
+        mock_agent.runtime.llm_model.replace_llm_model.return_value = "new_client"
         mock_get_agent.return_value = mock_agent
         mock_load_registry.return_value = {
             "ModelA": {
@@ -733,10 +733,10 @@ class TestSelectModel(unittest.TestCase):
     def test_select_model_synchronizes_openai_environment(self, mock_load_registry, mock_get_agent):
         """Test /models synchronizes canonical OpenAI-compatible environment variables."""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
-        mock_agent.llm_model.model = "old_client"
-        mock_agent.llm_model.replace_llm_model.return_value = "new_client"
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.runtime.llm_model.model = "old_client"
+        mock_agent.runtime.llm_model.replace_llm_model.return_value = "new_client"
         mock_get_agent.return_value = mock_agent
         mock_load_registry.return_value = {
             "ModelA": {
@@ -766,7 +766,7 @@ class TestSelectModel(unittest.TestCase):
             self.assertEqual(os.environ["OPENAI_ORG_ID"], "org_a")
             self.assertEqual(os.environ["OPENAI_PROJECT_ID"], "project_a")
 
-        mock_agent.llm_model.replace_llm_model.assert_called_once_with(
+        mock_agent.runtime.llm_model.replace_llm_model.assert_called_once_with(
             "old_client",
             api_key="key_a",
             api_base="https://a.example.com/v1",
@@ -779,10 +779,10 @@ class TestSelectModel(unittest.TestCase):
     def test_select_model_no_environment(self, mock_load_registry, mock_get_agent):
         """Test /models without environment field does not set env vars"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "OldModel"
-        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
-        mock_agent.llm_model.model = "old_client"
-        mock_agent.llm_model.replace_llm_model.return_value = "new_client"
+        mock_agent.runtime.llm_model.model_name = "OldModel"
+        mock_agent.runtime.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.runtime.llm_model.model = "old_client"
+        mock_agent.runtime.llm_model.replace_llm_model.return_value = "new_client"
         mock_get_agent.return_value = mock_agent
         mock_load_registry.return_value = {
             "ModelA": {"name": "ModelA", "api_base": "https://a.example.com", "api_key": "key_a"},
@@ -822,7 +822,7 @@ class TestSelectModel(unittest.TestCase):
     def test_list_models_empty_registry(self, mock_load_registry, mock_get_agent):
         """Test /models with empty registry shows current model"""
         mock_agent = MagicMock()
-        mock_agent.llm_model.model_name = "CurrentModel"
+        mock_agent.runtime.llm_model.model_name = "CurrentModel"
         mock_get_agent.return_value = mock_agent
         mock_load_registry.return_value = {}
 

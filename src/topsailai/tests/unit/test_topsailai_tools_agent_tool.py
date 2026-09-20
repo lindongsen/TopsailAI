@@ -166,6 +166,27 @@ class TestAgentWriter:
         call_kwargs = mock_internal.call_args[1]
         assert call_kwargs["workspace"] == "/custom/workspace"
 
+    @patch("topsailai.ai_base.agent_base.AgentRun")
+    @patch("topsailai.tools.agent_tool.file_tool")
+    def test_internal_writer_configures_runtime_model(self, mock_file_tool, mock_agent_run):
+        """Test writer configuration is applied through the agent runtime model."""
+        from topsailai.tools.agent_tool import _agent_writer
+
+        runtime_model = MagicMock(max_tokens=1200, temperature=0.3)
+        mock_agent = MagicMock()
+        mock_agent.runtime.llm_model = runtime_model
+        mock_agent.run.return_value = "result"
+        mock_agent_run.return_value = mock_agent
+        mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
+
+        result = _agent_writer("message", model_name="RuntimeModel")
+
+        assert result == "result"
+        assert runtime_model.max_tokens == 1600
+        assert runtime_model.temperature == 0.97
+        assert runtime_model.model_name == "RuntimeModel"
+        assert "llm_model" not in mock_agent.__dict__
+
 
 class TestAgentProgrammer:
     """Test agent_programmer function."""
@@ -223,7 +244,7 @@ class TestAgentProgrammer:
         
         result = agent_programmer("task", model_name="claude-3")
         
-        assert mock_agent_instance.llm_model.model_name == "claude-3"
+        assert mock_agent_instance.runtime.llm_model.model_name == "claude-3"
 
 
 class TestAsyncMultitasksAgentWriter:

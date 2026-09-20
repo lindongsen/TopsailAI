@@ -493,8 +493,9 @@ def print_with_time(msg, need_format=False, color_kind=None, color_enabled=None)
     agent_name = thread_local_tool.get_thread_var(thread_local_tool.KEY_AGENT_NAME)
     model_name = ""
     agent_obj = thread_local_tool.get_thread_var(thread_local_tool.KEY_AGENT_OBJECT)
-    if agent_obj is not None and hasattr(agent_obj, "llm_model"):
-        model_name = getattr(agent_obj.llm_model, "model_name", "") or ""
+    runtime = getattr(agent_obj, "runtime", None)
+    llm_model = getattr(runtime, "llm_model", None)
+    model_name = getattr(llm_model, "model_name", "") or ""
 
     prefix_parts = []
     if agent_name:

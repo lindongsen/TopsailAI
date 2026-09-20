@@ -98,10 +98,11 @@ def _agent_writer(
         agent_name="AgentWriter",
         excluded_tool_kits=["agent_tool"],
     )
-    agent.llm_model.max_tokens = max(1600, agent.llm_model.max_tokens)
-    agent.llm_model.temperature = max(0.97, agent.llm_model.temperature)
+    llm_model = agent.runtime.llm_model
+    llm_model.max_tokens = max(1600, llm_model.max_tokens)
+    llm_model.temperature = max(0.97, llm_model.temperature)
     if model_name:
-        agent.llm_model.model_name = model_name
+        llm_model.model_name = model_name
     return agent.run(Step4ReAct(), message)
 
 def agent_writer(msg_or_file:str, model_name:str=None, workspace:str=DEFAULT_WORKSPACE):
@@ -202,7 +203,7 @@ def agent_programmer(
         excluded_tool_kits=["agent_tool"],
     )
     if model_name:
-        agent.llm_model.model_name = model_name
+        agent.runtime.llm_model.model_name = model_name
     return agent.run(Step4ReAct(), message)
 
 def async_multitasks_agent_writer(

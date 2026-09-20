@@ -725,7 +725,7 @@ class TestPrintTool(unittest.TestCase):
         mock_is_interactive_mode.return_value = True
 
         agent_obj = MagicMock()
-        agent_obj.llm_model.model_name = "TestModel"
+        agent_obj.runtime.llm_model.model_name = "TestModel"
 
         def _get_thread_var(name, default=None):
             if name == print_tool.thread_local_tool.KEY_AGENT_OBJECT:
@@ -742,12 +742,35 @@ class TestPrintTool(unittest.TestCase):
     @patch('topsailai.utils.print_tool.datetime')
     @patch('topsailai.utils.print_tool.thread_local_tool.get_thread_var')
     @patch('topsailai.utils.env_tool.is_interactive_mode')
+    def test_print_with_time_agent_without_runtime(self, mock_is_interactive_mode, mock_get_thread_var, mock_datetime, mock_print):
+        """Test a duck-typed agent without runtime is safely ignored."""
+        mock_is_interactive_mode.return_value = True
+
+        class LegacyAgent:
+            pass
+
+        def _get_thread_var(name, default=None):
+            if name == print_tool.thread_local_tool.KEY_AGENT_OBJECT:
+                return LegacyAgent()
+            return None
+
+        mock_get_thread_var.side_effect = _get_thread_var
+        mock_datetime.now.return_value.strftime.return_value = "2026-01-01 00:00:00"
+
+        print_tool.print_with_time('test message')
+
+        mock_print.assert_called_once_with('[2026-01-01 00:00:00] test message')
+
+    @patch('topsailai.utils.print_tool.print')
+    @patch('topsailai.utils.print_tool.datetime')
+    @patch('topsailai.utils.print_tool.thread_local_tool.get_thread_var')
+    @patch('topsailai.utils.env_tool.is_interactive_mode')
     def test_print_with_time_agent_and_model_name(self, mock_is_interactive_mode, mock_get_thread_var, mock_datetime, mock_print):
         """Test print_with_time with both agent name and model name."""
         mock_is_interactive_mode.return_value = True
 
         agent_obj = MagicMock()
-        agent_obj.llm_model.model_name = "TestModel"
+        agent_obj.runtime.llm_model.model_name = "TestModel"
 
         def _get_thread_var(name, default=None):
             if name == print_tool.thread_local_tool.KEY_AGENT_NAME:

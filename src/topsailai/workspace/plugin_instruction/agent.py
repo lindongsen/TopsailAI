@@ -70,7 +70,7 @@ def _apply_model_config(agent, config: dict) -> str:
     Returns:
         str: Human-readable summary of the applied changes.
     """
-    llm_model = agent.llm_model
+    llm_model = agent.runtime.llm_model
     old_model_name = llm_model.model_name
     old_api_base = (
         getattr(llm_model.model_config, "api_base", "")
@@ -227,7 +227,7 @@ def set_llm(*args) -> str:
         return "No active agent"
 
     if not args:
-        return f"Current model: {agent.llm_model.model_name}"
+        return f"Current model: {agent.runtime.llm_model.model_name}"
 
     config = {}
 
@@ -253,7 +253,7 @@ def set_llm(*args) -> str:
                 config["api_key"] = os.getenv(value, "")
 
     if not config:
-        return f"Current model: {agent.llm_model.model_name}"
+        return f"Current model: {agent.runtime.llm_model.model_name}"
 
     result = _apply_model_config(agent, config)
     return result
@@ -267,7 +267,7 @@ def get_llm() -> str:
     if not agent:
         return
 
-    llm = agent.llm_model.model_name
+    llm = agent.runtime.llm_model.model_name
     return llm
 
 
@@ -288,7 +288,7 @@ def select_model(*args) -> str:
         return "No active agent"
 
     registry = _load_models_registry()
-    current_model = agent.llm_model.model_name
+    current_model = agent.runtime.llm_model.model_name
     model_names = sorted(registry.keys())
 
     if not args:
