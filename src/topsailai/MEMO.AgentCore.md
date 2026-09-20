@@ -55,17 +55,19 @@ def my_tool():
 
 **Accessing related runtime objects:**
 
-From the agent instance, you can also reach the underlying LLM model and its token statistics:
+From the agent instance, access shared runtime objects through the typed runtime facade:
 
 ```python
 from topsailai.utils.thread_local_tool import get_agent_object
 
 def my_tool():
     agent = get_agent_object()
-    if agent and agent.llm_model:
-        llm_model = agent.llm_model          # LLMModel instance (ai_base/llm_base.py)
-        token_stat = agent.llm_model.tokenStat  # TokenStat instance (context/token.py)
+    if agent:
+        llm_model = agent.runtime.llm_model
+        token_stat = agent.runtime.token_stat
 ```
+
+`AgentBase` and `LLMModel` internals may continue to access the objects they own directly; callers outside those ownership boundaries should use `agent.runtime`.
 
 
 ## MEMO: Lazy Import Allowance for `openai`
@@ -182,7 +184,7 @@ This archiving logic is triggered automatically inside `PromptBase.append_messag
 2. **Threshold check** — `ThresholdContextHistory.is_exceeded()` evaluates whether the context needs slimming. It checks:
    - Message count against `CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH` (default 43, minimum 27).
    - Token usage ratio against `CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS` (default 128000) multiplied by `token_ratio` (0.8).
-   - Prefers `agent.llm_model.tokenStat.uncached_tokens` when available; falls back to `count_tokens(str(messages))`.
+   - Prefers `agent.runtime.token_stat.uncached_tokens` when available; falls back to `count_tokens(str(messages))`.
 3. **Archive pass** — When exceeded, each configured context-history manager (`ChatHistoryBase`) runs `link_messages(messages)`.
 
 The actual archive transformation is implemented in `context/chat_history_manager/__base.py` by `ContextManager.link_messages()`:
@@ -269,7 +271,7 @@ The same discipline applies to `self.ai_agent.messages` in `workspace/context/ag
 
 1. **Single source of truth**: `set_messages()` clears the existing list and extends it in place, avoiding accidental aliasing of the internal list with an external object.
 2. **Persistence parity**: `append_message()` and `reset_messages()` are used by `ContextRuntimeData.add_session_message()` and `summarize_messages_for_processed()` to keep the in-memory `self.messages` synchronized with the persisted session store.
-3. **Token accounting**: After summarization, `ContextRuntimeAgent2LLM.summarize_messages_for_processing()` calls `self.ai_agent.llm_model.tokenStat.add_msgs(...)`; direct assignment can bypass this bookkeeping.
+3. **Token accounting**: After summarization, `ContextRuntimeAgent2LLM.summarize_messages_for_processing()` calls `self.ai_agent.runtime.token_stat.add_msgs(...)`; direct assignment can bypass this bookkeeping.
 4. **Task-message preservation**: Summarization logic splits and re-merges task messages; using the controlled mutators ensures the preserved messages end up in the right order.
 
 #### Practical examples
@@ -290,7 +292,7 @@ self.messages = new_messages
 
 #### Agent2LLM layer notes
 
-In `workspace/context/agent2llm.py`, `del_agent_messages()` and `summarize_messages_for_processing()` mutate `self.ai_agent.messages` directly because they operate on the ephemeral ReAct context and must preserve the work-memory prefix (`self.ai_agent.messages[:index]`). When modifying that layer, always preserve the prefix returned by `self.ai_agent.get_work_memory_first_position()` and update `tokenStat` afterward when tokens change materially.
+In `workspace/context/agent2llm.py`, `del_agent_messages()` and `summarize_messages_for_processing()` mutate `self.ai_agent.messages` directly because they operate on the ephemeral ReAct context and must preserve the work-memory prefix (`self.ai_agent.messages[:index]`). When modifying that layer, always preserve the prefix returned by `self.ai_agent.get_work_memory_first_position()` and update `self.ai_agent.runtime.token_stat` afterward when tokens change materially.
 
 ---
 
@@ -340,13 +342,13 @@ This randomization avoids synchronized summarization spikes across multiple agen
 ### User2Agent — `is_need_summarize_for_processed()`
 
 - **Quantity check**: compares `len(self.messages)` (the persisted User2Agent session messages) against the randomized quantity threshold.
-- **Token check**: reads `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` (default `0`, i.e. disabled). If set to a positive value, compares `self.ai_agent.llm_model.tokenStat.current_tokens` against it.
+- **Token check**: reads `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` (default `0`, i.e. disabled). If set to a positive value, compares `self.ai_agent.runtime.token_stat.current_tokens` against it.
 - **Trigger**: returns `True` if either the quantity threshold or the token threshold is exceeded.
 
 ### Agent2LLM — `is_need_summarize_for_processing()`
 
 - **Quantity check**: builds an extended candidate list from fixed primes `[23, 27, 29, 31, 37, 41, 43, 47]`, appends the configured quantity threshold, and optionally appends `quantity_threshold * 2`. It then picks a random value from this list and ensures it is at least the configured threshold. Finally it compares `len(self.ai_agent.messages)` against this value.
-- **Token check**: reads `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` (default `128000`). If positive, compares `self.ai_agent.llm_model.tokenStat.current_tokens` against it.
+- **Token check**: reads `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` (default `128000`). If positive, compares `self.ai_agent.runtime.token_stat.current_tokens` against it.
 - **Trigger**: returns `True` if either the quantity threshold or the token threshold is exceeded.
 
 ### Key Differences
