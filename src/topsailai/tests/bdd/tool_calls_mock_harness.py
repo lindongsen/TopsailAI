@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from topsailai.ai_base.agent_base import AgentRun
+from topsailai.ai_base.agent_runtime import AgentRuntime
 from topsailai.ai_base.agent_types.react import Step4ReAct
 from topsailai.ai_base.llm_hooks.hook_before_chat import tool_call_pairing
 from topsailai.ai_base.llm_base import LLMModel
@@ -82,6 +83,7 @@ class SummaryAgentFixture:
         self.llm_model = model
         self.messages = list(messages)
         self.agent_type = "react"
+        self.runtime = AgentRuntime(self)
 
     @staticmethod
     def get_work_memory_first_position() -> int:
