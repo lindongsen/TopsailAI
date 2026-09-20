@@ -40,6 +40,7 @@ from topsailai.ai_base.exception import (
 from topsailai.tools.base.common import (
     get_tools_for_chat,
 )
+from topsailai.ai_base.agent_runtime import AgentRuntime
 from topsailai.ai_base.agent_tool import AgentTool
 from topsailai.ai_base.tool_call import StepCallBase
 
@@ -99,6 +100,7 @@ class AgentBase(AgentTool):
             llm_request_stat=self.llm_request_stat,
             state_visualizer=self.state_visualizer,
         )
+        self.runtime = AgentRuntime(self)
         return
 
     def close(self) -> None:

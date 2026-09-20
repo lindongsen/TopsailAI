@@ -70,6 +70,18 @@ class TestAgentBaseInitialization(unittest.TestCase):
         self.assertIs(call_kwargs["llm_request_stat"], agent.llm_request_stat)
         self.assertIs(call_kwargs["state_visualizer"], agent.state_visualizer)
 
+    def test_agent_binds_runtime_after_components_initialize(self):
+        """Agent runtime exposes the agent's initialized runtime components."""
+        from topsailai.ai_base.agent_base import AgentBase
+
+        agent = AgentBase("prompt", {}, "agent")
+        self.mock_llm_model.tokenStat = object()
+
+        self.assertIs(agent.runtime.agent, agent)
+        self.assertIs(agent.runtime.llm_model, agent.llm_model)
+        self.assertIs(agent.runtime.token_stat, agent.llm_model.tokenStat)
+        self.assertIs(agent.runtime.llm_request_stat, agent.llm_request_stat)
+
     def test_agents_own_isolated_runtime_components(self):
         """Separate agents never share request statistics or visualizers."""
         from topsailai.ai_base.agent_base import AgentBase
