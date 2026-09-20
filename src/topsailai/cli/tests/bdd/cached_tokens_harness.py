@@ -8,6 +8,7 @@ from types import MethodType, SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from topsailai.ai_base.agent_runtime import AgentRuntime
 from topsailai.ai_base.llm_base import LLMModel
 from topsailai.context.session_manager.__base import SessionData
 from topsailai.context.session_manager.sql import SessionSQLAlchemy
@@ -24,6 +25,7 @@ class _HarnessAgent:
         self.llm_model = model
         self.messages = list(messages)
         self.agent_type = "react"
+        self.runtime = AgentRuntime(self)
 
     @staticmethod
     def get_work_memory_first_position() -> int:
@@ -260,6 +262,7 @@ class CachedTokensHarness:
         ai_agent.agent_type = "react"
         ai_agent.llm_model = self.model
         ai_agent.messages = self.stable_messages()
+        ai_agent.runtime = AgentRuntime(ai_agent)
 
         def _run_agent(_step_call, message: str) -> str:
             """Send the AgentChat message through the real LLM client."""
@@ -284,9 +287,7 @@ class CachedTokensHarness:
         ), patch(
             "topsailai.workspace.agent.agent_shell_base.env_tool.is_interactive_mode",
             return_value=False,
-        ), patch(
-            "topsailai.workspace.agent.agent_shell_base.tool_stat.get_agent_tool_stat"
-        ) as mock_tool_stat, patch.object(
+        ), patch.object(
             self.model, "send_content"
         ), patch.object(
             self.model.tokenStat, "print_token_stat"
@@ -297,7 +298,6 @@ class CachedTokensHarness:
                 " ".join(str(arg) for arg in args)
             )
         ):
-            mock_tool_stat.return_value.export_json.return_value = "{}"
             chat = AgentChat(
                 hook_instruction=MagicMock(),
                 ctx_rt_aiagent=runtime_agent,

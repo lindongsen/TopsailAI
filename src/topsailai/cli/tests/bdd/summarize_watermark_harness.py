@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+from topsailai.ai_base.agent_runtime import AgentRuntime
 from topsailai.workspace.context.base import ContextRuntimeBase
 from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
 
@@ -36,6 +37,7 @@ class AgentStub:
         self.messages: list[dict] = []
         self.llm_model = ModelStub()
         self.agent_type = "react"
+        self.runtime = AgentRuntime(self)
 
     def get_work_memory_first_position(self) -> int:
         """Return the first non-system position used by summarization."""

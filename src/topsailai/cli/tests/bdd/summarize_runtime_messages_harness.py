@@ -9,6 +9,7 @@ import logging
 import threading
 from typing import Any
 
+from topsailai.ai_base.agent_runtime import AgentRuntime
 from topsailai.ai_base.llm_base import LLMModel
 from topsailai.tests.mock.llm_mock_server import MockServerConfig, create_server
 from topsailai.workspace.context.agent2llm import ContextRuntimeAgent2LLM
@@ -23,6 +24,7 @@ class _HarnessAgent:
         self.messages = list(messages)
         self.agent_type = "react"
         self.available_tools = {}
+        self.runtime = AgentRuntime(self)
 
     @staticmethod
     def get_work_memory_first_position() -> int:

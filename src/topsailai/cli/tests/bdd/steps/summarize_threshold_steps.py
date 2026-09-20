@@ -210,9 +210,6 @@ def duplicate_tool_threshold(threshold_context, threshold: int) -> None:
 @given(parsers.parse("the consecutive duplicate tool call count is {count:d}"))
 def consecutive_duplicate_count(threshold_context, count: int) -> None:
     """Attach deterministic duplicate-call statistics to the agent model."""
-    tool_stat = type(
-        "ToolStatStub",
-        (),
-        {"get_consecutive_duplicate_count": lambda self: count},
-    )()
-    _harness(threshold_context).agent.llm_model.tool_stat = tool_stat
+    _harness(
+        threshold_context
+    ).agent.runtime.tool_stat.consecutive_duplicate_count = count
