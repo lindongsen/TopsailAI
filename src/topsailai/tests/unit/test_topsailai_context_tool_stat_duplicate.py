@@ -232,6 +232,25 @@ class TestGetAgentToolStat(TestCase):
             stat = get_agent_tool_stat()
         self.assertIs(stat, get_default_stat())
 
+    def test_prefers_runtime_tool_stat(self):
+        """Return runtime.tool_stat before legacy agent locations."""
+        runtime_stat = ToolStat()
+        model_stat = ToolStat()
+        legacy_stat = ToolStat()
+        runtime = type("Runtime", (), {"tool_stat": runtime_stat})()
+        llm_model = type("LLM", (), {"tool_stat": model_stat})()
+        agent = type(
+            "Agent",
+            (),
+            {
+                "runtime": runtime,
+                "llm_model": llm_model,
+                "_tool_stat": legacy_stat,
+            },
+        )()
+
+        self.assertIs(get_agent_tool_stat(agent), runtime_stat)
+
     def test_returns_agent_tool_stat_when_present(self):
         """Returns agent.llm_model.tool_stat when available."""
         agent_tool_stat = ToolStat()

@@ -683,10 +683,9 @@ def get_agent_tool_stat(agent=None) -> ToolStat:
     Get or create the ToolStat instance bound to the current agent.
 
     When an agent is active (either passed explicitly or available via
-    thread-local storage), the same ToolStat instance attached to that agent is
-    returned so that duplicate detection and statistics are isolated per agent.
-    If no agent is available, the module-level default ToolStat instance is
-    returned as a fallback.
+    thread-local storage), its runtime ToolStat is preferred. Legacy model- and
+    agent-bound locations remain available as compatibility fallbacks. If no
+    agent is available, the module-level default ToolStat instance is returned.
 
     Args:
         agent: Optional agent object. When provided, the ToolStat bound to this
@@ -702,14 +701,20 @@ def get_agent_tool_stat(agent=None) -> ToolStat:
     if agent is None:
         return get_default_stat()
 
-    # Prefer a ToolStat attached to the agent's LLM model if present.
+    runtime = getattr(agent, "runtime", None)
+    if runtime is not None:
+        tool_stat = getattr(runtime, "tool_stat", None)
+        if tool_stat is not None:
+            return tool_stat
+
+    # Preserve the legacy LLM model location as a compatibility fallback.
     llm_model = getattr(agent, "llm_model", None)
     if llm_model is not None:
         tool_stat = getattr(llm_model, "tool_stat", None)
         if tool_stat is not None:
             return tool_stat
 
-    # Otherwise attach a ToolStat directly to the agent instance.
+    # Preserve the legacy agent location as a compatibility fallback.
     if not hasattr(agent, "_tool_stat"):
         agent._tool_stat = ToolStat()
     return agent._tool_stat
