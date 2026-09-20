@@ -19,6 +19,8 @@ class FakeAgent:
     def __init__(self) -> None:
         """Initialize fake runtime components."""
         self.llm_model = SimpleNamespace(tokenStat=object(), max_tokens=4096)
+        self.messages = []
+        self.available_tools = {}
         self.llm_request_stat = object()
         self.state_visualizer = object()
 
@@ -33,6 +35,8 @@ def test_runtime_exposes_bound_agent_components() -> None:
     assert runtime.llm_model is agent.llm_model
     assert runtime.token_stat is agent.llm_model.tokenStat
     assert runtime.tool_stat is tool_stat
+    assert runtime.agent2llm_messages is agent.messages
+    assert runtime.available_tools is agent.available_tools
     assert runtime.llm_request_stat is agent.llm_request_stat
     assert runtime.state_visualizer is agent.state_visualizer
     assert runtime.max_tokens == 4096
@@ -43,15 +47,21 @@ def test_runtime_properties_follow_replaced_agent_components() -> None:
     agent = FakeAgent()
     runtime = AgentRuntime(agent)
     replacement_model = SimpleNamespace(tokenStat=object(), max_tokens=8192)
+    replacement_messages = [{"role": "user", "content": "new context"}]
+    replacement_tools = {"tool": object()}
     replacement_request_stat = object()
     replacement_visualizer = object()
 
     agent.llm_model = replacement_model
+    agent.messages = replacement_messages
+    agent.available_tools = replacement_tools
     agent.llm_request_stat = replacement_request_stat
     agent.state_visualizer = replacement_visualizer
 
     assert runtime.llm_model is replacement_model
     assert runtime.token_stat is replacement_model.tokenStat
+    assert runtime.agent2llm_messages is replacement_messages
+    assert runtime.available_tools is replacement_tools
     assert runtime.llm_request_stat is replacement_request_stat
     assert runtime.state_visualizer is replacement_visualizer
     assert runtime.max_tokens == 8192

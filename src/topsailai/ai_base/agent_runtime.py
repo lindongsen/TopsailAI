@@ -40,6 +40,16 @@ class AgentRuntime:
         return self.llm_model.tokenStat
 
     @property
+    def agent2llm_messages(self) -> Any:
+        """Return the current Agent2LLM messages, not User2Agent session messages."""
+        return self.agent.messages
+
+    @property
+    def available_tools(self) -> Any:
+        """Return the agent's current tool mapping without owning it."""
+        return self.agent.available_tools
+
+    @property
     def llm_request_stat(self) -> Any:
         """Return the agent's current LLM request statistics."""
         return self.agent.llm_request_stat
