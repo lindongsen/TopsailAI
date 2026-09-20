@@ -312,22 +312,28 @@ HUMAN_CALL_CEILING_SECONDS = 5.0
 HUMAN_BASE_QUESTION = "Should the scenario continue?"
 
 
-def call_human_tool(answer: Any = None, **kwargs: Any) -> dict:
-    """Call ``ask_decision`` without an input channel, or with a scripted answer.
+def call_human_tool(
+    answer: Any = None, scripted_answers: list[Any] | None = None, **kwargs: Any
+) -> dict:
+    """Call ``ask_decision`` without an input channel, or with finite scripted answers.
 
-    ``answer`` registers a thread-local runtime input function *inside* the worker
-    thread, which is what a real agent run does; leaving it as ``None`` reproduces a
+    Scripted answers register a thread-local runtime input function *inside* the worker
+    thread, which is what a real agent run does; leaving them unset reproduces a
     non-interactive process, where a well-formed request must degrade to
     ``unavailable`` while a malformed one must still answer ``invalid_request``.
     """
     box: dict[str, Any] = {}
     prompts: list[str] = []
+    answers = iter(scripted_answers if scripted_answers is not None else [answer])
 
     def runner() -> None:
-        if answer is not None:
+        if answer is not None or scripted_answers is not None:
             def scripted_read(prompt: str, timeout: float | None = None) -> str:
                 prompts.append(prompt)
-                return answer
+                try:
+                    return next(answers)
+                except StopIteration as exc:
+                    raise TimeoutError("scripted answers exhausted") from exc
 
             thread_local_tool.set_agent_runtime_input_with_timeout(scripted_read)
         try:

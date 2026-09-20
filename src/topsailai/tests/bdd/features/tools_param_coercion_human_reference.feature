@@ -190,10 +190,11 @@ Feature: ask_decision keeps its string-first parameter contract
     Then the human decision answer is answered from the scripted reply
     And the human decision answer equals hello there
 
-  Scenario: ask_decision falls back when the operator replies with nothing
-    When the human decision tool is asked with a scripted answer empty and parameters options set to ["yes","no"] and default set to fallback
+  Scenario: ask_decision asks again when the operator replies with nothing
+    When the human decision tool is asked with scripted answers empty then next answer and parameters options set to ["yes","no"] and default set to fallback
     Then the human decision answer is answered from the scripted reply
-    And the human decision answer equals fallback
+    And the human decision answer equals next answer
+    And the human decision prompt was rendered 2 times
 
   Scenario: ask_decision accepts an unlisted reply
     Free-text input is always enabled, so the human's own answer remains authoritative.

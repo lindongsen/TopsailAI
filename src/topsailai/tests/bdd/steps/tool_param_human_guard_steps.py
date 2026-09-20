@@ -193,6 +193,18 @@ def ask_human_with_scripted_answer_and_two_parameters(ctx, answer, first_param, 
     )
 
 
+@when(parsers.parse('the human decision tool is asked with scripted answers {first_answer} then {second_answer} and parameters {first_param} set to {first_value} and {second_param} set to {second_value}'))
+def ask_human_with_two_scripted_answers(ctx, first_answer, second_answer, first_param, first_value, second_param, second_value):
+    """An operator gives two finite replies while two arguments shape the request."""
+    ctx["response"] = call_human_tool(
+        scripted_answers=[_expand(ctx, first_answer), _expand(ctx, second_answer)],
+        **_human_kwargs(
+            ctx,
+            {first_param: _expand(ctx, first_value), second_param: _expand(ctx, second_value)},
+        ),
+    )
+
+
 
 
 
@@ -313,6 +325,13 @@ def human_answer_equals(ctx, expected):
     response = ctx["response"]
     assert response["kind"] == "dict", f"expected a dict, got {response}"
     assert response.get("answer") == _expand(ctx, expected), f"unexpected answer: {response}"
+
+
+@then(parsers.parse('the human decision prompt was rendered {count:d} times'))
+def human_prompt_count(ctx, count):
+    """The prompt count reflects every scripted operator reply."""
+    response = ctx["response"]
+    assert len(response.get("prompts", [])) == count, f"unexpected prompts: {response}"
 
 
 @then(parsers.parse('the human decision answer selected option index {index}'))
