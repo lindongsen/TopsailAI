@@ -12,7 +12,7 @@ references:
 
 ## Overview
 
-TopsailAI centralizes frequently used agent-scoped runtime objects behind `AgentBase.runtime`. The runtime facade provides one typed and discoverable access path for the current agent, LLM model, token statistics, tool statistics, request statistics, state visualizer, and maximum token setting.
+TopsailAI centralizes frequently used agent-scoped runtime objects behind `AgentBase.runtime`. The runtime facade provides one typed and discoverable access path for the current agent, LLM model, token statistics, tool statistics, request statistics, state visualizer, Agent2LLM messages, Agent-scoped tools, and maximum token setting.
 
 The intended access chain for code that cannot receive explicit dependencies is:
 
@@ -51,9 +51,15 @@ It currently exposes:
 - `llm_model`
 - `token_stat`
 - `tool_stat`
+- `agent2llm_messages`
+- `available_tools`
 - `llm_request_stat`
 - `state_visualizer`
 - `max_tokens`
+
+`agent2llm_messages` dynamically returns the current `agent.messages` list. It represents the temporary Agent2LLM ReAct context and is not the persistent User2Agent messages managed by `ContextRuntimeData`.
+
+`available_tools` dynamically returns the current Agent-scoped `agent.available_tools` mapping without taking ownership or maintaining a second registry. Tool registration and removal must continue through the Agent's management methods.
 
 ### Current-Agent Location Remains Separate
 
@@ -95,7 +101,7 @@ The facade accepts compatible agent-shaped objects instead of requiring a strict
 
 ### Typed Surface, Not a General Registry
 
-`AgentRuntime` exposes explicit, stable properties. It is not an arbitrary string-keyed service locator and must not absorb process-global registries, provider pools, static configuration, or independent `LLMChat` objects.
+`AgentRuntime` exposes explicit, stable properties. It must not become a Service Locator containing every runtime object, including session state, configuration, hooks, or task state. It must not absorb process-global registries, provider pools, static configuration, independent `LLMChat` objects, or other objects outside the Agent lifecycle.
 
 ## Access Priority
 
