@@ -21,7 +21,6 @@ from topsailai.utils.print_tool import (
     print_info,
     print_warning,
 )
-from topsailai.context import tool_stat
 from topsailai.ai_base.constants import (
     ROLE_ASSISTANT,
 )
@@ -437,9 +436,9 @@ class AgentChat(AgentChatBase):
                             if env_tool.EnvReaderInstance.check_bool(
                                 "TOPSAILAI_ENABLE_TOOL_STAT", True
                             ):
-                                task.tool_call_count = tool_stat.get_agent_tool_stat(
-                                    self.ai_agent
-                                ).total_calls
+                                task.tool_call_count = (
+                                    self.ai_agent.runtime.tool_stat.total_calls
+                                )
                             else:
                                 task.tool_call_count = 0
                         except Exception as e:
@@ -576,7 +575,7 @@ class AgentChat(AgentChatBase):
                     sys.stdout.flush()
 
                 if env_tool.is_debug_mode() or env_tool.EnvReaderInstance.check_bool("TOPSAILAI_PRINT_TOOL_STAT", True):
-                    tool_call_stat = tool_stat.get_agent_tool_stat(self.ai_agent)
+                    tool_call_stat = self.ai_agent.runtime.tool_stat
                     __content = tool_call_stat.export_json()
                     logger.info("ToolStat of tool_calls:\n [%s]", __content)
 

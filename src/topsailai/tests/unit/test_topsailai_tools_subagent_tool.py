@@ -740,18 +740,18 @@ class TestSubagentReuseGating:
 
         try:
             mock_agent = MagicMock()
-            mock_agent.ai_agent.llm_model.tool_stat = ToolStat()
+            mock_agent.ai_agent.runtime.tool_stat = ToolStat()
             mock_agent._run.return_value = "response"
             mock_get_agent_chat.return_value = mock_agent
             mock_get_task_id.return_value = "task_123"
 
             subagent_tool.call_assistant("first task")
-            mock_agent.ai_agent.llm_model.tool_stat.record("file_tool-read_file")
-            assert mock_agent.ai_agent.llm_model.tool_stat.total_calls == 1
+            mock_agent.ai_agent.runtime.tool_stat.record("file_tool-read_file")
+            assert mock_agent.ai_agent.runtime.tool_stat.total_calls == 1
 
             subagent_tool.call_assistant("second task")
 
-            assert mock_agent.ai_agent.llm_model.tool_stat.total_calls == 0
+            assert mock_agent.ai_agent.runtime.tool_stat.total_calls == 0
         finally:
             os.environ.pop("TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS", None)
 

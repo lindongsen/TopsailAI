@@ -71,13 +71,12 @@ class TestAgentChatRun(unittest.TestCase):
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
     @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
     @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
-    @patch("topsailai.workspace.agent.agent_shell_base.tool_stat")
     @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
     def test_run_preassigns_executor_before_manifest(self,
             mock_get_agent_step_call, mock_task_tool, mock_lock_tool,
-            mock_tool_stat, mock_env_tool, mock_set_ai_agent, mock_get_hooks):
+            mock_env_tool, mock_set_ai_agent, mock_get_hooks):
         """Verify executor is assigned before run() so pre-run manifests carry it."""
         from topsailai.workspace.agent.agent_shell_base import AgentChat
 
@@ -121,15 +120,14 @@ class TestAgentChatRun(unittest.TestCase):
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
     @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
     @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
-    @patch("topsailai.workspace.agent.agent_shell_base.tool_stat")
     @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
     def test_run_sets_task_tool_call_count(
         self, mock_get_agent_step_call, mock_task_tool, mock_lock_tool,
-        mock_tool_stat, mock_env_tool, mock_set_ai_agent, mock_get_hooks
+        mock_env_tool, mock_set_ai_agent, mock_get_hooks
     ):
-        """Test task completion records the agent tool call count."""
+        """Test task completion records the agent runtime tool call count."""
         from topsailai.workspace.agent.agent_shell_base import AgentChat
 
         mock_get_hooks.return_value = []
@@ -147,7 +145,7 @@ class TestAgentChatRun(unittest.TestCase):
         mock_task.manifest = "---\nstatus: done\n---\n"
         mock_task_tool.ctxm_process_task.return_value.__enter__ = MagicMock(return_value=None)
         mock_task_tool.ctxm_process_task.return_value.__exit__ = MagicMock(return_value=False)
-        mock_tool_stat.get_agent_tool_stat.return_value.total_calls = 5
+        self.mock_ai_agent.runtime.tool_stat.total_calls = 5
         self.mock_ai_agent.run.return_value = "Test response"
         self.mock_ai_agent.agent_name = "test-agent"
 
@@ -161,19 +159,16 @@ class TestAgentChatRun(unittest.TestCase):
 
         self.assertEqual(mock_task.tool_call_count, 5)
         self.assertEqual(mock_task.executor, "test-agent")
-        self.assertEqual(mock_tool_stat.get_agent_tool_stat.call_count, 2)
-        mock_tool_stat.get_agent_tool_stat.assert_any_call(self.mock_ai_agent)
 
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
     @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
     @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
-    @patch("topsailai.workspace.agent.agent_shell_base.tool_stat")
     @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
     def test_run_lazy_warning_when_tool_stat_enabled_and_zero_calls(
         self, mock_get_agent_step_call, mock_task_tool, mock_lock_tool,
-        mock_tool_stat, mock_env_tool, mock_set_ai_agent, mock_get_hooks
+        mock_env_tool, mock_set_ai_agent, mock_get_hooks
     ):
         """When tool-stat is enabled and no tool calls were made, append the warning."""
         from topsailai.workspace.agent.agent_shell_base import (
@@ -197,7 +192,7 @@ class TestAgentChatRun(unittest.TestCase):
         mock_task.tool_call_count = 0
         mock_task_tool.ctxm_process_task.return_value.__enter__ = MagicMock(return_value=None)
         mock_task_tool.ctxm_process_task.return_value.__exit__ = MagicMock(return_value=False)
-        mock_tool_stat.get_agent_tool_stat.return_value.total_calls = 0
+        self.mock_ai_agent.runtime.tool_stat.total_calls = 0
         self.mock_ai_agent.run.return_value = "Test response"
 
         agent_chat = AgentChat(
@@ -214,13 +209,12 @@ class TestAgentChatRun(unittest.TestCase):
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
     @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
     @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
-    @patch("topsailai.workspace.agent.agent_shell_base.tool_stat")
     @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
     def test_run_no_lazy_warning_when_tool_calls_present(
         self, mock_get_agent_step_call, mock_task_tool, mock_lock_tool,
-        mock_tool_stat, mock_env_tool, mock_set_ai_agent, mock_get_hooks
+        mock_env_tool, mock_set_ai_agent, mock_get_hooks
     ):
         """When tool-stat is enabled and tool calls were made, do not append the warning."""
         from topsailai.workspace.agent.agent_shell_base import (
@@ -244,7 +238,7 @@ class TestAgentChatRun(unittest.TestCase):
         mock_task.tool_call_count = 3
         mock_task_tool.ctxm_process_task.return_value.__enter__ = MagicMock(return_value=None)
         mock_task_tool.ctxm_process_task.return_value.__exit__ = MagicMock(return_value=False)
-        mock_tool_stat.get_agent_tool_stat.return_value.total_calls = 3
+        self.mock_ai_agent.runtime.tool_stat.total_calls = 3
         self.mock_ai_agent.run.return_value = "Test response"
 
         agent_chat = AgentChat(
@@ -260,13 +254,12 @@ class TestAgentChatRun(unittest.TestCase):
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
     @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
     @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
-    @patch("topsailai.workspace.agent.agent_shell_base.tool_stat")
     @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
     def test_run_no_lazy_warning_when_tool_stat_disabled(
         self, mock_get_agent_step_call, mock_task_tool, mock_lock_tool,
-        mock_tool_stat, mock_env_tool, mock_set_ai_agent, mock_get_hooks
+        mock_env_tool, mock_set_ai_agent, mock_get_hooks
     ):
         """When tool-stat is disabled, do not append the warning even with zero calls."""
         from topsailai.workspace.agent.agent_shell_base import (
@@ -935,7 +928,6 @@ class TestCacheHitRate(unittest.TestCase):
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
     @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
     @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
-    @patch("topsailai.workspace.agent.agent_shell_base.tool_stat")
     @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
@@ -943,14 +935,14 @@ class TestCacheHitRate(unittest.TestCase):
     @patch("builtins.print")
     def test_one_shot_prints_final_summary_once_after_answer(
         self, mock_print, mock_get_totals, mock_get_agent_step_call,
-        mock_task_tool, mock_lock_tool, mock_tool_stat, mock_env_tool,
+        mock_task_tool, mock_lock_tool, mock_env_tool,
         mock_set_ai_agent, mock_get_hooks, mock_is_need_print,
     ):
         """A one-shot run prints its token, cache, and tool summary after the answer."""
         mock_get_totals.return_value = (1000, 250)
-        mock_tool_stat.get_agent_tool_stat.return_value.export_json.return_value = "{}"
 
         agent_chat = self._make_agent_chat(mock_env_tool, mock_lock_tool, mock_get_hooks)
+        agent_chat.ai_agent.runtime.tool_stat.export_json.return_value = "{}"
         agent_chat.ai_agent.run.return_value = "Response"
 
         result = agent_chat.run(message="Hello", times=1)
@@ -962,8 +954,7 @@ class TestCacheHitRate(unittest.TestCase):
         self.assertEqual(printed.count("total_cached_tokens : 250"), 1)
         self.assertEqual(printed.count("cache_hit_rate      : 25.000%"), 1)
         self.assertLess(printed.index("Response"), printed.index("total_prompt_tokens : 1000"))
-        mock_tool_stat.get_agent_tool_stat.assert_called_once_with(agent_chat.ai_agent)
-        mock_tool_stat.get_agent_tool_stat.return_value.export_json.assert_called_once_with()
+        agent_chat.ai_agent.runtime.tool_stat.export_json.assert_called_once_with()
         agent_chat.ctx_runtime_data.reset_messages.assert_not_called()
 
     @patch("topsailai.workspace.agent.agent_shell_base.input_message")
