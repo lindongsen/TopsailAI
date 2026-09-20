@@ -16,6 +16,7 @@ from topsailai.ai_base.llm_control.message import (
     get_count_of_action,
 )
 from topsailai.ai_base.agent_base import AgentBase
+from topsailai.ai_base.agent_runtime import AgentRuntime
 
 
 def get_count_of_action_for_current_agent() -> int:
@@ -38,10 +39,14 @@ class _AgentContextBase(object):
         return get_agent_object()
 
     @property
+    def runtime(self) -> AgentRuntime | None:
+        agent = self.agent
+        return agent.runtime if agent is not None else None
+
+    @property
     def max_tokens(self) -> int:
-        _max_tokens = 0
-        if self.agent:
-            _max_tokens = self.agent.llm_model.max_tokens
+        runtime = self.runtime
+        _max_tokens = runtime.max_tokens if runtime is not None else 0
         if not _max_tokens:
             _max_tokens = env_tool.EnvReaderInstance.get_with_fallback(
                 "TOPSAILAI_MAX_COMPLETION_TOKENS", "MAX_TOKENS",

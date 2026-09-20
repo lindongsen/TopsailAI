@@ -63,29 +63,74 @@ class TestGetCountOfActionForCurrentAgent(unittest.TestCase):
                 self.assertEqual(result, 1)
 
 
+class TestAgentContextRuntime(unittest.TestCase):
+    """Test current-agent runtime access."""
+
+    def test_runtime_proxies_current_agent_runtime(self):
+        """Return the runtime owned by the current agent."""
+        from topsailai.ai_base.agent_types.context import AgentContextInstance
+
+        runtime = object()
+        agent = MagicMock(runtime=runtime)
+        with patch(
+            "topsailai.ai_base.agent_types.context.get_agent_object",
+            return_value=agent,
+        ):
+            self.assertIs(AgentContextInstance.runtime, runtime)
+
+    def test_runtime_is_none_without_current_agent(self):
+        """Return no runtime when no current agent exists."""
+        from topsailai.ai_base.agent_types.context import AgentContextInstance
+
+        with patch(
+            "topsailai.ai_base.agent_types.context.get_agent_object",
+            return_value=None,
+        ):
+            self.assertIsNone(AgentContextInstance.runtime)
+
+
 class TestAgentContextMaxTokens(unittest.TestCase):
-    """Test environment resolution for the context token limit."""
+    """Test runtime and environment resolution for the context token limit."""
+
+    def test_runtime_max_tokens_takes_precedence(self):
+        """Use the current runtime token limit before environment values."""
+        from topsailai.ai_base.agent_types.context import AgentContextInstance
+
+        runtime = MagicMock(max_tokens=6100)
+        agent = MagicMock(runtime=runtime)
+        environment = {"TOPSAILAI_MAX_COMPLETION_TOKENS": "5100"}
+        with patch.dict("os.environ", environment, clear=True), patch(
+            "topsailai.ai_base.agent_types.context.get_agent_object",
+            return_value=agent,
+        ):
+            self.assertEqual(AgentContextInstance.max_tokens, 6100)
 
     def test_legacy_variable_is_used_as_fallback(self):
-        """Use MAX_TOKENS when the preferred variable has no value."""
+        """Use MAX_TOKENS when there is no agent or preferred value."""
         from topsailai.ai_base.agent_types.context import AgentContextInstance
 
         environment = {
             "TOPSAILAI_MAX_COMPLETION_TOKENS": "",
             "MAX_TOKENS": "4100",
         }
-        with patch.dict("os.environ", environment, clear=True):
+        with patch.dict("os.environ", environment, clear=True), patch(
+            "topsailai.ai_base.agent_types.context.get_agent_object",
+            return_value=None,
+        ):
             self.assertEqual(AgentContextInstance.max_tokens, 4100)
 
     def test_prefixed_variable_takes_precedence(self):
-        """Use the preferred variable when both names have values."""
+        """Use the preferred variable when no agent exists and both names have values."""
         from topsailai.ai_base.agent_types.context import AgentContextInstance
 
         environment = {
             "TOPSAILAI_MAX_COMPLETION_TOKENS": "5100",
             "MAX_TOKENS": "4100",
         }
-        with patch.dict("os.environ", environment, clear=True):
+        with patch.dict("os.environ", environment, clear=True), patch(
+            "topsailai.ai_base.agent_types.context.get_agent_object",
+            return_value=None,
+        ):
             self.assertEqual(AgentContextInstance.max_tokens, 5100)
 
 
