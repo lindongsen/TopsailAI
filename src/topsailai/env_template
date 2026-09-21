@@ -1,3 +1,21 @@
+# =============================================================================
+# JEV Decision Tool
+# =============================================================================
+# HTTP or HTTPS service origin. Required; the tool appends /v1/systemone.
+TOPSAILAI_JEV_BASE_URL=""
+# Bearer credential. Required and never logged.
+TOPSAILAI_JEV_API_KEY=""
+# JEV-compatible model name.
+TOPSAILAI_JEV_MODEL="jev-latest"
+# Positive finite timeout in seconds for each HTTP attempt.
+TOPSAILAI_JEV_TIMEOUT_SECONDS=10
+# Non-negative retry count for transient failures.
+TOPSAILAI_JEV_MAX_RETRIES=1
+# Maximum recent eligible Agent2LLM messages exported to JEV.
+TOPSAILAI_JEV_MAX_CONTEXT_MESSAGES=50
+# Maximum serialized Agent2LLM context characters exported to JEV.
+TOPSAILAI_JEV_MAX_CONTEXT_CHARS=60000
+
 # Agent2LLM message persistence across User2Agent turns.
 # When 1, Agent2LLM messages are kept across turns and User2Agent session
 # messages are appended each turn (duplicates are skipped). When 0 (default),

@@ -150,3 +150,7 @@ When the LLM request-statistics feature caused `utils.StateVisualizer` to import
 ## Abandoned User2Agent turns must bypass completion side effects and restore turn accounting
 
 When `LLMBackToChatError` abandons a failed User2Agent turn, reading a replacement message is not sufficient: falling through normal completion handling can run success/final hooks, persist a fake answer, reset session state, or consume the finite-turn budget. Handle Back with explicit local state, invoke the failure hook once, normalize and revalidate fresh input, guard all completion-only effects, and restore `curr_count` before naturally starting the next iteration. This prevents old-message replay, false completion records, and premature finite-run termination without confusing Back with the request-level retry that remains inside `LLMModel.chat()`.
+
+## Retry policy implementations must use the approved explicit status allowlist
+
+During JEV client review, treating every HTTP 5xx response as retryable conflicted with the approved policy that permits retries only for transport failures and HTTP 408, 429, 502, 503, and 504. Implement retryability from one explicit allowlist shared by response mapping and tests, and add a negative regression for an unlisted status such as HTTP 500; this prevents broad status families from silently consuming extra requests and service capacity.

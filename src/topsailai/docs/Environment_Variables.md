@@ -28,6 +28,18 @@ These variables define the agent's working environment and project access scope.
 | `TOPSAILAI_PROJECT_WORKSPACE_LOCK_ENABLED` | `1` | When `1`, `agent_shell` tries to acquire a lock on `{TOPSAILAI_PROJECT_WORKSPACE}/.topsailai/project_workspace.lock` at startup. Set to `0` to disable project workspace locking. |
 | `TOPSAILAI_PROJECT_WORKSPACE_LOCK_TIMEOUT` | `300` | Timeout in seconds for the interactive prompt when acquiring the project workspace lock fails. The user can choose `exit`, `continue`, or `wait`. If the timeout expires or no input is received, the default action is `wait`. |
 
+## JEV Decision Tool
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_JEV_BASE_URL` | `""` | Required JEV service origin using `http://` or `https://`; the tool validates the scheme and appends `/v1/systemone`. |
+| `TOPSAILAI_JEV_API_KEY` | `""` | Required Bearer credential for JEV requests; never logged or returned. |
+| `TOPSAILAI_JEV_MODEL` | `"jev-latest"` | Model sent to the JEV-compatible service. |
+| `TOPSAILAI_JEV_TIMEOUT_SECONDS` | `10` | Positive finite timeout in seconds for each HTTP attempt. |
+| `TOPSAILAI_JEV_MAX_RETRIES` | `1` | Non-negative retry count for transient transport and upstream failures. |
+| `TOPSAILAI_JEV_MAX_CONTEXT_MESSAGES` | `50` | Maximum number of recent eligible Agent2LLM messages exported to JEV; complete tool-call groups remain atomic. |
+| `TOPSAILAI_JEV_MAX_CONTEXT_CHARS` | `60000` | Maximum serialized Agent2LLM context characters exported to JEV. |
+
 ## Application Settings
 
 | Variable | Default | Description |
