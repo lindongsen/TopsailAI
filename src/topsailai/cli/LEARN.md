@@ -105,3 +105,17 @@ Searched all runtime command help, fallback, and error strings and updated each 
 ### Why this prevents recurrence
 
 Treating parsing, dispatch, startup help, fallback help, error guidance, and usage documentation as one command contract prevents a working command from remaining undiscoverable or being incorrectly reported as unavailable in another runtime path.
+
+## FIFO message framing must reject content that collides with its terminator
+
+### Trigger
+
+Runtime `/send` reported success for a multiline message containing a standalone `EOF` line, while the receiving input protocol treated that line as the end marker and discarded the remaining content.
+
+### Action taken
+
+Traced input capture, FIFO writing, and receiver parsing; confirmed that the sender wrote all bytes but the receiver truncated at the in-band marker, then made the CLI reject such messages before opening the pipe because the receiver protocol is outside this workspace.
+
+### Why this prevents recurrence
+
+Validating reserved framing markers before transport prevents silent partial delivery until sender and receiver can adopt a collision-free framing protocol together.

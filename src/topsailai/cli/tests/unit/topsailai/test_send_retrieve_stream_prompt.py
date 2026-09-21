@@ -132,6 +132,28 @@ class TestSendRetrieveStreamPrompt(unittest.TestCase):
         self.assertEqual(received, [b"line one\nline two\nEOF\n"])
         self.assertEqual(set(os.listdir(temporary_dir)), before)
 
+    def test_send_rejects_embedded_eof_marker_before_pipe_write(self):
+        """A protocol marker in message content must not cause silent truncation."""
+        with tempfile.TemporaryDirectory() as task_dir:
+            stdout_path = os.path.join(task_dir, "s1.1234.session.stdout")
+            pipe_path = os.path.join(task_dir, "s1.1234.session.pipe")
+            with open(stdout_path, "w", encoding="utf-8") as stdout_file:
+                stdout_file.write("running")
+            os.mkfifo(pipe_path)
+
+            with patch("cli_topsailai.streaming.os.open") as mock_open:
+                result = send_message_to_session(
+                    "s1",
+                    "before\nEOF\nafter",
+                    task_dir,
+                    timeout=0.1,
+                    stdout_path=stdout_path,
+                    pid=1234,
+                )
+
+        self.assertFalse(result)
+        mock_open.assert_not_called()
+
     def test_multiline_send_removes_temporary_file_after_write_failure(self):
         """A failed pipe write does not leave the staged payload behind."""
         import threading

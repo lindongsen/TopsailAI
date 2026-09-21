@@ -1728,6 +1728,14 @@ def send_message_to_session(
     Returns:
         ``True`` if the message was sent, ``False`` otherwise.
     """
+    if "EOF" in message.splitlines():
+        print(
+            f"{Colors.RED}[ERROR] Message contains a standalone 'EOF' line, "
+            f"which conflicts with the session pipe terminator and would truncate "
+            f"the message. Remove or alter that line before sending.{Colors.RESET}"
+        )
+        return False
+
     if stdout_path is None:
         stdout_path = _find_session_stdout_file(task_dir, session_id)
         if stdout_path is None:
