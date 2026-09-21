@@ -131,3 +131,49 @@ def assert_no_transport(jev_world):
 def assert_invalid_response(jev_world):
     """Verify mismatched answers are rejected."""
     assert jev_world.result["status"] == "invalid_response"
+
+
+@given("a private JEV-compatible server returning a score answer")
+def score_server(jev_world, monkeypatch):
+    """Configure a valid structured score response."""
+    _start(jev_world, monkeypatch, {
+        "model": "jev-latest",
+        "answers": {
+            "quality": {
+                "type": "score",
+                "score": 1.75,
+                "legend": {"0": "poor", "1": "acceptable", "2": "good"},
+                "probabilities": {"0": 0.05, "1": 0.15, "2": 0.8},
+                "confidence": 0.65,
+            }
+        },
+        "usage": {"input_tokens": 8, "output_tokens": 2},
+    })
+
+
+@when("the agent evaluates a response quality score")
+def evaluate_score(jev_world):
+    """Invoke a score question with ordered criteria levels."""
+    question = {
+        "quality": {
+            "type": "score",
+            "instructions": "Rate the response quality.",
+            "criteria": ["poor", "acceptable", "good"],
+        }
+    }
+    with ctxm_set_agent(jev_world.agent):
+        jev_world.result = jev_tool.evaluate(json.dumps(question))
+
+
+@then("JEV receives the ordered score criteria levels")
+def assert_score_criteria(jev_world):
+    """Verify criteria remain an ordered array on the wire."""
+    criteria = jev_world.server.requests[0]["questions"]["quality"]["criteria"]
+    assert criteria == ["poor", "acceptable", "good"]
+
+
+@then("the structured score result is returned")
+def assert_score_result(jev_world):
+    """Verify a valid score answer passes response validation."""
+    assert jev_world.result["status"] == "ok"
+    assert jev_world.result["answers"]["quality"]["score"] == 1.75

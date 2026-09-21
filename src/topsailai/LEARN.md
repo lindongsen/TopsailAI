@@ -154,3 +154,13 @@ When `LLMBackToChatError` abandons a failed User2Agent turn, reading a replaceme
 ## Retry policy implementations must use the approved explicit status allowlist
 
 During JEV client review, treating every HTTP 5xx response as retryable conflicted with the approved policy that permits retries only for transport failures and HTTP 408, 429, 502, 503, and 504. Implement retryability from one explicit allowlist shared by response mapping and tests, and add a negative regression for an unlisted status such as HTTP 500; this prevents broad status families from silently consuming extra requests and service capacity.
+
+
+## A broad OpenAPI union does not prove each discriminated variant accepts every union member
+
+The deployed JEV schema described `Question.criteria` as either an object or array for all question types, but live validation required score criteria to be an ordered array of 2–10 string, object, or array levels. The Tool incorrectly reused choice's object criteria rule for score, so locally accepted score requests always failed upstream.
+
+Lessons:
+1. When one schema field is shared by discriminated variants, verify each variant's semantic constraints instead of applying the broad union uniformly.
+2. For a newly supported remote variant, pair contract inspection with one minimal live boundary probe when the published schema omits runtime validators.
+3. Encode the confirmed variant-specific shape in the LLM-facing Tool contract and assert both local rejection boundaries and the exact HTTP wire payload so an apparently schema-valid but unusable request cannot regress.

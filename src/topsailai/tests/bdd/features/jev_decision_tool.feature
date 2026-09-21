@@ -22,3 +22,10 @@ Feature: JEV decision tool
     And Agent2LLM history containing one user message
     When the agent evaluates a noul refund question
     Then the tool returns an invalid response status
+
+  Scenario: A score decision sends ordered criteria levels over HTTP
+    Given a private JEV-compatible server returning a score answer
+    And Agent2LLM history containing one user message
+    When the agent evaluates a response quality score
+    Then JEV receives the ordered score criteria levels
+    And the structured score result is returned

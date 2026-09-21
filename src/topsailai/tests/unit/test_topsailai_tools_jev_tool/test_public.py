@@ -20,6 +20,10 @@ def test_registration_and_docstring_contract():
     ('{"": {"type":"noul","instructions":"x"}}', "invalid_question_id"),
     ('{"q": {"type":"bad","instructions":"x"}}', "invalid_question_type"),
     ('{"q": {"type":"choice","instructions":"x"}}', "missing_question_criteria"),
+    ('{"q": {"type":"score","instructions":"x","criteria":{"1":"low","2":"high"}}}', "score_criteria_must_contain_2_to_10_levels"),
+    ('{"q": {"type":"score","instructions":"x","criteria":["only"]}}', "score_criteria_must_contain_2_to_10_levels"),
+    ('{"q": {"type":"score","instructions":"x","criteria":["0","1","2","3","4","5","6","7","8","9","10"]}}', "score_criteria_must_contain_2_to_10_levels"),
+    ('{"q": {"type":"score","instructions":"x","criteria":["low",2]}}', "invalid_score_criteria_level"),
     ('{"q": {"type":"noul","instructions":"x","criteria":{}}}', "noul_criteria_not_supported"),
     ('{"q": {"type":"noul","instructions":"x","extra":1}}', "unknown_question_field"),
 ])
@@ -35,12 +39,18 @@ def test_orchestration_uses_runtime_agent(monkeypatch):
     expected = {"status": "ok", "model": "m", "answers": {}, "usage": {}}
     config = SimpleNamespace(api_key="key", max_context_messages=2, max_context_chars=100)
     agent = SimpleNamespace(messages=[{"role": "user", "content": "hello"}])
+    captured = {}
     monkeypatch.setattr(jev_tool, "load_config", lambda: config)
     monkeypatch.setattr(jev_tool, "get_agent_object", lambda: agent)
     monkeypatch.setattr(jev_tool, "build_state", lambda *args: {"agent2llm_messages": []})
-    monkeypatch.setattr(jev_tool, "evaluate_remote", lambda *args: expected)
-    result = jev_tool.evaluate('{"q":{"type":"noul","instructions":"yes?"}}')
+    monkeypatch.setattr(jev_tool, "evaluate_remote", lambda *args: captured.setdefault("args", args) and expected)
+    criteria = ["poor", {"label": "acceptable"}, ["good"]]
+    result = jev_tool.evaluate(
+        '{"quality":{"type":"score","instructions":"quality?",'
+        '"criteria":["poor",{"label":"acceptable"},["good"]]}}'
+    )
     assert result is expected
+    assert captured["args"][2]["quality"]["criteria"] == criteria
 
 
 @pytest.mark.parametrize("value,reason", [
