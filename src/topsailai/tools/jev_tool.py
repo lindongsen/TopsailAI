@@ -58,6 +58,9 @@ def evaluate(questions: str) -> dict:
             A ``score`` needs an ordered ``criteria`` array containing 2–10
             string, object, or array levels. One call accepts 1–32 questions.
 
+        Example:
+            ``evaluate('{"refund":{"type":"noul","instructions":"Does the user request a refund?"},"priority":{"type":"choice","instructions":"Choose the priority.","criteria":{"low":"Can wait","high":"Needs prompt attention"}},"quality":{"type":"score","instructions":"Rate the response quality.","criteria":["poor","acceptable","good"]}}')``
+
     Context:
         Sends eligible user, assistant, and complete paired tool interactions
         from the current Agent2LLM runtime. System messages and the active JEV
