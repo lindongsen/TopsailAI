@@ -45,7 +45,12 @@ build-docker: build-deb
 	@mkdir -p docker/deb-output
 	@cp -f $$(ls -t $(OUTPUT_DIR)/topsailai-[0-9]*.deb | head -1) docker/deb-output/topsailai-1.0.deb
 	@cp -f $$(ls -t $(OUTPUT_DIR)/topsailai-data-[0-9]*.deb | head -1) docker/deb-output/topsailai-data-1.0.deb
-	@docker build -f docker/Dockerfile.binary -t $(DOCKER_TAG) .
+	@# Resolve the repo-root .env.local symlink to its real file so Docker can COPY it
+	@# (Docker cannot follow symlinks that point outside the build context).
+	@cp -fL .env.local docker/.env.local
+	@# Use host networking: the Docker daemon runs with iptables=false, so the
+	@# default bridge cannot reach the internet (uv pip install needs pypi.org).
+	@docker build --network=host -f docker/Dockerfile.binary -t $(DOCKER_TAG) .
 	@echo "==> Done. Docker image $(DOCKER_TAG) built."
 
 ## Remove build artifacts
@@ -53,6 +58,7 @@ clean:
 	@echo "==> Cleaning build artifacts..."
 	@rm -rf $(OUTPUT_DIR)
 	@rm -rf docker/deb-output
+	@rm -f docker/.env.local
 	@echo "==> Done."
 
 ## Show this help message
