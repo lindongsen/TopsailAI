@@ -1,6 +1,7 @@
 """JEV semantic decision tool."""
 
 import json
+import os
 
 from topsailai.tools.jev_tool_utils.client import error_result, evaluate_remote
 from topsailai.tools.jev_tool_utils.config import JevConfigError, load_config
@@ -103,4 +104,4 @@ controlled only by TOPSAILAI_JEV_* settings.
 """
 
 TOOLS = {"evaluate": evaluate}
-FLAG_TOOL_ENABLED = True
+FLAG_TOOL_ENABLED = bool(os.getenv("TOPSAILAI_JEV_BASE_URL", "").strip())

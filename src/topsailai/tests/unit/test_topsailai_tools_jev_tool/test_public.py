@@ -1,10 +1,29 @@
 """Tests for the public JEV tool contract."""
 
+import importlib
 from types import SimpleNamespace
 
 import pytest
 
 from topsailai.tools import jev_tool
+
+
+@pytest.mark.parametrize("base_url,enabled", [
+    (None, False),
+    ("   ", False),
+    ("https://example.test", True),
+])
+def test_tool_enablement_requires_non_empty_base_url(monkeypatch, base_url, enabled):
+    """The JEV tool is enabled only when its base URL is configured."""
+    try:
+        with monkeypatch.context() as patch:
+            if base_url is None:
+                patch.delenv("TOPSAILAI_JEV_BASE_URL", raising=False)
+            else:
+                patch.setenv("TOPSAILAI_JEV_BASE_URL", base_url)
+            assert importlib.reload(jev_tool).FLAG_TOOL_ENABLED is enabled
+    finally:
+        importlib.reload(jev_tool)
 
 
 def test_registration_and_docstring_contract():

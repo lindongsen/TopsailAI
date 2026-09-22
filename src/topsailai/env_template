@@ -1,7 +1,8 @@
 # =============================================================================
 # JEV Decision Tool
 # =============================================================================
-# HTTP or HTTPS service origin. Required; the tool appends /v1/systemone.
+# HTTP or HTTPS service origin. Unset or empty disables the JEV tool; when set,
+# the tool validates the origin and appends /v1/systemone.
 TOPSAILAI_JEV_BASE_URL=""
 # Bearer credential. Required and never logged.
 TOPSAILAI_JEV_API_KEY=""

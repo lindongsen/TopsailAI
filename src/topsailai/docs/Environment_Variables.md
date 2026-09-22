@@ -32,7 +32,7 @@ These variables define the agent's working environment and project access scope.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TOPSAILAI_JEV_BASE_URL` | `""` | Required JEV service origin using `http://` or `https://`; the tool validates the scheme and appends `/v1/systemone`. |
+| `TOPSAILAI_JEV_BASE_URL` | `""` | JEV service origin using `http://` or `https://`; unset or empty disables the JEV tool, while a non-empty value enables it, validates the scheme, and appends `/v1/systemone`. |
 | `TOPSAILAI_JEV_API_KEY` | `""` | Required Bearer credential for JEV requests; never logged or returned. |
 | `TOPSAILAI_JEV_MODEL` | `"jev-latest"` | Model sent to the JEV-compatible service. |
 | `TOPSAILAI_JEV_TIMEOUT_SECONDS` | `10` | Positive finite timeout in seconds for each HTTP attempt. |
