@@ -2459,6 +2459,79 @@ class TestLLMModelChatAgentRuntimeInput(unittest.TestCase):
             ">>> LLM Retry [yes/no] ", plain_input
         )
 
+    @patch_llm_time
+    @patch.dict(
+        "os.environ",
+        {
+            "TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY":
+                '["服务器繁忙，请稍后再试。"]'
+        },
+        clear=False,
+    )
+    @patch("topsailai.ai_base.llm_base.input_yes_or_no")
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    def test_chat_special_response_exception_retries_without_prompt(
+        self, mock_is_main_thread, mock_input_yes_or_no, mock_sleep
+    ):
+        """A generic exception matching a special response retries automatically."""
+
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(
+            side_effect=[
+                RuntimeError("服务器繁忙，请稍后再试。"),
+                (MagicMock(), "recovered"),
+            ]
+        )
+        model._return_chat_response = MagicMock(return_value=["recovered"])
+        input_func = MagicMock()
+
+        with patch("topsailai.ai_base.llm_base.random.choice", return_value=11):
+            result = model.chat(
+                [{"role": "user", "content": "test"}],
+                retry_interaction_policy=LLMRetryInteractionPolicy(
+                    True, False, input_func, max_manual_retry_cycles=0
+                ),
+            )
+
+        self.assertEqual(result, ["recovered"])
+        self.assertEqual(model.call_llm_model.call_count, 2)
+        self.assertEqual(mock_sleep, [11, 5])
+        mock_input_yes_or_no.assert_not_called()
+        input_func.assert_not_called()
+
+    @patch.dict(
+        "os.environ",
+        {
+            "TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY":
+                '["服务器繁忙，请稍后再试。"]'
+        },
+        clear=False,
+    )
+    @patch("topsailai.ai_base.llm_base.input_yes_or_no", return_value=False)
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    def test_chat_partial_special_response_exception_still_prompts(
+        self, mock_is_main_thread, mock_input_yes_or_no
+    ):
+        """An exception containing but not equaling a special response stays generic."""
+
+        error = RuntimeError("provider error: 服务器繁忙，请稍后再试。")
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(side_effect=error)
+        input_func = MagicMock(return_value="no")
+
+        with self.assertRaises(RuntimeError) as context:
+            model.chat(
+                [{"role": "user", "content": "test"}],
+                retry_interaction_policy=LLMRetryInteractionPolicy(
+                    True, False, input_func, max_manual_retry_cycles=0
+                ),
+            )
+
+        self.assertIs(context.exception, error)
+        mock_input_yes_or_no.assert_called_once_with(
+            ">>> LLM Retry [yes/no] ", input_func
+        )
+
     @patch("topsailai.ai_base.llm_base.input_yes_or_no")
     @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
     def test_chat_without_input_capability_does_not_prompt(

@@ -540,8 +540,7 @@ class LLMModelBase(object):
             raise TypeError("null of response")
 
         # special responses that should trigger a retry
-        special_responses = self._get_special_responses_for_retry()
-        if special_responses and rsp_content in special_responses:
+        if self._is_special_response_for_retry(rsp_content):
             raise LLMServiceSpecialResponseError(
                 f"LLM returned a special response that requires retry: {rsp_content!r}"
             )
@@ -561,8 +560,14 @@ class LLMModelBase(object):
                     raise ModelServiceError(error_msg, repetition_result)
         return
 
+    def _is_special_response_for_retry(self, response):
+        """Return whether a value exactly matches a configured special response."""
+        if response is None:
+            return False
+        return str(response).strip() in self._get_special_responses_for_retry()
+
     def _get_special_responses_for_retry(self):
-        """Parse TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY into a list of exact-match strings."""
+        """Parse TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY into exact-match strings."""
         raw = EnvReaderInstance.get("TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY", default="[]")
         if not raw or not raw.strip():
             return []

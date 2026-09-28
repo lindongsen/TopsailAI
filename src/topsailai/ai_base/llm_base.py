@@ -808,6 +808,16 @@ class LLMModel(
                 raise
             except (KeyError, Exception) as e:
                 last_error = e
+                if self._is_special_response_for_retry(e):
+                    retry_reason = "special_response"
+                    sec = random.choice(
+                        _LLM_SERVICE_SPECIAL_RESPONSE_SLEEP_SECONDS
+                    )
+                    print_error(f"!!! [{i}] {LLM_KEYWORD_SERVICE}: {e}")
+                    print_error(f"blocking chat {sec}s ...")
+                    time.sleep(sec)
+                    continue
+
                 retry_reason = "unknown"
                 print_error(f"Some errors have occurred: [{e}]")
                 logger.exception("some errors have occurred: %s", e)
