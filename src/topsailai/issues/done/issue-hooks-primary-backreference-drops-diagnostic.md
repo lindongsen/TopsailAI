@@ -22,10 +22,12 @@ Both paths retained resource safety but made the process error unreachable from 
 
 ## Resolution
 
-The aggregation contract now preserves every original exception object while representing contradictory topology explicitly. Before attaching the diagnostic beneath the primary, it detaches only direct cause or context edges that point back to that primary and adds a note to the affected original exception describing the detached edge. The diagnostic is then attached using the existing cause or BaseExceptionGroup aggregation path. This preserves primary identity and all original exception identities in an acyclic inspectable graph without pretending that both contradictory directed edges can coexist.
+The aggregation contract preserves every original exception object while representing contradictory topology explicitly. Before attaching a diagnostic beneath the primary, it detaches a mutable cause or context edge whenever that edge's complete cause/context/group graph reaches the primary. A PEP 678 note records the detached edge type. When the detached target is not the primary itself, the exact original target is retained by identity in the affected exception's `__cleanup_detached_diagnostics__` sidecar, which is intentionally outside the directed cause/context/group graph because making a group that contains the primary reachable from the primary would necessarily create a cycle.
 
-Initial-finalization and retry regressions assert the process, channel, and outer exception identities remain reachable, the primary identity is unchanged, the contradictory cause edge is detached with an explanatory note, and the complete cause/context/group graph has no recursion-path cycle. They also retain the established resource, debt, exact lease, and no-signal assertions.
+This covers both direct backreferences and indirect backreferences through immutable `BaseExceptionGroup.exceptions` membership. The process, channel, outer, group, and primary objects remain inspectable by identity; the primary identity and propagation remain unchanged; and the traversable cause/context/group graph is acyclic.
+
+Initial-finalization and retry regressions cover direct and group-member backreferences. They assert the original exception identities, explicit note and sidecar representation, complete cause/context/group recursion-path safety, resource closure, genuine debt retention, exact lease release, and absence of unauthorized signals.
 
 ## Verification
 
-Focused primary-backreference regressions: 2 passed. Complete colorless focused Hooks suite: 122 passed in 16.14s. Compilation, whitespace, line-count, residual-process, and final diff checks are recorded in the Logical Unit 2 execution checklist.
+Focused primary-backreference regressions: 4 passed. Complete colorless focused Hooks suite: 124 passed in 13.59s. Compilation, whitespace, line-count, residual-process, and final diff checks are recorded in the Logical Unit 2 execution checklist.

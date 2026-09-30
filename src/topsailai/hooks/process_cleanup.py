@@ -271,7 +271,7 @@ class ProcessCleanupMixin:
     def _detach_primary_backreferences(
         cls, diagnostic: BaseException, primary: BaseException
     ) -> None:
-        """Detach contradictory edges to the primary and record the representation change."""
+        """Detach mutable edges whose targets lead back to the primary."""
         pending = [diagnostic]
         seen: set[int] = set()
         while pending:
@@ -280,17 +280,21 @@ class ProcessCleanupMixin:
                 continue
             seen.add(id(current))
             detached: list[str] = []
-            if current.__cause__ is primary:
+            cause = current.__cause__
+            if cause is not None and cls._exception_reaches(cause, primary):
                 current.__cause__ = None
                 current.__suppress_context__ = False
+                cls._retain_detached_diagnostic(current, cause, primary)
                 detached.append("cause")
-            elif current.__cause__ is not None:
-                pending.append(current.__cause__)
-            if current.__context__ is primary:
+            elif cause is not None:
+                pending.append(cause)
+            context = current.__context__
+            if context is not None and cls._exception_reaches(context, primary):
                 current.__context__ = None
+                cls._retain_detached_diagnostic(current, context, primary)
                 detached.append("context")
-            elif current.__context__ is not None:
-                pending.append(current.__context__)
+            elif context is not None:
+                pending.append(context)
             if isinstance(current, BaseExceptionGroup):
                 pending.extend(
                     nested for nested in current.exceptions if nested is not primary
@@ -300,6 +304,16 @@ class ProcessCleanupMixin:
                     "cleanup diagnostic backreference to the primary interruption "
                     f"was detached from {', '.join(detached)} to preserve an acyclic graph"
                 )
+
+    @staticmethod
+    def _retain_detached_diagnostic(
+        owner: BaseException, detached: BaseException, primary: BaseException
+    ) -> None:
+        """Retain a non-primary detached target outside the directed exception graph."""
+        if detached is primary:
+            return
+        retained = getattr(owner, "__cleanup_detached_diagnostics__", ())
+        owner.__cleanup_detached_diagnostics__ = (*retained, detached)
 
     @classmethod
     def _exception_reaches(
