@@ -188,7 +188,7 @@ def call_assistant(task:str, role:str=None, llm:str=None) -> str:
 
     Args:
         task (str): content
-        role (str, optional): subagent role/member name
+        role (str, optional): subagent role/member name; ignored when no roles are configured
         llm (str, optional): large language model
 
     Returns:
@@ -211,7 +211,10 @@ def call_assistant(task:str, role:str=None, llm:str=None) -> str:
     if role:
         if role.endswith(".member"):
             role = role[:-len(".member")]
-        if role not in _SUBAGENT_ROLES:
+        if not _SUBAGENT_ROLES:
+            logger.debug("ignoring subagent role because no roles are configured: %s", role)
+            role = None
+        elif role not in _SUBAGENT_ROLES:
             return invalid_request("role", role, "unknown role")
 
     role_name = role

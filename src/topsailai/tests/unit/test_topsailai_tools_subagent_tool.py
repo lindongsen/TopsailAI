@@ -470,20 +470,42 @@ class TestSubagentRoles:
                 task_id="task_123",
             )
 
-    def test_no_mention_when_role_unknown(self):
-        """Verify an unknown role is rejected before agent creation."""
+    @pytest.mark.parametrize("role", ["unknown", "unknown.member"])
+    def test_role_is_ignored_when_no_roles_are_configured(self, role):
+        """Verify a supplied role degrades to the ordinary subagent path without roles."""
         from topsailai.tools import subagent_tool
 
         with patch("topsailai.workspace.agent_shell.get_agent_chat") as mock_get_agent_chat, \
-             patch("topsailai.tools.subagent_tool.get_task_id") as mock_get_task_id, \
-             patch.object(subagent_tool, "_SUBAGENT_ROLES", {}):
+             patch("topsailai.tools.subagent_tool.get_task_id", return_value="task_123"), \
+             patch.object(subagent_tool, "_SUBAGENT_ROLES", {}), \
+             patch.dict(os.environ, {"TOPSAILAI_AGENT_NAME": "FallbackAgent"}):
 
             mock_agent = MagicMock()
             mock_agent._run.return_value = "response"
             mock_get_agent_chat.return_value = mock_agent
-            mock_get_task_id.return_value = "task_123"
 
-            result = subagent_tool.call_assistant("plain task", role="unknown")
+            result = subagent_tool.call_assistant("plain task", role=role)
+
+            assert result == "response"
+            call_kwargs = mock_get_agent_chat.call_args.kwargs
+            assert call_kwargs["agent_name"] == "Sub.FallbackAgent"
+            assert "unknown" not in call_kwargs["system_prompt"]
+            mock_agent._run.assert_called_once_with(
+                message="plain task",
+                times=1,
+                need_session_lock=False,
+                task_id="task_123",
+            )
+
+    @pytest.mark.parametrize("role", ["unknown", "unknown.member"])
+    def test_unknown_role_is_rejected_when_roles_are_configured(self, role):
+        """Verify an unknown role remains invalid when at least one role is configured."""
+        from topsailai.tools import subagent_tool
+
+        with patch("topsailai.workspace.agent_shell.get_agent_chat") as mock_get_agent_chat, \
+             patch.object(subagent_tool, "_SUBAGENT_ROLES", {"reviewer": "You review code."}):
+
+            result = subagent_tool.call_assistant("plain task", role=role)
 
             assert result["status"] == "invalid_request"
             assert "role" in result["reason"]
