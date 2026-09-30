@@ -168,3 +168,7 @@ Lessons:
 ## Cleanup retries must settle independent resources despite process uncertainty
 
 Trigger: a cleanup-debt retry returned immediately when process inspection or termination failed, leaving owned channels open. Action: while holding the exact cleanup lease, capture the process outcome, always attempt channel closure, retain unresolved process debt, and propagate host interruption only after independent cleanup. This prevents one uncertain cleanup domain from leaking resources owned by another domain without weakening process-signal authorization.
+
+## Exception aggregation must distinguish shared ancestry from cycles
+
+In Hooks cleanup, independently raised failures can share an outer `__context__` when cleanup runs inside an exception handler. Whole-graph intersection therefore cannot decide whether attaching a diagnostic is safe: preserve shared DAG ancestors, reject only an edge whose target can already reach its source, and verify retention by exception-object identity plus recursion-stack cycle detection across causes, contexts, and exception-group members. This prevents legitimate cleanup diagnostics from being discarded while retaining the primary host interruption.

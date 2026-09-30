@@ -222,16 +222,13 @@ class ProcessCleanupMixin:
                 *ordinary_errors,
                 *interruptions[1:],
             ]
-            if not diagnostics:
-                raise primary
-            additional = (
-                diagnostics[0]
-                if len(diagnostics) == 1
-                else BaseExceptionGroup("additional cleanup failures", diagnostics)
-            )
-            if primary.__cause__ is None:
-                raise primary from additional
-            cls._append_cleanup_diagnostics(primary, additional)
+            if diagnostics:
+                additional = (
+                    diagnostics[0]
+                    if len(diagnostics) == 1
+                    else BaseExceptionGroup("additional cleanup failures", diagnostics)
+                )
+                cls._append_cleanup_diagnostics(primary, additional)
             raise primary
         if len(ordinary_errors) == 1:
             raise ordinary_errors[0]
@@ -242,28 +239,32 @@ class ProcessCleanupMixin:
     def _append_cleanup_diagnostics(
         cls, primary: BaseException, additional: BaseException
     ) -> None:
-        """Append disjoint diagnostics without replacing the primary exception cause."""
-        primary_nodes = cls._exception_graph_ids(primary)
-        if cls._exception_graph_ids(additional) & primary_nodes:
+        """Append diagnostics when the new edge cannot create an exception-graph cycle."""
+        if cls._exception_reaches(primary, additional):
             return
-        tail = primary.__cause__
-        if tail is None:
-            return
-        seen: set[int] = set()
-        while tail.__cause__ is not None and id(tail) not in seen:
-            seen.add(id(tail))
+        tail = primary
+        cause_seen: set[int] = set()
+        while tail.__cause__ is not None:
+            if id(tail) in cause_seen:
+                return
+            cause_seen.add(id(tail))
             tail = tail.__cause__
-        if id(tail) in seen:
+        if id(tail) in cause_seen or cls._exception_reaches(additional, tail):
             return
         tail.__cause__ = additional
+        tail.__suppress_context__ = True
 
     @classmethod
-    def _exception_graph_ids(cls, error: BaseException) -> set[int]:
-        """Return identities in causes, contexts, and nested exception groups."""
-        pending = [error]
+    def _exception_reaches(
+        cls, start: BaseException, target: BaseException
+    ) -> bool:
+        """Return whether cause, context, or group edges reach the target identity."""
+        pending = [start]
         seen: set[int] = set()
         while pending:
             current = pending.pop()
+            if current is target:
+                return True
             if id(current) in seen:
                 continue
             seen.add(id(current))
@@ -273,7 +274,7 @@ class ProcessCleanupMixin:
                 pending.append(current.__context__)
             if isinstance(current, BaseExceptionGroup):
                 pending.extend(current.exceptions)
-        return seen
+        return False
 
     @staticmethod
     def _cleanup_execution_owned(record: _LaunchRecord) -> bool:

@@ -234,15 +234,44 @@ def test_initial_finalization_channel_interrupt_outweighs_process_error(
                 pass
 
 
+def _exception_graph(error: BaseException) -> tuple[list[BaseException], bool]:
+    """Return identity-unique graph nodes and whether any active path contains a cycle."""
+    nodes: list[BaseException] = []
+    visited: set[int] = set()
+    active: set[int] = set()
+    has_cycle = False
+
+    def visit(current: BaseException) -> None:
+        """Visit cause, context, and exception-group edges by object identity."""
+        nonlocal has_cycle
+        identity = id(current)
+        if identity in active:
+            has_cycle = True
+            return
+        if identity in visited:
+            return
+        visited.add(identity)
+        active.add(identity)
+        nodes.append(current)
+        edges: list[BaseException] = []
+        if current.__cause__ is not None:
+            edges.append(current.__cause__)
+        if current.__context__ is not None:
+            edges.append(current.__context__)
+        if isinstance(current, BaseExceptionGroup):
+            edges.extend(current.exceptions)
+        for nested in edges:
+            visit(nested)
+        active.remove(identity)
+
+    visit(error)
+    return nodes, has_cycle
+
+
 def _exception_messages(error: BaseException) -> list[str]:
-    """Return messages reachable through explicit causes and exception groups."""
-    messages = [str(error)]
-    if isinstance(error, BaseExceptionGroup):
-        for nested in error.exceptions:
-            messages.extend(_exception_messages(nested))
-    if error.__cause__ is not None:
-        messages.extend(_exception_messages(error.__cause__))
-    return messages
+    """Return messages from the complete identity-unique exception graph."""
+    nodes, _ = _exception_graph(error)
+    return [str(node) for node in nodes]
 
 
 def _two_stream_record(debt_id: str) -> tuple[_Process, LaunchRecord, int, Any, Any]:
@@ -375,6 +404,73 @@ def test_outer_cleanup_diagnostics_preserve_existing_interruption_cause(
         assert "fixture ordinary process failure" in messages
         assert "fixture ordinary channel failure" in messages
         assert len(messages) == len(set(messages))
+        _assert_two_streams_closed(record, result_fd, stdin, stdout)
+        debts = backend.cleanup_debts()
+        assert [debt.debt_id for debt in debts] == [record.debt_id]
+        assert backend._debt_processes[record.debt_id].state == "pending"
+        assert not record.cleanup.termination_confirmed
+        assert signals == []
+    finally:
+        stdin.close()
+        stdout.close()
+        try:
+            os.close(result_fd)
+        except OSError:
+            pass
+
+
+@pytest.mark.parametrize("operation", ["initial", "retry"])
+def test_cleanup_inside_outer_except_retains_shared_context_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """Shared outer contexts must not discard independent cleanup diagnostics."""
+    signals: list[tuple[int, int]] = []
+    process_error = RuntimeError("fixture ordinary process failure")
+    channel_error = ValueError("fixture ordinary channel failure")
+    interruption = KeyboardInterrupt("fixture channel interruption")
+
+    class SharedContextBackend(IsolatedProcessBackend):
+        def _terminate_owned(self, process: Any) -> bool:
+            raise process_error
+
+        def _after_channel_close(
+            self, record: LaunchRecord, name: str, descriptor: int
+        ) -> None:
+            if name == "stdin":
+                raise channel_error
+            if name == "stdout":
+                raise interruption
+
+    backend = SharedContextBackend(temp_root=str(tmp_path))
+    process, record, result_fd, stdin, stdout = _two_stream_record(
+        f"shared-context-{operation}-debt"
+    )
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
+    if operation == "retry":
+        backend._record_process_debt(record.debt_id, process, "fixture", record)
+
+    try:
+        outer_error = LookupError("fixture active outer failure")
+        try:
+            raise outer_error
+        except LookupError:
+            with pytest.raises(KeyboardInterrupt) as raised:
+                if operation == "initial":
+                    backend._finish_record(
+                        record,
+                        "worker_lost",
+                        {"stdout": bytearray(), "stderr": bytearray()},
+                        {"stdout": 0, "stderr": 0},
+                        "transport_error",
+                    )
+                else:
+                    backend.retry_cleanup(record.debt_id)
+        assert raised.value is interruption
+        nodes, has_cycle = _exception_graph(raised.value)
+        assert any(node is process_error for node in nodes)
+        assert any(node is channel_error for node in nodes)
+        assert any(node is outer_error for node in nodes)
+        assert not has_cycle
         _assert_two_streams_closed(record, result_fd, stdin, stdout)
         debts = backend.cleanup_debts()
         assert [debt.debt_id for debt in debts] == [record.debt_id]
