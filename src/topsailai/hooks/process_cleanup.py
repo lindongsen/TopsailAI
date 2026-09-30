@@ -234,16 +234,22 @@ class ProcessCleanupMixin:
             raise ordinary_errors[0]
         if ordinary_errors:
             raise ExceptionGroup("ordinary cleanup failures", ordinary_errors)
-
     @classmethod
     def _append_cleanup_diagnostics(
         cls, primary: BaseException, additional: BaseException
     ) -> None:
-        """Append diagnostics while explicitly detaching edges back to the primary."""
+        """Append diagnostics while detaching edges back to the primary."""
         if cls._exception_reaches(primary, additional):
             return
         if cls._exception_reaches(additional, primary):
             cls._detach_primary_backreferences(additional, primary)
+            if cls._exception_reaches(additional, primary):
+                cls._retain_detached_diagnostic(primary, additional, primary)
+                primary.add_note(
+                    "cleanup diagnostic with an immutable group-member backreference "
+                    "to the primary interruption was retained outside the exception graph"
+                )
+                return
         tail = primary
         cause_seen: set[int] = set()
         while tail.__cause__ is not None:
@@ -260,11 +266,9 @@ class ProcessCleanupMixin:
         existing = primary.__cause__
         if existing is None:
             return
-        aggregate = BaseExceptionGroup(
-            "additional cleanup failures",
-            [existing, additional],
+        primary.__cause__ = BaseExceptionGroup(
+            "additional cleanup failures", [existing, additional]
         )
-        primary.__cause__ = aggregate
         primary.__suppress_context__ = True
 
     @classmethod
