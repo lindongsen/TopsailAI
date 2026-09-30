@@ -321,9 +321,7 @@ class ProcessCleanupMixin:
         owner.__cleanup_detached_diagnostics__ = (*retained, detached)
 
     @classmethod
-    def _exception_reaches(
-        cls, start: BaseException, target: BaseException
-    ) -> bool:
+    def _exception_reaches(cls, start: BaseException, target: BaseException) -> bool:
         """Return whether cause, context, or group edges reach the target identity."""
         pending = [start]
         seen: set[int] = set()
