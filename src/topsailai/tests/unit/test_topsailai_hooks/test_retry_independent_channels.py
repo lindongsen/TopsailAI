@@ -76,7 +76,8 @@ def test_retry_poll_error_still_closes_real_channels(
     )
     monkeypatch.setattr(os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
 
-    assert not backend.retry_cleanup(record.debt_id)
+    with pytest.raises(OSError, match="fixture poll failure"):
+        backend.retry_cleanup(record.debt_id)
 
     _assert_retry_cleanup_state(backend, record, result_fd, stream)
     assert process.stdin is None
@@ -103,7 +104,8 @@ def test_retry_termination_failure_still_closes_real_channels(
     monkeypatch.setattr(os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
 
     if isinstance(failure, Exception):
-        assert not backend.retry_cleanup(record.debt_id)
+        with pytest.raises(type(failure), match=str(failure)):
+            backend.retry_cleanup(record.debt_id)
     else:
         with pytest.raises(KeyboardInterrupt):
             backend.retry_cleanup(record.debt_id)
@@ -230,3 +232,158 @@ def test_initial_finalization_channel_interrupt_outweighs_process_error(
                 os.close(descriptor)
             except OSError:
                 pass
+
+
+def _exception_messages(error: BaseException) -> list[str]:
+    """Return messages reachable through explicit causes and exception groups."""
+    messages = [str(error)]
+    if isinstance(error, BaseExceptionGroup):
+        for nested in error.exceptions:
+            messages.extend(_exception_messages(nested))
+    if error.__cause__ is not None:
+        messages.extend(_exception_messages(error.__cause__))
+    return messages
+
+
+def _two_stream_record(debt_id: str) -> tuple[_Process, LaunchRecord, int, Any, Any]:
+    """Create one launch record owning two real streams and one raw descriptor."""
+    stdin_read, stdin_write = os.pipe()
+    stdout_read, stdout_write = os.pipe()
+    result_read, result_write = os.pipe()
+    os.close(stdin_read)
+    os.close(stdout_write)
+    os.close(result_write)
+    stdin = os.fdopen(stdin_write, "wb", buffering=0)
+    stdout = os.fdopen(stdout_read, "rb", buffering=0)
+    process = _Process(stdin, None)
+    process.stdout = stdout
+    return process, LaunchRecord(debt_id, process=process, result_fd=result_read), result_read, stdin, stdout
+
+
+def _assert_two_streams_closed(
+    record: LaunchRecord, result_fd: int, stdin: Any, stdout: Any
+) -> None:
+    """Assert every real channel is closed and the exact cleanup lease is released."""
+    assert stdin.closed and stdout.closed
+    with pytest.raises(OSError):
+        os.fstat(result_fd)
+    assert record.result_fd is None
+    assert all(channel.state == "closed" for channel in record.cleanup.channels.values())
+    assert record.cleanup.execution_owner is None
+    assert record.cleanup.execution_depth == 0
+
+
+@pytest.mark.parametrize("operation", ["initial", "retry"])
+def test_nested_cleanup_interruptions_retain_every_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """Process and channel interruptions must retain an intervening ordinary error."""
+    signals: list[tuple[int, int]] = []
+
+    class NestedFailureBackend(IsolatedProcessBackend):
+        def _terminate_owned(self, process: Any) -> bool:
+            raise KeyboardInterrupt("fixture process interruption")
+
+        def _after_channel_close(
+            self, record: LaunchRecord, name: str, descriptor: int
+        ) -> None:
+            if name == "stdin":
+                raise RuntimeError("fixture ordinary channel failure")
+            if name == "stdout":
+                raise KeyboardInterrupt("fixture channel interruption")
+
+    backend = NestedFailureBackend(temp_root=str(tmp_path))
+    process, record, result_fd, stdin, stdout = _two_stream_record(
+        f"nested-{operation}-debt"
+    )
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
+    if operation == "retry":
+        backend._record_process_debt(record.debt_id, process, "fixture", record)
+
+    try:
+        with pytest.raises(KeyboardInterrupt) as raised:
+            if operation == "initial":
+                backend._finish_record(
+                    record,
+                    "worker_lost",
+                    {"stdout": bytearray(), "stderr": bytearray()},
+                    {"stdout": 0, "stderr": 0},
+                    "transport_error",
+                )
+            else:
+                backend.retry_cleanup(record.debt_id)
+        assert str(raised.value) == "fixture process interruption"
+        messages = _exception_messages(raised.value)
+        assert "fixture ordinary channel failure" in messages
+        assert "fixture channel interruption" in messages
+        _assert_two_streams_closed(record, result_fd, stdin, stdout)
+        debts = backend.cleanup_debts()
+        assert [debt.debt_id for debt in debts] == [record.debt_id]
+        assert backend._debt_processes[record.debt_id].state == "pending"
+        assert not record.cleanup.termination_confirmed
+        assert signals == []
+    finally:
+        stdin.close()
+        stdout.close()
+        try:
+            os.close(result_fd)
+        except OSError:
+            pass
+
+
+@pytest.mark.parametrize("operation", ["initial", "retry"])
+def test_multiple_ordinary_cleanup_errors_remain_inspectable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """Ordinary process and channel failures must all remain inspectable."""
+    signals: list[tuple[int, int]] = []
+
+    class OrdinaryFailureBackend(IsolatedProcessBackend):
+        def _terminate_owned(self, process: Any) -> bool:
+            raise RuntimeError("fixture ordinary termination failure")
+
+        def _after_channel_close(
+            self, record: LaunchRecord, name: str, descriptor: int
+        ) -> None:
+            if name == "stdin":
+                raise ValueError("fixture first ordinary channel failure")
+            if name == "stdout":
+                raise OSError("fixture second ordinary channel failure")
+
+    backend = OrdinaryFailureBackend(temp_root=str(tmp_path))
+    process, record, result_fd, stdin, stdout = _two_stream_record(
+        f"multiple-ordinary-{operation}-debt"
+    )
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
+    if operation == "retry":
+        backend._record_process_debt(record.debt_id, process, "fixture", record)
+
+    try:
+        with pytest.raises(ExceptionGroup) as raised:
+            if operation == "initial":
+                backend._finish_record(
+                    record,
+                    "worker_lost",
+                    {"stdout": bytearray(), "stderr": bytearray()},
+                    {"stdout": 0, "stderr": 0},
+                    "transport_error",
+                )
+            else:
+                backend.retry_cleanup(record.debt_id)
+        messages = _exception_messages(raised.value)
+        assert "fixture ordinary termination failure" in messages
+        assert "fixture first ordinary channel failure" in messages
+        assert "fixture second ordinary channel failure" in messages
+        _assert_two_streams_closed(record, result_fd, stdin, stdout)
+        debts = backend.cleanup_debts()
+        assert [debt.debt_id for debt in debts] == [record.debt_id]
+        assert backend._debt_processes[record.debt_id].state == "pending"
+        assert not record.cleanup.termination_confirmed
+        assert signals == []
+    finally:
+        stdin.close()
+        stdout.close()
+        try:
+            os.close(result_fd)
+        except OSError:
+            pass

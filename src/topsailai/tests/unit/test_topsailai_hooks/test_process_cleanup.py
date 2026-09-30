@@ -310,7 +310,7 @@ def test_retry_retains_exited_leader_with_uncertain_descendants_without_signal(
 
 
 def test_retry_poll_error_and_interrupt_restore_pending_state(tmp_path: Path) -> None:
-    """Retry failures must never strand an exclusive debt in cleaning state."""
+    """Retry failures must remain observable without stranding a claimed debt."""
     class Process:
         pid = 424242
         poll_calls = 0
@@ -331,7 +331,9 @@ def test_retry_poll_error_and_interrupt_restore_pending_state(tmp_path: Path) ->
     backend = InterruptBackend(temp_root=str(tmp_path))
     process = Process()
     backend._record_process_debt("debt", process, "fixture")
-    assert not backend.retry_cleanup("debt")
+    with pytest.raises(OSError, match="fixture poll failure"):
+        backend.retry_cleanup("debt")
+    assert backend._debt_processes["debt"].state == "pending"
     with pytest.raises(KeyboardInterrupt):
         backend.retry_cleanup("debt")
     assert backend._debt_processes["debt"].state == "pending"
