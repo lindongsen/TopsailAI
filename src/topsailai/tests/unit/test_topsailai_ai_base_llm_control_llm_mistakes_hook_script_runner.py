@@ -80,19 +80,251 @@ def script_dir(tmp_path):
 def test_discover_scripts_orders_and_filters(script_dir):
     """Verify discovery sorts by name and ignores helpers/temp files."""
     scripts = runner._discover_scripts(script_dir)
-    names = [os.path.basename(s) for s in scripts]
-    assert names == [
-        "p010_first.py",
-        "p020_second.py",
-        "p030_invalid.py",
-        "p040_empty.py",
-        "p050_timeout.py",
+    assert [script.module_name for script in scripts] == [
+        "p010_first",
+        "p020_second",
+        "p030_invalid",
+        "p040_empty",
+        "p050_timeout",
     ]
+    assert all(script.kind == runner.SCRIPT_KIND_SOURCE for script in scripts)
 
 
 def test_discover_scripts_missing_dir():
     """Verify discovery returns empty for a missing folder."""
     assert runner._discover_scripts("/nonexistent/path") == []
+
+
+def test_discover_scripts_accepts_extension_suffix(tmp_path, monkeypatch):
+    """Verify discovery accepts the platform extension suffix via its finder."""
+    script_dir = tmp_path / "hooks"
+    script_dir.mkdir()
+    extension_path = script_dir / (
+        "p010_compiled" + runner.importlib.machinery.EXTENSION_SUFFIXES[0]
+    )
+    extension_path.write_bytes(b"")
+
+    class Finder:
+        """Return the synthetic extension artifact spec."""
+
+        @staticmethod
+        def find_spec(name):
+            return type("Spec", (), {"origin": str(extension_path)})()
+
+    module = runner.pkgutil.ModuleInfo(Finder(), "p010_compiled", False)
+    monkeypatch.setattr(runner.pkgutil, "iter_modules", lambda paths: [module])
+
+    assert runner._discover_scripts(str(script_dir)) == [
+        runner.HookScript(
+            "p010_compiled", str(extension_path), runner.SCRIPT_KIND_EXTENSION
+        )
+    ]
+
+
+
+def test_retained_source_only_directory_discovers_and_executes_directly(
+    tmp_path, monkeypatch
+):
+    """Verify compiled packages may retain directly executable source hooks."""
+    script_dir = tmp_path / "hooks"
+    script_dir.mkdir()
+    source_path = script_dir / "p010_retained.py"
+    source_path.write_text("", encoding="utf-8")
+    scripts = runner._discover_scripts(str(script_dir))
+    captured = {}
+    original_popen = subprocess.Popen
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = argv
+        return original_popen(
+            [
+                sys.executable,
+                "-c",
+                "import simplejson; print(simplejson.dumps([{'step_name': 'thought', 'raw_text': 'source'}]))",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+
+    assert scripts == [
+        runner.HookScript(
+            "p010_retained", str(source_path), runner.SCRIPT_KIND_SOURCE
+        )
+    ]
+    outcome, result = runner._run_single_script(
+        scripts[0], str(script_dir), "deepseek-chat", "response", None
+    )
+    assert outcome == "handled"
+    assert result == [{"step_name": "thought", "raw_text": "source"}]
+    assert captured["argv"] == [resolve_python_interpreter(), str(source_path)]
+
+
+def test_mixed_source_and_extension_discovery_and_execution_paths(
+    tmp_path, monkeypatch
+):
+    """Verify mixed artifacts are ordered and use their matching execution paths."""
+    script_dir = tmp_path / "hooks"
+    script_dir.mkdir()
+    source_path = script_dir / "p010_retained.py"
+    source_path.write_text("", encoding="utf-8")
+    extension_path = script_dir / (
+        "p020_compiled" + runner.importlib.machinery.EXTENSION_SUFFIXES[0]
+    )
+    extension_path.write_bytes(b"")
+    scripts = runner._discover_scripts(str(script_dir))
+    commands = []
+    original_popen = subprocess.Popen
+
+    def fake_popen(argv, **kwargs):
+        commands.append(argv)
+        return original_popen(
+            [
+                sys.executable,
+                "-c",
+                "import simplejson; print(simplejson.dumps([{'step_name': 'thought', 'raw_text': 'ok'}]))",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+    for script in scripts:
+        outcome, _ = runner._run_single_script(
+            script, str(script_dir), "deepseek-chat", "response", None
+        )
+        assert outcome == "handled"
+
+    assert scripts == [
+        runner.HookScript(
+            "p010_retained", str(source_path), runner.SCRIPT_KIND_SOURCE
+        ),
+        runner.HookScript(
+            "p020_compiled", str(extension_path), runner.SCRIPT_KIND_EXTENSION
+        ),
+    ]
+    interpreter = resolve_python_interpreter()
+    assert commands == [
+        [interpreter, str(source_path)],
+        [interpreter, "-c", runner.EXTENSION_BOOTSTRAP, "p020_compiled"],
+    ]
+
+
+def test_same_name_extension_takes_import_precedence_over_source(tmp_path):
+    """Verify Python finder precedence selects one extension for a duplicate name."""
+    script_dir = tmp_path / "hooks"
+    script_dir.mkdir()
+    source_path = script_dir / "p010_same.py"
+    source_path.write_text("", encoding="utf-8")
+    extension_path = script_dir / (
+        "p010_same" + runner.importlib.machinery.EXTENSION_SUFFIXES[0]
+    )
+    extension_path.write_bytes(b"")
+
+    assert runner._discover_scripts(str(script_dir)) == [
+        runner.HookScript(
+            "p010_same", str(extension_path), runner.SCRIPT_KIND_EXTENSION
+        )
+    ]
+
+
+def test_run_single_extension_imports_module_by_separate_argument(tmp_path, monkeypatch):
+    """Verify extension execution imports by name through the fixed bootstrap."""
+    extension_path = tmp_path / (
+        "p010_compiled" + runner.importlib.machinery.EXTENSION_SUFFIXES[0]
+    )
+    captured = {}
+    original_popen = subprocess.Popen
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return original_popen(
+            [
+                sys.executable,
+                "-c",
+                "import simplejson; print(simplejson.dumps([{'step_name': 'thought', 'raw_text': 'ok'}]))",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+    script = runner.HookScript(
+        "p010_compiled", str(extension_path), runner.SCRIPT_KIND_EXTENSION
+    )
+
+    outcome, result = runner._run_single_script(
+        script, str(tmp_path), "deepseek-chat", "response", None
+    )
+
+    assert outcome == "handled"
+    assert result == [{"step_name": "thought", "raw_text": "ok"}]
+    assert captured["argv"] == [
+        resolve_python_interpreter(),
+        "-c",
+        runner.EXTENSION_BOOTSTRAP,
+        "p010_compiled",
+    ]
+    assert str(extension_path) not in captured["argv"]
+    assert captured["kwargs"]["cwd"] == str(tmp_path)
+    assert captured["kwargs"]["start_new_session"] is True
+
+
+def test_run_single_extension_executes_imported_main(tmp_path):
+    """Verify the extension bootstrap imports a module and calls its main."""
+    module_path = tmp_path / "p010_compiled.py"
+    module_path.write_text(
+        textwrap.dedent(
+            """\
+            import simplejson
+
+            def main():
+                print(simplejson.dumps([{"step_name": "thought", "raw_text": "compiled"}]))
+            """
+        ),
+        encoding="utf-8",
+    )
+    script = runner.HookScript(
+        "p010_compiled", str(module_path), runner.SCRIPT_KIND_EXTENSION
+    )
+
+    outcome, result = runner._run_single_script(
+        script, str(tmp_path), "deepseek-chat", "response", None
+    )
+
+    assert outcome == "handled"
+    assert result == [{"step_name": "thought", "raw_text": "compiled"}]
+
+
+@pytest.mark.parametrize(
+    ("kind", "artifact_name"),
+    [
+        (runner.SCRIPT_KIND_SOURCE, "p010_source.py"),
+        (
+            runner.SCRIPT_KIND_EXTENSION,
+            "p010_compiled" + runner.importlib.machinery.EXTENSION_SUFFIXES[0],
+        ),
+    ],
+)
+def test_interpreter_resolution_failure_preserves_public_fallback(
+    tmp_path, monkeypatch, kind, artifact_name
+):
+    """Verify interpreter resolution failures fall back for both hook kinds."""
+    script = runner.HookScript("p010_hook", str(tmp_path / artifact_name), kind)
+    monkeypatch.setattr(runner, "_discover_scripts", lambda script_dir: [script])
+
+    def fail_resolution():
+        raise RuntimeError("no usable Python interpreter")
+
+    def fail_popen(*args, **kwargs):
+        pytest.fail("subprocess must not start when interpreter resolution fails")
+
+    monkeypatch.setattr(runner, "resolve_python_interpreter", fail_resolution)
+    monkeypatch.setattr(runner.subprocess, "Popen", fail_popen)
+
+    assert runner.run_hook_scripts(str(tmp_path), "deepseek-chat", "response") is None
 
 
 def test_run_hook_scripts_first_match_short_circuits(script_dir):

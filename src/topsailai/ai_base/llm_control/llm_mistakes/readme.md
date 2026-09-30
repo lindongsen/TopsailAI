@@ -177,23 +177,29 @@ extensible without modifying core code or restarting the agent.
 ### Folder Layout
 
 Each model folder lives under `llm_mistakes/`, e.g.
-`deepseek_hook_scripts/`. Eligible scripts are `*.py` files whose name does
-not start with `_` and does not end with a temp/backup suffix (`.tmp`,
-`.new`, `.bak`, `~`, `.swp`, `.pyc`). Files are executed in lexicographic
-filename order, so use a `pNNN_<case>.py` prefix to control priority.
+`deepseek_hook_scripts/`. Eligible handlers are importable Python source or
+compiled extension modules whose names do not start with `_`; packages and
+unsupported artifacts are excluded. Handlers execute in lexicographic module-name
+order, so use a `pNNN_<case>` prefix to control priority.
 
 ### Discovery
 
-The folder is rescanned on every call (no import cache). Scripts added,
-removed, or changed between responses take effect on the next response
-without a restart.
+The folder is rescanned through the Python import system on every call. Source
+scripts retained in a compiled package remain eligible and keep direct script
+execution; scripts added, removed, or changed between responses take effect on
+the next response without a restart. Discovery also supports platform-specific
+compiled extension suffixes, including ABI-tagged modules. If source and
+extension artifacts share a module name, Python import precedence selects the
+extension artifact.
 
 ### Execution
 
-Each script is spawned as an independent subprocess via `sys.executable`
-(no shell, no executable-bit requirement). The working directory is the
-script folder. A timeout (default 5s) kills the whole process group; stdout
-is capped (default 1MB).
+Each handler is spawned as an independent subprocess through a validated Python
+interpreter (no shell or executable-bit requirement). Source handlers retain
+direct script execution and may use an `__main__` block. Compiled handlers are
+imported by module name in the child process and must expose a callable `main()`.
+The working directory is the handler folder. A timeout (default 5s) kills the
+whole process group; stdout is capped (default 1MB).
 
 ### Environment Contract
 
