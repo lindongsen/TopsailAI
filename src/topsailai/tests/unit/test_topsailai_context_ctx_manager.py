@@ -18,6 +18,7 @@ import logging
 import os
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 
@@ -1221,41 +1222,41 @@ class TestWaitAgentReady(unittest.TestCase):
         os.environ.clear()
         os.environ.update(self.original_env)
 
-    @patch('topsailai.context.ctx_manager.time.sleep')
-    @patch('topsailai.context.ctx_manager.os.getenv')
-    def test_wait_agent_ready_returns_when_context_user_message_empty(self, mock_getenv, mock_sleep):
+    def test_wait_agent_ready_returns_when_context_user_message_empty(self):
         """Test wait_agent_ready returns immediately when env var is empty."""
         from topsailai.context.ctx_manager import wait_agent_ready
 
-        mock_getenv.return_value = ""
-
-        wait_agent_ready()
+        mock_getenv = MagicMock(return_value="")
+        mock_sleep = MagicMock()
+        with patch('topsailai.context.ctx_manager.os', SimpleNamespace(getenv=mock_getenv)), \
+                patch('topsailai.context.ctx_manager.time', SimpleNamespace(sleep=mock_sleep)):
+            wait_agent_ready()
 
         mock_getenv.assert_called_with("TOPSAILAI_CONTEXT_USER_MESSAGE")
         mock_sleep.assert_called_once_with(1)
 
-    @patch('topsailai.context.ctx_manager.time.sleep')
-    @patch('topsailai.context.ctx_manager.os.getenv')
-    def test_wait_agent_ready_waits_until_context_user_message_cleared(self, mock_getenv, mock_sleep):
+    def test_wait_agent_ready_waits_until_context_user_message_cleared(self):
         """Test wait_agent_ready polls until TOPSAILAI_CONTEXT_USER_MESSAGE is cleared."""
         from topsailai.context.ctx_manager import wait_agent_ready
 
-        mock_getenv.side_effect = ["some context", "some context", ""]
-
-        wait_agent_ready()
+        mock_getenv = MagicMock(side_effect=["some context", "some context", ""])
+        mock_sleep = MagicMock()
+        with patch('topsailai.context.ctx_manager.os', SimpleNamespace(getenv=mock_getenv)), \
+                patch('topsailai.context.ctx_manager.time', SimpleNamespace(sleep=mock_sleep)):
+            wait_agent_ready()
 
         self.assertEqual(mock_getenv.call_count, 3)
         self.assertEqual(mock_sleep.call_count, 3)
 
-    @patch('topsailai.context.ctx_manager.time.sleep')
-    @patch('topsailai.context.ctx_manager.os.getenv')
-    def test_wait_agent_ready_with_need_agent_object(self, mock_getenv, mock_sleep):
+    def test_wait_agent_ready_with_need_agent_object(self):
         """Test wait_agent_ready waits for agent object when requested."""
         from topsailai.context.ctx_manager import wait_agent_ready
 
-        mock_getenv.return_value = ""
-
-        with patch('topsailai.context.ctx_manager.thread_local_tool.get_agent_object') as mock_get_agent:
+        mock_getenv = MagicMock(return_value="")
+        mock_sleep = MagicMock()
+        with patch('topsailai.context.ctx_manager.os', SimpleNamespace(getenv=mock_getenv)), \
+                patch('topsailai.context.ctx_manager.time', SimpleNamespace(sleep=mock_sleep)), \
+                patch('topsailai.context.ctx_manager.thread_local_tool.get_agent_object') as mock_get_agent:
             mock_get_agent.side_effect = [None, "agent_obj"]
             wait_agent_ready(need_agent_object=True)
             self.assertEqual(mock_get_agent.call_count, 2)
