@@ -23,11 +23,6 @@ class TestGetSessionId(unittest.TestCase):
         """Set up clean environment for each test"""
         self.env_patcher = patch.dict(os.environ, {}, clear=True)
         self.env_patcher.start()
-        # Clear any cached import
-        if 'topsailai.ai_team.common' in sys.modules:
-            del sys.modules['topsailai.ai_team.common']
-        if 'topsailai.context.common' in sys.modules:
-            del sys.modules['topsailai.context.common']
 
     def tearDown(self):
         """Clean up environment after each test"""
@@ -196,9 +191,6 @@ class TestGetSessionHeadTailOffset(unittest.TestCase):
         """Set up clean environment for each test"""
         self.env_patcher = patch.dict(os.environ, {}, clear=True)
         self.env_patcher.start()
-        # Clear any cached import
-        if 'topsailai.ai_team.common' in sys.modules:
-            del sys.modules['topsailai.ai_team.common']
 
     def tearDown(self):
         """Clean up environment after each test"""
