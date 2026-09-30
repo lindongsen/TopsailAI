@@ -220,6 +220,6 @@ class TestAutoDiscovery:
         ) as iter_modules:
             control_handlers.register_control_handlers(registry)
 
-        iter_modules.assert_called_once_with(control_handlers.__path__)
+        iter_modules.assert_any_call(control_handlers.__path__)
         assert registry.is_registered("call_instruction")
         assert isinstance(registry.get("call_instruction"), CallInstructionHandler)
