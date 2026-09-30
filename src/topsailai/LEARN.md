@@ -164,3 +164,7 @@ Lessons:
 1. When one schema field is shared by discriminated variants, verify each variant's semantic constraints instead of applying the broad union uniformly.
 2. For a newly supported remote variant, pair contract inspection with one minimal live boundary probe when the published schema omits runtime validators.
 3. Encode the confirmed variant-specific shape in the LLM-facing Tool contract and assert both local rejection boundaries and the exact HTTP wire payload so an apparently schema-valid but unusable request cannot regress.
+
+## Cleanup retries must settle independent resources despite process uncertainty
+
+Trigger: a cleanup-debt retry returned immediately when process inspection or termination failed, leaving owned channels open. Action: while holding the exact cleanup lease, capture the process outcome, always attempt channel closure, retain unresolved process debt, and propagate host interruption only after independent cleanup. This prevents one uncertain cleanup domain from leaking resources owned by another domain without weakening process-signal authorization.

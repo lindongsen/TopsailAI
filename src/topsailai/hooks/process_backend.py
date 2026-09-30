@@ -119,7 +119,7 @@ class IsolatedProcessBackend(ProcessCleanupMixin):
             return tuple(self._debts[key] for key in sorted(self._debts))
 
     def retry_cleanup(self, debt_id: str) -> bool:
-        """Exclusively settle process cleanup and remaining channel obligations."""
+        """Independently retry process and channel cleanup under one exact lease."""
         entry: _DebtEntry | None = None
         debt_restore_required = False
         try:
@@ -135,27 +135,33 @@ class IsolatedProcessBackend(ProcessCleanupMixin):
             with self._cleanup_execution_lease(entry.record) as lease:
                 if lease is None:
                     return False
+                confirmed = entry.record.cleanup.termination_confirmed
+                process_error = False
+                interruption: BaseException | None = None
                 try:
-                    exited = entry.process.poll() is not None
-                except OSError:
-                    return False
-                if exited:
-                    confirmed = not self._group_exists(entry.process.pid)
-                else:
-                    confirmed = self._terminate_owned(entry.process)
-                if confirmed:
-                    entry.record.cleanup.termination_confirmed = True
+                    if not confirmed:
+                        exited = entry.process.poll() is not None
+                        if exited:
+                            confirmed = not self._group_exists(entry.process.pid)
+                        else:
+                            confirmed = self._terminate_owned(entry.process)
+                        if confirmed:
+                            entry.record.cleanup.termination_confirmed = True
+                except BaseException as exc:
+                    process_error = True
+                    if not isinstance(exc, Exception):
+                        interruption = exc
                 try:
                     self._close_record_channels(entry.record)
-                except KeyboardInterrupt:
-                    raise
-                except BaseException:
-                    return False
+                except BaseException as exc:
+                    if not isinstance(exc, Exception) and interruption is None:
+                        interruption = exc
                 closed = self._record_channels_closed(entry.record)
                 if confirmed and closed:
                     self._resolve_debt(debt_id, entry.record)
-                    return True
-                return False
+                if interruption is not None:
+                    raise interruption
+                return not process_error and confirmed and closed
         finally:
             if debt_restore_required and entry is not None:
                 with self._debt_lock:
