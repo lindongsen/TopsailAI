@@ -111,3 +111,122 @@ def test_retry_termination_failure_still_closes_real_channels(
     _assert_retry_cleanup_state(backend, record, result_fd, stream)
     assert process.stdin is None
     assert signals == []
+
+
+def test_retry_later_channel_interrupt_outweighs_ordinary_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later channel interruption must retain and outrank an ordinary close error."""
+    signals: list[tuple[int, int]] = []
+
+    class MixedFailureBackend(IsolatedProcessBackend):
+        def _after_channel_close(
+            self, record: LaunchRecord, name: str, descriptor: int
+        ) -> None:
+            if name == "stdin":
+                raise RuntimeError("fixture ordinary channel failure")
+            if name == "stdout":
+                raise KeyboardInterrupt("fixture channel interruption")
+
+    stdin_read, stdin_write = os.pipe()
+    stdout_read, stdout_write = os.pipe()
+    result_read, result_write = os.pipe()
+    os.close(stdin_read)
+    os.close(stdout_write)
+    os.close(result_write)
+    stdin = os.fdopen(stdin_write, "wb", buffering=0)
+    stdout = os.fdopen(stdout_read, "rb", buffering=0)
+    backend = MixedFailureBackend(temp_root=str(tmp_path))
+    process = _Process(stdin, None)
+    process.stdout = stdout
+    record = LaunchRecord("mixed-retry-debt", process=process, result_fd=result_read)
+    record.cleanup.termination_confirmed = True
+    backend._record_process_debt(record.debt_id, process, "fixture", record)
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
+
+    try:
+        with pytest.raises(KeyboardInterrupt) as raised:
+            backend.retry_cleanup(record.debt_id)
+        assert isinstance(raised.value.__cause__, RuntimeError)
+        assert str(raised.value.__cause__) == "fixture ordinary channel failure"
+        assert stdin.closed and stdout.closed
+        with pytest.raises(OSError):
+            os.fstat(result_read)
+        assert process.stdin is None and process.stdout is None
+        assert record.result_fd is None
+        assert all(
+            channel.state == "closed" for channel in record.cleanup.channels.values()
+        )
+        assert backend.cleanup_debts() == ()
+        assert record.cleanup.execution_owner is None
+        assert record.cleanup.execution_depth == 0
+        assert signals == []
+    finally:
+        stdin.close()
+        stdout.close()
+        for descriptor in (result_read,):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def test_initial_finalization_channel_interrupt_outweighs_process_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Initial cleanup must propagate channel interruption after process failure."""
+    signals: list[tuple[int, int]] = []
+
+    class MixedFailureBackend(IsolatedProcessBackend):
+        def _terminate_owned(self, process: Any) -> bool:
+            raise RuntimeError("fixture termination failure")
+
+        def _after_channel_close(
+            self, record: LaunchRecord, name: str, descriptor: int
+        ) -> None:
+            if name == "stdin":
+                raise KeyboardInterrupt("fixture channel interruption")
+
+    stream_read, stream_write = os.pipe()
+    result_read, result_write = os.pipe()
+    os.close(stream_read)
+    os.close(result_write)
+    stream = os.fdopen(stream_write, "wb", buffering=0)
+    backend = MixedFailureBackend(temp_root=str(tmp_path))
+    process = _Process(stream, None)
+    record = LaunchRecord("mixed-finalization-debt", process=process, result_fd=result_read)
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
+
+    try:
+        with pytest.raises(KeyboardInterrupt) as raised:
+            backend._finish_record(
+                record,
+                "worker_lost",
+                {"stdout": bytearray(), "stderr": bytearray()},
+                {"stdout": 0, "stderr": 0},
+                "transport_error",
+            )
+        assert isinstance(raised.value.__cause__, RuntimeError)
+        assert str(raised.value.__cause__) == "fixture termination failure"
+        assert stream.closed
+        with pytest.raises(OSError):
+            os.fstat(result_read)
+        assert process.stdin is None
+        assert record.result_fd is None
+        assert all(
+            channel.state == "closed" for channel in record.cleanup.channels.values()
+        )
+        debts = backend.cleanup_debts()
+        assert [debt.debt_id for debt in debts] == [record.debt_id]
+        assert backend._debt_processes[record.debt_id].state == "pending"
+        assert record.cleanup.execution_owner is None
+        assert record.cleanup.execution_depth == 0
+        assert not record.cleanup.termination_confirmed
+        assert signals == []
+    finally:
+        stream.close()
+        for descriptor in (result_read,):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass

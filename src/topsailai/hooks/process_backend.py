@@ -136,7 +136,7 @@ class IsolatedProcessBackend(ProcessCleanupMixin):
                 if lease is None:
                     return False
                 confirmed = entry.record.cleanup.termination_confirmed
-                process_error = False
+                ordinary_errors: list[Exception] = []
                 interruption: BaseException | None = None
                 try:
                     if not confirmed:
@@ -148,20 +148,21 @@ class IsolatedProcessBackend(ProcessCleanupMixin):
                         if confirmed:
                             entry.record.cleanup.termination_confirmed = True
                 except BaseException as exc:
-                    process_error = True
-                    if not isinstance(exc, Exception):
-                        interruption = exc
+                    interruption = self._retain_cleanup_error(
+                        exc, ordinary_errors, interruption
+                    )
                 try:
                     self._close_record_channels(entry.record)
                 except BaseException as exc:
-                    if not isinstance(exc, Exception) and interruption is None:
-                        interruption = exc
+                    interruption = self._retain_cleanup_error(
+                        exc, ordinary_errors, interruption
+                    )
                 closed = self._record_channels_closed(entry.record)
                 if confirmed and closed:
                     self._resolve_debt(debt_id, entry.record)
                 if interruption is not None:
-                    raise interruption
-                return not process_error and confirmed and closed
+                    self._raise_cleanup_errors(ordinary_errors, interruption)
+                return not ordinary_errors and confirmed and closed
         finally:
             if debt_restore_required and entry is not None:
                 with self._debt_lock:

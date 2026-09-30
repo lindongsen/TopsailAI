@@ -98,7 +98,8 @@ class ProcessCleanupMixin:
             if process is None:
                 raise RuntimeError("cleanup process is unavailable")
 
-            pending: BaseException | None = None
+            ordinary_errors: list[Exception] = []
+            interruption: BaseException | None = None
             try:
                 if not cleanup.termination_started:
                     cleanup.termination_started = True
@@ -106,28 +107,41 @@ class ProcessCleanupMixin:
                         cleanup.termination_confirmed = self._terminate_owned(process)
                         self._after_record_termination(record)
                     except BaseException as exc:
-                        pending = exc
+                        interruption = self._retain_cleanup_error(
+                            exc, ordinary_errors, interruption
+                        )
                 if cleanup.termination_started and not cleanup.termination_confirmed:
                     try:
                         self._ensure_record_debt(record, process)
                         self._after_record_debt(record)
                     except BaseException as exc:
-                        if pending is None:
-                            pending = exc
+                        interruption = self._retain_cleanup_error(
+                            exc, ordinary_errors, interruption
+                        )
             finally:
                 try:
                     self._close_record_channels(record)
                 except BaseException as exc:
-                    if pending is None:
-                        pending = exc
+                    interruption = self._retain_cleanup_error(
+                        exc, ordinary_errors, interruption
+                    )
                 closed = self._record_channels_closed(record)
                 if not closed:
-                    self._ensure_record_debt(record, process)
+                    try:
+                        self._ensure_record_debt(record, process)
+                    except BaseException as exc:
+                        interruption = self._retain_cleanup_error(
+                            exc, ordinary_errors, interruption
+                        )
                 if cleanup.termination_confirmed and closed:
-                    self._resolve_debt(record.debt_id, record)
+                    try:
+                        self._resolve_debt(record.debt_id, record)
+                    except BaseException as exc:
+                        interruption = self._retain_cleanup_error(
+                            exc, ordinary_errors, interruption
+                        )
 
-            if pending is not None:
-                raise pending
+            self._raise_cleanup_errors(ordinary_errors, interruption)
             confirmed = cleanup.termination_confirmed and self._record_channels_closed(record)
             cleanup.result = WorkerResult(
                 status=status,
@@ -182,20 +196,49 @@ class ProcessCleanupMixin:
         process = record.process
         if process is None:
             return
-        pending: BaseException | None = None
+        ordinary_errors: list[Exception] = []
+        interruption: BaseException | None = None
         for name in ("stdin", "stdout", "stderr"):
             try:
                 self._close_stream_channel(record, process, name)
             except BaseException as exc:
-                if pending is None:
-                    pending = exc
+                interruption = self._retain_cleanup_error(
+                    exc, ordinary_errors, interruption
+                )
         try:
             self._close_result_channel(record)
         except BaseException as exc:
-            if pending is None:
-                pending = exc
-        if pending is not None:
-            raise pending
+            interruption = self._retain_cleanup_error(exc, ordinary_errors, interruption)
+        self._raise_cleanup_errors(ordinary_errors, interruption)
+
+    @staticmethod
+    def _retain_cleanup_error(
+        error: BaseException,
+        ordinary_errors: list[Exception],
+        interruption: BaseException | None,
+    ) -> BaseException | None:
+        """Retain ordinary failures separately so they cannot mask an interruption."""
+        if isinstance(error, Exception):
+            ordinary_errors.append(error)
+            return interruption
+        if interruption is None and isinstance(error.__cause__, Exception):
+            ordinary_errors.append(error.__cause__)
+        return interruption or error
+
+    @staticmethod
+    def _raise_cleanup_errors(
+        ordinary_errors: list[Exception], interruption: BaseException | None
+    ) -> None:
+        """Raise host interruption first while preserving ordinary cleanup diagnostics."""
+        if interruption is not None:
+            if not ordinary_errors:
+                raise interruption
+            cause: Exception = ordinary_errors[0]
+            if len(ordinary_errors) > 1:
+                cause = ExceptionGroup("ordinary cleanup failures", ordinary_errors)
+            raise interruption from cause
+        if ordinary_errors:
+            raise ordinary_errors[0]
 
     @staticmethod
     def _cleanup_execution_owned(record: _LaunchRecord) -> bool:
