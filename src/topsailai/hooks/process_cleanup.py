@@ -239,7 +239,7 @@ class ProcessCleanupMixin:
     def _append_cleanup_diagnostics(
         cls, primary: BaseException, additional: BaseException
     ) -> None:
-        """Append diagnostics when the new edge cannot create an exception-graph cycle."""
+        """Append diagnostics without creating an exception-graph cycle."""
         if cls._exception_reaches(primary, additional):
             return
         tail = primary
@@ -249,10 +249,23 @@ class ProcessCleanupMixin:
                 return
             cause_seen.add(id(tail))
             tail = tail.__cause__
-        if id(tail) in cause_seen or cls._exception_reaches(additional, tail):
+        if id(tail) in cause_seen:
             return
-        tail.__cause__ = additional
-        tail.__suppress_context__ = True
+        if not cls._exception_reaches(additional, tail):
+            tail.__cause__ = additional
+            tail.__suppress_context__ = True
+            return
+        if cls._exception_reaches(additional, primary):
+            return
+        existing = primary.__cause__
+        if existing is None:
+            return
+        aggregate = BaseExceptionGroup(
+            "additional cleanup failures",
+            [existing, additional],
+        )
+        primary.__cause__ = aggregate
+        primary.__suppress_context__ = True
 
     @classmethod
     def _exception_reaches(

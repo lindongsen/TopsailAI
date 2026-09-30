@@ -485,6 +485,74 @@ def test_cleanup_inside_outer_except_retains_shared_context_diagnostics(
         except OSError:
             pass
 
+
+@pytest.mark.parametrize("operation", ["initial", "retry"])
+def test_cleanup_shared_explicit_cause_retains_every_diagnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """A cyclic tail candidate must use an acyclic diagnostic aggregate."""
+    signals: list[tuple[int, int]] = []
+    channel_error = ValueError("fixture shared channel failure")
+    process_error = RuntimeError("fixture process failure")
+    process_error.__cause__ = channel_error
+    interruption = KeyboardInterrupt("fixture channel interruption")
+
+    class SharedCauseBackend(IsolatedProcessBackend):
+        def _terminate_owned(self, process: Any) -> bool:
+            raise process_error
+
+        def _after_channel_close(
+            self, record: LaunchRecord, name: str, descriptor: int
+        ) -> None:
+            if name == "stdin":
+                raise channel_error
+            if name == "stdout":
+                raise interruption
+
+    backend = SharedCauseBackend(temp_root=str(tmp_path))
+    process, record, result_fd, stdin, stdout = _two_stream_record(
+        f"shared-cause-{operation}-debt"
+    )
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
+    if operation == "retry":
+        backend._record_process_debt(record.debt_id, process, "fixture", record)
+
+    try:
+        outer_error = LookupError("fixture active outer failure")
+        try:
+            raise outer_error
+        except LookupError:
+            with pytest.raises(KeyboardInterrupt) as raised:
+                if operation == "initial":
+                    backend._finish_record(
+                        record,
+                        "worker_lost",
+                        {"stdout": bytearray(), "stderr": bytearray()},
+                        {"stdout": 0, "stderr": 0},
+                        "transport_error",
+                    )
+                else:
+                    backend.retry_cleanup(record.debt_id)
+        assert raised.value is interruption
+        nodes, has_cycle = _exception_graph(raised.value)
+        assert any(node is process_error for node in nodes)
+        assert any(node is channel_error for node in nodes)
+        assert any(node is outer_error for node in nodes)
+        assert not has_cycle
+        _assert_two_streams_closed(record, result_fd, stdin, stdout)
+        debts = backend.cleanup_debts()
+        assert [debt.debt_id for debt in debts] == [record.debt_id]
+        assert backend._debt_processes[record.debt_id].state == "pending"
+        assert not record.cleanup.termination_confirmed
+        assert signals == []
+    finally:
+        stdin.close()
+        stdout.close()
+        try:
+            os.close(result_fd)
+        except OSError:
+            pass
+
 @pytest.mark.parametrize("operation", ["initial", "retry"])
 def test_multiple_ordinary_cleanup_errors_remain_inspectable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
