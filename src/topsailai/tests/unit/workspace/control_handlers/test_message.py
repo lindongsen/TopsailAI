@@ -279,7 +279,7 @@ class TestAutoDiscovery:
         fake_dir.mkdir()
         (fake_dir / "empty.py").write_text("# no handlers here\n")
 
-        classes = _discover_handler_classes(str(fake_dir), "fake_handlers")
+        classes = _discover_handler_classes([str(fake_dir)], "fake_handlers")
         assert classes == []
 
     def test_discover_collects_handler_from_module(self, tmp_path):
@@ -302,7 +302,7 @@ class TestAutoDiscovery:
         (fake_dir / "__init__.py").write_text("")
         sys.path.insert(0, str(tmp_path))
         try:
-            classes = _discover_handler_classes(str(fake_dir), "fake_handlers")
+            classes = _discover_handler_classes([str(fake_dir)], "fake_handlers")
         finally:
             sys.path.pop(0)
 
