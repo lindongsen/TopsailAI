@@ -234,6 +234,7 @@ class ProcessCleanupMixin:
             raise ordinary_errors[0]
         if ordinary_errors:
             raise ExceptionGroup("ordinary cleanup failures", ordinary_errors)
+
     @classmethod
     def _append_cleanup_diagnostics(
         cls, primary: BaseException, additional: BaseException
@@ -534,7 +535,6 @@ class ProcessCleanupMixin:
                 return "closed", None
             return "uncertain", None
         return "open", (descriptor, stat.st_dev, stat.st_ino)
-
 
     def _after_cleanup_execution_owner_set(self, record: _LaunchRecord) -> None:
         """Provide a deterministic seam after the first lease-state mutation."""
