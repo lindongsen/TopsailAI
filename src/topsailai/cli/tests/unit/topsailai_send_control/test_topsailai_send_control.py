@@ -301,6 +301,12 @@ class TestGetParams:
             "soft_interrupt",
         ]
 
+    def test_call_instruction_command_is_accepted(self):
+        with patch.object(sys, "argv", ["script", "-c", "call_instruction"]):
+            params = cli_module.get_params()
+
+        assert params["command"] == "call_instruction"
+
     def test_invalid_json_args_exits(self, capsys):
         with patch.object(sys, "argv", ["script", "-c", "hard_interrupt", "-a", "not-json"]):
             with pytest.raises(SystemExit) as exc_info:

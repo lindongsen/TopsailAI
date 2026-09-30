@@ -9,26 +9,21 @@ Purpose: Auto-discover and register business handlers for the control channel
 
 import importlib
 import inspect
-import os
+import pkgutil
 from typing import Type
 
 from topsailai.workspace.control_channel.handler import ControlHandler, ControlHandlerRegistry
 
 
-def _discover_handler_classes(package_dir: str, package_name: str) -> list[Type[ControlHandler]]:
-    """Scan package_dir for ControlHandler subclasses.
-
-    Every ``.py`` file except ``__init__.py`` is imported. Classes that are
-    concrete subclasses of ``ControlHandler`` are collected and returned.
-    """
+def _discover_handler_classes(package_path: list[str], package_name: str) -> list[Type[ControlHandler]]:
+    """Discover concrete ControlHandler subclasses in package modules."""
     handler_classes: list[Type[ControlHandler]] = []
-    for filename in sorted(os.listdir(package_dir)):
-        if not filename.endswith(".py"):
-            continue
-        if filename == "__init__.py":
+    modules = sorted(pkgutil.iter_modules(package_path), key=lambda module: module.name)
+    for module_info in modules:
+        if module_info.ispkg:
             continue
 
-        module_name = f"{package_name}.{filename[:-3]}"
+        module_name = f"{package_name}.{module_info.name}"
         try:
             module = importlib.import_module(module_name)
         except Exception:
@@ -46,10 +41,7 @@ def _discover_handler_classes(package_dir: str, package_name: str) -> list[Type[
 
 def register_control_handlers(registry: ControlHandlerRegistry) -> None:
     """Register all discovered business control handlers on the given registry."""
-    package_dir = os.path.dirname(os.path.abspath(__file__))
-    package_name = __name__
-
-    handler_classes = _discover_handler_classes(package_dir, package_name)
+    handler_classes = _discover_handler_classes(__path__, __name__)
 
     for handler_class in handler_classes:
         registry.register(handler_class())

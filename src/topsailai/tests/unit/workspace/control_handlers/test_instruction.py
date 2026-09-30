@@ -8,13 +8,13 @@ Purpose: Verify the call_instruction control handler and its integration
 with HookInstruction.call_instruction.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+import topsailai.workspace.control_handlers as control_handlers
 from topsailai.workspace.control_channel.handler import ControlHandlerRegistry
 from topsailai.workspace.control_channel.protocol import ControlContext, ControlRequest
-from topsailai.workspace.control_handlers import register_control_handlers
 from topsailai.workspace.control_handlers.instruction import CallInstructionHandler
 
 
@@ -213,7 +213,13 @@ class TestCallInstructionHandler:
 class TestAutoDiscovery:
     def test_register_control_handlers_discovers_call_instruction(self):
         registry = ControlHandlerRegistry()
-        register_control_handlers(registry)
+        with patch.object(
+            control_handlers.pkgutil,
+            "iter_modules",
+            wraps=control_handlers.pkgutil.iter_modules,
+        ) as iter_modules:
+            control_handlers.register_control_handlers(registry)
 
+        iter_modules.assert_called_once_with(control_handlers.__path__)
         assert registry.is_registered("call_instruction")
         assert isinstance(registry.get("call_instruction"), CallInstructionHandler)
