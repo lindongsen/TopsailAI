@@ -20,11 +20,13 @@ class MockTransport(ApprovalTransport):
         self.instances = []
         self._events: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
+        self.request_ready = threading.Event()
 
     def send_request(self, instance):
         self.instances.append(instance)
         with self._lock:
             self._events[instance.id] = threading.Event()
+        self.request_ready.set()
 
     def wait_response(self, instance, timeout=None):
         with self._lock:
@@ -177,7 +179,7 @@ class TestDecoratorAsk:
         monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")
         monkeypatch.setenv(
             "TOPSAILAI_TOOL_APPROVAL_RULES",
-            '[{"match": "cmd_tool-exec_cmd", "mode": "require", "policy": "deny"}]',
+            '[{"match": "cmd_tool-exec_cmd", "mode": "require", "timeout": 1, "policy": "deny"}]',
         )
         from topsailai.ai_base.tool_approval import matcher
 
@@ -189,12 +191,17 @@ class TestDecoratorAsk:
             return f"ran {cmd}"
 
         def resolve_later():
-            time.sleep(0.05)
+            assert transport.request_ready.wait(timeout=1)
             instance = transport.instances[0]
             transport.resolve(instance.id, "approve")
 
-        threading.Thread(target=resolve_later).start()
-        result = wrapped(run_cmd, {"cmd": "ls"}, tool_name="cmd_tool-exec_cmd")
+        resolver = threading.Thread(target=resolve_later)
+        resolver.start()
+        try:
+            result = wrapped(run_cmd, {"cmd": "ls"}, tool_name="cmd_tool-exec_cmd")
+        finally:
+            resolver.join(timeout=1)
+        assert not resolver.is_alive()
         assert result == "executed"
         assert len(calls) == 1
 
