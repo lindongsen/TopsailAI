@@ -364,7 +364,7 @@ These variables configure the optional tool-call approval gate. When enabled, ea
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOPSAILAI_HOOK_AFTER_LLM_CHAT` | `""` | Module paths separated by `;`. Hook function signature: `hook_func(content:str) -> list[dict]\|str`. |
-| `TOPSAILAI_HOOK_AFTER_LLM_RESPONSE` | `"topsailai.tools.memory_tool_utils.memory_ref_scan_hook"` | Module paths separated by `;` for observing raw LLM response text before formatting. Hook function signature: `hook_func(content:str) -> str`. |
+| `TOPSAILAI_HOOK_AFTER_LLM_RESPONSE` | `"topsailai.tools.memory_tool_utils.memory_ref_scan_hook"` | Semicolon-separated Python module paths that observe raw LLM response text before formatting. Each module must provide `hook_execute(content: str) -> str`; each return value feeds the next hook. Duplicate paths are removed, and configured execution order is not guaranteed. |
 | `TOPSAILAI_HOOK_BEFORE_LLM_CHAT` | `""` | Module paths separated by `;`. Hook function signature: `hook_func(content:list[dict]) -> list[dict]`. When unset, the built-in default hooks run: `only_one_system_message`, then the tool-call pairing sanitizer `tool_call_pairing`, which drops orphaned `role=tool` messages before the request is sent. Setting this variable **replaces** the defaults entirely, so it also disables that sanitizer. |
 | `TOPSAILAI_HOOK_SCRIPTS_POST_FINAL_ANSWER` | `""` | Scripts to run after the final answer. Format: `"{script_file} {cmd_options};"`. |
 | `TOPSAILAI_HOOK_SCRIPTS_MEMORY_WRITE` | `""` | Legacy scripts called after successful memory create or update operations, after in-process hooks. Format: `"{script_file} {cmd_options};"`. |
