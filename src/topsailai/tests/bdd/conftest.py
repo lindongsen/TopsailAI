@@ -9,14 +9,20 @@ import pytest
 
 
 def pytest_configure(config):
-    """Register markers used by the tool parameter-coercion feature set."""
+    """Register markers used by the behavior test suites."""
     config.addinivalue_line("markers", "bdd: Gherkin behavior test")
+    config.addinivalue_line(
+        "markers",
+        "packaged: requires a real compiled package tree produced by the build",
+    )
     config.addinivalue_line(
         "markers",
         "wip: scenario pinned to a known source defect, expected to fail",
     )
 
+
 pytest_plugins = [
+    "tests.bdd.steps.compiled_module_discovery_steps",
     "tests.bdd.steps.exec_cmd_process_lifecycle_steps",
     "tests.bdd.steps.tool_param_cmd_git_file_steps",
     "tests.bdd.steps.tool_param_remote_steps",

@@ -1,3 +1,4 @@
+import importlib.machinery
 import pytest
 import sys
 import os
@@ -92,6 +93,20 @@ def test_get_path_for_sys_and_package_filesystem_path():
     
     # The result depends on the system configuration
     assert sys_path is not None or pkg_path is not None
+
+
+def test_get_path_for_sys_and_package_extension_initializer(tmp_path):
+    """Recognize a parent package whose initializer is an extension module."""
+    outer_package = tmp_path / "compiled_outer"
+    nested_package = outer_package / "compiled_inner"
+    nested_package.mkdir(parents=True)
+    extension_suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    (outer_package / f"__init__{extension_suffix}").touch()
+
+    sys_path, pkg_path = get_path_for_sys_and_package(str(nested_package))
+
+    assert sys_path == str(tmp_path)
+    assert pkg_path == "compiled_outer.compiled_inner"
 
 
 def test_get_path_for_sys_and_package_package_path():

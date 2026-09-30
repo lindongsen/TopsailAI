@@ -5,6 +5,7 @@
   Purpose: Module introspection and dynamic import utilities
 '''
 
+import importlib.machinery
 import os
 import sys
 import re
@@ -14,6 +15,14 @@ from topsailai.logger import logger
 
 
 DEFAULT_CONN_CHAR = "."
+
+
+def _has_package_initializer(path: str) -> bool:
+    """Return whether a directory has an importable package initializer."""
+    return any(
+        os.path.isfile(os.path.join(path, f"__init__{suffix}"))
+        for suffix in importlib.machinery.all_suffixes()
+    )
 
 
 def get_mod(path):
@@ -217,8 +226,7 @@ def get_path_for_sys_and_package(path:str) -> tuple[str|None, str|None]:
         sys_path = os.path.dirname(path)
         pkg_path = os.path.basename(path)
         for _ in range(100):
-            if not os.path.exists(f"{sys_path}/__init__.py") \
-                and not os.path.exists(f"{sys_path}/__init__.pyc"):
+            if not _has_package_initializer(sys_path):
                 break
             _base_name = os.path.basename(sys_path)
             if not is_valid_module_name(_base_name):
