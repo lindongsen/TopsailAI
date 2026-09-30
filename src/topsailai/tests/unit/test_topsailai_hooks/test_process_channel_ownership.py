@@ -318,8 +318,7 @@ def test_lease_interrupt_on_first_protected_body_line_releases_exact_level(
     record = LaunchRecord("protected-body")
 
     def interrupt_inner() -> None:
-        with backend._cleanup_execution_lease(record) as lease:
-            assert lease is not None
+        with backend._cleanup_execution_lease(record):
             raise KeyboardInterrupt()
 
     if not reentrant:

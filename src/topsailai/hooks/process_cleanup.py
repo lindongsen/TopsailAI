@@ -428,13 +428,18 @@ class ProcessCleanupMixin:
         """Provide a compatibility seam after confirmed raw descriptor closure."""
 
     def _terminate_owned(self, process: subprocess.Popen[bytes]) -> bool:
-        """Bound TERM/KILL escalation and reap only the exact owned process group."""
+        """Signal only while the exact process leader still proves group ownership."""
         pgid = process.pid
         for sig in (signal.SIGTERM, signal.SIGKILL):
+            authorization = self._authorize_owned_group_signal(process, pgid)
+            if authorization == "exited":
+                return not self._group_exists(pgid)
+            if authorization != "owned":
+                return False
             try:
                 os.killpg(pgid, sig)
             except ProcessLookupError:
-                pass
+                return self._owned_group_finished(process, pgid)
             except OSError:
                 return False
             end = time.monotonic() + self._cleanup_grace
@@ -443,14 +448,38 @@ class ProcessCleanupMixin:
                     exited = process.poll() is not None
                 except OSError:
                     return False
-                if exited and not self._group_exists(pgid):
-                    return True
+                if exited:
+                    return not self._group_exists(pgid)
                 time.sleep(0.005)
         try:
             process.wait(timeout=self._cleanup_grace)
         except (subprocess.TimeoutExpired, OSError):
             return False
         return not self._group_exists(pgid)
+
+    @staticmethod
+    def _authorize_owned_group_signal(
+        process: subprocess.Popen[bytes], pgid: int
+    ) -> str:
+        """Classify exact live ownership before each process-group signal."""
+        try:
+            if process.poll() is not None:
+                return "exited"
+            return "owned" if os.getpgid(process.pid) == pgid else "uncertain"
+        except ProcessLookupError:
+            return "exited"
+        except OSError:
+            return "uncertain"
+
+    def _owned_group_finished(
+        self, process: subprocess.Popen[bytes], pgid: int
+    ) -> bool:
+        """Confirm completion after an authorized signal races with group exit."""
+        try:
+            exited = process.poll() is not None
+        except OSError:
+            return False
+        return exited and not self._group_exists(pgid)
 
     def _record_launch_debt(self, debt_id: str) -> None:
         """Record an unsettled launch whose creator retains cleanup ownership."""
