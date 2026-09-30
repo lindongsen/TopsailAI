@@ -211,9 +211,9 @@ class ProcessCleanupMixin:
             return
         interruptions.append(error)
 
-    @staticmethod
+    @classmethod
     def _raise_cleanup_errors(
-        ordinary_errors: list[Exception], interruptions: list[BaseException]
+        cls, ordinary_errors: list[Exception], interruptions: list[BaseException]
     ) -> None:
         """Raise the primary interruption with every other cleanup failure inspectable."""
         if interruptions:
@@ -224,13 +224,56 @@ class ProcessCleanupMixin:
             ]
             if not diagnostics:
                 raise primary
-            if len(diagnostics) == 1:
-                raise primary from diagnostics[0]
-            raise primary from BaseExceptionGroup("additional cleanup failures", diagnostics)
+            additional = (
+                diagnostics[0]
+                if len(diagnostics) == 1
+                else BaseExceptionGroup("additional cleanup failures", diagnostics)
+            )
+            if primary.__cause__ is None:
+                raise primary from additional
+            cls._append_cleanup_diagnostics(primary, additional)
+            raise primary
         if len(ordinary_errors) == 1:
             raise ordinary_errors[0]
         if ordinary_errors:
             raise ExceptionGroup("ordinary cleanup failures", ordinary_errors)
+
+    @classmethod
+    def _append_cleanup_diagnostics(
+        cls, primary: BaseException, additional: BaseException
+    ) -> None:
+        """Append disjoint diagnostics without replacing the primary exception cause."""
+        primary_nodes = cls._exception_graph_ids(primary)
+        if cls._exception_graph_ids(additional) & primary_nodes:
+            return
+        tail = primary.__cause__
+        if tail is None:
+            return
+        seen: set[int] = set()
+        while tail.__cause__ is not None and id(tail) not in seen:
+            seen.add(id(tail))
+            tail = tail.__cause__
+        if id(tail) in seen:
+            return
+        tail.__cause__ = additional
+
+    @classmethod
+    def _exception_graph_ids(cls, error: BaseException) -> set[int]:
+        """Return identities in causes, contexts, and nested exception groups."""
+        pending = [error]
+        seen: set[int] = set()
+        while pending:
+            current = pending.pop()
+            if id(current) in seen:
+                continue
+            seen.add(id(current))
+            if current.__cause__ is not None:
+                pending.append(current.__cause__)
+            if current.__context__ is not None:
+                pending.append(current.__context__)
+            if isinstance(current, BaseExceptionGroup):
+                pending.extend(current.exceptions)
+        return seen
 
     @staticmethod
     def _cleanup_execution_owned(record: _LaunchRecord) -> bool:
