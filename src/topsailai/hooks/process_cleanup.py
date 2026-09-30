@@ -239,9 +239,11 @@ class ProcessCleanupMixin:
     def _append_cleanup_diagnostics(
         cls, primary: BaseException, additional: BaseException
     ) -> None:
-        """Append diagnostics without creating an exception-graph cycle."""
+        """Append diagnostics while explicitly detaching edges back to the primary."""
         if cls._exception_reaches(primary, additional):
             return
+        if cls._exception_reaches(additional, primary):
+            cls._detach_primary_backreferences(additional, primary)
         tail = primary
         cause_seen: set[int] = set()
         while tail.__cause__ is not None:
@@ -255,8 +257,6 @@ class ProcessCleanupMixin:
             tail.__cause__ = additional
             tail.__suppress_context__ = True
             return
-        if cls._exception_reaches(additional, primary):
-            return
         existing = primary.__cause__
         if existing is None:
             return
@@ -266,6 +266,40 @@ class ProcessCleanupMixin:
         )
         primary.__cause__ = aggregate
         primary.__suppress_context__ = True
+
+    @classmethod
+    def _detach_primary_backreferences(
+        cls, diagnostic: BaseException, primary: BaseException
+    ) -> None:
+        """Detach contradictory edges to the primary and record the representation change."""
+        pending = [diagnostic]
+        seen: set[int] = set()
+        while pending:
+            current = pending.pop()
+            if id(current) in seen:
+                continue
+            seen.add(id(current))
+            detached: list[str] = []
+            if current.__cause__ is primary:
+                current.__cause__ = None
+                current.__suppress_context__ = False
+                detached.append("cause")
+            elif current.__cause__ is not None:
+                pending.append(current.__cause__)
+            if current.__context__ is primary:
+                current.__context__ = None
+                detached.append("context")
+            elif current.__context__ is not None:
+                pending.append(current.__context__)
+            if isinstance(current, BaseExceptionGroup):
+                pending.extend(
+                    nested for nested in current.exceptions if nested is not primary
+                )
+            if detached:
+                current.add_note(
+                    "cleanup diagnostic backreference to the primary interruption "
+                    f"was detached from {', '.join(detached)} to preserve an acyclic graph"
+                )
 
     @classmethod
     def _exception_reaches(
