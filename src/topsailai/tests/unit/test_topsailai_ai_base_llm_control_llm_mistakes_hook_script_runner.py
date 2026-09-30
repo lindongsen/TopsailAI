@@ -95,6 +95,65 @@ def test_discover_scripts_missing_dir():
     assert runner._discover_scripts("/nonexistent/path") == []
 
 
+def test_discover_scripts_directory_failure_returns_empty(tmp_path, monkeypatch):
+    """Verify directory enumeration failures remain fail-open."""
+    script_dir = tmp_path / "hooks"
+    script_dir.mkdir()
+    monkeypatch.setattr(
+        runner.pkgutil,
+        "iter_modules",
+        lambda paths: (_ for _ in ()).throw(RuntimeError("sensitive detail")),
+    )
+    warnings = []
+    monkeypatch.setattr(runner.logger, "warning", lambda *args: warnings.append(args))
+
+    assert runner._discover_scripts(str(script_dir)) == []
+    assert warnings == [
+        ("LLM mistake hook script directory discovery failed (%s)", "RuntimeError")
+    ]
+
+
+def test_discover_scripts_skips_failed_module_and_continues(tmp_path, monkeypatch):
+    """Verify one finder failure does not discard later valid hook modules."""
+    script_dir = tmp_path / "hooks"
+    script_dir.mkdir()
+    valid_path = script_dir / "p020_valid.py"
+    valid_path.write_text("", encoding="utf-8")
+
+    class FailingFinder:
+        """Raise a loader-specific error while resolving one module."""
+
+        @staticmethod
+        def find_spec(name):
+            raise ValueError("sensitive detail")
+
+    class ValidFinder:
+        """Return the later valid source module."""
+
+        @staticmethod
+        def find_spec(name):
+            return type("Spec", (), {"origin": str(valid_path)})()
+
+    modules = [
+        runner.pkgutil.ModuleInfo(FailingFinder(), "p010_failed", False),
+        runner.pkgutil.ModuleInfo(ValidFinder(), "p020_valid", False),
+    ]
+    monkeypatch.setattr(runner.pkgutil, "iter_modules", lambda paths: modules)
+    warnings = []
+    monkeypatch.setattr(runner.logger, "warning", lambda *args: warnings.append(args))
+
+    assert runner._discover_scripts(str(script_dir)) == [
+        runner.HookScript("p020_valid", str(valid_path), runner.SCRIPT_KIND_SOURCE)
+    ]
+    assert warnings == [
+        (
+            "LLM mistake hook module %s discovery failed (%s); skipped",
+            "p010_failed",
+            "ValueError",
+        )
+    ]
+
+
 def test_discover_scripts_accepts_extension_suffix(tmp_path, monkeypatch):
     """Verify discovery accepts the platform extension suffix via its finder."""
     script_dir = tmp_path / "hooks"

@@ -282,6 +282,39 @@ class TestAutoDiscovery:
         classes = _discover_handler_classes([str(fake_dir)], "fake_handlers")
         assert classes == []
 
+    def test_discover_warns_without_exception_details_on_import_failure(
+        self, monkeypatch
+    ):
+        """Verify a broken handler module is skipped with safe diagnostics."""
+        import topsailai.workspace.control_handlers as control_handlers
+
+        module_info = types.SimpleNamespace(name="broken", ispkg=False)
+        monkeypatch.setattr(
+            control_handlers.pkgutil, "iter_modules", lambda paths: [module_info]
+        )
+        monkeypatch.setattr(
+            control_handlers.importlib,
+            "import_module",
+            lambda name: (_ for _ in ()).throw(RuntimeError("sensitive detail")),
+        )
+        warnings = []
+        monkeypatch.setattr(
+            control_handlers.logger,
+            "warning",
+            lambda *args: warnings.append(args),
+        )
+
+        assert control_handlers._discover_handler_classes(
+            ["/unused"], "fake_handlers"
+        ) == []
+        assert warnings == [
+            (
+                "Control handler module %s import failed (%s); skipped",
+                "fake_handlers.broken",
+                "RuntimeError",
+            )
+        ]
+
     def test_discover_collects_handler_from_module(self, tmp_path):
         from topsailai.workspace.control_handlers import _discover_handler_classes
 

@@ -12,6 +12,7 @@ import inspect
 import pkgutil
 from typing import Type
 
+from topsailai.logger.log_chat import logger
 from topsailai.workspace.control_channel.handler import ControlHandler, ControlHandlerRegistry
 
 
@@ -26,8 +27,13 @@ def _discover_handler_classes(package_path: list[str], package_name: str) -> lis
         module_name = f"{package_name}.{module_info.name}"
         try:
             module = importlib.import_module(module_name)
-        except Exception:
+        except Exception as exc:
             # A broken module should not prevent other handlers from loading.
+            logger.warning(
+                "Control handler module %s import failed (%s); skipped",
+                module_name,
+                type(exc).__name__,
+            )
             continue
 
         for _name, obj in inspect.getmembers(module, inspect.isclass):

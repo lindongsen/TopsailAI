@@ -142,9 +142,17 @@ def _discover_scripts(script_dir):
         # Python's finder emits one entry per module name and applies its normal
         # import precedence, so a same-name extension artifact wins over source.
         modules = sorted(pkgutil.iter_modules([script_dir]), key=lambda item: item.name)
-        for module in modules:
-            if module.ispkg or module.name.startswith("_"):
-                continue
+    except Exception as exc:
+        logger.warning(
+            "LLM mistake hook script directory discovery failed (%s)",
+            type(exc).__name__,
+        )
+        return []
+
+    for module in modules:
+        if module.ispkg or module.name.startswith("_"):
+            continue
+        try:
             spec = module.module_finder.find_spec(module.name)
             path = getattr(spec, "origin", None)
             if not path or not os.path.isfile(path):
@@ -160,9 +168,12 @@ def _discover_scripts(script_dir):
                 )
                 continue
             scripts.append(HookScript(module.name, path, kind))
-    except (ImportError, OSError) as exc:
-        logger.warning("LLM mistake hook script discovery failed: %s", exc)
-        return []
+        except Exception as exc:
+            logger.warning(
+                "LLM mistake hook module %s discovery failed (%s); skipped",
+                module.name,
+                type(exc).__name__,
+            )
     return scripts
 
 
