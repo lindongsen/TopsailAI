@@ -1,22 +1,18 @@
 import importlib.machinery
+from unittest.mock import patch
+
 import pytest
-import sys
-import os
-import tempfile
-import shutil
-from unittest.mock import patch, MagicMock
 
-# Add the source directory to Python path
-sys.path.insert(0, '/root/ai/TopsailAI/src')
-
+import topsailai.utils.module_tool as module_tool
 from topsailai.utils.module_tool import (
-    get_mod,
-    get_var,
-    list_sub_mods_name,
+    _has_package_initializer,
+    get_external_function_map,
     get_function_map,
-    is_valid_module_name,
+    get_mod,
     get_path_for_sys_and_package,
-    get_external_function_map
+    get_var,
+    is_valid_module_name,
+    list_sub_mods_name,
 )
 
 
@@ -85,28 +81,71 @@ def test_is_valid_module_name_invalid():
     assert not is_valid_module_name('')
 
 
-def test_get_path_for_sys_and_package_filesystem_path():
-    """Test get_path_for_sys_and_package with filesystem path."""
-    # Test with a path that should be in sys.path
-    test_path = '/usr/lib/python3.10'  # Common Python library path
-    sys_path, pkg_path = get_path_for_sys_and_package(test_path)
-    
-    # The result depends on the system configuration
-    assert sys_path is not None or pkg_path is not None
+@pytest.mark.parametrize(
+    ("initializer", "expected"),
+    [
+        ("__init__.py", True),
+        ("__init__.pyc", True),
+        (f"__init__{importlib.machinery.EXTENSION_SUFFIXES[0]}", True),
+        (None, False),
+        ("__init__.txt", False),
+        ("__init__.foo", False),
+    ],
+)
+def test_has_package_initializer(tmp_path, initializer, expected):
+    """Recognize only initializer suffixes supported by Python imports."""
+    if initializer:
+        (tmp_path / initializer).touch()
+
+    assert _has_package_initializer(str(tmp_path)) is expected
 
 
-def test_get_path_for_sys_and_package_extension_initializer(tmp_path):
-    """Recognize a parent package whose initializer is an extension module."""
-    outer_package = tmp_path / "compiled_outer"
-    nested_package = outer_package / "compiled_inner"
-    nested_package.mkdir(parents=True)
-    extension_suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
-    (outer_package / f"__init__{extension_suffix}").touch()
+@pytest.mark.parametrize("initializer", ["__init__.py", "__init__.pyc"])
+def test_get_path_for_sys_and_package_source_or_bytecode_initializer(
+    tmp_path, initializer
+):
+    """Resolve a package with a deterministic source or bytecode initializer."""
+    package = tmp_path / "outer_package"
+    target = package / "inner_package"
+    target.mkdir(parents=True)
+    (package / initializer).touch()
 
-    sys_path, pkg_path = get_path_for_sys_and_package(str(nested_package))
+    with patch.object(module_tool.sys, "path", []):
+        sys_path, pkg_path = get_path_for_sys_and_package(str(target))
 
     assert sys_path == str(tmp_path)
-    assert pkg_path == "compiled_outer.compiled_inner"
+    assert pkg_path == "outer_package.inner_package"
+
+
+def test_get_path_for_sys_and_package_non_package_parent(tmp_path):
+    """Stop package traversal when the parent has no valid initializer."""
+    parent = tmp_path / "plain_directory"
+    target = parent / "candidate_package"
+    target.mkdir(parents=True)
+    (parent / "__init__.unknown").touch()
+
+    with patch.object(module_tool.sys, "path", []):
+        sys_path, pkg_path = get_path_for_sys_and_package(str(target))
+
+    assert sys_path == str(parent)
+    assert pkg_path == "candidate_package"
+
+
+def test_get_path_for_sys_and_package_multilevel_extension_initializers(tmp_path):
+    """Resolve every level of a nested extension-only package path."""
+    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    outer = tmp_path / "compiled_outer"
+    inner = outer / "compiled_inner"
+    target = inner / "plugin_package"
+    target.mkdir(parents=True)
+    (outer / f"__init__{suffix}").touch()
+    (inner / f"__init__{suffix}").touch()
+
+    with patch.object(module_tool.sys, "path", []):
+        sys_path, pkg_path = get_path_for_sys_and_package(str(target))
+
+    assert sys_path == str(tmp_path)
+    assert pkg_path == "compiled_outer.compiled_inner.plugin_package"
 
 
 def test_get_path_for_sys_and_package_package_path():
@@ -125,6 +164,39 @@ def test_get_function_map_basic():
     assert result is not None
     assert isinstance(result, dict)
 
+
+def test_get_external_function_map_delegates_extension_only_path(tmp_path):
+    """Resolve an extension-only path before delegating function discovery."""
+    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    outer = tmp_path / "compiled_outer"
+    package = outer / "compiled_inner"
+    package.mkdir(parents=True)
+    (outer / f"__init__{suffix}").touch()
+    expected = {"plugin.run": object()}
+    isolated_sys_path = []
+
+    with (
+        patch.object(module_tool.sys, "path", isolated_sys_path),
+        patch.object(module_tool, "get_function_map", return_value=expected) as discover,
+    ):
+        result = get_external_function_map(
+            str(package),
+            key="FUNCTIONS",
+            prefix_name="external",
+            conn_char="-",
+            need_module_log=False,
+        )
+
+    assert result is expected
+    assert isolated_sys_path == [str(tmp_path)]
+    discover.assert_called_once_with(
+        "compiled_outer.compiled_inner",
+        "FUNCTIONS",
+        "external",
+        conn_char="-",
+        hook_check=None,
+        need_module_log=False,
+    )
 
 def test_get_external_function_map_basic():
     """Test get_external_function_map basic functionality."""
