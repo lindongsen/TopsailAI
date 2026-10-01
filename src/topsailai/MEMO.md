@@ -78,3 +78,9 @@ Summary: every `role="tool"` message must have a preceding assistant message who
 The full rule lives in [docs/Documentation_Conventions.md](./docs/Documentation_Conventions.md) — section "`MEMO.md` Is Index Only".
 
 Summary: `MEMO.md` is injected into the agent context, so each entry is only a heading, a relative link to the owning document, and one summary sentence; write the detail in the owning document first, then link here.
+
+## MEMO: Plugin, Hook, and Event Responsibilities
+
+The full rule lives in [features/feature-plugin-mechanisms.md](./features/feature-plugin-mechanisms.md) — section "Plugin, Hook, and Event Responsibilities".
+
+Summary: Plugin extends what a component can do, Hook defines when and where additional behavior runs in an existing flow, and Event communicates what happened so decoupled components can observe or react; these are complementary dimensions that can be composed.
