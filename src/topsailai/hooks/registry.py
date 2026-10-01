@@ -160,6 +160,44 @@ class HookRegistry:
             self._state = _RegistryState(generation, dict(state.definitions), bindings)
             return RegistrationResult(True, generation)
 
+    def unregister_scope(self, scope_id: str) -> RegistrationResult:
+        """Atomically remove every registration owned by one closing scope."""
+        if type(scope_id) is not str or not scope_id:
+            return RegistrationResult(False, self.generation, errors=("scope_id is invalid",))
+        with self._lock:
+            state = self._state
+            bindings = {
+                key: registered
+                for key, registered in state.bindings.items()
+                if key[0] != scope_id
+            }
+            if len(bindings) == len(state.bindings):
+                return RegistrationResult(True, state.generation)
+            generation = state.generation + 1
+            self._state = _RegistryState(generation, dict(state.definitions), bindings)
+            return RegistrationResult(True, generation)
+
+    def reconfigure(self, bindings_per_event: int) -> int:
+        """Publish a new cap and advance the shared registry generation."""
+        with self._lock:
+            self._bindings_per_event = bindings_per_event
+            state = self._state
+            generation = state.generation + 1
+            self._state = _RegistryState(
+                generation, dict(state.definitions), dict(state.bindings)
+            )
+            return generation
+
+    def binding_cap_compatible(self, bindings_per_event: int) -> bool:
+        """Return whether a candidate cap retains every scope-local event set."""
+        with self._lock:
+            counts: dict[tuple[str, str, int], int] = {}
+            for (scope_id, _), registered in self._state.bindings.items():
+                binding = registered.binding
+                key = (scope_id, binding.event_name, binding.event_version)
+                counts[key] = counts.get(key, 0) + 1
+            return all(count <= bindings_per_event for count in counts.values())
+
     def snapshot(
         self,
         scope_id: str,

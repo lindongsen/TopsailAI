@@ -321,6 +321,15 @@ class RegistrationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ReloadResult:
+    """Report atomic operational settings publication without raising."""
+
+    accepted: bool
+    generation: int
+    errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class RegistrySnapshot:
     """Freeze one registry generation and its deterministic binding plan."""
 
