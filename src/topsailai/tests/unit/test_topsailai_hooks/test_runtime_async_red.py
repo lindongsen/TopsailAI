@@ -1,0 +1,281 @@
+"""RED regressions for bounded asynchronous Hooks dispatch ownership."""
+
+from __future__ import annotations
+
+import asyncio
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from topsailai.tests.unit.test_topsailai_hooks.red_runtime_helpers import (
+    BlockingBackend,
+    binding,
+    definition,
+    event,
+    runtime_and_scope,
+)
+
+
+async def _wait_for_queue(runtime: Any, items: int, timeout: float = 1.0) -> None:
+    """Observe scheduler reservation under its real condition lock."""
+    def wait() -> bool:
+        deadline = time.monotonic() + timeout
+        with runtime._scheduler._changed:
+            while runtime._scheduler._queued_items != items:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                runtime._scheduler._changed.wait(min(remaining, 0.02))
+            return True
+
+    assert await asyncio.to_thread(wait), f"queue never reached {items} reserved item(s)"
+
+
+async def _cleanup_exercise(
+    runtime: Any,
+    backend: BlockingBackend,
+    tasks: list[asyncio.Task[Any]],
+    *,
+    closer: threading.Thread | None = None,
+    allow_cancelled: bool = False,
+) -> None:
+    """Run every owned cleanup phase and aggregate independent failures."""
+    failures: list[str] = []
+    backend.release.set()
+
+    done, pending = await asyncio.wait(tasks, timeout=1.0) if tasks else (set(), set())
+    if pending:
+        failures.append(f"owned tasks did not settle: {len(pending)}")
+    for task in done:
+        if task.cancelled():
+            if not allow_cancelled:
+                failures.append("owned task was unexpectedly cancelled")
+            continue
+        exception = task.exception()
+        if exception is not None:
+            failures.append(f"owned task failed: {exception!r}")
+
+    if backend.started.is_set() and not await asyncio.to_thread(backend.wait_idle, 1):
+        failures.append("backend remained active after release")
+    started, active, completed = backend.snapshot()
+    if active != 0:
+        failures.append(f"backend active count remained {active}")
+    if completed != started:
+        failures.append(
+            f"backend completion mismatch: started={started}, completed={completed}"
+        )
+
+    if closer is not None and closer.ident is not None:
+        closer.join(1)
+        if closer.is_alive():
+            failures.append("closer thread did not terminate")
+
+    with runtime._scheduler._lock:
+        if runtime._scheduler._work:
+            failures.append("scheduler ownership did not reach zero")
+        if runtime._scheduler._queued_items != 0:
+            failures.append("queue item reservations did not reach zero")
+        if runtime._scheduler._queued_bytes != 0:
+            failures.append("queue byte reservations did not reach zero")
+    assert failures == []
+
+
+def test_adispatch_uses_bounded_queue_item_admission(tmp_path: Path) -> None:
+    """Async dispatch must queue one waiter and reject the next item overflow."""
+    backend = BlockingBackend()
+    runtime, scope = runtime_and_scope(
+        tmp_path, backend=backend, queue_items=1, queue_bytes=65_536
+    )
+    assert runtime.register(definition(), binding(), scope).accepted
+
+    async def exercise() -> None:
+        tasks: list[asyncio.Task[Any]] = []
+        try:
+            first = asyncio.create_task(runtime.adispatch(event(runtime, scope, 1)))
+            tasks.append(first)
+            assert await asyncio.to_thread(backend.started.wait, 1)
+            second = asyncio.create_task(runtime.adispatch(event(runtime, scope, 2)))
+            tasks.append(second)
+            await _wait_for_queue(runtime, 1)
+            third = await runtime.adispatch(event(runtime, scope, 3))
+            assert third.rejection_reason == "rejected_capacity"
+        finally:
+            await _cleanup_exercise(runtime, backend, tasks)
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        backend.release.set()
+        runtime.close(deadline_ms=100)
+
+
+def test_adispatch_uses_bounded_queue_byte_admission(tmp_path: Path) -> None:
+    """Async dispatch must reject byte overflow independently of item capacity."""
+    backend = BlockingBackend()
+    runtime, scope = runtime_and_scope(
+        tmp_path, backend=backend, queue_items=8, queue_bytes=512
+    )
+    assert runtime.register(definition(), binding(), scope).accepted
+
+    async def exercise() -> None:
+        tasks: list[asyncio.Task[Any]] = []
+        second_size = 0
+        try:
+            first = asyncio.create_task(runtime.adispatch(event(runtime, scope, 1)))
+            tasks.append(first)
+            assert await asyncio.to_thread(backend.started.wait, 1)
+            second_event = event(runtime, scope, 2)
+            admission, rejection = runtime._prepare_admission(second_event, None)
+            assert rejection is None and admission is not None
+            second_size = admission.size_bytes
+            assert second_size <= 512 < second_size * 2
+            second = asyncio.create_task(runtime.adispatch(second_event))
+            tasks.append(second)
+            await _wait_for_queue(runtime, 1)
+            with runtime._scheduler._lock:
+                assert runtime._scheduler._queued_bytes == second_size
+            overflow = await runtime.adispatch(event(runtime, scope, 3))
+            assert overflow.rejection_reason == "rejected_capacity"
+        finally:
+            await _cleanup_exercise(runtime, backend, tasks)
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        backend.release.set()
+        runtime.close(deadline_ms=100)
+
+
+def test_close_retains_observable_adispatch_ownership_until_settlement(tmp_path: Path) -> None:
+    """A bounded close must retain blocked async work as pending ownership."""
+    backend = BlockingBackend()
+    runtime, scope = runtime_and_scope(tmp_path, backend=backend, shutdown_timeout_ms=30)
+    assert runtime.register(definition(), binding(), scope).accepted
+    close_returned = threading.Event()
+    close_errors: list[BaseException] = []
+    closer: threading.Thread | None = None
+
+    async def exercise() -> None:
+        nonlocal closer
+        task = asyncio.create_task(runtime.adispatch(event(runtime, scope)))
+        try:
+            assert await asyncio.to_thread(backend.started.wait, 1)
+
+            def close() -> None:
+                """Capture close failure without losing the owned thread."""
+                try:
+                    runtime.close(deadline_ms=30)
+                except BaseException as exc:
+                    close_errors.append(exc)
+                finally:
+                    close_returned.set()
+
+            closer = threading.Thread(target=close)
+            closer.start()
+            assert await asyncio.to_thread(close_returned.wait, 1)
+            assert runtime._scheduler._work, "close forgot blocked adispatch ownership"
+            assert any(
+                record.get("kind") == "shutdown_debt"
+                for record in runtime.drain_diagnostics(50)
+            )
+        finally:
+            await _cleanup_exercise(runtime, backend, [task], closer=closer)
+            assert close_errors == []
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        backend.release.set()
+        if closer is not None and closer.ident is not None:
+            closer.join(1)
+        runtime.close(deadline_ms=100)
+
+
+def test_queued_adispatch_expires_without_late_backend_start(tmp_path: Path) -> None:
+    """A proven queued deadline must release capacity and never start late."""
+    backend = BlockingBackend()
+    runtime, scope = runtime_and_scope(tmp_path, backend=backend, dispatch_timeout_ms=500)
+    assert runtime.register(definition(), binding(), scope).accepted
+
+    async def exercise() -> None:
+        tasks: list[asyncio.Task[Any]] = []
+        try:
+            first = asyncio.create_task(runtime.adispatch(event(runtime, scope, 1)))
+            tasks.append(first)
+            assert await asyncio.to_thread(backend.started.wait, 1)
+            second = asyncio.create_task(
+                runtime.adispatch(event(runtime, scope, 2), {"timeout_ms": 60})
+            )
+            tasks.append(second)
+            await _wait_for_queue(runtime, 1)
+            assert backend.calls == 1
+            await asyncio.sleep(0.02)
+            assert backend.calls == 1
+            report = await asyncio.wait_for(asyncio.shield(second), 0.5)
+            assert report.outcomes[0].status.value == "skipped_deadline"
+            assert runtime._scheduler._queued_items == 0
+            assert runtime._scheduler._queued_bytes == 0
+            backend.release.set()
+            await asyncio.wait_for(asyncio.shield(first), 0.5)
+            assert not backend.second_started.wait(0.05)
+            assert backend.calls == 1
+        finally:
+            await _cleanup_exercise(runtime, backend, tasks)
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        backend.release.set()
+        runtime.close(deadline_ms=100)
+
+
+def test_repeated_cancellation_retains_observable_ownership(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repeated cancellation must not forget blocked backend ownership."""
+    backend = BlockingBackend()
+    runtime, scope = runtime_and_scope(
+        tmp_path, backend=backend, dispatch_timeout_ms=1_000, shutdown_timeout_ms=200
+    )
+    assert runtime.register(definition(), binding(), scope).accepted
+    settlement_started = threading.Event()
+    original_publish = runtime._diagnostics.publish
+
+    def observe_publish(kind: str, **fields: object) -> None:
+        """Observe the existing first-cancellation settlement checkpoint."""
+        original_publish(kind, **fields)
+        if kind == "dispatch_cancel_requested":
+            settlement_started.set()
+
+    monkeypatch.setattr(runtime._diagnostics, "publish", observe_publish)
+
+    async def exercise() -> None:
+        task = asyncio.create_task(runtime.adispatch(event(runtime, scope)))
+        try:
+            assert await asyncio.to_thread(backend.started.wait, 1)
+            task.cancel()
+            assert await asyncio.to_thread(settlement_started.wait, 1)
+            task.cancel()
+            done, pending = await asyncio.wait({task}, timeout=0.4)
+            assert done == {task}, "cancellation exceeded the loose anti-hang bound"
+            assert pending == set()
+            with pytest.raises(asyncio.CancelledError):
+                task.result()
+            assert runtime._scheduler._work, "bounded cancellation forgot pending work"
+            _, active, _ = backend.snapshot()
+            assert active == 1, "bounded return did not retain backend ownership"
+        finally:
+            await _cleanup_exercise(
+                runtime, backend, [task], allow_cancelled=True
+            )
+            started, active, completed = backend.snapshot()
+            assert (started, active, completed) == (1, 0, 1)
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        backend.release.set()
+        runtime.close(deadline_ms=100)
