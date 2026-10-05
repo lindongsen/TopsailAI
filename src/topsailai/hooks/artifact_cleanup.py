@@ -182,6 +182,8 @@ class DescriptorLedger:
         record = self._records.get(obligation_id)
         if record is None or record.descriptor != descriptor:
             raise RuntimeError("descriptor ownership record is inconsistent")
+        if record.uncertain_close:
+            raise RuntimeError("descriptor close outcome is uncertain")
         record.uncertain_close = True
         self._by_descriptor.pop(descriptor, None)
         record.descriptor = None

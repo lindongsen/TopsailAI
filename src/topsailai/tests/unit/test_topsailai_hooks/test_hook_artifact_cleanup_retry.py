@@ -482,3 +482,30 @@ def test_empty_capture_checks_liveness_after_descriptor_close(
     expected = "artifact_capture_cancelled" if liveness == "cancellation" else "artifact_capture_timeout"
     assert result.errors == (expected,) and issued == [0]
     assert owner.cleanup_debts() == ()
+
+
+@pytest.mark.parametrize("use_boundary_alias", (False, True), ids=("close", "close-descriptor"))
+def test_direct_uncertain_close_reentry_is_nonretryable(
+    monkeypatch, tmp_path: Path, use_boundary_alias: bool
+) -> None:
+    """Reject both individual close entry points after close authority is uncertain."""
+    from .artifact_handoff_helpers import assert_direct_uncertain_close_is_nonretryable
+
+    assert_direct_uncertain_close_is_nonretryable(
+        monkeypatch, tmp_path, use_boundary_alias=use_boundary_alias
+    )
+
+
+def test_public_source_close_reentry_retains_owner_bound_debt(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Keep public recovery authority when source-finalization close is re-entered."""
+    from .artifact_handoff_helpers import (
+        assert_public_source_close_reentry_is_nonretryable,
+    )
+    from .test_hook_artifact_ownership import _fixture
+
+    owner, request, artifact_root = _fixture(tmp_path)
+    assert_public_source_close_reentry_is_nonretryable(
+        monkeypatch, tmp_path, owner, request, artifact_root
+    )

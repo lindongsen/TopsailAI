@@ -357,3 +357,141 @@ def assert_successful_capture_handoff_is_cleanup_owned(
     assert owner.cleanup_debts() == ()
     assert not list(artifact_root.iterdir())
     assert owner.close().accepted
+
+
+def assert_direct_uncertain_close_is_nonretryable(
+    monkeypatch, tmp_path: Path, *, use_boundary_alias: bool
+) -> None:
+    """Reject direct re-entry without closing a descriptor whose outcome is uncertain."""
+    import topsailai.hooks.artifact_cleanup as cleanup
+
+    owned = tmp_path / "direct-close-owned"
+    external = tmp_path / "direct-close-external"
+    owned.write_bytes(b"owned")
+    external.write_bytes(b"external")
+    ledger = DescriptorLedger()
+    descriptor = ledger.open(owned, os.O_RDONLY)
+    record = next(iter(ledger._records.values()))
+    record.uncertain_close = True
+    real_close = cleanup.os.close
+    real_close(descriptor)
+    external_fd = os.open(external, os.O_RDONLY)
+    assert external_fd == descriptor
+    close_calls: list[int] = []
+
+    def forbidden_close(value: int) -> None:
+        close_calls.append(value)
+        raise AssertionError("direct re-entry retried a historical descriptor")
+
+    monkeypatch.setattr(cleanup.os, "close", forbidden_close)
+    close_operation = ledger.close_descriptor if use_boundary_alias else ledger.close
+    try:
+        close_operation(descriptor)
+    except RuntimeError as exc:
+        assert str(exc) == "descriptor close outcome is uncertain"
+    else:
+        raise AssertionError("uncertain direct close was accepted")
+    assert ledger.count == 1 and ledger.has_outstanding()
+    assert ledger._by_descriptor == {descriptor: record.obligation_id}
+    assert record.descriptor == descriptor and record.uncertain_close
+    assert close_calls == [] and os.read(external_fd, 8) == b"external"
+    assert ledger.close_all() == () and ledger.count == 1
+    assert ledger._by_descriptor == {} and record.descriptor is None
+    assert close_calls == [] and os.read(external_fd, 8) == b""
+    real_close(external_fd)
+
+
+def assert_public_source_close_reentry_is_nonretryable(
+    monkeypatch, tmp_path: Path, owner, request, artifact_root: Path
+) -> None:
+    """Preserve owner-bound debt when public source cleanup re-enters armed close."""
+    import topsailai.hooks.artifact_cleanup as cleanup
+    import topsailai.hooks.artifact_store as store
+
+    external = tmp_path / "public-close-reentry-external"
+    external.write_bytes(b"external")
+    primary = KeyboardInterrupt("source finalization armed interruption")
+    real_close_method = DescriptorLedger.close
+    real_os_close = cleanup.os.close
+    real_close_sources = store.ArtifactCaptureOwner._close_sources
+    real_issue = store.ArtifactCaptureOwner._issue
+    real_seal = store.ArtifactCaptureOwner._seal_and_sync
+    armed = False
+    interrupted = False
+    historical_descriptor: int | None = None
+    external_fd: int | None = None
+    historical_close_calls: list[int] = []
+    close_source_calls = 0
+    issue_calls = 0
+    seal_calls = 0
+
+    def observe_os_close(descriptor: int) -> None:
+        if interrupted and descriptor == historical_descriptor:
+            historical_close_calls.append(descriptor)
+            raise AssertionError("public cleanup retried a historical descriptor")
+        real_os_close(descriptor)
+
+    def reuse_descriptor(descriptor: int) -> None:
+        nonlocal interrupted, historical_descriptor, external_fd
+        historical_descriptor = descriptor
+        real_os_close(descriptor)
+        external_fd = os.open(external, os.O_RDONLY)
+        assert external_fd == descriptor
+        interrupted = True
+
+    def close_with_interruption(self, descriptor: int) -> None:
+        nonlocal armed
+        if not armed:
+            return real_close_method(self, descriptor)
+        armed = False
+        obligation_id = self._by_descriptor[descriptor]
+        record = self._records[obligation_id]
+        assert not record.uncertain_close and record.descriptor == descriptor
+        record.uncertain_close = True
+        reuse_descriptor(descriptor)
+        raise primary
+
+    def observed_close_sources(self, slot, sources, checkpoint=None):
+        nonlocal armed, close_source_calls
+        close_source_calls += 1
+        if close_source_calls == 1:
+            armed = True
+        return real_close_sources(self, slot, sources, checkpoint)
+
+    def observed_issue(*args, **kwargs):
+        nonlocal issue_calls
+        issue_calls += 1
+        return real_issue(*args, **kwargs)
+
+    def observed_seal(*args, **kwargs):
+        nonlocal seal_calls
+        seal_calls += 1
+        return real_seal(*args, **kwargs)
+
+    monkeypatch.setattr(DescriptorLedger, "close", close_with_interruption)
+    monkeypatch.setattr(cleanup.os, "close", observe_os_close)
+    monkeypatch.setattr(store.ArtifactCaptureOwner, "_close_sources", observed_close_sources)
+    monkeypatch.setattr(store.ArtifactCaptureOwner, "_issue", observed_issue)
+    monkeypatch.setattr(store.ArtifactCaptureOwner, "_seal_and_sync", observed_seal)
+    try:
+        owner.capture((request,))
+    except KeyboardInterrupt as exc:
+        assert exc is primary
+        assert get_artifact_recovery_owner(exc) is owner
+    else:
+        raise AssertionError("source-finalization interruption was swallowed")
+    assert close_source_calls == 2
+    assert issue_calls == 0 and seal_calls == 0
+    assert historical_descriptor is not None and external_fd == historical_descriptor
+    assert historical_close_calls == [] and os.read(external_fd, 8) == b"external"
+    debts = owner.cleanup_debts()
+    assert len(debts) == 1
+    slot = owner._slots[debts[0].debt_id]
+    records = tuple(slot.ledger._records.values())
+    assert len(records) == 1 and records[0].uncertain_close
+    assert records[0].descriptor is None and slot.ledger._by_descriptor == {}
+    assert not owner.retry_cleanup(debts[0].debt_id)
+    assert owner.close().cleanup_pending and owner.cleanup_debts() == debts
+    assert historical_close_calls == [] and os.read(external_fd, 8) == b""
+    assert not list(artifact_root.iterdir())
+    real_os_close(external_fd)
