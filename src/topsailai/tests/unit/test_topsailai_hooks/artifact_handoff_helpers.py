@@ -23,6 +23,18 @@ class _InterruptMap(dict):
         raise self._primary
 
 
+class _PublishThenInterruptMap(dict):
+    """Publish descriptor authority before raising one exact host primary."""
+
+    def __init__(self, primary: BaseException) -> None:
+        super().__init__()
+        self._primary = primary
+
+    def __setitem__(self, key, value) -> None:
+        super().__setitem__(key, value)
+        raise self._primary
+
+
 def _settlement_line(ledger: DescriptorLedger, text: str) -> int:
     """Return one exact executable line in interrupted publication settlement."""
     source, first_line = inspect.getsourcelines(ledger._settle_interrupted_publication)
@@ -44,6 +56,7 @@ def assert_settlement_post_return_is_nonretryable(monkeypatch, tmp_path: Path) -
     real_open, real_close = cleanup.os.open, cleanup.os.close
     owned_fd: int | None = None
     external_fd: int | None = None
+    close_entry_states: list[tuple[bool, int | None, bool]] = []
 
     def observed_open(path, flags, mode=0o777, *, dir_fd=None):
         nonlocal owned_fd
@@ -52,11 +65,19 @@ def assert_settlement_post_return_is_nonretryable(monkeypatch, tmp_path: Path) -
             owned_fd = descriptor
         return descriptor
 
+    def observed_close(descriptor: int) -> None:
+        record = next(iter(ledger._records.values()))
+        close_entry_states.append(
+            (record.uncertain_close, record.descriptor, descriptor in ledger._by_descriptor)
+        )
+        real_close(descriptor)
+
     def reuse_descriptor() -> None:
         nonlocal external_fd
         external_fd = real_open(external, os.O_RDONLY)
 
     monkeypatch.setattr(cleanup.os, "open", observed_open)
+    monkeypatch.setattr(cleanup.os, "close", observed_close)
     ledger._by_descriptor = _InterruptMap(primary)
     try:
         with composed_line_interruption(
@@ -72,6 +93,7 @@ def assert_settlement_post_return_is_nonretryable(monkeypatch, tmp_path: Path) -
         raise AssertionError("publication primary was swallowed")
     record = next(iter(ledger._records.values()))
     assert owned_fd is not None and external_fd == owned_fd
+    assert close_entry_states == [(True, None, False)]
     assert record.descriptor is None and record.uncertain_close
     assert ledger._by_descriptor == {}
     assert os.read(external_fd, 8) == b"external"
@@ -80,17 +102,24 @@ def assert_settlement_post_return_is_nonretryable(monkeypatch, tmp_path: Path) -
     real_close(external_fd)
 
 
-def assert_intermediate_revocation_is_nonretryable(monkeypatch, tmp_path: Path) -> None:
-    """Prove uncertainty is armed before settlement authority mutation."""
+def assert_intermediate_revocation_is_nonretryable(
+    monkeypatch, tmp_path: Path, *, published_map: bool
+) -> None:
+    """Prove settlement cleanup revokes empty or published map state safely."""
     import topsailai.hooks.artifact_cleanup as cleanup
 
-    owned = tmp_path / "intermediate-owned"
+    suffix = "published" if published_map else "empty"
+    owned = tmp_path / f"intermediate-{suffix}-owned"
+    external = tmp_path / f"intermediate-{suffix}-external"
     owned.write_bytes(b"owned")
+    external.write_bytes(b"external")
     ledger = DescriptorLedger()
     primary = KeyboardInterrupt("publication primary")
     interruption = KeyboardInterrupt("intermediate revocation interruption")
     real_close = cleanup.os.close
-    ledger._by_descriptor = _InterruptMap(primary)
+    close_calls: list[int] = []
+    map_type = _PublishThenInterruptMap if published_map else _InterruptMap
+    ledger._by_descriptor = map_type(primary)
     try:
         with composed_line_interruption(
             ledger._settle_interrupted_publication.__func__.__code__,
@@ -105,10 +134,77 @@ def assert_intermediate_revocation_is_nonretryable(monkeypatch, tmp_path: Path) 
     record = next(iter(ledger._records.values()))
     descriptor = record.descriptor
     assert descriptor is not None and record.uncertain_close
-    assert ledger._by_descriptor == {}
-    assert ledger.close_all() == () and ledger.count == 1
+    if published_map:
+        assert ledger._by_descriptor == {descriptor: record.obligation_id}
+    else:
+        assert ledger._by_descriptor == {}
     real_close(descriptor)
+    external_fd = os.open(external, os.O_RDONLY)
+    assert external_fd == descriptor
 
+    def forbidden_close(value: int) -> None:
+        close_calls.append(value)
+        raise AssertionError("cleanup retried a historical descriptor")
+
+    monkeypatch.setattr(cleanup.os, "close", forbidden_close)
+    assert ledger.close_all() == () and ledger.count == 1
+    assert ledger._by_descriptor == {}
+    assert record.descriptor is None and record.uncertain_close
+    assert close_calls == []
+    assert os.read(external_fd, 8) == b"external"
+    real_close(external_fd)
+
+
+def assert_ordinary_close_intermediate_is_nonretryable(
+    monkeypatch, tmp_path: Path, boundary: str
+) -> None:
+    """Prove ordinary close intermediates retain bounded nonretryable debt."""
+    import topsailai.hooks.artifact_cleanup as cleanup
+
+    owned = tmp_path / f"ordinary-{boundary}-owned"
+    external = tmp_path / f"ordinary-{boundary}-external"
+    owned.write_bytes(b"owned")
+    external.write_bytes(b"external")
+    ledger = DescriptorLedger()
+    descriptor = ledger.open(owned, os.O_RDONLY)
+    record = next(iter(ledger._records.values()))
+    interruption = KeyboardInterrupt(f"ordinary close {boundary}")
+    source, first_line = inspect.getsourcelines(DescriptorLedger.close)
+    text = "self._by_descriptor.pop" if boundary == "armed" else "record.descriptor = None"
+    target_line = first_line + next(
+        index for index, line in enumerate(source) if text in line
+    )
+    try:
+        with composed_line_interruption(
+            DescriptorLedger.close.__code__, target_line, interruption
+        ):
+            ledger.close(descriptor)
+    except KeyboardInterrupt as exc:
+        assert exc is interruption
+    else:
+        raise AssertionError("ordinary close interruption was swallowed")
+    assert record.uncertain_close and record.descriptor == descriptor
+    if boundary == "armed":
+        assert ledger._by_descriptor == {descriptor: record.obligation_id}
+    else:
+        assert ledger._by_descriptor == {}
+    cleanup.os.close(descriptor)
+    external_fd = os.open(external, os.O_RDONLY)
+    assert external_fd == descriptor
+    close_calls: list[int] = []
+    real_close = cleanup.os.close
+
+    def forbidden_close(value: int) -> None:
+        close_calls.append(value)
+        raise AssertionError("cleanup retried a historical descriptor")
+
+    monkeypatch.setattr(cleanup.os, "close", forbidden_close)
+    assert ledger.close_all() == () and ledger.count == 1
+    assert ledger._by_descriptor == {}
+    assert record.descriptor is None and record.uncertain_close
+    assert close_calls == []
+    assert os.read(external_fd, 8) == b"external"
+    real_close(external_fd)
 
 def assert_public_settlement_debt_is_owner_bound(
     monkeypatch, tmp_path: Path, owner, request, artifact_root: Path

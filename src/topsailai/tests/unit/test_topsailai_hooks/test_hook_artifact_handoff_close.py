@@ -11,6 +11,7 @@ from topsailai.hooks.artifact_store import ArtifactCapturePolicy, get_artifact_r
 
 from .artifact_handoff_helpers import (
     assert_intermediate_revocation_is_nonretryable,
+    assert_ordinary_close_intermediate_is_nonretryable,
     assert_public_settlement_debt_is_owner_bound,
     assert_settlement_post_return_is_nonretryable,
     assert_successful_capture_handoff_is_cleanup_owned,
@@ -523,11 +524,22 @@ def test_settlement_post_return_retains_bounded_debt_and_reused_fd(
     assert_settlement_post_return_is_nonretryable(monkeypatch, tmp_path)
 
 
+@pytest.mark.parametrize("published_map", (False, True), ids=("empty-map", "stale-map"))
 def test_settlement_intermediate_revocation_is_nonretryable(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, published_map: bool
 ) -> None:
-    """Arm bounded uncertainty before any settlement authority mutation."""
-    assert_intermediate_revocation_is_nonretryable(monkeypatch, tmp_path)
+    """Keep bounded uncertainty for empty and published map intermediates."""
+    assert_intermediate_revocation_is_nonretryable(
+        monkeypatch, tmp_path, published_map=published_map
+    )
+
+
+@pytest.mark.parametrize("boundary", ("armed", "map-revoked"))
+def test_ordinary_close_intermediate_is_nonretryable(
+    monkeypatch, tmp_path: Path, boundary: str
+) -> None:
+    """Classify and revoke ordinary close intermediate authority safely."""
+    assert_ordinary_close_intermediate_is_nonretryable(monkeypatch, tmp_path, boundary)
 
 
 def test_public_settlement_handoff_retains_owner_bound_debt(

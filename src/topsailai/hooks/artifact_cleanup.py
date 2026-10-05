@@ -176,11 +176,14 @@ class DescriptorLedger:
 
     def close(self, descriptor: int) -> None:
         """Close once without reclaiming authority from an ambiguous result."""
-        obligation_id = self._by_descriptor.pop(descriptor, None)
+        obligation_id = self._by_descriptor.get(descriptor)
         if obligation_id is None:
             raise RuntimeError("descriptor is not owned by this capture slot")
-        record = self._records[obligation_id]
+        record = self._records.get(obligation_id)
+        if record is None or record.descriptor != descriptor:
+            raise RuntimeError("descriptor ownership record is inconsistent")
         record.uncertain_close = True
+        self._by_descriptor.pop(descriptor, None)
         record.descriptor = None
         os.close(descriptor)
         self._records.pop(obligation_id, None)
@@ -202,6 +205,10 @@ class DescriptorLedger:
                 self.close(descriptor)
             except Exception as exc:
                 failures.append(exc)
+        mapped_ids = set(self._by_descriptor.values())
+        for obligation_id, record in tuple(self._records.items()):
+            if record.uncertain_close and obligation_id not in mapped_ids:
+                record.descriptor = None
         return tuple(failures)
 
     def has_outstanding(self) -> bool:
