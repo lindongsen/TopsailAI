@@ -496,6 +496,38 @@ def test_direct_uncertain_close_reentry_is_nonretryable(
     )
 
 
+def test_direct_reuse_mismatch_closes_only_acquired_external_fd(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Close the acquired fixture fd when deterministic reuse validation fails."""
+    from .artifact_handoff_helpers import assert_direct_uncertain_close_is_nonretryable
+
+    unrelated_path = tmp_path / "direct-close-unrelated"
+    unrelated_path.write_bytes(b"unrelated")
+    opened: dict[str, int] = {}
+
+    def force_reuse_mismatch(path, flags) -> int:
+        """Occupy the historical integer and return a second owned descriptor."""
+        opened["unrelated"] = os.open(unrelated_path, os.O_RDONLY)
+        opened["external"] = os.open(path, flags)
+        return opened["external"]
+
+    try:
+        with pytest.raises(AssertionError):
+            assert_direct_uncertain_close_is_nonretryable(
+                monkeypatch,
+                tmp_path,
+                use_boundary_alias=False,
+                external_open=force_reuse_mismatch,
+            )
+        assert os.read(opened["unrelated"], 9) == b"unrelated"
+        with pytest.raises(OSError):
+            os.fstat(opened["external"])
+    finally:
+        if "unrelated" in opened:
+            os.close(opened["unrelated"])
+
+
 def test_public_source_close_reentry_retains_owner_bound_debt(
     monkeypatch, tmp_path: Path
 ) -> None:

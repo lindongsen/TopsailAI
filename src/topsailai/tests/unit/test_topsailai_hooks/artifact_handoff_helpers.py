@@ -366,7 +366,7 @@ def assert_successful_capture_handoff_is_cleanup_owned(
 
 
 def assert_direct_uncertain_close_is_nonretryable(
-    monkeypatch, tmp_path: Path, *, use_boundary_alias: bool
+    monkeypatch, tmp_path: Path, *, use_boundary_alias: bool, external_open=None
 ) -> None:
     """Reject direct re-entry without closing a descriptor whose outcome is uncertain."""
     import topsailai.hooks.artifact_cleanup as cleanup
@@ -381,17 +381,19 @@ def assert_direct_uncertain_close_is_nonretryable(
     record.uncertain_close = True
     real_close = cleanup.os.close
     real_close(descriptor)
-    external_fd = os.open(external, os.O_RDONLY)
-    assert external_fd == descriptor
+    external_fd: int | None = None
     close_calls: list[int] = []
 
     def forbidden_close(value: int) -> None:
         close_calls.append(value)
         raise AssertionError("direct re-entry retried a historical descriptor")
 
-    monkeypatch.setattr(cleanup.os, "close", forbidden_close)
-    close_operation = ledger.close_descriptor if use_boundary_alias else ledger.close
     try:
+        open_external = external_open or os.open
+        external_fd = open_external(external, os.O_RDONLY)
+        assert external_fd == descriptor
+        monkeypatch.setattr(cleanup.os, "close", forbidden_close)
+        close_operation = ledger.close_descriptor if use_boundary_alias else ledger.close
         try:
             close_operation(descriptor)
         except RuntimeError as exc:
@@ -406,7 +408,8 @@ def assert_direct_uncertain_close_is_nonretryable(
         assert ledger._by_descriptor == {} and record.descriptor is None
         assert close_calls == [] and os.read(external_fd, 8) == b""
     finally:
-        real_close(external_fd)
+        if external_fd is not None:
+            real_close(external_fd)
 
 
 def assert_public_source_close_reentry_is_nonretryable(
