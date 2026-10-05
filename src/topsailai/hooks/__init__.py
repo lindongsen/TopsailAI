@@ -1,5 +1,25 @@
 """Public foundational contracts for the standalone unified hooks framework."""
 
+
+from topsailai.hooks.artifact_contracts import (
+    ArtifactCapturePolicy,
+    ArtifactCaptureRequest,
+    ArtifactCaptureResult,
+    ArtifactCaptureTrust,
+    ArtifactCleanupDebt,
+    ArtifactClosureAssertion,
+    ArtifactDisposeResult,
+    ArtifactFileIdentity,
+    ArtifactInterpreterEvidence,
+    ArtifactInventoryEntry,
+    ArtifactPythonRuntimeAuthority,
+    ArtifactValidationEvidence,
+)
+from topsailai.hooks.artifact_store import (
+    ArtifactCaptureOwner,
+    CapturedArtifact,
+    get_artifact_recovery_owner,
+)
 from topsailai.hooks.configuration import HookLimits, HookSettings
 from topsailai.hooks.contracts import (
     Binding,
@@ -42,6 +62,20 @@ from topsailai.hooks.runtime import CloseReport, HookRuntime, HookScope
 from topsailai.hooks.validation import ValidationError, freeze_json, validate_payload
 
 __all__ = [
+    "ArtifactCaptureOwner",
+    "ArtifactCapturePolicy",
+    "ArtifactCaptureRequest",
+    "ArtifactCaptureResult",
+    "ArtifactCaptureTrust",
+    "ArtifactCleanupDebt",
+    "ArtifactClosureAssertion",
+    "ArtifactDisposeResult",
+    "ArtifactFileIdentity",
+    "ArtifactInterpreterEvidence",
+    "ArtifactInventoryEntry",
+    "ArtifactPythonRuntimeAuthority",
+    "ArtifactValidationEvidence",
+    "CapturedArtifact",
     "Binding",
     "CloseReport",
     "DeliveryReceipt",
@@ -77,6 +111,7 @@ __all__ = [
     "discover_hook_script_entries",
     "execute_configured_hook_script",
     "freeze_json",
+    "get_artifact_recovery_owner",
     "hook_script_ready",
     "settle_configured_empty_hook_script",
     "settle_unconfigured_hook_script",
