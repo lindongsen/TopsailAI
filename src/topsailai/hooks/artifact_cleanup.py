@@ -157,9 +157,9 @@ class DescriptorLedger:
         self, record: _DescriptorObligation, descriptor: int
     ) -> None:
         """Close the exact acquired descriptor after interrupted publication."""
+        record.uncertain_close = True
         record.descriptor = None
         self._by_descriptor.pop(descriptor, None)
-        record.uncertain_close = True
         os.close(descriptor)
         self._records.pop(record.obligation_id, None)
 
@@ -180,8 +180,8 @@ class DescriptorLedger:
         if obligation_id is None:
             raise RuntimeError("descriptor is not owned by this capture slot")
         record = self._records[obligation_id]
-        record.descriptor = None
         record.uncertain_close = True
+        record.descriptor = None
         os.close(descriptor)
         self._records.pop(obligation_id, None)
 
@@ -192,7 +192,12 @@ class DescriptorLedger:
     def close_all(self) -> tuple[Exception, ...]:
         """Attempt confirmed descriptors without retrying lost close authority."""
         failures: list[Exception] = []
-        for descriptor in tuple(self._by_descriptor):
+        for descriptor, obligation_id in tuple(self._by_descriptor.items()):
+            record = self._records.get(obligation_id)
+            if record is not None and record.uncertain_close:
+                self._by_descriptor.pop(descriptor, None)
+                record.descriptor = None
+                continue
             try:
                 self.close(descriptor)
             except Exception as exc:

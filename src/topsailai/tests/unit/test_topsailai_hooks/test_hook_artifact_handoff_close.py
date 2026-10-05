@@ -9,6 +9,13 @@ import pytest
 from topsailai.hooks.artifact_cleanup import DescriptorLedger
 from topsailai.hooks.artifact_store import ArtifactCapturePolicy, get_artifact_recovery_owner
 
+from .artifact_handoff_helpers import (
+    assert_intermediate_revocation_is_nonretryable,
+    assert_public_settlement_debt_is_owner_bound,
+    assert_settlement_post_return_is_nonretryable,
+    assert_successful_capture_handoff_is_cleanup_owned,
+)
+from .artifact_trace_helpers import composed_line_interruption
 from .test_hook_artifact_ownership import _fixture
 
 
@@ -114,7 +121,6 @@ def test_descriptor_reservation_handoff_releases_empty_record(
 ) -> None:
     """Release an exact empty reservation without starting acquisition I/O."""
     import inspect
-    import sys
     import topsailai.hooks.artifact_cleanup as cleanup
 
     source = tmp_path / "reservation-source"
@@ -146,8 +152,15 @@ def test_descriptor_reservation_handoff_releases_empty_record(
         acquisition_calls += 1
         return real_open(*args, **kwargs)
 
+    def traced_frame() -> None:
+        return None
+
+    def declined_frame() -> None:
+        return None
+
     ledger._records = InterruptReservation()
-    previous_trace = sys.gettrace()
+    monkeypatch.setattr(cleanup.os, "open", observed_open)
+    trace_context = None
     if boundary == "pre_open":
         source_lines, first_line = inspect.getsourcelines(DescriptorLedger.open)
         handoff_line = first_line + next(
@@ -155,27 +168,30 @@ def test_descriptor_reservation_handoff_releases_empty_record(
             for index, line in enumerate(source_lines)
             if "acquisition_started = True" in line
         )
-
-        def interrupt_before_acquisition(frame, event, argument):
-            if (
-                frame.f_code is DescriptorLedger.open.__code__
-                and event == "line"
-                and frame.f_lineno == handoff_line
-            ):
-                sys.settrace(previous_trace)
-                raise interruption
-            return interrupt_before_acquisition
-
-        sys.settrace(interrupt_before_acquisition)
-    monkeypatch.setattr(cleanup.os, "open", observed_open)
+        trace_context = composed_line_interruption(
+            DescriptorLedger.open.__code__,
+            handoff_line,
+            interruption,
+            traced_code=traced_frame.__code__,
+            declined_code=declined_frame.__code__,
+        )
     try:
-        ledger.open(source, os.O_RDONLY)
+        if trace_context is None:
+            ledger.open(source, os.O_RDONLY)
+        else:
+            with trace_context as events:
+                traced_frame()
+                declined_frame()
+                ledger.open(source, os.O_RDONLY)
     except KeyboardInterrupt as exc:
         assert exc is interruption
     else:
         raise AssertionError("empty reservation interruption was swallowed")
-    finally:
-        sys.settrace(previous_trace)
+    if boundary == "pre_open":
+        assert ("traced_frame", "line") in events
+        assert ("traced_frame", "return") in events
+        assert ("declined_frame", "call") in events
+        assert ("declined_frame", "line") not in events
     assert acquisition_calls == 0
     assert ledger.count == 0 and ledger.close_all() == ()
     assert os.read(unrelated_fd, 9) == b"unrelated"
@@ -192,7 +208,6 @@ def test_capture_composition_releases_interrupted_descriptor_reservation(
 ) -> None:
     """Restore public capture capacity after an empty-record interruption."""
     import inspect
-    import sys
     import topsailai.hooks.artifact_cleanup as cleanup
 
     owner, request, artifact_root = _fixture(tmp_path)
@@ -222,9 +237,15 @@ def test_capture_composition_releases_interrupted_descriptor_reservation(
         acquisition_calls += 1
         return real_open(*args, **kwargs)
 
+    def traced_frame() -> None:
+        return None
+
+    def declined_frame() -> None:
+        return None
+
     monkeypatch.setattr(DescriptorLedger, "__init__", init_with_interrupting_records)
     monkeypatch.setattr(cleanup.os, "open", observed_open)
-    previous_trace = sys.gettrace()
+    trace_context = None
     if boundary == "pre_open":
         source_lines, first_line = inspect.getsourcelines(DescriptorLedger.open)
         handoff_line = first_line + next(
@@ -232,26 +253,30 @@ def test_capture_composition_releases_interrupted_descriptor_reservation(
             for index, line in enumerate(source_lines)
             if "acquisition_started = True" in line
         )
-
-        def interrupt_before_acquisition(frame, event, argument):
-            if (
-                frame.f_code is DescriptorLedger.open.__code__
-                and event == "line"
-                and frame.f_lineno == handoff_line
-            ):
-                sys.settrace(previous_trace)
-                raise interruption
-            return interrupt_before_acquisition
-
-        sys.settrace(interrupt_before_acquisition)
+        trace_context = composed_line_interruption(
+            DescriptorLedger.open.__code__,
+            handoff_line,
+            interruption,
+            traced_code=traced_frame.__code__,
+            declined_code=declined_frame.__code__,
+        )
     try:
-        owner.capture((request,))
+        if trace_context is None:
+            owner.capture((request,))
+        else:
+            with trace_context as events:
+                traced_frame()
+                declined_frame()
+                owner.capture((request,))
     except KeyboardInterrupt as exc:
         assert exc is interruption
     else:
         raise AssertionError("public empty reservation interruption was swallowed")
-    finally:
-        sys.settrace(previous_trace)
+    if boundary == "pre_open":
+        assert ("traced_frame", "line") in events
+        assert ("traced_frame", "return") in events
+        assert ("declined_frame", "call") in events
+        assert ("declined_frame", "line") not in events
     assert acquisition_calls == 0
     assert owner.cleanup_debts() == ()
     assert not list(artifact_root.iterdir())
@@ -491,57 +516,61 @@ def test_interrupted_publication_close_failure_retains_nonretryable_debt(
     real_close(external_fd)
 
 
+def test_settlement_post_return_retains_bounded_debt_and_reused_fd(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Keep nonretryable debt after settlement close returns successfully."""
+    assert_settlement_post_return_is_nonretryable(monkeypatch, tmp_path)
+
+
+def test_settlement_intermediate_revocation_is_nonretryable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Arm bounded uncertainty before any settlement authority mutation."""
+    assert_intermediate_revocation_is_nonretryable(monkeypatch, tmp_path)
+
+
+def test_public_settlement_handoff_retains_owner_bound_debt(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Expose bounded public recovery authority for settlement handoff debt."""
+    owner, request, artifact_root = _fixture(tmp_path)
+    assert_public_settlement_debt_is_owner_bound(
+        monkeypatch, tmp_path, owner, request, artifact_root
+    )
+
+
+@pytest.mark.parametrize(
+    "boundary", ("identity", "write", "fsync", "revalidation", "sealing")
+)
+def test_successful_capture_operation_handoff_remains_cleanup_owned(
+    monkeypatch, tmp_path: Path, boundary: str
+) -> None:
+    """Retain cleanup authority after each named operation returns successfully."""
+    owner, request, artifact_root = _fixture(tmp_path)
+    assert_successful_capture_handoff_is_cleanup_owned(
+        monkeypatch, tmp_path, boundary, owner, request, artifact_root
+    )
+
+
 def test_caller_first_statement_interruption_keeps_owner_cleanup_authority(
     tmp_path: Path,
 ) -> None:
     """Preserve prior global/local tracing while owning the caller frame."""
     import inspect
-    import sys
 
     owner, request, artifact_root = _fixture(tmp_path)
     interruption = KeyboardInterrupt("caller first statement interrupted")
-    sentinel_events: list[tuple[str, str]] = []
 
-    def unrelated_frame() -> None:
-        sentinel_events.append(("unrelated", "body"))
+    def traced_frame() -> None:
+        return None
 
-    def untraced_frame() -> None:
-        sentinel_events.append(("untraced", "body"))
-
-    def sentinel_local(frame, event, argument):
-        sentinel_events.append((frame.f_code.co_name, event))
-        return sentinel_local
-
-    def sentinel_global(frame, event, argument):
-        sentinel_events.append((frame.f_code.co_name, event))
-        return sentinel_local if frame.f_code is unrelated_frame.__code__ else None
-
-    def combine_locals(first, second):
-        if first is None:
-            return second
-        if second is None:
-            return first
-
-        def combined(frame, event, argument):
-            return combine_locals(
-                first(frame, event, argument), second(frame, event, argument)
-            )
-
-        return combined
-
-    original_trace = sys.gettrace()
-
-    def previous_global(frame, event, argument):
-        original_local = (
-            original_trace(frame, event, argument)
-            if original_trace is not None
-            else None
-        )
-        return combine_locals(original_local, sentinel_global(frame, event, argument))
+    def declined_frame() -> None:
+        return None
 
     def call_capture():
-        unrelated_frame()
-        untraced_frame()
+        traced_frame()
+        declined_frame()
         result = owner.capture((request,))
         marker = result
         return marker
@@ -550,51 +579,26 @@ def test_caller_first_statement_interruption_keeps_owner_cleanup_authority(
     marker_line = first_line + next(
         index for index, line in enumerate(source) if "marker = result" in line
     )
-    delegated_traces: dict[int, object] = {}
-    declined_frames: set[int] = set()
-
-    def interrupt_before_marker(frame, event, argument):
-        if frame.f_code is call_capture.__code__:
-            if event == "line" and frame.f_lineno == marker_line:
-                sys.settrace(original_trace)
-                raise interruption
-            return interrupt_before_marker
-        frame_id = id(frame)
-        if event == "call":
-            delegate = previous_global(frame, event, argument)
-            if delegate is None:
-                declined_frames.add(frame_id)
-            else:
-                delegated_traces[frame_id] = delegate
-        elif frame_id in delegated_traces:
-            delegate = delegated_traces[frame_id]
-            next_delegate = delegate(frame, event, argument)
-            if next_delegate is None:
-                delegated_traces.pop(frame_id, None)
-            else:
-                delegated_traces[frame_id] = next_delegate
-        if event == "return":
-            delegated_traces.pop(frame_id, None)
-        return interrupt_before_marker
-
-    sys.settrace(interrupt_before_marker)
     try:
-        call_capture()
+        with composed_line_interruption(
+            call_capture.__code__,
+            marker_line,
+            interruption,
+            traced_code=traced_frame.__code__,
+            declined_code=declined_frame.__code__,
+        ) as events:
+            call_capture()
     except KeyboardInterrupt as exc:
         assert exc is interruption
         assert get_artifact_recovery_owner(exc) is None
     else:
         raise AssertionError("caller-line interruption was swallowed")
-    finally:
-        sys.settrace(original_trace)
-    assert sys.gettrace() is original_trace
-    assert ("unrelated_frame", "call") in sentinel_events
-    assert ("unrelated_frame", "line") in sentinel_events
-    assert ("unrelated_frame", "return") in sentinel_events
-    assert ("untraced_frame", "call") in sentinel_events
-    assert ("untraced_frame", "line") not in sentinel_events
-    assert ("untraced_frame", "return") not in sentinel_events
-    assert declined_frames
+    assert ("traced_frame", "call") in events
+    assert ("traced_frame", "line") in events
+    assert ("traced_frame", "return") in events
+    assert ("declined_frame", "call") in events
+    assert ("declined_frame", "line") not in events
+    assert ("declined_frame", "return") not in events
     assert owner.cleanup_debts() == ()
     assert len(list(artifact_root.iterdir())) == 1
     assert owner.close().accepted
@@ -606,7 +610,6 @@ def test_interruption_after_close_return_never_retries_reused_descriptor(
 ) -> None:
     """Revoke close authority before the real post-return line boundary."""
     import inspect
-    import sys
 
     owned_path = tmp_path / "owned"
     external_path = tmp_path / "external"
@@ -620,40 +623,24 @@ def test_interruption_after_close_return_never_retries_reused_descriptor(
     )
     external_descriptor: int | None = None
     interruption = KeyboardInterrupt("interrupted after close returned")
-    previous_trace = sys.gettrace()
-    delegated_traces = {}
 
-    def interrupt_at_settlement(frame, event, argument):
+    def reuse_descriptor() -> None:
         nonlocal external_descriptor
-        if frame.f_code is DescriptorLedger.close.__code__:
-            if frame.f_lineno == settle_line:
-                sys.settrace(previous_trace)
-                external_descriptor = os.open(external_path, os.O_RDONLY)
-                assert external_descriptor == descriptor
-                raise interruption
-            return interrupt_at_settlement
-        frame_id = id(frame)
-        delegate = previous_trace if event == "call" else delegated_traces.get(
-            frame_id, previous_trace
-        )
-        if delegate is not None:
-            next_delegate = delegate(frame, event, argument)
-            if event == "return" or next_delegate is None:
-                delegated_traces.pop(frame_id, None)
-            else:
-                delegated_traces[frame_id] = next_delegate
-        return interrupt_at_settlement
+        external_descriptor = os.open(external_path, os.O_RDONLY)
+        assert external_descriptor == descriptor
 
-    sys.settrace(interrupt_at_settlement)
     try:
-        ledger.close(descriptor)
+        with composed_line_interruption(
+            DescriptorLedger.close.__code__,
+            settle_line,
+            interruption,
+            before_interrupt=reuse_descriptor,
+        ):
+            ledger.close(descriptor)
     except KeyboardInterrupt as exc:
         assert exc is interruption
     else:
         raise AssertionError("close settlement interruption was swallowed")
-    finally:
-        sys.settrace(previous_trace)
-    assert sys.gettrace() is previous_trace
     assert external_descriptor == descriptor
     assert ledger.count == 1 and ledger.has_outstanding()
     assert ledger.close_all() == () and ledger.count == 1
