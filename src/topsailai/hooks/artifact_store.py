@@ -35,6 +35,7 @@ from topsailai.hooks.artifact_structure import (
     validate_capture_call as _validate_call,
     validate_resource_free as _validate_resource_free,
 )
+from topsailai.hooks.artifact_store_managed import ArtifactCaptureOwnerConstruction
 from topsailai.hooks.artifact_validation import (
     ArtifactValidationError,
     ValidatedSource,
@@ -42,7 +43,6 @@ from topsailai.hooks.artifact_validation import (
     open_validated_source,
     revalidate_source,
     validate_artifact_root,
-    validate_capture_trust_structure,
     validate_python_runtime,
     validate_request_structure,
     validate_source_roots,
@@ -128,22 +128,12 @@ class CapturedArtifact:
         """Reject serialization of owner-issued authority."""
         raise TypeError("CapturedArtifact is not serializable")
 
-class ArtifactCaptureOwner:
+class ArtifactCaptureOwner(ArtifactCaptureOwnerConstruction):
     """Capture, retain, and explicitly clean a bounded immutable artifact set."""
 
     def __init__(self, *, artifact_root: str, trust: ArtifactCaptureTrust) -> None:
         """Validate only detached structure without filesystem access."""
-        if not _valid_root_spelling(artifact_root) or not validate_capture_trust_structure(trust):
-            raise ValueError("invalid artifact capture owner")
-        self._artifact_root = Path(artifact_root)
-        self._trust = trust
-        self._lock = threading.RLock()
-        self._slots: dict[str, _Slot] = {}
-        self._issued: dict[int, _Slot] = {}
-        self._closed = False
-        self._bound_uid: int | None = None
-        self._root_identity: tuple[int, int, int, int] | None = None
-        self._python_fingerprint: str | None = None
+        super().__init__(artifact_root=artifact_root, trust=trust)
 
     def __enter__(self) -> ArtifactCaptureOwner:
         """Return this explicit lifecycle owner."""
@@ -216,6 +206,9 @@ class ArtifactCaptureOwner:
                     reserved_entries=len(requests),
                     reserved_bytes=reserved_bytes,
                 )
+                recovery = self._managed_recovery
+                if recovery is not None:
+                    recovery._bind_capture_slot(slot)
                 return self._capture_reserved(slot, requests, policy, checkpoint)
         except _Cancelled:
             return _rejected("artifact_capture_cancelled")
@@ -667,20 +660,27 @@ class ArtifactCaptureOwner:
         )
 
 def get_artifact_recovery_owner(error: BaseException) -> ArtifactCaptureOwner | None:
-    """Return the owner attached to an interrupted call with obligations."""
+    """Return the owner attached to an interrupted standalone call."""
     value = getattr(error, "_topsailai_artifact_recovery_owner", None)
     return value if isinstance(value, ArtifactCaptureOwner) else None
 
+
 def _attach_recovery_owner(error: BaseException, owner: ArtifactCaptureOwner) -> None:
-    """Attach bounded recovery authority without changing exception identity."""
+    """Route bounded recovery without changing exception identity."""
     try:
-        setattr(error, "_topsailai_artifact_recovery_owner", owner)
+        recovery = owner._managed_recovery
+        if recovery is None:
+            setattr(error, "_topsailai_artifact_recovery_owner", owner)
+        else:
+            setattr(error, "_topsailai_artifact_lease_recovery", recovery)
     except BaseException:
         pass
 
+
 def _rejected(token: str, owner: ArtifactCaptureOwner | None = None) -> ArtifactCaptureResult:
-    """Build one bounded rejection result."""
-    return ArtifactCaptureResult(False, errors=(token,), recovery_owner=owner)
+    """Build one bounded rejection result without leaking a managed owner."""
+    recovery_owner = owner if owner is not None and owner._managed_recovery is None else None
+    return ArtifactCaptureResult(False, errors=(token,), recovery_owner=recovery_owner)
 
 def _fsync_directory(path: Path, ledger: DescriptorLedger, checkpoint) -> None:
     """Synchronize one directory through a slot-owned descriptor."""
