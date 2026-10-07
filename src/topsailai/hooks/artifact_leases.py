@@ -31,6 +31,7 @@ from topsailai.hooks.artifact_lease_transactions import ArtifactLeaseTransaction
 from topsailai.hooks.artifact_physical_lock import ExactPhysicalLock
 from topsailai.hooks.artifact_publication import ArtifactPublicationMixin
 from topsailai.hooks.artifact_retention import (
+    CandidateRegistryMixin,
     reclamation_order,
     valid_deadline,
     valid_reclaim_limit,
@@ -147,12 +148,8 @@ class CaptureReceipt:
         return self._state
 
 
-
-
-class ArtifactLeaseManager(
-    ArtifactLeaseReceiptMixin, ArtifactLeaseScopeMixin,
-    ArtifactLeaseTransactionMixin, ArtifactPublicationMixin,
-):
+class ArtifactLeaseManager(ArtifactLeaseReceiptMixin, ArtifactLeaseScopeMixin,
+        ArtifactLeaseTransactionMixin, ArtifactPublicationMixin, CandidateRegistryMixin):
     """Own one U07 owner and bound all lease, debt, and cleanup metadata."""
 
     _max_tokens = _MAX_TOKENS
@@ -167,6 +164,7 @@ class ArtifactLeaseManager(
         self._physical = ExactPhysicalLock(self._lock)
         self._state: Literal["open", "closing", "closed"] = "open"
         self._groups: dict[int, ArtifactLeaseGroup] = {}
+        self._candidate_groups: dict[int, ArtifactLeaseGroup] = {}
         self._tokens: dict[int, ArtifactLease] = {}
         self._versions: dict[int, _Version] = {}
         self._next_group = 1
@@ -192,8 +190,7 @@ class ArtifactLeaseManager(
             now = self._clock()
             if self._state != "open":
                 return LeaseGroupResult(False, errors=("artifact_lease_manager_closed",))
-            candidates = sum(group._state in ("candidate", "staged") for group in self._groups.values())
-            if candidates >= _MAX_CANDIDATES or len(self._groups) >= _MAX_GROUPS:
+            if len(self._candidate_groups) >= _MAX_CANDIDATES or len(self._groups) >= _MAX_GROUPS:
                 return LeaseGroupResult(False, errors=("artifact_lease_capacity_exceeded",))
             group = ArtifactLeaseGroup(_ISSUER)
             group._issuer = self._execution_identity
@@ -209,8 +206,12 @@ class ArtifactLeaseManager(
             group._mutation = None
             group._terminal = False
             self._next_group += 1
-            self._groups[group._group_id] = group
-            return LeaseGroupResult(True, group)
+            try:
+                self._register_candidate(group)
+                return LeaseGroupResult(True, group)
+            except BaseException:
+                self._unregister_candidate(group)
+                raise
 
     def capture(
         self,
@@ -411,6 +412,7 @@ class ArtifactLeaseManager(
         try:
             if not self._physical.acquire(blocking=False, owner=physical_owner):
                 return LeaseReclaimResult(False, cleanup_pending=True, errors=("artifact_lease_busy",))
+            self._expire_candidates()
             examined = removed = 0
             timeout = False
             for version in self._eligible_versions(pressure)[:max_versions]:
@@ -442,7 +444,8 @@ class ArtifactLeaseManager(
         finally:
             self._physical.release_if_owned(physical_owner)
         pending = self._cleanup_pending()
-        if self._state == "closing" and not pending and not self._groups and self._receipt is None:
+        if (self._state == "closing" and not pending and not self._groups
+                and not self._candidate_groups and self._receipt is None):
             self._state = "closed"
         if timeout:
             return LeaseReclaimResult(False, examined, removed, pending, ("artifact_lease_timeout",))
@@ -509,11 +512,10 @@ class ArtifactLeaseManager(
                     self._cleanup_debt_views[item.debt_id] = debt
                 debts.append(debt)
             states = tuple(group._state for group in self._groups.values())
+            candidate_count, active_count = self._snapshot_publication_group_counts()
             versions = tuple(self._versions.values())
             return ArtifactLeaseSnapshot(
-                self._state,
-                sum(item in ("candidate", "staged") for item in states),
-                states.count("active"), states.count("admitted"),
+                self._state, candidate_count, active_count, states.count("admitted"),
                 states.count("execution_debt"), len(self._tokens),
                 int(self._receipt is not None and self._receipt._reserved_token),
                 capture_slots, reserved_entries, reserved_bytes,
@@ -679,10 +681,15 @@ class ArtifactLeaseManager(
         """Return whether physical, metadata, or execution obligations remain."""
         owner_pending = bool(self._owner.cleanup_debts())
         with self._lock:
+            indexed_orphan = any(
+                self._groups.get(group_id) is not group
+                for group_id, group in self._candidate_groups.items()
+            )
             return bool(
                 owner_pending
                 or self._versions
                 or self._receipt
+                or indexed_orphan
                 or any(
                     group._mutation is not None
                     or group._state in ("admitted", "execution_debt")

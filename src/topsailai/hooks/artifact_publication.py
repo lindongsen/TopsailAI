@@ -269,6 +269,26 @@ class ArtifactPublicationMixin:
             and stage._changed is changed
         )
 
+
+    def _snapshot_publication_group_counts(
+        self: ArtifactLeaseManager,
+    ) -> tuple[int, int]:
+        """Classify candidates and active roots from an unfinished decision."""
+        candidate_count = len(self._candidate_groups)
+        active_count = sum(group._state == "active" for group in self._groups.values())
+        stage = self._publication_stage
+        if stage is None or stage._cell.current is not stage._replacement:
+            return candidate_count, active_count
+        candidate = stage._candidate
+        if self._candidate_groups.get(candidate._group_id) is candidate:
+            candidate_count -= 1
+        if not stage._changed:
+            return candidate_count, active_count
+        if candidate._state != "active":
+            active_count += 1
+        active_count -= sum(group._state == "active" for group in stage._old_groups)
+        return candidate_count, active_count
+
     def _clear_publication_stage(
         self: ArtifactLeaseManager, stage: PublicationStage
     ) -> None:
@@ -290,6 +310,8 @@ class ArtifactPublicationMixin:
         candidate = stage._candidate
         if stage._changed:
             candidate._state = "active"
+            if self._candidate_groups.get(candidate._group_id) is candidate:
+                self._candidate_groups.pop(candidate._group_id, None)
             for group in stage._old_groups:
                 self._settle_group_tokens(group, state="retired")
         else:

@@ -54,7 +54,9 @@ class ArtifactLeaseTransactionMixin:
 
     def _reconcile_group_mutation(self, group: object) -> None:
         """Finish a previously armed group mutation before observing its result."""
-        if not self._owned_group(group) or group._mutation is None:
+        if not self._owned_group(group):
+            return
+        if group._mutation is None:
             return
         operation, value = group._mutation
         if operation == "issue":
@@ -79,4 +81,4 @@ class ArtifactLeaseTransactionMixin:
     def _remove_group_if_settled(self, group) -> None:
         """Drop terminal metadata only after receipt and tokens settle."""
         if group._terminal and not group._tokens and not group._pending_capture:
-            self._groups.pop(group._group_id, None)
+            self._unregister_candidate(group)
