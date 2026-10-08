@@ -3,8 +3,9 @@
 Unit tests for command handling in cli_topsailai.
 """
 
-import os
 import io
+import json
+import os
 import sys
 import tempfile
 import unittest
@@ -1676,6 +1677,224 @@ class TestWorkspaceFlag(unittest.TestCase):
 
         mock_print_workspace.assert_not_called()
         mock_prompt.assert_called_once()
+
+
+class TestWorkspaceFormat(unittest.TestCase):
+    """Tests for the workspace JSON output format."""
+
+    @patch("cli_topsailai.core._print_workspace_json")
+    def test_short_format_option_dispatches_json(self, mock_print_json: MagicMock) -> None:
+        """The short format option selects JSON output."""
+        from cli_topsailai.core import main
+
+        with self.assertRaises(SystemExit) as raised:
+            main(["workspace", "-f", "json"])
+
+        self.assertEqual(raised.exception.code, 0)
+        mock_print_json.assert_called_once_with()
+
+    @patch("cli_topsailai.core._print_workspace_json")
+    def test_long_format_option_dispatches_json(self, mock_print_json: MagicMock) -> None:
+        """The long format option selects JSON output."""
+        from cli_topsailai.core import main
+
+        with self.assertRaises(SystemExit) as raised:
+            main(["workspace", "--format", "json"])
+
+        self.assertEqual(raised.exception.code, 0)
+        mock_print_json.assert_called_once_with()
+
+    @patch("cli_topsailai.core._print_workspace_table")
+    def test_workspace_without_format_preserves_table(self, mock_table: MagicMock) -> None:
+        """The workspace command keeps the existing table output by default."""
+        from cli_topsailai.core import main
+
+        with self.assertRaises(SystemExit) as raised:
+            main(["workspace"])
+
+        self.assertEqual(raised.exception.code, 0)
+        mock_table.assert_called_once_with()
+
+    def test_invalid_or_missing_format_is_rejected(self) -> None:
+        """Argparse rejects unsupported and missing format values."""
+        from cli_topsailai.core import main
+
+        for argv in (["workspace", "-f", "yaml"], ["workspace", "--format"]):
+            with self.subTest(argv=argv):
+                with self.assertRaises(SystemExit) as raised:
+                    main(argv)
+                self.assertEqual(raised.exception.code, 2)
+
+    @patch("sys.stdout", new_callable=io.StringIO)
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.paths.get_topsailai_home", return_value="/fake/home")
+    def test_json_output_is_valid_for_empty_workspace(
+        self,
+        _mock_home: MagicMock,
+        mock_discover: MagicMock,
+        mock_enrich: MagicMock,
+        mock_stdout: io.StringIO,
+    ) -> None:
+        """An empty workspace emits one valid JSON document without ANSI text."""
+        from cli_topsailai.core import _print_workspace_json
+
+        mock_discover.return_value = []
+        _print_workspace_json()
+
+        output = mock_stdout.getvalue()
+        payload = json.loads(output)
+        self.assertEqual(payload["items"], [])
+        self.assertEqual(payload["total"], 0)
+        self.assertEqual(payload["home"], "/fake/home")
+        self.assertEqual(payload["task_dir"], "/fake/home/workspace/task")
+        self.assertNotIn("\x1b", output)
+        mock_enrich.assert_called_once_with([])
+
+    @patch("sys.stdout", new_callable=io.StringIO)
+    @patch("cli_topsailai.log_files.is_session_pipe_open", return_value=False)
+    @patch("cli_topsailai.core.os.kill")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.paths.get_topsailai_home", return_value="/fake/home")
+    def test_json_items_preserve_order_and_types(
+        self,
+        _mock_home: MagicMock,
+        mock_discover: MagicMock,
+        mock_enrich: MagicMock,
+        _mock_kill: MagicMock,
+        _mock_pipe: MagicMock,
+        mock_stdout: io.StringIO,
+    ) -> None:
+        """JSON items retain discovery order and machine-readable field types."""
+        from cli_topsailai.core import _print_workspace_json
+
+        records = [
+            {
+                "filename": "old.101.session.stdout",
+                "session_id": "old",
+                "is_task": False,
+                "pid": 101,
+                "ctime": 10.5,
+            },
+            {
+                "filename": "new.202.step.task.stdout",
+                "session_id": "new",
+                "is_task": True,
+                "pid": 202,
+                "ctime": 20.5,
+            },
+        ]
+        mock_discover.return_value = records
+
+        def enrich(items):
+            for item in items:
+                item["session_name"] = f"name-{item['session_id']}"
+                item["project_workspace"] = f"/work/{item['session_id']}"
+
+        mock_enrich.side_effect = enrich
+        _print_workspace_json()
+
+        payload = json.loads(mock_stdout.getvalue())
+        self.assertEqual(payload["total"], 2)
+        self.assertEqual([item["filename"] for item in payload["items"]], [
+            "old.101.session.stdout",
+            "new.202.step.task.stdout",
+        ])
+        self.assertEqual([item["no"] for item in payload["items"]], [1, 2])
+        self.assertIsInstance(payload["items"][0]["pid"], int)
+        self.assertIs(payload["items"][0]["is_task"], False)
+        self.assertIs(payload["items"][1]["is_task"], True)
+        self.assertEqual(payload["items"][0]["status"], "running")
+        self.assertRegex(
+            payload["items"][0]["created_at"],
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4}$",
+        )
+
+    def test_json_item_created_at_is_null_without_ctime(self) -> None:
+        """A log record without a creation time emits a JSON null value."""
+        from cli_topsailai.core import _workspace_json_item
+
+        item = _workspace_json_item({}, 1)
+
+        self.assertIsNone(item["created_at"])
+
+    @patch("cli_topsailai.log_files.is_session_pipe_open", return_value=True)
+    @patch("cli_topsailai.core.os.kill")
+    def test_json_item_status_is_input_when_session_pipe_is_open(
+        self,
+        mock_kill: MagicMock,
+        mock_pipe: MagicMock,
+    ) -> None:
+        """A live session with an open input pipe is reported as input."""
+        from cli_topsailai.core import _workspace_json_item
+
+        item = _workspace_json_item({"pid": 1234}, 1)
+
+        self.assertEqual(item["status"], "input")
+        self.assertEqual(item["pid"], 1234)
+        mock_kill.assert_called_once_with(1234, 0)
+        mock_pipe.assert_called_once()
+
+    @patch("cli_topsailai.log_files.is_session_pipe_open", return_value=False)
+    @patch("cli_topsailai.core.os.kill")
+    def test_json_item_status_is_idle_when_process_is_not_alive(
+        self,
+        mock_kill: MagicMock,
+        mock_pipe: MagicMock,
+    ) -> None:
+        """A process-not-found probe is reported as idle."""
+        from cli_topsailai.core import _workspace_json_item
+
+        mock_kill.side_effect = ProcessLookupError()
+        item = _workspace_json_item({"pid": 1234}, 1)
+
+        self.assertEqual(item["status"], "idle")
+        self.assertIsNone(item["pid"])
+        mock_kill.assert_called_once_with(1234, 0)
+        mock_pipe.assert_not_called()
+
+    def test_json_item_status_is_idle_without_a_pid(self) -> None:
+        """A log record without a PID is reported as idle."""
+        from cli_topsailai.core import _workspace_json_item
+
+        item = _workspace_json_item({}, 1)
+
+        self.assertEqual(item["status"], "idle")
+        self.assertIsNone(item["pid"])
+
+    @patch("cli_topsailai.log_files.is_session_pipe_open")
+    @patch("cli_topsailai.core.os.kill", side_effect=PermissionError())
+    def test_json_item_status_is_idle_on_permission_error(
+        self,
+        mock_kill: MagicMock,
+        mock_pipe: MagicMock,
+    ) -> None:
+        """A permission error during the PID probe is reported as idle."""
+        from cli_topsailai.core import _workspace_json_item
+
+        item = _workspace_json_item({"pid": 1234}, 1)
+
+        self.assertEqual(item["status"], "idle")
+        self.assertIsNone(item["pid"])
+        mock_pipe.assert_not_called()
+
+    @patch("cli_topsailai.log_files.is_session_pipe_open")
+    @patch("cli_topsailai.core.os.kill", side_effect=OSError("probe failed"))
+    def test_json_item_status_is_idle_on_other_os_error(
+        self,
+        mock_kill: MagicMock,
+        mock_pipe: MagicMock,
+    ) -> None:
+        """An unexpected OS error during the PID probe is reported as idle."""
+        from cli_topsailai.core import _workspace_json_item
+
+        item = _workspace_json_item({"pid": 1234}, 1)
+
+        self.assertEqual(item["status"], "idle")
+        self.assertIsNone(item["pid"])
+        mock_pipe.assert_not_called()
+
 
 
 class TestPrintWorkspaceTable(unittest.TestCase):

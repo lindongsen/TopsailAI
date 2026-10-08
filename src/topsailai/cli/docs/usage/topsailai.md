@@ -115,7 +115,7 @@ The selected configuration is resolved immediately before `/agent` or `/resume`.
 
 | Command | Description |
 |---------|-------------|
-| `workspace` | Display the workspace task list and exit without entering interactive mode. |
+| `workspace [-f json]` | Display the workspace task list and exit. The default is the human-readable table; `-f json` or `--format json` emits one JSON document. |
 | `docs list` | List all usage documentation files and exit. |
 | `docs read <name>` | Read a specific usage documentation file and exit. |
 | `project add <path> [name]` | Add a project to the managed project list. |
@@ -130,6 +130,8 @@ The selected configuration is resolved immediately before `/agent` or `/resume`.
 | `models select <number-or-name>` | Set the workspace default model selection. |
 | `models clear` | Clear the workspace model selection. |
 
+The JSON workspace document contains `host`, `pwd`, `home`, `task_dir`, `items`, and `total`. Each item contains `no`, `filename`, `session_name`, `session_id`, `is_task`, `pid`, `status`, `created_at`, and `project_workspace`. `created_at` is the local creation time in ISO 8601 format with a timezone offset (`YYYY-MM-DDTHH:MM:SS+/-HHMM`), or `null` when the creation time is unavailable. Items retain the default oldest-first order. An empty workspace returns `"items": []` and `"total": 0`.
+
 ## Examples
 
 ```bash
@@ -138,6 +140,9 @@ The selected configuration is resolved immediately before `/agent` or `/resume`.
 
 # Display the workspace task list without entering interactive mode
 ./topsailai.py workspace
+
+# Display the workspace task list as JSON
+topsailai workspace -f json
 
 # List all usage documentation files
 ./topsailai.py docs list

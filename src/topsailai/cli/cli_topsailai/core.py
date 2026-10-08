@@ -8,6 +8,8 @@ command dispatch loop, and ``main()`` entry point.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
+import json
 import os
 import re
 import signal
@@ -269,9 +271,13 @@ def _warn_deprecated(old_flag: str, new_cmd: str) -> None:
     )
 
 
-def _handle_workspace_subcommand(_args: argparse.Namespace) -> int:
+def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
     """Handle the non-interactive ``workspace`` subcommand."""
-    _print_workspace_table()
+    output_format = getattr(args, "format", None)
+    if output_format == "json":
+        _print_workspace_json()
+    else:
+        _print_workspace_table()
     return 0
 
 
@@ -935,6 +941,66 @@ def _print_workspace_table() -> None:
         print(f"  {task_dir}")
 
 
+def _workspace_json_item(file_info: dict, index: int) -> dict:
+    """Build one stable JSON item from a discovered workspace log file."""
+    from cli_topsailai.log_files import is_session_pipe_open
+
+    pid = file_info.get("pid")
+    if pid is not None:
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, PermissionError, OSError):
+            pid = None
+    if pid and is_session_pipe_open(file_info):
+        status = "input"
+    elif pid:
+        status = "running"
+    else:
+        status = "idle"
+    ctime = file_info.get("ctime")
+    created_at = None
+    if ctime is not None:
+        created_at = datetime.fromtimestamp(ctime).astimezone().strftime(
+            "%Y-%m-%dT%H:%M:%S%z"
+        )
+    return {
+        "no": index,
+        "filename": file_info.get("filename", ""),
+        "session_name": file_info.get("session_name"),
+        "session_id": file_info.get("session_id"),
+        "is_task": bool(file_info.get("is_task", False)),
+        "pid": pid,
+        "status": status,
+        "created_at": created_at,
+        "project_workspace": file_info.get("project_workspace"),
+    }
+
+
+def _print_workspace_json() -> None:
+    """Print the workspace task list as one JSON document."""
+    from cli_topsailai.log_files import discover_log_files
+    from cli_topsailai.paths import get_topsailai_home
+    from cli_topsailai.session_info import enrich_files_with_session_names
+
+    topsailai_home = get_topsailai_home()
+    task_dir = os.path.join(topsailai_home, "workspace", "task")
+    log_files = discover_log_files(task_dir)
+    enrich_files_with_session_names(log_files)
+    items = [
+        _workspace_json_item(file_info, index)
+        for index, file_info in enumerate(log_files, start=1)
+    ]
+    payload = {
+        "host": socket.gethostname(),
+        "pwd": os.getcwd(),
+        "home": topsailai_home,
+        "task_dir": task_dir,
+        "items": items,
+        "total": len(items),
+    }
+    print(json.dumps(payload, ensure_ascii=False))
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     """Main entry point for the TopsailAI CLI."""
     global _project_scope_mode
@@ -1161,6 +1227,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     workspace_parser = subparsers.add_parser(
         "workspace",
         help="display the workspace task list and exit",
+    )
+    workspace_parser.add_argument(
+        "-f", "--format",
+        choices=["json"],
+        default=None,
+        dest="format",
+        help="output format (supported: json)",
     )
     workspace_parser.set_defaults(func=_handle_workspace_subcommand)
 
