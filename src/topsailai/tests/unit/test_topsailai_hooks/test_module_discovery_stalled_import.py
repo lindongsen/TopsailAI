@@ -53,7 +53,7 @@ def test_real_stalled_import_reaps_group_channels_and_storage(
     monkeypatch.setattr(discovery, "IsolatedProcessBackend", ObservedBackend)
     result = discovery.build_module_manifest(
         tmp_path,
-        "conversation.started",
+        "hook_conversation_started",
         temp_root=str(private_temp_root(tmp_path)),
         policy=ModuleDiscoveryPolicy(timeout_ms=1_000),
     )

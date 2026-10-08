@@ -40,7 +40,7 @@ def test_configured_records_are_frozen_and_deeply_detached(tmp_path: Path) -> No
     """Caller mutation must not change a configured contract snapshot."""
     kwargs = {"nested": [1, {"value": "before"}]}
     point = ConfiguredHookPoint(
-        "point",
+        "hook_point",
         EventDefinition("test.configured", 1),
         module_folder=tmp_path,
         module_kwargs=kwargs,
@@ -58,12 +58,12 @@ def test_configured_hook_point_accepts_mapping_and_round_trips_frozen_kwargs() -
     """Any valid Mapping and a prior frozen snapshot must remain admissible."""
     proxy = MappingProxyType({"nested": [1, {"value": "before"}]})
     first = ConfiguredHookPoint(
-        "point-a",
+        "hook_point_a",
         EventDefinition("test.eventa", 1),
         module_kwargs=proxy,
     )
     second = ConfiguredHookPoint(
-        "point-b",
+        "hook_point_b",
         EventDefinition("test.eventb", 1),
         module_kwargs=first.module_kwargs,
     )
@@ -75,7 +75,7 @@ def test_configured_hook_point_detaches_mutable_mapping_and_rejects_non_mapping(
     """Mutable Mapping inputs must detach deeply and non-mappings must reject."""
     kwargs = UserDict({"nested": [1, {"value": "before"}]})
     point = ConfiguredHookPoint(
-        "point",
+        "hook_point",
         EventDefinition("test.configured", 1),
         module_kwargs=kwargs,
     )
@@ -84,7 +84,7 @@ def test_configured_hook_point_detaches_mutable_mapping_and_rejects_non_mapping(
     for invalid in ((), [], "value", 1, None):
         with pytest.raises(ValueError, match="^invalid configured hook point$"):
             ConfiguredHookPoint(
-                "point",
+                "hook_point",
                 EventDefinition("test.configured", 1),
                 module_kwargs=invalid,
             )
@@ -103,7 +103,7 @@ def test_configured_hook_point_bounds_mapping_normalization() -> None:
     for invalid in (self_dict, {"value": self_list}, mutual_a):
         with pytest.raises(ValueError, match="^invalid configured hook point$"):
             ConfiguredHookPoint(
-                "point",
+                "hook_point",
                 EventDefinition("test.configured", 1),
                 module_kwargs=invalid,
             )
@@ -116,20 +116,20 @@ def test_configured_hook_point_bounds_mapping_normalization() -> None:
         nested = child
     with pytest.raises(ValueError, match="^invalid configured hook point$"):
         ConfiguredHookPoint(
-            "point",
+            "hook_point",
             EventDefinition("test.configured", 1),
             module_kwargs=too_deep,
         )
     with pytest.raises(ValueError, match="^invalid configured hook point$"):
         ConfiguredHookPoint(
-            "point",
+            "hook_point",
             EventDefinition("test.configured", 1),
             module_kwargs={"items": list(range(1_025))},
         )
 
     shared = {"value": ["safe"]}
     point = ConfiguredHookPoint(
-        "point",
+        "hook_point",
         EventDefinition("test.configured", 1),
         module_kwargs={"left": shared, "right": shared},
     )
@@ -239,7 +239,7 @@ def test_configured_hook_point_rejects_relative_module_folder() -> None:
     """Configured module folders must be absolute path values."""
     with pytest.raises(ValueError, match="^invalid configured hook point$"):
         ConfiguredHookPoint(
-            "point",
+            "hook_point",
             EventDefinition("test.configured", 1),
             module_folder=Path("relative"),
         )
@@ -305,7 +305,7 @@ def test_configured_script_rejects_relative_platform_interpreter(tmp_path: Path)
             ExecutablePlatformPolicy("posix", allowed_interpreters=("relative-python",)),
         )
         point = ConfiguredHookPoint(
-            "point",
+            "hook_point",
             EventDefinition("test.configured", 1),
             script=script,
         )
@@ -376,7 +376,7 @@ def test_configured_script_owns_absolute_platform_policy_snapshot(tmp_path: Path
     )
     script = ConfiguredScript(tmp_path / "hook", policy)
     point = ConfiguredHookPoint(
-        "point",
+        "hook_point",
         EventDefinition("test.configured", 1),
         script=script,
     )
@@ -394,14 +394,14 @@ def test_configured_hook_point_enforces_one_combined_json_budget() -> None:
     """Module positional and keyword values must share one JSON budget."""
     with pytest.raises(ValueError, match="^invalid configured hook point$"):
         ConfiguredHookPoint(
-            "point",
+            "hook_point",
             EventDefinition("test.configured", 1),
             module_args=tuple(range(600)),
             module_kwargs={str(index): index for index in range(600)},
         )
     with pytest.raises(ValueError, match="^invalid configured hook point$"):
         ConfiguredHookPoint(
-            "point",
+            "hook_point",
             EventDefinition("test.configured", 1),
             module_args=("a" * 32_768,),
             module_kwargs={"value": "b" * 32_768},
@@ -427,7 +427,7 @@ def test_configured_hook_point_rejects_malformed_event_definition() -> None:
     )
     for definition in malformed:
         with pytest.raises(ValueError, match="^invalid configured hook point$"):
-            ConfiguredHookPoint("point", definition)
+            ConfiguredHookPoint("hook_point", definition)
 
 
 def test_configured_hook_point_owns_event_definition_snapshot() -> None:
@@ -437,7 +437,7 @@ def test_configured_hook_point_owns_event_definition_snapshot() -> None:
         "properties": {"value": {"type": "string"}},
     }
     definition = EventDefinition("test.configured", 1, schema, 1_024)
-    point = ConfiguredHookPoint("point", definition)
+    point = ConfiguredHookPoint("hook_point", definition)
     schema["properties"]["value"]["type"] = "integer"
     object.__setattr__(definition, "name", "test.changed")
     object.__setattr__(definition, "payload_schema", {"type": "integer"})
@@ -451,19 +451,19 @@ def test_configured_hook_point_owns_event_definition_snapshot() -> None:
 def test_configured_hooks_require_bijective_point_event_mapping() -> None:
     """Configured hook points and event identities must map one-to-one."""
     point_a_event_a = ConfiguredHookPoint(
-        "point-a",
+        "hook_point_a",
         EventDefinition("test.eventa", 1),
     )
     point_a_event_b = ConfiguredHookPoint(
-        "point-a",
+        "hook_point_a",
         EventDefinition("test.eventb", 1),
     )
     point_b_event_a = ConfiguredHookPoint(
-        "point-b",
+        "hook_point_b",
         EventDefinition("test.eventa", 1),
     )
     point_b_event_b = ConfiguredHookPoint(
-        "point-b",
+        "hook_point_b",
         EventDefinition("test.eventb", 1),
     )
     invalid_mappings = (
@@ -487,7 +487,7 @@ def test_passive_configured_records_detach_collection_inputs() -> None:
     artifact_identities = ["a" * 64]
     module_failures = [ConfiguredModuleFailure("failed", "load_error")]
     summary = ConfiguredPlanSummary(
-        "point",
+        "hook_point",
         "test.configured",
         1,
         binding_ids,
@@ -531,12 +531,12 @@ def test_passive_configured_records_reject_custom_collection_lookalikes() -> Non
     invalid = UserList(["value"])
     failure = ConfiguredModuleFailure("failed", "load_error")
     summary = ConfiguredPlanSummary(
-        "point", "test.configured", 1, (), (), ()
+        "hook_point", "test.configured", 1, (), (), ()
     )
     constructors = (
-        lambda: ConfiguredPlanSummary("point", "test.configured", 1, invalid, (), ()),
-        lambda: ConfiguredPlanSummary("point", "test.configured", 1, (), invalid, ()),
-        lambda: ConfiguredPlanSummary("point", "test.configured", 1, (), (), UserList([failure])),
+        lambda: ConfiguredPlanSummary("hook_point", "test.configured", 1, invalid, (), ()),
+        lambda: ConfiguredPlanSummary("hook_point", "test.configured", 1, (), invalid, ()),
+        lambda: ConfiguredPlanSummary("hook_point", "test.configured", 1, (), (), UserList([failure])),
         lambda: PrepareConfiguredResult(False, 0, errors=invalid),
         lambda: PublishConfiguredResult(False, 0, plans=UserList([summary])),
         lambda: PublishConfiguredResult(False, 0, errors=invalid),
@@ -551,7 +551,7 @@ def test_passive_configured_records_accept_tuple_controls() -> None:
     """C02 tuple inputs must remain valid after passive-record hardening."""
     failure = ConfiguredModuleFailure("failed", "invalid_entry")
     summary = ConfiguredPlanSummary(
-        "point", "test.configured", 1, ("binding",), ("a" * 64,), (failure,)
+        "hook_point", "test.configured", 1, ("binding",), ("a" * 64,), (failure,)
     )
     assert PrepareConfiguredResult(False, 0, errors=("cancelled",)).errors == ("cancelled",)
     assert PublishConfiguredResult(True, 1, plans=(summary,)).plans == (summary,)
@@ -562,18 +562,18 @@ def test_passive_configured_records_accept_tuple_controls() -> None:
 def test_configured_plan_summary_requires_canonical_artifact_identities() -> None:
     """Artifact identities must already be unique and lexicographically sorted."""
     valid = ConfiguredPlanSummary(
-        "point", "test.configured", 1, (), ("a" * 64, "b" * 64)
+        "hook_point", "test.configured", 1, (), ("a" * 64, "b" * 64)
     )
     assert valid.artifact_identities == ("a" * 64, "b" * 64)
     for invalid in (("a" * 64, "a" * 64), ("b" * 64, "a" * 64)):
         with pytest.raises(ValueError, match="^invalid configured plan summary$"):
-            ConfiguredPlanSummary("point", "test.configured", 1, (), invalid)
+            ConfiguredPlanSummary("hook_point", "test.configured", 1, (), invalid)
 
 
 def test_passive_results_enforce_c02_cross_field_invariants() -> None:
     """Accepted and rejected result shapes must obey the C02 lifecycle contract."""
     summary = ConfiguredPlanSummary(
-        "point", "test.configured", 1, (), ("a" * 64,)
+        "hook_point", "test.configured", 1, (), ("a" * 64,)
     )
     invalid_results = (
         lambda: PrepareConfiguredResult(True, 0, errors=("invalid_configuration",)),

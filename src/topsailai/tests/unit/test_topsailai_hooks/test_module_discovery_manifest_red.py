@@ -18,12 +18,12 @@ from topsailai.tests.unit.test_topsailai_hooks.module_discovery_helpers import (
 )
 
 
-def _discover(folder: Path, hook_point: str = "conversation.started"):
+def _discover(folder: Path, hook_name: str = "hook_conversation_started"):
     """Invoke the future production contract after an attributable in-body check."""
     discovery = require_discovery_contract()
     return discovery(
         module_folder=folder,
-        hook_point=hook_point,
+        hook_name=hook_name,
         temp_root=str(private_temp_root(folder)),
     )
 
@@ -100,13 +100,13 @@ def test_identity_and_order_are_stable_and_case_sensitive(tmp_path: Path) -> Non
     for name in ("zeta", "Alpha", "beta"):
         write_module(tmp_path, name)
 
-    first = _discover(tmp_path, hook_point="agent2llm.finished")
-    second = _discover(tmp_path, hook_point="agent2llm.finished")
+    first = _discover(tmp_path, hook_name="hook_agent2llm_finished")
+    second = _discover(tmp_path, hook_name="hook_agent2llm_finished")
 
     first_entries = manifest_entries(first)
     assert [entry.logical_name for entry in first_entries] == ["Alpha", "beta", "zeta"]
     assert [entry.stable_identity for entry in first_entries] == [
-        ("agent2llm.finished", str(tmp_path.resolve()), name)
+        ("hook_agent2llm_finished", str(tmp_path.resolve()), name)
         for name in ("Alpha", "beta", "zeta")
     ]
     assert [entry.stable_identity for entry in manifest_entries(second)] == [
@@ -324,3 +324,14 @@ def test_candidate_filtering_boundaries_remain_closed(tmp_path: Path) -> None:
     candidates = discovery_module._enumerate_candidates(tmp_path.resolve())
 
     assert candidates == [("kept_boundary", (tmp_path / "kept_boundary.py").resolve())]
+
+
+def test_same_module_under_distinct_hook_names_has_distinct_identity(tmp_path: Path) -> None:
+    """Only the Hook-name identity component changes between configured hooks."""
+    write_module(tmp_path, "shared")
+    first = manifest_entries(_discover(tmp_path, hook_name="hook_first"))
+    second = manifest_entries(_discover(tmp_path, hook_name="hook_second"))
+    assert len(first) == len(second) == 1
+    assert first[0].stable_identity[1:] == second[0].stable_identity[1:]
+    assert first[0].stable_identity[0] == "hook_first"
+    assert second[0].stable_identity[0] == "hook_second"

@@ -30,7 +30,7 @@ def _discover(folder: Path, **kwargs: object):
     """Run discovery with explicit private storage."""
     return discovery.build_module_manifest(
         folder,
-        "conversation.started",
+        "hook_conversation_started",
         temp_root=str(private_temp_root(folder)),
         **kwargs,
     )
@@ -48,7 +48,7 @@ def test_invalid_input_precedes_pre_set_cancellation(tmp_path: Path) -> None:
         cancellation=cancellation,
     )
 
-    assert result.errors == ("invalid module configuration",)
+    assert result.errors == ("invalid hook name",)
 
 
 @pytest.mark.parametrize(
@@ -369,3 +369,16 @@ def test_successor_is_not_launched_after_shared_budget_expires(
 
     assert result.errors == ("module discovery timeout",)
     assert calls == [("alpha", 2_499, 2_499)]
+
+
+def test_invalid_hook_name_performs_no_discovery_io(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Invalid names reject before path, enumeration, storage, or worker boundaries."""
+    calls: list[str] = []
+    monkeypatch.setattr(discovery, "_canonical_root", lambda *args: calls.append("path"))
+    monkeypatch.setattr(discovery, "_enumerate_candidates", lambda *args, **kwargs: calls.append("enumerate"))
+    monkeypatch.setattr(discovery, "validate_temporary_root", lambda *args: calls.append("temp"))
+    monkeypatch.setattr(discovery, "TemporaryStorageOwner", lambda *args: calls.append("storage"))
+    monkeypatch.setattr(discovery, "IsolatedProcessBackend", lambda *args, **kwargs: calls.append("worker"))
+    result = discovery.build_module_manifest(tmp_path, "invalid-name", temp_root=str(tmp_path))
+    assert result.errors == ("invalid hook name",)
+    assert calls == []

@@ -23,6 +23,7 @@ from topsailai.hooks.artifact_store import (
 from topsailai.hooks.configuration import HookLimits, HookSettings
 from topsailai.hooks.configured_contracts import (
     ConfiguredHookPoint,
+    is_valid_hook_name,
     ConfiguredHooks,
     ConfiguredModuleFailure,
     ConfiguredPlanSummary,
@@ -93,6 +94,7 @@ __all__ = [
     "CapturedArtifact",
     "Binding",
     "ConfiguredHookPoint",
+    "is_valid_hook_name",
     "ConfiguredHooks",
     "ConfiguredModuleFailure",
     "ConfiguredPlanSummary",

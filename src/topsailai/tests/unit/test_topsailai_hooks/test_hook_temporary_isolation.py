@@ -37,9 +37,9 @@ def test_temp_root_is_required_keyword_only_and_invalid_roots_reject(tmp_path: P
     signature = inspect.signature(discovery_module.build_module_manifest)
     assert signature.parameters["temp_root"].kind is inspect.Parameter.KEYWORD_ONLY
     with pytest.raises(TypeError):
-        discovery_module.build_module_manifest(tmp_path, "conversation.started")
+        discovery_module.build_module_manifest(tmp_path, "hook_conversation_started")
     with pytest.raises(TypeError):
-        discovery_module.build_module_manifest(tmp_path, "conversation.started", str(tmp_path))
+        discovery_module.build_module_manifest(tmp_path, "hook_conversation_started", str(tmp_path))
 
     valid_root = tmp_path.parent / f"{tmp_path.name}-valid-temp"
     valid_root.mkdir(mode=0o700)
@@ -58,7 +58,7 @@ def test_temp_root_is_required_keyword_only_and_invalid_roots_reject(tmp_path: P
     )
     for value in values:
         result = discovery_module.build_module_manifest(
-            tmp_path, "conversation.started", temp_root=value
+            tmp_path, "hook_conversation_started", temp_root=value
         )
         assert not result.accepted
         assert result.errors == ("invalid discovery temp root",)
@@ -75,7 +75,7 @@ def test_success_removes_only_owned_invocation_directory(tmp_path: Path) -> None
     before = _inventory(plugins)
 
     result = discovery_module.build_module_manifest(
-        plugins, "conversation.started", temp_root=str(host_root)
+        plugins, "hook_conversation_started", temp_root=str(host_root)
     )
 
     assert result.accepted
@@ -105,7 +105,7 @@ def test_concurrent_discoveries_use_distinct_invocation_directories(
         results = tuple(
             executor.map(
                 lambda _: discovery_module.build_module_manifest(
-                    plugins, "conversation.started", temp_root=str(host_root)
+                    plugins, "hook_conversation_started", temp_root=str(host_root)
                 ),
                 range(2),
             )
@@ -137,7 +137,7 @@ def test_storage_cleanup_failure_is_queryable_and_retryable(
 
     monkeypatch.setattr(TemporaryStorageOwner, "cleanup", fail_once)
     result = discovery_module.build_module_manifest(
-        plugins, "conversation.started", temp_root=str(host_root)
+        plugins, "hook_conversation_started", temp_root=str(host_root)
     )
 
     assert result.recovery_owner is not None
@@ -156,7 +156,7 @@ def test_import_failure_and_timeout_remove_owned_storage(tmp_path: Path) -> None
     write_module(plugins, "broken", "raise RuntimeError('sentinel')\n")
 
     failed = discovery_module.build_module_manifest(
-        plugins, "conversation.started", temp_root=str(host_root)
+        plugins, "hook_conversation_started", temp_root=str(host_root)
     )
 
     assert failed.entries[0].load_status == "load_error"
@@ -166,7 +166,7 @@ def test_import_failure_and_timeout_remove_owned_storage(tmp_path: Path) -> None
     (plugins / "broken.py").unlink()
     write_module(plugins, "slow", "while True:\n    pass\n")
     timed_out = discovery_module.build_module_manifest(
-        plugins, "conversation.started", temp_root=str(host_root)
+        plugins, "hook_conversation_started", temp_root=str(host_root)
     )
 
     assert timed_out.entries[0].load_status == "load_error"
@@ -208,7 +208,7 @@ def test_host_interruption_preserves_identity_when_storage_cleanup_fails(
 
     with pytest.raises(KeyboardInterrupt) as caught:
         discovery_module.build_module_manifest(
-            plugins, "conversation.started", temp_root=str(host_root)
+            plugins, "hook_conversation_started", temp_root=str(host_root)
         )
 
     assert caught.value is interruption
@@ -253,7 +253,7 @@ def test_read_only_plugin_inventory_is_unchanged_for_worker_identity(tmp_path: P
         "write_failed=False; "
         "\ntry: (p/'forbidden').write_text('x')\n"
         "except PermissionError: write_failed=True\n"
-        f"r=build_module_manifest(p, 'conversation.started', temp_root={str(host_root)!r}); "
+        f"r=build_module_manifest(p, 'hook_conversation_started', temp_root={str(host_root)!r}); "
         "print(json.dumps({'accepted':r.accepted,'ready':r.entries[0].entry_valid,"
         "'write_failed':write_failed}))"
     )
@@ -301,7 +301,7 @@ def test_allocation_failure_retains_storage_only_recovery(
     )
 
     result = discovery_module.build_module_manifest(
-        plugins, "conversation.started", temp_root=str(host_root)
+        plugins, "hook_conversation_started", temp_root=str(host_root)
     )
 
     assert not result.accepted
@@ -334,7 +334,7 @@ def test_backend_construction_failure_cleans_or_retains_storage(
 
     with pytest.raises(KeyboardInterrupt) as caught:
         discovery_module.build_module_manifest(
-            plugins, "conversation.started", temp_root=str(host_root)
+            plugins, "hook_conversation_started", temp_root=str(host_root)
         )
 
     assert caught.value is interruption
@@ -361,7 +361,7 @@ def test_cleanup_interruption_preserves_recovery_and_primary_identity(
 
     with pytest.raises(KeyboardInterrupt) as caught:
         discovery_module.build_module_manifest(
-            plugins, "conversation.started", temp_root=str(host_root)
+            plugins, "hook_conversation_started", temp_root=str(host_root)
         )
 
     assert caught.value is cleanup_interrupt
@@ -385,7 +385,7 @@ def test_cleanup_interruption_preserves_recovery_and_primary_identity(
     monkeypatch.setattr(discovery_module, "IsolatedProcessBackend", InterruptingBackend)
     with pytest.raises(KeyboardInterrupt) as primary_caught:
         discovery_module.build_module_manifest(
-            plugins, "conversation.started", temp_root=str(host_root)
+            plugins, "hook_conversation_started", temp_root=str(host_root)
         )
     assert primary_caught.value is primary
     assert discovery_module.get_interruption_recovery_owner(primary) is not None
@@ -433,7 +433,7 @@ def test_directory_creation_handoff_interruption_preserves_cleanup(
     monkeypatch.setattr(os, "mkdir", interrupt_after_mkdir)
     with pytest.raises(KeyboardInterrupt) as caught:
         discovery_module.build_module_manifest(
-            plugins, "conversation.started", temp_root=str(host_root)
+            plugins, "hook_conversation_started", temp_root=str(host_root)
         )
 
     assert caught.value is interruption
@@ -470,7 +470,7 @@ def test_backend_owner_handoff_interruption_preserves_cleanup(
     monkeypatch.setattr(discovery_module, "_make_cleanup_owner", interrupt_second_owner)
     with pytest.raises(KeyboardInterrupt) as caught:
         discovery_module.build_module_manifest(
-            plugins, "conversation.started", temp_root=str(host_root)
+            plugins, "hook_conversation_started", temp_root=str(host_root)
         )
 
     assert caught.value is interruption
@@ -493,7 +493,7 @@ def test_post_probe_manifest_handoff_interruption_preserves_cleanup(
     monkeypatch.setattr(discovery_module, "_append_manifest_entry", interrupt_append)
     with pytest.raises(KeyboardInterrupt) as caught:
         discovery_module.build_module_manifest(
-            plugins, "conversation.started", temp_root=str(host_root)
+            plugins, "hook_conversation_started", temp_root=str(host_root)
         )
 
     assert caught.value is interruption
@@ -586,7 +586,7 @@ def test_chmod_file_exists_error_cleans_created_directory(
     )
 
     result = discovery_module.build_module_manifest(
-        plugins, "conversation.started", temp_root=str(host_root)
+        plugins, "hook_conversation_started", temp_root=str(host_root)
     )
 
     assert not result.accepted

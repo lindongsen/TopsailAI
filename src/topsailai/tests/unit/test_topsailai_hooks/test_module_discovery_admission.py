@@ -73,7 +73,7 @@ def test_unconfirmed_cleanup_stops_probing_and_retains_recovery_owner(
     )
 
     result = discovery_module.build_module_manifest(
-        tmp_path, "conversation.started", temp_root=str(private_temp_root(tmp_path))
+        tmp_path, "hook_conversation_started", temp_root=str(private_temp_root(tmp_path))
     )
 
     backend = _RecordingBackend.instances[0]
@@ -108,7 +108,7 @@ def test_process_debt_keeps_storage_until_process_settlement(
     host_root = private_temp_root(tmp_path)
 
     result = discovery_module.build_module_manifest(
-        tmp_path, "conversation.started", temp_root=str(host_root)
+        tmp_path, "hook_conversation_started", temp_root=str(host_root)
     )
 
     invocation_directories = tuple(host_root.glob("discovery-*"))
@@ -144,7 +144,7 @@ def test_interruption_propagates_with_exact_recovery_owner(
     try:
         discovery_module.build_module_manifest(
             tmp_path,
-            "conversation.started",
+            "hook_conversation_started",
             temp_root=str(private_temp_root(tmp_path)),
         )
     except BaseException as error:
@@ -172,7 +172,7 @@ def test_enumeration_failure_rejects_without_backend_probe(
     monkeypatch.setattr(discovery_module, "_list_children", fail_enumeration)
 
     result = discovery_module.build_module_manifest(
-        tmp_path, "conversation.started", temp_root=str(private_temp_root(tmp_path))
+        tmp_path, "hook_conversation_started", temp_root=str(private_temp_root(tmp_path))
     )
 
     assert not result.accepted
@@ -186,7 +186,7 @@ def test_readable_empty_directory_is_accepted(tmp_path: Path, monkeypatch: Any) 
     _install_backend(monkeypatch, WorkerResult("success"))
 
     result = discovery_module.build_module_manifest(
-        tmp_path, "conversation.started", temp_root=str(private_temp_root(tmp_path))
+        tmp_path, "hook_conversation_started", temp_root=str(private_temp_root(tmp_path))
     )
 
     assert result.accepted
@@ -213,7 +213,7 @@ def test_resolved_candidate_escape_rejects_without_backend_probe(
     monkeypatch.setattr(discovery_module, "_resolve_candidate", escape_on_resolve)
 
     result = discovery_module.build_module_manifest(
-        tmp_path, "conversation.started", temp_root=str(private_temp_root(tmp_path))
+        tmp_path, "hook_conversation_started", temp_root=str(private_temp_root(tmp_path))
     )
 
     assert not result.accepted
@@ -253,7 +253,7 @@ def test_retry_reports_incomplete_while_another_backend_debt_remains(
     monkeypatch.setattr(discovery_module, "IsolatedProcessBackend", MultipleDebtBackend)
 
     result = discovery_module.build_module_manifest(
-        tmp_path, "conversation.started", temp_root=str(host_root)
+        tmp_path, "hook_conversation_started", temp_root=str(host_root)
     )
 
     assert result.recovery_owner is not None
@@ -289,7 +289,7 @@ def test_confirmed_create_claim_entry_interruption_preserves_cleanup(
 
     with pytest.raises(KeyboardInterrupt) as caught:
         discovery_module.build_module_manifest(
-            plugins, "conversation.started", temp_root=str(host_root)
+            plugins, "hook_conversation_started", temp_root=str(host_root)
         )
 
     assert caught.value is interruption
@@ -337,7 +337,7 @@ def test_confirmed_create_before_claim_call_interruption_preserves_cleanup(
     try:
         with pytest.raises(KeyboardInterrupt) as caught:
             discovery_module.build_module_manifest(
-                plugins, "conversation.started", temp_root=str(host_root)
+                plugins, "hook_conversation_started", temp_root=str(host_root)
             )
     finally:
         sys.settrace(previous_trace)

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterator
 
 from topsailai.hooks.contracts import HookContext, HookEvent
+from topsailai.hooks.configured_contracts import is_valid_hook_name
 from topsailai.hooks.module_discovery_policy import (
     DiscoveryBudget,
     ModuleDiscoveryPolicy,
@@ -116,7 +117,7 @@ def _cleanup_or_propagate(owner: ModuleCleanupOwner) -> bool:
 
 def build_module_manifest(
     module_folder: os.PathLike[str] | str,
-    hook_point: str,
+    hook_name: str,
     *,
     temp_root: str,
     policy: ModuleDiscoveryPolicy = ModuleDiscoveryPolicy(),
@@ -127,8 +128,10 @@ def build_module_manifest(
         return ModuleManifest(False, errors=("invalid discovery policy",))
     if cancellation is not None and not isinstance(cancellation, threading.Event):
         return ModuleManifest(False, errors=("invalid discovery cancellation",))
-    if not isinstance(module_folder, (str, os.PathLike)) or type(hook_point) is not str or not hook_point:
+    if not isinstance(module_folder, (str, os.PathLike)):
         return ModuleManifest(False, errors=("invalid module configuration",))
+    if not is_valid_hook_name(hook_name):
+        return ModuleManifest(False, errors=("invalid hook name",))
 
     budget = make_discovery_budget(policy.timeout_ms, cancellation)
     rejection = budget.rejection()
@@ -201,7 +204,7 @@ def build_module_manifest(
             entry, result = _probe_candidate(
                 backend,
                 root,
-                hook_point,
+                hook_name,
                 logical_name,
                 source_path,
                 timeout_ms,
@@ -453,13 +456,13 @@ def _logical_name(filename: str, extension_suffixes: tuple[str, ...]) -> str | N
 def _probe_candidate(
     backend: IsolatedProcessBackend,
     root: Path,
-    hook_point: str,
+    hook_name: str,
     logical_name: str,
     source_path: Path,
     timeout_ms: int = _PROBE_TIMEOUT_MS,
 ) -> tuple[ModuleManifestEntry, WorkerResult]:
     """Probe one candidate while preserving the original worker classification."""
-    identity = (hook_point, str(root), logical_name)
+    identity = (hook_name, str(root), logical_name)
     context = HookContext(
         event=HookEvent(
             event_id=uuid.uuid4().hex,

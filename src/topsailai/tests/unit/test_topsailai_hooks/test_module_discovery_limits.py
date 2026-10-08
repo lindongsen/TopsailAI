@@ -53,7 +53,7 @@ def _discover(folder: Path, **kwargs: object):
     """Discover one fixture tree with an explicit private host root."""
     return discovery.build_module_manifest(
         folder,
-        "conversation.started",
+        "hook_conversation_started",
         temp_root=str(private_temp_root(folder)),
         **kwargs,
     )

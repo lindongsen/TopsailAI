@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping as MappingABC
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, Mapping, TYPE_CHECKING
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from topsailai.hooks.runtime import HookRuntime
 
 _INVALID_TRUST = "invalid configured trust policy"
+_HOOK_NAME = re.compile(r"^hook_[a-z][a-z0-9_]*$")
 _ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _RESERVED_ENVIRONMENT = frozenset(
     {
@@ -223,7 +224,7 @@ class ConfiguredScript:
 class ConfiguredHookPoint:
     """Describe one complete configured hook-point replacement."""
 
-    hook_point: str
+    hook_name: str
     definition: EventDefinition
     module_folder: Path | None = None
     module_args: tuple[JsonValue, ...] = ()
@@ -231,10 +232,15 @@ class ConfiguredHookPoint:
     script: ConfiguredScript | None = None
     max_concurrency: int = 1
 
+    @property
+    def hook_point(self) -> str:
+        """Return the deprecated configured-name alias."""
+        return self.hook_name
+
     def __post_init__(self) -> None:
         """Validate and deeply detach caller-owned configured values."""
-        if type(self.hook_point) is not str or not self.hook_point:
-            raise ValueError("invalid configured hook point")
+        if not is_valid_hook_name(self.hook_name):
+            raise ValueError("invalid configured hook name")
         if type(self.definition) is not EventDefinition:
             raise ValueError("invalid configured hook point")
         if validate_event_definition(self.definition):
@@ -278,6 +284,7 @@ class ConfiguredHooks:
     hook_points: tuple[ConfiguredHookPoint, ...]
     settings: HookSettings
     policy: ConfiguredPreparationPolicy = ConfiguredPreparationPolicy()
+    _hook_index: Mapping[str, ConfiguredHookPoint] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Validate exact immutable top-level configured inputs."""
@@ -310,7 +317,7 @@ class ConfiguredHooks:
             raise ValueError("invalid configured hooks")
         if len(self.hook_points) > self.policy.max_hook_points:
             raise ValueError("invalid configured hooks")
-        point_names = {point.hook_point for point in self.hook_points}
+        point_names = {point.hook_name for point in self.hook_points}
         event_keys = {
             (point.definition.name, point.definition.major_version)
             for point in self.hook_points
@@ -318,6 +325,26 @@ class ConfiguredHooks:
         if len(point_names) != len(self.hook_points) or len(event_keys) != len(self.hook_points):
             raise ValueError("invalid configured hooks")
         object.__setattr__(self, "settings", settings)
+        object.__setattr__(self, "hook_points", tuple(self.hook_points))
+        object.__setattr__(self, "_hook_index", MappingProxyType({point.hook_name: point for point in self.hook_points}))
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "ConfiguredHooks":
+        """Decode a strict deterministic mapping keyed by canonical hook name."""
+        from topsailai.hooks.configured_mapping import decode_configured_hooks
+
+        return decode_configured_hooks(value)
+
+    def get_hook(self, hook_name: str) -> ConfiguredHookPoint | None:
+        """Return the exact configured declaration for one canonical name."""
+        if not is_valid_hook_name(hook_name):
+            return None
+        return self._hook_index.get(hook_name)
+
+
+def is_valid_hook_name(value: object) -> bool:
+    """Return whether a value is a canonical configured hook name."""
+    return type(value) is str and len(value) <= 128 and _HOOK_NAME.fullmatch(value) is not None
 
 
 @dataclass(frozen=True, slots=True)
