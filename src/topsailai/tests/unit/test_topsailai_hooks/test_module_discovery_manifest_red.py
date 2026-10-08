@@ -12,6 +12,7 @@ import topsailai.hooks.module_discovery as discovery_module
 from topsailai.tests.unit.test_topsailai_hooks.module_discovery_helpers import (
     compile_extension,
     manifest_entries,
+    private_temp_root,
     require_discovery_contract,
     write_module,
 )
@@ -20,7 +21,11 @@ from topsailai.tests.unit.test_topsailai_hooks.module_discovery_helpers import (
 def _discover(folder: Path, hook_point: str = "conversation.started"):
     """Invoke the future production contract after an attributable in-body check."""
     discovery = require_discovery_contract()
-    return discovery(module_folder=folder, hook_point=hook_point)
+    return discovery(
+        module_folder=folder,
+        hook_point=hook_point,
+        temp_root=str(private_temp_root(folder)),
+    )
 
 
 def test_discovers_only_direct_source_children(tmp_path: Path) -> None:

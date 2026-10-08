@@ -234,16 +234,24 @@ def test_b03_invalid_inputs_are_independent_and_pure():
         LocalHookScriptExecutionOptions(environment=(("A", "\ud800"),)),
     ]
     policy_mutations = [object()]
-    time_names = ("entry_timeout_ms", "hook_timeout_ms", "cleanup_timeout_ms", "terminate_grace_ms", "max_entries")
-    for name in time_names:
-        for value in (True, 0, -1, 1.5):
+    duration_names = (
+        "entry_timeout_ms", "hook_timeout_ms", "cleanup_timeout_ms", "terminate_grace_ms"
+    )
+    for name in duration_names:
+        for value in (True, 0, -1, 1.5, 600_001):
             policy_mutations.append(replace(_baseline()["policy"], **{name: value}))
-    for name in ("stdin_limit_bytes", "stdout_limit_bytes", "stderr_limit_bytes", "output_total_limit_bytes", "argument_environment_limit_bytes"):
-        for value in (True, -1, 1.5):
+    byte_names = (
+        "stdin_limit_bytes", "stdout_limit_bytes", "stderr_limit_bytes",
+        "output_total_limit_bytes", "argument_environment_limit_bytes", "result_limit_bytes",
+    )
+    for name in byte_names:
+        for value in (True, 0, -1, 1.5, 1_048_577):
             policy_mutations.append(replace(_baseline()["policy"], **{name: value}))
-    for value in (None, "65536"):
-        policy_mutations.append(replace(_baseline()["policy"], argument_environment_limit_bytes=value))
-    policy_mutations.append(replace(_baseline()["policy"], cleanup_timeout_ms=99, terminate_grace_ms=100))
+    for value in (True, 0, -1, 1.5, 33):
+        policy_mutations.append(replace(_baseline()["policy"], max_entries=value))
+    policy_mutations.append(
+        replace(_baseline()["policy"], cleanup_timeout_ms=99, terminate_grace_ms=100)
+    )
     cases = []
     for value in option_mutations:
         case = _baseline(); case["options"] = value; cases.append(case)
@@ -277,13 +285,6 @@ def test_b03_invalid_inputs_are_independent_and_pure():
         token = "hook_script_plan_rejected" if not plan.accepted else "hook_script_invalid_execution_input"
         _assert_settlement(result, "error", token, 0, False)
         assert runner.calls == runner.current_calls == runner.retry_calls == []
-    stdin_zero = _baseline(); stdin_zero["policy"] = replace(stdin_zero["policy"], stdin_limit_bytes=0)
-    rejected, rejected_runner, _, _ = _run(stdin_zero)
-    _assert_settlement(rejected, "error", "hook_script_invalid_execution_input", 0, False)
-    assert rejected_runner.calls == []
-    valid = _baseline(); valid["policy"] = replace(valid["policy"], stdout_limit_bytes=0, stderr_limit_bytes=0, output_total_limit_bytes=0, argument_environment_limit_bytes=0); valid["options"] = LocalHookScriptExecutionOptions((), root, ())
-    accepted, _, _, _ = _run(valid)
-    _assert_settlement(accepted, "success", None, 3, True)
 def test_b04_order_and_single_execution(monkeypatch):
     case = _baseline(); captured = []
     import topsailai.hooks.hook_script as module

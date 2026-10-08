@@ -172,3 +172,23 @@ Trigger: a cleanup-debt retry returned immediately when process inspection or te
 ## Exception aggregation must distinguish shared ancestry from cycles
 
 In Hooks cleanup, independently raised failures can share an outer `__context__` or an existing cause descendant. Whole-graph intersection therefore cannot decide whether attaching a diagnostic is safe: preserve shared DAG ancestors, reject only the specific edge whose target can already reach its source, and retain an independent diagnostic through an acyclic aggregate at another attachment point instead of dropping it. Verify retention by exception-object identity plus recursion-stack cycle detection across causes, contexts, and exception-group members. This prevents legitimate cleanup diagnostics from being discarded while retaining the primary host interruption.
+
+## Cleanup ownership must be armed before every fallible handoff and mutation
+
+Trigger: U04 review found that temporary storage created before allocation completion, backend construction, or cleanup could lose its recovery owner, and that one successful debt retry could be mistaken for complete settlement.
+
+Action: arm a stable cleanup debt before deletion, retain storage-only ownership before backend construction, preserve the primary interruption while attaching recovery authority, and report success only after every process, channel, and storage obligation is confirmed settled; treat confirmed path absence as idempotent cleanup and keep best-effort logging outside cleanup state transitions.
+
+Why this prevents recurrence: every failure window retains an exact owner and tests cover partial allocation, handoff interruption, multiple debts, cleanup interruption, missing paths, and logging failure instead of validating only the normal cleanup path.
+
+## Cooperative deadlines and security validation require checks at every authority boundary
+
+Trigger: U07 review found that a late low-level I/O result could permit later non-cleanup I/O, malformed nested policy values could raise before stable error mapping, and interpreter validation did not fully repeat identity, metadata, named-path, and ancestry checks after reading.
+
+Action: place cooperative checkpoints immediately before and after each relevant low-level operation and composite validation call; perform exact resource-free structural validation before locks or filesystem access; and route Python and shebang interpreters through one post-read revalidation path covering complete identity, security metadata, named path, and ancestors.
+
+Why this prevents recurrence: every late result is observed before another non-cleanup side effect starts, malformed public inputs fail with stable tokens and zero I/O, and interpreter authority cannot survive byte, metadata, path, or ancestry replacement races.
+
+## Nonretryable uncertainty must be enforced at every cleanup entry point
+
+The artifact descriptor ledger originally rejected an uncertain close only during bulk cleanup, while direct `close()` and its `close_descriptor()` alias could re-enter first from the public exception handler and retry a historical descriptor integer. When an operation records an ambiguous outcome, every public and internal entry point capable of repeating that operation must reject the uncertain state before authority mutation or I/O; tests must cover each individual alias plus the real composed recovery order with actual identifier reuse, not only the final bulk-cleanup path. This prevents an earlier cleanup stage from bypassing a safeguard implemented only in a later stage.

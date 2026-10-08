@@ -19,9 +19,9 @@ from tests.bdd.tool_calls_mock_harness import (
 
 
 @pytest.fixture
-def tc_norm_ctx(tmp_path, monkeypatch):
+def tc_norm_ctx(bdd_tmp_path, monkeypatch):
     """Yield one isolated scenario and enforce exact server-thread teardown."""
-    context = ToolCallsScenario(tmp_path, monkeypatch)
+    context = ToolCallsScenario(bdd_tmp_path, monkeypatch)
     yield context
     context.close()
 

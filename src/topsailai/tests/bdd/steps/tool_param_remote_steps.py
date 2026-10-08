@@ -26,14 +26,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
 from typing import Any
 
 import pytest
 from pytest_bdd import given, parsers, then, when
 
-logger = logging.getLogger("tests.bdd.tool_param.remote")
-
+from tests.bdd.temp_storage import BDDTempStorage
 from tests.bdd.tool_param_harness import (
     TEST_NET_HOST,
     call_plain_tool,
@@ -43,29 +41,28 @@ from tests.bdd.tool_param_harness import (
     write_skill_folder,
 )
 
+logger = logging.getLogger("tests.bdd.tool_param.remote")
+
 SANDBOX_CONFIG = f"tag=bdd,protocol=ssh,node={TEST_NET_HOST},port=22"
 REMOTE_TARGET = "/remote/incoming/payload.txt"
 PROBE_SCRIPT = "scripts/echo.sh"
 
 
 @pytest.fixture
-def remote_ctx():
-    """Per-scenario state plus a temporary folder that is removed after the scenario."""
-    context: dict[str, Any] = {"files": {}, "response": None}
-    yield context
-    folder = context["files"].get("folder")
-    if folder and os.path.isdir(folder):
-        shutil.rmtree(folder)
-        logger.info("removed remote parameter test folder: [%s]", folder)
+def remote_ctx(bdd_temp_storage: BDDTempStorage):
+    """Keep per-scenario state backed by owned workspace temporary storage."""
+    return {
+        "files": {},
+        "response": None,
+        "temp_storage": bdd_temp_storage,
+    }
 
 
 def _tmp_folder(ctx) -> str:
-    """Return (creating on first use) the scenario-scoped temporary folder."""
+    """Return the lazily created scenario-owned temporary directory."""
     folder = ctx["files"].get("folder")
     if not folder:
-        import tempfile
-
-        folder = tempfile.mkdtemp(prefix="topsailai-bdd-remote-")
+        folder = str(ctx["temp_storage"].create_directory("topsailai-bdd-remote-"))
         ctx["files"]["folder"] = folder
     return folder
 

@@ -5,7 +5,11 @@ instead of driving the CLI, and it registers its own step modules so that the tw
 suites never share step definitions.
 """
 
+from pathlib import Path
+
 import pytest
+
+from tests.bdd.temp_storage import BDDTempStorage
 
 
 def pytest_configure(config):
@@ -29,6 +33,20 @@ pytest_plugins = [
     "tests.bdd.steps.tool_param_human_guard_steps",
     "tests.bdd.steps.tool_calls_normalization_steps",
 ]
+
+
+@pytest.fixture
+def bdd_temp_storage() -> BDDTempStorage:
+    """Provide scenario-owned storage rooted below the workspace ``.tmp`` folder."""
+    storage = BDDTempStorage()
+    yield storage
+    storage.cleanup()
+
+
+@pytest.fixture
+def bdd_tmp_path(bdd_temp_storage: BDDTempStorage) -> Path:
+    """Provide one scenario directory for harnesses that need a pathlib path."""
+    return bdd_temp_storage.create_directory("scenario-")
 
 
 def pytest_collection_modifyitems(config, items):

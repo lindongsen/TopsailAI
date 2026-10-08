@@ -166,6 +166,41 @@ def exec_cmd(
     return format_return(cmd_string, result)
 
 # name: func
+
+TOOLS_INFO = {
+    "exec_cmd": {
+        "type": "function",
+        "function": {
+            "name": "exec_cmd",
+            "description": exec_cmd.__doc__,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cmd": {
+                        "anyOf": [
+                            {"type": "string"},
+                            {"type": "array", "items": {"type": "string"}},
+                        ],
+                        "description": "Command string or argument list to execute.",
+                    },
+                    "no_need_stderr": {
+                        "type": "integer",
+                        "enum": [0, 1],
+                        "default": 0,
+                    },
+                    "timeout": {"type": "integer", "default": 120},
+                    "cwd": {"type": "string"},
+                    "env": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                    },
+                },
+                "required": ["cmd"],
+                "additionalProperties": False,
+            },
+        },
+    },
+}
 TOOLS = dict(
     exec_cmd=exec_cmd,
 )

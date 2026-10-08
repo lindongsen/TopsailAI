@@ -40,6 +40,18 @@ def _backend(tmp_path: Path, **changes: object) -> IsolatedProcessBackend:
     return IsolatedProcessBackend(temp_root=str(tmp_path), **changes)
 
 
+def test_worker_environment_redirects_writable_runtime_state(tmp_path: Path) -> None:
+    """Worker runtime state and temporary files stay in the owned directory."""
+    environment = _backend(tmp_path)._worker_environment()
+
+    assert environment["HOME"] == str(tmp_path)
+    assert environment["TOPSAILAI_HOME"] == str(tmp_path)
+    assert environment["TMPDIR"] == str(tmp_path)
+    assert environment["TEMP"] == str(tmp_path)
+    assert environment["TMP"] == str(tmp_path)
+    assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
+
+
 def _reap_test_resources(
     backend: IsolatedProcessBackend, *processes: object, timeout: float = 2.0
 ) -> None:

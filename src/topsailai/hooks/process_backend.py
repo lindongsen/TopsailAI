@@ -15,6 +15,16 @@ import uuid
 from typing import Any
 
 from topsailai.hooks.contracts import HookContext, JsonValue, ValidationError
+from topsailai.hooks.process_cleanup import ProcessCleanupMixin
+from topsailai.hooks.process_launch import build_script_environment
+from topsailai.hooks.process_setup import ProcessSetupMixin
+from topsailai.hooks.process_state import (
+    CleanupDebt,
+    DebtEntry as _DebtEntry,
+    LaunchRecord as _LaunchRecord,
+    WorkerResult,
+)
+from topsailai.hooks.process_termination import terminate_unpublished_process
 from topsailai.hooks.worker_protocol import (
     ProtocolLimits,
     build_request,
@@ -22,15 +32,6 @@ from topsailai.hooks.worker_protocol import (
     encode_frame,
     expected_frame_size,
     validate_response,
-)
-
-
-from topsailai.hooks.process_cleanup import ProcessCleanupMixin
-from topsailai.hooks.process_state import (
-    CleanupDebt,
-    DebtEntry as _DebtEntry,
-    LaunchRecord as _LaunchRecord,
-    WorkerResult,
 )
 
 
@@ -83,7 +84,7 @@ class _LaunchLease:
             self._record, "worker_lost", empty, dropped, "host_interrupted"
         )
 
-class IsolatedProcessBackend(ProcessCleanupMixin):
+class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin):
     """Execute each handler in a fresh, owned Linux process group."""
 
     def __init__(
@@ -113,6 +114,11 @@ class IsolatedProcessBackend(ProcessCleanupMixin):
         self._debts: dict[str, CleanupDebt] = {}
         self._debt_processes: dict[str, _DebtEntry] = {}
 
+    @property
+    def script_temp_root(self) -> str:
+        """Expose the host-owned root to admission-scoped script storage owners."""
+        return self._temp_root
+
     def cleanup_debts(self) -> tuple[CleanupDebt, ...]:
         """Return a stable snapshot of cleanup obligations not yet confirmed settled."""
         with self._debt_lock:
@@ -139,12 +145,8 @@ class IsolatedProcessBackend(ProcessCleanupMixin):
                 ordinary_errors: list[Exception] = []
                 interruptions: list[BaseException] = []
                 try:
-                    if not confirmed:
-                        exited = entry.process.poll() is not None
-                        if exited:
-                            confirmed = not self._group_exists(entry.process.pid)
-                        else:
-                            confirmed = self._terminate_owned(entry.process)
+                    if not confirmed and entry.process is not None:
+                        confirmed = self._terminate_record(entry.record, entry.process)
                         if confirmed:
                             entry.record.cleanup.termination_confirmed = True
                 except BaseException as exc:
@@ -408,6 +410,147 @@ class IsolatedProcessBackend(ProcessCleanupMixin):
             self._abandon_launch(record)
             raise
 
+    def launch_script(
+        self,
+        *,
+        argv: tuple[str, ...],
+        cwd: str,
+        environment: dict[str, str],
+        argument_environment_limit_bytes: int,
+        deadline: float,
+        record: _LaunchRecord,
+    ) -> _LaunchLease | WorkerResult:
+        """Launch one literal script under the backend's armed ownership handoff."""
+
+        def launch() -> None:
+            process: subprocess.Popen[bytes] | None = None
+            try:
+                result_read, result_write = os.pipe()
+                self._adopt_setup_pipe(record, result_read, result_write)
+                child_environment = build_script_environment(
+                    argv,
+                    environment,
+                    result_write,
+                    argument_environment_limit_bytes,
+                )
+                if child_environment is None:
+                    raise ValueError("script argument/environment limit exceeded")
+                process = subprocess.Popen(
+                    argv,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=cwd,
+                    env=child_environment,
+                    close_fds=True,
+                    pass_fds=(result_write,),
+                    start_new_session=True,
+                    bufsize=0,
+                )
+                self._close_setup_channel(record, "result_write")
+                if record.cleanup.setup_channels["result_write"].state != "closed":
+                    raise OSError("parent result write descriptor close is unconfirmed")
+                record.group_authorized = os.getpgid(process.pid) == process.pid
+                if not record.group_authorized:
+                    raise RuntimeError("script process group ownership is unavailable")
+                self._before_publish_process(record)
+                with record.condition:
+                    record.process = process
+                    self._transfer_setup_result_read(record)
+                    if record.state == "abandoned":
+                        owns_cleanup = True
+                    else:
+                        record.state = "published"
+                        record.condition.notify_all()
+                        owns_cleanup = False
+                if owns_cleanup:
+                    self._cleanup_launch_record(record, "late_launch_cleanup")
+            except BaseException as exc:
+                if process is not None:
+                    with record.condition:
+                        if record.process is None:
+                            record.process = process
+                    if not record.group_authorized:
+                        cleanup_deadline = record.cleanup_deadline or deadline
+                        record.cleanup.termination_started = True
+                        try:
+                            record.cleanup.termination_confirmed = (
+                                terminate_unpublished_process(
+                                    self,
+                                    process,
+                                    cleanup_deadline,
+                                    record.termination_grace or self._cleanup_grace,
+                                )
+                            )
+                        except BaseException:
+                            record.cleanup.termination_confirmed = False
+                    try:
+                        self._cleanup_launch_record(record, "launch_exception_cleanup")
+                    except BaseException:
+                        self._ensure_record_debt(record, process)
+                else:
+                    record.cleanup.termination_started = True
+                    record.cleanup.termination_confirmed = True
+                    for channel in record.cleanup.channels.values():
+                        channel.state = "closed"
+                    try:
+                        with self._cleanup_execution_lease(record) as cleanup_lease:
+                            if cleanup_lease is not None:
+                                self._close_record_channels(record)
+                    except BaseException:
+                        pass
+                    if not self._record_channels_closed(record):
+                        self._ensure_record_debt(record, None)
+                with record.condition:
+                    if record.state == "abandoned":
+                        if (
+                            record.cleanup.termination_confirmed
+                            and self._record_channels_closed(record)
+                        ):
+                            self._resolve_debt(record.debt_id, record)
+                        return
+                    record.error = exc
+                    record.cleanup_confirmed = (
+                        record.cleanup.termination_confirmed
+                        and self._record_channels_closed(record)
+                    )
+                    record.cleanup_debt = (
+                        None if record.cleanup_confirmed else record.debt_id
+                    )
+                    record.state = "failed"
+                    record.condition.notify_all()
+        thread = threading.Thread(target=launch, name="hook-script-launch", daemon=True)
+        try:
+            thread.start()
+            self._after_launch_thread_start(record)
+            with record.condition:
+                while record.state == "launching":
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        record.state = "abandoned"
+                        self._record_launch_debt(record.debt_id)
+                        return WorkerResult(
+                            "timeout",
+                            error_category="startup_timeout",
+                            cleanup_confirmed=False,
+                            cleanup_debt=record.debt_id,
+                        )
+                    self._wait_for_launch(record, remaining)
+                if record.state == "failed":
+                    return WorkerResult(
+                        "worker_lost",
+                        error_category="startup_failure",
+                        cleanup_confirmed=record.cleanup_confirmed,
+                        cleanup_debt=record.cleanup_debt,
+                    )
+                if record.process is None or record.result_fd is None:
+                    return WorkerResult("worker_lost", error_category="startup_failure")
+                self._after_launch_published(record)
+                return _LaunchLease(self, record)
+        except BaseException:
+            self._abandon_launch(record)
+            raise
+
     def _abandon_launch(self, record: _LaunchRecord) -> None:
         """Leave launch cleanup with exactly one owner after host interruption."""
         lease: _LaunchLease | None = None
@@ -439,12 +582,14 @@ class IsolatedProcessBackend(ProcessCleanupMixin):
     def _worker_environment(self) -> dict[str, str]:
         """Build a minimal explicit environment for the controlled worker."""
         environment = {
+            "HOME": self._temp_root,
             "PATH": os.environ.get("PATH", ""),
             "PYTHONPATH": os.pathsep.join(filter(None, sys.path)),
             "PYTHONDONTWRITEBYTECODE": "1",
-            "TMPDIR": self._temp_root,
             "TEMP": self._temp_root,
             "TMP": self._temp_root,
+            "TMPDIR": self._temp_root,
+            "TOPSAILAI_HOME": self._temp_root,
             "TOPSAILAI_HOOK_WORKER": "1",
         }
         for name in ("LANG", "LC_ALL", "SYSTEMROOT", "WINDIR"):

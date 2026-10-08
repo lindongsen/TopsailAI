@@ -261,6 +261,26 @@ class TestToolsConstant:
         assert "exec_cmd" in TOOLS
         assert callable(TOOLS["exec_cmd"])
 
+    def test_exec_cmd_schema_requires_cmd(self):
+        """The native tool schema exposes cmd as a required parameter."""
+        from topsailai.tools.cmd_tool import TOOLS_INFO
+
+        function = TOOLS_INFO["exec_cmd"]["function"]
+        parameters = function["parameters"]
+        assert function["name"] == "exec_cmd"
+        assert "cmd" in parameters["properties"]
+        assert parameters["required"] == ["cmd"]
+
+    def test_registered_exec_cmd_schema_requires_cmd(self):
+        """The aggregated native schema retains the required cmd contract."""
+        from topsailai.tools.base.common import get_tools_for_chat
+        from topsailai.tools.cmd_tool import exec_cmd
+
+        schema = get_tools_for_chat({"cmd_tool-exec_cmd": exec_cmd})
+        parameters = schema["cmd_tool-exec_cmd"]["function"]["parameters"]
+        assert "cmd" in parameters["properties"]
+        assert parameters["required"] == ["cmd"]
+
 
 class TestModuleImports:
     """Test module imports"""

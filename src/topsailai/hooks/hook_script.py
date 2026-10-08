@@ -7,11 +7,20 @@ import json
 import math
 import threading
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, fields, replace
+from dataclasses import fields, replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from topsailai.hooks.contracts import Binding, HookContext, HookEvent, HookStatus
+from topsailai.hooks.hook_script_contracts import (
+    HookPointBindingPlan,
+    HookScriptBinding,
+    HookScriptEntryResult,
+    HookScriptExecutionOptions,
+    HookScriptExecutionPolicy,
+    HookScriptRunner,
+    HookScriptSettlement,
+)
 from topsailai.hooks.hook_script_discovery import HookScriptDiscoveryResult, HookScriptEntry
 
 _RESERVED_BINDING_ID = "hook_script"
@@ -29,108 +38,6 @@ _CLEANUP_SAFE_TERMINAL_STATUSES = frozenset(
         "rejected_capacity",
     }
 )
-
-
-@dataclass(frozen=True, slots=True)
-class HookScriptBinding:
-    """Describe the unique immutable framework-owned terminal binding."""
-    binding_id: str
-    hook_point: str
-    priority: int
-    after: tuple[str, ...]
-    framework_owned: bool
-    terminal: bool
-    configured: bool
-    entries: tuple[HookScriptEntry, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class HookPointBindingPlan:
-    """Return an atomically accepted immutable hook-point binding plan."""
-    accepted: bool
-    bindings: tuple[Binding | HookScriptBinding, ...] = ()
-    errors: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class HookScriptSettlement:
-    """Describe metadata-only settlement of the reserved script binding."""
-    status: str
-    entry_results: tuple[object, ...] = ()
-    started: bool = False
-    error_category: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class HookScriptExecutionOptions:
-    """Provide literal, already-admitted process execution options."""
-    argv: tuple[str, ...] = ()
-    cwd: Path | None = None
-    environment: tuple[tuple[str, str], ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class HookScriptExecutionPolicy:
-    """Bound one synchronous script batch and every retained byte stream."""
-    entry_timeout_ms: int = 1000
-    hook_timeout_ms: int = 1000
-    cleanup_timeout_ms: int = 1000
-    terminate_grace_ms: int = 100
-    stdin_limit_bytes: int = 65536
-    stdout_limit_bytes: int = 16384
-    stderr_limit_bytes: int = 16384
-    output_total_limit_bytes: int = 65536
-    max_entries: int = 32
-    argument_environment_limit_bytes: int = 65536
-
-
-@dataclass(frozen=True, slots=True)
-class HookScriptEntryResult:
-    """Report bounded execution and cleanup facts for one planned entry."""
-    entry_index: int
-    basename: str
-    status: HookStatus
-    started: bool
-    exit_code: int | None = None
-    duration_ms: int = 0
-    error_category: str | None = None
-    stdout: bytes = b""
-    stderr: bytes = b""
-    stdout_dropped: int = 0
-    stderr_dropped: int = 0
-    cleanup_confirmed: bool = True
-    cleanup_debt: str | None = None
-
-
-class HookScriptRunner(Protocol):
-    """Define the trusted synchronous adapter boundary used by orchestration."""
-    def execute_entry(
-        self,
-        *,
-        entry_index: int,
-        entry: HookScriptEntry,
-        context: HookContext,
-        options: HookScriptExecutionOptions,
-        policy: HookScriptExecutionPolicy,
-        execution_deadline: float,
-        cleanup_deadline: float,
-        output_remaining_bytes: int,
-        cancellation: threading.Event,
-    ) -> HookScriptEntryResult:
-        """Execute one admitted entry and return bounded observed facts."""
-        ...
-
-    def current_result(self, entry_index: int) -> HookScriptEntryResult:
-        """Return the authoritative recovery snapshot for one entry."""
-        ...
-
-    def cleanup_debts(self) -> tuple[object, ...]:
-        """Return cleanup debts still owned by this runner."""
-        ...
-
-    def retry_cleanup(self, debt_id: str) -> bool:
-        """Retry cleanup for one exact caller-selected debt."""
-        ...
 
 
 def execute_configured_hook_script(
@@ -297,18 +204,26 @@ def _valid_options(options: HookScriptExecutionOptions, policy: HookScriptExecut
 
 
 def _valid_policy(policy: HookScriptExecutionPolicy) -> bool:
-    """Validate exact numeric policy domains and cleanup ordering."""
-    positive = (
-        policy.entry_timeout_ms, policy.hook_timeout_ms, policy.cleanup_timeout_ms,
-        policy.terminate_grace_ms, policy.max_entries,
+    """Validate exact v1 policy domains, maxima, and cleanup ordering."""
+    durations = (
+        policy.entry_timeout_ms,
+        policy.hook_timeout_ms,
+        policy.cleanup_timeout_ms,
+        policy.terminate_grace_ms,
     )
-    nonnegative = (
-        policy.stdin_limit_bytes, policy.stdout_limit_bytes, policy.stderr_limit_bytes,
-        policy.output_total_limit_bytes, policy.argument_environment_limit_bytes,
+    byte_limits = (
+        policy.stdin_limit_bytes,
+        policy.stdout_limit_bytes,
+        policy.stderr_limit_bytes,
+        policy.output_total_limit_bytes,
+        policy.argument_environment_limit_bytes,
+        policy.result_limit_bytes,
     )
     return (
-        all(type(value) is int and value > 0 for value in positive)
-        and all(type(value) is int and value >= 0 for value in nonnegative)
+        all(type(value) is int and 0 < value <= 600_000 for value in durations)
+        and all(type(value) is int and 0 < value <= 1_048_576 for value in byte_limits)
+        and type(policy.max_entries) is int
+        and 0 < policy.max_entries <= 32
         and policy.terminate_grace_ms <= policy.cleanup_timeout_ms
     )
 

@@ -38,15 +38,12 @@ from __future__ import annotations
 import logging
 import os
 import re
-import shutil
-import tempfile
 from typing import Any
 
 import pytest
 from pytest_bdd import given, parsers, then, when
 
-logger = logging.getLogger("tests.bdd.tool_param.human_guard")
-
+from tests.bdd.temp_storage import BDDTempStorage
 from tests.bdd.tool_param_harness import (  # noqa: E402
     HUMAN_BASE_QUESTION,
     MULTIMODAL_ANSWER,
@@ -56,6 +53,8 @@ from tests.bdd.tool_param_harness import (  # noqa: E402
     expand_token,
     write_guard_workspace,
 )
+
+logger = logging.getLogger("tests.bdd.tool_param.human_guard")
 
 # Text markers that must never reach the model as the whole tool answer.
 RAW_EXCEPTION_MARKERS = (
@@ -73,21 +72,20 @@ ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}")
 
 
 @pytest.fixture
-def human_guard_ctx():
-    """Per-scenario state plus a sandbox workspace removed after the scenario."""
-    context: dict[str, Any] = {"files": {}, "response": None}
-    yield context
-    folder = context["files"].get("folder")
-    if folder and os.path.isdir(folder):
-        shutil.rmtree(folder)
-        logger.info("removed human/guard parameter test folder: [%s]", folder)
+def human_guard_ctx(bdd_temp_storage: BDDTempStorage):
+    """Keep per-scenario state backed by owned workspace temporary storage."""
+    return {
+        "files": {},
+        "response": None,
+        "temp_storage": bdd_temp_storage,
+    }
 
 
 def _tmp_folder(ctx) -> str:
-    """Return (creating on first use) the scenario-scoped sandbox workspace."""
+    """Return the lazily created scenario-owned sandbox workspace."""
     folder = ctx["files"].get("folder")
     if not folder:
-        folder = tempfile.mkdtemp(prefix="topsailai-bdd-humanguard-")
+        folder = str(ctx["temp_storage"].create_directory("topsailai-bdd-humanguard-"))
         ctx["files"]["folder"] = folder
     return folder
 

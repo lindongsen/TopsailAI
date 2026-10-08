@@ -14,6 +14,12 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping
 
 from topsailai.hooks.configuration import HookSettings
+from topsailai.hooks.configured_contracts import ConfiguredTrustPolicy
+from topsailai.hooks.configured_runtime import (
+    detach_configured_trust,
+    get_configured_trust,
+    prepare_configured as _prepare_configured,
+)
 from topsailai.hooks.contracts import (
     Binding,
     DeliveryReceipt,
@@ -101,14 +107,17 @@ class HookRuntime:
         temp_root: str,
         process_backend: IsolatedProcessBackend | None = None,
         diagnostic_observer: Callable[[dict[str, object]], None] | None = None,
+        configured_trust: ConfiguredTrustPolicy | None = None,
     ) -> None:
         """Build an explicit runtime without imports, workers, or environment discovery."""
+        detached_trust = detach_configured_trust(configured_trust)
         if type(temp_root) is not str or not os.path.isabs(temp_root):
             raise ValueError("temp_root must be an absolute path")
         errors = settings.validate() if isinstance(settings, HookSettings) else ("invalid settings",)
         valid_settings = not errors
         active_settings = settings if valid_settings else HookSettings(enabled=False)
         self._settings = active_settings
+        self._configured_trust = detached_trust
         self._registry = HookRegistry(
             bindings_per_event=active_settings.limits.bindings_per_event
         )
@@ -139,6 +148,9 @@ class HookRuntime:
         self._closing_scopes: set[str] = set()
         self._sequences: dict[str, int] = {}
         self._local = threading.local()
+
+    configured_trust = property(get_configured_trust)
+    prepare_configured = _prepare_configured
 
     def open_scope(
         self,

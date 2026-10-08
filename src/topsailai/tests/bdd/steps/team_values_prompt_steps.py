@@ -21,9 +21,9 @@ from tests.bdd.team_values_prompt_harness import (
 
 
 @pytest.fixture
-def team_values_prompt_ctx():
-    """Hold the scenario created by its Given step and close it afterward."""
-    context = {"scenario": None}
+def team_values_prompt_ctx(bdd_tmp_path: Path):
+    """Hold the scenario and close it before its temporary directory is removed."""
+    context = {"scenario": None, "tmp_path": bdd_tmp_path}
     yield context
     scenario = context["scenario"]
     if scenario is not None:
@@ -33,11 +33,11 @@ def team_values_prompt_ctx():
 def _create_scenario(
     context: dict,
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    bdd_tmp_path: Path,
     shared_state: str,
 ) -> TeamValuesPromptScenario:
     """Create exactly one private Team prompt scenario."""
-    scenario = TeamValuesPromptScenario(monkeypatch, tmp_path, shared_state)
+    scenario = TeamValuesPromptScenario(monkeypatch, bdd_tmp_path, shared_state)
     context["scenario"] = scenario
     assert scenario.server_thread.is_alive()
     return scenario
@@ -47,11 +47,11 @@ def _create_scenario(
 def given_direct_member_team(
     team_values_prompt_ctx,
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    bdd_tmp_path: Path,
 ):
     """Provide a direct Member with shared and private prompt layers."""
     return _create_scenario(
-        team_values_prompt_ctx, monkeypatch, tmp_path, "present"
+        team_values_prompt_ctx, monkeypatch, bdd_tmp_path, "present"
     )
 
 
@@ -59,11 +59,11 @@ def given_direct_member_team(
 def given_plugin_precomposed_team(
     team_values_prompt_ctx,
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    bdd_tmp_path: Path,
 ):
     """Provide a Team whose Manager output will simulate plugin precomposition."""
     return _create_scenario(
-        team_values_prompt_ctx, monkeypatch, tmp_path, "present"
+        team_values_prompt_ctx, monkeypatch, bdd_tmp_path, "present"
     )
 
 
@@ -76,7 +76,7 @@ def given_plugin_precomposed_team(
 def given_compatible_shared_values_team(
     team_values_prompt_ctx,
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    bdd_tmp_path: Path,
     shared_values_state: str,
 ):
     """Provide a Team with an absent or empty optional shared values file."""
@@ -84,7 +84,7 @@ def given_compatible_shared_values_team(
     return _create_scenario(
         team_values_prompt_ctx,
         monkeypatch,
-        tmp_path,
+        bdd_tmp_path,
         shared_values_state,
     )
 
@@ -93,11 +93,11 @@ def given_compatible_shared_values_team(
 def given_unreadable_shared_values_team(
     team_values_prompt_ctx,
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    bdd_tmp_path: Path,
 ):
     """Provide an existing shared-values path that cannot be read as a file."""
     return _create_scenario(
-        team_values_prompt_ctx, monkeypatch, tmp_path, "unreadable"
+        team_values_prompt_ctx, monkeypatch, bdd_tmp_path, "unreadable"
     )
 
 

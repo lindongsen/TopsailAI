@@ -21,6 +21,19 @@ from topsailai.hooks.artifact_store import (
     get_artifact_recovery_owner,
 )
 from topsailai.hooks.configuration import HookLimits, HookSettings
+from topsailai.hooks.configured_contracts import (
+    ConfiguredHookPoint,
+    ConfiguredHooks,
+    ConfiguredModuleFailure,
+    ConfiguredPlanSummary,
+    ConfiguredPreparationPolicy,
+    ConfiguredScript,
+    ConfiguredTrustPolicy,
+    DisposeConfiguredResult,
+    PrepareConfiguredResult,
+    PreparedConfigured,
+    PublishConfiguredResult,
+)
 from topsailai.hooks.contracts import (
     Binding,
     DeliveryReceipt,
@@ -57,8 +70,10 @@ from topsailai.hooks.hook_script_discovery import (
     HookScriptEntry,
     discover_hook_script_entries,
 )
+from topsailai.hooks.module_discovery_policy import ModuleDiscoveryPolicy
 from topsailai.hooks.registry import HookRegistry
 from topsailai.hooks.runtime import CloseReport, HookRuntime, HookScope
+from topsailai.hooks.script_runner import OwnedHookScriptRunner
 from topsailai.hooks.validation import ValidationError, freeze_json, validate_payload
 
 __all__ = [
@@ -77,6 +92,17 @@ __all__ = [
     "ArtifactValidationEvidence",
     "CapturedArtifact",
     "Binding",
+    "ConfiguredHookPoint",
+    "ConfiguredHooks",
+    "ConfiguredModuleFailure",
+    "ConfiguredPlanSummary",
+    "ConfiguredPreparationPolicy",
+    "ConfiguredScript",
+    "ConfiguredTrustPolicy",
+    "DisposeConfiguredResult",
+    "PrepareConfiguredResult",
+    "PreparedConfigured",
+    "PublishConfiguredResult",
     "CloseReport",
     "DeliveryReceipt",
     "DispatchReport",
@@ -90,6 +116,8 @@ __all__ = [
     "HookRegistry",
     "HookRuntime",
     "HookScope",
+    "ModuleDiscoveryPolicy",
+    "OwnedHookScriptRunner",
     "HookScriptBinding",
     "HookScriptDiscoveryResult",
     "HookScriptEntry",

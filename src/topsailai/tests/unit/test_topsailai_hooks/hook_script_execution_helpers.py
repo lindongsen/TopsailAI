@@ -75,6 +75,7 @@ class LocalHookScriptExecutionPolicy:
     output_total_limit_bytes: int = 65536
     max_entries: int = 32
     argument_environment_limit_bytes: int = 65536
+    result_limit_bytes: int = 16384
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,7 +212,7 @@ LOCAL_FIELDS = {
         "entry_timeout_ms", "hook_timeout_ms", "cleanup_timeout_ms",
         "terminate_grace_ms", "stdin_limit_bytes", "stdout_limit_bytes",
         "stderr_limit_bytes", "output_total_limit_bytes", "max_entries",
-        "argument_environment_limit_bytes",
+        "argument_environment_limit_bytes", "result_limit_bytes",
     ),
     LocalHookScriptEntryResult: (
         "entry_index", "basename", "status", "started", "exit_code",

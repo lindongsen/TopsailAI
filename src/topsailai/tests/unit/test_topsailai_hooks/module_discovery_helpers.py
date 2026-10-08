@@ -17,10 +17,18 @@ def require_discovery_contract() -> Callable[..., Any]:
     except (ImportError, ModuleNotFoundError) as exc:
         raise AssertionError(
             "R4 module-discovery contract missing: "
-            "build_module_manifest(module_folder, hook_point)"
+            "build_module_manifest(module_folder, hook_point, *, temp_root)"
         ) from exc
     assert callable(build_module_manifest), "build_module_manifest must be callable"
     return build_module_manifest
+
+
+def private_temp_root(plugin_folder: Path) -> Path:
+    """Create one private host-owned root separate from the plugin tree."""
+    root = plugin_folder.parent / f"{plugin_folder.name}-discovery-temp"
+    root.mkdir(mode=0o700, exist_ok=True)
+    root.chmod(0o700)
+    return root
 
 
 def write_module(folder: Path, name: str, body: str = "def main(*args, **kwargs):\n    return None\n") -> Path:

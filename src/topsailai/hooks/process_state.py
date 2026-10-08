@@ -52,6 +52,8 @@ class ChannelCloseState:
     resource: object | None = None
     close_owner: int | None = None
     close_started: bool = False
+    identity_pending: bool = False
+
 
 @dataclass(slots=True)
 class CleanupState:
@@ -70,6 +72,14 @@ class CleanupState:
             for name in ("stdin", "stdout", "stderr", "result")
         }
     )
+    setup_channels: dict[str, ChannelCloseState] = field(
+        default_factory=lambda: {
+            name: ChannelCloseState(state="closed")
+            for name in ("result_read", "result_write")
+        }
+    )
+
+
 @dataclass(slots=True)
 class LaunchRecord:
     """Retain process, channel, and cleanup ownership in one record."""
@@ -82,6 +92,9 @@ class LaunchRecord:
     error: BaseException | None = None
     cleanup_confirmed: bool = True
     cleanup_debt: str | None = None
+    cleanup_deadline: float | None = None
+    termination_grace: float | None = None
+    group_authorized: bool = False
     cleanup: CleanupState = field(default_factory=CleanupState)
 
 
@@ -89,6 +102,6 @@ class LaunchRecord:
 class DebtEntry:
     """Retain exclusive retry authority linked to its cleanup record."""
 
-    process: subprocess.Popen[bytes]
+    process: subprocess.Popen[bytes] | None
     record: LaunchRecord
     state: str = "pending"

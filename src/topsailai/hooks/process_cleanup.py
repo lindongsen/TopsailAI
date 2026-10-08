@@ -18,6 +18,7 @@ from topsailai.hooks.process_state import (
     LaunchRecord as _LaunchRecord,
     WorkerResult,
 )
+from topsailai.hooks.process_termination import terminate_record as _terminate_record
 
 
 class ProcessCleanupMixin:
@@ -104,7 +105,7 @@ class ProcessCleanupMixin:
                 if not cleanup.termination_started:
                     cleanup.termination_started = True
                     try:
-                        cleanup.termination_confirmed = self._terminate_owned(process)
+                        cleanup.termination_confirmed = self._terminate_record(record, process)
                         self._after_record_termination(record)
                     except BaseException as exc:
                         self._retain_cleanup_error(exc, ordinary_errors, interruptions)
@@ -147,17 +148,19 @@ class ProcessCleanupMixin:
             return cleanup.result
 
     def _ensure_record_debt(
-        self, record: _LaunchRecord, process: subprocess.Popen[bytes]
+        self,
+        record: _LaunchRecord,
+        process: subprocess.Popen[bytes] | None,
     ) -> None:
-        """Represent unfinished cleanup unless shared state is already settled."""
+        """Represent unfinished process or descriptor cleanup until fully settled."""
         with self._debt_lock:
             if record.cleanup.debt_state == "settled":
                 return
             if record.debt_id not in self._debt_processes:
                 self._debts[record.debt_id] = CleanupDebt(
                     record.debt_id,
-                    "process",
-                    process.pid,
+                    "process" if process is not None else "descriptors",
+                    process.pid if process is not None else None,
                     "owned cleanup not confirmed",
                 )
                 self._debt_processes[record.debt_id] = _DebtEntry(process, record)
@@ -183,20 +186,24 @@ class ProcessCleanupMixin:
         """Close channels while retaining every unconfirmed ownership obligation."""
         if not self._cleanup_execution_owned(record):
             raise RuntimeError("cleanup execution lease is required for channel closure")
-        process = record.process
-        if process is None:
-            return
         ordinary_errors: list[Exception] = []
         interruptions: list[BaseException] = []
-        for name in ("stdin", "stdout", "stderr"):
-            try:
-                self._close_stream_channel(record, process, name)
-            except BaseException as exc:
-                self._retain_cleanup_error(exc, ordinary_errors, interruptions)
+        process = record.process
+        if process is not None:
+            for name in ("stdin", "stdout", "stderr"):
+                try:
+                    self._close_stream_channel(record, process, name)
+                except BaseException as exc:
+                    self._retain_cleanup_error(exc, ordinary_errors, interruptions)
         try:
             self._close_result_channel(record)
         except BaseException as exc:
             self._retain_cleanup_error(exc, ordinary_errors, interruptions)
+        for name in ("result_read", "result_write"):
+            try:
+                self._close_setup_channel(record, name)
+            except BaseException as exc:
+                self._retain_cleanup_error(exc, ordinary_errors, interruptions)
         self._raise_cleanup_errors(ordinary_errors, interruptions)
 
     @staticmethod
@@ -518,8 +525,9 @@ class ProcessCleanupMixin:
         return "uncertain"
 
     def _record_channels_closed(self, record: _LaunchRecord) -> bool:
-        """Return whether every channel obligation is confirmed closed."""
-        return all(item.state == "closed" for item in record.cleanup.channels.values())
+        """Return whether every ordinary and setup channel is confirmed closed."""
+        channels = (*record.cleanup.channels.values(), *record.cleanup.setup_channels.values())
+        return all(item.state == "closed" for item in channels)
 
     @staticmethod
     def _descriptor_identity(
@@ -568,6 +576,8 @@ class ProcessCleanupMixin:
 
     def _after_record_result_fd_close(self, record: _LaunchRecord, descriptor: int) -> None:
         """Provide a compatibility seam after confirmed raw descriptor closure."""
+
+    _terminate_record = _terminate_record
 
     def _terminate_owned(self, process: subprocess.Popen[bytes]) -> bool:
         """Signal only while the exact process leader still proves group ownership."""
@@ -667,24 +677,6 @@ class ProcessCleanupMixin:
         except OSError:
             pass
 
-    @staticmethod
-    def _close_process_stream(process: subprocess.Popen[bytes], name: str) -> None:
-        """Close one setup-only process stream."""
-        stream = getattr(process, name)
-        if stream is None:
-            return
-        stream.close()
-        setattr(process, name, None)
-
-    @classmethod
-    def _close_channels(cls, process: subprocess.Popen[bytes], result_fd: int | None) -> None:
-        """Close setup-only channels before authoritative publication."""
-        for name in ("stdin", "stdout", "stderr"):
-            try:
-                cls._close_process_stream(process, name)
-            except OSError:
-                pass
-        cls._safe_close_fd(result_fd)
 
     @staticmethod
     def _group_exists(pgid: int) -> bool:
