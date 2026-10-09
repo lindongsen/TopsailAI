@@ -19,7 +19,7 @@ This document records the approved architecture and implemented standalone frame
 | Dimension | Current status |
 |---|---|
 | Implementation | Standalone contracts, validation, configuration, registry, scheduler, runtime, scope, diagnostics, HookScript orchestration, configured discovery/capture, and the simplified configured Runtime API are implemented. |
-| Verification | Focused API/resource tests, public Runtime BDD, affected Hook regression, and the complete 293-file Unit runner pass; cross-platform and production-performance acceptance remain separate. |
+| Verification | Focused API/resource tests, public Runtime BDD, affected Hook regression, and the complete 293-file Unit runner pass; post-implementation scoped coverage, cross-platform, packaged-launcher, application-integration, and production-performance acceptance remain separate gates. |
 | Integration | The configured API is available at `HookRuntime`; conversation, Agent, LLM, tool, memory, and skill lifecycle integrations remain deferred. |
 
 In scope now: the independent framework, its execution guarantees, interfaces, configuration, lifecycle, extension seams, current implementation status, and verification plan. Possible future integration families are conversation, User2Agent turns, Agent2LLM runs, LLM requests, prompt assembly, context summarization, persistence checkpoints, and task lifecycle.
@@ -118,7 +118,7 @@ settle_configured_empty_hook_script(...) -> HookScriptSettlement
 execute_configured_hook_script(..., runner: HookScriptRunner, ...) -> HookScriptSettlement
 ```
 
-The standalone HookScript orchestration interfaces `HookScriptExecutionOptions`, `HookScriptExecutionPolicy`, `HookScriptEntryResult`, `HookScriptRunner`, and `execute_configured_hook_script` are implemented. `HookScriptRunner` is an injected trusted runner protocol; these interfaces do not imply that a concrete launcher/transport or configured-hook Runtime integration is implemented.
+The standalone HookScript orchestration interfaces `HookScriptExecutionOptions`, `HookScriptExecutionPolicy`, `HookScriptEntryResult`, `HookScriptRunner`, and `execute_configured_hook_script` are implemented. `HookScriptRunner` is an injected trusted runner protocol. The simplified configured Runtime facade is also implemented through `register_configured()`, `dispatch_configured()`, `adispatch_configured()`, and `emit_configured()`; application-domain lifecycle integrations remain deferred.
 
 Every handler has the same signature and return envelope. Null, false, zero, empty text, empty list, and empty object are valid distinct JSON values. The framework does not interpret any of them as a veto, replacement, success marker, or request to retry. Execution success is represented by outcome.status, independently of outcome.value.
 
@@ -328,7 +328,7 @@ Plan tests before each implementation or integration unit. Existing focused test
 
 Use synchronization/ready signals rather than equal-duration sleeps. Isolation canaries require real child processes and a separate loose test anti-hang watchdog. Do not confuse mocked timeout return values with proof that workers terminate. Test supported operating systems and packaged launchers separately; document unsupported environments.
 
-Later LLM-related integrations require BDD using tests/mock/llm_mock_server.py over real loopback HTTP/SSE, proving unchanged provider request counts. Full project unit verification uses tests/run_tests.py, not a single pytest invocation over the full unit tree. Focused committed-tree evidence reported for the implemented units includes module discovery 22/22, HookScript orchestration 59/59, and Runtime/reload/diagnostics 68/68. Separately, the Tester reported a workspace Hooks-scope run with 277 collected, 277 passed, and 0 failed, errors, or skipped tests in 20.72 seconds. These are scoped gates, not proof of full-project, cross-platform, packaged-launcher, application-integration, or production-performance acceptance. Later full project verification must still use the prescribed runner.
+Later LLM-related integrations require BDD using `tests/mock/llm_mock_server.py` over real loopback HTTP/SSE, proving unchanged provider request counts. Full project unit verification uses `tests/run_tests.py`, not a single pytest invocation over the full unit tree. Focused committed-tree evidence for earlier implemented units includes module discovery 22/22, HookScript orchestration 59/59, and Runtime/reload/diagnostics 68/68; a separate Hooks-scope run reported 277 collected and 277 passed in 20.72 seconds. For the simplified configured Runtime change, public Runtime BDD passed 4/4, the affected Hook regression passed 177/177, and the prescribed complete Unit runner passed all 293 files in 242.937 seconds. Scoped coverage was not measured after the final branch-changing implementation, so the project coverage threshold remains an unresolved acceptance gate; cross-platform, packaged-launcher, application-integration, and production-performance acceptance also remain separate.
 
 ## Phased delivery
 
@@ -371,7 +371,7 @@ One framework provides registration, event delivery, ordering, isolated executio
 
 ## Simplified configured Hook registration and execution
 
-This section records the implemented configured-script API and supersedes the former caller-managed configured-candidate design. The approved design record is [`.task/plan_20261009185500_simplified-hook-configuration.md`](../.task/plan_20261009185500_simplified-hook-configuration.md); the durable public contract is [`docs/Hooks_API.md`](../docs/Hooks_API.md).
+This section records the implemented configured-script API and supersedes the former caller-managed configured-candidate design. The Human-approved design history is retained in the workspace task records; the durable tracked public contract is [`docs/Hooks_API.md`](../docs/Hooks_API.md).
 
 ### Implemented public boundary
 
