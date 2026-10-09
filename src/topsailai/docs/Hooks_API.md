@@ -12,6 +12,116 @@ programming_language: python
 
 This document is the authoritative public Python API reference for the standalone `topsailai.hooks` Runtime, including simplified configured-script registration. The architecture and security rationale are maintained in [`features/feature-unified-hooks-design.md`](../features/feature-unified-hooks-design.md).
 
+## Complete runnable lifecycle demo
+
+The following example uses only symbols exported from `topsailai.hooks`. It registers a configured-empty plan, which exercises the complete public Runtime lifecycle without weakening the trust contract for executable files. An empty plan is useful for wiring and lifecycle checks: it is a known Hook that succeeds with no outcomes, unlike an unknown Hook, which is rejected.
+
+```python
+import asyncio
+import tempfile
+from pathlib import Path
+
+from topsailai.hooks import ConfiguredTrustPolicy, HookRuntime, HookSettings
+
+
+async def dispatch_async(runtime, scope):
+    """Dispatch one configured event without blocking the active event loop."""
+    event = runtime.make_event(
+        scope,
+        "demo.business-event",
+        1,
+        {"message": "async"},
+        operation_id="demo-async",
+        layer="demo",
+        purpose="configured-hook-example",
+    )
+    report = await runtime.adispatch_configured("hook_demo", event)
+    if report.rejection_reason is not None:
+        raise RuntimeError(report.rejection_reason)
+    return report
+
+
+with tempfile.TemporaryDirectory() as temporary_directory:
+    root = Path(temporary_directory).resolve()
+    source_root = root / "configured-sources"
+    runtime_root = root / "runtime"
+    source_root.mkdir()
+    runtime_root.mkdir()
+
+    trust = ConfiguredTrustPolicy(source_roots=(source_root,))
+    with HookRuntime(
+        HookSettings(),
+        temp_root=str(runtime_root),
+        configured_trust=trust,
+    ) as runtime:
+        with runtime.open_scope(metadata={"owner_id": "demo-owner"}) as scope:
+            registration = runtime.register_configured(
+                "hook_demo",
+                scope,
+                scripts=[],
+            )
+            if not registration.accepted:
+                raise RuntimeError(registration.errors)
+
+            sync_event = runtime.make_event(
+                scope,
+                "demo.business-event",
+                1,
+                {"message": "sync"},
+                operation_id="demo-sync",
+                layer="demo",
+                purpose="configured-hook-example",
+            )
+            sync_report = runtime.dispatch_configured("hook_demo", sync_event)
+            assert sync_report.rejection_reason is None
+            assert sync_report.outcomes == ()
+
+            async_report = asyncio.run(dispatch_async(runtime, scope))
+            assert async_report.outcomes == ()
+
+            background_event = runtime.make_event(
+                scope,
+                "demo.business-event",
+                1,
+                {"message": "background"},
+                operation_id="demo-background",
+                layer="demo",
+                purpose="configured-hook-example",
+            )
+            receipt = runtime.emit_configured("hook_demo", background_event)
+            if not receipt.admitted:
+                print(f"background work rejected: {receipt.rejection_reason}")
+
+            invalid_registration = runtime.register_configured(
+                "hook_demo_missing_source",
+                scope,
+            )
+            assert not invalid_registration.accepted
+            assert invalid_registration.errors == ("invalid_script_source",)
+
+            unknown = runtime.dispatch_configured("hook_unknown", sync_event)
+            assert unknown.rejection_reason == "unknown_configured_hook"
+```
+
+`asyncio.run()` is used only because this example starts in synchronous code. An application already running an event loop should directly use `await runtime.adispatch_configured(...)` and must not call `dispatch_configured()` from that loop. `emit_configured()` returns admission status only; there is intentionally no Receipt wait method. Exiting the Scope and Runtime context managers settles owned work and closes resources.
+
+## Non-empty script deployment prerequisite
+
+A non-empty `scripts` or `folder` registration additionally requires deployment-provisioned `ConfiguredTrustPolicy` data for every admitted executable: authorized source roots, exact interpreters or native-script policy, and matching immutable `ArtifactClosureAssertion` records. Supplying only a source root is insufficient and fails closed during artifact capture.
+
+The package currently exposes the trust records but does not provide a public manifest builder or loader for ordinary callers. Therefore this document does not fabricate a helper that hashes and authorizes files at runtime. Production code should receive the complete policy from a trusted deployment/configuration boundary; tests may construct exact assertions for their own fixtures. Once that policy has been supplied to `HookRuntime(configured_trust=...)`, use one of the registration forms below.
+
+## Existing real-worker demos
+
+The maintained demos under [`tests/demo/hooks/`](../tests/demo/hooks/) exercise the public generic `HookRuntime` binding API with real isolated worker processes:
+
+- `demo_basic_dispatch.py` demonstrates deterministic priority/dependency order and process isolation.
+- `demo_failure_isolation.py` demonstrates structured handler failure while independent work succeeds.
+- `demo_runtime_reload.py` demonstrates settings reload, binding replacement, registry generations, and rejection after Runtime close.
+- `unified_hooks_demo_handlers.py` contains importable Python handlers used by those three demos.
+
+These are runnable public-API demonstrations, but they use `EventDefinition`, `Binding`, and `runtime.register(...)`; they do not call `register_configured(...)`, discover script files, or construct configured-script trust assertions. They therefore demonstrate that the underlying Runtime executes real non-empty handlers, but they do not remove the configured-script deployment prerequisite above and are not a manifest builder or loader.
+
 ## Configured Runtime API
 
 The implemented method signatures are:
@@ -71,8 +181,8 @@ result = runtime.register_configured(
     "hook_pre_tool_call",
     scope,
     scripts=[
-        "/project/hooks/01_validate.py",
-        "/project/hooks/02_add_context.py",
+        source_root / "01_validate.py",
+        source_root / "02_add_context.py",
     ],
 )
 if not result.accepted:
@@ -89,7 +199,7 @@ An empty `scripts=[]` is valid and registers a configured-empty plan. Executing 
 result = runtime.register_configured(
     "hook_post_final_answer",
     scope,
-    folder="/project/hooks/post_final_answer",
+    folder=source_root / "post_final_answer",
 )
 if not result.accepted:
     raise RuntimeError(result.errors)
