@@ -11,6 +11,7 @@ topsailai:
   non-src:
     'pyproject.toml': '/TopsailAI/pyproject.toml'
     'uv.lock': '/TopsailAI/uv.lock'
+    'build/data/topsailai.sh': '/etc/profile.d/topsailai.sh'
   control:
     template: 'build/data/template/control'
     params:
