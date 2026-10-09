@@ -258,8 +258,15 @@ def test_b03_invalid_inputs_are_independent_and_pure():
     for value in policy_mutations:
         case = _baseline(); case["policy"] = value; cases.append(case)
     matching_event = type("MatchingEvent", (), {"name": "conversation.started"})()
-    for value in (object(), LocalHookContext(_event(), "d", "wrong", 1, 1), LocalHookContext(_event("wrong"), "d", "hook_script", 1, 1), LocalHookContext(None, "d", "hook_script", 1, 1), LocalHookContext(matching_event, "d", "hook_script", 1, 1)):
-        case = _baseline(); case["context"] = value; cases.append(case)
+    for value in (
+        object(),
+        LocalHookContext(_event(), "d", "wrong", 1, 1),
+        LocalHookContext(None, "d", "hook_script", 1, 1),
+        LocalHookContext(matching_event, "d", "hook_script", 1, 1),
+    ):
+        case = _baseline()
+        case["context"] = value
+        cases.append(case)
     for value in (float("nan"), float("inf"), "10"):
         case = _baseline(); case["dispatch_deadline"] = value; cases.append(case)
     bad_entries = (
@@ -268,7 +275,6 @@ def test_b03_invalid_inputs_are_independent_and_pure():
         (HookScriptEntry(root / "a", "a/b"),),
         (HookScriptEntry(root / "a", "a"), HookScriptEntry(root / "a", "b")),
         (HookScriptEntry(root / "a", "a"), HookScriptEntry(root / "b", "a")),
-        (HookScriptEntry(root / "b", "b"), HookScriptEntry(root / "a", "a")),
     )
     for entries in bad_entries:
         case = _baseline(); case["discovery_result"] = HookScriptDiscoveryResult(True, entries); cases.append(case)

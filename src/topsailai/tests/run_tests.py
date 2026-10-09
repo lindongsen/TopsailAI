@@ -12,8 +12,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Resolve directories relative to this script's location.
 SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
 TEST_DIR = SCRIPT_DIR / "unit"
-OUTPUT_FILE = (SCRIPT_DIR.parent / ".tmp" / "test_results.txt").resolve()
+OUTPUT_FILE = (PROJECT_ROOT / ".tmp" / "test_results.txt").resolve()
+RUN_TEMP_ROOT = (PROJECT_ROOT / ".tmp" / "unit-runner").resolve()
 print(f"Results will save to {OUTPUT_FILE}")
 
 
@@ -40,40 +42,34 @@ def resolve_src_root(start_dir=None, package_name=None):
     return start.parent
 
 
-# Source root prepended to PYTHONPATH so child pytest processes can import the package.
+# Import roots used by isolated child pytest processes.
 SRC_ROOT = resolve_src_root()
 
 
 def build_child_env(base_env=None, src_root=None):
-    """Return a child-process environment whose PYTHONPATH can import the package.
+    """Return a child environment with deterministic project import roots.
 
-    Each test file runs in its own subprocess with ``cwd`` set to the unit-test
-    directory, so the source root is not on the default import path and tests
-    that spawn ``python -c "import topsailai..."`` fail with ModuleNotFoundError.
-    The source root is prepended to any inherited ``PYTHONPATH`` and duplicated
-    entries are removed. The mapping passed in is never modified in place.
-
-    Args:
-        base_env: Base environment mapping; defaults to ``os.environ``.
-        src_root: Source root to prepend; defaults to the resolved ``SRC_ROOT``.
-
-    Returns:
-        dict: Copy of ``base_env`` with ``PYTHONPATH`` rebuilt.
+    Per-file subprocesses run from ``tests/unit``. The project root is needed
+    for imports from ``tests.*`` while the source root is needed for imports
+    from ``topsailai``. Required roots are prepended without duplicates, and
+    the caller's mapping is never modified in place.
     """
     env = dict(os.environ if base_env is None else base_env)
-    raw_root = SRC_ROOT if src_root is None else src_root
-    root = os.path.normpath(str(raw_root)) if str(raw_root) else ""
-    if not root:
-        return env
+    raw_source = SRC_ROOT if src_root is None else src_root
+    required = [os.path.normpath(str(PROJECT_ROOT))]
+    if str(raw_source):
+        required.append(os.path.normpath(str(raw_source)))
 
     inherited = env.get("PYTHONPATH", "")
-    norm_root = os.path.normcase(root)
+    required_keys = {os.path.normcase(path) for path in required}
     kept = [
         entry
         for entry in inherited.split(os.pathsep)
-        if entry and os.path.normcase(os.path.normpath(entry)) != norm_root
+        if entry
+        and os.path.normcase(os.path.normpath(entry)) not in required_keys
     ]
-    env["PYTHONPATH"] = os.pathsep.join([root] + kept)
+    env["PYTHONPATH"] = os.pathsep.join(required + kept)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     return env
 
 
@@ -110,9 +106,13 @@ def run_test(test_file, timeout, retries=0):
     test_path = TEST_DIR / test_file
     last_status = None
     last_details = None
+    RUN_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    RUN_TEMP_ROOT.chmod(0o755)
+    safe_name = test_file.replace(os.sep, "-").replace("/", "-")
 
     for attempt in range(retries + 1):
         start = time.perf_counter()
+        basetemp = RUN_TEMP_ROOT / f"{safe_name}-{attempt}"
         try:
             result = subprocess.run(
                 [
@@ -123,6 +123,9 @@ def run_test(test_file, timeout, retries=0):
                     "-v",
                     "--tb=short",
                     "--color=no",
+                    "-p",
+                    "no:cacheprovider",
+                    f"--basetemp={basetemp}",
                 ],
                 capture_output=True,
                 text=True,
@@ -147,10 +150,10 @@ def run_test(test_file, timeout, retries=0):
             elapsed = time.perf_counter() - start
             last_status = "TIMEOUT"
             last_details = f"Test timed out after {timeout} seconds"
-        except Exception as e:
+        except Exception as error:
             elapsed = time.perf_counter() - start
             last_status = "ERROR"
-            last_details = str(e)
+            last_details = str(error)
 
     return last_status, last_details, elapsed
 

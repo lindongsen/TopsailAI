@@ -192,3 +192,12 @@ Why this prevents recurrence: every late result is observed before another non-c
 ## Nonretryable uncertainty must be enforced at every cleanup entry point
 
 The artifact descriptor ledger originally rejected an uncertain close only during bulk cleanup, while direct `close()` and its `close_descriptor()` alias could re-enter first from the public exception handler and retry a historical descriptor integer. When an operation records an ambiguous outcome, every public and internal entry point capable of repeating that operation must reject the uncertain state before authority mutation or I/O; tests must cover each individual alias plus the real composed recovery order with actual identifier reuse, not only the final bulk-cleanup path. This prevents an earlier cleanup stage from bypassing a safeguard implemented only in a later stage.
+
+
+## A per-file test runner must preserve both import roots, isolate temporary trees, and bound process concurrency
+
+Trigger: the repository-mandated `tests/run_tests.py` passed focused tests but failed 25 files when each file ran from `tests/unit`, privilege-dropping children traversed a shared pytest temporary tree, and ten concurrent process-heavy files exhausted deadline budgets.
+
+Action: construct each child `PYTHONPATH` from both the project root (for `tests.*`) and source root (for `topsailai`), assign each file a task-scoped basetemp below a minimally traversable `0755` root, and use bounded worker concurrency that the deadline-sensitive process tests can sustain.
+
+Why this prevents recurrence: the runner now preserves isolated per-file imports, lets unprivileged children reach only their owned temporary hierarchy without widening source permissions, and avoids turning host contention into false deadline regressions.

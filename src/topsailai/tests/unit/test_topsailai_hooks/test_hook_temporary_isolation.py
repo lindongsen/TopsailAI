@@ -457,17 +457,17 @@ def test_backend_owner_handoff_interruption_preserves_cleanup(
     write_module(plugins, "valid")
     host_root = private_temp_root(plugins)
     interruption = KeyboardInterrupt("owner handoff")
-    original_factory = discovery_module._make_cleanup_owner
-    calls = 0
+    original_bind_backend = discovery_module.ModuleCleanupOwner.bind_backend
 
-    def interrupt_second_owner(backend: object, storage: TemporaryStorageOwner) -> object:
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise interruption
-        return original_factory(backend, storage)
+    def interrupt_after_bind(owner: object, backend: object) -> None:
+        original_bind_backend(owner, backend)
+        raise interruption
 
-    monkeypatch.setattr(discovery_module, "_make_cleanup_owner", interrupt_second_owner)
+    monkeypatch.setattr(
+        discovery_module.ModuleCleanupOwner,
+        "bind_backend",
+        interrupt_after_bind,
+    )
     with pytest.raises(KeyboardInterrupt) as caught:
         discovery_module.build_module_manifest(
             plugins, "hook_conversation_started", temp_root=str(host_root)

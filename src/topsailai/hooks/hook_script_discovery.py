@@ -156,6 +156,88 @@ def _resolve_strict(path: Path) -> Path:
     return path.resolve(strict=True)
 
 
+def discover_configured_hook_scripts(
+    *,
+    scripts: tuple[os.PathLike[str] | str, ...] | None,
+    folder: os.PathLike[str] | str | None,
+    platform_policy: ExecutablePlatformPolicy,
+) -> HookScriptDiscoveryResult:
+    """Discover one ordered list or one recursive directory atomically."""
+    if (scripts is None) == (folder is None):
+        return _rejected(_TARGET_INVALID)
+    if scripts is not None:
+        if type(scripts) is not tuple:
+            return _rejected(_TARGET_INVALID)
+        entries: list[HookScriptEntry] = []
+        for target in scripts:
+            result = discover_hook_script_entries(target, platform_policy)
+            if not result.accepted or len(result.entries) != 1:
+                return result if not result.accepted else _rejected(_TARGET_INVALID)
+            entries.append(result.entries[0])
+        return _unique_entries(entries)
+    return _discover_recursive_directory(folder, platform_policy)
+
+
+def _discover_recursive_directory(
+    target: os.PathLike[str] | str | None,
+    policy: ExecutablePlatformPolicy,
+) -> HookScriptDiscoveryResult:
+    """Recursively discover scripts without traversing symbolic-link directories."""
+    root_path = _target_path(target)
+    if root_path is None:
+        return _rejected(_TARGET_INVALID)
+    try:
+        status = root_path.lstat()
+        root = root_path.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return _rejected(_TARGET_INVALID)
+    if stat.S_ISLNK(status.st_mode) or not stat.S_ISDIR(status.st_mode):
+        return _rejected(_TARGET_INVALID)
+    entries: list[tuple[str, HookScriptEntry]] = []
+    try:
+        walked = tuple(os.walk(root_path, followlinks=False))
+    except (OSError, ValueError):
+        return _rejected(_TARGET_INVALID)
+    for directory, names, files in walked:
+        base = Path(directory)
+        names[:] = sorted(
+            name for name in names if not (base / name).is_symlink()
+        )
+        for name in sorted(files):
+            candidate = base / name
+            try:
+                candidate_status = candidate.lstat()
+            except (OSError, ValueError):
+                return _rejected(_TARGET_INVALID)
+            if stat.S_ISLNK(candidate_status.st_mode) or not stat.S_ISREG(candidate_status.st_mode):
+                continue
+            if not _has_execute_permission(candidate):
+                continue
+            try:
+                canonical = candidate.resolve(strict=True)
+            except (OSError, RuntimeError, ValueError):
+                return _rejected(_TARGET_INVALID)
+            if not canonical.is_relative_to(root):
+                return _rejected(_PATH_ESCAPE)
+            if not _is_admitted(canonical, policy):
+                return _rejected(_TARGET_NOT_EXECUTABLE)
+            relative = candidate.relative_to(root_path).as_posix()
+            entries.append((relative, HookScriptEntry(canonical, candidate.name)))
+    entries.sort(key=lambda item: item[0])
+    return _unique_entries([entry for _, entry in entries])
+
+
+def _unique_entries(entries: list[HookScriptEntry]) -> HookScriptDiscoveryResult:
+    """Reject duplicate canonical identities without publishing a partial list."""
+    paths = tuple(entry.source_path for entry in entries)
+    if len(set(paths)) != len(paths):
+        return _rejected("duplicate hook_script identity")
+    names = tuple(entry.basename for entry in entries)
+    if len(set(names)) != len(names):
+        return _rejected("duplicate hook_script name")
+    return HookScriptDiscoveryResult(True, tuple(entries))
+
+
 def _has_execute_permission(path: Path) -> bool:
     """Return whether any POSIX-style execute bit is present on the entry."""
     try:

@@ -404,6 +404,31 @@ def _valid_paths(paths: object, *, minimum: int) -> bool:
     return len(set(paths)) == len(paths)
 
 
+@dataclass(frozen=True, slots=True)
+class ConfiguredRegistrationResult:
+    """Report atomic configured registration without exposing lifecycle internals."""
+
+    accepted: bool
+    changed: bool = False
+    script_count: int = 0
+    errors: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Validate the small caller-facing registration result."""
+        if type(self.accepted) is not bool or type(self.changed) is not bool:
+            raise ValueError("invalid configured registration result")
+        if type(self.script_count) is not int or self.script_count < 0:
+            raise ValueError("invalid configured registration result")
+        if type(self.errors) is not tuple or any(
+            type(error) is not str or not error for error in self.errors
+        ):
+            raise ValueError("invalid configured registration result")
+        if not self.accepted and (self.changed or self.script_count):
+            raise ValueError("invalid configured registration result")
+        if self.accepted and self.errors:
+            raise ValueError("invalid configured registration result")
+
+
 class PreparedConfigured:
     """Represent one opaque Runtime-issued unpublished candidate."""
 

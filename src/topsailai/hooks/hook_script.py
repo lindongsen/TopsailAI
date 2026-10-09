@@ -165,7 +165,7 @@ def _valid_execution_inputs(
         return False
     if type(context.event) is not HookEvent or context.binding_id != _RESERVED_BINDING_ID:
         return False
-    if context.event.name != hook_point or not _valid_policy(policy) or not _valid_options(options, policy):
+    if not _valid_policy(policy) or not _valid_options(options, policy):
         return False
     if type(entries) is not tuple or not entries or len(entries) > policy.max_entries:
         return False
@@ -229,8 +229,7 @@ def _valid_policy(policy: HookScriptExecutionPolicy) -> bool:
 
 
 def _valid_entries(entries: tuple[HookScriptEntry, ...]) -> bool:
-    """Require deterministic, unique, absolute execution metadata."""
-    keys: list[tuple[str, str]] = []
+    """Require unique absolute execution metadata in its already planned order."""
     paths: set[Path] = set()
     names: set[str] = set()
     for entry in entries:
@@ -244,8 +243,7 @@ def _valid_entries(entries: tuple[HookScriptEntry, ...]) -> bool:
             return False
         paths.add(entry.source_path)
         names.add(entry.basename)
-        keys.append((entry.basename, entry.source_path.name))
-    return keys == sorted(keys)
+    return True
 
 
 def _context_encoded_size(context: HookContext) -> int:

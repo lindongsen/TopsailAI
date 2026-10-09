@@ -54,12 +54,15 @@ class TestResolveSrcRoot:
 class TestBuildChildEnv:
     """Tests for build_child_env() PYTHONPATH construction."""
 
-    def test_prepends_src_root(self, runner):
-        """The source root must be the first PYTHONPATH entry."""
+    def test_prepends_project_and_source_roots(self, runner):
+        """Children import both the tests package and the project package deterministically."""
         env = runner.build_child_env({"PYTHONPATH": f"/foo{os.pathsep}/bar"})
         entries = env["PYTHONPATH"].split(os.pathsep)
-        assert entries[0] == os.path.normpath(str(runner.SRC_ROOT))
-        assert entries[1:] == ["/foo", "/bar"]
+        assert entries[:2] == [
+            os.path.normpath(str(runner.PROJECT_ROOT)),
+            os.path.normpath(str(runner.SRC_ROOT)),
+        ]
+        assert entries[2:] == ["/foo", "/bar"]
 
     def test_keeps_existing_pythonpath_entries(self, runner):
         """Inherited entries are preserved instead of being replaced or cleared."""
@@ -69,23 +72,34 @@ class TestBuildChildEnv:
         assert "/keep/first" in env["PYTHONPATH"]
         assert "/keep/second" in env["PYTHONPATH"]
 
-    def test_removes_duplicated_src_root(self, runner):
-        """An already present source root is not duplicated."""
-        root = str(runner.SRC_ROOT)
-        env = runner.build_child_env({"PYTHONPATH": f"/foo{os.pathsep}{root}"})
-        entries = env["PYTHONPATH"].split(os.pathsep)
-        assert entries.count(entries[0]) == 1
-        assert entries == [os.path.normpath(root), "/foo"]
+    def test_removes_duplicated_required_roots(self, runner):
+        """Already present project and source roots are not duplicated."""
+        source = str(runner.SRC_ROOT)
+        project = str(runner.PROJECT_ROOT)
+        env = runner.build_child_env(
+            {"PYTHONPATH": os.pathsep.join(["/foo", source, project])}
+        )
+        assert env["PYTHONPATH"].split(os.pathsep) == [
+            os.path.normpath(project),
+            os.path.normpath(source),
+            "/foo",
+        ]
 
     def test_missing_pythonpath(self, runner):
-        """An unset PYTHONPATH still yields the source root only."""
+        """An unset PYTHONPATH still yields both required import roots."""
         env = runner.build_child_env({})
-        assert env["PYTHONPATH"] == os.path.normpath(str(runner.SRC_ROOT))
+        assert env["PYTHONPATH"].split(os.pathsep) == [
+            os.path.normpath(str(runner.PROJECT_ROOT)),
+            os.path.normpath(str(runner.SRC_ROOT)),
+        ]
 
     def test_empty_pythonpath(self, runner):
-        """An empty PYTHONPATH yields the source root without leading separators."""
+        """An empty PYTHONPATH yields required roots without blank entries."""
         env = runner.build_child_env({"PYTHONPATH": ""})
-        assert env["PYTHONPATH"] == os.path.normpath(str(runner.SRC_ROOT))
+        assert env["PYTHONPATH"].split(os.pathsep) == [
+            os.path.normpath(str(runner.PROJECT_ROOT)),
+            os.path.normpath(str(runner.SRC_ROOT)),
+        ]
 
     def test_other_variables_preserved(self, runner):
         """Unrelated environment variables must survive untouched."""
@@ -105,7 +119,10 @@ class TestBuildChildEnv:
         try:
             env = runner.build_child_env()
             assert "PYTHONPATH" not in os.environ
-            assert env["PYTHONPATH"].startswith(os.path.normpath(str(runner.SRC_ROOT)))
+            assert env["PYTHONPATH"].split(os.pathsep)[:2] == [
+                os.path.normpath(str(runner.PROJECT_ROOT)),
+                os.path.normpath(str(runner.SRC_ROOT)),
+            ]
         finally:
             if original is not None:
                 os.environ["PYTHONPATH"] = original
@@ -122,12 +139,18 @@ class TestBuildChildEnv:
     def test_explicit_src_root_override(self, runner):
         """An explicit source root argument takes precedence over the resolved one."""
         env = runner.build_child_env({"PYTHONPATH": ""}, src_root="/custom/root")
-        assert env["PYTHONPATH"] == os.path.normpath("/custom/root")
+        assert env["PYTHONPATH"].split(os.pathsep) == [
+            os.path.normpath(str(runner.PROJECT_ROOT)),
+            os.path.normpath("/custom/root"),
+        ]
 
-    def test_empty_src_root_keeps_env(self, runner):
-        """An empty source root leaves PYTHONPATH untouched instead of adding blanks."""
+    def test_empty_src_root_keeps_project_root(self, runner):
+        """An empty source override still keeps the tests package importable."""
         env = runner.build_child_env({"PYTHONPATH": "/foo"}, src_root="")
-        assert env["PYTHONPATH"] == "/foo"
+        assert env["PYTHONPATH"].split(os.pathsep) == [
+            os.path.normpath(str(runner.PROJECT_ROOT)),
+            "/foo",
+        ]
 
 
 class TestRunTestPassesEnv:
@@ -153,8 +176,38 @@ class TestRunTestPassesEnv:
         assert status == "PASS"
         assert details == "All tests passed"
         env = captured["env"]
-        assert env["PYTHONPATH"].startswith(os.path.normpath(str(runner.SRC_ROOT)))
+        assert env["PYTHONPATH"].split(os.pathsep)[:2] == [
+            os.path.normpath(str(runner.PROJECT_ROOT)),
+            os.path.normpath(str(runner.SRC_ROOT)),
+        ]
         assert captured["cwd"] == runner.TEST_DIR
+
+    def test_run_test_uses_isolated_workspace_basetemp(self, runner, monkeypatch, tmp_path):
+        """Each file receives a distinct pytest basetemp below the workspace temp root."""
+        captured = {}
+
+        class FakeCompleted:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured.update(kwargs)
+            return FakeCompleted()
+
+        monkeypatch.setattr(runner, "RUN_TEMP_ROOT", tmp_path / "unit-runner")
+        monkeypatch.setattr(runner.subprocess, "run", fake_run)
+        status, _, _ = runner.run_test("nested/test_example.py", 5)
+
+        assert status == "PASS"
+        basetemp_arg = next(
+            value for value in captured["cmd"] if value.startswith("--basetemp=")
+        )
+        basetemp = Path(basetemp_arg.split("=", 1)[1])
+        assert basetemp.parent == runner.RUN_TEMP_ROOT
+        assert runner.RUN_TEMP_ROOT.stat().st_mode & 0o777 == 0o755
+        assert "-p" in captured["cmd"] and "no:cacheprovider" in captured["cmd"]
 
 
 class TestMainExitCode:

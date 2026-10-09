@@ -16,9 +16,14 @@ from typing import Any, Callable, Mapping
 from topsailai.hooks.configuration import HookSettings
 from topsailai.hooks.configured_contracts import ConfiguredTrustPolicy
 from topsailai.hooks.configured_runtime import (
+    adispatch_configured as _adispatch_configured,
     detach_configured_trust,
+    dispatch_configured as _dispatch_configured,
+    emit_configured as _emit_configured,
     get_configured_trust,
     prepare_configured as _prepare_configured,
+    register_configured as _register_configured,
+    retire_configured_scope,
 )
 from topsailai.hooks.contracts import (
     Binding,
@@ -151,6 +156,10 @@ class HookRuntime:
 
     configured_trust = property(get_configured_trust)
     prepare_configured = _prepare_configured
+    register_configured = _register_configured
+    dispatch_configured = _dispatch_configured
+    adispatch_configured = _adispatch_configured
+    emit_configured = _emit_configured
 
     def open_scope(
         self,
@@ -610,6 +619,7 @@ class HookRuntime:
                     "dispatch_cancelled", scope_id=scope_id, cancelled_count=cancelled
                 )
             self._scheduler.release_scope(scope_id)
+            retire_configured_scope(self, scope_id)
             self._registry.unregister_scope(scope_id)
             with self._lock:
                 scope = self._scopes.pop(scope_id, None)

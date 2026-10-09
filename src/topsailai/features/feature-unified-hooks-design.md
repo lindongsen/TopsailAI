@@ -6,21 +6,21 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
-status: partially implemented
-scope: standalone components implemented; integration and some acceptance remain
+status: implemented
+scope: standalone framework and simplified configured Hook Runtime API implemented; application-domain integrations remain deferred
 ---
 
 # Standalone Unified Hook Framework
 
 ## Status and scope
 
-This document records both the approved architecture and the current implementation boundary. The standalone framework, HookScript planning and orchestration, and configured module discovery are implemented; application integration, immutable file artifacts, a concrete script launcher/transport, and some acceptance gates remain. This revision replaces the earlier migration-oriented proposal and follows the latest human direction: one foundational framework, with domain-specific behavior implemented above it.
+This document records the approved architecture and implemented standalone framework boundary. The framework now includes explicit bindings, HookScript planning and orchestration, immutable configured-script capture, recursive configured discovery, exact-name configured execution, atomic replacement, and scope/Runtime-owned cleanup. Application-domain integrations remain separately reviewed work.
 
 | Dimension | Current status |
 |---|---|
-| Implementation | Standalone contracts, validation, configuration, registry, scheduler, runtime, scope, diagnostics, HookScript planning/orchestration, and module discovery are implemented. |
-| Verification | Focused committed-tree gates exist for the implemented components; full-project, cross-platform, packaged-launcher, and production-performance acceptance remain separate. |
-| Integration | Configured discovery and HookScript components are not yet composed into the ordinary Runtime or application lifecycle boundaries. |
+| Implementation | Standalone contracts, validation, configuration, registry, scheduler, runtime, scope, diagnostics, HookScript orchestration, configured discovery/capture, and the simplified configured Runtime API are implemented. |
+| Verification | Focused API/resource tests, public Runtime BDD, affected Hook regression, and the complete 293-file Unit runner pass; cross-platform and production-performance acceptance remain separate. |
+| Integration | The configured API is available at `HookRuntime`; conversation, Agent, LLM, tool, memory, and skill lifecycle integrations remain deferred. |
 
 In scope now: the independent framework, its execution guarantees, interfaces, configuration, lifecycle, extension seams, current implementation status, and verification plan. Possible future integration families are conversation, User2Agent turns, Agent2LLM runs, LLM requests, prompt assembly, context summarization, persistence checkpoints, and task lifecycle.
 
@@ -369,132 +369,51 @@ After separate approval, add one event family at a time from the catalog, beginn
 
 One framework provides registration, event delivery, ordering, isolated execution, deadlines, outcomes and lifecycle management. Functional differences live in event schemas and caller-owned result policies, not hook categories. Optional extensions may propose data but never gain implicit authority over core application flow. Build and verify this component independently first; choose lifecycle integration points only after its non-disruptive behavior is proven.
 
-## Configured module discovery and terminal hook_script
+## Simplified configured Hook registration and execution
 
-This section incorporates the human-approved registration requirements and supersedes the earlier statement that directory discovery is wholly deferred. Discovery remains explicit and configuration-driven: the framework never scans the working directory, installed packages, or arbitrary search paths implicitly.
+This section records the implemented configured-script API and supersedes the former caller-managed configured-candidate design. The approved design record is [`.task/plan_20261009185500_simplified-hook-configuration.md`](../.task/plan_20261009185500_simplified-hook-configuration.md); the durable public contract is [`docs/Hooks_API.md`](../docs/Hooks_API.md).
 
-### Hook-point configuration and reserved registration
+### Implemented public boundary
 
-Each framework-defined hook point may receive one typed configuration containing:
+Configured scripts belong at the existing `HookRuntime` boundary. A caller supplies one exact `hook_name` and exactly one source: an ordered `scripts` list or one recursively searched `folder`. The Runtime validates and captures the complete source, atomically registers one Runtime/scope-owned plan, executes it by exact Hook name, and cleans up internal resources when its scope or Runtime closes.
 
-- `module_folder`: an optional canonical directory whose direct children are module-hook candidates;
-- `hook_script.target`: an optional canonical path to one executable file or one directory of directly contained executable entries;
-- module arguments and keyword arguments that are JSON-serializable and bounded;
-- `hook_script.argv`: a bounded list of literal string arguments appended after each selected executable path;
-- `hook_script.stdin_payload`: a declaration that the bounded detached hook context is encoded as JSON on standard input;
-- `hook_script.environment_allowlist`: names that may be copied from the host environment;
-- `hook_script.environment`: bounded explicit string overrides, with secret-bearing values prohibited from diagnostics;
-- working-directory and input/output byte limits; and
-- the ordinary unified binding timeout, aggregate deadline, cancellation, and capacity settings.
+The implementation does not introduce an Agent-level `run_agent()` API, a second registry, or another scheduler. Existing explicit `register(definition, binding, scope)`, `dispatch(event)`, `adispatch(event)`, and `emit(event)` behavior remains unchanged.
 
-The implemented independent planner reserves exactly one binding named `hook_script` for every hook point. The design requires it to be admitted, scheduled, cancelled, settled, and reported through the same runtime mechanisms as module hooks once integrated. Users cannot replace, remove, duplicate, rename, reprioritize, or add dependencies after this reserved binding. An unconfigured `hook_script` remains a successful zero-entry no-op. It counts toward `bindings_per_event`; candidate validation reserves its slot so capacity is explicit rather than hidden.
+Implemented additive Runtime methods are:
 
-The implemented planner places `hook_script` as the terminal binding. Module hooks execute sequentially in deterministic module-name order and must reach a terminal, cleanup-safe state before the next module starts. Only after every preceding module has completed may `hook_script` start. This rule overrides ordinary priority and parallel-ready-node selection for discovered hooks at that hook point; the compiled plan represents explicit completion-before-start edges ending at `hook_script`.
+```python
+register_configured(hook_name, scope, *, scripts=None, folder=None)
+dispatch_configured(hook_name, event, policy=None)
+adispatch_configured(hook_name, event, policy=None)
+emit_configured(hook_name, event, policy=None)
+```
 
-“Always last” defines ordering, not guaranteed execution. A completed module error or invalid result does not suppress later modules or `hook_script`; it is recorded and execution continues while budget remains. A timeout may permit continuation only after the exact owned worker has been confirmed terminated and its reservation settled. If cancellation, scope/runtime closure, aggregate deadline exhaustion, or unresolved cleanup debt leaves the preceding work unfinished, no later module or script starts. Remaining entries receive unified non-started outcomes such as `skipped_deadline` or `cancelled`. The main application flow returns within its bounded contract and never waits indefinitely merely to reach the script phase.
+The exact typed signatures, return contracts, and examples are maintained in [`docs/Hooks_API.md`](../docs/Hooks_API.md).
 
-### Python and Cython module discovery
+### Caller contract
 
-`module_folder` discovery is non-recursive and evaluates only direct regular-file children. It does not follow symbolic links. It excludes package initializers, hidden/editor-temporary files, directories, and files outside the canonical configured root.
+- Hook names use the exact, case-sensitive `^hook_[a-z][a-z0-9_]*$` contract and never fall back to event names, binding IDs, handler references, filenames, prefixes, aliases, or case-folded values.
+- Exactly one of `scripts` and `folder` is accepted.
+- Explicit lists preserve caller order.
+- Folder mode recursively discovers supported entries without following symlinks and sorts accepted entries by normalized relative path using case-sensitive Unicode code-point order.
+- Existing shell-free executable-format, interpreter, trust, capture, deadline, and process-isolation rules remain authoritative.
+- Duplicate canonical files, duplicate basenames, unsafe paths, recognized-but-invalid candidates, capacity failures, or plan failures reject the entire operation without changing active state.
+- Re-registering the same configured `(scope incarnation, hook_name)` atomically replaces the complete plan; an identical plan is a successful no-op and unrelated explicit registrations are never overwritten.
+- Execution uses the existing Hook failure, timeout, cancellation, scheduler, diagnostic, and cleanup policies. There is no automatic retry and no second failure policy.
+- Scope and Runtime close own configured-plan removal, admitted-work settlement, artifact retirement, and internal cleanup recovery. A caller never disposes a registration candidate.
 
-Candidates are:
+### Candidate design superseded
 
-- files ending in `.py`; and
-- extension modules whose complete suffix matches one of `importlib.machinery.EXTENSION_SUFFIXES` for the running interpreter.
+The caller contract excludes `PreparedConfigured`, candidate capacity/TTL/generation/provenance, caller-visible prepare/publish/dispose, caller-owned artifact leases, and caller-owned cleanup debt. Candidate result records were removed from the package-root exports. The fail-closed `HookRuntime.prepare_configured()` compatibility boundary and private candidate records remain only for historical internal tests and safety implementation; they are not advertised as public configured registration APIs.
 
-Complete extension suffixes are matched in descending length order before the suffix is removed and the remaining logical module name is checked with Python identifier rules. Suffix recognition is filename-level candidate admission only; it does not certify ABI compatibility. A foreign-tagged filename whose complete foreign suffix is not recognized falls back to ordinary filename handling and is excluded when the remaining logical name is not a valid identifier. Conversely, a validly named but unloadable binary remains a recognized candidate and proceeds to isolated probing, where its failure is retained as a bounded load result rather than being silently omitted.
+Internal bounded discovery, immutable capture, artifact leases, process identity, cleanup ownership, cancellation settlement, and interruption recovery remain implementation primitives. Keeping those safety mechanisms does not preserve or justify a public candidate lifecycle.
 
-The logical module name is the filename with the complete recognized source or extension suffix removed. It must be a valid Python identifier. A source file and extension module, or multiple extension suffix variants, that map to the same logical name are an ambiguous identity and reject the candidate configuration rather than relying on import precedence.
+### Current implementation boundary
 
-Every recognized candidate enters the manifest. Isolated loading records success only when import succeeds and the module exposes a callable attribute named `main`; import failure or missing callable `main` remains in the manifest as a bounded failure entry such as `load_error`. Discovery validates importability and callable presence but never invokes the target `main`. The future invocation contract remains `main(*args, **kwargs)`. Signature introspection is advisory because Cython callables may not expose a reliable Python signature; an invocation mismatch is a normal isolated hook error, not host failure.
+The standalone framework implements explicit Runtime/Registry APIs, exact configured Hook-name validation, ordered list and recursive folder discovery, immutable artifact capture, whole-plan publication/replacement, exact-name sync/async/background execution, and scope/Runtime cleanup integration. The configured API is verified by focused real-process tests, public Runtime BDD, affected Hook regression, and the complete Unit runner.
 
-Stable registration identity is `(hook_name, canonical_module_folder, logical_module_name)`, where `hook_name` is the canonical configuration identity.
+### Historical design status
 
-Configured hook names are exact, case-sensitive strings matching `^hook_[a-z][a-z0-9_]*$` and no longer than 128 characters. Names are unique within one `ConfiguredHooks` replacement, while separate Runtime scopes may reuse a name. Mapping configuration uses the hook name as its authoritative `hooks` key; nested duplicate name fields are rejected. Configuration discovery performs exact `get_hook(hook_name)` lookup only and never falls back to event names, binding IDs, handler references, prefixes, or case-folded values. Ordering uses the Unicode code-point, case-sensitive logical module name, independent of locale and filesystem enumeration order. The target immutable execution version is separate from stable identity and would include the runtime generation plus a content/version fingerprint; current frozen dataclasses do not freeze file contents.
+Earlier direct-child discovery, terminal `hook_script`, configured-empty settlement, captured preparation, and candidate-publication documents remain useful implementation and safety history. They no longer define the caller-facing configured-script workflow. References to candidate caps, prepare-then-publish, public disposal, or future U09-C/U10 candidate acceptance are superseded for configured-script registration.
 
-Current discovery rejects invalid roots, path escapes, and duplicate recognized identities. Plugin import never occurs in the host process and never mutates host `sys.path`; import and callable-`main` validation run in a managed isolated worker under finite startup/import/execution budgets. A recognized candidate failure does not prevent independent later candidates from being probed. Capacity validation, atomic rejection of an integrated candidate configuration, and preservation of the active generation belong to the future Runtime integration layer described below; they are not capabilities of standalone discovery.
-
-Process isolation is failure containment, not a security sandbox. Python and native extension code can execute at import time and retains the OS permissions of its worker account. Only administrator-trusted roots are eligible. Minimum-privilege accounts, filesystem/network sandboxing, and native-library policy are deployment controls outside this framework; unsupported containment fails closed rather than importing inline.
-
-### Public hook_script discovery and execution
-
-Static HookScript discovery is implemented. `hook_script` accepts either one configured file or one configured directory. A file target yields one candidate. A directory is scanned non-recursively for direct regular-file children; symbolic links, subdirectories, sockets, devices, and other special files are rejected or ignored according to candidate-level validation and are never executed.
-
-Directory entries execute sequentially in filename order. The stable sorting key is `(basename, normalized relative path)`, compared case-sensitively by Unicode code point and independent of locale. For a non-recursive directory, basename is unique; the relative-path tiebreaker fixes the contract if representation rules later evolve. Extensions do not affect priority and do not select an interpreter.
-
-Executable policy is explicit and shell-free:
-
-- POSIX requires a regular file with execute permission. Text scripts require a valid shebang naming an allowed executable; native binaries must be directly executable by the operating system.
-- Windows initially permits directly executable native entries recognized by the reviewed launcher, such as `.exe`. File associations and implicit execution of `.py`, `.bat`, `.cmd`, or PowerShell files are not used. Supporting an interpreter later requires an explicit configured launcher and separate review.
-- No platform invokes a shell, builds a command string, expands globs, evaluates metacharacters, or searches `PATH` for the target.
-- A directly configured non-executable file rejects the candidate. In a configured directory, non-executable ordinary files are excluded and summarized by bounded diagnostics; an empty resulting list is a successful no-op.
-
-The target concrete launcher/transport will ensure each process receives an argument vector composed of the exact canonical executable path followed by configured literal `argv`. The detached, size-bounded hook context is encoded as JSON on standard input; no runtime object, scope object, credential, open descriptor, or mutable host reference is passed. The child environment starts from a minimal framework baseline, copies only explicitly allowlisted host names, then applies bounded explicit overrides. The working directory is the validated target directory unless an equally constrained explicit directory is configured.
-
-The target concrete launcher/transport drains standard output and standard error without deadlock, byte-limited independently, sanitized, and kept separate from the structured result channel. They never flow directly into the application output. Non-zero exit, signal termination, malformed result, output overflow, startup failure, timeout, and cancellation map to the same bounded outcome/diagnostic categories used by module hooks.
-
-The implemented static plan models `hook_script` as one registered hook, not one registry binding per executable. `execute_configured_hook_script` implements sequential orchestration over an immutable entry snapshot through an injected trusted `HookScriptRunner` protocol. A completed entry failure is retained in a bounded sub-result and does not prevent the next entry while the shared budget remains; a later success cannot overwrite an earlier failure. Every entry consumes the one absolute `hook_script` deadline and remaining dispatch deadline—each entry must not receive a reset full timeout. Runtime integration must reuse the existing unified scheduler and process ownership authority and must not create a second scheduler, executor, retry loop, or cleanup subsystem.
-
-### Atomic reload and immutable versions
-
-The target configured-discovery integration uses prepare-then-publish. Current `HookRuntime.reload()` atomically adjusts operational runtime settings; it does not jointly publish module/script manifests or immutable file artifacts:
-
-1. Resolve and validate canonical roots, enumerate candidates, detect identities/conflicts, compute bounded fingerprints, and prepare an immutable manifest outside the runtime owner transaction. Any plugin import probe occurs only in isolated owned workers.
-2. Enter the runtime owner transaction and revalidate runtime lifecycle, base generation, binding capacity, and manifest applicability.
-3. Atomically publish settings, module manifest, terminal `hook_script` manifest, registry plan, and one new runtime generation.
-4. On any rejection, retain the old settings, registrations, scheduler identity, manifests, and behavior.
-
-An equal configuration with equal immutable manifests is an accepted no-op and does not increment generation. A content change at the same path creates a new execution version. Work already admitted retains its old ordered module list, script list, arguments, environment policy, limits, absolute deadline, and generation; later admission sees the complete new version or complete old version, never a hybrid.
-
-Capturing paths alone is insufficient because files can be replaced in place after admission. A future jointly published file-backed version therefore requires framework-owned immutable artifacts, or an equivalently proven identity-preserving handle, with bounded reference-counted retention until admitted work settles. Cleanup physically removes only framework-owned versions, logs deletion, and observes count/byte/age limits. The first version supports only layouts whose module and native dependency closure can be frozen and loaded predictably; unresolved relative imports, mutable external package dependencies, or companion native libraries are rejected rather than falsely claimed immutable.
-
-### Security and diagnostic boundaries
-
-Configuration authority and code-execution authority are distinct from event publication authority. Only trusted configuration owners may add roots, environment names, launchers, arguments, or executable targets. When opening/versioning is integrated, canonical containment must be checked again immediately before that operation to limit path-replacement races. Files must eventually satisfy a configured ownership and permission policy; world-writable-root and entry enforcement remains to be implemented or independently accepted. Current discovery performs its existing canonical containment checks only; those checks do not freeze file identity or prove ownership, permission, or path-race safety.
-
-Diagnostics contain stable hook point, stable binding/module identity, generation, bounded status category, entry count, and timing. They omit payloads, argv values, environment values, stdout/stderr content, arbitrary exception text, and absolute sensitive paths by default. Import and execution failures cannot recursively emit hooks.
-
-### Historical delivery sequence and remaining work
-
-Deterministic contracts and production implementation were added for direct-child `.py` and interpreter-compatible extension discovery, exclusion of incompatible `.so` names and symlinks, duplicate logical-name rejection, stable identity and locale-independent ordering, callable `main` validation, and isolated per-module load failure. Extension-only loading uses a real isolated extension fixture where the supported build environment permits it; a renamed text file is not treated as proof of extension loading.
-
-Terminal `hook_script` reservation/order, discovery-to-plan bridging, configured-empty and legacy-zero-entry settlement, shared-deadline orchestration, and unfinished-cleanup gating were delivered in earlier focused units. Configured module discovery and entry validation were implemented and committed in `042ecc5`; the `_red` test filename records its TDD history rather than a currently failing state.
-
-Remaining separate units cover a concrete cross-platform script launcher and JSON/argv/environment transport, aggregate module-discovery deadlines, candidate caps and cancellation, read-only-root-safe temporary isolation, immutable artifact versioning across reload, owned-resource cleanup, and application wiring. No unit may introduce a second scheduler or weaken the existing R2b/R3 reload contracts. Demos, tools, memory, skill, legacy migration, and the blocked repeated-cancellation deadline, cancellation early-return, and concurrent `make_event` proofs remain outside this completed discovery unit.
-
-
-## Configured accepted-empty metadata settlement decision
-
-This decision superseded the earlier next-unit statement above and the earlier plan suggestion of a general zero-entry helper with a predecessor-status argument. The accepted legacy nonempty-entry fix remains unchanged. The API is implemented and publicly exported, but it is not yet wired into Runtime.
-
-### Input provenance and public entry
-
-Public signature: `settle_configured_empty_hook_script(*, hook_point: str, module_bindings: tuple[Binding, ...], bindings_per_event: int, discovery_result: HookScriptDiscoveryResult | None) -> HookScriptSettlement`.
-
-Use a separate entry rather than broaden `settle_unconfigured_hook_script(terminal)`. The new entry has no caller-controlled configured flag, terminal argument, predecessor statuses, or execution options. It fixes `hook_script_configured=True` and composes the existing public `build_hook_point_binding_plan_from_discovery(...)` with the supplied planning inputs and discovery result. It must reuse that bridge rather than duplicate its validators or construct a success terminal from raw entries.
-
-The production caller obtains discovery_result from the existing static discovery boundary, retains its diagnostics, and supplies the same planning inputs used for the intended hook point. The constructor revalidates these inputs through the bridge; it never rescans the filesystem. A bare terminal is insufficient provenance: the ordinary planner can construct a configured empty terminal without discovery, and all current dataclasses are publicly constructible. Accordingly this API proves validated metadata composition only, not cryptographic provenance, filesystem authenticity, generation authority, or that discovery actually ran. In-memory public discovery records are suitable for contract tests; no new opaque authority, admission token, or registry is introduced in this unit.
-
-### Fixed result semantics and precedence
-
-The bridge result is inspected before entry cardinality. All results have `entry_results=()` and `started=False`; inputs and their nested metadata remain unchanged.
-
-| Condition, in evaluation order | status | error_category |
-|---|---|---|
-| Bridge rejects malformed/missing discovery, accepted-with-errors, rejected discovery, or invalid planning inputs | error | hook_script_plan_rejected |
-| Bridge accepts, but its terminal entries are not exactly the empty tuple | error | hook_script_nonempty_entries |
-| Bridge accepts a configured terminal whose entries equal the empty tuple | success | None |
-
-The existing bridge remains authoritative for exact input validation and detailed `HookPointBindingPlan.errors`. Its rejection diagnostics are not rewritten or copied into error_category. HookScriptSettlement has no detailed-errors field; the caller retains discovery/plan diagnostics separately. This decision does not add fields or promise a new diagnostic transport. A rejected discovery never becomes an empty successful terminal, even when its entries are empty. Accepted nonempty input remains pending work, not an executed or successful script. Validation rejection is returned as metadata; this unit does not add blanket exception handling for arbitrary hostile objects or internal programming failures.
-
-### Compatibility and caller-owned readiness
-
-The legacy helper remains restricted to unconfigured terminals: its exact-empty success, `hook_script_not_unconfigured` precedence, and `hook_script_nonempty_entries` rejection stay unchanged. The new API does not support the unconfigured case; missing discovery returns hook_script_plan_rejected, not legacy fallback.
-
-This is a result constructor, not an admission or publication operation. The caller must establish readiness for the corresponding accepted plan through `hook_script_ready(...)` under its existing ownership authority before recording successful terminal completion. Missing predecessors, cleanup-pending work, cancellation, expired budget, closed scope, or stale generation must not be bypassed because entries are empty. The constructor neither reads those states nor enforces them; no predecessor mapping is accepted, and it may construct metadata before the caller is authorized to publish it. Empty results do not prove the whole hook chain completed. Actual configured-hook Runtime integration, lifecycle enforcement, and freshness proofs remain deferred work.
-
-### Configured-empty contract history
-
-The seven non-parameterized contracts in `tests/unit/test_topsailai_hooks/test_hook_script_configured_empty_red.py` were added during the RED phase and the implementation/export now exist. The `_red` suffix records test history; it does not indicate a currently failing suite. The contracts cover accepted-empty success, accepted-nonempty rejection, discovery and planning rejection, absence of readiness enforcement in the constructor, and unchanged legacy behavior.
-
-This completed unit did not add execution transport, immutable artifacts, Runtime/application wiring, demos/integrations, tools/memory/skill, environment changes, legacy migration, or the separate cancellation/deadline/make_event proofs. Those exclusions remain valid boundaries for future work.
+No environment variable is introduced by this implementation. `MEMO.md` remains index-only and does not require an entry because this feature already has an authoritative design document and durable API document.

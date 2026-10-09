@@ -32,6 +32,7 @@ class _RegistryState:
     generation: int
     definitions: dict[tuple[str, int], EventDefinition]
     bindings: dict[tuple[str, str], _RegisteredBinding]
+    configured: dict[tuple[str, str], tuple[object, object]]
 
 
 class HookRegistry:
@@ -43,7 +44,7 @@ class HookRegistry:
             raise ValueError("bindings_per_event must be a positive integer")
         self._bindings_per_event = bindings_per_event
         self._registry_id = uuid.uuid4().hex
-        self._state = _RegistryState(0, {}, {})
+        self._state = _RegistryState(0, {}, {}, {})
         self._lock = threading.Lock()
 
     @property
@@ -108,7 +109,7 @@ class HookRegistry:
             if plan_errors:
                 return RegistrationResult(False, state.generation, errors=plan_errors)
 
-            self._state = _RegistryState(generation, definitions, bindings)
+            self._state = _RegistryState(generation, definitions, bindings, dict(state.configured))
             handle = RegistrationHandle(
                 scope_id, binding.binding_id, generation, self._registry_id
             )
@@ -157,7 +158,7 @@ class HookRegistry:
                 return RegistrationResult(False, state.generation, errors=plan_errors)
 
             generation = state.generation + 1
-            self._state = _RegistryState(generation, dict(state.definitions), bindings)
+            self._state = _RegistryState(generation, dict(state.definitions), bindings, dict(state.configured))
             return RegistrationResult(True, generation)
 
     def unregister_scope(self, scope_id: str) -> RegistrationResult:
@@ -171,11 +172,67 @@ class HookRegistry:
                 for key, registered in state.bindings.items()
                 if key[0] != scope_id
             }
-            if len(bindings) == len(state.bindings):
+            configured = {
+                key: registered
+                for key, registered in state.configured.items()
+                if key[0] != scope_id
+            }
+            if len(bindings) == len(state.bindings) and len(configured) == len(state.configured):
                 return RegistrationResult(True, state.generation)
             generation = state.generation + 1
-            self._state = _RegistryState(generation, dict(state.definitions), bindings)
+            self._state = _RegistryState(
+                generation, dict(state.definitions), bindings, configured
+            )
             return RegistrationResult(True, generation)
+
+    def publish_configured(
+        self, scope_id: str, hook_name: str, fingerprint: object, plan: object
+    ) -> tuple[bool, int, object | None]:
+        """Atomically publish one complete scope-local configured plan."""
+        key = (scope_id, hook_name)
+        with self._lock:
+            state = self._state
+            previous = state.configured.get(key)
+            if previous is not None and previous[0] == fingerprint:
+                return False, state.generation, None
+            configured = dict(state.configured)
+            configured[key] = (fingerprint, plan)
+            generation = state.generation + 1
+            self._state = _RegistryState(
+                generation, dict(state.definitions), dict(state.bindings), configured
+            )
+            return True, generation, None if previous is None else previous[1]
+
+    def configured_plan(self, scope_id: str, hook_name: str) -> tuple[int, object | None]:
+        """Return one exact configured plan from a stable registry generation."""
+        with self._lock:
+            state = self._state
+            registered = state.configured.get((scope_id, hook_name))
+            return state.generation, None if registered is None else registered[1]
+
+    def remove_configured_scope(self, scope_id: str) -> tuple[object, ...]:
+        """Atomically remove and return configured plans owned by one scope."""
+        with self._lock:
+            state = self._state
+            removed = tuple(
+                registered[1]
+                for key, registered in state.configured.items()
+                if key[0] == scope_id
+            )
+            if not removed:
+                return ()
+            configured = {
+                key: registered
+                for key, registered in state.configured.items()
+                if key[0] != scope_id
+            }
+            self._state = _RegistryState(
+                state.generation + 1,
+                dict(state.definitions),
+                dict(state.bindings),
+                configured,
+            )
+            return removed
 
     def reconfigure(self, bindings_per_event: int) -> int:
         """Publish a new cap and advance the shared registry generation."""
@@ -184,7 +241,10 @@ class HookRegistry:
             state = self._state
             generation = state.generation + 1
             self._state = _RegistryState(
-                generation, dict(state.definitions), dict(state.bindings)
+                generation,
+                dict(state.definitions),
+                dict(state.bindings),
+                dict(state.configured),
             )
             return generation
 
