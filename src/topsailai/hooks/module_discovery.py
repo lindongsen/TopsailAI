@@ -5,13 +5,17 @@ from __future__ import annotations
 import importlib.machinery
 import os
 import threading
-import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator, Literal
 
-from topsailai.hooks.contracts import HookContext, HookEvent
+from topsailai.hooks.module_discovery_probe import (
+    ModuleManifestEntry,
+    PROBE_HANDLER as _PROBE_HANDLER,
+    PROBE_TIMEOUT_MS as _PROBE_TIMEOUT_MS,
+    probe_candidate as _probe_candidate_impl,
+)
 from topsailai.hooks.configured_contracts import is_valid_hook_name
 from topsailai.hooks.module_discovery_policy import (
     DiscoveryBudget,
@@ -26,28 +30,56 @@ from topsailai.hooks.temporary_storage import (
     validate_temporary_root,
 )
 
-_PROBE_HANDLER = "topsailai.hooks.module_discovery_worker:main"
-_PROBE_TIMEOUT_MS = 5_000
 
+def _probe_candidate(
+    backend: IsolatedProcessBackend,
+    root: Path,
+    hook_name: str,
+    logical_name: str,
+    source_path: Path,
+    timeout_ms: int = _PROBE_TIMEOUT_MS,
+) -> tuple[ModuleManifestEntry, WorkerResult]:
+    """Probe one candidate through the module-local compatibility seam."""
+    return _probe_candidate_impl(
+        backend,
+        root,
+        hook_name,
+        logical_name,
+        source_path,
+        timeout_ms,
+        handler_ref=_PROBE_HANDLER,
+    )
 
 @dataclass(frozen=True, slots=True)
-class ModuleManifestEntry:
-    """Describe one stable configured module and its isolated probe result."""
+class ModuleCandidate:
+    """Describe one bounded module candidate before isolated probing."""
 
     logical_name: str
     source_path: Path
-    stable_identity: tuple[str, str, str]
-    entry_name: str
-    entry_valid: bool
-    load_status: str
-
+    kind: Literal["python_source", "python_extension"]
 
 @dataclass(frozen=True, slots=True)
+class ModuleCandidateInventory:
+    """Return an immutable, atomically accepted candidate inventory."""
+
+    accepted: bool
+    root: Path | None = None
+    candidates: tuple[ModuleCandidate, ...] = ()
+    errors: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
 class ModuleCleanupOwner:
     """Retain exact backend and storage authority for unresolved cleanup."""
 
     _backend: IsolatedProcessBackend | None
     _storage: TemporaryStorageOwner
+
+    def bind_backend(self, backend: IsolatedProcessBackend) -> None:
+        """Bind the one backend to this stable cleanup owner exactly once."""
+        if self._backend is not None:
+            raise RuntimeError("module cleanup backend is already bound")
+        self._backend = backend
 
     def cleanup_debts(self) -> tuple[object, ...]:
         """Return current process, channel, and storage cleanup obligations."""
@@ -115,6 +147,203 @@ def _cleanup_or_propagate(owner: ModuleCleanupOwner) -> bool:
         raise
 
 
+class ModuleProbeSession:
+    """Own one isolated probe lifecycle and forbid successors after cleanup debt."""
+
+    __slots__ = ("_root", "_hook_name", "_backend", "_storage", "_owner", "_state")
+
+    def __init__(
+        self,
+        root: Path,
+        hook_name: str,
+        backend: IsolatedProcessBackend | None,
+        storage: TemporaryStorageOwner,
+        *,
+        owner: ModuleCleanupOwner,
+    ) -> None:
+        """Capture the caller-owned cleanup authority without constructing a fallback."""
+        if owner._storage is not storage or owner._backend is not backend:
+            raise ValueError("module probe session owner does not match resources")
+        self._root = root
+        self._hook_name = hook_name
+        self._backend = backend
+        self._storage = storage
+        self._owner = owner
+        self._state = "open"
+
+    @property
+    def recovery_owner(self) -> ModuleCleanupOwner:
+        """Return the sole cleanup authority for this session."""
+        return self._owner
+
+    @property
+    def state(self) -> str:
+        """Return the owned session lifecycle state."""
+        return self._state
+
+    def probe(
+        self,
+        candidate: ModuleCandidate,
+        *,
+        captured_path: Path,
+        timeout_ms: int = _PROBE_TIMEOUT_MS,
+    ) -> tuple[ModuleManifestEntry, WorkerResult]:
+        """Probe only the explicitly supplied captured path."""
+        if self._state != "open":
+            raise RuntimeError("module probe session is not open")
+        if not isinstance(captured_path, Path):
+            raise TypeError("captured_path must be a Path")
+        path = captured_path
+        if self._backend is None:
+            raise RuntimeError("module probe session has pending cleanup")
+        try:
+            entry, result = _probe_candidate(
+                self._backend,
+                self._root,
+                self._hook_name,
+                candidate.logical_name,
+                path,
+                timeout_ms,
+            )
+        except BaseException as error:
+            self._storage.retain_cleanup_debt()
+            self._state = "cleanup_pending"
+            _attach_recovery_owner(error, self._owner)
+            raise
+        if not result.cleanup_confirmed or self._backend.cleanup_debts():
+            self._storage.retain_cleanup_debt()
+            self._state = "cleanup_pending"
+        return entry, result
+
+    def close(self) -> bool:
+        """Settle storage only after all backend cleanup is confirmed."""
+        if self._state == "closed":
+            return True
+        try:
+            if self._backend is not None and self._backend.cleanup_debts():
+                self._storage.retain_cleanup_debt()
+                self._state = "cleanup_pending"
+                return False
+            settled = self._storage.cleanup()
+        except BaseException as error:
+            self._storage.retain_cleanup_debt()
+            self._state = "cleanup_pending"
+            _attach_recovery_owner(error, self._owner)
+            raise
+        if settled:
+            self._state = "closed"
+        else:
+            self._state = "cleanup_pending"
+        return settled
+
+
+def _run_with_module_probe_session(
+    *,
+    root: Path,
+    hook_name: str,
+    temp_root: str,
+    owner: ModuleCleanupOwner,
+    operation: Callable[[ModuleProbeSession], object],
+    budget: DiscoveryBudget | None = None,
+) -> object | None:
+    """Acquire resources and run all ownership-sensitive work in one continuation."""
+    storage = owner._storage
+    try:
+        if budget is not None:
+            _checkpoint(budget)
+        allocated = storage.allocate()
+        if budget is not None:
+            _checkpoint(budget)
+        if not allocated:
+            if not storage.cleanup_debts():
+                return None
+            session = ModuleProbeSession(root, hook_name, None, storage, owner=owner)
+            session._state = "cleanup_pending"
+            return operation(session)
+        backend = IsolatedProcessBackend(temp_root=str(storage.path))
+        owner.bind_backend(backend)
+        if budget is not None:
+            _checkpoint(budget)
+        session = ModuleProbeSession(root, hook_name, backend, storage, owner=owner)
+        return operation(session)
+    except BaseException as error:
+        _cleanup_after_error(error, owner)
+        raise
+
+
+def open_module_probe_session(
+    *,
+    root: Path,
+    hook_name: str,
+    temp_root: str,
+    budget: DiscoveryBudget | None = None,
+) -> ModuleProbeSession | None:
+    """Open a compatible session; ownership-sensitive callers use the continuation API."""
+    host_root = validate_temporary_root(temp_root, root)
+    if budget is not None:
+        _checkpoint(budget)
+    if host_root is None:
+        return None
+    storage = TemporaryStorageOwner(host_root)
+    owner = _make_cleanup_owner(None, storage)
+    result = _run_with_module_probe_session(
+        root=root, hook_name=hook_name, temp_root=temp_root, owner=owner,
+        operation=lambda session: session, budget=budget,
+    )
+    return result if isinstance(result, ModuleProbeSession) else None
+
+
+def _build_manifest_with_session(
+    session: ModuleProbeSession,
+    *,
+    inventory: ModuleCandidateInventory,
+    budget: DiscoveryBudget,
+) -> ModuleManifest:
+    """Build the manifest while the acquisition owner remains continuously reachable."""
+    entries: list[ModuleManifestEntry] = []
+    owner = session.recovery_owner
+    if session.state == "cleanup_pending":
+        return _rejected("module discovery cleanup pending", recovery_owner=owner)
+    for candidate in inventory.candidates:
+        rejection = budget.rejection()
+        if rejection is not None:
+            if not session.close():
+                return _rejected("module discovery cleanup pending", entries, owner)
+            return _rejected(rejection, entries)
+        remaining_ms = budget.remaining_ms()
+        if remaining_ms < 1:
+            if not session.close():
+                return _rejected("module discovery cleanup pending", entries, owner)
+            return _rejected("module discovery timeout", entries)
+        timeout_ms = min(_PROBE_TIMEOUT_MS, remaining_ms)
+        aggregate_binding = remaining_ms <= _PROBE_TIMEOUT_MS
+        entry, result = session.probe(
+            candidate, captured_path=candidate.source_path, timeout_ms=timeout_ms
+        )
+        _append_manifest_entry(entries, entry)
+        if session.state == "cleanup_pending":
+            return _rejected("module discovery cleanup pending", entries, owner)
+        rejection = budget.rejection()
+        if rejection is not None:
+            if not session.close():
+                return _rejected("module discovery cleanup pending", entries, owner)
+            return _rejected(rejection, entries)
+        if result.status == "unsupported_backend":
+            if not session.close():
+                return _rejected("module discovery cleanup pending", entries, owner)
+            return _rejected("module discovery unsupported blocking io", entries)
+        if result.status == "timeout" and aggregate_binding:
+            if not session.close():
+                return _rejected("module discovery cleanup pending", entries, owner)
+            return _rejected("module discovery timeout", entries)
+    if not session.close():
+        return _rejected("module discovery cleanup pending", entries, owner)
+    rejection = budget.rejection()
+    if rejection is not None:
+        return _rejected(rejection, entries)
+    return ModuleManifest(True, tuple(entries))
+
+
 def build_module_manifest(
     module_folder: os.PathLike[str] | str,
     hook_name: str,
@@ -132,107 +361,43 @@ def build_module_manifest(
         return ModuleManifest(False, errors=("invalid module configuration",))
     if not is_valid_hook_name(hook_name):
         return ModuleManifest(False, errors=("invalid hook name",))
-
     budget = make_discovery_budget(policy.timeout_ms, cancellation)
     rejection = budget.rejection()
     if rejection is not None:
         return _rejected(rejection)
-    try:
-        root = _canonical_root(module_folder, budget)
-    except _DiscoveryRejected as error:
-        return _rejected(error.token)
+    inventory = enumerate_module_candidates_owned(module_folder, policy=policy, budget=budget)
+    if not inventory.accepted:
+        return _rejected(inventory.errors[0] if inventory.errors else "invalid module configuration")
+    root = inventory.root
     if root is None:
         return _rejected("invalid module configuration")
-
-    try:
-        candidates = _enumerate_candidates(root, policy=policy, budget=budget)
-    except _DiscoveryRejected as error:
-        return _rejected(error.token)
-    names = [logical_name for logical_name, _ in candidates]
-    if len(names) != len(set(names)):
-        return _rejected("duplicate module identity")
     rejection = budget.rejection()
     if rejection is not None:
         return _rejected(rejection)
-    ordered_candidates = sorted(candidates, key=lambda item: item[0])
-    rejection = budget.rejection()
-    if rejection is not None:
-        return _rejected(rejection)
-
     host_root = validate_temporary_root(temp_root, root)
     rejection = budget.rejection()
     if rejection is not None:
         return _rejected(rejection)
     if host_root is None:
         return _rejected("invalid discovery temp root")
-    if not ordered_candidates:
+    if not inventory.candidates:
         return ModuleManifest(True)
-
-    storage = TemporaryStorageOwner(host_root)
-    owner = _make_cleanup_owner(None, storage)
-    entries: list[ModuleManifestEntry] = []
+    owner = _make_cleanup_owner(None, TemporaryStorageOwner(host_root))
     try:
-        rejection = budget.rejection()
-        if rejection is not None:
-            return _finish_rejection(owner, entries, rejection)
-        allocated = storage.allocate()
-        rejection = budget.rejection()
-        if rejection is not None:
-            return _finish_rejection(owner, entries, rejection)
-        if not allocated:
-            token = (
-                "module discovery cleanup pending"
-                if owner.cleanup_debts()
-                else "invalid discovery temp root"
-            )
-            return _rejected(token, recovery_owner=owner if owner.cleanup_debts() else None)
-
-        backend = IsolatedProcessBackend(temp_root=str(storage.path))
-        owner = _make_cleanup_owner(backend, storage)
-        rejection = budget.rejection()
-        if rejection is not None:
-            return _finish_rejection(owner, entries, rejection)
-        for logical_name, source_path in ordered_candidates:
-            rejection = budget.rejection()
-            if rejection is not None:
-                return _finish_rejection(owner, entries, rejection)
-            remaining_ms = budget.remaining_ms()
-            if remaining_ms < 1:
-                return _finish_rejection(owner, entries, "module discovery timeout")
-            timeout_ms = min(_PROBE_TIMEOUT_MS, remaining_ms)
-            aggregate_binding = remaining_ms <= _PROBE_TIMEOUT_MS
-            entry, result = _probe_candidate(
-                backend,
-                root,
-                hook_name,
-                logical_name,
-                source_path,
-                timeout_ms,
-            )
-            _append_manifest_entry(entries, entry)
-            if not result.cleanup_confirmed or backend.cleanup_debts():
-                storage.retain_cleanup_debt()
-                return _rejected(
-                    "module discovery cleanup pending",
-                    entries,
-                    owner,
-                )
-            rejection = budget.rejection()
-            if rejection is not None:
-                return _finish_rejection(owner, entries, rejection)
-            if result.status == "unsupported_backend":
-                return _finish_rejection(
-                    owner, entries, "module discovery unsupported blocking io"
-                )
-            if result.status == "timeout" and aggregate_binding:
-                return _finish_rejection(owner, entries, "module discovery timeout")
-
-        if not _cleanup_or_propagate(owner):
-            return _rejected("module discovery cleanup pending", entries, owner)
-        rejection = budget.rejection()
-        if rejection is not None:
-            return _rejected(rejection, entries)
-        return ModuleManifest(True, tuple(entries))
+        result = _run_with_module_probe_session(
+            root=root, hook_name=hook_name, temp_root=temp_root, owner=owner,
+            operation=lambda session: _build_manifest_with_session(
+                session, inventory=inventory, budget=budget
+            ), budget=budget,
+        )
+        if result is None:
+            return _rejected("invalid discovery temp root")
+        return result  # type: ignore[return-value]
+    except _DiscoveryRejected as error:
+        if owner.cleanup_debts():
+            _cleanup_after_error(error, owner)
+            return _rejected("module discovery cleanup pending", recovery_owner=owner)
+        return _rejected(error.token)
     except BaseException as error:
         _cleanup_after_error(error, owner)
         raise
@@ -365,6 +530,7 @@ def _enumerate_candidates(
     *,
     policy: ModuleDiscoveryPolicy | None = None,
     budget: DiscoveryBudget | None = None,
+    scan_counter: Callable[[], None] | None = None,
 ) -> list[tuple[str, Path]]:
     """Incrementally return a bounded direct regular-file candidate inventory."""
     active_policy = policy or ModuleDiscoveryPolicy()
@@ -382,8 +548,49 @@ def _enumerate_candidates(
             active_budget,
             suffixes,
             candidates,
+            scan_counter=scan_counter,
         )
     return candidates
+
+
+def enumerate_module_candidates_owned(
+    module_folder: os.PathLike[str] | str,
+    *,
+    policy: ModuleDiscoveryPolicy = ModuleDiscoveryPolicy(),
+    budget: DiscoveryBudget | None = None,
+    scan_counter: Callable[[], None] | None = None,
+) -> ModuleCandidateInventory:
+    """Enumerate a canonical bounded module inventory without probing candidates."""
+    if not validate_discovery_policy(policy):
+        return ModuleCandidateInventory(False, errors=("invalid discovery policy",))
+    active_budget = budget or make_discovery_budget(policy.timeout_ms, None)
+    try:
+        root = _canonical_root(module_folder, active_budget)
+        if root is None:
+            return ModuleCandidateInventory(False, errors=("invalid module configuration",))
+        candidates = _enumerate_candidates(
+            root, policy=policy, budget=active_budget, scan_counter=scan_counter
+        )
+    except _DiscoveryRejected as error:
+        return ModuleCandidateInventory(False, errors=(error.token,))
+    names = [logical_name for logical_name, _ in candidates]
+    if len(names) != len(set(names)):
+        return ModuleCandidateInventory(False, root=root, errors=("duplicate module identity",))
+    ordered = tuple(
+        ModuleCandidate(logical_name, source_path, _candidate_kind(source_path))
+        for logical_name, source_path in sorted(candidates, key=lambda item: item[0])
+    )
+    return ModuleCandidateInventory(True, root=root, candidates=ordered)
+
+
+def _candidate_kind(source_path: Path) -> Literal["python_source", "python_extension"]:
+    """Return the existing U03 kind vocabulary for one recognized candidate."""
+    if source_path.name.endswith(".py"):
+        return "python_source"
+    suffixes = tuple(sorted(importlib.machinery.EXTENSION_SUFFIXES, key=len, reverse=True))
+    if any(source_path.name.endswith(suffix) for suffix in suffixes):
+        return "python_extension"
+    raise ValueError("unrecognized module candidate suffix")
 
 
 def _scan_candidates(
@@ -393,6 +600,8 @@ def _scan_candidates(
     budget: DiscoveryBudget,
     suffixes: tuple[str, ...],
     candidates: list[tuple[str, Path]],
+    *,
+    scan_counter: Callable[[], None] | None = None,
 ) -> None:
     """Consume one bounded direct-child iterator into a candidate inventory."""
     scanned = 0
@@ -407,6 +616,8 @@ def _scan_candidates(
             raise _DiscoveryRejected("module enumeration unavailable") from error
         _checkpoint(budget)
         scanned += 1
+        if scan_counter is not None:
+            scan_counter()
         if scanned > policy.max_scanned_entries:
             raise _DiscoveryRejected("module discovery scanned entry limit exceeded")
         if child.name.startswith("."):
@@ -451,57 +662,3 @@ def _logical_name(filename: str, extension_suffixes: tuple[str, ...]) -> str | N
         if filename.endswith(suffix):
             return filename[: -len(suffix)]
     return None
-
-
-def _probe_candidate(
-    backend: IsolatedProcessBackend,
-    root: Path,
-    hook_name: str,
-    logical_name: str,
-    source_path: Path,
-    timeout_ms: int = _PROBE_TIMEOUT_MS,
-) -> tuple[ModuleManifestEntry, WorkerResult]:
-    """Probe one candidate while preserving the original worker classification."""
-    identity = (hook_name, str(root), logical_name)
-    context = HookContext(
-        event=HookEvent(
-            event_id=uuid.uuid4().hex,
-            name="hooks.module_discovery.probe",
-            major_version=1,
-            owner_id="module_discovery",
-            scope_id="module_discovery",
-            operation_id=uuid.uuid4().hex,
-            parent_operation_id=None,
-            sequence=0,
-            timestamp="",
-            layer="hooks",
-            purpose="entry_validation",
-            payload={"source_path": str(source_path), "logical_name": logical_name},
-        ),
-        delivery_id=uuid.uuid4().hex,
-        binding_id="module_discovery",
-        registry_generation=0,
-        remaining_budget_ms=timeout_ms,
-    )
-    result = backend.execute(_PROBE_HANDLER, context, timeout_ms)
-    load_status = "load_error"
-    entry_valid = False
-    if result.cleanup_confirmed and result.status == "success" and hasattr(result.value, "get"):
-        reported_status = result.value.get("load_status")
-        reported_valid = result.value.get("entry_valid")
-        if reported_status in ("ready", "invalid_entry", "load_error"):
-            load_status = reported_status
-        if type(reported_valid) is bool:
-            entry_valid = reported_valid
-    if not result.cleanup_confirmed:
-        load_status = "cleanup_pending"
-        entry_valid = False
-    entry = ModuleManifestEntry(
-        logical_name=logical_name,
-        source_path=source_path,
-        stable_identity=identity,
-        entry_name="main",
-        entry_valid=entry_valid,
-        load_status=load_status,
-    )
-    return entry, result

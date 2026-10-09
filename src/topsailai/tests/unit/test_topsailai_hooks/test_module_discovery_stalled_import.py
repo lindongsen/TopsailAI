@@ -55,7 +55,7 @@ def test_real_stalled_import_reaps_group_channels_and_storage(
         tmp_path,
         "hook_conversation_started",
         temp_root=str(private_temp_root(tmp_path)),
-        policy=ModuleDiscoveryPolicy(timeout_ms=1_000),
+        policy=ModuleDiscoveryPolicy(timeout_ms=5_000),
     )
 
     assert result.errors == ("module discovery timeout",)

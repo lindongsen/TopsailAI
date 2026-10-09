@@ -28,12 +28,26 @@ class DiscoveryBudget:
         timeout_ms: int,
         cancellation: threading.Event | None,
         clock: Callable[[], float],
+        *,
+        deadline: float | None = None,
     ) -> None:
         """Capture one absolute deadline from the supplied monotonic clock."""
         self._clock = clock
         self._cancellation = cancellation
         self._cancelled = False
-        self.deadline = clock() + timeout_ms / 1_000
+        self.deadline = (
+            clock() + timeout_ms / 1_000 if deadline is None else deadline
+        )
+
+    @classmethod
+    def from_deadline(
+        cls,
+        deadline: float,
+        cancellation: threading.Event | None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> "DiscoveryBudget":
+        """Share an existing absolute deadline without extending the operation."""
+        return cls(0, cancellation, clock, deadline=deadline)
 
     def rejection(self) -> str | None:
         """Return the highest-priority current liveness rejection, if any."""
@@ -51,13 +65,20 @@ class DiscoveryBudget:
         return floor((self.deadline - self._clock()) * 1_000)
 
 
+def make_discovery_budget_for_deadline(
+    deadline: float,
+    cancellation: threading.Event | None,
+) -> DiscoveryBudget:
+    """Construct a budget that shares an already approved absolute deadline."""
+    return DiscoveryBudget.from_deadline(deadline, cancellation)
+
+
 def make_discovery_budget(
     timeout_ms: int,
     cancellation: threading.Event | None,
 ) -> DiscoveryBudget:
     """Construct the production per-invocation budget."""
     return DiscoveryBudget(timeout_ms, cancellation, time.monotonic)
-
 
 def validate_discovery_policy(policy: object) -> bool:
     """Validate the exact public policy type and all v1 bounds."""

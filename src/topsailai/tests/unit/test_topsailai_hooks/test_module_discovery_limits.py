@@ -282,6 +282,31 @@ def test_per_probe_timeout_remains_load_error_and_successor_runs(
     assert [entry.load_status for entry in result.entries] == ["load_error", "ready"]
 
 
+def test_probe_handler_patch_reaches_backend_with_explicit_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The module-local handler seam and explicit timeout reach backend execution."""
+    captured: list[tuple[str, int]] = []
+
+    class Backend:
+        def execute(self, handler_ref: str, context: object, timeout_ms: int) -> WorkerResult:
+            captured.append((handler_ref, timeout_ms))
+            return WorkerResult("success", {"load_status": "ready", "entry_valid": True})
+
+    handler = "tests.module_discovery.sentinel"
+    monkeypatch.setattr(discovery, "_PROBE_HANDLER", handler)
+    discovery._probe_candidate(
+        Backend(),
+        tmp_path,
+        "hook_conversation_started",
+        "candidate",
+        tmp_path / "candidate.py",
+        137,
+    )
+
+    assert captured == [(handler, 137)]
+
+
 def test_delayed_iterator_result_rejects_without_probe_and_closes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -326,6 +351,56 @@ def test_empty_inventory_validates_storage_without_backend(
     assert _discover(tmp_path).accepted
 
 
+
+
+def test_empty_inventory_rejects_invalid_storage_root(tmp_path: Path) -> None:
+    """An empty scan still rejects an invalid explicit storage root."""
+    result = discovery.build_module_manifest(
+        tmp_path,
+        "hook_conversation_started",
+        temp_root=str(tmp_path / "missing-private-root"),
+    )
+    assert not result.accepted
+    assert result.errors == ("invalid discovery temp root",)
+
+
+@pytest.mark.parametrize("trigger", ["cancellation", "timeout"])
+@pytest.mark.parametrize("valid_root", [True, False])
+def test_temp_root_validation_rechecks_budget_after_validator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trigger: str, valid_root: bool
+) -> None:
+    """Validation-time cancellation or timeout wins over root classification."""
+    event = threading.Event()
+    clock = _Clock()
+    original_validate = discovery.validate_temporary_root
+    root = private_temp_root(tmp_path) if valid_root else tmp_path / "missing-private-root"
+
+    def validate_then_trigger(temp_root: str, module_root: Path):
+        result = original_validate(temp_root, module_root)
+        if trigger == "cancellation":
+            event.set()
+        else:
+            clock.now = 1.0
+        return result
+
+    monkeypatch.setattr(discovery, "validate_temporary_root", validate_then_trigger)
+    monkeypatch.setattr(
+        policy_module,
+        "make_discovery_budget",
+        lambda timeout_ms, cancellation: DiscoveryBudget(timeout_ms, cancellation, clock),
+    )
+    monkeypatch.setattr(discovery, "make_discovery_budget", policy_module.make_discovery_budget)
+
+    result = discovery.build_module_manifest(
+        tmp_path,
+        "hook_conversation_started",
+        temp_root=str(root),
+        policy=ModuleDiscoveryPolicy(timeout_ms=1_000),
+        cancellation=event,
+    )
+
+    expected = ("module discovery cancelled",) if trigger == "cancellation" else ("module discovery timeout",)
+    assert result.errors == expected
 
 
 def test_iterator_close_error_maps_to_enumeration_unavailable(
