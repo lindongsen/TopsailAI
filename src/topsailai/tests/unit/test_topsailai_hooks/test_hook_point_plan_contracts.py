@@ -164,3 +164,137 @@ def test_plan_correlation_and_configuration_boundaries():
     with pytest.raises(ValidationError):
         replace(base, modules=(first, second), capture_policy=__import__("topsailai.hooks.artifact_contracts", fromlist=["ArtifactCapturePolicy"]).ArtifactCapturePolicy(max_entries=1))
     assert replace(base, modules=[first]).modules == (first,)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("allowed_interpreters", ("x",) * 1025),
+    ("native_suffixes", (".exe",) * 1025),
+    ("allowed_interpreters", ("x" * 32769,)),
+    ("native_suffixes", ("é" * 32768,)),
+])
+def test_budget_platform_bounds(field, value):
+    """Bound legacy policy metadata at candidate admission only."""
+    from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
+    c = api()
+    platform = ExecutablePlatformPolicy("posix", **{field: value})
+    with pytest.raises(ValidationError):
+        c.HookPointPlan("point", (), c.DefaultScriptHook(()), platform_policy=platform)
+
+
+def test_budget_canonical_compatibility():
+    """Compare original canonical JSON bytes for Unicode and nested invocations."""
+    import hashlib
+    import json
+    from dataclasses import replace
+    from topsailai.hooks.contracts import _thaw_frozen_json
+    from topsailai.hooks.hook_script_contracts import HookScriptExecutionOptions
+    c = api()
+    item = captured("module")
+    item = replace(item, source=replace(item.source, invocation=ModuleInvocation(
+        ["é\n\"", {"z": [None, True, -0.0], "a": 3}], {"Ω": "\t"})))
+    plan = c.HookPointPlan("点", (item,), c.DefaultScriptHook(()),
+        options=HookScriptExecutionOptions(argv=["é", "\n"]))
+    semantic = c._semantic(plan)
+    def plain(value):
+        """Expand framework snapshots solely for the legacy test oracle."""
+        value = _thaw_frozen_json(value)
+        if isinstance(value, (list, tuple)):
+            return [plain(v) for v in value]
+        if isinstance(value, dict):
+            return {k: plain(v) for k, v in value.items()}
+        return value
+    encoded = json.dumps(plain(semantic), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    assert plan.fingerprint == hashlib.sha256(b"hook-point-plan-v1\x00" + encoded).hexdigest()
+
+
+@pytest.mark.parametrize("case", ("deep", "cycle", "wide", "text", "utf8", "integer", "nan", "object", "key"))
+def test_budget_bounded_traversal(case):
+    """Reject shape and scalar hazards before expanding them into JSON."""
+    c = api()
+    value = []
+    if case == "deep":
+        for _ in range(26):
+            value = [value]
+    elif case == "cycle":
+        value.append(value)
+    elif case == "wide":
+        value = [None] * 1025
+    elif case == "text":
+        value = "x" * 32769
+    elif case == "utf8":
+        value = "\ud800"
+    elif case == "integer":
+        value = 1 << 4097
+    elif case == "nan":
+        value = float("nan")
+    elif case == "object":
+        value = object()
+    else:
+        value = {1: "value"}
+    with pytest.raises(ValidationError):
+        c._canonical_digest(value)
+
+
+def test_budget_exact_bytes_and_visits(monkeypatch):
+    """Stop at exact UTF-8 framing budget and bound aggregate node visits."""
+    import hashlib
+    c = api()
+    assert c._canonical_digest("é", limit=4) == hashlib.sha256(b"hook-point-plan-v1\x00" + '"é"'.encode()).hexdigest()
+    with pytest.raises(ValidationError):
+        c._canonical_digest("é", limit=3)
+    monkeypatch.setattr(c, "_SEMANTIC_NODES", 3)
+    with pytest.raises(ValidationError):
+        c._canonical_digest([None, None, None])
+
+
+def test_budget_original_commit_fingerprint_oracle():
+    """Compare directly with the original committed implementation, not a new framer."""
+    import subprocess
+    import sys
+    import types
+    from dataclasses import fields
+    c = api()
+    original = subprocess.check_output(["git", "-C", "/TopsailAI/src/topsailai", "show",
+        "f2d6f8be995db1cc57562ec38a5a6d6af0f63524:src/topsailai/hooks/hook_point_plan_contracts.py"], text=True)
+    old = types.ModuleType("_u05a_original_contracts")
+    sys.modules[old.__name__] = old
+    try:
+        exec(compile(original, "<original-contracts>", "exec"), old.__dict__)
+        module = captured("module")
+        old_source = old.ModuleSource(**{f.name: getattr(module.source, f.name) for f in fields(c.ModuleSource)})
+        old_module = old.CapturedModule(**{f.name: old_source if f.name == "source" else getattr(module, f.name)
+                                          for f in fields(c.CapturedModule)})
+        new_plan = c.HookPointPlan("点", (module,), c.DefaultScriptHook(()))
+        old_plan = old.HookPointPlan("点", (old_module,), old.DefaultScriptHook(()))
+        assert new_plan.fingerprint == old_plan.fingerprint
+        assert c.HookPointPlan("point", (), c.DefaultScriptHook(())).fingerprint == old.HookPointPlan("point", (), old.DefaultScriptHook(())).fingerprint
+    finally:
+        sys.modules.pop(old.__name__)
+
+
+def test_budget_chunked_encoding_and_aggregate(monkeypatch):
+    """Never send an entire tree or large text to the JSON encoder."""
+    from topsailai.hooks.hook_script_contracts import HookScriptExecutionOptions
+    c = api()
+    original = c.json.dumps
+    tokens = []
+    def bounded(value, **kwargs):
+        """Observe actual JSON token boundaries while keeping the real encoder."""
+        assert type(value) not in (list, tuple, dict)
+        if type(value) is str:
+            assert len(value) <= 1024
+        tokens.append(value)
+        return original(value, **kwargs)
+    monkeypatch.setattr(c.json, "dumps", bounded)
+    c._canonical_digest("é" * 16000)
+    assert len(tokens) > 1
+    with pytest.raises(ValidationError, match="aggregate"):
+        c.HookPointPlan("point", (), c.DefaultScriptHook(()),
+            options=HookScriptExecutionOptions(environment=tuple((f"K{i}", "x" * 32768) for i in range(65))))
+
+
+@pytest.mark.parametrize("value", (Path("/" + "a" * 32769), "not-path"))
+def test_budget_path_before_join(value):
+    """Reject oversized or malformed path metadata without stringification."""
+    with pytest.raises(ValidationError):
+        api()._path_text(value)

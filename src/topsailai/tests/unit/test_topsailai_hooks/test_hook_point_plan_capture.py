@@ -617,3 +617,48 @@ def test_context_hostile_diagnostic_access(tmp_path, monkeypatch, access, target
         assert list(output.iterdir()) == [unrelated]
     finally:
         assert candidate.close().accepted
+
+
+@pytest.mark.parametrize("case", ("platform_count", "platform_text", "options", "invocations", "deep", "cycle"))
+def test_budget_rejects_before_allocation(tmp_path, monkeypatch, case):
+    """Reject aggregate configuration before any backend/capture/probe operation."""
+    from dataclasses import replace
+    from topsailai.hooks.contracts import ValidationError
+    from topsailai.hooks.hook_script_contracts import HookScriptExecutionOptions
+    from topsailai.hooks.module_invocation_protocol import ModuleInvocation
+    from topsailai.hooks import hook_point_plan_capture as capture
+    build, inputs, output, imported, called = fixtures(tmp_path)
+    if case == "platform_count":
+        inputs["platform_policy"] = ExecutablePlatformPolicy("posix", ("x",) * 1025)
+    if case == "platform_text":
+        inputs["platform_policy"] = ExecutablePlatformPolicy("posix", ("x" * 32769,))
+    if case == "options":
+        inputs["options"] = HookScriptExecutionOptions(argv=("x" * 32768,) * 65)
+    if case == "invocations":
+        invocation = ModuleInvocation(["x" * 32768] * 3, {})
+        inputs["modules"] = tuple(replace(inputs["modules"][0], registered_name=f"M{i:03d}",
+            source_path=tmp_path / f"m{i}.py", invocation=invocation) for i in range(22))
+    if case in ("deep", "cycle"):
+        invocation = object.__new__(ModuleInvocation)
+        value = []
+        if case == "cycle":
+            value.append(value)
+        else:
+            for _ in range(26):
+                value = [value]
+        object.__setattr__(invocation, "args", value)
+        object.__setattr__(invocation, "kwargs", {})
+        object.__setattr__(inputs["modules"][0], "invocation", invocation)
+    before = inputs.copy()
+    calls = []
+    def forbidden(*args, **kwargs):
+        """Record forbidden side effects without creating resources."""
+        calls.append(True)
+        raise AssertionError("allocation before budget rejection")
+    monkeypatch.setattr(capture.IsolatedProcessBackend, "__init__", forbidden)
+    monkeypatch.setattr(capture, "ArtifactCaptureOwner", forbidden)
+    monkeypatch.setattr(capture, "probe_candidate", forbidden)
+    with pytest.raises(ValidationError):
+        build("point", **inputs)
+    assert calls == [] and inputs == before
+    assert list(output.iterdir()) == [] and not imported.exists() and not called.exists()

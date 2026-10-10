@@ -11,7 +11,7 @@ from topsailai.hooks.contracts import ValidationError
 from topsailai.hooks.hook_script_contracts import HookScriptExecutionOptions, HookScriptExecutionPolicy
 from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy, HookScriptDiscoveryResult, HookScriptEntry
 from topsailai.hooks.hook_point_plan_contracts import (
-    ModuleSource, CapturedModule, CapturedScript, DefaultScriptHook, HookPointPlan, _text, _execution,
+    ModuleSource, CapturedModule, CapturedScript, DefaultScriptHook, HookPointPlan, _text, _execution, _preflight_configuration,
 )
 from topsailai.hooks.hook_point_plan_ownership import HookPointCandidate, CandidateBuildError
 from topsailai.hooks.module_discovery_probe import probe_candidate
@@ -24,23 +24,17 @@ def _inputs(hook_name, modules, discovery, platform, trust, artifact_root, backe
     _text(hook_name)
     if type(modules) not in (list, tuple) or len(modules) > 128:
         raise ValidationError("invalid module source collection")
-    owned = []
-    for item in modules:
-        if type(item) is not ModuleSource:
-            raise ValidationError("invalid module source record")
-        owned.append(ModuleSource(**{f.name: getattr(item, f.name) for f in fields(ModuleSource)}))
-    owned.sort(key=lambda item: item.registered_name)
-    if type(platform) is not ExecutablePlatformPolicy:
-        raise ValidationError("invalid candidate platform")
     if discovery is not None and (type(discovery) is not HookScriptDiscoveryResult or discovery.accepted is not True or discovery.errors):
         raise ValidationError("invalid script discovery")
+    _preflight_configuration(hook_name, modules, () if discovery is None else discovery.entries,
+        discovery is not None, options, execution_policy, policy, platform)
+    owned = []
+    for item in modules:
+        owned.append(ModuleSource(**{f.name: getattr(item, f.name) for f in fields(ModuleSource)}))
+    owned.sort(key=lambda item: item.registered_name)
     raw = () if discovery is None else discovery.entries
-    if type(raw) not in (list, tuple) or len(raw) > 128:
-        raise ValidationError("invalid script source collection")
     scripts = []
     for item in raw:
-        if type(item) is not HookScriptEntry:
-            raise ValidationError("invalid script source record")
         _text(item.final_registered_name, empty=True)
         scripts.append(HookScriptEntry(item.source_path, item.basename, item.registered_name))
     scripts.sort(key=lambda item: item.final_registered_name)
