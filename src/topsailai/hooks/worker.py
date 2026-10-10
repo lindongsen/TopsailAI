@@ -8,6 +8,7 @@ import importlib
 import inspect
 import os
 import signal
+from types import CoroutineType, GeneratorType
 from typing import Any, Callable
 
 from topsailai.hooks.contracts import ValidationError, _thaw_frozen_json
@@ -49,11 +50,27 @@ def _invoke(handler: Callable[..., Any], context: Any) -> Any:
     return result
 
 
+def _module_isawaitable(value: Any) -> bool:
+    """Inspect real types and special-method slots without observing the instance."""
+    cls = type(value)
+    if cls is CoroutineType:
+        return True
+    if cls is GeneratorType:
+        return bool(value.gi_code.co_flags & inspect.CO_ITERABLE_COROUTINE)
+    # Python resolves special methods on the real type, not spoofed __class__.
+    # Bypass metaclass hooks and do not bind or execute __await__ descriptors here.
+    for base in type.__dict__["__mro__"].__get__(cls):
+        namespace = type.__dict__["__dict__"].__get__(base)
+        if "__await__" in namespace:
+            return namespace["__await__"] is not None
+    return False
+
+
 def _invoke_module(handler: Callable[..., Any], invocation: Any) -> Any:
     """Thaw owned safe arguments and await only within the isolated worker."""
     result = handler(*_thaw_frozen_json(invocation.args),
                      **_thaw_frozen_json(invocation.kwargs))
-    if inspect.isawaitable(result):
+    if _module_isawaitable(result):
         return asyncio.run(_await_result(result))
     return result
 

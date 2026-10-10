@@ -81,7 +81,7 @@ def test_normal_values(tmp_path, value):
     assert_closed(tmp_path, result)
 
 
-@pytest.mark.parametrize('mode', ['hostile', 'nested', 'cycle', 'oversize'])
+@pytest.mark.parametrize('mode', ['hostile', 'nested', 'cycle', 'oversize', 'plain_generator', 'shadowed_awaitable'])
 def test_unavailable_normal_returns(tmp_path, mode):
     """Unsupported normal objects remain success without observation."""
     result = backend(tmp_path).execute_module(REF, _context(), 2500, args=(mode,))
@@ -276,9 +276,10 @@ def test_import_deadline(tmp_path, monkeypatch):
     assert 'slow_module' not in sys.modules
 
 
-def test_child_awaitable(tmp_path):
+@pytest.mark.parametrize('mode', ['awaitable', 'generator_awaitable', 'custom_awaitable'])
+def test_child_awaitable(tmp_path, mode):
     """v2 preserves worker-owned awaitable execution without host scheduling."""
-    result = backend(tmp_path).execute_module(REF, _context(), 2500, args=('awaitable',))
+    result = backend(tmp_path).execute_module(REF, _context(), 2500, args=(mode,))
     assert result.status == 'success' and result.returned.value == 'awaited'
     assert_closed(tmp_path, result)
 
@@ -324,3 +325,25 @@ def test_measured_v1_unsupported_return(tmp_path):
     assert result.status == 'invalid_output' and result.error_category == 'protocol_error'
     assert not result.returned.present and result.transport_diagnostic is None
     assert result.cleanup_confirmed
+
+
+
+@pytest.mark.parametrize('mode', ['hostile_class', 'hostile_meta'])
+def test_opaque_class_not_observed(tmp_path, mode):
+    """A hostile class property cannot turn a normal child return into failure."""
+    result = backend(tmp_path).execute_module(REF, _context(), 2500, args=(mode,))
+    assert_closed(tmp_path, result)
+    assert result.status == 'success' and result.returned.present
+    assert result.returned.representation == 'unavailable' and result.value is None
+    assert result.transport_diagnostic.category == 'return_unavailable'
+    assert result.transport_diagnostic.message == ''
+    assert not (tmp_path / 'observed').exists()
+
+
+
+def test_child_await_exception(tmp_path):
+    """A failure in actual awaiting remains an execution error with absent return."""
+    result = backend(tmp_path).execute_module(REF, _context(), 2500, args=('await_error',))
+    assert result.status == 'error' and result.error_category == 'handler_error'
+    assert not result.returned.present and result.transport_diagnostic is None
+    assert_closed(tmp_path, result)
