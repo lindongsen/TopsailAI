@@ -335,3 +335,14 @@ def test_same_module_under_distinct_hook_names_has_distinct_identity(tmp_path: P
     assert first[0].stable_identity[1:] == second[0].stable_identity[1:]
     assert first[0].stable_identity[0] == "hook_first"
     assert second[0].stable_identity[0] == "hook_second"
+
+
+def test_exact_function_entry_admission(tmp_path: Path) -> None:
+    """Regular, async and C functions are supported, not arbitrary callables."""
+    write_module(tmp_path, "regular")
+    write_module(tmp_path, "async_entry", "async def main():\n    return None\n")
+    write_module(tmp_path, "callable_object", "class Entry:\n    def __call__(self): pass\nmain = Entry()\n")
+    result = _discover(tmp_path)
+    assert [(entry.logical_name, entry.entry_valid) for entry in manifest_entries(result)] == [
+        ("async_entry", True), ("callable_object", False), ("regular", True),
+    ]

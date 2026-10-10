@@ -8,7 +8,7 @@ import importlib
 import inspect
 import os
 import signal
-from types import CoroutineType, GeneratorType
+from types import BuiltinFunctionType, CoroutineType, FunctionType, GeneratorType, ModuleType
 from typing import Any, Callable
 
 from topsailai.hooks.contracts import ValidationError, _thaw_frozen_json
@@ -31,8 +31,9 @@ def _resolve_handler(handler_ref: str) -> Callable[..., Any]:
     if not separator or not module_name or not function_name or "." in function_name:
         raise ValidationError("handler_ref must identify one module-level function")
     module = importlib.import_module(module_name)
-    handler = getattr(module, function_name)
-    if not inspect.isfunction(handler):
+    handler = ModuleType.__dict__["__dict__"].__get__(module).get(function_name)
+    handler_type = type(handler)
+    if handler_type is not FunctionType and handler_type is not BuiltinFunctionType:
         raise ValidationError("handler_ref must resolve to a function")
     return handler
 
