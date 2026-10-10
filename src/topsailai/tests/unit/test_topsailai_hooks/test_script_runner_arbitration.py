@@ -1703,7 +1703,7 @@ def test_recovery_outer_repair_and_repeated_release(
     outer = next(i for i, line in enumerate(source) if "if primary is not None and lease" in line)
     target = first + next(i for i in range(outer, len(source)) if "custody.recovering = False" in source[i])
     if fault == "pending_release":
-        target = first + next(i for i in range(outer, len(source)) if "if not custody.pending:" in source[i])
+        target = first + next(i for i in range(outer, len(source)) if "if release_verified and not custody.pending and self._prelaunch_storage.get" in source[i])
     armed = fault in {"repair", "pending_release"}
     repair_armed = fault == "repair_method"
     original_setattr = module._StorageCustody.__setattr__
@@ -4334,3 +4334,558 @@ def test_prelaunch_first_publication_native_fallback_failure(tmp_path, monkeypat
         for custody, owner in captured:
             print("exact fallback cleanup", owner.__dict__.get("_path"))
             owner.cleanup()
+
+
+@pytest.mark.parametrize("kind", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("fallback_after", [False, True])
+@pytest.mark.parametrize("teardown", ["none", "before", "after"])
+def test_incomplete_arming_invocation_exclusion(tmp_path, monkeypatch, context, kind, fallback_after, teardown):
+    """Cover bounded fallback handler without replacing the coverage tracer."""
+    import topsailai.hooks.script_runner as module
+
+    initialize = module._StorageCustody.__init__
+    setter = module._StorageCustody.__setattr__
+    primary = kind("original allocation handoff")
+    captured = []
+    observed = []
+    fallback_failed = False
+    native = dict
+    armed = True
+    backend_calls = []
+    native_list = list
+    teardown_hit = False
+
+    class NativeDict(dict):
+        """Reject one fallback update while preserving real native ownership writes."""
+        @staticmethod
+        def update(state, **values):
+            """Inject fallback failure only during execution authority publication."""
+            if "execution_owner" in values:
+                nonlocal fallback_failed
+                fallback_failed = True
+                if fallback_after:
+                    native.update(state, **values)
+                raise SystemExit("native fallback")
+            native.update(state, **values)
+
+    class NativeList(list):
+        """Interrupt one exact invocation lease teardown before or after its write."""
+        @staticmethod
+        def __setitem__(lease, index, value):
+            """Leave the fallback independent of this one-shot native seam."""
+            nonlocal teardown_hit
+            if teardown != "none" and not teardown_hit:
+                teardown_hit = True
+                if teardown == "after":
+                    native_list.__setitem__(lease, index, value)
+                raise SystemExit("lease teardown")
+            native_list.__setitem__(lease, index, value)
+
+    class State(dict):
+        """Reject the ordinary arming write before native fallback."""
+        def __setitem__(self, name, value):
+            """Keep all writes except one execution arming assignment unchanged."""
+            if name == "execution_owner" and value is not None:
+                raise KeyboardInterrupt("ordinary arming")
+            native.__setitem__(self, name, value)
+
+    def init(custody, owner):
+        """Capture the actual owner and isolate state injection to this custody."""
+        initialize(custody, owner)
+        custody.__dict__ = State(custody.__dict__)
+        captured.append((custody, owner))
+
+    def assign(custody, name, value):
+        """Start recovery after genuine allocation with the original exception."""
+        nonlocal armed
+        if armed and name == "storage_alias" and value is not None:
+            armed = False
+            raise primary
+        setter(custody, name, value)
+
+    script = tmp_path / "script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    original_lock = runner._lock
+    class ReleaseSeam:
+        """Observe exact retry only after recovery lock release before finalizer."""
+        def __enter__(self):
+            original_lock.acquire()
+            return self
+        def __exit__(self, *args):
+            nonlocal fallback_failed
+            original_lock.release()
+            if fallback_failed:
+                fallback_failed = False
+                custody, owner = captured[0]
+                alias = owner.cleanup_debts()[0].debt_id
+                path = owner.path
+                assert custody.pending
+                result = runner.retry_cleanup(alias)
+                concurrent = []
+                started = threading.Event()
+                def retry():
+                    """Run exact and unrelated retries after the real lock is released."""
+                    started.set()
+                    concurrent.append(runner.retry_cleanup(alias))
+                    concurrent.append(runner.retry_cleanup("unrelated-incomplete-arming"))
+                thread = threading.Thread(target=retry)
+                thread.start()
+                assert started.wait(5)
+                thread.join(5)
+                assert not thread.is_alive() and concurrent == [False, True]
+                observed.append((result, path.exists(), id(owner) in runner._prelaunch_storage))
+    runner._lock = ReleaseSeam()
+
+    def backend_retry(alias):
+        """Accept only the unrelated alias at the observed handoff."""
+        backend_calls.append(alias)
+        return True
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "dict", NativeDict, raising=False)
+            patch.setattr(module, "list", NativeList, raising=False)
+            patch.setattr(runner._backend, "retry_cleanup", backend_retry)
+            patch.setattr(module._StorageCustody, "__init__", init)
+            patch.setattr(module._StorageCustody, "__setattr__", assign)
+            with pytest.raises(BaseException) as caught:
+                runner.execute_entry(entry_index=0, entry=HookScriptEntry(script, script.name),
+                    context=context, options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                    execution_deadline=time.monotonic()+5, cleanup_deadline=time.monotonic()+5,
+                    output_remaining_bytes=65536, cancellation=threading.Event())
+        assert caught.value is primary and primary.__cause__ is None
+        custody, owner = captured[0]
+        assert observed == [(False, True, True)]
+        assert backend_calls == ["unrelated-incomplete-arming"]
+        assert custody.execution_lease == [None]
+        assert teardown_hit == (teardown != "none")
+        frames = []
+        tb = caught.value.__traceback__
+        while tb is not None:
+            frames.append(tb.tb_frame.f_code.co_name)
+            tb = tb.tb_next
+        assert "assign" in frames
+        alias = owner.cleanup_debts()[0].debt_id
+        assert [debt.debt_id for debt in runner.cleanup_debts()] == [alias]
+        assert runner.retry_cleanup(alias)
+        assert custody.retry_owner is None and custody.execution_owner is None
+        assert runner.cleanup_debts() == () and runner._prelaunch_storage == {}
+        print("exact retry excluded until invocation handback", observed)
+
+    finally:
+        for custody, owner in captured:
+            print("exact fallback cleanup", owner.__dict__.get("_path"))
+            owner.cleanup()
+
+
+@pytest.mark.parametrize("kind", [KeyboardInterrupt, SystemExit])
+def test_terminal_invocation_lease_handoff(tmp_path, monkeypatch, context, kind):
+    """Keep exact aliases excluded until terminal lease and custody hand off together."""
+    import topsailai.hooks.script_runner as module
+
+    captured = []
+    observations = []
+    backend_calls = []
+    initialize = module._StorageCustody.__init__
+    setter = module._StorageCustody.__setattr__
+    primary = kind("terminal original interruption")
+    armed = True
+
+    def init(custody, owner):
+        """Capture the exact real owner without changing its state."""
+        initialize(custody, owner)
+        captured.append((custody, owner))
+
+    def assign(custody, name, value):
+        """Interrupt the first stable alias publication after genuine allocation."""
+        nonlocal armed
+        if armed and name == "storage_alias" and value is not None:
+            armed = False
+            captured.append((value.debt_id, custody.owner.path))
+            raise primary
+        setter(custody, name, value)
+
+    script = tmp_path / "terminal-script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    unrelated = tmp_path / "unrelated"
+    unrelated.mkdir()
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    lock = runner._lock
+    observing = False
+
+    class ReleaseSeam:
+        """Observe only after actual unlock and never recursively intercept retry."""
+        def __enter__(self):
+            """Acquire the actual runner lock."""
+            lock.acquire()
+            return self
+
+        def __exit__(self, *args):
+            """Inspect active terminal authority outside the critical section."""
+            nonlocal observing
+            lock.release()
+            if observing or len(captured) != 2:
+                return
+            custody, owner = captured[0]
+            if custody.execution_lease[0] is None:
+                return
+            observing = True
+            try:
+                alias, path = captured[1]
+                reachable = runner._prelaunch_storage.get(id(owner)) is custody
+                result = runner.retry_cleanup(alias)
+                other = runner.retry_cleanup("unrelated-terminal")
+                observations.append((reachable, result, other, path.exists()))
+            finally:
+                observing = False
+
+    def backend_retry(alias):
+        """Record whether an exact alias incorrectly falls through to backend."""
+        backend_calls.append(alias)
+        return True
+
+    runner._lock = ReleaseSeam()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module._StorageCustody, "__init__", init)
+            patch.setattr(module._StorageCustody, "__setattr__", assign)
+            patch.setattr(runner._backend, "retry_cleanup", backend_retry)
+            with pytest.raises(BaseException) as caught:
+                runner.execute_entry(entry_index=0, entry=HookScriptEntry(script, script.name),
+                    context=context, options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                    execution_deadline=time.monotonic()+5, cleanup_deadline=time.monotonic()+5,
+                    output_remaining_bytes=65536, cancellation=threading.Event())
+        custody, owner = captured[0]
+        alias, path = captured[1]
+        assert caught.value is primary
+        frames = []
+        tb = primary.__traceback__
+        while tb is not None:
+            frames.append(tb.tb_frame.f_code.co_name)
+            tb = tb.tb_next
+        assert "assign" in frames and primary.__cause__ is None
+        assert observations and all(row[:3] == (True, False, True) for row in observations)
+        assert alias not in backend_calls and unrelated.exists()
+        assert not path.exists() and custody.execution_lease == [None]
+        assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
+        assert runner.retry_cleanup(alias)
+        print("terminal real resource observations", observations)
+    finally:
+        if captured:
+            print("exact terminal owner cleanup", captured[0][1].__dict__.get("_path"))
+            captured[0][1].cleanup()
+
+
+def test_forget_storage_retains_independent_execution_lease(tmp_path):
+    """Keep settled exact custody reachable while its independent invocation is active."""
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    path = owner.path
+    custody = _StorageCustody(owner)
+    custody.storage_alias = owner.cleanup_debts()[0]
+    token = object()
+    custody.execution_lease = [token]
+    runner._prelaunch_storage[id(owner)] = custody
+    runner._remember_storage(owner)
+    try:
+        assert owner.cleanup() and not path.exists()
+        runner._forget_storage(owner)
+        assert runner._prelaunch_storage.get(id(owner)) is custody
+        assert custody.execution_lease[0] is token and custody.release_complete
+        assert runner.retry_cleanup(custody.storage_alias.debt_id) is False
+    finally:
+        print("exact settled lease owner cleanup", owner.__dict__.get("_path"))
+        owner.cleanup()
+
+
+@pytest.mark.parametrize("kind", [KeyboardInterrupt, SystemExit])
+def test_execution_lease_mismatch_retains_exact_custody(tmp_path, monkeypatch, context, kind):
+    """Never release a foreign invocation token or its reachable exact custody."""
+    import topsailai.hooks.script_runner as module
+
+    initialize = module._StorageCustody.__init__
+    setter = module._StorageCustody.__setattr__
+    cleanup = TemporaryStorageOwner.cleanup
+    primary = kind("original alias handoff")
+    foreign = object()
+    captured = []
+    armed = True
+
+    def init(custody, owner):
+        """Capture only the actual invocation custody."""
+        initialize(custody, owner)
+        captured.append((custody, owner))
+
+    def assign(custody, name, value):
+        """Interrupt after allocation without altering the original traceback."""
+        nonlocal armed
+        if armed and name == "storage_alias" and value is not None:
+            armed = False
+            raise primary
+        setter(custody, name, value)
+
+    def remove(owner):
+        """Replace authority before genuine cleanup to test exact release ownership."""
+        captured[0][0].execution_lease[0] = foreign
+        return cleanup(owner)
+
+    script = tmp_path / "script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    with monkeypatch.context() as patch:
+        patch.setattr(module._StorageCustody, "__init__", init)
+        patch.setattr(module._StorageCustody, "__setattr__", assign)
+        patch.setattr(TemporaryStorageOwner, "cleanup", remove)
+        with pytest.raises(BaseException) as caught:
+            runner.execute_entry(entry_index=0, entry=HookScriptEntry(script, script.name),
+                context=context, options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                execution_deadline=time.monotonic()+5, cleanup_deadline=time.monotonic()+5,
+                output_remaining_bytes=65536, cancellation=threading.Event())
+    custody, owner = captured[0]
+    assert caught.value is primary and primary.__cause__ is None
+    assert custody.execution_lease[0] is foreign
+    assert runner._prelaunch_storage.get(id(owner)) is custody
+    assert custody.release_complete
+    assert not runner.retry_cleanup(custody.storage_alias.debt_id)
+    assert runner.retry_cleanup("unrelated-foreign-lease")
+    assert custody.execution_lease[0] is foreign
+    # The simulated foreign owner alone hands back its own authority.
+    custody.execution_lease[0] = None
+    custody.pending = True
+    assert runner.retry_cleanup(custody.storage_alias.debt_id)
+    assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
+
+
+@pytest.mark.parametrize("allocation_state", ["empty", "debt", "missing", "malformed"])
+def test_allocation_false_requires_verified_no_resource(tmp_path, monkeypatch, allocation_state):
+    """Trust false allocation only with complete evidence and retain contradictory real debt."""
+    import topsailai.hooks.script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    native_allocate = TemporaryStorageOwner.allocate
+    owners = []
+    custodies = []
+    native_init = module._StorageCustody.__init__
+
+    def initialize(custody, owner):
+        """Capture exact custody without changing invocation authority."""
+        native_init(custody, owner)
+        custodies.append(custody)
+
+    def allocate(owner):
+        """Return false with verified emptiness, actual debt, or unprovable state."""
+        owners.append(owner)
+        if allocation_state == "debt":
+            assert native_allocate(owner)
+        elif allocation_state == "missing":
+            del owner.__dict__["_candidate_path"]
+        elif allocation_state == "malformed":
+            owner.__dict__["_candidate_path"] = object()
+        return False
+
+    script = tmp_path / "script"
+    script.write_text("unused")
+    script.chmod(0o700)
+    event = HookEvent("review", "u06.arbitration", 1, "owner", "scope", "op", None, 1,
+                      "2026-10-10T00:00:00Z", "test", "review", {})
+    with monkeypatch.context() as patch:
+        patch.setattr(module._StorageCustody, "__init__", initialize)
+        patch.setattr(TemporaryStorageOwner, "allocate", allocate)
+        result = runner.execute_entry(entry_index=0, entry=HookScriptEntry(script, script.name),
+            context=HookContext(event, "delivery", "hook_script", 1, 5000),
+            options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+            execution_deadline=time.monotonic()+5, cleanup_deadline=time.monotonic()+5,
+            output_remaining_bytes=65536, cancellation=threading.Event())
+    assert result.status is HookStatus.ERROR
+    custody = custodies[0]
+    owner = owners[0]
+    assert custody.execution_lease == [None]
+    assert custody.storage_settled is (allocation_state == "empty")
+    assert runner.retry_cleanup("unrelated-false-allocation")
+    if allocation_state == "empty":
+        assert runner._prelaunch_storage == {}
+    else:
+        assert runner._prelaunch_storage[id(owner)] is custody
+        assert custody.pending
+    if allocation_state == "debt":
+        path = owner.path
+        assert path.exists()
+        alias = owner.cleanup_debts()[0].debt_id
+        assert [debt.debt_id for debt in runner.cleanup_debts()] == [alias]
+        assert runner.retry_cleanup(alias)
+        assert not path.exists() and runner._prelaunch_storage == {}
+
+
+@pytest.mark.parametrize("after", [False, True])
+@pytest.mark.parametrize("release_failure", ["none", "before", "after", "fallback"])
+def test_verified_empty_allocation_teardown_interruption(tmp_path, monkeypatch, context, after, release_failure):
+    """Propagate teardown failure without leaving settled custody hidden after lease withdrawal."""
+    import topsailai.hooks.script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    initialize = module._StorageCustody.__init__
+    captured = []
+    native_list = list
+    interruption = SystemExit("empty allocation lease teardown")
+    release_error = KeyboardInterrupt("terminal registry release")
+
+    class Registry(dict):
+        """Interrupt exact terminal removal without changing identity authority."""
+        def pop(self, key, default=None):
+            """Exercise before/after release while preserving the teardown primary."""
+            if release_failure == "none":
+                return super().pop(key, default)
+            if release_failure == "after":
+                super().pop(key, default)
+            raise release_error
+
+        def __delitem__(self, key):
+            """Force the native exact-identity fallback only when requested."""
+            if release_failure == "fallback":
+                raise release_error
+            super().__delitem__(key)
+
+    runner._prelaunch_storage = Registry()
+
+    class NativeList(list):
+        """Interrupt the exact lease withdrawal before or after its native mutation."""
+        @staticmethod
+        def __setitem__(lease, index, value):
+            """Keep the actual invocation token seam bounded to its one teardown."""
+            if after:
+                native_list.__setitem__(lease, index, value)
+            raise interruption
+
+    def init(custody, owner):
+        """Retain exact custody for settlement and authority assertions."""
+        initialize(custody, owner)
+        captured.append(custody)
+
+    script = tmp_path / "script"
+    script.write_text("unused")
+    script.chmod(0o700)
+    with monkeypatch.context() as patch:
+        patch.setattr(module, "list", NativeList, raising=False)
+        patch.setattr(module._StorageCustody, "__init__", init)
+        patch.setattr(TemporaryStorageOwner, "allocate", lambda owner: False)
+        with pytest.raises(SystemExit) as caught:
+            runner.execute_entry(entry_index=0, entry=HookScriptEntry(script, script.name),
+                context=context, options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                execution_deadline=time.monotonic()+5, cleanup_deadline=time.monotonic()+5,
+                output_remaining_bytes=65536, cancellation=threading.Event())
+    assert caught.value is interruption and interruption.__cause__ is None
+    frames = []
+    traceback = interruption.__traceback__
+    while traceback is not None:
+        frames.append(traceback.tb_frame.f_code.co_name)
+        traceback = traceback.tb_next
+    assert "__setitem__" in frames
+    assert interruption.__context__ is None
+    assert captured[0].storage_settled and captured[0].execution_lease == [None]
+    assert runner.cleanup_debts() == ()
+    assert runner.retry_cleanup("unrelated-empty-teardown")
+    assert runner._prelaunch_storage == {}
+
+
+@pytest.mark.parametrize("malformed", [None, [], [None, None], (None,), {}, "missing", [False], [object()]])
+def test_malformed_execution_lease_preserves_unrelated_retry(tmp_path, monkeypatch, context, malformed):
+    """Retain unprovable authority without crashing unrelated public recovery."""
+    import topsailai.hooks.script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    initialize = module._StorageCustody.__init__
+    captured = []
+
+    def init(custody, owner):
+        """Capture the exact invocation custody before allocation."""
+        initialize(custody, owner)
+        captured.append(custody)
+
+    def allocate(owner):
+        """Invalidate only lease shape without inventing resource settlement."""
+        if malformed == "missing":
+            del captured[0].execution_lease
+        else:
+            captured[0].execution_lease = malformed
+        return False
+
+    script = tmp_path / "script"
+    script.write_text("unused")
+    script.chmod(0o700)
+    with monkeypatch.context() as patch:
+        patch.setattr(module._StorageCustody, "__init__", init)
+        patch.setattr(TemporaryStorageOwner, "allocate", allocate)
+        result = runner.execute_entry(entry_index=0, entry=HookScriptEntry(script, script.name),
+            context=context, options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+            execution_deadline=time.monotonic()+5, cleanup_deadline=time.monotonic()+5,
+            output_remaining_bytes=65536, cancellation=threading.Event())
+    assert result.status is HookStatus.ERROR
+    assert runner._prelaunch_storage
+    if malformed == "missing":
+        assert "execution_lease" not in captured[0].__dict__
+    else:
+        assert captured[0].execution_lease is malformed
+    assert runner.retry_cleanup("unrelated-malformed-lease")
+
+
+@pytest.mark.parametrize("shape", ["none", "empty", "long", "tuple", "mapping", "string", "wrong-token", "missing", "foreign"])
+def test_execution_lease_shape_exact_custody_handback(tmp_path, shape):
+    """Block only exact unsafe authority and converge after its legitimate handback."""
+    import topsailai.hooks.script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    path = owner.path
+    alias = owner.cleanup_debts()[0].debt_id
+    custody = module._StorageCustody(owner)
+    custody.pending = True
+    custody.storage_alias = owner.cleanup_debts()[0]
+    foreign = object()
+    values = {"none": None, "empty": [], "long": [None, None], "tuple": (None,),
+              "mapping": {0: None}, "string": "x", "wrong-token": [False], "foreign": [foreign]}
+    if shape == "missing":
+        del custody.execution_lease
+    else:
+        custody.execution_lease = values[shape]
+    runner._prelaunch_storage[id(owner)] = custody
+    runner._storage[alias] = owner
+    state = custody.__dict__.copy()
+    assert runner.retry_cleanup("unrelated-shape")
+    assert not runner.retry_cleanup(alias)
+    assert path.exists() and runner._prelaunch_storage[id(owner)] is custody
+    assert custody.__dict__ == state
+    assert runner.cleanup_debts() == ()
+    # The legitimate authority alone repairs and hands back its exact obligation.
+    custody.execution_lease = [None]
+    assert runner.retry_cleanup(alias)
+    assert not path.exists() and runner._prelaunch_storage == {}
+    assert runner.cleanup_debts() == ()
+
+
+@pytest.mark.parametrize("lease", [None, [], [None, None], (None,), [False], [object()]])
+def test_forget_storage_retains_unprovable_lease(tmp_path, lease):
+    """Keep exact settled custody reachable until authority is safely handed back."""
+    import topsailai.hooks.script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    custody = module._StorageCustody(owner)
+    custody.execution_lease = lease
+    runner._prelaunch_storage[id(owner)] = custody
+    assert owner.cleanup()
+    runner._forget_storage(owner)
+    assert runner._prelaunch_storage[id(owner)] is custody
+    assert custody.execution_lease is lease and custody.release_complete
+    assert runner.retry_cleanup("unrelated-forget-shape")
+    custody.execution_lease = [None]
+    runner._forget_storage(owner)
+    assert runner._prelaunch_storage == {}

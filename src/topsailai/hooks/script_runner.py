@@ -55,11 +55,24 @@ class _StorageCustody:
         self.recovering = False
         self.retry_owner: object | None = None
         self.execution_owner: object | None = None
+        self.execution_lease: list[object | None] = [None]
         self.storage_alias: CleanupDebt | None = None
         self.release_complete = False
         self.storage_settled = False
         self.reconciliation_pending = False
         self.record: LaunchRecord | None = None
+
+
+def _valid_execution_lease(lease: object) -> bool:
+    """Accept only the bounded native invocation lease and its exact token shape."""
+    return (type(lease) is type([]) and len(lease) == 1
+            and (lease[0] is None or type(lease[0]) is object))
+
+
+def _execution_lease_inactive(custody: _StorageCustody) -> bool:
+    """Fail closed on missing or malformed authority without invoking user methods."""
+    lease = dict.get(object.__getattribute__(custody, "__dict__"), "execution_lease")
+    return _valid_execution_lease(lease) and lease[0] is None
 
 
 class OwnedHookScriptRunner:
@@ -123,6 +136,9 @@ class OwnedHookScriptRunner:
         custody = _StorageCustody(storage)
         owner_state = object.__getattribute__(storage, "__dict__")
         custody_state = object.__getattribute__(custody, "__dict__")
+        execution_token = object()
+        execution_lease = [execution_token]
+        object.__setattr__(custody, "execution_lease", execution_lease)
         with self._lock:
             self._prelaunch_storage[id(storage)] = custody
         lease = None
@@ -131,9 +147,20 @@ class OwnedHookScriptRunner:
         recovered = None
         primary = None
         primary_traceback = None
-        execution_token = object()
         try:
-            if not storage.allocate():
+            allocated = storage.allocate()
+            if allocated is not True:
+                # A false allocation result is settled only with complete exact owner evidence.
+                no_resource = (allocated is False and all(
+                    name in owner_state and dict.get(owner_state, name) is None
+                    for name in ("_candidate_path", "_path", "_uncertain_path", "_debt")
+                ))
+                if no_resource:
+                    dict.__setitem__(custody_state, "storage_settled", True)
+                else:
+                    dict.update(custody_state, pending=True,
+                                storage_alias=dict.get(owner_state, "_debt"))
+                    self._remember_storage(storage)
                 return self._publish(initial, HookStatus.ERROR, "hook_script_startup_failed")
             custody.storage_alias = owner_state["_debt"]
             invocation_id = uuid.uuid4().hex
@@ -308,46 +335,68 @@ class OwnedHookScriptRunner:
             raise
         finally:
             try:
-                with self._lock:
-                    # Unpublished responsibility is not proof of exact owner settlement.
-                    if primary is not None and not all(
-                        name in owner_state and dict.get(owner_state, name) is None
-                        for name in ("_path", "_uncertain_path", "_debt")
-                    ):
-                        dict.update(custody_state, pending=True,
-                                    storage_alias=dict.get(owner_state, "_debt") or dict.get(custody_state, "storage_alias"))
-                    if custody_state["execution_owner"] is execution_token:
-                        if custody_state["release_complete"]:
-                            custody_state["pending"] = False
-                        custody_state["execution_owner"] = None
-                        if not custody_state["pending"] and self._prelaunch_storage.get(id(storage)) is custody:
-                            del self._prelaunch_storage[id(storage)]
-            except BaseException:
-                # Withdraw only native authority owned by this recovery invocation.
-                with self._lock:
-                    if dict.get(custody_state, "execution_owner") is execution_token:
-                        dict.__setitem__(custody_state, "execution_owner", None)
-                    if dict.get(custody_state, "release_complete"):
-                        dict.__setitem__(custody_state, "pending", False)
-                    if not dict.get(custody_state, "pending") and dict.get(self._prelaunch_storage, id(storage)) is custody:
-                        dict.__delitem__(self._prelaunch_storage, id(storage))
-                if primary is None:
-                    raise
-            try:
-                if not custody.pending:  # pragma: no branch - pending propagates the primary exception
-                    self._prelaunch_storage.pop(id(storage), None)
-            except BaseException:
-                if primary is None:
-                    raise
                 try:
-                    if not custody.pending and self._prelaunch_storage.get(id(storage)) is custody:
-                        del self._prelaunch_storage[id(storage)]
+                    with self._lock:
+                        # Unpublished responsibility is not proof of exact owner settlement.
+                        if primary is not None and not all(
+                            name in owner_state and dict.get(owner_state, name) is None
+                            for name in ("_path", "_uncertain_path", "_debt")
+                        ):
+                            dict.update(custody_state, pending=True,
+                                        storage_alias=dict.get(owner_state, "_debt") or dict.get(custody_state, "storage_alias"))
+                        if custody_state["execution_owner"] is execution_token:
+                            if custody_state["release_complete"]:
+                                custody_state["pending"] = False
+                            custody_state["execution_owner"] = None
                 except BaseException:
-                    # Bypass failed registry overrides, retaining exact identity authority.
-                    registry = self._prelaunch_storage
-                    if not custody.pending and dict.get(registry, id(storage)) is custody:
-                        dict.__delitem__(registry, id(storage))
-                raise primary.with_traceback(primary_traceback) from None
+                    # Withdraw only native authority owned by this recovery invocation.
+                    with self._lock:
+                        if dict.get(custody_state, "execution_owner") is execution_token:
+                            dict.__setitem__(custody_state, "execution_owner", None)
+                        if dict.get(custody_state, "release_complete"):
+                            dict.__setitem__(custody_state, "pending", False)
+                    if primary is None:
+                        raise
+            finally:
+                terminal_error = None
+                terminal_traceback = None
+                # Withdraw only the independently preregistered invocation lease.
+                with self._lock:
+                    lease_owned = (dict.get(custody_state, "execution_lease") is execution_lease
+                                   and _valid_execution_lease(execution_lease)
+                                   and execution_lease[0] is execution_token)
+                    if lease_owned:
+                        try:
+                            list.__setitem__(execution_lease, 0, None)
+                        except BaseException as interrupted:
+                            # Settle exact responsibility before propagating teardown failure.
+                            if execution_lease[0] is execution_token:
+                                execution_lease[0] = None
+                            if primary is None:
+                                terminal_error = interrupted
+                                terminal_traceback = interrupted.__traceback__
+                    release_verified = (lease_owned and _execution_lease_inactive(custody)
+                                        and (dict.get(custody_state, "release_complete") is True
+                                             or dict.get(custody_state, "storage_settled") is True))
+                    try:
+                        if release_verified and not custody.pending and self._prelaunch_storage.get(id(storage)) is custody:
+                            self._prelaunch_storage.pop(id(storage), None)
+                    except BaseException as interrupted:
+                        if primary is None and terminal_error is None:
+                            terminal_error = interrupted
+                            terminal_traceback = interrupted.__traceback__
+                        try:
+                            if release_verified and not custody.pending and self._prelaunch_storage.get(id(storage)) is custody:
+                                del self._prelaunch_storage[id(storage)]
+                        except BaseException:
+                            # Bypass failed registry overrides, retaining exact identity authority.
+                            registry = self._prelaunch_storage
+                            if release_verified and not custody.pending and dict.get(registry, id(storage)) is custody:
+                                dict.__delitem__(registry, id(storage))
+                        if primary is not None:
+                            raise primary.with_traceback(primary_traceback) from None
+                if terminal_error is not None:
+                    raise terminal_error.with_traceback(terminal_traceback) from None
 
     def _reconcile_custody(self, custody: _StorageCustody) -> None:
         """Publish exact completion or an enumerable observation obligation once."""
@@ -389,7 +438,7 @@ class OwnedHookScriptRunner:
         with self._lock:
             owners = {id(storage): storage for storage in self._storage.values()}
             for owner_id, custody in self._prelaunch_storage.items():
-                if not custody.pending or custody.recovering or custody.retry_owner is not None or custody.execution_owner is not None:
+                if not custody.pending or custody.recovering or custody.retry_owner is not None or custody.execution_owner is not None or not _execution_lease_inactive(custody):
                     owners.pop(owner_id, None)
                     continue
                 if custody.reconciliation_pending and custody.record is not None:
@@ -425,11 +474,11 @@ class OwnedHookScriptRunner:
         selected = None
         try:
             with self._lock:
-                if any((c.recovering or c.retry_owner is not None or c.execution_owner is not None) and c.record is not None and c.record.debt_id == debt_id
+                if any((c.recovering or c.retry_owner is not None or c.execution_owner is not None or not _execution_lease_inactive(c)) and c.record is not None and c.record.debt_id == debt_id
                        for c in self._prelaunch_storage.values()):
                     return False
                 for custody in self._prelaunch_storage.values():
-                    if not custody.recovering and custody.retry_owner is None and custody.execution_owner is None:
+                    if not custody.recovering and custody.retry_owner is None and custody.execution_owner is None and _execution_lease_inactive(custody):
                         continue
                     alias = custody.storage_alias
                     if isinstance(alias, CleanupDebt) and alias.debt_id == debt_id:
@@ -437,13 +486,13 @@ class OwnedHookScriptRunner:
                     debt = object.__getattribute__(custody.owner, "__dict__").get("_debt")
                     if isinstance(debt, CleanupDebt) and debt.debt_id == debt_id:
                         return False
-                pending = tuple(c for c in self._prelaunch_storage.values() if c.pending and not c.recovering and c.retry_owner is None and c.execution_owner is None)
+                pending = tuple(c for c in self._prelaunch_storage.values() if c.pending and not c.recovering and c.retry_owner is None and c.execution_owner is None and _execution_lease_inactive(c))
                 process_custody = next((c for c in pending if c.record is not None
                                         and (c.record.debt_id == debt_id or (
                                             c.reconciliation_pending and c.storage_alias is not None
                                             and c.storage_alias.debt_id == debt_id))), None)
                 storage = self._storage.get(debt_id)
-                if any((c.recovering or c.retry_owner is not None or c.execution_owner is not None) and c.owner is storage
+                if any((c.recovering or c.retry_owner is not None or c.execution_owner is not None or not _execution_lease_inactive(c)) and c.owner is storage
                        for c in self._prelaunch_storage.values()):
                     return False
                 for custody in pending:
@@ -622,6 +671,7 @@ class OwnedHookScriptRunner:
     ) -> HookScriptEntryResult:
         """Settle prelaunch storage or publish its exact removal debt."""
         if storage.cleanup():
+            self._forget_storage(storage)
             return self._publish(
                 result, HookStatus.ERROR, "hook_script_startup_failed"
             )
@@ -698,7 +748,8 @@ class OwnedHookScriptRunner:
                 if owner is not storage
             }
             custody = self._prelaunch_storage.get(id(storage))
-            if custody is not None and (custody.retry_owner is not None or custody.execution_owner is not None):
+            if custody is not None and (custody.retry_owner is not None or custody.execution_owner is not None
+                                        or not _execution_lease_inactive(custody)):
                 custody.release_complete = True
             else:
                 self._prelaunch_storage.pop(id(storage), None)
