@@ -255,6 +255,12 @@ Supported actions: `call_instruction`, `hard_interrupt`, `soft_interrupt`,
 - To change agent behavior: look up the variable in `env_template`, add the
   override to `.env.local`, then restart the agent.
 
+## Model registry
+
+- The available model configuration file is `${HOME}/.topsailai/.models.jsonl`.
+- To add a new model, update this file. For example, to add a `gpt-6.1-sol`
+  model, add an entry with the same format as `gpt-5.6-sol`.
+
 ## Log files
 
 Runtime logs live under `{TOPSAILAI_HOME}/log/` (default
