@@ -115,6 +115,8 @@ class OwnedHookScriptRunner:
         custody = _StorageCustody(storage)
         with self._lock:
             self._prelaunch_storage[id(storage)] = custody
+        lease = None
+        record = None
         try:
             if not storage.allocate():
                 return self._publish(initial, HookStatus.ERROR, "hook_script_startup_failed")
@@ -138,7 +140,77 @@ class OwnedHookScriptRunner:
                 cleanup_deadline=cleanup_deadline,
                 termination_grace=policy.terminate_grace_ms / 1_000,
             )
+            lease = None
+            try:
+                spawned = self._backend.launch_script(
+                    argv=argv,
+                    cwd=str(cwd),
+                    environment=environment,
+                    argument_environment_limit_bytes=(
+                        policy.argument_environment_limit_bytes
+                    ),
+                    deadline=execution_deadline,
+                    record=record,
+                )
+                if isinstance(spawned, WorkerResult):
+                    return self._finish_launch_failure(initial, storage, spawned)
+                lease = spawned
+                process, result_fd = lease.resources()
+                lease.release_to_caller()
+                current = HookScriptEntryResult(
+                    entry_index,
+                    entry.basename,
+                    HookStatus.ERROR,
+                    True,
+                    error_category="hook_script_execution_error",
+                )
+                self._set_result(current)
+                facts = drain_script_process(
+                    process,
+                    result_fd,
+                    request,
+                    policy,
+                    execution_deadline,
+                    effective_remaining,
+                    cancellation,
+                    lambda: self._backend._close_transport_stream(record, "stdin"),
+                )
+                with self._lock:
+                    self._nonretained_observed_bytes += (
+                        facts.result_observed_bytes
+                        + facts.stdout_dropped
+                        + facts.stderr_dropped
+                    )
+                current = _classify_result(
+                    current, facts, context, invocation_id, policy, started
+                )
+                worker = lease.finish(
+                    current.status.value,
+                    {"stdout": facts.stdout, "stderr": facts.stderr},
+                    {
+                        "stdout": facts.stdout_dropped,
+                        "stderr": facts.stderr_dropped,
+                    },
+                    current.error_category,
+                )
+                current = _settled_result(current, facts, worker, started)
+                current = self._settle_storage(current, storage)
+                self._set_result(current)
+                return current
+            except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
+                if lease is not None:
+                    self._preserve_interrupted(initial, record, storage, started)
+                raise
+            except Exception:
+                if lease is None:
+                    return self._finish_storage(initial, storage)
+                current = self._preserve_interrupted(initial, record, storage, started)
+                self._set_result(current)
+                return current
         except BaseException:
+            if lease is not None or (record is not None and record.process is not None):
+                # The inner guard retains process-before-storage recovery authority.
+                raise
             custody.pending = True
             try:
                 self._remember_storage(storage)
@@ -156,75 +228,6 @@ class OwnedHookScriptRunner:
         finally:
             if not custody.pending:  # pragma: no branch - pending propagates the primary exception
                 self._prelaunch_storage.pop(id(storage), None)
-        lease = None
-        try:
-            spawned = self._backend.launch_script(
-                argv=argv,
-                cwd=str(cwd),
-                environment=environment,
-                argument_environment_limit_bytes=(
-                    policy.argument_environment_limit_bytes
-                ),
-                deadline=execution_deadline,
-                record=record,
-            )
-            if isinstance(spawned, WorkerResult):
-                return self._finish_launch_failure(initial, storage, spawned)
-            lease = spawned
-            process, result_fd = lease.resources()
-            lease.release_to_caller()
-            current = HookScriptEntryResult(
-                entry_index,
-                entry.basename,
-                HookStatus.ERROR,
-                True,
-                error_category="hook_script_execution_error",
-            )
-            self._set_result(current)
-            facts = drain_script_process(
-                process,
-                result_fd,
-                request,
-                policy,
-                execution_deadline,
-                effective_remaining,
-                cancellation,
-                lambda: self._backend._close_transport_stream(record, "stdin"),
-            )
-            with self._lock:
-                self._nonretained_observed_bytes += (
-                    facts.result_observed_bytes
-                    + facts.stdout_dropped
-                    + facts.stderr_dropped
-                )
-            current = _classify_result(
-                current, facts, context, invocation_id, policy, started
-            )
-            worker = lease.finish(
-                current.status.value,
-                {"stdout": facts.stdout, "stderr": facts.stderr},
-                {
-                    "stdout": facts.stdout_dropped,
-                    "stderr": facts.stderr_dropped,
-                },
-                current.error_category,
-            )
-            current = _settled_result(current, facts, worker, started)
-            current = self._settle_storage(current, storage)
-            self._set_result(current)
-            return current
-        except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
-            if lease is not None:
-                self._preserve_interrupted(initial, record, storage, started)
-            else:
-                self._remember_storage(storage)
-            raise
-        except Exception:
-            if lease is None:
-                return self._finish_storage(initial, storage)
-            current = self._preserve_interrupted(initial, record, storage, started)
-            self._set_result(current)
-            return current
 
     def current_result(self, entry_index: int) -> HookScriptEntryResult:
         """Return the latest immutable recovery snapshot for this admission."""
