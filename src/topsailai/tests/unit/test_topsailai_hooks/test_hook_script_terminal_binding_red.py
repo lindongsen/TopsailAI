@@ -177,7 +177,8 @@ def test_terminal_binding_waits_for_every_cleanup_safe_terminal_predecessor() ->
     )
 
 
-@pytest.mark.parametrize("handler_ref", ("plugin:main", "package.plugin:main", "missing_plugin:main"))
+@pytest.mark.parametrize("handler_ref", ("plugin:main", "package.plugin:main", "missing_plugin:main",
+                                       "插件:main", "package.插件:main", "éclair:main", "a\u0301:main"))
 def test_main_reference_accepts_registered_alias_without_host_import(handler_ref: str) -> None:
     """Validate reference metadata without importing a plugin or coupling its name."""
     binding = module_binding("display_alias", handler_ref=handler_ref)
@@ -198,7 +199,8 @@ def test_main_reference_accepts_registered_alias_without_host_import(handler_ref
     (None, False, 1, [], {}, "", "main", ":main", "plugin", "plugin:",
      "plugin:run", "plugin:Main", "plugin:main:extra", "plugin::main",
      "plugin.main", " :main", "plugin..child:main", ".plugin:main", "plugin.:main",
-     "plugin name:main", "plugin:main\n"),
+     "plugin name:main", "plugin:main\n", "a²:main", "1plugin:main",
+     "package.1plugin:main", "plugin .child:main"),
 )
 def test_invalid_main_reference_rejects_whole_candidate(handler_ref: object) -> None:
     """Reject malformed or non-main entries without exposing a partial terminal plan."""

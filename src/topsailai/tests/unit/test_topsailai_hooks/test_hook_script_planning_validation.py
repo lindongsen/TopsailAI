@@ -192,7 +192,10 @@ def test_valid_states_preserve_configuration_order_and_detached_metadata() -> No
     assert [entry.basename for entry in discovery_result.entries] == ["Zulu", "alpha"]
 
 
-@pytest.mark.parametrize("handler_ref", (None, "", ":main", "plugin:", "plugin:run", "plugin:main:extra"))
+@pytest.mark.parametrize("handler_ref", (None, "", ":main", "plugin:", "plugin:run", "plugin:main:extra",
+                                       "a²:main", "1plugin:main", "package.1plugin:main",
+                                       "plugin name:main", "plugin..child:main", ".plugin:main",
+                                       "plugin.:main"))
 def test_discovery_bridge_rejects_invalid_module_entry(handler_ref: object) -> None:
     """An accepted script discovery cannot bypass the unified Module entry check."""
     from topsailai.tests.unit.test_topsailai_hooks.hook_script_terminal_helpers import module_binding
@@ -201,8 +204,8 @@ def test_discovery_bridge_rejects_invalid_module_entry(handler_ref: object) -> N
     binding = module_binding("alias", handler_ref=handler_ref)
     result = build_hook_point_binding_plan_from_discovery(
         hook_point="conversation.started",
-        module_bindings=(binding,),
-        bindings_per_event=2,
+        module_bindings=(module_binding("alpha"), binding),
+        bindings_per_event=3,
         hook_script_configured=True,
         discovery_result=discovery,
     )
@@ -210,3 +213,33 @@ def test_discovery_bridge_rejects_invalid_module_entry(handler_ref: object) -> N
     _assert_rejected(result, "module handler_ref must use non-empty module:main format")
     assert discovery == HookScriptDiscoveryResult(True)
     assert binding.handler_ref is handler_ref
+    assert binding.after == ()
+
+
+@pytest.mark.parametrize(
+    "handler_ref", ("插件:main", "package.插件:main", "éclair:main", "a\u0301:main"),
+)
+def test_discovery_bridge_accepts_python_identifiers_without_mutation(handler_ref: str) -> None:
+    """Preserve valid Unicode import names independently of the registered alias."""
+    from topsailai.tests.unit.test_topsailai_hooks.hook_script_terminal_helpers import module_binding
+
+    discovery = HookScriptDiscoveryResult(True)
+    binding = module_binding("display_alias", handler_ref=handler_ref)
+    candidate = (module_binding("alpha"), binding)
+    result = build_hook_point_binding_plan_from_discovery(
+        hook_point="conversation.started",
+        module_bindings=candidate,
+        bindings_per_event=3,
+        hook_script_configured=True,
+        discovery_result=discovery,
+    )
+
+    assert result.accepted
+    assert result.errors == ()
+    assert [item.binding_id for item in result.bindings] == [
+        "module:alpha", "module:display_alias", "hook_script",
+    ]
+    assert result.bindings[1].handler_ref == handler_ref
+    assert binding.handler_ref == handler_ref
+    assert all(item.after == () for item in candidate)
+    assert discovery == HookScriptDiscoveryResult(True)

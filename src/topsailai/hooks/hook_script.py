@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-import re
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import fields, replace
@@ -613,7 +612,12 @@ def _validate_plan_inputs(
         return ("bindings_per_event limit exceeded",)
     if any(
         type(binding.handler_ref) is not str
-        or re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:main", binding.handler_ref) is None
+        or binding.handler_ref.count(":") != 1
+        or binding.handler_ref.rsplit(":", 1)[1] != "main"
+        or not all(
+            component.isidentifier()
+            for component in binding.handler_ref.split(":", 1)[0].split(".")
+        )
         for binding in module_bindings
     ):
         return ("module handler_ref must use non-empty module:main format",)
