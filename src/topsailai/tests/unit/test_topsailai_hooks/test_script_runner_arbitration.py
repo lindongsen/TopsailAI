@@ -2951,3 +2951,373 @@ def test_precleanup_obligation_survives_exhaustion(tmp_path, monkeypatch, primar
             backend._finish_record(record, 'worker_lost', {'stdout': bytearray(), 'stderr': bytearray()},
                 {'stdout': 0, 'stderr': 0}, 'review_cleanup')
             TemporaryStorageOwner.cleanup(owner)
+
+
+@pytest.mark.parametrize("primary_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("secondary_type", [KeyboardInterrupt, SystemExit])
+def test_retry_exclusion_real_interrupt_reentry(tmp_path, monkeypatch, primary_type, secondary_type):
+    boundary, settlement = "helper_entry", "storage"
+    """Preserve exact settlement and primary across repeated observer failures."""
+    import builtins
+    import inspect
+    import sys
+    import topsailai.hooks.script_runner as module
+    root = tmp_path / 'private'
+    root.mkdir(mode=0o700)
+    unrelated = root / 'unrelated'
+    unrelated.mkdir()
+    script = tmp_path / 'script'
+    script.write_text('#!/bin/false\n')
+    script.chmod(0o700)
+    backend = IsolatedProcessBackend(temp_root=str(root))
+    runner = module.OwnedHookScriptRunner(backend)
+    event = HookEvent('review', 'u06.arbitration', 1, 'owner', 'scope', 'op', None, 1,
+                      '2026-10-10T00:00:00Z', 'test', 'review', {})
+    context = HookContext(event, 'review-delivery', 'hook_script', 1, 5000)
+    primary = primary_type('drain primary')
+    secondary = secondary_type('repeated terminal observation')
+    captured, hits, cleanups = [], [], []
+    cleanup = TemporaryStorageOwner.cleanup
+    target_code = runner._reconcile_custody.__func__.__code__
+    source, first = inspect.getsourcelines(runner._reconcile_custody)
+    if boundary.startswith('precleanup'):
+        target_code = runner._settle_storage.__func__.__code__
+        source, first = inspect.getsourcelines(runner._settle_storage)
+    marker = {"precleanup_arming": 'journal["reconciliation_pending"] = True',
+              "precleanup_try": '        try:', "native": 'state["reconciliation_pending"] = True',
+              "helper_entry": 'state = custody.__dict__',
+              "helper_pending": 'state["pending"] = True',
+              "helper_disarm": 'state["reconciliation_pending"] = False',
+              "helper_return": 'state["reconciliation_pending"] = False'}[boundary]
+    matches = [i for i, line in enumerate(source) if marker in line]
+    target = first + (min(matches) if settlement != "complete" and boundary == "helper_disarm" else max(matches))
+    previous = sys.gettrace()
+    armed = True
+    native_hits = []
+    def trace(frame, event, arg):
+        """Interrupt the new native fallback once after real cleanup."""
+        nonlocal armed
+        if armed and event == ('return' if boundary == 'helper_return' else 'line') and frame.f_code is target_code and (boundary == 'helper_return' or frame.f_lineno == target):
+            armed = False
+            raise secondary_type('outer fallback boundary')
+        return trace
+    class AuthorityView:
+        """Forward exact live owner fields with one controlled read failure."""
+        def __init__(self, state):
+            """Retain the real owner's dictionary rather than a snapshot."""
+            self.state = state
+        def __getitem__(self, name):
+            """Interrupt only the direct outer read, then permit convergence."""
+            if (name == '_path' and len(native_hits) < 3
+                    and sys._getframe(1).f_code is runner.execute_entry.__func__.__code__):
+                native_hits.append(name)
+                sys.settrace(trace)
+                sys._getframe(1).f_trace = trace
+                raise secondary_type('native authority read')
+            return self.state[name]
+    class ObjectView:
+        """Inject only this consumer's already-held exact owner observation."""
+        @staticmethod
+        def __getattribute__(value, name):
+            """Leave custody and all other native attribute access unchanged."""
+            state = builtins.object.__getattribute__(value, name)
+            if isinstance(value, TemporaryStorageOwner) and name == '__dict__':
+                return AuthorityView(state)
+            return state
+    recover = runner._preserve_interrupted
+    native_set = module._StorageCustody.__setattr__
+    def drain(*args, **kwargs):
+        """Raise the original interrupt after a real process launch."""
+        if boundary.startswith('precleanup'):
+            sys.settrace(trace)
+            sys._getframe(1).f_trace = trace
+        raise primary
+    def recovery(initial, record, owner, started):
+        """Hold the exact production resources for assertions and cleanup."""
+        captured.append((record, owner, owner.path))
+        if settlement == 'process':
+            runner._remember_storage(owner)
+            raise secondary_type('process recovery interrupted')
+        return recover(initial, record, owner, started)
+    def remove(owner):
+        """Retain incomplete storage or genuinely remove the exact owner once."""
+        custody = runner._prelaunch_storage[id(owner)]
+        assert custody.reconciliation_pending
+        assert custody.recovering
+        assert not runner.retry_cleanup(custody.record.debt_id)
+        cleanups.append(owner)
+        if settlement == 'storage':
+            raise secondary_type('storage cleanup interrupted')
+        return cleanup(owner)
+    def setter(custody, name, value):
+        """Prevent initial journal publication after genuine cleanup."""
+        if name == 'storage_settled' and value is True:
+            raise secondary_type('journal interrupted')
+        native_set(custody, name, value)
+    def observe(values):
+        """Repeatedly interrupt the existing terminal predicate at each level."""
+        caller = sys._getframe(1).f_code
+        if caller in (runner.execute_entry.__func__.__code__, runner._settle_storage.__func__.__code__):
+            hits.append(caller.co_name)
+            raise secondary
+        return builtins.all(values)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module, 'object', ObjectView, raising=False)
+            patch.setattr(module, 'drain_script_process', drain)
+            patch.setattr(TemporaryStorageOwner, 'cleanup', remove)
+            patch.setattr(runner, '_preserve_interrupted', recovery)
+            patch.setattr(module._StorageCustody, '__setattr__', setter)
+            patch.setattr(module, 'all', observe, raising=False)
+            now = time.monotonic()
+            with pytest.raises(BaseException) as caught:
+                runner.execute_entry(entry_index=0, entry=HookScriptEntry(script.resolve(), script.name),
+                    context=context, options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                    execution_deadline=now + 5, cleanup_deadline=now + 6,
+                    output_remaining_bytes=65536, cancellation=threading.Event())
+        sys.settrace(previous)
+        assert not armed
+        assert native_hits == ['_path'] * 3
+        record, owner, path = captured[0]
+        assert hits
+        if settlement == 'complete' and not boundary.startswith('precleanup'):
+            assert hits[0] == '_settle_storage'
+        assert caught.value is primary
+        tb = primary.__traceback__
+        while tb.tb_next is not None:
+            tb = tb.tb_next
+        assert tb.tb_frame.f_code is drain.__code__
+        assert all(not c.recovering for c in runner._prelaunch_storage.values())
+        if settlement == 'complete' and not boundary.startswith('precleanup'):
+            assert record.process.poll() is not None
+            assert record.cleanup.debt_state == 'settled'
+            assert not path.exists() and owner.cleanup_debts() == ()
+            debts = runner.cleanup_debts()
+            if runner._prelaunch_storage:
+                assert len(debts) == 1 and debts[0].debt_id == record.debt_id
+                assert runner.retry_cleanup(debts[0].debt_id)
+            assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
+            assert cleanups == [owner]
+        else:
+            assert path.exists()
+            debts = runner.cleanup_debts()
+            assert len(debts) == 1
+            expected = debts[0].debt_id
+            assert expected in {record.debt_id, *(d.debt_id for d in owner.cleanup_debts())}
+            assert debts[0].debt_id == expected
+            if settlement == 'process' or boundary.startswith('precleanup'):
+                assert cleanups == []
+            else:
+                assert cleanups == [owner]
+            assert not runner.retry_cleanup('unrelated-debt') or path.exists()
+            assert path.exists()
+            attempts = []
+            nested = []
+            active = True
+            real_cleanup = TemporaryStorageOwner.cleanup
+            def reenter(value):
+                """Try the same public ID at the real removal boundary without races."""
+                nonlocal active
+                attempts.append(value)
+                if active:
+                    active = False
+                    nested.append(runner.retry_cleanup(expected))
+                    assert runner._prelaunch_storage[id(owner)].owner is owner
+                return real_cleanup(value)
+            with monkeypatch.context() as retry_patch:
+                retry_patch.setattr(TemporaryStorageOwner, "cleanup", reenter)
+                assert runner.retry_cleanup(expected)
+            assert nested == [False]
+            assert attempts == [owner]
+
+        assert unrelated.exists()
+        assert not path.exists()
+        assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
+        assert runner.retry_cleanup(record.debt_id)
+        assert runner._prelaunch_storage == {}
+        seen, error = set(), primary
+        while error is not None:
+            assert id(error) not in seen
+            seen.add(id(error))
+            error = error.__context__
+    finally:
+        sys.settrace(previous)
+        for record, owner, path in captured:
+            backend._finish_record(record, 'worker_lost', {'stdout': bytearray(), 'stderr': bytearray()},
+                {'stdout': 0, 'stderr': 0}, 'review_cleanup')
+            TemporaryStorageOwner.cleanup(owner)
+
+
+@pytest.mark.parametrize("alias", ["record", "storage"])
+@pytest.mark.parametrize("mode", ["nested", "concurrent", "failure"])
+def test_retry_exclusion_alias_and_concurrency(tmp_path, monkeypatch, alias, mode):
+    """Hold one exact real owner across record/storage aliases and event handoff."""
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "private"
+    root.mkdir(mode=0o700)
+    owner = TemporaryStorageOwner(root)
+    assert owner.allocate()
+    owner.retain_cleanup_debt()
+    storage_id = owner.cleanup_debts()[0].debt_id
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(root)))
+    custody = module._StorageCustody(owner)
+    custody.record = LaunchRecord("exact-retry-alias")
+    custody.pending = True
+    runner._prelaunch_storage[id(owner)] = custody
+    runner._storage[storage_id] = owner
+    ids = (custody.record.debt_id, storage_id)
+    selected = ids[alias == "storage"]
+    cleanup = TemporaryStorageOwner.cleanup
+    attempts, results = [], []
+    entered, finished = threading.Event(), threading.Event()
+
+    def competitor():
+        """Wait for the first cleanup callback without a sleep race."""
+        assert entered.wait(5)
+        results.extend(runner.retry_cleanup(value) for value in ids)
+        finished.set()
+
+    def remove(value):
+        """Observe exclusion before one genuine removal or one failed attempt."""
+        attempts.append(value)
+        assert custody.retry_owner is not None
+        assert runner._prelaunch_storage[id(owner)] is custody
+        if mode == "concurrent":
+            entered.set()
+            assert finished.wait(5)
+        else:
+            results.extend(runner.retry_cleanup(value) for value in ids)
+        assert runner._prelaunch_storage[id(owner)] is custody
+        return False if mode == "failure" else cleanup(value)
+
+    thread = threading.Thread(target=competitor) if mode == "concurrent" else None
+    try:
+        if thread is not None:
+            thread.start()
+        with monkeypatch.context() as patch:
+            patch.setattr(TemporaryStorageOwner, "cleanup", remove)
+            assert runner.retry_cleanup(selected) is (mode != "failure")
+        if thread is not None:
+            thread.join(5)
+            assert not thread.is_alive()
+        assert results == [False, False]
+        assert attempts == [owner]
+        assert custody.retry_owner is None
+        if mode == "failure":
+            assert runner.cleanup_debts()[0].debt_id == storage_id
+            assert runner.retry_cleanup(storage_id)
+        assert runner.cleanup_debts() == ()
+        assert runner._prelaunch_storage == {}
+    finally:
+        entered.set()
+        if thread is not None:
+            thread.join(5)
+        cleanup(owner)
+
+
+@pytest.mark.parametrize("exception_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("boundary", ["acquire_before", "acquire_after", "helper", "cleanup", "release", "disarm"])
+def test_retry_exclusion_interruption_handoff(tmp_path, monkeypatch, exception_type, boundary):
+    """Finite retry handoff interruptions retain public debt and exact convergence."""
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "private"
+    root.mkdir(mode=0o700)
+    owner = TemporaryStorageOwner(root)
+    assert owner.allocate()
+    owner.retain_cleanup_debt()
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(root)))
+    custody = module._StorageCustody(owner)
+    custody.record = LaunchRecord("exact-retry-interruption")
+    custody.pending = True
+    custody.reconciliation_pending = True
+    runner._prelaunch_storage[id(owner)] = custody
+    native_set = module._StorageCustody.__setattr__
+    helper, forget = runner._reconcile_custody, runner._forget_storage
+    cleanup = TemporaryStorageOwner.cleanup
+    interrupted = exception_type("retry handoff")
+    armed = True
+
+    def setter(value, name, item):
+        """Interrupt before/after acquiring or before withdrawing the exact token."""
+        nonlocal armed
+        hit = name == "retry_owner" and (
+            (item is not None and boundary.startswith("acquire"))
+            or (item is None and boundary == "disarm"))
+        if armed and hit:
+            armed = False
+            if boundary == "acquire_after":
+                native_set(value, name, item)
+            raise interrupted
+        native_set(value, name, item)
+
+    def reconcile(value):
+        """Try both aliases while helper still owns active retry exclusion."""
+        nonlocal armed
+        helper(value)
+        assert not runner.retry_cleanup(custody.record.debt_id)
+        if armed and boundary == "helper":
+            armed = False
+            raise interrupted
+
+    def remove(value):
+        """Retain a real incomplete owner when removal is interrupted."""
+        nonlocal armed
+        if armed and boundary == "cleanup":
+            armed = False
+            raise interrupted
+        return cleanup(value)
+
+    def release(value):
+        """Interrupt after real removal but before exact registry release."""
+        nonlocal armed
+        if armed and boundary == "release":
+            armed = False
+            raise interrupted
+        return forget(value)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module._StorageCustody, "__setattr__", setter)
+            patch.setattr(runner, "_reconcile_custody", reconcile)
+            patch.setattr(TemporaryStorageOwner, "cleanup", remove)
+            patch.setattr(runner, "_forget_storage", release)
+            with pytest.raises(exception_type) as caught:
+                runner.retry_cleanup(custody.record.debt_id)
+        assert caught.value is interrupted
+        assert not armed
+        assert custody.retry_owner is None
+        if runner._prelaunch_storage:
+            debts = runner.cleanup_debts()
+            assert len(debts) == 1
+            assert runner.retry_cleanup(debts[0].debt_id)
+        assert runner._prelaunch_storage == {}
+        assert runner.cleanup_debts() == ()
+    finally:
+        cleanup(owner)
+
+
+@pytest.mark.parametrize("process_settled", [False, True])
+def test_retry_exclusion_unbound_fallback_remains_incomplete(tmp_path, monkeypatch, process_settled):
+    """Preserve legacy backend fallback failure and storage debt mapping."""
+    root = tmp_path / "private"
+    root.mkdir(mode=0o700)
+    backend = IsolatedProcessBackend(temp_root=str(root))
+    runner = OwnedHookScriptRunner(backend)
+    owner = TemporaryStorageOwner(root)
+    assert owner.allocate()
+    runner._process_storage["legacy-process"] = owner
+    cleanup = TemporaryStorageOwner.cleanup
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(backend, "retry_cleanup", lambda debt_id: process_settled)
+            patch.setattr(TemporaryStorageOwner, "cleanup", lambda value: False)
+            assert not runner.retry_cleanup("legacy-process")
+        assert runner._process_storage["legacy-process"] is owner
+        if process_settled:
+            debt = runner.cleanup_debts()[0]
+            assert debt.debt_id == owner.cleanup_debts()[0].debt_id
+            assert runner.retry_cleanup(debt.debt_id)
+    finally:
+        cleanup(owner)

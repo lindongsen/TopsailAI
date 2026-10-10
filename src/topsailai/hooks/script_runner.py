@@ -53,6 +53,7 @@ class _StorageCustody:
         self.owner = owner
         self.pending = False
         self.recovering = False
+        self.retry_owner: object | None = None
         self.storage_settled = False
         self.reconciliation_pending = False
         self.record: LaunchRecord | None = None
@@ -342,7 +343,7 @@ class OwnedHookScriptRunner:
         with self._lock:
             owners = {id(storage): storage for storage in self._storage.values()}
             for owner_id, custody in self._prelaunch_storage.items():
-                if not custody.pending or custody.recovering:
+                if not custody.pending or custody.recovering or custody.retry_owner is not None:
                     owners.pop(owner_id, None)
                     continue
                 if custody.reconciliation_pending:
@@ -369,67 +370,90 @@ class OwnedHookScriptRunner:
         return (*process.values(), *storage)
 
     def retry_cleanup(self, debt_id: str) -> bool:
-        """Retry exact process custody before allowing its storage to be removed."""
-        with self._lock:
-            if any(c.recovering and c.record is not None and c.record.debt_id == debt_id
-                   for c in self._prelaunch_storage.values()):
-                return False
-            pending = tuple(c for c in self._prelaunch_storage.values() if c.pending and not c.recovering)
-            process_custody = next((c for c in pending if c.record is not None
-                                    and c.record.debt_id == debt_id), None)
-            storage = self._storage.get(debt_id)
-            if any(c.recovering and c.owner is storage
-                   for c in self._prelaunch_storage.values()):
-                storage = None
-            for custody in pending:
-                if custody.reconciliation_pending:
-                    continue
-                if not self._storage_ready(custody):
-                    if storage is custody.owner:
-                        storage = None
-                    continue
-                if any(debt.debt_id == debt_id for debt in custody.owner.cleanup_debts()):
-                    storage = custody.owner
-        if storage is not None:
-            settled = storage.retry_cleanup(debt_id)
-            if settled:
-                self._forget_storage(storage)
-            return settled
-        if process_custody is not None:
-            record = process_custody.record
-            if not self._storage_ready(process_custody):
-                if not self._backend.retry_cleanup(debt_id):
+        """Own exact retry exclusion until cleanup and identity release complete."""
+        token = object()
+        selected = None
+        try:
+            with self._lock:
+                if any((c.recovering or c.retry_owner is not None) and c.record is not None and c.record.debt_id == debt_id
+                       for c in self._prelaunch_storage.values()):
                     return False
-                if not self._storage_ready(process_custody):
-                    self._backend._finish_record(
-                        record, "worker_lost", {"stdout": bytearray(), "stderr": bytearray()},
-                        {"stdout": 0, "stderr": 0}, "host_interrupted",
-                    )
-                if not self._storage_ready(process_custody):
+                pending = tuple(c for c in self._prelaunch_storage.values() if c.pending and not c.recovering and c.retry_owner is None)
+                process_custody = next((c for c in pending if c.record is not None
+                                        and c.record.debt_id == debt_id), None)
+                storage = self._storage.get(debt_id)
+                if any((c.recovering or c.retry_owner is not None) and c.owner is storage
+                       for c in self._prelaunch_storage.values()):
                     return False
-            storage = process_custody.owner
-            if process_custody.reconciliation_pending:
+                for custody in pending:
+                    if custody.reconciliation_pending:
+                        continue
+                    if not self._storage_ready(custody):
+                        if storage is custody.owner:
+                            storage = None
+                        continue
+                    if any(debt.debt_id == debt_id for debt in custody.owner.cleanup_debts()):
+                        storage = custody.owner
+                selected = process_custody
+                if storage is not None:
+                    selected = next((c for c in pending if c.owner is storage), selected)
+                if selected is not None:
+                    selected.retry_owner = token
+                    selected.reconciliation_pending = True
+            if storage is not None:
+                settled = storage.retry_cleanup(debt_id)
+                if settled:
+                    self._forget_storage(storage)
+                return settled
+            if process_custody is not None:
+                record = process_custody.record
+                if not self._storage_ready(process_custody):
+                    if not self._backend.retry_cleanup(debt_id):
+                        return False
+                    if not self._storage_ready(process_custody):
+                        self._backend._finish_record(
+                            record, "worker_lost", {"stdout": bytearray(), "stderr": bytearray()},
+                            {"stdout": 0, "stderr": 0}, "host_interrupted",
+                        )
+                    if not self._storage_ready(process_custody):
+                        return False
+                storage = process_custody.owner
                 self._reconcile_custody(process_custody)
                 if process_custody.reconciliation_pending:
                     return False
                 if process_custody.storage_settled:
                     self._forget_storage(storage)
                     return True
+                process_custody.reconciliation_pending = True
+                if not storage.cleanup():
+                    return False
+                self._forget_storage(storage)
+                return True
+            if not self._backend.retry_cleanup(debt_id):
+                return False
+            with self._lock:
+                storage = self._process_storage.get(debt_id)
+            if storage is None:
+                return True
+            self._remember_storage(storage)
             if not storage.cleanup():
                 return False
             self._forget_storage(storage)
             return True
-        if not self._backend.retry_cleanup(debt_id):
-            return False
-        with self._lock:
-            storage = self._process_storage.get(debt_id)
-        if storage is None:
-            return True
-        self._remember_storage(storage)
-        if not storage.cleanup():
-            return False
-        self._forget_storage(storage)
-        return True
+        finally:
+            if selected is not None:
+                try:
+                    with self._lock:
+                        if selected.retry_owner is token:
+                            owner_state = selected.owner.__dict__
+                            if "_debt" in owner_state and owner_state["_debt"] is not None:
+                                selected.reconciliation_pending = False
+                            selected.retry_owner = None
+                finally:
+                    # Only this invocation may withdraw its exact retry authority.
+                    state = object.__getattribute__(selected, "__dict__")
+                    if state["retry_owner"] is token:
+                        state["retry_owner"] = None
 
     def _preflight(
         self,
