@@ -552,3 +552,157 @@ def test_interrupted_process_to_storage_cleanup_retains_exact_ownership(
     assert runner.retry_cleanup(unrelated_debt.debt_id)
     assert not unrelated_path.exists()
     assert runner.cleanup_debts() == ()
+
+
+@pytest.mark.parametrize("boundary", ["uuid", "encode", "argv", "cwd", "environment", "clock", "record_uuid", "record"])
+@pytest.mark.parametrize("interrupt_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("cleanup_mode", ["success", "failure", "interrupt"])
+def test_prelaunch_interrupt_preserves_exact_storage_custody(
+    tmp_path: Path, context: HookContext, monkeypatch: pytest.MonkeyPatch,
+    boundary: str, interrupt_type: type[BaseException], cleanup_mode: str,
+) -> None:
+    """Every prelaunch interruption retains exact recoverable storage authority."""
+    import inspect
+    import sys
+    from types import SimpleNamespace
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "prelaunch-root"
+    root.mkdir(mode=0o700)
+    script = tmp_path / "prelaunch-script"
+    script.write_text("#!/bin/false\n", encoding="utf-8")
+    script.chmod(0o700)
+    runner = OwnedHookScriptRunner(_LaunchFailureBackend(temp_root=str(root)))
+    unrelated = TemporaryStorageOwner(root)
+    assert unrelated.allocate()
+    unrelated_path = unrelated.path
+    unrelated_path.joinpath("keep").write_text("unchanged", encoding="utf-8")
+    now = time.monotonic()
+    primary = interrupt_type("prelaunch primary")
+    owners: list[TemporaryStorageOwner] = []
+    launches: list[object] = []
+    original_allocate = TemporaryStorageOwner.allocate
+    original_cleanup = TemporaryStorageOwner.cleanup
+    original_uuid = module.uuid.uuid4
+    source, first_line = inspect.getsourcelines(module.OwnedHookScriptRunner.execute_entry)
+    argv_line = first_line + next(i for i, line in enumerate(source) if "argv = (" in line)
+    prior_trace = sys.gettrace()
+
+    def allocate(owner: TemporaryStorageOwner) -> bool:
+        """Observe only the real successfully allocated invocation owner."""
+        accepted = original_allocate(owner)
+        if accepted:
+            owners.append(owner)
+        return accepted
+
+    def fail(*args, **kwargs):
+        """Raise the exact primary exception at the chosen boundary."""
+        raise primary
+
+    def cleanup(owner: TemporaryStorageOwner) -> bool:
+        """Inject cleanup failure only for this invocation's exact owner."""
+        if owners and owner is owners[0]:
+            if cleanup_mode == "failure":
+                return False
+            if cleanup_mode == "interrupt":
+                raise SystemExit("secondary cleanup interrupt")
+        return original_cleanup(owner)
+
+    uuid_calls = 0
+
+    def uuid_value():
+        """Leave allocation UUID intact and interrupt the selected runner UUID."""
+        nonlocal uuid_calls
+        uuid_calls += 1
+        if uuid_calls == (1 if boundary == "uuid" else 2):
+            raise primary
+        return original_uuid()
+
+    def trace(frame, event, arg):
+        """Interrupt argv construction without mutating shared platform modules."""
+        if frame.f_code is module.OwnedHookScriptRunner.execute_entry.__code__ and event == "line" and frame.f_lineno == argv_line:
+            raise primary
+        return trace
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(TemporaryStorageOwner, "allocate", allocate)
+            patch.setattr(TemporaryStorageOwner, "cleanup", cleanup)
+            patch.setattr(runner._backend, "launch_script", lambda **kwargs: launches.append(kwargs))
+            if boundary in {"uuid", "record_uuid"}:
+                patch.setattr(module, "uuid", SimpleNamespace(uuid4=uuid_value))
+            elif boundary == "clock":
+                patch.setattr(module, "time", SimpleNamespace(monotonic=lambda: fail() if owners else now))
+            elif boundary != "argv":
+                target = {"encode": "encode_script_input", "cwd": "_execution_cwd", "environment": "_execution_environment", "record": "LaunchRecord"}[boundary]
+                patch.setattr(module, target, fail)
+            if boundary == "argv":
+                sys.settrace(trace)
+            try:
+                with pytest.raises(interrupt_type) as caught:
+                    runner.execute_entry(
+                        entry_index=0, entry=HookScriptEntry(script.resolve(), script.name),
+                        context=context, options=HookScriptExecutionOptions(),
+                        policy=HookScriptExecutionPolicy(), execution_deadline=now + 5,
+                        cleanup_deadline=now + 6, output_remaining_bytes=65_536,
+                        cancellation=threading.Event(),
+                    )
+            finally:
+                sys.settrace(prior_trace)
+            assert caught.value is primary
+            traceback = caught.value.__traceback__
+            names = []
+            while traceback is not None:
+                names.append(traceback.tb_frame.f_code.co_name)
+                traceback = traceback.tb_next
+            assert names[-1] in {"fail", "uuid_value", "trace"}
+            assert "execute_entry" in names
+            assert launches == []
+            assert len(owners) == 1
+            assert unrelated_path.joinpath("keep").read_text(encoding="utf-8") == "unchanged"
+            debts = runner.cleanup_debts()
+            if cleanup_mode == "success":
+                assert debts == ()
+                assert owners[0].cleanup_debts() == ()
+                assert tuple(root.iterdir()) == (unrelated_path,)
+            else:
+                assert debts == owners[0].cleanup_debts()
+                assert len(debts) == 1
+                assert runner._storage[debts[0].debt_id] is owners[0]
+        for debt in runner.cleanup_debts():
+            assert runner.retry_cleanup(debt.debt_id)
+        assert runner.cleanup_debts() == ()
+        assert runner._storage == {}
+        assert unrelated_path.exists()
+    finally:
+        sys.settrace(prior_trace)
+        for owner in owners:
+            original_cleanup(owner)
+        original_cleanup(unrelated)
+
+
+@pytest.mark.parametrize("error", [OSError("setup"), ValueError("setup")])
+def test_prelaunch_ordinary_setup_classification(tmp_path, context, monkeypatch, error):
+    """Ordinary setup failures retain startup classification and settle storage."""
+    root = tmp_path / "ordinary-root"
+    root.mkdir(mode=0o700)
+    script = tmp_path / "ordinary-script"
+    script.write_text("#!/bin/false\n", encoding="utf-8")
+    script.chmod(0o700)
+    runner = OwnedHookScriptRunner(_LaunchFailureBackend(temp_root=str(root)))
+
+    def fail(*args, **kwargs):
+        """Reject setup before the backend can launch."""
+        raise error
+
+    monkeypatch.setattr("topsailai.hooks.script_runner._execution_cwd", fail)
+    now = time.monotonic()
+    result = runner.execute_entry(
+        entry_index=0, entry=HookScriptEntry(script.resolve(), script.name),
+        context=context, options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+        execution_deadline=now + 5, cleanup_deadline=now + 6,
+        output_remaining_bytes=65_536, cancellation=threading.Event(),
+    )
+    assert not result.started and result.error_category == "hook_script_startup_failed"
+    assert result.cleanup_confirmed and runner.cleanup_debts() == ()
+    assert tuple(root.iterdir()) == ()

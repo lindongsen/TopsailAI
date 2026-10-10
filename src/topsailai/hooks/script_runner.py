@@ -105,29 +105,35 @@ class OwnedHookScriptRunner:
         try:
             if not storage.allocate():
                 return self._publish(initial, HookStatus.ERROR, "hook_script_startup_failed")
+            invocation_id = uuid.uuid4().hex
+            try:
+                request = encode_script_input(
+                    context=context,
+                    invocation_id=invocation_id,
+                    entry_index=entry_index,
+                    max_bytes=policy.stdin_limit_bytes,
+                )
+                argv = (str(entry.source_path), *options.argv)
+                cwd = _execution_cwd(entry, options)
+                environment = _execution_environment(storage.path, options)
+            except (OSError, ValueError, ScriptProtocolError):
+                return self._finish_storage(initial, storage)
+
+            started = time.monotonic()
+            record = LaunchRecord(
+                uuid.uuid4().hex,
+                cleanup_deadline=cleanup_deadline,
+                termination_grace=policy.terminate_grace_ms / 1_000,
+            )
         except BaseException:
             self._remember_storage(storage)
+            try:
+                if storage.cleanup():
+                    self._forget_storage(storage)
+            except BaseException:
+                # Preserve the primary interruption and exact retryable custody.
+                pass
             raise
-        invocation_id = uuid.uuid4().hex
-        try:
-            request = encode_script_input(
-                context=context,
-                invocation_id=invocation_id,
-                entry_index=entry_index,
-                max_bytes=policy.stdin_limit_bytes,
-            )
-            argv = (str(entry.source_path), *options.argv)
-            cwd = _execution_cwd(entry, options)
-            environment = _execution_environment(storage.path, options)
-        except (OSError, ValueError, ScriptProtocolError):
-            return self._finish_storage(initial, storage)
-
-        started = time.monotonic()
-        record = LaunchRecord(
-            uuid.uuid4().hex,
-            cleanup_deadline=cleanup_deadline,
-            termination_grace=policy.terminate_grace_ms / 1_000,
-        )
         lease = None
         try:
             spawned = self._backend.launch_script(
