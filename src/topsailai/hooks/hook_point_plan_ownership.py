@@ -89,12 +89,16 @@ def _preserve_body_diagnosis(body, cleanup):
             continue
         seen.add(id(error))
         for attribute in ("__cause__", "__context__"):
-            edge = getattr(error, attribute)
+            descriptor = BaseException.__dict__[attribute]
+            edge = descriptor.__get__(error)
             if edge is cleanup:
-                setattr(error, attribute, None)
+                suppression = BaseException.__dict__["__suppress_context__"]
+                suppressed = suppression.__get__(error)
+                descriptor.__set__(error, None)
+                suppression.__set__(error, suppressed)
             elif edge is not None:
                 pending.append(edge)
-    cleanup.__context__ = body
+    BaseException.__dict__["__context__"].__set__(cleanup, body)
 
 
 class CandidateBuildError(ValueError):

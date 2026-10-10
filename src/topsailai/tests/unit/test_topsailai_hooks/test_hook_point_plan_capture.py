@@ -525,3 +525,95 @@ def test_context_cleanup_interrupt_preserves_existing_body_chain(tmp_path, monke
         monkeypatch.setattr(candidate, "close", original)
         assert candidate.close().accepted
     assert list(output.iterdir()) == []
+
+
+@pytest.mark.parametrize("access", ("get", "set"))
+@pytest.mark.parametrize("target", ("body", "diagnosis", "cleanup"))
+@pytest.mark.parametrize("back_edge", (False, True))
+def test_context_hostile_diagnostic_access(tmp_path, monkeypatch, access, target, back_edge):
+    """Bypass subclass hooks while preserving exact interrupts and genuine debt."""
+    from types import SimpleNamespace
+    from topsailai.hooks import artifact_cleanup
+    fields = ("__cause__", "__context__", "__suppress_context__")
+    touched = []
+    class HostileAccess:
+        """Reject ordinary chain observation and mutation without hiding custody."""
+        def __getattribute__(self, name):
+            """Expose any accidental ordinary diagnostic read as a failure."""
+            if access == "get" and name in fields:
+                touched.append(name)
+                raise RuntimeError("hostile diagnostic getter")
+            return super().__getattribute__(name)
+
+        def __setattr__(self, name, value):
+            """Expose any accidental ordinary diagnostic write as a failure."""
+            if access == "set" and name in fields:
+                touched.append(name)
+                raise RuntimeError("hostile diagnostic setter")
+            super().__setattr__(name, value)
+
+    class HostileBody(HostileAccess, ValueError):
+        """Retain an ordinary body error with adversarial chain attributes."""
+
+    class HostileInterrupt(HostileAccess, KeyboardInterrupt):
+        """Retain host cancellation with adversarial chain attributes."""
+
+    cause, context, suppression = (BaseException.__dict__[name] for name in fields)
+    body = (HostileBody if target == "body" else ValueError)("body")
+    diagnosis = (HostileBody if target == "diagnosis" else RuntimeError)("diagnosis")
+    interrupt = (HostileInterrupt if target == "cleanup" else KeyboardInterrupt)("cleanup")
+    cause.__set__(body, diagnosis)
+    context.__set__(body, diagnosis)
+    if back_edge:
+        cause.__set__(diagnosis, interrupt)
+        context.__set__(diagnosis, interrupt)
+    suppression.__set__(diagnosis, False)
+    build, inputs, output, _, _ = fixtures(tmp_path)
+    candidate = build("point", **inputs)
+    unrelated = output / "unrelated"
+    unrelated.mkdir(mode=0o700)
+    original_os, original_close = artifact_cleanup.os, candidate.close
+    def fail_directory(path, *args, **kwargs):
+        """Create real indexed-directory removal debt without global os mutation."""
+        if str(path).startswith("entry-"):
+            raise OSError("indexed cleanup failure")
+        return original_os.rmdir(path, *args, **kwargs)
+
+    def close():
+        """Raise the selected interrupt only after genuine removal debt exists."""
+        result = original_close()
+        assert result.cleanup_pending and candidate.cleanup_debts()
+        raise interrupt
+
+    isolated = SimpleNamespace(**{name: getattr(original_os, name) for name in dir(original_os)})
+    isolated.rmdir = fail_directory
+    monkeypatch.setattr(artifact_cleanup, "os", isolated)
+    monkeypatch.setattr(candidate, "close", close)
+    caught = None
+    try:
+        try:
+            with candidate:
+                raise body
+        except BaseException as error:
+            caught = error
+    finally:
+        monkeypatch.setattr(candidate, "close", original_close)
+        monkeypatch.setattr(artifact_cleanup, "os", original_os)
+    try:
+        assert caught is interrupt
+        assert interrupt.recovery_owner is candidate
+        assert touched == []
+        assert context.__get__(interrupt) is body
+        assert cause.__get__(body) is diagnosis
+        assert context.__get__(body) is diagnosis
+        assert cause.__get__(diagnosis) is None
+        assert context.__get__(diagnosis) is None
+        assert suppression.__get__(diagnosis) is False
+        debts = candidate.cleanup_debts()
+        assert len(debts) == 1
+        assert not candidate.retry_cleanup("foreign")
+        assert candidate.retry_cleanup(debts[0].debt_id)
+        assert candidate.cleanup_debts() == ()
+        assert list(output.iterdir()) == [unrelated]
+    finally:
+        assert candidate.close().accepted
