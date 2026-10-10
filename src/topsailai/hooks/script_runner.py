@@ -54,6 +54,8 @@ class _StorageCustody:
         self.pending = False
         self.recovering = False
         self.retry_owner: object | None = None
+        self.storage_alias: CleanupDebt | None = None
+        self.release_complete = False
         self.storage_settled = False
         self.reconciliation_pending = False
         self.record: LaunchRecord | None = None
@@ -131,6 +133,7 @@ class OwnedHookScriptRunner:
         try:
             if not storage.allocate():
                 return self._publish(initial, HookStatus.ERROR, "hook_script_startup_failed")
+            custody.storage_alias = owner_state["_debt"]
             invocation_id = uuid.uuid4().hex
             try:
                 request = encode_script_input(
@@ -381,12 +384,17 @@ class OwnedHookScriptRunner:
                 for custody in self._prelaunch_storage.values():
                     if not custody.recovering and custody.retry_owner is None:
                         continue
+                    alias = custody.storage_alias
+                    if isinstance(alias, CleanupDebt) and alias.debt_id == debt_id:
+                        return False
                     debt = object.__getattribute__(custody.owner, "__dict__").get("_debt")
                     if isinstance(debt, CleanupDebt) and debt.debt_id == debt_id:
                         return False
                 pending = tuple(c for c in self._prelaunch_storage.values() if c.pending and not c.recovering and c.retry_owner is None)
                 process_custody = next((c for c in pending if c.record is not None
-                                        and c.record.debt_id == debt_id), None)
+                                        and (c.record.debt_id == debt_id or (
+                                            c.reconciliation_pending and c.storage_alias is not None
+                                            and c.storage_alias.debt_id == debt_id))), None)
                 storage = self._storage.get(debt_id)
                 if any((c.recovering or c.retry_owner is not None) and c.owner is storage
                        for c in self._prelaunch_storage.values()):
@@ -404,6 +412,9 @@ class OwnedHookScriptRunner:
                 if storage is not None:
                     selected = next((c for c in pending if c.owner is storage), selected)
                 if selected is not None:
+                    debt = object.__getattribute__(selected.owner, "__dict__").get("_debt")
+                    if isinstance(debt, CleanupDebt):
+                        selected.storage_alias = debt
                     selected.retry_owner = token
                     selected.reconciliation_pending = True
             if storage is not None:
@@ -455,6 +466,8 @@ class OwnedHookScriptRunner:
                             if "_debt" in owner_state and owner_state["_debt"] is not None:
                                 selected.reconciliation_pending = False
                             selected.retry_owner = None
+                            if selected.release_complete and self._prelaunch_storage.get(id(selected.owner)) is selected:
+                                del self._prelaunch_storage[id(selected.owner)]
                 finally:
                     # Only this invocation may withdraw its exact retry authority.
                     state = object.__getattribute__(selected, "__dict__")
@@ -635,7 +648,11 @@ class OwnedHookScriptRunner:
                 for debt_id, owner in self._process_storage.items()
                 if owner is not storage
             }
-            self._prelaunch_storage.pop(id(storage), None)
+            custody = self._prelaunch_storage.get(id(storage))
+            if custody is not None and custody.retry_owner is not None:
+                custody.release_complete = True
+            else:
+                self._prelaunch_storage.pop(id(storage), None)
 
     def _remember_process_storage(
         self, debt_id: str, storage: TemporaryStorageOwner
