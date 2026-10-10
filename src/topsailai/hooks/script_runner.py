@@ -378,6 +378,12 @@ class OwnedHookScriptRunner:
                 if any((c.recovering or c.retry_owner is not None) and c.record is not None and c.record.debt_id == debt_id
                        for c in self._prelaunch_storage.values()):
                     return False
+                for custody in self._prelaunch_storage.values():
+                    if not custody.recovering and custody.retry_owner is None:
+                        continue
+                    debt = object.__getattribute__(custody.owner, "__dict__").get("_debt")
+                    if isinstance(debt, CleanupDebt) and debt.debt_id == debt_id:
+                        return False
                 pending = tuple(c for c in self._prelaunch_storage.values() if c.pending and not c.recovering and c.retry_owner is None)
                 process_custody = next((c for c in pending if c.record is not None
                                         and c.record.debt_id == debt_id), None)

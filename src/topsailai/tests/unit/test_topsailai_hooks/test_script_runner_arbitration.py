@@ -3121,13 +3121,16 @@ def test_retry_exclusion_real_interrupt_reentry(tmp_path, monkeypatch, primary_t
                 attempts.append(value)
                 if active:
                     active = False
+                    alias = owner.cleanup_debts()[0].debt_id
+                    assert alias not in runner._storage
                     nested.append(runner.retry_cleanup(expected))
+                    nested.append(runner.retry_cleanup(alias))
                     assert runner._prelaunch_storage[id(owner)].owner is owner
                 return real_cleanup(value)
             with monkeypatch.context() as retry_patch:
                 retry_patch.setattr(TemporaryStorageOwner, "cleanup", reenter)
                 assert runner.retry_cleanup(expected)
-            assert nested == [False]
+            assert nested == [False, False]
             assert attempts == [owner]
 
         assert unrelated.exists()
@@ -3148,9 +3151,10 @@ def test_retry_exclusion_real_interrupt_reentry(tmp_path, monkeypatch, primary_t
             TemporaryStorageOwner.cleanup(owner)
 
 
+@pytest.mark.parametrize("registered", [False, True])
 @pytest.mark.parametrize("alias", ["record", "storage"])
 @pytest.mark.parametrize("mode", ["nested", "concurrent", "failure"])
-def test_retry_exclusion_alias_and_concurrency(tmp_path, monkeypatch, alias, mode):
+def test_retry_exclusion_alias_and_concurrency(tmp_path, monkeypatch, alias, mode, registered):
     """Hold one exact real owner across record/storage aliases and event handoff."""
     import topsailai.hooks.script_runner as module
 
@@ -3165,7 +3169,8 @@ def test_retry_exclusion_alias_and_concurrency(tmp_path, monkeypatch, alias, mod
     custody.record = LaunchRecord("exact-retry-alias")
     custody.pending = True
     runner._prelaunch_storage[id(owner)] = custody
-    runner._storage[storage_id] = owner
+    if registered:
+        runner._storage[storage_id] = owner
     ids = (custody.record.debt_id, storage_id)
     selected = ids[alias == "storage"]
     cleanup = TemporaryStorageOwner.cleanup
@@ -3183,12 +3188,15 @@ def test_retry_exclusion_alias_and_concurrency(tmp_path, monkeypatch, alias, mod
         attempts.append(value)
         assert custody.retry_owner is not None
         assert runner._prelaunch_storage[id(owner)] is custody
+        token = custody.retry_owner
         if mode == "concurrent":
             entered.set()
             assert finished.wait(5)
         else:
             results.extend(runner.retry_cleanup(value) for value in ids)
         assert runner._prelaunch_storage[id(owner)] is custody
+        assert custody.retry_owner is token
+        assert results == [False, False]
         return False if mode == "failure" else cleanup(value)
 
     thread = threading.Thread(target=competitor) if mode == "concurrent" else None
@@ -3321,3 +3329,43 @@ def test_retry_exclusion_unbound_fallback_remains_incomplete(tmp_path, monkeypat
             assert runner.retry_cleanup(debt.debt_id)
     finally:
         cleanup(owner)
+
+
+@pytest.mark.parametrize("active", ["recovering", "retry", "idle"])
+@pytest.mark.parametrize("debt_kind", ["exact", "other", "none"])
+def test_retry_exclusion_retained_alias_authority(tmp_path, monkeypatch, active, debt_kind):
+    """Only exact active owner authority blocks backend fallback without owner locks."""
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "private"
+    root.mkdir(mode=0o700)
+    owner = TemporaryStorageOwner(root)
+    assert owner.allocate()
+    if debt_kind != "none":
+        owner.retain_cleanup_debt()
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(root)))
+    custody = module._StorageCustody(owner)
+    custody.record = LaunchRecord("active-process")
+    custody.recovering = active == "recovering"
+    token = object() if active == "retry" else None
+    custody.retry_owner = token
+    runner._prelaunch_storage[id(owner)] = custody
+    debt_id = owner.cleanup_debts()[0].debt_id if debt_kind == "exact" else "other-debt"
+    calls = []
+
+    def backend_retry(value):
+        """Record fallback and refuse completion for unrelated recovery authority."""
+        calls.append(value)
+        return False
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(runner._backend, "retry_cleanup", backend_retry)
+            with owner._lock:
+                assert not runner.retry_cleanup(debt_id)
+        assert calls == ([] if active != "idle" and debt_kind == "exact" else [debt_id])
+        assert custody.retry_owner is token
+        assert runner._prelaunch_storage[id(owner)] is custody
+        assert owner.path.exists()
+    finally:
+        TemporaryStorageOwner.cleanup(owner)
