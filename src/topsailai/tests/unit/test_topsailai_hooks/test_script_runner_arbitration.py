@@ -1867,3 +1867,216 @@ def test_final_release_without_primary_propagates(tmp_path, context, monkeypatch
             output_remaining_bytes=65_536, cancellation=threading.Event(),
         )
     assert caught.value is failure
+
+
+@pytest.mark.parametrize("primary_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("secondary_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("fault", ["lookup", "journal_before", "journal_after", "storage_fail", "storage_interrupt", "process"])
+def test_storage_settlement_journal_exact_handoff(
+    tmp_path, context, monkeypatch, primary_type, secondary_type, fault,
+):
+    """Transfer real cleanup facts without post-destruction registry authority."""
+    import sys
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "journal-root"
+    root.mkdir(mode=0o700)
+    unrelated = root / "unrelated"
+    unrelated.mkdir()
+    script = tmp_path / "journal-script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    backend = IsolatedProcessBackend(temp_root=str(root))
+    runner = OwnedHookScriptRunner(backend)
+    original = runner._preserve_interrupted
+    cleanup = TemporaryStorageOwner.cleanup
+    native_set = module._StorageCustody.__setattr__
+    captured, hits, cleanups = [], [], []
+    primary = primary_type("authoritative drain")
+
+    class FailedLookup(dict):
+        """Continuously reject only the exact settlement lookup."""
+        def get(self, key, default=None):
+            """Fail before any destructive cleanup may obtain custody."""
+            if sys._getframe(1).f_code is OwnedHookScriptRunner._settle_storage.__code__:
+                hits.append("lookup")
+                raise secondary_type("journal lookup")
+            return super().get(key, default)
+
+    def set_fact(custody, name, value):
+        """Interrupt publication before or after its native mutation."""
+        if name == "storage_settled" and value is True and fault.startswith("journal"):
+            hits.append("journal")
+            if fault == "journal_after":
+                native_set(custody, name, value)
+            raise secondary_type("journal write")
+        native_set(custody, name, value)
+
+    def remove(owner):
+        """Exercise actual cleanup or retain the exact unsettled directory."""
+        cleanups.append(owner)
+        if fault == "storage_fail":
+            return False
+        if fault == "storage_interrupt":
+            raise secondary_type("storage cleanup")
+        return cleanup(owner)
+
+    def recover(initial, record, owner, started):
+        """Capture exact real resources and optionally leave process unsettled."""
+        captured.append((record, owner, owner.path))
+        if fault == "process":
+            runner._remember_storage(owner)
+            result = HookScriptEntryResult(0, script.name, HookStatus.WORKER_LOST, True,
+                                          cleanup_confirmed=False, cleanup_debt=record.debt_id)
+            return runner._settle_storage(result, owner)
+        return original(initial, record, owner, started)
+
+    def drain(*args, **kwargs):
+        """Raise the primary only after the production child has launched."""
+        raise primary
+
+    try:
+        with monkeypatch.context() as patch:
+            if fault == "lookup":
+                runner._prelaunch_storage = FailedLookup()
+            patch.setattr(module._StorageCustody, "__setattr__", set_fact)
+            patch.setattr(TemporaryStorageOwner, "cleanup", remove)
+            patch.setattr(runner, "_preserve_interrupted", recover)
+            patch.setattr(module, "drain_script_process", drain)
+            now = time.monotonic()
+            with pytest.raises(primary_type) as caught:
+                runner.execute_entry(
+                    entry_index=0, entry=HookScriptEntry(script.resolve(), script.name), context=context,
+                    options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                    execution_deadline=now + 5, cleanup_deadline=now + 6,
+                    output_remaining_bytes=65_536, cancellation=threading.Event(),
+                )
+            assert caught.value is primary
+            tb = primary.__traceback__
+            while tb.tb_next is not None:
+                tb = tb.tb_next
+            assert tb.tb_frame.f_code.co_name == "drain"
+            assert all(not c.recovering for c in runner._prelaunch_storage.values())
+            record, owner, path = captured[0]
+            if fault.startswith("journal"):
+                assert hits == ["journal"] and cleanups == [owner]
+                assert not path.exists() and owner.cleanup_debts() == ()
+                assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
+            else:
+                assert path.exists()
+                if fault in {"lookup", "process"}:
+                    assert cleanups == []
+                if fault == "lookup":
+                    assert hits == ["lookup"]
+                assert len(runner._prelaunch_storage) == 1
+            seen, error = set(), primary
+            while error is not None:
+                assert id(error) not in seen
+                seen.add(id(error))
+                error = error.__context__
+        runner._prelaunch_storage = dict(runner._prelaunch_storage)
+        if not fault.startswith("journal"):
+            debts = runner.cleanup_debts()
+            assert len(debts) == 1
+            assert runner.retry_cleanup(debts[0].debt_id)
+        assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
+        assert not path.exists() and unrelated.exists()
+    finally:
+        runner._prelaunch_storage = dict(runner._prelaunch_storage)
+        for record, owner, path in captured:
+            backend._finish_record(record, "worker_lost", {"stdout": bytearray(), "stderr": bytearray()},
+                                   {"stdout": 0, "stderr": 0}, "test_cleanup")
+            if path.exists():
+                print(f"cleanup exact journal owner: {path}")
+            cleanup(owner)
+
+
+@pytest.mark.parametrize("primary_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("secondary_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("boundary", ["entry", "fallback_entry", "fallback_write", "fallback_exit"])
+def test_storage_settlement_journal_protection_entry(tmp_path, context, monkeypatch, primary_type, secondary_type, boundary):
+    """Interrupt after real cleanup returns but before journal protection enters."""
+    import inspect
+    import sys
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "journal-entry-root"
+    root.mkdir(mode=0o700)
+    unrelated = root / "unrelated"
+    unrelated.mkdir()
+    script = tmp_path / "journal-entry-script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    backend = IsolatedProcessBackend(temp_root=str(root))
+    runner = OwnedHookScriptRunner(backend)
+    original = runner._preserve_interrupted
+    cleanup = TemporaryStorageOwner.cleanup
+    captured, hits = [], []
+    primary = primary_type("authoritative drain")
+    source, first = inspect.getsourcelines(OwnedHookScriptRunner._settle_storage)
+    if boundary == "entry":
+        target = first + next(i for i, line in enumerate(source) if "if custody is not None:" in line)
+    elif boundary == "fallback_entry":
+        target = first + next(i for i, line in enumerate(source) if "if journal is not None" in line)
+    elif boundary == "fallback_write":
+        target = first + next(i for i, line in enumerate(source) if 'journal["storage_settled"] = True' in line)
+    else:
+        target = first + next(i for i, line in enumerate(source) if 'journal["storage_settled"] = True' in line)
+    previous = sys.gettrace()
+    armed = True
+
+    def trace(frame, event, arg):
+        """Inject once at the exact journal boundary, not during cleanup."""
+        nonlocal armed
+        target_event = "return" if boundary == "fallback_exit" else "line"
+        if armed and event == target_event and frame.f_code is OwnedHookScriptRunner._settle_storage.__code__ and frame.f_lineno == target:
+            armed = False
+            hits.append("entry")
+            raise secondary_type("journal protection entry")
+        return trace
+
+    native_set = module._StorageCustody.__setattr__
+
+    def interrupt_journal(custody, name, value):
+        """Require fallback to publish the already-completed exact cleanup fact."""
+        if boundary.startswith("fallback") and name == "storage_settled" and value is True:
+            raise secondary_type("initial journal publication")
+        native_set(custody, name, value)
+
+    def recover(initial, record, owner, started):
+        """Capture exact production resources before genuine recovery."""
+        captured.append((record, owner, owner.path))
+        return original(initial, record, owner, started)
+
+    def drain(*args, **kwargs):
+        """Arm only the settlement frame after the real process launch."""
+        sys.settrace(trace)
+        raise primary
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "drain_script_process", drain)
+            patch.setattr(runner, "_preserve_interrupted", recover)
+            patch.setattr(module._StorageCustody, "__setattr__", interrupt_journal)
+            now = time.monotonic()
+            with pytest.raises(primary_type) as caught:
+                runner.execute_entry(
+                    entry_index=0, entry=HookScriptEntry(script.resolve(), script.name), context=context,
+                    options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                    execution_deadline=now + 5, cleanup_deadline=now + 6,
+                    output_remaining_bytes=65_536, cancellation=threading.Event(),
+                )
+            sys.settrace(previous)
+            record, owner, path = captured[0]
+            assert caught.value is primary and hits == ["entry"]
+            assert not path.exists() and owner.cleanup_debts() == ()
+            assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
+            assert unrelated.exists()
+    finally:
+        sys.settrace(previous)
+        for record, owner, path in captured:
+            backend._finish_record(record, "worker_lost", {"stdout": bytearray(), "stderr": bytearray()},
+                                   {"stdout": 0, "stderr": 0}, "test_cleanup")
+            if path.exists():
+                print(f"cleanup exact journal entry owner: {path}")
+            cleanup(owner)

@@ -116,6 +116,8 @@ class OwnedHookScriptRunner:
 
         storage = TemporaryStorageOwner(Path(self._backend.script_temp_root))
         custody = _StorageCustody(storage)
+        owner_state = object.__getattribute__(storage, "__dict__")
+        custody_state = object.__getattribute__(custody, "__dict__")
         with self._lock:
             self._prelaunch_storage[id(storage)] = custody
         lease = None
@@ -235,12 +237,15 @@ class OwnedHookScriptRunner:
             if primary is not None and lease is not None:
                 try:
                     custody.recovering = False
+                    if all(owner_state[name] is None for name in ("_path", "_uncertain_path", "_debt")):
+                        custody_state["storage_settled"] = True
                     custody.pending = not custody.storage_settled
                 except BaseException:
-                    # Restore local custody without repeating fallible diagnostic access.
-                    state = object.__getattribute__(custody, "__dict__")
-                    state["recovering"] = False
-                    state["pending"] = not state["storage_settled"]
+                    # Reconcile held owner authority even when journal publication failed.
+                    custody_state["recovering"] = False
+                    if all(owner_state[name] is None for name in ("_path", "_uncertain_path", "_debt")):
+                        custody_state["storage_settled"] = True
+                    custody_state["pending"] = not custody_state["storage_settled"]
                 raise primary.with_traceback(primary_traceback) from None
             if lease is not None or (record is not None and record.process is not None):
                 # Retain exact ordered recovery even when the inner publication failed.
@@ -488,11 +493,20 @@ class OwnedHookScriptRunner:
         if not result.cleanup_confirmed and result.cleanup_debt is not None:
             self._remember_process_storage(result.cleanup_debt, storage)
             return _replace_cleanup_pending(result, result.cleanup_debt)
-        if storage.cleanup():
-            custody = self._prelaunch_storage.get(id(storage))
-            if custody is not None:
-                custody.storage_settled = True
-            return result
+        custody = self._prelaunch_storage.get(id(storage))
+        owner_state = object.__getattribute__(storage, "__dict__")
+        journal = None if custody is None else object.__getattribute__(custody, "__dict__")
+        try:
+            if storage.cleanup():
+                if custody is not None:
+                    custody.storage_settled = True
+                return result
+        finally:
+            # The exact owner's revoked authority survives an interrupted cleanup return.
+            if journal is not None and all(
+                owner_state[name] is None for name in ("_path", "_uncertain_path", "_debt")
+            ):
+                journal["storage_settled"] = True
         self._remember_storage(storage)
         return _replace_cleanup_pending(result, storage.cleanup_debts()[0].debt_id)
 
