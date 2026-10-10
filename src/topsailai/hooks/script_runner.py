@@ -241,11 +241,22 @@ class OwnedHookScriptRunner:
                         custody_state["storage_settled"] = True
                     custody.pending = not custody.storage_settled
                 except BaseException:
-                    # Reconcile held owner authority even when journal publication failed.
-                    custody_state["recovering"] = False
-                    if all(owner_state[name] is None for name in ("_path", "_uncertain_path", "_debt")):
-                        custody_state["storage_settled"] = True
-                    custody_state["pending"] = not custody_state["storage_settled"]
+                    try:
+                        while True:
+                            try:
+                                # Read prebound native authority without retrying the failed observer.
+                                custody_state["recovering"] = False
+                                if (owner_state["_path"] is None
+                                        and owner_state["_uncertain_path"] is None
+                                        and owner_state["_debt"] is None):
+                                    custody_state["storage_settled"] = True
+                                custody_state["pending"] = not custody_state["storage_settled"]
+                                break
+                            except BaseException:
+                                # Exact responsibility remains armed until publication completes.
+                                continue
+                    finally:
+                        raise primary.with_traceback(primary_traceback) from None
                 raise primary.with_traceback(primary_traceback) from None
             if lease is not None or (record is not None and record.process is not None):
                 # Retain exact ordered recovery even when the inner publication failed.
