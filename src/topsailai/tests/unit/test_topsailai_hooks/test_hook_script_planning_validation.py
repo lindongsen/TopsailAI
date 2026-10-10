@@ -190,3 +190,23 @@ def test_valid_states_preserve_configuration_order_and_detached_metadata() -> No
     with pytest.raises((FrozenInstanceError, TypeError, AttributeError)):
         terminal_entries[0].basename = "changed"
     assert [entry.basename for entry in discovery_result.entries] == ["Zulu", "alpha"]
+
+
+@pytest.mark.parametrize("handler_ref", (None, "", ":main", "plugin:", "plugin:run", "plugin:main:extra"))
+def test_discovery_bridge_rejects_invalid_module_entry(handler_ref: object) -> None:
+    """An accepted script discovery cannot bypass the unified Module entry check."""
+    from topsailai.tests.unit.test_topsailai_hooks.hook_script_terminal_helpers import module_binding
+
+    discovery = HookScriptDiscoveryResult(True)
+    binding = module_binding("alias", handler_ref=handler_ref)
+    result = build_hook_point_binding_plan_from_discovery(
+        hook_point="conversation.started",
+        module_bindings=(binding,),
+        bindings_per_event=2,
+        hook_script_configured=True,
+        discovery_result=discovery,
+    )
+
+    _assert_rejected(result, "module handler_ref must use non-empty module:main format")
+    assert discovery == HookScriptDiscoveryResult(True)
+    assert binding.handler_ref is handler_ref

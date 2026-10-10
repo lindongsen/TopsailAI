@@ -175,3 +175,42 @@ def test_terminal_binding_waits_for_every_cleanup_safe_terminal_predecessor() ->
         terminal,
         {"module:alpha": "error", "module:beta": "success"},
     )
+
+
+@pytest.mark.parametrize("handler_ref", ("plugin:main", "package.plugin:main", "missing_plugin:main"))
+def test_main_reference_accepts_registered_alias_without_host_import(handler_ref: str) -> None:
+    """Validate reference metadata without importing a plugin or coupling its name."""
+    binding = module_binding("display_alias", handler_ref=handler_ref)
+
+    result = build_plan((binding,))
+
+    assert result.accepted
+    assert result.errors == ()
+    assert [item.binding_id for item in result.bindings] == ["module:display_alias", "hook_script"]
+    assert result.bindings[0].handler_ref == handler_ref
+    assert result.bindings[0] is not binding
+    assert binding.handler_ref == handler_ref
+    assert binding.after == ()
+
+
+@pytest.mark.parametrize(
+    "handler_ref",
+    (None, False, 1, [], {}, "", "main", ":main", "plugin", "plugin:",
+     "plugin:run", "plugin:Main", "plugin:main:extra", "plugin::main",
+     "plugin.main", " :main", "plugin..child:main", ".plugin:main", "plugin.:main",
+     "plugin name:main", "plugin:main\n"),
+)
+def test_invalid_main_reference_rejects_whole_candidate(handler_ref: object) -> None:
+    """Reject malformed or non-main entries without exposing a partial terminal plan."""
+    valid = module_binding("alpha")
+    invalid = module_binding("beta", handler_ref=handler_ref)
+    candidate = (valid, invalid)
+
+    result = build_plan(candidate)
+
+    assert not result.accepted
+    assert result.bindings == ()
+    assert result.errors == ("module handler_ref must use non-empty module:main format",)
+    assert candidate == (valid, invalid)
+    assert invalid.handler_ref is handler_ref
+    assert valid.after == invalid.after == ()
