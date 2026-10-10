@@ -427,3 +427,101 @@ def test_legacy_large_planning_does_not_inherit_candidate_limit(tmp_path):
         build("point", **inputs)
     assert not imported.exists() and not called.exists()
     assert list(output.iterdir()) == []
+
+
+@pytest.mark.parametrize("body_type", (None, ValueError, KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("cleanup_type", (None, OSError, KeyboardInterrupt, SystemExit))
+def test_context_exception_priority_matrix(tmp_path, monkeypatch, body_type, cleanup_type):
+    """Cross exact exception identities with genuine capture debt and retry custody."""
+    from types import SimpleNamespace
+    from topsailai.hooks import artifact_cleanup
+    build, inputs, output, _, _ = fixtures(tmp_path)
+    candidate = build("point", **inputs)
+    unrelated = output / "unrelated"
+    unrelated.mkdir(mode=0o700)
+    body = None if body_type is None else body_type("body")
+    cleanup = None if cleanup_type is None else cleanup_type("cleanup")
+    original_os, original_close = artifact_cleanup.os, candidate.close
+    def fail_directory(path, *args, **kwargs):
+        """Retain real indexed-directory removal debt without shared os mutation."""
+        if str(path).startswith("entry-"):
+            raise OSError("indexed cleanup failure")
+        return original_os.rmdir(path, *args, **kwargs)
+    def close():
+        """Create actual cleanup debt before raising the selected cleanup exception."""
+        result = original_close()
+        assert result.cleanup_pending
+        assert candidate.cleanup_debts()
+        raise cleanup
+    if cleanup is not None:
+        isolated = SimpleNamespace(**{name: getattr(original_os, name) for name in dir(original_os)})
+        isolated.rmdir = fail_directory
+        monkeypatch.setattr(artifact_cleanup, "os", isolated)
+        monkeypatch.setattr(candidate, "close", close)
+    expected = body
+    if cleanup is not None and (body is None or isinstance(body, Exception) and not isinstance(cleanup, Exception)):
+        expected = cleanup
+    caught = None
+    try:
+        with candidate:
+            if body is not None:
+                raise body
+    except BaseException as error:
+        caught = error
+    finally:
+        monkeypatch.setattr(candidate, "close", original_close)
+        monkeypatch.setattr(artifact_cleanup, "os", original_os)
+    try:
+        assert caught is expected
+        if cleanup is not None:
+            assert caught.recovery_owner is candidate
+            debts = candidate.cleanup_debts()
+            assert len(debts) == 1
+            assert not candidate.retry_cleanup("foreign")
+            assert candidate.retry_cleanup(debts[0].debt_id)
+        assert candidate.cleanup_debts() == ()
+        assert list(output.iterdir()) == [unrelated]
+        if caught is cleanup and body is not None:
+            assert cleanup.__context__ is body
+        if caught is not None:
+            stack, seen = [(caught, frozenset())], set()
+            while stack:
+                error, ancestors = stack.pop()
+                assert id(error) not in ancestors
+                if id(error) in seen:
+                    continue
+                seen.add(id(error))
+                stack.extend((edge, ancestors | {id(error)}) for edge in
+                    (error.__cause__, error.__context__) if edge is not None)
+    finally:
+        assert candidate.close().accepted
+
+
+@pytest.mark.parametrize("shared_diagnosis", (False, True))
+def test_context_cleanup_interrupt_preserves_existing_body_chain(tmp_path, monkeypatch, shared_diagnosis):
+    """Preserve prior body evidence while cutting only a cycle-forming back edge."""
+    build, inputs, output, _, _ = fixtures(tmp_path)
+    candidate = build("point", **inputs)
+    original = candidate.close
+    body, diagnosis, interrupt = ValueError("body"), RuntimeError("prior diagnosis"), KeyboardInterrupt("cleanup")
+    body.__cause__ = diagnosis
+    if shared_diagnosis:
+        body.__context__ = diagnosis
+    diagnosis.__context__ = interrupt
+    def close():
+        """Interrupt cleanup with the same pre-chained object."""
+        raise interrupt
+    monkeypatch.setattr(candidate, "close", close)
+    try:
+        with pytest.raises(KeyboardInterrupt) as caught:
+            with candidate:
+                raise body
+        assert caught.value is interrupt
+        assert interrupt.recovery_owner is candidate
+        assert interrupt.__context__ is body
+        assert body.__cause__ is diagnosis
+        assert diagnosis.__context__ is None
+    finally:
+        monkeypatch.setattr(candidate, "close", original)
+        assert candidate.close().accepted
+    assert list(output.iterdir()) == []

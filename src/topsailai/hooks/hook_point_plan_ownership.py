@@ -69,13 +69,32 @@ class HookPointCandidate:
                     raise CandidateBuildError("candidate_cleanup_pending", self)
                 exc.recovery_owner = self
         except BaseException as error:
-            if exc is None:
+            if exc is None or (isinstance(exc, Exception) and not isinstance(error, Exception)):
                 error.recovery_owner = self
+                if exc is not None:
+                    _preserve_body_diagnosis(exc, error)
                 raise
             exc.recovery_owner = self
         if exc is not None and self.cleanup_debts():
             exc.recovery_owner = self
         return False
+
+
+def _preserve_body_diagnosis(body, cleanup):
+    """Keep body evidence while removing back edges to the propagated interrupt."""
+    pending, seen = [body], set()
+    while pending:
+        error = pending.pop()
+        if id(error) in seen:
+            continue
+        seen.add(id(error))
+        for attribute in ("__cause__", "__context__"):
+            edge = getattr(error, attribute)
+            if edge is cleanup:
+                setattr(error, attribute, None)
+            elif edge is not None:
+                pending.append(edge)
+    cleanup.__context__ = body
 
 
 class CandidateBuildError(ValueError):
