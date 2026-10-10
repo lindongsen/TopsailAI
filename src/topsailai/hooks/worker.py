@@ -10,7 +10,10 @@ import os
 import signal
 from typing import Any, Callable
 
-from topsailai.hooks.contracts import ValidationError
+from topsailai.hooks.contracts import ValidationError, _thaw_frozen_json
+from topsailai.hooks.module_invocation_protocol import (
+    MODULE_PROTOCOL_VERSION, parse_module_request, build_module_response,
+)
 from topsailai.hooks.validation import freeze_json
 from topsailai.hooks.worker_protocol import (
     PROTOCOL_VERSION,
@@ -41,6 +44,15 @@ async def _await_result(value: Any) -> Any:
 def _invoke(handler: Callable[..., Any], context: Any) -> Any:
     """Invoke a sync handler or await its result on a worker-owned event loop."""
     result = handler(context)
+    if inspect.isawaitable(result):
+        return asyncio.run(_await_result(result))
+    return result
+
+
+def _invoke_module(handler: Callable[..., Any], invocation: Any) -> Any:
+    """Thaw owned safe arguments and await only within the isolated worker."""
+    result = handler(*_thaw_frozen_json(invocation.args),
+                     **_thaw_frozen_json(invocation.kwargs))
     if inspect.isawaitable(result):
         return asyncio.run(_await_result(result))
     return result
@@ -110,23 +122,38 @@ def run_worker(result_fd: int, request_limit: int, response_limit: int) -> int:
     try:
         request_frame = _read_request_frame(request_limit)
         request = decode_frame(request_frame, request_limit)
-        correlation_id, channel_token, handler_ref, context = parse_request(request)
+        version = request.get("protocol_version") if type(request) is dict else None
+        if type(version) is not int or version not in (PROTOCOL_VERSION, MODULE_PROTOCOL_VERSION):
+            raise ValidationError("unsupported worker protocol version")
+        module = version == MODULE_PROTOCOL_VERSION
+        if module:
+            correlation_id, channel_token, handler_ref, context, invocation = parse_module_request(
+                request, limits=ProtocolLimits(request_limit, response_limit)
+            )
+        else:
+            correlation_id, channel_token, handler_ref, context = parse_request(request)
         delivery_id = context.delivery_id
         try:
-            value = _invoke(_resolve_handler(handler_ref), context)
+            handler = _resolve_handler(handler_ref)
+            value = _invoke_module(handler, invocation) if module else _invoke(handler, context)
         except BaseException as exc:
             detached = None
             status = "error"
             error_category = _safe_category(exc)
         else:
-            try:
-                detached = freeze_json(value, max_bytes=response_limit // 2)
+            if module:
+                detached = value
                 status = "success"
                 error_category = None
-            except ValidationError:
-                detached = None
-                status = "invalid_output"
-                error_category = "protocol_error"
+            else:
+                try:
+                    detached = freeze_json(value, max_bytes=response_limit // 2)
+                    status = "success"
+                    error_category = None
+                except ValidationError:
+                    detached = None
+                    status = "invalid_output"
+                    error_category = "protocol_error"
         response = {
             "protocol_version": PROTOCOL_VERSION,
             "correlation_id": correlation_id,
@@ -136,6 +163,13 @@ def run_worker(result_fd: int, request_limit: int, response_limit: int) -> int:
             "value": detached,
             "error_category": error_category,
         }
+        if module:
+            response = build_module_response(
+                correlation_id=correlation_id, channel_token=channel_token,
+                delivery_id=delivery_id, value=detached, status=status,
+                error_category=error_category,
+                limits=ProtocolLimits(request_limit, response_limit),
+            )
         frame = encode_frame(response, response_limit)
     except BaseException:
         return 2

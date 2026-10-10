@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import secrets
 import selectors
 import shutil
 import signal
@@ -16,6 +15,7 @@ from typing import Any
 
 from topsailai.hooks.contracts import HookContext, JsonValue, ValidationError
 from topsailai.hooks.process_cleanup import ProcessCleanupMixin
+from topsailai.hooks.process_execution import ProcessExecutionMixin
 from topsailai.hooks.process_launch import build_script_environment
 from topsailai.hooks.process_setup import ProcessSetupMixin
 from topsailai.hooks.process_state import (
@@ -27,9 +27,6 @@ from topsailai.hooks.process_state import (
 from topsailai.hooks.process_termination import terminate_unpublished_process
 from topsailai.hooks.worker_protocol import (
     ProtocolLimits,
-    build_request,
-    decode_frame,
-    encode_frame,
     expected_frame_size,
     validate_response,
 )
@@ -63,10 +60,11 @@ class _LaunchLease:
         dropped: dict[str, int],
         error_category: Any = None,
         value: Any = None,
+        **metadata: Any,
     ) -> WorkerResult:
         """Complete or resume the one cleanup transaction and build its result."""
         return self._backend._finish_record(
-            self._record, status, buffers, dropped, error_category, value
+            self._record, status, buffers, dropped, error_category, value, **metadata
         )
 
     def close_after_finish(self) -> None:
@@ -84,7 +82,7 @@ class _LaunchLease:
             self._record, "worker_lost", empty, dropped, "host_interrupted"
         )
 
-class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin):
+class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExecutionMixin):
     """Execute each handler in a fresh, owned Linux process group."""
 
     def __init__(
@@ -171,93 +169,14 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin):
         """Provide a deterministic seam after the first debt-state mutation."""
 
     def execute(self, handler_ref: str, context: HookContext, timeout_ms: int) -> WorkerResult:
-        """Execute one delivery under one absolute startup/import/invoke/read deadline."""
-        unsupported = self._preflight(timeout_ms)
-        if unsupported is not None:
-            return unsupported
-        interpreter = self._resolve_interpreter()
-        if interpreter is None:
-            return WorkerResult("unsupported_backend", error_category="missing_interpreter")
-        try:
-            os.makedirs(self._temp_root, exist_ok=True)
-        except OSError:
-            return WorkerResult("unsupported_backend", error_category="invalid_temp_root")
+        """Execute the unchanged legacy context handler protocol."""
+        return self._execute_delivery(handler_ref, context, timeout_ms)
 
-        deadline = time.monotonic() + timeout_ms / 1_000
-        correlation_id = uuid.uuid4().hex
-        channel_token = secrets.token_urlsafe(32)
-        request = build_request(
-            correlation_id=correlation_id,
-            channel_token=channel_token,
-            handler_ref=handler_ref,
-            context=context,
-        )
-        try:
-            request_frame = encode_frame(request, self._limits.request_bytes)
-        except ValidationError:
-            return WorkerResult("invalid_request", error_category="invalid_request")
-
-        record = _LaunchRecord(uuid.uuid4().hex)
-        lease: _LaunchLease | None = None
-        try:
-            spawned = self._spawn(interpreter, deadline, record)
-            if isinstance(spawned, WorkerResult):
-                return spawned
-            lease = spawned
-            process, result_fd = lease.resources()
-            buffers = {"result": bytearray(), "stdout": bytearray(), "stderr": bytearray()}
-            dropped = {"stdout": 0, "stderr": 0}
-            transferred = False
-            try:
-                self._before_launch_lease_release(record)
-                lease.release_to_caller()
-                transferred = True
-                read_status = self._exchange(
-                    record, process, result_fd, request_frame, buffers, dropped, deadline
-                )
-                if read_status != "result":
-                    if read_status == "timeout":
-                        status, category = "timeout", "deadline"
-                    elif read_status in ("invalid_output", "worker_lost"):
-                        status, category = read_status, "protocol_error"
-                    else:
-                        status, category = "worker_lost", "transport_error"
-                    return lease.finish(status, buffers, dropped, category)
-                try:
-                    response = decode_frame(bytes(buffers["result"]), self._limits.response_bytes)
-                    terminal = self._validate_terminal(
-                        response,
-                        correlation_id=correlation_id,
-                        channel_token=channel_token,
-                        delivery_id=context.delivery_id,
-                    )
-                except ValidationError:
-                    return lease.finish(
-                        "invalid_output", buffers, dropped, "protocol_error"
-                    )
-                if self._deadline_expired(deadline):
-                    return lease.finish("timeout", buffers, dropped, "deadline")
-                return lease.finish(
-                    str(terminal["status"]),
-                    buffers,
-                    dropped,
-                    terminal["error_category"],
-                    terminal["value"],
-                )
-            finally:
-                if transferred:
-                    try:
-                        lease.finish(
-                            "worker_lost", buffers, dropped, "host_interrupted"
-                        )
-                    finally:
-                        lease.close_after_finish()
-        except BaseException:
-            if lease is not None:
-                lease.cleanup()
-            else:
-                self._abandon_launch(record)
-            raise
+    def execute_module(self, handler_ref: str, context: HookContext, timeout_ms: int,
+                       *, args=(), kwargs=None) -> WorkerResult:
+        """Execute safe explicit Module arguments only in an owned child process."""
+        return self._execute_delivery(handler_ref, context, timeout_ms,
+                                      module=True, args=args, kwargs=kwargs)
 
     def _preflight(self, timeout_ms: int) -> WorkerResult | None:
         """Reject platforms outside the currently verified Linux capability scope."""

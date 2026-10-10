@@ -618,3 +618,10 @@ def test_transport_read_error_is_structured_and_cleanup_runs(tmp_path: Path) -> 
     )
     assert (result.status, result.error_category) == ("worker_lost", "transport_error")
     assert result.cleanup_confirmed
+
+
+def test_legacy_result_metadata_defaults(tmp_path: Path) -> None:
+    """Legacy JSON projection does not claim v2 normal return presence."""
+    result = _backend(tmp_path).execute(f"{HANDLERS}:sync_success", _context(), 2_000)
+    assert result.status == "success"
+    assert not result.returned.present and result.transport_diagnostic is None

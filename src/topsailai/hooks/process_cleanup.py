@@ -10,6 +10,7 @@ import threading
 from contextlib import contextmanager
 from typing import Any, Iterator
 
+from topsailai.hooks.result_contracts import ReturnedValue, ResultDiagnostic
 from topsailai.hooks.process_state import (
     ChannelCloseState,
     CleanupDebt,
@@ -87,6 +88,9 @@ class ProcessCleanupMixin:
         dropped: dict[str, int],
         error_category: Any = None,
         value: Any = None,
+        *,
+        returned: ReturnedValue | None = None,
+        transport_diagnostic: ResultDiagnostic | None = None,
     ) -> WorkerResult:
         """Resume the authoritative termination, debt, closure, and result transaction."""
         with self._cleanup_execution_lease(record) as lease:
@@ -144,6 +148,8 @@ class ProcessCleanupMixin:
                 stderr_dropped=dropped["stderr"],
                 cleanup_confirmed=confirmed,
                 cleanup_debt=None if confirmed else record.debt_id,
+                returned=ReturnedValue() if returned is None else returned,
+                transport_diagnostic=transport_diagnostic,
             )
             return cleanup.result
 

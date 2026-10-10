@@ -7,6 +7,7 @@ import threading
 from dataclasses import dataclass, field
 
 from topsailai.hooks.contracts import JsonValue
+from topsailai.hooks.result_contracts import ReturnedValue, ResultDiagnostic
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +23,8 @@ class WorkerResult:
     stderr_dropped: int = 0
     cleanup_confirmed: bool = True
     cleanup_debt: str | None = None
+    returned: ReturnedValue = field(default_factory=ReturnedValue)
+    transport_diagnostic: ResultDiagnostic | None = None
 
 
 @dataclass(frozen=True, slots=True)
