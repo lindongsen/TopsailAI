@@ -1291,3 +1291,222 @@ def test_process_recovery_public_retry_waits_for_active_cleanup(tmp_path, contex
     assert runner.cleanup_debts() == owners[0].cleanup_debts()
     assert runner.retry_cleanup(debt.debt_id)
     assert runner.cleanup_debts() == () and runner._prelaunch_storage == {}
+
+
+@pytest.mark.parametrize("boundary", ["arming", "pending", "receiver", "completion", "accepted", "disarming"])
+@pytest.mark.parametrize("secondary_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("primary_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("cleanup_mode", ["success", "failure", "interrupt"])
+def test_recovery_state_boundary_preserves_primary(
+    tmp_path, context, monkeypatch, boundary, primary_type, cleanup_mode, secondary_type,
+):
+    """Interrupt real recovery state transitions without losing exact process custody."""
+    import inspect
+    import sys
+    import topsailai.hooks.script_runner as module
+
+    source, first = inspect.getsourcelines(OwnedHookScriptRunner.execute_entry)
+    markers = {
+        "arming": "custody.recovering = True",
+        "pending": "custody.pending = True",
+        "receiver": "recovered = self._preserve_interrupted",
+        "completion": "custody.pending = not recovered.cleanup_confirmed",
+        "accepted": "recovery_complete = True",
+        "disarming": "custody.recovering = False",
+    }
+    start = next(i for i, line in enumerate(source) if "except (KeyboardInterrupt" in line)
+    target = first + next(i for i in range(start, len(source)) if markers[boundary] in source[i])
+    root = tmp_path / "state-root"
+    root.mkdir(mode=0o700)
+    keep = root / "unrelated"
+    keep.mkdir()
+    script = tmp_path / "state-script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    backend = IsolatedProcessBackend(temp_root=str(root))
+    runner = OwnedHookScriptRunner(backend)
+    owners, records, paths = [], [], []
+    allocate_original, cleanup_original = TemporaryStorageOwner.allocate, TemporaryStorageOwner.cleanup
+    launch_original = backend.launch_script
+    primary = primary_type("authoritative drain")
+    armed = True
+    prior = sys.gettrace()
+
+    def allocate(owner):
+        """Capture genuine allocation without altering its ownership."""
+        result = allocate_original(owner)
+        owners.append(owner)
+        paths.append(owner.path)
+        return result
+
+    def launch(**kwargs):
+        """Capture the genuine process record."""
+        records.append(kwargs["record"])
+        return launch_original(**kwargs)
+
+    def drain(*args, **kwargs):
+        """Raise the authoritative exception after process launch."""
+        raise primary
+
+    def cleanup(owner):
+        """Inject storage outcomes only after exact process settlement."""
+        assert records[0].cleanup.termination_confirmed
+        if cleanup_mode == "interrupt":
+            raise SystemExit("storage secondary")
+        return cleanup_original(owner) if cleanup_mode == "success" else False
+
+    def trace(frame, event, arg):
+        """Disarm before injecting one secondary host interruption."""
+        nonlocal armed
+        if prior is not None:
+            prior(frame, event, arg)
+            frame.f_trace = trace
+        if armed and event == "line" and frame.f_code is OwnedHookScriptRunner.execute_entry.__code__ and frame.f_lineno == target:
+            armed = False
+            raise secondary_type("recovery boundary secondary")
+        return trace
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(TemporaryStorageOwner, "allocate", allocate)
+            patch.setattr(TemporaryStorageOwner, "cleanup", cleanup)
+            patch.setattr(backend, "launch_script", launch)
+            patch.setattr(module, "drain_script_process", drain)
+            sys.settrace(trace)
+            try:
+                now = time.monotonic()
+                with pytest.raises(primary_type) as caught:
+                    runner.execute_entry(
+                        entry_index=0, entry=HookScriptEntry(script.resolve(), script.name), context=context,
+                        options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                        execution_deadline=now + 5, cleanup_deadline=now + 6,
+                        output_remaining_bytes=65_536, cancellation=threading.Event(),
+                    )
+            finally:
+                sys.settrace(prior)
+            # Failed storage cleanup exits before the completion statement.
+            assert not armed or (boundary in ("completion", "accepted") and cleanup_mode == "interrupt")
+            assert caught.value is primary
+            tb = primary.__traceback__
+            while tb.tb_next is not None:
+                tb = tb.tb_next
+            assert tb.tb_frame.f_code.co_name == "drain"
+        assert len(records) == len(owners) == 1
+        assert all(not custody.recovering for custody in runner._prelaunch_storage.values())
+        for debt in runner.cleanup_debts():
+            assert runner.retry_cleanup(debt.debt_id)
+        assert runner.cleanup_debts() == () and runner._prelaunch_storage == {}
+        assert not paths[0].exists() and keep.exists()
+        ancestors, error = set(), primary
+        while error is not None:
+            assert id(error) not in ancestors
+            ancestors.add(id(error))
+            error = error.__context__
+    finally:
+        sys.settrace(prior)
+        for record in records:
+            backend._finish_record(record, "worker_lost", {"stdout": bytearray(), "stderr": bytearray()},
+                                   {"stdout": 0, "stderr": 0}, "test_cleanup")
+        for owner in owners:
+            cleanup_original(owner)
+
+
+def test_partial_storage_publication_waits_for_authoritative_settlement(tmp_path, context, monkeypatch):
+    """Mask partial storage authority until exact process settlement can be observed."""
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "partial-root"
+    root.mkdir(mode=0o700)
+    script = tmp_path / "partial-script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    backend = IsolatedProcessBackend(temp_root=str(root))
+    runner = OwnedHookScriptRunner(backend)
+    primary = KeyboardInterrupt("drain")
+
+    def drain(*args, **kwargs):
+        """Interrupt the genuine process to leave exact recovery responsibility."""
+        raise primary
+
+    def publication(initial, record, storage, started):
+        """Publish storage prematurely and fail before process settlement."""
+        runner._remember_storage(storage)
+        raise SystemExit("partial publication")
+
+    now = time.monotonic()
+    with monkeypatch.context() as patch:
+        patch.setattr(module, "drain_script_process", drain)
+        patch.setattr(runner, "_preserve_interrupted", publication)
+        with pytest.raises(KeyboardInterrupt) as caught:
+            runner.execute_entry(
+                entry_index=0, entry=HookScriptEntry(script.resolve(), script.name), context=context,
+                options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                execution_deadline=now + 5, cleanup_deadline=now + 6,
+                output_remaining_bytes=65_536, cancellation=threading.Event(),
+            )
+        assert caught.value is primary
+    custody = next(iter(runner._prelaunch_storage.values()))
+    storage_debt = custody.owner.cleanup_debts()[0]
+    storage_path = custody.owner.path
+    assert runner.cleanup_debts()[0].debt_id == custody.record.debt_id
+    with monkeypatch.context() as patch:
+        patch.setattr(backend, "retry_cleanup", lambda debt_id: True)
+        patch.setattr(backend, "_finish_record", lambda *args: None)
+        runner.retry_cleanup(storage_debt.debt_id)
+        assert not runner.retry_cleanup(custody.record.debt_id)
+        assert custody.owner.path.exists()
+        assert runner._prelaunch_storage[id(custody.owner)] is custody
+    assert runner.retry_cleanup(custody.record.debt_id)
+    assert runner.cleanup_debts() == () and not storage_path.exists()
+
+
+@pytest.mark.parametrize("primary_type", [KeyboardInterrupt, SystemExit])
+def test_completed_recovery_observation_preserves_primary(tmp_path, context, monkeypatch, primary_type):
+    """Retain completed cleanup when the first recovery-result observation interrupts."""
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "observed-root"
+    root.mkdir(mode=0o700)
+    script = tmp_path / "observed-script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(root)))
+    original = runner._preserve_interrupted
+    primary = primary_type("drain primary")
+
+    class InterruptedObservation:
+        """Expose the genuine result with one transient observation interruption."""
+        def __init__(self, result):
+            """Keep the actual completed recovery result."""
+            self.result = result
+            self.first = True
+
+        @property
+        def cleanup_confirmed(self):
+            """Interrupt once and then return genuine settlement evidence."""
+            if self.first:
+                self.first = False
+                raise SystemExit("result observation")
+            return self.result.cleanup_confirmed
+
+    def recover(*args):
+        """Run real process/storage cleanup before injecting observation failure."""
+        return InterruptedObservation(original(*args))
+
+    def drain(*args, **kwargs):
+        """Interrupt the genuine launched process."""
+        raise primary
+
+    monkeypatch.setattr(module, "drain_script_process", drain)
+    monkeypatch.setattr(runner, "_preserve_interrupted", recover)
+    now = time.monotonic()
+    with pytest.raises(primary_type) as caught:
+        runner.execute_entry(
+            entry_index=0, entry=HookScriptEntry(script.resolve(), script.name), context=context,
+            options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+            execution_deadline=now + 5, cleanup_deadline=now + 6,
+            output_remaining_bytes=65_536, cancellation=threading.Event(),
+        )
+    assert caught.value is primary
+    assert runner.cleanup_debts() == () and runner._prelaunch_storage == {}
+    assert tuple(root.iterdir()) == ()

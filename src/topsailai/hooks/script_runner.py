@@ -120,6 +120,7 @@ class OwnedHookScriptRunner:
         lease = None
         record = None
         recovery_complete = False
+        recovered = None
         try:
             if not storage.allocate():
                 return self._publish(initial, HookStatus.ERROR, "hook_script_startup_failed")
@@ -202,18 +203,22 @@ class OwnedHookScriptRunner:
                 self._set_result(current)
                 return current
             except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
-                if lease is not None:
-                    custody.recovering = True
-                    custody.pending = True
-                    try:
-                        recovered = self._preserve_interrupted(initial, record, storage, started)
-                        custody.pending = not recovered.cleanup_confirmed
+                try:
+                    if lease is not None:
+                        try:
+                            custody.recovering = True
+                            custody.pending = True
+                            recovered = self._preserve_interrupted(initial, record, storage, started)
+                            custody.pending = not recovered.cleanup_confirmed
+                            recovery_complete = True
+                        finally:
+                            custody.recovering = False
+                except BaseException:
+                    # Abandoned recovery must preserve the primary and release exclusion.
+                    custody.recovering = False
+                    if recovered is not None and recovered.cleanup_confirmed:
+                        custody.pending = False
                         recovery_complete = True
-                    except BaseException:
-                        # Recovery failure cannot supersede the authoritative interruption.
-                        pass
-                    finally:
-                        custody.recovering = False
                 raise
             except Exception:
                 if lease is None:
