@@ -45,6 +45,15 @@ _RESERVED_ENVIRONMENT = frozenset(
 _PROHIBITED_ENVIRONMENT = frozenset({"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS"})
 
 
+class _StorageCustody:
+    """Retain an exact prelaunch owner before recovery publication can fail."""
+
+    def __init__(self, owner: TemporaryStorageOwner) -> None:
+        """Arm ownership without exposing healthy in-flight storage as debt."""
+        self.owner = owner
+        self.pending = False
+
+
 class OwnedHookScriptRunner:
     """Execute one admission's entries through one existing backend authority."""
 
@@ -57,6 +66,7 @@ class OwnedHookScriptRunner:
         self._results: dict[int, HookScriptEntryResult] = {}
         self._storage: dict[str, TemporaryStorageOwner] = {}
         self._process_storage: dict[str, TemporaryStorageOwner] = {}
+        self._prelaunch_storage: dict[int, _StorageCustody] = {}
         self._nonretained_observed_bytes = 0
 
     def execute_entry(
@@ -102,6 +112,9 @@ class OwnedHookScriptRunner:
             return preflight
 
         storage = TemporaryStorageOwner(Path(self._backend.script_temp_root))
+        custody = _StorageCustody(storage)
+        with self._lock:
+            self._prelaunch_storage[id(storage)] = custody
         try:
             if not storage.allocate():
                 return self._publish(initial, HookStatus.ERROR, "hook_script_startup_failed")
@@ -126,14 +139,23 @@ class OwnedHookScriptRunner:
                 termination_grace=policy.terminate_grace_ms / 1_000,
             )
         except BaseException:
-            self._remember_storage(storage)
+            custody.pending = True
+            try:
+                self._remember_storage(storage)
+            except BaseException:
+                # The pre-armed exact owner survives failed debt publication.
+                pass
             try:
                 if storage.cleanup():
                     self._forget_storage(storage)
+                    custody.pending = False
             except BaseException:
                 # Preserve the primary interruption and exact retryable custody.
                 pass
             raise
+        finally:
+            if not custody.pending:  # pragma: no branch - pending propagates the primary exception
+                self._prelaunch_storage.pop(id(storage), None)
         lease = None
         try:
             spawned = self._backend.launch_script(
@@ -217,6 +239,11 @@ class OwnedHookScriptRunner:
         process = self._backend.cleanup_debts()
         with self._lock:
             owners = {id(storage): storage for storage in self._storage.values()}
+            owners.update(
+                (owner_id, custody.owner)
+                for owner_id, custody in self._prelaunch_storage.items()
+                if custody.pending
+            )
             storage = tuple(
                 debt
                 for owner_id in sorted(owners)
@@ -228,6 +255,18 @@ class OwnedHookScriptRunner:
         """Retry one exact process or storage debt without renewing deadlines."""
         with self._lock:
             storage = self._storage.get(debt_id)
+            if storage is None:
+                storage = next(
+                    (
+                        custody.owner
+                        for custody in self._prelaunch_storage.values()
+                        if custody.pending and any(
+                            debt.debt_id == debt_id
+                            for debt in custody.owner.cleanup_debts()
+                        )
+                    ),
+                    None,
+                )
         if storage is not None:
             settled = storage.retry_cleanup(debt_id)
             if settled:
@@ -405,6 +444,7 @@ class OwnedHookScriptRunner:
                 for debt_id, owner in self._process_storage.items()
                 if owner is not storage
             }
+            self._prelaunch_storage.pop(id(storage), None)
 
     def _remember_process_storage(
         self, debt_id: str, storage: TemporaryStorageOwner

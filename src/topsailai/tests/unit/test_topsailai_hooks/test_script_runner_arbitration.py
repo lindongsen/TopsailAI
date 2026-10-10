@@ -706,3 +706,139 @@ def test_prelaunch_ordinary_setup_classification(tmp_path, context, monkeypatch,
     assert not result.started and result.error_category == "hook_script_startup_failed"
     assert result.cleanup_confirmed and runner.cleanup_debts() == ()
     assert tuple(root.iterdir()) == ()
+
+
+@pytest.mark.parametrize("stage", ["retain", "observe", "lock", "before", "after", "allocate"])
+@pytest.mark.parametrize("primary_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("secondary_type", [RuntimeError, SystemExit])
+@pytest.mark.parametrize("cleanup_mode", ["success", "failure", "interrupt"])
+def test_recovery_registration_failure_preserves_primary_and_owner(
+    tmp_path, context, monkeypatch, stage, primary_type, secondary_type, cleanup_mode,
+):
+    """Registration failure cannot strand a real owner or replace its primary."""
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "recovery-root"
+    root.mkdir(mode=0o700)
+    script = tmp_path / "recovery-script"
+    script.write_text("#!/bin/false\n", encoding="utf-8")
+    script.chmod(0o700)
+    runner = OwnedHookScriptRunner(_LaunchFailureBackend(temp_root=str(root)))
+    unrelated = TemporaryStorageOwner(root)
+    assert unrelated.allocate()
+    keep = unrelated.path / "keep"
+    keep.write_text("unchanged", encoding="utf-8")
+    primary = primary_type("primary")
+    secondary = secondary_type("registration")
+    owners, launches, cleanups = [], [], []
+    allocate_original = TemporaryStorageOwner.allocate
+    cleanup_original = TemporaryStorageOwner.cleanup
+    retain_original = TemporaryStorageOwner.retain_cleanup_debt
+    debts_original = TemporaryStorageOwner.cleanup_debts
+    remember_original = runner._remember_storage
+    lock_original = runner._lock
+    now = time.monotonic()
+
+    def allocate(owner):
+        """Allocate genuine storage, then interrupt the allocation handoff."""
+        result = allocate_original(owner)
+        owners.append(owner)
+        if stage == "allocate":
+            raise primary
+        return result
+
+    def fail(*args, **kwargs):
+        """Raise the authoritative prelaunch interrupt."""
+        raise primary
+
+    def cleanup(owner):
+        """Record exact cleanup and inject only the invocation failure."""
+        if owner in owners:
+            cleanups.append(owner)
+            if cleanup_mode == "failure":
+                return False
+            if cleanup_mode == "interrupt":
+                raise SystemExit("cleanup")
+        return cleanup_original(owner)
+
+    def retain(owner):
+        """Fail debt retention only inside registration."""
+        if owner in owners and stage == "retain":
+            raise secondary
+        return retain_original(owner)
+
+    def debts(owner):
+        """Fail registration observation without corrupting other owners."""
+        if owner in owners and stage == "observe":
+            raise secondary
+        return debts_original(owner)
+
+    class InterruptedLock:
+        """Inject exactly the registration lock boundary."""
+        def __enter__(self):
+            """Reject this lock acquisition."""
+            raise secondary
+
+        def __exit__(self, *args):
+            """Provide the context-manager protocol."""
+            return False
+
+    def remember(owner):
+        """Exercise real helper stages, including completed publication."""
+        if stage == "before":
+            raise secondary
+        if stage == "lock":
+            runner._lock = InterruptedLock()
+        try:
+            remember_original(owner)
+        finally:
+            runner._lock = lock_original
+        if stage == "after":
+            raise secondary
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(TemporaryStorageOwner, "allocate", allocate)
+            patch.setattr(TemporaryStorageOwner, "cleanup", cleanup)
+            patch.setattr(TemporaryStorageOwner, "retain_cleanup_debt", retain)
+            patch.setattr(TemporaryStorageOwner, "cleanup_debts", debts)
+            patch.setattr(runner, "_remember_storage", remember)
+            patch.setattr(module, "encode_script_input", fail)
+            patch.setattr(runner._backend, "launch_script", lambda **kw: launches.append(kw))
+            with pytest.raises(primary_type) as caught:
+                runner.execute_entry(
+                    entry_index=0, entry=HookScriptEntry(script.resolve(), script.name),
+                    context=context, options=HookScriptExecutionOptions(),
+                    policy=HookScriptExecutionPolicy(), execution_deadline=now + 5,
+                    cleanup_deadline=now + 6, output_remaining_bytes=65_536,
+                    cancellation=threading.Event(),
+                )
+            assert caught.value is primary
+            traceback = primary.__traceback__
+            while traceback.tb_next is not None:
+                traceback = traceback.tb_next
+            assert traceback.tb_frame.f_code.co_name == ("allocate" if stage == "allocate" else "fail")
+            assert cleanups == owners and len(owners) == 1
+            assert launches == [] and keep.read_text(encoding="utf-8") == "unchanged"
+        seen, pending = set(), [primary]
+        while pending:
+            error = pending.pop()
+            assert id(error) not in seen
+            seen.add(id(error))
+            if error.__context__ is not None:
+                pending.append(error.__context__)
+        public = runner.cleanup_debts()
+        if cleanup_mode == "success":
+            assert public == () and owners[0].cleanup_debts() == ()
+        else:
+            assert public == owners[0].cleanup_debts() and len(public) == 1
+            assert runner.retry_cleanup(public[0].debt_id)
+            runner.retry_cleanup(public[0].debt_id)
+            assert runner._prelaunch_storage == {}
+        assert runner.cleanup_debts() == ()
+        assert runner._storage == {} and keep.exists()
+    finally:
+        runner._lock = lock_original
+        for owner in owners:
+            cleanup_original(owner)
+        cleanup_original(unrelated)
