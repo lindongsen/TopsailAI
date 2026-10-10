@@ -4132,3 +4132,205 @@ def test_prelaunch_recovery_protected_arming(
         for custody, owner in captured:
             print("exact test cleanup", owner.__dict__.get("_path"))
             cleanup(owner)
+
+
+@pytest.mark.parametrize("kind", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("after", [False, True])
+@pytest.mark.parametrize("fallback", [False, True])
+@pytest.mark.parametrize("failed_cleanup", [False, True])
+def test_prelaunch_first_publication_boundary(
+    tmp_path, monkeypatch, context, kind, after, fallback, failed_cleanup
+):
+    """Protect first native publication and a second fallback interruption."""
+    import dis
+    import sys
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "private"
+    root.mkdir(mode=0o700)
+    unrelated = root / "unrelated"
+    unrelated.mkdir()
+    script = tmp_path / "script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(root)))
+    primary = kind("original alias assignment")
+    secondary = SystemExit("publication") if kind is KeyboardInterrupt else KeyboardInterrupt("publication")
+    initialize = module._StorageCustody.__init__
+    setter = module._StorageCustody.__setattr__
+    cleanup = TemporaryStorageOwner.cleanup
+    captured, hits, removals = [], [], []
+    alias_armed = True
+    source = Path(module.__file__).read_text().splitlines()
+    lines = {number for number, line in enumerate(source, 1)
+             if 'dict.__setitem__(custody_state, "pending", True)' in line
+             and 270 < number < 325}
+    instructions = list(dis.get_instructions(OwnedHookScriptRunner.execute_entry))
+    targets = set()
+    for index, instruction in enumerate(instructions):
+        if instruction.opname == "CALL" and instruction.positions.lineno in lines:
+            targets.add(instructions[index + 1].offset if after else instruction.offset)
+    fallback_lines = {number for number, line in enumerate(source, 1)
+                      if 'dict.update(custody_state, pending=True, execution_owner=' in line}
+    fallback_targets = set()
+    for index, instruction in enumerate(instructions):
+        if instruction.opname in ("CALL", "CALL_KW") and instruction.positions.lineno in fallback_lines:
+            fallback_targets.add(instructions[index + 1].offset if after else instruction.offset)
+    previous = sys.gettrace()
+    previous_profile = sys.getprofile()
+    budget = 2 if fallback else 1
+
+    def trace(frame, event, arg):
+        """Rearm once inside fallback, disarming before each raised interruption."""
+        if frame.f_code is OwnedHookScriptRunner.execute_entry.__code__:
+            frame.f_trace_opcodes = True
+            selected = targets if not hits else fallback_targets
+            if event == "opcode" and frame.f_lasti in selected and len(hits) < budget:
+                hits.append(frame.f_lasti)
+                sys.settrace(None)
+                frame.f_trace = None
+                raise secondary
+            return trace
+        return None
+
+    def profile(frame, event, arg):
+        """Rearm a second one-shot opcode probe only inside the fallback."""
+        if (fallback and len(hits) == 1 and event == "c_call"
+                and frame.f_code is OwnedHookScriptRunner.execute_entry.__code__
+                and any(line <= frame.f_lineno <= line + 1 for line in fallback_lines)):
+            sys.settrace(trace)
+            frame.f_trace = trace
+            frame.f_trace_opcodes = True
+
+    def init(custody, owner):
+        """Capture actual custody and preserve exact native state."""
+        initialize(custody, owner)
+        captured.append((custody, owner))
+
+    def assign(custody, name, value):
+        """Trigger recovery only after genuine allocation."""
+        nonlocal alias_armed
+        if alias_armed and name == "storage_alias" and value is not None:
+            alias_armed = False
+            raise primary
+        setter(custody, name, value)
+
+    def remove(owner):
+        """Check active exact exclusion before genuine cleanup or retained failure."""
+        removals.append(owner)
+        alias = owner.cleanup_debts()[0].debt_id
+        assert not runner.retry_cleanup(alias)
+        if failed_cleanup:
+            raise secondary
+        return cleanup(owner)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module._StorageCustody, "__init__", init)
+            patch.setattr(module._StorageCustody, "__setattr__", assign)
+            patch.setattr(TemporaryStorageOwner, "cleanup", remove)
+            sys.settrace(trace)
+            sys.setprofile(profile)
+            with pytest.raises(BaseException) as caught:
+                runner.execute_entry(entry_index=0, entry=HookScriptEntry(script, script.name),
+                    context=context, options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                    execution_deadline=time.monotonic()+5, cleanup_deadline=time.monotonic()+5,
+                    output_remaining_bytes=65536, cancellation=threading.Event())
+        sys.setprofile(previous_profile)
+        sys.settrace(previous)
+        assert runner._lock.acquire(blocking=False), "publication leaked runner lock"
+        runner._lock.release()
+        assert caught.value is primary
+        assert len(hits) == budget
+        tb = primary.__traceback__
+        frames = []
+        while tb:
+            frames.append(tb.tb_frame.f_code.co_name)
+            tb = tb.tb_next
+        assert "assign" in frames and primary.__cause__ is None
+        custody, owner = captured[0]
+        assert custody.execution_owner is None and custody.retry_owner is None
+        if owner.__dict__["_path"] is not None:
+            alias = owner.cleanup_debts()[0].debt_id
+            assert custody.pending and runner._prelaunch_storage[id(owner)] is custody
+            assert [debt.debt_id for debt in runner.cleanup_debts()] == [alias]
+            assert runner.retry_cleanup("unrelated-first-publication")
+            assert runner.retry_cleanup(alias)
+        assert runner.cleanup_debts() == () and runner._prelaunch_storage == {}
+        assert unrelated.exists()
+    finally:
+        sys.setprofile(previous_profile)
+        sys.settrace(previous)
+        for custody, owner in captured:
+            print("exact boundary cleanup", owner.__dict__.get("_path"))
+            cleanup(owner)
+
+
+@pytest.mark.parametrize("kind", [KeyboardInterrupt, SystemExit])
+def test_prelaunch_first_publication_native_fallback_failure(tmp_path, monkeypatch, context, kind):
+    """Cover bounded fallback handler without replacing the coverage tracer."""
+    import topsailai.hooks.script_runner as module
+
+    initialize = module._StorageCustody.__init__
+    setter = module._StorageCustody.__setattr__
+    primary = kind("original allocation handoff")
+    captured = []
+    native = dict
+    armed = True
+
+    class NativeDict(dict):
+        """Reject one fallback update while preserving real native ownership writes."""
+        @staticmethod
+        def update(state, **values):
+            """Inject fallback failure only during execution authority publication."""
+            if "execution_owner" in values:
+                raise SystemExit("native fallback")
+            native.update(state, **values)
+
+    class State(dict):
+        """Reject the ordinary arming write before native fallback."""
+        def __setitem__(self, name, value):
+            """Keep all writes except one execution arming assignment unchanged."""
+            if name == "execution_owner" and value is not None:
+                raise KeyboardInterrupt("ordinary arming")
+            native.__setitem__(self, name, value)
+
+    def init(custody, owner):
+        """Capture the actual owner and isolate state injection to this custody."""
+        initialize(custody, owner)
+        custody.__dict__ = State(custody.__dict__)
+        captured.append((custody, owner))
+
+    def assign(custody, name, value):
+        """Start recovery after genuine allocation with the original exception."""
+        nonlocal armed
+        if armed and name == "storage_alias" and value is not None:
+            armed = False
+            raise primary
+        setter(custody, name, value)
+
+    script = tmp_path / "script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "dict", NativeDict, raising=False)
+            patch.setattr(module._StorageCustody, "__init__", init)
+            patch.setattr(module._StorageCustody, "__setattr__", assign)
+            with pytest.raises(BaseException) as caught:
+                runner.execute_entry(entry_index=0, entry=HookScriptEntry(script, script.name),
+                    context=context, options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                    execution_deadline=time.monotonic()+5, cleanup_deadline=time.monotonic()+5,
+                    output_remaining_bytes=65536, cancellation=threading.Event())
+        assert caught.value is primary and primary.__cause__ is None
+        custody, owner = captured[0]
+        assert owner.path.exists() and custody.pending and custody.execution_owner is None
+        alias = owner.cleanup_debts()[0].debt_id
+        assert [debt.debt_id for debt in runner.cleanup_debts()] == [alias]
+        assert runner.retry_cleanup(alias)
+        assert runner.cleanup_debts() == () and runner._prelaunch_storage == {}
+    finally:
+        for custody, owner in captured:
+            print("exact fallback cleanup", owner.__dict__.get("_path"))
+            owner.cleanup()

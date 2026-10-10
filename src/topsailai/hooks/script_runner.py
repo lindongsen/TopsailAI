@@ -281,17 +281,18 @@ class OwnedHookScriptRunner:
             primary_traceback = interrupted.__traceback__
             with self._lock:
                 # Publish responsibility before interruptible recovery authority writes.
-                dict.__setitem__(custody_state, "pending", True)
                 try:
+                    dict.__setitem__(custody_state, "pending", True)
                     custody_state["pending"] = True
                     custody_state["execution_owner"] = execution_token
                     custody_state["storage_alias"] = owner_state.get("_debt") or custody_state["storage_alias"]
                 except BaseException:
                     # Complete this invocation's handoff without repeating failed overrides.
-                    dict.__setitem__(custody_state, "pending", True)
-                    dict.__setitem__(custody_state, "execution_owner", execution_token)
-                    dict.__setitem__(custody_state, "storage_alias",
-                                     dict.get(owner_state, "_debt") or dict.get(custody_state, "storage_alias"))
+                    try:
+                        dict.update(custody_state, pending=True, execution_owner=execution_token,
+                                    storage_alias=dict.get(owner_state, "_debt") or dict.get(custody_state, "storage_alias"))
+                    except BaseException:
+                        raise primary.with_traceback(primary_traceback) from None
             try:
                 self._remember_storage(storage)
             except BaseException:
@@ -308,6 +309,13 @@ class OwnedHookScriptRunner:
         finally:
             try:
                 with self._lock:
+                    # Unpublished responsibility is not proof of exact owner settlement.
+                    if primary is not None and not all(
+                        name in owner_state and dict.get(owner_state, name) is None
+                        for name in ("_path", "_uncertain_path", "_debt")
+                    ):
+                        dict.update(custody_state, pending=True,
+                                    storage_alias=dict.get(owner_state, "_debt") or dict.get(custody_state, "storage_alias"))
                     if custody_state["execution_owner"] is execution_token:
                         if custody_state["release_complete"]:
                             custody_state["pending"] = False
