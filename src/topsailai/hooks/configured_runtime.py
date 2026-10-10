@@ -202,10 +202,12 @@ def register_configured(
         return ConfiguredRegistrationResult(False, errors=("registration_capacity_exceeded",))
     platform = _platform_policy(trust)
     discovery = discover_configured_hook_scripts(
-        scripts=ordered_scripts, folder=folder, platform_policy=platform
+        scripts=ordered_scripts, folder=folder, platform_policy=platform, max_resources=128
     )
     if not discovery.accepted:
-        return ConfiguredRegistrationResult(False, errors=("discovery_rejected",))
+        error = ("registration_capacity_exceeded" if discovery.errors ==
+                 ("registration_capacity_exceeded",) else "discovery_rejected")
+        return ConfiguredRegistrationResult(False, errors=(error,))
     if len(discovery.entries) > 128:
         return ConfiguredRegistrationResult(False, errors=("registration_capacity_exceeded",))
     plan, error = _capture_plan(runtime, hook_name, discovery, platform, trust)

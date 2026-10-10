@@ -167,13 +167,18 @@ def discover_configured_hook_scripts(
     scripts: tuple[os.PathLike[str] | str, ...] | None,
     folder: os.PathLike[str] | str | None,
     platform_policy: ExecutablePlatformPolicy,
+    max_resources: int | None = None,
 ) -> HookScriptDiscoveryResult:
-    """Discover one ordered list or one recursive directory atomically."""
+    """Discover atomically, optionally bounding configured resource admission."""
+    if max_resources is not None and (type(max_resources) is not int or max_resources < 1):
+        return _rejected(_TARGET_INVALID)
     if (scripts is None) == (folder is None):
         return _rejected(_TARGET_INVALID)
     if scripts is not None:
         if type(scripts) is not tuple:
             return _rejected(_TARGET_INVALID)
+        if max_resources is not None and len(scripts) > max_resources:
+            return _rejected("registration_capacity_exceeded")
         entries: list[HookScriptEntry] = []
         for target in scripts:
             result = discover_hook_script_entries(target, platform_policy)
@@ -181,12 +186,13 @@ def discover_configured_hook_scripts(
                 return result if not result.accepted else _rejected(_TARGET_INVALID)
             entries.append(result.entries[0])
         return _unique_entries(entries)
-    return _discover_recursive_directory(folder, platform_policy)
+    return _discover_recursive_directory(folder, platform_policy, max_resources)
 
 
 def _discover_recursive_directory(
     target: os.PathLike[str] | str | None,
     policy: ExecutablePlatformPolicy,
+    max_resources: int | None = None,
 ) -> HookScriptDiscoveryResult:
     """Recursively discover scripts without traversing symbolic-link directories."""
     root_path = _target_path(target)
@@ -201,34 +207,35 @@ def _discover_recursive_directory(
         return _rejected(_TARGET_INVALID)
     entries: list[tuple[str, HookScriptEntry]] = []
     try:
-        walked = tuple(os.walk(root_path, followlinks=False))
+        for directory, names, files in os.walk(root_path, followlinks=False):
+            base = Path(directory)
+            names[:] = sorted(
+                name for name in names if not (base / name).is_symlink()
+            )
+            for name in (files if max_resources is not None else sorted(files)):
+                candidate = base / name
+                try:
+                    candidate_status = candidate.lstat()
+                except (OSError, ValueError):
+                    return _rejected(_TARGET_INVALID)
+                if stat.S_ISLNK(candidate_status.st_mode) or not stat.S_ISREG(candidate_status.st_mode):
+                    continue
+                if not _has_execute_permission(candidate):
+                    continue
+                try:
+                    canonical = candidate.resolve(strict=True)
+                except (OSError, RuntimeError, ValueError):
+                    return _rejected(_TARGET_INVALID)
+                if not canonical.is_relative_to(root):
+                    return _rejected(_PATH_ESCAPE)
+                if max_resources is not None and len(entries) == max_resources:
+                    return _rejected("registration_capacity_exceeded")
+                if not _is_admitted(canonical, policy):
+                    return _rejected(_TARGET_NOT_EXECUTABLE)
+                relative = candidate.relative_to(root_path).as_posix()
+                entries.append((relative, HookScriptEntry(canonical, candidate.name)))
     except (OSError, ValueError):
         return _rejected(_TARGET_INVALID)
-    for directory, names, files in walked:
-        base = Path(directory)
-        names[:] = sorted(
-            name for name in names if not (base / name).is_symlink()
-        )
-        for name in sorted(files):
-            candidate = base / name
-            try:
-                candidate_status = candidate.lstat()
-            except (OSError, ValueError):
-                return _rejected(_TARGET_INVALID)
-            if stat.S_ISLNK(candidate_status.st_mode) or not stat.S_ISREG(candidate_status.st_mode):
-                continue
-            if not _has_execute_permission(candidate):
-                continue
-            try:
-                canonical = candidate.resolve(strict=True)
-            except (OSError, RuntimeError, ValueError):
-                return _rejected(_TARGET_INVALID)
-            if not canonical.is_relative_to(root):
-                return _rejected(_PATH_ESCAPE)
-            if not _is_admitted(canonical, policy):
-                return _rejected(_TARGET_NOT_EXECUTABLE)
-            relative = candidate.relative_to(root_path).as_posix()
-            entries.append((relative, HookScriptEntry(canonical, candidate.name)))
     entries.sort(key=lambda item: item[0])
     return _unique_entries([entry for _, entry in entries])
 

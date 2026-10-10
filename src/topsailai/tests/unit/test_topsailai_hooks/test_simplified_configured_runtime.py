@@ -662,3 +662,137 @@ def test_real_registration_capacity_and_failed_replacement(tmp_path):
         assert scripts == before
     finally:
         runtime.close()
+
+
+@pytest.mark.parametrize("count", (128, 129, 130))
+def test_bounded_real_folder_registration(tmp_path, monkeypatch, count):
+    """Stop at capacity before later reads, capture, or active-plan replacement."""
+    from topsailai.hooks import configured_runtime as registration
+    from topsailai.hooks import hook_script_discovery as discovery
+
+    folder = tmp_path / "sources"
+    paths = [_script(folder / f"s{i:03d}") for i in range(count)]
+    if count == 130:
+        paths[-1].write_text("malformed late script", encoding="utf-8")
+    original_bytes = tuple(path.read_bytes() for path in paths)
+    runtime, scope = _real_runtime(tmp_path, tuple(paths))
+    admitted = []
+    captures = []
+    original_admit = discovery._is_admitted
+    original_walk = discovery.os.walk
+    original_capture = registration._capture_plan
+
+    def ordered_walk(*args, **kwargs):
+        """Preserve real traversal while deterministically positioning late input."""
+        for directory, names, files in original_walk(*args, **kwargs):
+            yield directory, names, sorted(files)
+
+    def admit(path, policy):
+        """Record only real header admission, refusing any over-boundary read."""
+        admitted.append(path.name)
+        assert len(admitted) <= 128
+        return original_admit(path, policy)
+
+    def capture(*args):
+        """Keep the real trusted capture for legal registrations only."""
+        captures.append(True)
+        return original_capture(*args)
+
+    try:
+        assert runtime.register_configured("hook_capacity", scope, scripts=[]).accepted
+        before = runtime._registry.configured_plan(scope.scope_id, "hook_capacity")
+        generation = runtime._registry.generation
+        monkeypatch.setattr(discovery.os, "walk", ordered_walk)
+        monkeypatch.setattr(discovery, "_is_admitted", admit)
+        monkeypatch.setattr(registration, "_capture_plan", capture)
+        result = runtime.register_configured("hook_capacity", scope, folder=folder)
+        assert len(admitted) == 128
+        if count == 128:
+            assert result.accepted and result.script_count == 128
+            assert captures == [True]
+            _, active = runtime._registry.configured_plan(scope.scope_id, "hook_capacity")
+            assert tuple(entry.basename for entry in active.entries) == tuple(p.name for p in paths)
+            assert active.policy.max_entries == 32
+        else:
+            assert result.errors == ("registration_capacity_exceeded",)
+            assert captures == []
+            assert runtime._registry.configured_plan(scope.scope_id, "hook_capacity") == before
+            assert runtime._registry.generation == generation
+        assert tuple(path.read_bytes() for path in paths) == original_bytes
+    finally:
+        runtime.close()
+
+
+def test_bounded_folder_walk_stops_before_next_row(tmp_path, monkeypatch):
+    """Do not eagerly exhaust traversal or read the first excess candidate."""
+    from topsailai.hooks import hook_script_discovery as discovery
+
+    folder = tmp_path / "sources"
+    paths = [_script(folder / f"s{i:03d}") for i in range(129)]
+    rows = []
+
+    def walk(*args, **kwargs):
+        """Yield the boundary row then fail if discovery requests another row."""
+        rows.append(1)
+        def files():
+            """Fail if candidates are sorted or consumed past the capacity boundary."""
+            for path in paths:
+                yield path.name
+            raise AssertionError("files consumed after capacity")
+
+        yield str(folder), [], files()
+        raise AssertionError("walk consumed after capacity")
+
+    monkeypatch.setattr(discovery.os, "walk", walk)
+    runtime, scope = _runtime(tmp_path)
+    try:
+        result = runtime.register_configured("hook_capacity", scope, folder=folder)
+        assert result.errors == ("registration_capacity_exceeded",)
+        assert rows == [1]
+        assert runtime._registry.generation == 0
+    finally:
+        runtime.close()
+
+
+def test_independent_folder_discovery_retains_unbounded_default(tmp_path):
+    """Standalone discovery does not silently inherit registration capacity."""
+    paths = [_script(tmp_path / f"s{i:03d}") for i in range(130)]
+    result = discover_configured_hook_scripts(
+        scripts=None, folder=tmp_path, platform_policy=_platform_policy()
+    )
+    assert result.accepted and tuple(e.source_path for e in result.entries) == tuple(paths)
+
+
+@pytest.mark.parametrize("limit", (0, -1, True, "128"))
+def test_bounded_discovery_invalid_limit(tmp_path, limit):
+    """Reject invalid explicit capacities without touching missing source files."""
+    result = discover_configured_hook_scripts(
+        scripts=(tmp_path / "missing",), folder=None,
+        platform_policy=_platform_policy(), max_resources=limit,
+    )
+    assert not result.accepted and result.errors == ("hook_script target is invalid",)
+
+
+def test_bounded_discovery_explicit_capacity(tmp_path):
+    """The optional boundary rejects excess explicit entries before file reads."""
+    result = discover_configured_hook_scripts(
+        scripts=(tmp_path / "missing",) * 129, folder=None,
+        platform_policy=_platform_policy(), max_resources=128,
+    )
+    assert result.errors == ("registration_capacity_exceeded",)
+
+
+def test_bounded_discovery_walk_error(tmp_path, monkeypatch):
+    """Traversal failure returns an atomic rejection without partial entries."""
+    from topsailai.hooks import hook_script_discovery as discovery
+
+    def walk(*args, **kwargs):
+        """Raise only on iteration, as a streaming filesystem walker can."""
+        yield str(tmp_path), [], []
+        raise OSError("walk unavailable")
+
+    monkeypatch.setattr(discovery.os, "walk", walk)
+    result = discover_configured_hook_scripts(
+        scripts=None, folder=tmp_path, platform_policy=_platform_policy(), max_resources=128,
+    )
+    assert not result.accepted and result.entries == ()
