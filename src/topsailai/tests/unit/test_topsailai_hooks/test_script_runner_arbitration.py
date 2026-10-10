@@ -1510,3 +1510,360 @@ def test_completed_recovery_observation_preserves_primary(tmp_path, context, mon
     assert caught.value is primary
     assert runner.cleanup_debts() == () and runner._prelaunch_storage == {}
     assert tuple(root.iterdir()) == ()
+
+
+@pytest.mark.parametrize("primary_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("secondary_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("settlement", ["complete", "process", "storage"])
+@pytest.mark.parametrize("fallback_boundary", ["observation", "entry", "exit"])
+def test_recovery_fallback_persistent_observation(
+    tmp_path, context, monkeypatch, primary_type, secondary_type, settlement, fallback_boundary,
+):
+    """Keep genuine custody reachable without re-reading failed result diagnostics."""
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "fallback-root"
+    root.mkdir(mode=0o700)
+    keep = root / "unrelated"
+    keep.mkdir()
+    script = tmp_path / "fallback-script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    backend = IsolatedProcessBackend(temp_root=str(root))
+    runner = OwnedHookScriptRunner(backend)
+    original = runner._preserve_interrupted
+    cleanup = TemporaryStorageOwner.cleanup
+    owners, records, paths, observations = [], [], [], []
+    primary = primary_type("authoritative drain")
+    allocate_original = TemporaryStorageOwner.allocate
+    import inspect
+    import sys
+    prior = sys.gettrace()
+    armed = fallback_boundary != "observation"
+    source, first = inspect.getsourcelines(OwnedHookScriptRunner.execute_entry)
+    marker = "custody.recovering = False" if fallback_boundary == "entry" else "if custody.storage_settled:"
+    fallback_start = next(i for i, line in enumerate(source) if "Abandoned recovery" in line)
+    target = first + next(i for i in range(fallback_start, len(source)) if marker in source[i])
+
+    def trace(frame, event, arg):
+        """Inject after failed observation without racing process cleanup."""
+        nonlocal armed
+        if armed and event == "line" and frame.f_code is OwnedHookScriptRunner.execute_entry.__code__ and frame.f_lineno == target:
+            armed = False
+            raise secondary_type("fallback boundary")
+        return trace
+
+    def allocate(owner):
+        """Capture the actual allocated owner and immutable path."""
+        result = allocate_original(owner)
+        owners.append(owner)
+        paths.append(owner.path)
+        return result
+
+    class FailedObservation:
+        """Fail every observation after real recovery work."""
+        @property
+        def cleanup_confirmed(self):
+            """Reject repeated diagnostic reads deterministically."""
+            observations.append(True)
+            if armed:
+                frame = sys._getframe(1)
+                frame.f_trace = trace
+                sys.settrace(trace)
+            raise secondary_type("persistent settlement observation")
+
+    def recover(initial, record, storage, started):
+        """Run real recovery or leave exact process custody unsettled."""
+        records.append(record)
+        if settlement == "process":
+            runner._remember_storage(storage)
+        else:
+            original(initial, record, storage, started)
+        return FailedObservation()
+
+    def drain(*args, **kwargs):
+        """Raise the authoritative exception in the genuine process path."""
+        raise primary
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(TemporaryStorageOwner, "allocate", allocate)
+            patch.setattr(module, "drain_script_process", drain)
+            patch.setattr(runner, "_preserve_interrupted", recover)
+            if settlement == "storage":
+                patch.setattr(TemporaryStorageOwner, "cleanup", lambda owner: False)
+            now = time.monotonic()
+            with pytest.raises(primary_type) as caught:
+                runner.execute_entry(
+                    entry_index=0, entry=HookScriptEntry(script.resolve(), script.name), context=context,
+                    options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                    execution_deadline=now + 5, cleanup_deadline=now + 6,
+                    output_remaining_bytes=65_536, cancellation=threading.Event(),
+                )
+            sys.settrace(prior)
+            assert caught.value is primary
+            assert not armed
+            assert len(observations) <= 1
+            assert all(not c.recovering for c in runner._prelaunch_storage.values())
+            tb = primary.__traceback__
+            while tb.tb_next is not None:
+                tb = tb.tb_next
+            assert tb.tb_frame.f_code.co_name == "drain"
+        if settlement == "complete":
+            assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
+        else:
+            debts = runner.cleanup_debts()
+            assert len(debts) == 1
+            expected = records[0].debt_id if settlement == "process" else owners[0].cleanup_debts()[0].debt_id
+            assert debts[0].debt_id == expected and paths[0].exists()
+            assert runner.retry_cleanup(expected)
+        assert runner.cleanup_debts() == () and runner._prelaunch_storage == {}
+        assert not paths[0].exists() and keep.exists()
+        seen, error = set(), primary
+        while error is not None:
+            assert id(error) not in seen
+            seen.add(id(error))
+            error = error.__context__
+    finally:
+        sys.settrace(prior)
+        for record in records:
+            backend._finish_record(record, "worker_lost", {"stdout": bytearray(), "stderr": bytearray()},
+                                   {"stdout": 0, "stderr": 0}, "test_cleanup")
+        for owner in owners:
+            cleanup(owner)
+
+
+@pytest.mark.parametrize("primary_type", [KeyboardInterrupt, SystemExit])
+def test_recovery_fallback_final_release_interruption(tmp_path, context, monkeypatch, primary_type):
+    """A failed final registry release must not hide already-settled custody."""
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "release-root"
+    root.mkdir(mode=0o700)
+    script = tmp_path / "release-script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(root)))
+    primary = primary_type("drain primary")
+
+    class InterruptedRelease(dict):
+        """Reject one exact final release without deleting another owner."""
+        def pop(self, key, default=None):
+            """Interrupt once before removing the settled exact record."""
+            if self:
+                raise SystemExit("final release")
+            return super().pop(key, default)
+
+    runner._prelaunch_storage = InterruptedRelease()
+
+    def drain(*args, **kwargs):
+        """Interrupt after the real process has been launched."""
+        raise primary
+
+    monkeypatch.setattr(module, "drain_script_process", drain)
+    now = time.monotonic()
+    with pytest.raises(primary_type) as caught:
+        runner.execute_entry(
+            entry_index=0, entry=HookScriptEntry(script.resolve(), script.name), context=context,
+            options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+            execution_deadline=now + 5, cleanup_deadline=now + 6,
+            output_remaining_bytes=65_536, cancellation=threading.Event(),
+        )
+    assert caught.value is primary
+    assert runner.cleanup_debts() == ()
+    assert runner._prelaunch_storage == {}
+
+
+@pytest.mark.parametrize("primary_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("secondary_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("settlement", ["complete", "process", "storage"])
+@pytest.mark.parametrize("fault", ["repair", "release", "pending_release", "repair_method", "released_pop", "released_delete"])
+def test_recovery_outer_repair_and_repeated_release(
+    tmp_path, context, monkeypatch, primary_type, secondary_type, settlement, fault,
+):
+    """Keep exact real custody reachable after a second recovery-boundary failure."""
+    import inspect
+    import sys
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "outer-root"
+    root.mkdir(mode=0o700)
+    unrelated = root / "unrelated"
+    unrelated.mkdir()
+    script = tmp_path / "outer-script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    backend = IsolatedProcessBackend(temp_root=str(root))
+    runner = OwnedHookScriptRunner(backend)
+    original = runner._preserve_interrupted
+    primary = primary_type("authoritative drain")
+    records, owners, hits = [], [], []
+    previous = sys.gettrace()
+    source, first = inspect.getsourcelines(OwnedHookScriptRunner.execute_entry)
+    outer = next(i for i, line in enumerate(source) if "if primary is not None and lease" in line)
+    target = first + next(i for i in range(outer, len(source)) if "custody.recovering = False" in source[i])
+    if fault == "pending_release":
+        target = first + next(i for i in range(outer, len(source)) if "if not custody.pending:" in source[i])
+    armed = fault in {"repair", "pending_release"}
+    repair_armed = fault == "repair_method"
+    original_setattr = module._StorageCustody.__setattr__
+
+    def fail_repair(custody, name, value):
+        """Inject one real local state mutation failure without replacing the tracer."""
+        nonlocal repair_armed
+        if repair_armed and name == "recovering" and sys._getframe(1).f_lineno == target:
+            repair_armed = False
+            hits.append("repair")
+            raise secondary_type("outer state mutation")
+        original_setattr(custody, name, value)
+
+    def trace(frame, event, arg):
+        """Interrupt exactly once before outer repair clears recovery exclusion."""
+        nonlocal armed
+        if armed and event == "line" and frame.f_code is OwnedHookScriptRunner.execute_entry.__code__ and frame.f_lineno == target:
+            armed = False
+            hits.append("repair")
+            raise secondary_type("outer repair")
+        return trace
+
+    class FailedRelease(dict):
+        """Reject both fallible exact-release attempts without unrelated deletion."""
+        def pop(self, key, default=None):
+            """Inject the first release interruption."""
+            hits.append("pop")
+            if fault == "released_pop":
+                super().pop(key, default)
+            raise secondary_type("release pop")
+
+        def __delitem__(self, key):
+            """Inject the second release interruption."""
+            hits.append("delete")
+            if fault == "released_delete":
+                super().__delitem__(key)
+            raise secondary_type("release delete")
+
+    class FailedObservation:
+        """Force the outer repair after real or explicitly unsettled recovery."""
+        @property
+        def cleanup_confirmed(self):
+            """Fail the first observation and arm target-frame instrumentation."""
+            if armed:
+                frame = sys._getframe(1)
+                frame.f_trace = trace
+                sys.settrace(trace)
+            raise secondary_type("observation")
+
+    def recover(initial, record, storage, started):
+        """Capture exact resources and exercise genuine settlement paths."""
+        records.append(record)
+        owners.append((storage, storage.path))
+        if settlement == "process":
+            runner._remember_storage(storage)
+        else:
+            original(initial, record, storage, started)
+        # Leave exclusion armed to simulate interruption of the preceding finally.
+        runner._prelaunch_storage[id(storage)].recovering = True
+        return FailedObservation()
+
+    def drain(*args, **kwargs):
+        """Raise the original interruption after the actual child launch."""
+        raise primary
+
+    if fault in {"release", "released_pop", "released_delete"}:
+        runner._prelaunch_storage = FailedRelease()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "drain_script_process", drain)
+            patch.setattr(runner, "_preserve_interrupted", recover)
+            patch.setattr(module._StorageCustody, "__setattr__", fail_repair)
+            if settlement == "storage":
+                patch.setattr(TemporaryStorageOwner, "cleanup", lambda owner: False)
+            now = time.monotonic()
+            with pytest.raises(primary_type) as caught:
+                runner.execute_entry(
+                    entry_index=0, entry=HookScriptEntry(script.resolve(), script.name), context=context,
+                    options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                    execution_deadline=now + 5, cleanup_deadline=now + 6,
+                    output_remaining_bytes=65_536, cancellation=threading.Event(),
+                )
+            sys.settrace(previous)
+            assert caught.value is primary
+            assert all(not c.recovering for c in runner._prelaunch_storage.values())
+            if fault in {"repair", "pending_release", "repair_method"}:
+                assert hits == ["repair"]
+            elif settlement == "complete":
+                assert "pop" in hits
+                if fault != "released_pop":
+                    assert "delete" in hits
+            tb = primary.__traceback__
+            while tb.tb_next:
+                tb = tb.tb_next
+            assert tb.tb_frame.f_code.co_name == "drain"
+        # Restore ordinary registry operations before the public retry.
+        runner._prelaunch_storage = dict(runner._prelaunch_storage)
+        if settlement == "complete":
+            assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
+        else:
+            debts = runner.cleanup_debts()
+            assert len(debts) == 1 and owners[0][1].exists()
+            expected = records[0].debt_id if settlement == "process" else owners[0][0].cleanup_debts()[0].debt_id
+            assert debts[0].debt_id == expected
+            assert runner.retry_cleanup(expected)
+        assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
+        assert unrelated.exists() and not owners[0][1].exists()
+        seen, stack = set(), [primary]
+        while stack:
+            error = stack.pop()
+            assert id(error) not in seen
+            seen.add(id(error))
+            stack.extend(e for e in (error.__cause__, error.__context__) if e is not None)
+    finally:
+        sys.settrace(previous)
+        runner._prelaunch_storage = dict(runner._prelaunch_storage)
+        for record in records:
+            backend._finish_record(record, "worker_lost", {"stdout": bytearray(), "stderr": bytearray()},
+                                   {"stdout": 0, "stderr": 0}, "test_cleanup")
+        for owner, path in owners:
+            if path.exists():
+                print(f"cleanup exact test storage: {path}")
+            TemporaryStorageOwner.cleanup(owner)
+
+
+def test_storage_settlement_without_backup(tmp_path):
+    """Successful exact cleanup must support an already-released backup."""
+    backend = IsolatedProcessBackend(temp_root=str(tmp_path))
+    runner = OwnedHookScriptRunner(backend)
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    result = HookScriptEntryResult(0, "standalone", HookStatus.ERROR, True)
+    assert runner._settle_storage(result, owner) is result
+    assert runner._prelaunch_storage == {}
+
+
+def test_final_release_without_primary_propagates(tmp_path, context, monkeypatch):
+    """An ordinary final registry failure is not disguised as host recovery."""
+    import topsailai.hooks.script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    failure = RuntimeError("ordinary release")
+
+    class FailedRelease(dict):
+        """Fail the final release even when allocation was rejected."""
+        def pop(self, key, default=None):
+            """Raise the same ordinary failure for the caller."""
+            raise failure
+
+    runner._prelaunch_storage = FailedRelease()
+    monkeypatch.setattr(TemporaryStorageOwner, "allocate", lambda owner: False)
+    script = tmp_path / "ordinary-script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    now = time.monotonic()
+    with pytest.raises(RuntimeError) as caught:
+        runner.execute_entry(
+            entry_index=0, entry=HookScriptEntry(script.resolve(), script.name), context=context,
+            options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+            execution_deadline=now + 5, cleanup_deadline=now + 6,
+            output_remaining_bytes=65_536, cancellation=threading.Event(),
+        )
+    assert caught.value is failure

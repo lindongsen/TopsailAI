@@ -53,6 +53,7 @@ class _StorageCustody:
         self.owner = owner
         self.pending = False
         self.recovering = False
+        self.storage_settled = False
         self.record: LaunchRecord | None = None
 
 
@@ -121,6 +122,8 @@ class OwnedHookScriptRunner:
         record = None
         recovery_complete = False
         recovered = None
+        primary = None
+        primary_traceback = None
         try:
             if not storage.allocate():
                 return self._publish(initial, HookStatus.ERROR, "hook_script_startup_failed")
@@ -202,7 +205,9 @@ class OwnedHookScriptRunner:
                 current = self._settle_storage(current, storage)
                 self._set_result(current)
                 return current
-            except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
+            except (KeyboardInterrupt, SystemExit, asyncio.CancelledError) as interrupted:
+                primary = interrupted
+                primary_traceback = interrupted.__traceback__
                 try:
                     if lease is not None:
                         try:
@@ -216,7 +221,7 @@ class OwnedHookScriptRunner:
                 except BaseException:
                     # Abandoned recovery must preserve the primary and release exclusion.
                     custody.recovering = False
-                    if recovered is not None and recovered.cleanup_confirmed:
+                    if custody.storage_settled:
                         custody.pending = False
                         recovery_complete = True
                 raise
@@ -227,6 +232,16 @@ class OwnedHookScriptRunner:
                 self._set_result(current)
                 return current
         except BaseException:
+            if primary is not None and lease is not None:
+                try:
+                    custody.recovering = False
+                    custody.pending = not custody.storage_settled
+                except BaseException:
+                    # Restore local custody without repeating fallible diagnostic access.
+                    state = object.__getattribute__(custody, "__dict__")
+                    state["recovering"] = False
+                    state["pending"] = not state["storage_settled"]
+                raise primary.with_traceback(primary_traceback) from None
             if lease is not None or (record is not None and record.process is not None):
                 # Retain exact ordered recovery even when the inner publication failed.
                 if not recovery_complete:
@@ -247,8 +262,21 @@ class OwnedHookScriptRunner:
                 pass
             raise
         finally:
-            if not custody.pending:  # pragma: no branch - pending propagates the primary exception
-                self._prelaunch_storage.pop(id(storage), None)
+            try:
+                if not custody.pending:  # pragma: no branch - pending propagates the primary exception
+                    self._prelaunch_storage.pop(id(storage), None)
+            except BaseException:
+                if primary is None:
+                    raise
+                try:
+                    if not custody.pending and self._prelaunch_storage.get(id(storage)) is custody:
+                        del self._prelaunch_storage[id(storage)]
+                except BaseException:
+                    # Bypass failed registry overrides, retaining exact identity authority.
+                    registry = self._prelaunch_storage
+                    if not custody.pending and dict.get(registry, id(storage)) is custody:
+                        dict.__delitem__(registry, id(storage))
+                raise primary.with_traceback(primary_traceback) from None
 
     def current_result(self, entry_index: int) -> HookScriptEntryResult:
         """Return the latest immutable recovery snapshot for this admission."""
@@ -461,6 +489,9 @@ class OwnedHookScriptRunner:
             self._remember_process_storage(result.cleanup_debt, storage)
             return _replace_cleanup_pending(result, result.cleanup_debt)
         if storage.cleanup():
+            custody = self._prelaunch_storage.get(id(storage))
+            if custody is not None:
+                custody.storage_settled = True
             return result
         self._remember_storage(storage)
         return _replace_cleanup_pending(result, storage.cleanup_debts()[0].debt_id)
