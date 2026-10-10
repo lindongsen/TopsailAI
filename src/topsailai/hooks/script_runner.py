@@ -241,6 +241,8 @@ class OwnedHookScriptRunner:
                     if all(owner_state[name] is None for name in ("_path", "_uncertain_path", "_debt")):
                         custody_state["storage_settled"] = True
                     custody.pending = not custody.storage_settled
+                    if owner_state["_debt"] is not None:
+                        custody_state["reconciliation_pending"] = False
                 except BaseException:
                     try:
                         for attempt in range(3):
@@ -252,6 +254,8 @@ class OwnedHookScriptRunner:
                                         and owner_state["_debt"] is None):
                                     custody_state["storage_settled"] = True
                                 custody_state["pending"] = not custody_state["storage_settled"]
+                                if owner_state["_debt"] is not None:
+                                    custody_state["reconciliation_pending"] = False
                                 break
                             except BaseException:
                                 # Exact responsibility remains armed until publication completes.
@@ -545,6 +549,8 @@ class OwnedHookScriptRunner:
         custody = self._prelaunch_storage.get(id(storage))
         owner_state = object.__getattribute__(storage, "__dict__")
         journal = None if custody is None else object.__getattribute__(custody, "__dict__")
+        if journal is not None:
+            journal["reconciliation_pending"] = True
         try:
             if storage.cleanup():
                 if custody is not None:
