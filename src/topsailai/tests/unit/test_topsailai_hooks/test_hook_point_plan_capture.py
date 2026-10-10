@@ -619,7 +619,9 @@ def test_context_hostile_diagnostic_access(tmp_path, monkeypatch, access, target
         assert candidate.close().accepted
 
 
-@pytest.mark.parametrize("case", ("platform_count", "platform_text", "options", "invocations", "deep", "cycle"))
+@pytest.mark.parametrize("case", ("platform_count", "platform_text", "options", "invocations", "deep", "cycle",
+    "argv_mapping", "environment_mapping", "pair_short", "pair_mapping", "cwd_relative", "policy_zero",
+    "argv_subtype", "environment_subtype", "pair_subtype", "argv_iterator", "environment_iterator", "cwd_object"))
 def test_budget_rejects_before_allocation(tmp_path, monkeypatch, case):
     """Reject aggregate configuration before any backend/capture/probe operation."""
     from dataclasses import replace
@@ -649,6 +651,36 @@ def test_budget_rejects_before_allocation(tmp_path, monkeypatch, case):
         object.__setattr__(invocation, "args", value)
         object.__setattr__(invocation, "kwargs", {})
         object.__setattr__(inputs["modules"][0], "invocation", invocation)
+    touched = []
+    class Hostile(list):
+        """Detect unsupported container iteration and object stringification."""
+        def __iter__(self):
+            """Record accidental iteration before rejecting unsupported input."""
+            touched.append("iterate")
+            raise AssertionError("hostile iterator")
+
+        def __str__(self):
+            """Record accidental conversion before rejecting unsupported input."""
+            touched.append("stringify")
+            raise AssertionError("hostile string")
+
+    class Iterator:
+        """Supply a custom iterator lookalike without an exact container type."""
+        __iter__, __str__ = Hostile.__iter__, Hostile.__str__
+
+    malformed = {
+        "argv_mapping": {"argv": {"x": "value"}}, "environment_mapping": {"environment": {"KEY": "value"}},
+        "pair_short": {"environment": (("KEY",),)}, "pair_mapping": {"environment": ({"K": "V"},)},
+        "cwd_relative": {"cwd": Path("relative")}, "argv_subtype": {"argv": Hostile(["x"])},
+        "environment_subtype": {"environment": Hostile([("K", "V")])},
+        "pair_subtype": {"environment": (Hostile(["K", "V"]),)}, "argv_iterator": {"argv": Iterator()},
+        "environment_iterator": {"environment": Iterator()}, "cwd_object": {"cwd": Iterator()},
+    }
+    if case in malformed:
+        inputs["options"] = HookScriptExecutionOptions(**malformed[case])
+    if case == "policy_zero":
+        from topsailai.hooks.hook_script_contracts import HookScriptExecutionPolicy
+        inputs["execution_policy"] = HookScriptExecutionPolicy(entry_timeout_ms=0)
     before = inputs.copy()
     calls = []
     def forbidden(*args, **kwargs):
@@ -660,5 +692,5 @@ def test_budget_rejects_before_allocation(tmp_path, monkeypatch, case):
     monkeypatch.setattr(capture, "probe_candidate", forbidden)
     with pytest.raises(ValidationError):
         build("point", **inputs)
-    assert calls == [] and inputs == before
+    assert calls == [] and touched == [] and inputs == before
     assert list(output.iterdir()) == [] and not imported.exists() and not called.exists()

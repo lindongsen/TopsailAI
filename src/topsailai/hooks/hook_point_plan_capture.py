@@ -28,6 +28,7 @@ def _inputs(hook_name, modules, discovery, platform, trust, artifact_root, backe
         raise ValidationError("invalid script discovery")
     _preflight_configuration(hook_name, modules, () if discovery is None else discovery.entries,
         discovery is not None, options, execution_policy, policy, platform)
+    options, execution_policy = _execution(options, execution_policy)
     owned = []
     for item in modules:
         owned.append(ModuleSource(**{f.name: getattr(item, f.name) for f in fields(ModuleSource)}))
@@ -59,7 +60,6 @@ def _inputs(hook_name, modules, discovery, platform, trust, artifact_root, backe
             or backend._resolve_interpreter() != str(trust.python_runtime.executable)
             or backend._worker_module != "topsailai.hooks.worker"):
         raise ValidationError("untrusted probe runtime")
-    options, execution_policy = _execution(options, execution_policy)
     return tuple(owned), tuple(scripts), requests, options, execution_policy, backend
 
 
