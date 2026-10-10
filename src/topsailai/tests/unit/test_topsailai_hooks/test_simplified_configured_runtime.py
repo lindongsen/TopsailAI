@@ -572,3 +572,93 @@ def test_scope_cancellation_releases_queued_configured_plan_once(
     finally:
         gate.touch()
         runtime.close()
+
+
+@pytest.mark.parametrize("count", (128, 129))
+@pytest.mark.parametrize("source", ("scripts", "folder"))
+def test_registration_capacity_before_capture(tmp_path, monkeypatch, count, source):
+    """Apply the registration ceiling before capture or publication, not execution."""
+    from topsailai.hooks import configured_runtime as module
+    from topsailai.hooks.hook_script_discovery import HookScriptDiscoveryResult, HookScriptEntry
+    runtime, scope = _runtime(tmp_path)
+    entries = tuple(HookScriptEntry(tmp_path / f"s{i}", f"s{i}") for i in range(count))
+    scripts = [entry.source_path for entry in entries]
+    before = list(scripts)
+    calls = []
+
+    def discover(**kwargs):
+        """Expose deterministic resource metadata without creating artifacts."""
+        calls.append("discovery")
+        return HookScriptDiscoveryResult(True, entries)
+
+    def capture(*args):
+        """Record the resource boundary without allocating a capture owner."""
+        calls.append("capture")
+        return None, "test_capture_boundary"
+
+    monkeypatch.setattr(module, "discover_configured_hook_scripts", discover)
+    monkeypatch.setattr(module, "_capture_plan", capture)
+    generation = runtime._registry.generation
+    try:
+        kwargs = {"scripts": scripts} if source == "scripts" else {"folder": tmp_path}
+        result = runtime.register_configured("hook_capacity", scope, **kwargs)
+        assert not result.accepted
+        assert result.errors == (("test_capture_boundary",) if count == 128
+            else ("registration_capacity_exceeded",))
+        assert calls == (["discovery", "capture"] if count == 128 else
+            ([] if source == "scripts" else ["discovery"]))
+        assert runtime._registry.generation == generation
+        assert scripts == before
+    finally:
+        runtime.close()
+
+
+def test_capture_capacity_before_filesystem(tmp_path, monkeypatch):
+    """Defend the direct adapter before root, owner, or filesystem allocation."""
+    from topsailai.hooks import configured_runtime as module
+    from topsailai.hooks.hook_script_discovery import HookScriptDiscoveryResult, HookScriptEntry
+    from types import SimpleNamespace
+    entries = tuple(HookScriptEntry(tmp_path / f"s{i}", f"s{i}") for i in range(129))
+    plan, error = module._capture_plan(SimpleNamespace(), "hook_capacity",
+        HookScriptDiscoveryResult(True, entries), None, None)
+    assert plan is None and error == "registration_capacity_exceeded"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_registration_capacity_bounds_iterable_consumption(tmp_path):
+    """Read only limit plus one values and never exhaust an unsupported size."""
+    runtime, scope = _runtime(tmp_path)
+    observed = []
+
+    def scripts():
+        """Fail if capacity rejection consumes more than its bounded prefix."""
+        for index in range(130):
+            observed.append(index)
+            assert index < 129
+            yield tmp_path / f"s{index}"
+
+    try:
+        result = runtime.register_configured("hook_capacity", scope, scripts=scripts())
+        assert result.errors == ("registration_capacity_exceeded",)
+        assert observed == list(range(129))
+    finally:
+        runtime.close()
+
+
+def test_real_registration_capacity_and_failed_replacement(tmp_path):
+    """Capture 128 real scripts; oversized replacement preserves the active plan."""
+    scripts = [_script(tmp_path / "sources" / f"s{i:03d}") for i in range(129)]
+    runtime, scope = _real_runtime(tmp_path, tuple(scripts))
+    before = list(scripts)
+    try:
+        accepted = runtime.register_configured("hook_capacity", scope, scripts=scripts[:128])
+        assert accepted.accepted and accepted.script_count == 128
+        generation, active = runtime._registry.configured_plan(scope.scope_id, "hook_capacity")
+        assert len(active.entries) == 128
+        assert active.policy.max_entries == 32
+        rejected = runtime.register_configured("hook_capacity", scope, scripts=scripts)
+        assert rejected.errors == ("registration_capacity_exceeded",)
+        assert runtime._registry.configured_plan(scope.scope_id, "hook_capacity") == (generation, active)
+        assert scripts == before
+    finally:
+        runtime.close()

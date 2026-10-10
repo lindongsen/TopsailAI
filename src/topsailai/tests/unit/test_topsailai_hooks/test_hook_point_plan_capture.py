@@ -412,21 +412,50 @@ def test_scripts_only_alias_fallback(tmp_path):
         assert not imported.exists() and not called.exists()
 
 
-def test_legacy_large_planning_does_not_inherit_candidate_limit(tmp_path):
-    """Keep legacy planning capacity separate from new capture inventory bounds."""
+@pytest.mark.parametrize("count", (128, 129))
+def test_legacy_planning_uses_candidate_capacity(tmp_path, count):
+    """Accept 128 resources and reject 129 without changing caller metadata."""
     from topsailai.hooks.hook_script import build_hook_point_binding_plan_from_discovery
-    build, inputs, output, imported, called = fixtures(tmp_path)
     entries = tuple(HookScriptEntry(tmp_path / f"legacy-{index:03d}", f"legacy-{index:03d}")
-        for index in range(129))
+        for index in range(count))
     discovery = HookScriptDiscoveryResult(True, entries)
     legacy = build_hook_point_binding_plan_from_discovery(hook_point="point", module_bindings=(),
         bindings_per_event=1, hook_script_configured=True, discovery_result=discovery)
-    assert legacy.accepted and len(legacy.bindings[-1].entries) == 129
-    inputs.update(modules=(), script_discovery=discovery)
-    with pytest.raises(ValueError, match="invalid script source collection"):
-        build("point", **inputs)
-    assert not imported.exists() and not called.exists()
-    assert list(output.iterdir()) == []
+    assert legacy.accepted is (count == 128)
+    assert discovery.entries == entries
+    if count == 128:
+        assert len(legacy.bindings[-1].entries) == 128
+    else:
+        assert legacy.errors == ("registration capacity limit exceeded",)
+        assert legacy.bindings == ()
+
+
+@pytest.mark.parametrize("count", (128, 129))
+def test_legacy_module_planning_capacity(count):
+    """Count Module resources independently of the framework terminal binding."""
+    from topsailai.hooks.contracts import Binding
+    from topsailai.hooks.hook_script import build_hook_point_binding_plan
+    modules = tuple(Binding(f"module:m{i}", "point", 1, f"m{i}:main") for i in range(count))
+    plan = build_hook_point_binding_plan(hook_point="point", module_bindings=modules,
+        bindings_per_event=256)
+    assert plan.accepted is (count == 128)
+    if count == 129:
+        assert plan.errors == ("registration capacity limit exceeded",)
+
+
+@pytest.mark.parametrize("script_count", (127, 128))
+def test_legacy_mixed_planning_total_capacity(tmp_path, script_count):
+    """Bound the combined resources even when each kind fits independently."""
+    from topsailai.hooks.contracts import Binding
+    from topsailai.hooks.hook_script import build_hook_point_binding_plan_from_discovery
+    modules = (Binding("module:m", "point", 1, "m:main"),)
+    entries = tuple(HookScriptEntry(tmp_path / f"s{i}", f"s{i}") for i in range(script_count))
+    plan = build_hook_point_binding_plan_from_discovery(hook_point="point", module_bindings=modules,
+        bindings_per_event=256, hook_script_configured=True,
+        discovery_result=HookScriptDiscoveryResult(True, entries))
+    assert plan.accepted is (script_count == 127)
+    if script_count == 128:
+        assert plan.errors == ("registration capacity limit exceeded",)
 
 
 @pytest.mark.parametrize("body_type", (None, ValueError, KeyboardInterrupt, SystemExit))
@@ -694,3 +723,27 @@ def test_budget_rejects_before_allocation(tmp_path, monkeypatch, case):
         build("point", **inputs)
     assert calls == [] and touched == [] and inputs == before
     assert list(output.iterdir()) == [] and not imported.exists() and not called.exists()
+
+
+def test_candidate_capacity_rejects_before_resources(tmp_path, monkeypatch):
+    """Keep oversized candidate admission ahead of clone, capture and probe."""
+    from topsailai.hooks import hook_point_plan_capture as module
+    build, inputs, output, imported, called = fixtures(tmp_path)
+    entries = tuple(HookScriptEntry(tmp_path / f"s{i}", f"s{i}") for i in range(129))
+    inputs.update(modules=(), script_discovery=HookScriptDiscoveryResult(True, entries))
+    calls = []
+
+    def forbidden(*args, **kwargs):
+        """Record and reject any resource operation after invalid admission."""
+        calls.append("resource")
+        raise RuntimeError("resource reached")
+
+    monkeypatch.setattr(module, "IsolatedProcessBackend", forbidden)
+    monkeypatch.setattr(module, "ArtifactCaptureOwner", forbidden)
+    monkeypatch.setattr(module, "probe_candidate", forbidden)
+    with pytest.raises(ValueError, match="invalid script source collection"):
+        build("point", **inputs)
+    assert not calls
+    assert inputs["script_discovery"].entries == entries
+    assert list(output.iterdir()) == []
+    assert not imported.exists() and not called.exists()

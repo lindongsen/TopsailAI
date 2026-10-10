@@ -454,6 +454,8 @@ def build_hook_point_binding_plan_from_discovery(
     )
     if not plan.accepted or discovery_result is None:
         return plan
+    if len(module_bindings) + len(discovery_result.entries) > 128:
+        return HookPointBindingPlan(False, errors=("registration capacity limit exceeded",))
 
     entries = tuple(
         HookScriptEntry(entry.source_path, entry.basename, entry.registered_name)
@@ -558,6 +560,8 @@ def _validate_discovery_plan_input(
         return "discovery_result must be a HookScriptDiscoveryResult"
     if type(discovery_result.accepted) is not bool:
         return "discovery_result accepted must be a boolean"
+    if type(discovery_result.entries) is tuple and len(discovery_result.entries) > 128:
+        return "registration capacity limit exceeded"
     if type(discovery_result.entries) is not tuple or any(
         type(entry) is not HookScriptEntry for entry in discovery_result.entries
     ):
@@ -588,6 +592,8 @@ def _validate_plan_inputs(
     """Validate the complete candidate before any binding plan is published."""
     if type(hook_point) is not str or not hook_point:
         return ("hook_point must be a non-empty string",)
+    if type(module_bindings) is tuple and len(module_bindings) > 128:
+        return ("registration capacity limit exceeded",)
     if type(module_bindings) is not tuple or any(
         type(binding) is not Binding for binding in module_bindings
     ):

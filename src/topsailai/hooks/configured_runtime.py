@@ -8,6 +8,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence
 
@@ -194,15 +195,19 @@ def register_configured(
     if trust is None:
         return ConfiguredRegistrationResult(False, errors=("trust_policy_missing",))
     try:
-        ordered_scripts = None if scripts is None else tuple(scripts)
+        ordered_scripts = None if scripts is None else tuple(islice(scripts, 129))
     except TypeError:
         return ConfiguredRegistrationResult(False, errors=("invalid_script_source",))
+    if ordered_scripts is not None and len(ordered_scripts) > 128:
+        return ConfiguredRegistrationResult(False, errors=("registration_capacity_exceeded",))
     platform = _platform_policy(trust)
     discovery = discover_configured_hook_scripts(
         scripts=ordered_scripts, folder=folder, platform_policy=platform
     )
     if not discovery.accepted:
         return ConfiguredRegistrationResult(False, errors=("discovery_rejected",))
+    if len(discovery.entries) > 128:
+        return ConfiguredRegistrationResult(False, errors=("registration_capacity_exceeded",))
     plan, error = _capture_plan(runtime, hook_name, discovery, platform, trust)
     if plan is None:
         return ConfiguredRegistrationResult(False, errors=(error or "artifact_rejected",))
@@ -293,6 +298,8 @@ def _platform_policy(trust: ConfiguredTrustPolicy) -> ExecutablePlatformPolicy:
 
 def _capture_plan(runtime, hook_name, discovery, platform, trust):
     """Capture discovered sources into one Runtime-owned immutable plan."""
+    if len(discovery.entries) > 128:
+        return None, "registration_capacity_exceeded"
     if not discovery.entries:
         return _ConfiguredPlan(hook_name, (), None, ()), None
     root = Path(runtime._backend.script_temp_root) / "configured-artifacts" / uuid.uuid4().hex
