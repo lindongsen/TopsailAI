@@ -52,8 +52,7 @@ def validate_resource_free(requests, policy, trust) -> str | None:
     if len(requests) > policy.max_entries:
         return "artifact_inventory_limit"
     paths = tuple(item.source_path for item in requests)
-    keys = tuple((item.kind, item.logical_name) for item in requests)
-    if len(set(paths)) != len(paths) or len(set(keys)) != len(keys):
+    if len(set(paths)) != len(paths):
         return "invalid_artifact_request"
     from topsailai.hooks.artifact_validation import (
         ArtifactValidationError, assertion_for_request,
