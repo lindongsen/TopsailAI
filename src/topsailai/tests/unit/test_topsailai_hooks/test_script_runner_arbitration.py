@@ -4001,3 +4001,134 @@ def test_prelaunch_recovery_registered_owner_exclusion(tmp_path):
         custody.execution_owner = None
         owner.cleanup()
         runner._forget_storage(owner)
+
+
+@pytest.mark.parametrize("kind", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("write", ["execution_owner", "pending", "storage_alias"])
+@pytest.mark.parametrize("after", [False, True])
+@pytest.mark.parametrize("failed_cleanup", [False, True])
+def test_prelaunch_recovery_protected_arming(
+    tmp_path, monkeypatch, context, kind, write, after, failed_cleanup
+):
+    """Keep real custody and exact exclusion across each interrupted arming write."""
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "private"
+    root.mkdir(mode=0o700)
+    unrelated = root / "unrelated"
+    unrelated.mkdir()
+    script = tmp_path / "script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(root)))
+    primary = kind("original alias interruption")
+    secondary = SystemExit("arming") if kind is KeyboardInterrupt else KeyboardInterrupt("arming")
+    initialize = module._StorageCustody.__init__
+    setter = module._StorageCustody.__setattr__
+    cleanup = TemporaryStorageOwner.cleanup
+    entered, attempted, completed = threading.Event(), threading.Event(), threading.Event()
+    captured, concurrent, nested, errors, backend_calls, removals = [], [], [], [], [], []
+    alias_armed = True
+
+    class State(dict):
+        """Interrupt exactly one ordinary native-state arming assignment."""
+        def __setitem__(self, name, value):
+            """Coordinate a retry attempt while the runner lock still owns arming."""
+            if name == write and value is not None and not self.get("hit"):
+                dict.__setitem__(self, "hit", True)
+                if after:
+                    dict.__setitem__(self, name, value)
+                entered.set()
+                assert attempted.wait(5)
+                raise secondary
+            dict.__setitem__(self, name, value)
+
+    def init(custody, owner):
+        """Capture the real owner without synthesizing or deleting registry entries."""
+        initialize(custody, owner)
+        custody.__dict__ = State(custody.__dict__)
+        captured.append((custody, owner))
+
+    def assign(custody, name, value):
+        """Interrupt the initial alias assignment once after real allocation."""
+        nonlocal alias_armed
+        if alias_armed and name == "storage_alias" and value is not None:
+            alias_armed = False
+            raise primary
+        setter(custody, name, value)
+
+    def observe():
+        """Attempt exact retry concurrently and preserve unrelated backend behavior."""
+        try:
+            assert entered.wait(5)
+            custody, owner = captured[0]
+            alias = owner.cleanup_debts()[0].debt_id
+            attempted.set()
+            concurrent.append(runner.retry_cleanup(alias))
+            assert runner.retry_cleanup("unrelated-protected-arming")
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            completed.set()
+
+    def remove(owner):
+        """Probe nested admission and either remove real storage or leave exact debt."""
+        removals.append(owner)
+        custody = runner._prelaunch_storage[id(owner)]
+        token = custody.execution_owner
+        assert token is not None and custody.pending and custody.retry_owner is None
+        alias = owner.cleanup_debts()[0].debt_id
+        nested.append(runner.retry_cleanup(alias))
+        assert completed.wait(5) and not errors
+        assert custody.execution_owner is token and custody.retry_owner is None
+        assert runner.cleanup_debts() == () and owner.path.exists()
+        if failed_cleanup:
+            raise secondary
+        return cleanup(owner)
+
+    def backend_retry(alias):
+        """Record unrelated completion without accepting the exact storage alias."""
+        backend_calls.append(alias)
+        return True
+
+    thread = threading.Thread(target=observe)
+    thread.start()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module._StorageCustody, "__init__", init)
+            patch.setattr(module._StorageCustody, "__setattr__", assign)
+            patch.setattr(TemporaryStorageOwner, "cleanup", remove)
+            patch.setattr(runner._backend, "retry_cleanup", backend_retry)
+            with pytest.raises(BaseException) as caught:
+                runner.execute_entry(entry_index=0, entry=HookScriptEntry(script, script.name),
+                    context=context, options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                    execution_deadline=time.monotonic()+5, cleanup_deadline=time.monotonic()+5,
+                    output_remaining_bytes=65536, cancellation=threading.Event())
+        assert caught.value is primary
+        frames = []
+        tb = primary.__traceback__
+        while tb:
+            frames.append(tb.tb_frame.f_code.co_name)
+            tb = tb.tb_next
+        assert "assign" in frames and primary.__cause__ is None
+        assert concurrent == [False] and nested == [False] and not errors
+        assert backend_calls == ["unrelated-protected-arming"]
+        custody, owner = captured[0]
+        assert custody.__dict__["hit"] and custody.execution_owner is None
+        assert custody.retry_owner is None and removals == [owner]
+        if failed_cleanup:
+            alias = custody.storage_alias.debt_id
+            assert owner.path.exists() and custody.pending
+            assert runner._prelaunch_storage[id(owner)] is custody
+            assert [debt.debt_id for debt in runner.cleanup_debts()] == [alias]
+            assert runner.retry_cleanup(alias)
+        assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
+        assert unrelated.exists()
+    finally:
+        entered.set()
+        attempted.set()
+        thread.join(5)
+        assert not thread.is_alive()
+        for custody, owner in captured:
+            print("exact test cleanup", owner.__dict__.get("_path"))
+            cleanup(owner)

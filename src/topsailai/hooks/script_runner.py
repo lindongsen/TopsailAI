@@ -280,9 +280,18 @@ class OwnedHookScriptRunner:
             primary = interrupted
             primary_traceback = interrupted.__traceback__
             with self._lock:
-                custody_state["execution_owner"] = execution_token
-                custody_state["pending"] = True
-                custody_state["storage_alias"] = owner_state.get("_debt") or custody_state["storage_alias"]
+                # Publish responsibility before interruptible recovery authority writes.
+                dict.__setitem__(custody_state, "pending", True)
+                try:
+                    custody_state["pending"] = True
+                    custody_state["execution_owner"] = execution_token
+                    custody_state["storage_alias"] = owner_state.get("_debt") or custody_state["storage_alias"]
+                except BaseException:
+                    # Complete this invocation's handoff without repeating failed overrides.
+                    dict.__setitem__(custody_state, "pending", True)
+                    dict.__setitem__(custody_state, "execution_owner", execution_token)
+                    dict.__setitem__(custody_state, "storage_alias",
+                                     dict.get(owner_state, "_debt") or dict.get(custody_state, "storage_alias"))
             try:
                 self._remember_storage(storage)
             except BaseException:
