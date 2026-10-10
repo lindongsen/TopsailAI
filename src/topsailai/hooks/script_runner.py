@@ -301,9 +301,9 @@ class OwnedHookScriptRunner:
     def _reconcile_custody(self, custody: _StorageCustody) -> None:
         """Publish exact completion or an enumerable observation obligation once."""
         state = custody.__dict__
+        state["reconciliation_pending"] = True
         state["recovering"] = False
         state["pending"] = True
-        state["reconciliation_pending"] = True
         owner = custody.owner.__dict__
         names = ("_path", "_uncertain_path", "_debt")
         if any(name not in owner for name in names):
