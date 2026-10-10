@@ -27,3 +27,10 @@ def test_framework_readiness_contracts_are_publicly_exported() -> None:
 
     assert names <= set(hooks.__all__)
     assert all(getattr(hooks, name, None) is not None for name in names)
+
+
+def test_unified_result_contracts_are_publicly_exported() -> None:
+    """All eight foundation records must be public without runtime adoption."""
+    names = {"HandlerIdentity", "ReturnedValue", "ResultDiagnostic", "ResultTiming", "ResultCleanup", "ResultDecision", "HandlerResult", "HookPointResult"}
+    assert names <= set(hooks.__all__)
+    assert all(getattr(hooks, name, None) is not None for name in names)

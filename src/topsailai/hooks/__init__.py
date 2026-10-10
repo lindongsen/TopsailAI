@@ -93,7 +93,27 @@ from topsailai.hooks.runtime import CloseReport, HookRuntime, HookScope
 from topsailai.hooks.script_runner import OwnedHookScriptRunner
 from topsailai.hooks.validation import ValidationError, freeze_json, validate_payload
 
+from topsailai.hooks.result_contracts import (
+    HandlerIdentity,
+    ReturnedValue,
+    ResultDiagnostic,
+    ResultTiming,
+    ResultCleanup,
+    ResultDecision,
+    HandlerResult,
+    HookPointResult,
+)
+
 __all__ = [
+    "HandlerIdentity",
+    "ReturnedValue",
+    "ResultDiagnostic",
+    "ResultTiming",
+    "ResultCleanup",
+    "ResultDecision",
+    "HandlerResult",
+    "HookPointResult",
+
     "ArtifactCaptureOwner",
     "ArtifactCapturePolicy",
     "ArtifactCaptureRequest",
