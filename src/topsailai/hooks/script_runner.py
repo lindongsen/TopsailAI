@@ -54,6 +54,7 @@ class _StorageCustody:
         self.pending = False
         self.recovering = False
         self.storage_settled = False
+        self.reconciliation_pending = False
         self.record: LaunchRecord | None = None
 
 
@@ -242,7 +243,7 @@ class OwnedHookScriptRunner:
                     custody.pending = not custody.storage_settled
                 except BaseException:
                     try:
-                        while True:
+                        for attempt in range(3):
                             try:
                                 # Read prebound native authority without retrying the failed observer.
                                 custody_state["recovering"] = False
@@ -256,7 +257,10 @@ class OwnedHookScriptRunner:
                                 # Exact responsibility remains armed until publication completes.
                                 continue
                     finally:
-                        raise primary.with_traceback(primary_traceback) from None
+                        try:
+                            self._reconcile_custody(custody)
+                        finally:
+                            raise primary.with_traceback(primary_traceback) from None
                 raise primary.with_traceback(primary_traceback) from None
             if lease is not None or (record is not None and record.process is not None):
                 # Retain exact ordered recovery even when the inner publication failed.
@@ -294,6 +298,23 @@ class OwnedHookScriptRunner:
                         dict.__delitem__(registry, id(storage))
                 raise primary.with_traceback(primary_traceback) from None
 
+    def _reconcile_custody(self, custody: _StorageCustody) -> None:
+        """Publish exact completion or an enumerable observation obligation once."""
+        state = custody.__dict__
+        state["recovering"] = False
+        state["pending"] = True
+        state["reconciliation_pending"] = True
+        owner = custody.owner.__dict__
+        names = ("_path", "_uncertain_path", "_debt")
+        if any(name not in owner for name in names):
+            return
+        if any(owner[name] is not None for name in names):
+            state["reconciliation_pending"] = False
+            return
+        state["storage_settled"] = True
+        state["pending"] = False
+        state["reconciliation_pending"] = False
+
     def current_result(self, entry_index: int) -> HookScriptEntryResult:
         """Return the latest immutable recovery snapshot for this admission."""
         with self._lock:
@@ -318,6 +339,14 @@ class OwnedHookScriptRunner:
             owners = {id(storage): storage for storage in self._storage.values()}
             for owner_id, custody in self._prelaunch_storage.items():
                 if not custody.pending or custody.recovering:
+                    owners.pop(owner_id, None)
+                    continue
+                if custody.reconciliation_pending:
+                    record = custody.record
+                    process.setdefault(record.debt_id, CleanupDebt(
+                        record.debt_id, "process", None if record.process is None else record.process.pid,
+                        "exact settlement observation remains unresolved",
+                    ))
                     owners.pop(owner_id, None)
                     continue
                 if self._storage_ready(custody):
@@ -349,6 +378,8 @@ class OwnedHookScriptRunner:
                    for c in self._prelaunch_storage.values()):
                 storage = None
             for custody in pending:
+                if custody.reconciliation_pending:
+                    continue
                 if not self._storage_ready(custody):
                     if storage is custody.owner:
                         storage = None
@@ -373,6 +404,13 @@ class OwnedHookScriptRunner:
                 if not self._storage_ready(process_custody):
                     return False
             storage = process_custody.owner
+            if process_custody.reconciliation_pending:
+                self._reconcile_custody(process_custody)
+                if process_custody.reconciliation_pending:
+                    return False
+                if process_custody.storage_settled:
+                    self._forget_storage(storage)
+                    return True
             if not storage.cleanup():
                 return False
             self._forget_storage(storage)
