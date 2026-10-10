@@ -23,6 +23,7 @@ from topsailai.hooks.configured_runtime import (
     get_configured_trust,
     prepare_configured as _prepare_configured,
     register_configured as _register_configured,
+    retire_configured as _retire_configured,
     retire_configured_scope,
 )
 from topsailai.hooks.contracts import (
@@ -157,6 +158,7 @@ class HookRuntime:
     configured_trust = property(get_configured_trust)
     prepare_configured = _prepare_configured
     register_configured = _register_configured
+    retire_configured = _retire_configured
     dispatch_configured = _dispatch_configured
     adispatch_configured = _adispatch_configured
     emit_configured = _emit_configured

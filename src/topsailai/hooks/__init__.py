@@ -21,6 +21,23 @@ from topsailai.hooks.artifact_store import (
     get_artifact_recovery_owner,
 )
 from topsailai.hooks.configuration import HookLimits, HookSettings
+from topsailai.hooks.configured_bootstrap import (
+    ConfiguredHookBinding,
+    ConfiguredHookBootstrap,
+    load_configured_hook_bootstrap,
+    load_configured_trust_manifest,
+)
+from topsailai.hooks.configured_executor import (
+    ConfiguredHookExecutor,
+    HookOperation,
+    HookPointBlockedError,
+)
+from topsailai.hooks.configured_registration import (
+    ConfiguredHookRegistrar,
+    RegistrationEnsureResult,
+    RegistrationFailureKind,
+    RegistrationState,
+)
 from topsailai.hooks.configured_contracts import (
     ConfiguredHookPoint,
     is_valid_hook_name,
@@ -68,6 +85,8 @@ from topsailai.hooks.hook_script_discovery import (
     HookScriptEntry,
     discover_hook_script_entries,
 )
+from topsailai.hooks.hook_point_catalog import HookPointCatalog, HookPointDeclaration
+from topsailai.hooks.hook_point_decorator import HookInvocationView, hook_point
 from topsailai.hooks.module_discovery_policy import ModuleDiscoveryPolicy
 from topsailai.hooks.registry import HookRegistry
 from topsailai.hooks.runtime import CloseReport, HookRuntime, HookScope
@@ -90,6 +109,10 @@ __all__ = [
     "ArtifactValidationEvidence",
     "CapturedArtifact",
     "Binding",
+    "ConfiguredHookBinding",
+    "ConfiguredHookBootstrap",
+    "ConfiguredHookExecutor",
+    "ConfiguredHookRegistrar",
     "ConfiguredHookPoint",
     "is_valid_hook_name",
     "ConfiguredHooks",
@@ -108,6 +131,11 @@ __all__ = [
     "HookEvent",
     "HookLimits",
     "HookOutcome",
+    "HookInvocationView",
+    "HookOperation",
+    "HookPointBlockedError",
+    "HookPointCatalog",
+    "HookPointDeclaration",
     "HookPointBindingPlan",
     "HookRegistry",
     "HookRuntime",
@@ -125,6 +153,9 @@ __all__ = [
     "HookSettings",
     "HookStatus",
     "JsonValue",
+    "RegistrationEnsureResult",
+    "RegistrationFailureKind",
+    "RegistrationState",
     "RegistrationHandle",
     "RegistrationResult",
     "RegistrySnapshot",
@@ -136,7 +167,10 @@ __all__ = [
     "execute_configured_hook_script",
     "freeze_json",
     "get_artifact_recovery_owner",
+    "hook_point",
     "hook_script_ready",
+    "load_configured_hook_bootstrap",
+    "load_configured_trust_manifest",
     "settle_configured_empty_hook_script",
     "settle_unconfigured_hook_script",
     "validate_payload",

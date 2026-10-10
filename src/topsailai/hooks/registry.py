@@ -210,6 +210,24 @@ class HookRegistry:
             registered = state.configured.get((scope_id, hook_name))
             return state.generation, None if registered is None else registered[1]
 
+    def remove_configured(self, scope_id: str, hook_name: str) -> object | None:
+        """Atomically remove and return one exact configured plan."""
+        key = (scope_id, hook_name)
+        with self._lock:
+            state = self._state
+            registered = state.configured.get(key)
+            if registered is None:
+                return None
+            configured = dict(state.configured)
+            del configured[key]
+            self._state = _RegistryState(
+                state.generation + 1,
+                dict(state.definitions),
+                dict(state.bindings),
+                configured,
+            )
+            return registered[1]
+
     def remove_configured_scope(self, scope_id: str) -> tuple[object, ...]:
         """Atomically remove and return configured plans owned by one scope."""
         with self._lock:

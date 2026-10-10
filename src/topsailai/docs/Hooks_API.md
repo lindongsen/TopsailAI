@@ -322,3 +322,48 @@ The former caller-managed `PreparedConfigured` and prepare/publish/dispose lifec
 - Registration does not perform PATH lookup, shell expansion, shell command execution, or `/usr/bin/env` interpreter resolution.
 - Background admission does not create an unbounded completion-history or Receipt wait API.
 - Application-domain integrations and Agent-level convenience adapters are separate future work; no parallel `run_agent()` API is introduced.
+
+## Framework-readiness convenience APIs
+
+The Runtime methods above remain supported. The implemented convenience layer prepares the framework before Hook points are inserted into core flows while preserving every direct Runtime call above. It is exported from `topsailai.hooks`.
+
+The `ConfiguredHookExecutor` uses one shared Registrar for startup or lazy registration and exposes:
+
+```python
+executor.dispatch(POINT, payload=safe_payload)
+await executor.adispatch(POINT, payload=safe_payload)
+receipt = await executor.aemit(POINT, payload=safe_payload)
+```
+
+One decorator may publish three distinct cataloged Hook points around an ordinary sync or async callable. `success` means success-only; it is never emitted when the callable raises:
+
+```python
+@hook_point(
+    before=USER_LOOKUP_BEFORE,
+    success=USER_LOOKUP_SUCCESS,
+    error=USER_LOOKUP_ERROR,
+    executor_attribute="hook_executor",
+    payload_builder=build_user_lookup_payload,
+)
+async def lookup_user(self, user_id):
+    return await self.repository.get(user_id)
+```
+
+Use explicit function-body calls instead when timing belongs between statements, around branches or mutation, at precise before/success/error checkpoints, or in background admission:
+
+```python
+async def run_task(task, executor):
+    await executor.adispatch(TASK_BEFORE, payload=safe_task_input(task))
+    try:
+        result = await execute_task(task)
+    except Exception as error:
+        await executor.adispatch(TASK_ERROR, payload=safe_error(error))
+        raise
+    await executor.adispatch(TASK_SUCCESS, payload=safe_task_result(result))
+    await executor.aemit(TASK_FINISHED, payload=safe_task_result(result))
+    return result
+```
+
+Both styles use the same catalog declarations, event builder, Executor, Registrar, Runtime, Scope, trust authority, diagnostics, and cleanup. A decorator maps `before`, `success`, and `error` to separate stable declarations and emits exactly one of `success` or `error` after an entered callable. Each declaration defaults to exposing no business data to `payload_builder`: `argument_fields` explicitly allows named bound arguments, `result_fields` explicitly allows named keys from an exact built-in `dict` result on `success`, and `error_fields` may allow only the detached `type` and/or `message` tokens on `error`. Other result types expose no result fields, which avoids invoking custom mapping code while constructing the view. The error `type` token is the exception class name; the `message` token is present only when the base exception has exactly one exact-string argument, so extraction never invokes exception formatting or user code. Every allowed value is copied through bounded JSON validation before the builder runs; the builder never receives raw business objects, exception instances, or tracebacks. The legacy `sensitive_fields` tuple remains an additional argument denylist and cannot overlap `argument_fields`; configuration cannot expand any declaration allowlist. After an original callable exception, Hook processing always ends with a bare `raise` of that exact exception instance and traceback; even a security-critical error Hook cannot replace an active business exception. A blocking before Hook may prevent entry, while a blocking success Hook may fail after business work has completed and therefore requires explicit catalog approval. Decorators do not support generators or async generators initially. Core code will never load environment configuration or trust manifests.
+
+The complete implemented contract, lifecycle, failure semantics, security boundary, readiness gate, and ordered implementation roadmap are maintained in [`features/feature-unified-hooks-design.md`](../features/feature-unified-hooks-design.md#framework-readiness-extension-before-application-hook-point-rollout).

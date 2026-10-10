@@ -260,6 +260,20 @@ def emit_configured(
     )
     return DeliveryReceipt(True, event_id)
 
+def retire_configured(runtime: HookRuntime, hook_name: str, scope: HookScope) -> bool:
+    """Retire one exact configured plan owned by an open Runtime scope."""
+    if not is_valid_hook_name(hook_name):
+        return False
+    with runtime._lock:
+        if not runtime._owns_open_scope(scope):
+            return False
+        plan = runtime._registry.remove_configured(scope.scope_id, hook_name)
+    if isinstance(plan, _ConfiguredPlan):
+        plan.retire()
+        return True
+    return plan is not None
+
+
 
 def retire_configured_scope(runtime: HookRuntime, scope_id: str) -> None:
     """Retire every configured plan removed with one closing scope."""

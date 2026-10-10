@@ -361,6 +361,23 @@ These variables configure the optional tool-call approval gate. When enabled, ea
 
 ## Hook Configuration
 
+### Configured Hook Bootstrap
+
+These variables are read once by the application configuration boundary and passed to the Hook framework as a typed immutable bootstrap. Registrar, Executor, decorators, Runtime, and workers do not read the process environment.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_CONFIGURED_HOOKS_ENABLED` | `0` | Enable versioned configured-Hook bootstrap. When disabled, no Hook configuration or trust-manifest file is read. |
+| `TOPSAILAI_CONFIGURED_HOOKS_CONFIG` | `""` | Absolute path to the versioned configured-Hook JSON document; required when enabled. |
+| `TOPSAILAI_CONFIGURED_HOOKS_TRUST_MANIFEST` | `""` | Absolute path to the versioned deployment trust manifest; required when enabled. |
+| `TOPSAILAI_CONFIGURED_HOOKS_TRUST_MANIFEST_SHA256` | `""` | Deployment-pinned lowercase SHA-256 digest of the trust manifest; required when enabled and verified before manifest authority is accepted. |
+| `TOPSAILAI_CONFIGURED_HOOKS_REGISTRATION_MODE` | `startup` | Registration mode: `startup` registers enabled points before business admission; `lazy` registers one point on first execution through shared singleflight. |
+| `TOPSAILAI_CONFIGURED_HOOKS_STARTUP_POLICY` | `fail` | Startup registration failure policy: `fail` rejects startup; `disable` retires and disables the complete configured-Hook layer. Silent partial enablement is prohibited. |
+
+The configuration file maps known catalog Hook names to `enabled` and exactly one of ordered `scripts` or `folder`. Environment values do not embed per-Hook lists or trust assertions. Trust changes require constructing a replacement Runtime and application Scope.
+
+### Legacy and LLM Hook Configuration
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOPSAILAI_HOOK_AFTER_LLM_CHAT` | `""` | Module paths separated by `;`. Hook function signature: `hook_func(content:str) -> list[dict]\|str`. |

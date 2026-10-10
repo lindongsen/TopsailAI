@@ -22,6 +22,7 @@ class MockTransport(ApprovalTransport):
 
     def __init__(self):
         self.instances = []
+        self.request_ready = threading.Event()
         self._events: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
 
@@ -29,6 +30,7 @@ class MockTransport(ApprovalTransport):
         self.instances.append(instance)
         with self._lock:
             self._events[instance.id] = threading.Event()
+        self.request_ready.set()
 
     def wait_response(self, instance, timeout=None):
         with self._lock:
@@ -106,7 +108,8 @@ class TestIntegration:
             return f"ran {cmd}"
 
         def approve_later():
-            time.sleep(0.05)
+            if not transport.request_ready.wait(timeout=1):
+                return
             instance = transport.instances[0]
             transport.resolve(instance.id, "approve")
 

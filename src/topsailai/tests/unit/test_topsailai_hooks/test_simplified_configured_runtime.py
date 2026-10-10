@@ -131,6 +131,21 @@ def test_empty_plan_registers_noops_and_executes_by_exact_name(tmp_path: Path) -
         runtime.close()
 
 
+def test_exact_configured_plan_can_be_retired_without_closing_scope(tmp_path: Path) -> None:
+    """Registrar reload may retire one configured plan while retaining its Scope."""
+    runtime, scope = _runtime(tmp_path)
+    try:
+        assert runtime.register_configured("hook_before_chat", scope, scripts=[]).accepted
+        event = _event(runtime, scope)
+
+        assert runtime.retire_configured("hook_before_chat", scope) is True
+        assert runtime.retire_configured("hook_before_chat", scope) is False
+        assert runtime.dispatch_configured("hook_before_chat", event).rejection_reason == "unknown_configured_hook"
+        assert scope.closed is False
+    finally:
+        runtime.close()
+
+
 @pytest.mark.asyncio
 async def test_async_and_background_execution_share_the_registered_plan(
     tmp_path: Path,

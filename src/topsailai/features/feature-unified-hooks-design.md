@@ -6,8 +6,8 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
-status: implemented
-scope: standalone framework and simplified configured Hook Runtime API implemented; application-domain integrations remain deferred
+status: framework-readiness APIs implemented; final acceptance pending; application Hook-point rollout deferred
+scope: standalone framework, configured bootstrap/registration wrappers, Catalog, Executor, and decorator APIs implemented; application-domain integrations remain deferred
 ---
 
 # Standalone Unified Hook Framework
@@ -24,7 +24,7 @@ This document records the approved architecture and implemented standalone frame
 
 In scope now: the independent framework, its execution guarantees, interfaces, configuration, lifecycle, extension seams, current implementation status, and verification plan. Possible future integration families are conversation, User2Agent turns, Agent2LLM runs, LLM requests, prompt assembly, context summarization, persistence checkpoints, and task lifecycle.
 
-Explicitly out of scope: all tool-specific hooks under tools/, tool invocation and approval integrations, memory hooks, skill hooks, compatibility adapters, and migration of existing TOPSAILAI_HOOK_* implementations. Existing mechanisms remain untouched. No environment variable is introduced by this design. Domain integration is a later reviewed phase, not a prerequisite for the standalone component.
+Explicitly out of scope for the current implementation: all tool-specific hooks under tools/, tool invocation and approval integrations, memory hooks, skill hooks, compatibility adapters, migration of existing TOPSAILAI_HOOK_* implementations, and insertion of Hook points into application owners. Existing mechanisms remain untouched. The implemented foundation introduces no environment variable. The framework-readiness extension below implements environment-driven bootstrap and insertion APIs; its variables are synchronized to `env_template` and `docs/Environment_Variables.md`.
 
 ## Architectural decision
 
@@ -416,4 +416,277 @@ The standalone framework implements explicit Runtime/Registry APIs, exact config
 
 Earlier direct-child discovery, terminal `hook_script`, configured-empty settlement, captured preparation, and candidate-publication documents remain useful implementation and safety history. They no longer define the caller-facing configured-script workflow. References to candidate caps, prepare-then-publish, public disposal, or future U09-C/U10 candidate acceptance are superseded for configured-script registration.
 
-No environment variable is introduced by this implementation. `MEMO.md` remains index-only and does not require an entry because this feature already has an authoritative design document and durable API document.
+The original standalone Runtime remains free of deep environment reads. The framework-readiness extension introduces six application-boundary bootstrap variables, synchronized in `env_template` and `docs/Environment_Variables.md`; no dispatch, decorator, Registrar, or worker reads them directly. `MEMO.md` remains index-only and does not require an entry because this feature already has an authoritative design document and durable API document.
+
+## Framework-readiness extension before application Hook-point rollout
+
+The implemented extension makes the Hook framework ready before application owners add Hook points to core flows. This is a feature extension and convenience layer over the implemented Runtime, not a replacement for it. It adds environment-driven bootstrap, startup or first-use registration, a shared execution facade, and two insertion styles: decorators for ordinary callable boundaries and explicit function-body calls for precise lifecycle points.
+
+These framework-readiness APIs are implemented and exported. Existing explicit Runtime APIs remain supported and unchanged:
+
+```python
+runtime.register_configured(...)
+runtime.dispatch_configured(...)
+await runtime.adispatch_configured(...)
+runtime.emit_configured(...)
+```
+
+### Layering and ownership
+
+The target dependency flow is:
+
+```text
+application configuration boundary
+  -> ConfiguredHookBootstrap + ConfiguredTrustPolicy
+  -> application-owned long-lived HookScope
+  -> ConfiguredHookRegistrar
+       -> startup eager registration, or lazy singleflight registration
+  -> ConfiguredHookExecutor
+       -> dispatch / adispatch / aemit
+  -> existing HookRuntime configured APIs
+```
+
+Core business modules receive a `ConfiguredHookExecutor` explicitly. They never read environment variables, parse Hook configuration, scan script folders, build trust assertions, or mutate Runtime trust. Decorator and explicit insertion styles must call the same Executor and Registrar; neither may duplicate discovery, registration, failure caching, reload, or cleanup logic.
+
+The first release owns configured registrations in one application-level Scope with the Runtime lifetime. Short-lived request-level configured scopes are deferred because they would repeat capture and retirement. Runtime close first closes admission, settles Registrar waiters and owned deliveries under existing deadlines, retires plans and artifacts, and reports bounded cleanup debt.
+
+### Environment-driven bootstrap
+
+Environment is read exactly once at the application configuration boundary and converted into a deeply detached typed snapshot. No dispatch, decorator wrapper, Registrar, or worker reads `os.environ`.
+
+The implemented variables are:
+
+| Variable | Default | Contract |
+|---|---|---|
+| `TOPSAILAI_CONFIGURED_HOOKS_ENABLED` | `0` | Enable the versioned configured-Hook bootstrap. Disabled means no config or manifest I/O. |
+| `TOPSAILAI_CONFIGURED_HOOKS_CONFIG` | empty | Absolute path to a versioned Hook configuration document. |
+| `TOPSAILAI_CONFIGURED_HOOKS_TRUST_MANIFEST` | empty | Absolute path to a versioned deployment trust manifest. |
+| `TOPSAILAI_CONFIGURED_HOOKS_TRUST_MANIFEST_SHA256` | empty | Deployment-pinned digest for the manifest; required when enabled. |
+| `TOPSAILAI_CONFIGURED_HOOKS_REGISTRATION_MODE` | `startup` | `startup` or `lazy`. |
+| `TOPSAILAI_CONFIGURED_HOOKS_STARTUP_POLICY` | `fail` | `fail` or explicit `disable`; silent partial enablement is prohibited. |
+
+Environment variables locate versioned files and choose policy; they do not embed per-Hook script lists or artifact assertions. The Hook configuration maps exact Hook names to `enabled` plus exactly one of ordered `scripts` or `folder`. Relative script paths resolve only against source roots authorized by the manifest. Configuration and manifest parsers validate shape and aggregate budgets before normalization, reject path escape and duplicate canonical files, and return immutable owned records.
+
+The implemented public trust-manifest loader verifies the pinned digest and constructs exact source-root, interpreter/native-policy, Python runtime, deployment closure, and `ArtifactClosureAssertion` authority. Runtime code never authorizes files it has just discovered by computing assertions on demand. Missing, malformed, stale, or mismatched trust fails closed. Trust changes require a replacement Runtime and application Scope; in-place trust mutation is not supported.
+
+In `startup` mode, bootstrap opens the application Scope and registers every enabled configured Hook before business admission. The default startup policy is `fail`: enabling Hooks with invalid configuration, trust, or registration prevents startup. Explicit `disable` returns a whole-layer disabled result and retires the complete configured-Hook layer; the bootstrap owner records the corresponding bounded diagnostic. It does not partially register a valid-looking subset.
+
+### Lazy registration at execution
+
+`lazy` mode loads and validates the immutable configuration and trust snapshot at startup but defers script discovery, capture, and atomic plan publication until the Hook name is first executed. It never defers environment or manifest loading.
+
+Registrar state is keyed by `(scope incarnation, hook_name, configuration_generation)`:
+
+```text
+UNCONFIGURED -> no-op/reported absence
+UNINITIALIZED -> REGISTERING -> READY
+                         |-> FAILED_DETERMINISTIC
+                         |-> FAILED_TRANSIENT
+READY -> INVALIDATED -> UNINITIALIZED
+any state -> CLOSED
+```
+
+Exactly one caller performs discovery/capture/publication for one key. Concurrent synchronous and asynchronous first callers share the same singleflight result; they do not create separate artifacts or advance Registry generation more than once. File I/O and capture occur outside Runtime and Registrar state locks. Before publication, the winner revalidates Runtime, Scope, and configuration generation so a close or reload cannot publish stale work.
+
+`READY` is the steady state: only an in-memory state lookup and existing configured dispatch occur, with no environment, configuration, manifest, directory, hash, or registration I/O. An identical active plan remains a no-op under existing Registry semantics.
+
+Deterministic failures include invalid configuration, missing authority, digest or artifact mismatch, path escape, unsupported executable, invalid folder contents, and closed ownership. They are cached for the configuration generation and retried only after explicit reload. Narrowly classified transient resource or contention failures may be retried by one later caller after bounded backoff and attempt limits. Classification is typed; string matching is prohibited. There is no immediate retry loop.
+
+Reload consumes a complete, already validated snapshot and creates a new configuration generation. Unchanged entries retain `READY`; changed lazy entries become `INVALIDATED`; removed entries retire their plans; changed startup entries are eagerly replaced. Publication is atomic per complete Hook plan, admitted executions retain their immutable old plan, and failed replacement cannot expose a partial plan. Trust identity changes require Runtime replacement rather than Registrar reload.
+
+Existing synchronous `emit_configured()` remains fast admission and never gains hidden registration I/O. Lazy background use is exposed only as asynchronous `ConfiguredHookExecutor.aemit()`, which awaits registration and then delegates to `emit_configured()`.
+
+### Shared execution facade
+
+The implemented public facade is intentionally small:
+
+```python
+class ConfiguredHookExecutor:
+    def dispatch(self, point, *, payload, operation=None) -> DispatchReport: ...
+    async def adispatch(self, point, *, payload, operation=None) -> DispatchReport: ...
+    async def aemit(self, point, *, payload, operation=None) -> DeliveryReceipt: ...
+```
+
+`point` is a catalog-owned `HookPointDeclaration`, not an arbitrary caller-created name/schema pair. The Executor creates the immutable event from the declaration, owning Scope, detached payload, and supplied correlation metadata; invokes the shared Registrar according to startup/lazy mode; then calls the existing Runtime method. Sync dispatch retains the existing rejection inside a running event loop. Async first-use preparation runs blocking discovery/capture in controlled infrastructure and does not block the event loop.
+
+An unconfigured or disabled ordinary point returns a stable no-op/report outcome. A configured registration or execution failure follows the declaration policy:
+
+- `report` is the default and preserves host flow while recording the structured result.
+- `block` is allowed only when the catalog explicitly marks a security-critical point and its owner defines the host exception contract.
+
+No Hook return value implicitly replaces a business result. Any future transformation requires a separately reviewed domain reducer.
+
+### Decorator Hook-point insertion
+
+Decorators are intended only for callable boundaries whose timing aligns with function entry, successful return, or exceptional exit. They are not appropriate when the point belongs between statements, after a partial commit, around a branch, before mandatory cleanup, or when background admission is required.
+
+Implemented shape:
+
+```python
+@hook_point(
+    before=OPERATION_BEFORE,
+    success=OPERATION_SUCCESS,
+    error=OPERATION_ERROR,
+    executor_attribute="hook_executor",
+    payload_builder=build_safe_payload,
+)
+def operation(...): ...
+```
+
+`before`, `success`, and `error` are three optional, distinct `HookPointDeclaration` references with separate stable names, schemas, policies, and budgets. They are not labels applied to one ambiguous Hook point. At least one must be supplied. The canonical post-return phase name is `success`; an API alias named `after`, if ever provided for compatibility, must resolve only to the same success-only slot and cannot coexist with `success`.
+
+For free functions, `executor_provider` may be supplied instead of `executor_attribute`. The provider is application dependency injection; it must return an existing Executor and must not read environment or create a Runtime. Instance methods use the explicitly named receiver attribute. `functools.wraps`, descriptor binding, annotations, and the original inspectable signature are preserved. For `classmethod` or `staticmethod`, the Hook decorator applies to the underlying function inside the descriptor decorator; ambiguous ordering is rejected or documented by validation rather than guessed.
+
+Decorator semantics are:
+
+- Ordinary synchronous functions use `dispatch`; coroutine functions use `adispatch`. A synchronous wrapper never starts an event loop, and an async wrapper never blocks it with sync registration.
+- `before` runs immediately before invoking the original callable, after Python argument binding and payload validation. Under `report`, its Hook failure is recorded and invocation continues. An explicitly approved `block` failure raises the cataloged `HookPointBlockedError`, prevents callable entry, and does not emit `success` or `error` because the original callable did not run.
+- `success` runs only after the original callable returns normally and receives that result through the safe invocation view. It never runs when the callable raises. Under `report`, Hook failure is recorded and the exact original return object is returned. Under explicitly approved `block`, Hook failure raises `HookPointBlockedError` after business work has already completed; the catalog must acknowledge that semantic risk and define caller recovery.
+- `error` runs only when the original callable itself raises. It receives only an allowed detached exception summary, never the live exception or traceback. After error-Hook processing, the wrapper executes a bare `raise` in the active handler so the exact original exception instance and original traceback continue propagating. It never returns a fallback, converts the exception, or returns a Hook report.
+- If the `error` Hook fails under `report`, that failure is recorded as bounded diagnostics and the original business exception still wins. Even an explicitly security-critical `block` error Hook cannot replace, chain over, or suppress an already-active business exception; its blocked outcome is recorded, while bare `raise` preserves the original. Exception precedence is therefore always original callable exception over error-Hook failure.
+- For every invocation that enters the callable, `success` and `error` are mutually exclusive: normal return emits `success` once and `error` zero times; callable failure emits `error` once and `success` zero times. An enabled `before` emits once before either path.
+- The payload builder receives a read-only invocation view and is denied all business data by default. A declaration's `argument_fields` may allow named bound arguments; `result_fields` may allow named keys from an exact built-in `dict` return value only for `success`; and `error_fields` may allow only the detached `type` and/or `message` tokens for `error`. Other result types expose no result fields, avoiding custom mapping execution while constructing the view. The `type` token is the exception class name. The `message` token is included only when the base exception has exactly one exact-string argument; extraction never calls `str(error)` or other exception formatting code. `sensitive_fields` remains an additional argument denylist for compatibility and cannot overlap `argument_fields`. Configuration cannot add to any declaration allowlist.
+- Every authorized value is copied through bounded JSON validation before the builder runs. Builder mutation cannot affect business objects, later business mutation cannot change an existing view, and live objects, undeclared fields, credentials, raw exception objects, and tracebacks are never exposed to the builder or sent to workers. Payload schema validation and size limits still run after the builder and before dispatch.
+- Recursive and nested invocations each create an occurrence with parent operation/depth metadata. Existing origin/depth suppression prevents worker-origin recursion. There is no accidental process-global recursion guard that suppresses unrelated calls.
+- Applying the same before/success/error declaration tuple and versions to an already marked function is an idempotent no-op. A conflicting second decoration is rejected at definition time; deliberate nested decorators must use distinct declarations and make ordering explicit.
+- Generator and async-generator functions are unsupported initially and rejected at decoration time because entry, iteration, return, close, and exception boundaries require a separate lifecycle contract.
+
+Async example for an eligible method:
+
+```python
+@hook_point(
+    before=USER_LOOKUP_BEFORE,
+    success=USER_LOOKUP_SUCCESS,
+    error=USER_LOOKUP_ERROR,
+    executor_attribute="hook_executor",
+    payload_builder=build_user_lookup_payload,
+)
+async def lookup_user(self, user_id: str) -> User:
+    return await self.repository.get(user_id)
+```
+
+A synchronous function uses the identical declaration mapping; only its wrapper calls `dispatch` instead of awaiting `adispatch`. This convenience wrapper must compile to the same Executor calls an explicit insertion would make; it has no independent registration cache.
+
+### Explicit function-body insertion
+
+Explicit insertion is the default for precise core lifecycle work. The owning module selects a catalog declaration and builds a minimal detached payload at the exact checkpoint.
+
+Synchronous before/success/error example:
+
+```python
+def save_record(record, hook_executor):
+    hook_executor.dispatch(RECORD_SAVE_BEFORE, payload=safe_record_input(record))
+    try:
+        result = persist(record)
+    except Exception as error:
+        hook_executor.dispatch(RECORD_SAVE_ERROR, payload=safe_error(error))
+        raise
+    hook_executor.dispatch(RECORD_SAVE_SUCCESS, payload=safe_record_result(result))
+    return result
+```
+
+Asynchronous example:
+
+```python
+async def run_task(task, hook_executor):
+    await hook_executor.adispatch(TASK_BEFORE, payload=safe_task_input(task))
+    try:
+        result = await execute_task(task)
+    except Exception as error:
+        await hook_executor.adispatch(TASK_ERROR, payload=safe_error(error))
+        raise
+    await hook_executor.adispatch(TASK_SUCCESS, payload=safe_task_result(result))
+    return result
+```
+
+Background admission example:
+
+```python
+receipt = await hook_executor.aemit(
+    TASK_FINISHED,
+    payload=safe_task_result(result),
+)
+```
+
+The explicit owner retains business ordering, branching, mutation, return, and exception authority. It must not infer success before persistence/cleanup checkpoints or place a blocking Hook inside mandatory cleanup. `aemit` reports admission only and does not wait for handler completion.
+
+### Hook-point declaration catalog
+
+No core Hook point may be added before an AI-maintained catalog declaration is reviewed. Each `HookPointDeclaration` records:
+
+| Field | Requirement |
+|---|---|
+| Stable name and major version | Exact immutable selector and versioned compatibility boundary. |
+| Owning module and callable/checkpoint | Project-relative owner and precise publication location. |
+| Phase | Exactly one of `before`, `success`, or `error`; decorator slots always reference separate declarations, even when schemas happen to match. `success` is post-normal-return only. |
+| Event schema and payload budget | Detached JSON schema, required fields, maximum bytes, and example without secrets. |
+| Invocation mode | `sync`, `async`, or async background admission. |
+| Scope | Initially the application Scope; deviations require lifecycle justification. |
+| Failure policy | Default `report`; security-critical `block` requires explicit approval and host error contract. A blocking `success` declaration must approve post-business-work failure risk; an `error` declaration can never replace an active business exception. |
+| Sensitive-field policy | Allowlist, redaction, exception-summary rules, and prohibited fields. |
+| Ordering and latency | Required checkpoint ordering, aggregate deadline, startup/first-use allowance, and steady-state overhead budget. |
+| Ownership and cleanup | Owner of Executor, operation correlation, close ordering, and diagnostics. |
+
+The catalog is the source of event construction truth for both decorators and explicit calls. Hook configuration selects scripts for a known declaration; it cannot invent schemas or turn an ordinary point into `block` through an environment file.
+
+### Lifecycle, diagnostics, and performance gates
+
+The bootstrap owner creates one Runtime, one long-lived application Scope, one Registrar, and one Executor. It publishes them only after startup registration succeeds or explicit whole-layer disablement is recorded. Shutdown prevents new ensure/dispatch admission, wakes registration waiters, settles work, closes Scope and Runtime, and reports cleanup debt without allowing a late registration to republish.
+
+The framework currently reuses the Runtime's implemented bounded, non-recursive diagnostic path and returns typed bootstrap, registration, dispatch, and cleanup results. Dedicated lifecycle event names for bootstrap loaded/rejected/disabled, startup registration started/completed/rejected, lazy registration winner/wait/completion/rejection/retry, invalidation, and Runtime replacement are rollout observability requirements; they are not claimed as emitted by the current wrapper modules. Before a concrete core Hook point is enabled, its integration must either map those states into the owning application's bounded diagnostic sink or document the equivalent existing signal. Safe fields are Hook name, Scope ID, configuration generation, trust identity, mode, duration, attempt, and typed error category. Configuration bodies, environment values, script contents, credentials, and raw paths must not be logged.
+
+The framework tests must prove structural performance properties: disabled bootstrap performs no config/manifest I/O, `READY` lookup performs no bootstrap filesystem I/O, and lazy async registration moves blocking preparation off the event loop. Numeric production budgets for disabled overhead, `READY` lookup, decorator wrapping, first-use discovery/capture, queue memory, process launch, and close latency depend on each concrete Hook point and deployment; they are measured and approved during core rollout rather than claimed by the framework implementation alone.
+
+### Reachability matrix
+
+| Condition | Startup mode | Lazy mode |
+|---|---|---|
+| Disabled | No config/manifest I/O; no registration. | Same. |
+| Unconfigured known point | No plan; stable no-op/report. | `UNCONFIGURED`; no discovery. |
+| Valid configuration/trust | Register before business admission. | Register once on first execution, then `READY`. |
+| Invalid config or manifest | Default startup failure; optional whole-layer disable. | Rejected at bootstrap, never deferred to core execution. |
+| Artifact mismatch | Startup registration fails closed. | Deterministic first-use failure cached for generation. |
+| Concurrent first execution | Already ready. | One registration winner; all callers share result. |
+| Runtime or Scope closed | No registration/admission. | `CLOSED`; waiters wake with stable rejection. |
+| Config reload unchanged | No publication/generation change. | Retain `READY`. |
+| Config reload changed/removed | Eager atomic replace/retire. | Invalidate changed; retire removed; next use registers. |
+| Trust change | Replace Runtime and Scope. | Replace Runtime and Scope. |
+| Background first use | Existing emit after startup registration. | `aemit` awaits singleflight, then admits. |
+
+### Framework-ready acceptance criteria
+
+The Human may schedule core-code Hook-point rollout only when all of the following are true:
+
+- A public versioned trust-manifest loader and typed immutable bootstrap exist and fail closed against pinned deployment authority.
+- Both `startup` and `lazy` modes pass lifecycle, concurrency, reload, invalidation, closure, and cleanup tests; `startup` remains the default.
+- Registrar singleflight proves one discovery/capture/publication per Scope/Hook/configuration generation across sync and async first callers.
+- Executor `dispatch`, `adispatch`, and `aemit` delegate to existing Runtime APIs and preserve explicit API compatibility.
+- Decorator support maps one wrapper to distinct before/success/error declarations, preserves sync/async contracts and binding, and proves phase cardinality: before once before entry, success exactly once only on normal return, and error exactly once only on callable failure.
+- Decorator error-path tests prove the exact original exception object and traceback frames survive ordinary and failing `report` Hooks and an explicitly blocking error Hook; no path returns a fallback, Hook report, converted exception, or replacement exception.
+- Blocking-before tests prove callable non-entry; blocking-success tests prove the catalog explicitly approved failure after completed business work. Generators and unsafe payload exposure remain rejected.
+- Explicit insertion supports exact before/success/error/background checkpoints without changing business ownership.
+- One catalog contract drives both insertion styles, with reviewed schema, sensitive fields, mode, Scope, failure policy, ordering, latency, and owner.
+- Trust changes replace Runtime; graceful close prevents stale publication and reports zero unexplained cleanup debt in acceptance runs.
+- Structural performance tests prove disabled and `READY` paths perform no hidden bootstrap filesystem I/O and async first use does not block the event loop; each concrete core Hook-point rollout records and approves its numeric latency and resource budgets.
+- Unit coverage exceeds the project threshold, BDD proves user-visible bootstrap/decorator/explicit behavior, integration uses real isolated workers, and a non-empty configured public demo uses the supported manifest loader.
+- Configured-bootstrap environment variables are synchronized in `env_template` and `docs/Environment_Variables.md`.
+- Core integration remains absent until this gate is accepted.
+
+### Readiness status and implementation roadmap
+
+Already implemented and verified:
+
+- Generic Runtime/Scope/Registry/Scheduler, process isolation, diagnostics, deadlines, cleanup, explicit binding APIs, and settings reload.
+- Exact configured Hook names, ordered scripts/folder discovery, immutable capture, atomic plan replacement, sync/async/background configured execution, and Scope/Runtime cleanup.
+- Public Runtime BDD, interruption validation, the 294-file Unit runner, strict commit-scoped coverage, and maintained generic real-worker demos.
+
+Framework-readiness implementation units completed in dependency order:
+
+1. **Versioned trust-manifest loader and typed bootstrap:** implemented in `hooks/configured_bootstrap.py` with pinned digest, strict schema/path/budget validation, and immutable authority records.
+2. **Startup application-Scope registration:** implemented in `hooks/configured_registration.py` with `fail` and whole-layer `disable` behavior.
+3. **Lazy Registrar singleflight:** implemented with shared sync/async state, deterministic failure caching, typed bounded transient retry, reload/invalidation, and close arbitration.
+4. **ConfiguredHookExecutor facade:** implemented in `hooks/configured_executor.py` with `dispatch`, `adispatch`, and lazy-safe async `aemit` over the existing Runtime APIs.
+5. **Hook-point catalog and explicit insertion contract:** implemented in `hooks/hook_point_catalog.py` with exact declaration ownership and policy validation.
+6. **Decorator adapter:** implemented in `hooks/hook_point_decorator.py` with distinct before/success/error declarations, cardinality, identity-preserving error propagation, recursion metadata, idempotency, binding/metadata preservation, and generator rejection.
+7. **Framework acceptance:** focused Unit, BDD, real-worker integration, a non-empty configured startup demo, scoped coverage, and environment/API/design synchronization have implementation evidence. Final full regression and per-file completion review remain pending and must pass before the framework is accepted. Production performance budgets remain a rollout-specific acceptance input rather than a reason to change framework semantics.
+Prerequisites before core rollout are final acceptance of units 1–7 plus a reviewed initial Hook-point catalog. Explicitly deferred to the later core-integration phase: adding decorators or function-body calls to `workspace/`, `ai_base/`, `context/`, tasks, tools, memory, or skills; choosing concrete payloads from live business objects; and changing domain results based on Hook outputs. Each later core point is one separately reviewed logical unit with its own invariants and BDD/integration evidence.
