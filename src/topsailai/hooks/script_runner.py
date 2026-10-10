@@ -20,7 +20,7 @@ from topsailai.hooks.hook_script_contracts import (
 )
 from topsailai.hooks.hook_script_discovery import HookScriptEntry
 from topsailai.hooks.process_backend import IsolatedProcessBackend
-from topsailai.hooks.process_state import LaunchRecord, WorkerResult
+from topsailai.hooks.process_state import CleanupDebt, LaunchRecord, WorkerResult
 from topsailai.hooks.process_transport import ScriptTransportFacts, drain_script_process
 from topsailai.hooks.script_protocol import (
     ScriptProtocolError,
@@ -52,6 +52,8 @@ class _StorageCustody:
         """Arm ownership without exposing healthy in-flight storage as debt."""
         self.owner = owner
         self.pending = False
+        self.recovering = False
+        self.record: LaunchRecord | None = None
 
 
 class OwnedHookScriptRunner:
@@ -117,6 +119,7 @@ class OwnedHookScriptRunner:
             self._prelaunch_storage[id(storage)] = custody
         lease = None
         record = None
+        recovery_complete = False
         try:
             if not storage.allocate():
                 return self._publish(initial, HookStatus.ERROR, "hook_script_startup_failed")
@@ -140,6 +143,7 @@ class OwnedHookScriptRunner:
                 cleanup_deadline=cleanup_deadline,
                 termination_grace=policy.terminate_grace_ms / 1_000,
             )
+            custody.record = record
             lease = None
             try:
                 spawned = self._backend.launch_script(
@@ -199,7 +203,17 @@ class OwnedHookScriptRunner:
                 return current
             except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
                 if lease is not None:
-                    self._preserve_interrupted(initial, record, storage, started)
+                    custody.recovering = True
+                    custody.pending = True
+                    try:
+                        recovered = self._preserve_interrupted(initial, record, storage, started)
+                        custody.pending = not recovered.cleanup_confirmed
+                        recovery_complete = True
+                    except BaseException:
+                        # Recovery failure cannot supersede the authoritative interruption.
+                        pass
+                    finally:
+                        custody.recovering = False
                 raise
             except Exception:
                 if lease is None:
@@ -209,7 +223,9 @@ class OwnedHookScriptRunner:
                 return current
         except BaseException:
             if lease is not None or (record is not None and record.process is not None):
-                # The inner guard retains process-before-storage recovery authority.
+                # Retain exact ordered recovery even when the inner publication failed.
+                if not recovery_complete:
+                    custody.pending = True
                 raise
             custody.pending = True
             try:
@@ -237,44 +253,81 @@ class OwnedHookScriptRunner:
             raise KeyError("hook-script entry has no recovery snapshot")
         return result
 
+    def _storage_ready(self, custody: _StorageCustody) -> bool:
+        """Require exact process settlement before granting storage removal authority."""
+        record = custody.record
+        return record is None or record.process is None or (
+            record.cleanup.debt_state == "settled"
+            and record.cleanup.termination_confirmed
+            and self._backend._record_channels_closed(record)
+        )
+
     def cleanup_debts(self) -> tuple[object, ...]:
-        """Return backend process debt followed by published storage debt."""
-        process = self._backend.cleanup_debts()
+        """Return exact process obligations before independently removable storage."""
+        process = {debt.debt_id: debt for debt in self._backend.cleanup_debts()}
         with self._lock:
             owners = {id(storage): storage for storage in self._storage.values()}
-            owners.update(
-                (owner_id, custody.owner)
-                for owner_id, custody in self._prelaunch_storage.items()
-                if custody.pending
-            )
+            for owner_id, custody in self._prelaunch_storage.items():
+                if not custody.pending or custody.recovering:
+                    owners.pop(owner_id, None)
+                    continue
+                if self._storage_ready(custody):
+                    owners[owner_id] = custody.owner
+                else:
+                    owners.pop(owner_id, None)
+                    record = custody.record
+                    process.setdefault(record.debt_id, CleanupDebt(
+                        record.debt_id, "process", record.process.pid,
+                        "exact process recovery precedes storage removal",
+                    ))
             storage = tuple(
-                debt
-                for owner_id in sorted(owners)
+                debt for owner_id in sorted(owners)
                 for debt in owners[owner_id].cleanup_debts()
             )
-        return (*process, *storage)
+        return (*process.values(), *storage)
 
     def retry_cleanup(self, debt_id: str) -> bool:
-        """Retry one exact process or storage debt without renewing deadlines."""
+        """Retry exact process custody before allowing its storage to be removed."""
         with self._lock:
+            if any(c.recovering and c.record is not None and c.record.debt_id == debt_id
+                   for c in self._prelaunch_storage.values()):
+                return False
+            pending = tuple(c for c in self._prelaunch_storage.values() if c.pending and not c.recovering)
+            process_custody = next((c for c in pending if c.record is not None
+                                    and c.record.debt_id == debt_id), None)
             storage = self._storage.get(debt_id)
-            if storage is None:
-                storage = next(
-                    (
-                        custody.owner
-                        for custody in self._prelaunch_storage.values()
-                        if custody.pending and any(
-                            debt.debt_id == debt_id
-                            for debt in custody.owner.cleanup_debts()
-                        )
-                    ),
-                    None,
-                )
+            if any(c.recovering and c.owner is storage
+                   for c in self._prelaunch_storage.values()):
+                storage = None
+            for custody in pending:
+                if not self._storage_ready(custody):
+                    if storage is custody.owner:
+                        storage = None
+                    continue
+                if any(debt.debt_id == debt_id for debt in custody.owner.cleanup_debts()):
+                    storage = custody.owner
         if storage is not None:
             settled = storage.retry_cleanup(debt_id)
             if settled:
                 self._forget_storage(storage)
             return settled
+        if process_custody is not None:
+            record = process_custody.record
+            if not self._storage_ready(process_custody):
+                if not self._backend.retry_cleanup(debt_id):
+                    return False
+                if not self._storage_ready(process_custody):
+                    self._backend._finish_record(
+                        record, "worker_lost", {"stdout": bytearray(), "stderr": bytearray()},
+                        {"stdout": 0, "stderr": 0}, "host_interrupted",
+                    )
+                if not self._storage_ready(process_custody):
+                    return False
+            storage = process_custody.owner
+            if not storage.cleanup():
+                return False
+            self._forget_storage(storage)
+            return True
         if not self._backend.retry_cleanup(debt_id):
             return False
         with self._lock:

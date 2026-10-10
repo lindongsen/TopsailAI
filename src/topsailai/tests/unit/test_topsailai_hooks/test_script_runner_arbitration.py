@@ -1060,3 +1060,234 @@ def test_handoff_preserves_existing_launch_error_and_process_cleanup(
     assert result.error_category == ("hook_script_startup_failed" if stage.startswith("launch") else "host_interrupted")
     assert result.cleanup_confirmed and runner.cleanup_debts() == ()
     assert runner._prelaunch_storage == {} and tuple(root.iterdir()) == ()
+
+
+@pytest.mark.parametrize("primary_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("process_pending", [False, True])
+@pytest.mark.parametrize("storage_mode", ["success", "failure", "interrupt"])
+@pytest.mark.parametrize("publication", ["before", "after", "observe", "retain", "lock", "recovery"])
+def test_process_recovery_publication_preserves_exact_custody(
+    tmp_path, context, monkeypatch, primary_type, process_pending, storage_mode, publication,
+):
+    """Cross real process interruption with failed recovery and ordered exact retry."""
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "process-recovery-root"
+    root.mkdir(mode=0o700)
+    keep = root / "unrelated"
+    keep.mkdir()
+    (keep / "keep").write_text("unchanged")
+    script = tmp_path / "process-recovery-script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    backend = IsolatedProcessBackend(temp_root=str(root))
+    runner = OwnedHookScriptRunner(backend)
+    owners, records, cleanup_calls = [], [], []
+    original_allocate = TemporaryStorageOwner.allocate
+    original_cleanup = TemporaryStorageOwner.cleanup
+    original_launch = backend.launch_script
+    original_remember = runner._remember_process_storage if process_pending else runner._remember_storage
+    primary = primary_type("authoritative drain interruption")
+    secondary = SystemExit("secondary recovery interruption")
+
+    def allocate(owner):
+        """Capture a genuine temporary storage owner."""
+        result = original_allocate(owner)
+        owners.append(owner)
+        return result
+
+    def launch(**kwargs):
+        """Capture the exact backend record with a genuine child."""
+        records.append(kwargs["record"])
+        return original_launch(**kwargs)
+
+    def drain(*args, **kwargs):
+        """Interrupt after actual process ownership has been accepted."""
+        raise primary
+
+    def cleanup(owner):
+        """Assert ordering and inject exact storage cleanup outcomes."""
+        cleanup_calls.append(owner)
+        assert records[0].cleanup.termination_confirmed
+        if storage_mode == "interrupt":
+            raise secondary
+        return original_cleanup(owner) if storage_mode == "success" else False
+
+    class FailedLock:
+        """Reject the actual runner recovery registration lock."""
+        def __enter__(self):
+            """Interrupt recovery locking."""
+            raise secondary
+
+        def __exit__(self, *args):
+            """Provide the lock context protocol."""
+            return False
+
+    def remember(*args):
+        """Fail before, within or after actual recovery publication."""
+        if publication == "lock":
+            original_lock = runner._lock
+            runner._lock = FailedLock()
+            try:
+                original_remember(*args)
+            finally:
+                runner._lock = original_lock
+        if publication == "after":
+            original_remember(*args)
+        raise secondary
+
+    def fail_recovery(*args):
+        """Interrupt the receiver before it has cleaned the real process."""
+        raise secondary
+
+    def observe(owner):
+        """Make genuine owner debt observation temporarily unavailable."""
+        raise RuntimeError("debt observation unavailable")
+
+    now = time.monotonic()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(TemporaryStorageOwner, "allocate", allocate)
+            patch.setattr(TemporaryStorageOwner, "cleanup", cleanup)
+            patch.setattr(backend, "launch_script", launch)
+            patch.setattr(module, "drain_script_process", drain)
+            if process_pending:
+                patch.setattr(backend, "_terminate_record", lambda *args: False)
+            if publication == "recovery":
+                patch.setattr(runner, "_preserve_interrupted", fail_recovery)
+            elif publication == "observe":
+                patch.setattr(TemporaryStorageOwner, "cleanup_debts", observe)
+            elif publication == "retain":
+                patch.setattr(TemporaryStorageOwner, "retain_cleanup_debt", fail_recovery)
+            else:
+                patch.setattr(runner, "_remember_process_storage" if process_pending else "_remember_storage", remember)
+            with pytest.raises(primary_type) as caught:
+                runner.execute_entry(
+                    entry_index=0, entry=HookScriptEntry(script.resolve(), script.name),
+                    context=context, options=HookScriptExecutionOptions(),
+                    policy=HookScriptExecutionPolicy(), execution_deadline=now + 5,
+                    cleanup_deadline=now + 6, output_remaining_bytes=65_536,
+                    cancellation=threading.Event(),
+                )
+            assert caught.value is primary
+            tb = primary.__traceback__
+            while tb.tb_next is not None:
+                tb = tb.tb_next
+            assert tb.tb_frame.f_code.co_name == "drain"
+            assert len(records) == len(owners) == 1
+            assert len(cleanup_calls) == (0 if process_pending or publication == "recovery" else 1)
+            if process_pending and publication != "recovery":
+                assert not runner.retry_cleanup(records[0].debt_id)
+                assert cleanup_calls == []
+            if publication == "observe" and not process_pending and storage_mode != "success":
+                with pytest.raises(RuntimeError):
+                    runner.cleanup_debts()
+        debts = runner.cleanup_debts()
+        if process_pending or publication == "recovery":
+            assert len(debts) == 1 and debts[0].debt_id == records[0].debt_id
+            storage_debt = owners[0].cleanup_debts()[0]
+            runner.retry_cleanup(storage_debt.debt_id)
+            assert owners[0].path.exists()
+            with monkeypatch.context() as retry_patch:
+                retry_patch.setattr(TemporaryStorageOwner, "cleanup", lambda owner: False)
+                assert not runner.retry_cleanup(records[0].debt_id)
+            assert runner.retry_cleanup(records[0].debt_id)
+        elif storage_mode != "success":
+            assert debts == owners[0].cleanup_debts() and len(debts) == 1
+            assert runner.retry_cleanup(debts[0].debt_id)
+        else:
+            assert debts == ()
+        assert records[0].process.poll() is not None
+        assert runner.cleanup_debts() == () and runner._prelaunch_storage == {}
+        assert runner._storage == runner._process_storage == {}
+        assert (keep / "keep").read_text() == "unchanged"
+        seen = set()
+
+        def acyclic(error, ancestors):
+            """Check both cause and context edges without rejecting shared leaves."""
+            if error is None:
+                return
+            assert id(error) not in ancestors
+            seen.add(id(error))
+            acyclic(error.__cause__, ancestors | {id(error)})
+            acyclic(error.__context__, ancestors | {id(error)})
+
+        acyclic(primary, set())
+    finally:
+        for record in records:
+            backend.retry_cleanup(record.debt_id)
+            backend._finish_record(record, "worker_lost", {"stdout": bytearray(), "stderr": bytearray()},
+                                   {"stdout": 0, "stderr": 0}, "test_cleanup")
+        for owner in owners:
+            original_cleanup(owner)
+
+
+def test_process_recovery_public_retry_waits_for_active_cleanup(tmp_path, context, monkeypatch):
+    """Use events to deny concurrent storage removal during real recovery."""
+    import topsailai.hooks.script_runner as module
+
+    root = tmp_path / "active-recovery-root"
+    root.mkdir(mode=0o700)
+    script = tmp_path / "active-recovery-script"
+    script.write_text("#!/bin/false\n")
+    script.chmod(0o700)
+    backend = IsolatedProcessBackend(temp_root=str(root))
+    runner = OwnedHookScriptRunner(backend)
+    reached, proceed = threading.Event(), threading.Event()
+    owners, errors = [], []
+    original_allocate = TemporaryStorageOwner.allocate
+    original_remember = runner._remember_storage
+    primary = KeyboardInterrupt("drain")
+
+    def allocate(owner):
+        """Capture genuine invocation storage."""
+        result = original_allocate(owner)
+        owners.append(owner)
+        return result
+
+    def drain(*args, **kwargs):
+        """Interrupt the genuinely launched process."""
+        raise primary
+
+    def remember(owner):
+        """Pause after partial publication while recovery still owns cleanup."""
+        original_remember(owner)
+        reached.set()
+        assert proceed.wait(5)
+        raise SystemExit("publication interrupted")
+
+    def execute():
+        """Capture the authoritative interruption on the execution thread."""
+        now = time.monotonic()
+        try:
+            runner.execute_entry(
+                entry_index=0, entry=HookScriptEntry(script.resolve(), script.name),
+                context=context, options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
+                execution_deadline=now + 5, cleanup_deadline=now + 6,
+                output_remaining_bytes=65_536, cancellation=threading.Event(),
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(TemporaryStorageOwner, "allocate", allocate)
+        patch.setattr(TemporaryStorageOwner, "cleanup", lambda owner: False)
+        patch.setattr(module, "drain_script_process", drain)
+        patch.setattr(runner, "_remember_storage", remember)
+        worker = threading.Thread(target=execute)
+        worker.start()
+        try:
+            assert reached.wait(5)
+            debt = owners[0].cleanup_debts()[0]
+            assert runner.cleanup_debts() == ()
+            record = runner._prelaunch_storage[id(owners[0])].record
+            assert not runner.retry_cleanup(record.debt_id)
+            runner.retry_cleanup(debt.debt_id)
+            assert owners[0].path.exists()
+        finally:
+            proceed.set()
+            worker.join(5)
+    assert not worker.is_alive() and errors == [primary]
+    assert runner.cleanup_debts() == owners[0].cleanup_debts()
+    assert runner.retry_cleanup(debt.debt_id)
+    assert runner.cleanup_debts() == () and runner._prelaunch_storage == {}
