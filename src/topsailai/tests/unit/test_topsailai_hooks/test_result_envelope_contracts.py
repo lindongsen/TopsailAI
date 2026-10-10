@@ -149,3 +149,58 @@ def test_generated_envelopes_keep_payload_opaque():
     assert point([a,default()]) == point([b,default()])
     repr(point([a,default()]))
     hash(point([a,default()]))
+
+
+@pytest.mark.parametrize("kind", ["module", "script", "default_script_hook"])
+@pytest.mark.parametrize("started_at", [0, -1, 1])
+@pytest.mark.parametrize("finished_at", [None, 2])
+def test_not_run_rejects_started_timing(kind, started_at, finished_at):
+    """Unrun handlers reject every supplied start without observing return values."""
+    with pytest.raises(ValidationError, match="^not_run handler cannot have a start timestamp$"):
+        handler(kind, status="not_run", not_run_reason="skip",
+                timing=ResultTiming(started_at, finished_at, 10))
+
+
+@pytest.mark.parametrize("kind", ["module", "script", "default_script_hook"])
+@pytest.mark.parametrize("cleanup_state", ["safe", "pending", "failed"])
+def test_not_run_absent_start_preserves_cleanup(kind, cleanup_state):
+    """Absent starts remain valid without inventing end or duration semantics."""
+    timing = ResultTiming(None, 2, 10)
+    cleanup = ResultCleanup(cleanup_state)
+    result = handler(kind, status="not_run", not_run_reason="skip",
+                     timing=timing, cleanup=cleanup)
+    assert result.timing is timing
+    assert result.cleanup is cleanup
+    assert not result.returned.present
+
+
+@pytest.mark.parametrize("status", ["success", "error", "timeout", "cancelled", "completed_with_errors"])
+@pytest.mark.parametrize("cleanup_state", ["safe", "pending", "failed"])
+def test_run_statuses_preserve_started_timing(status, cleanup_state):
+    """The new not-run invariant does not constrain other statuses or cleanup."""
+    timing = ResultTiming(-1, 2, 10)
+    cleanup = ResultCleanup(cleanup_state)
+    kwargs = {"error": ResultDiagnostic("failure", "")} if status == "error" else {}
+    result = default(status=status, timing=timing, cleanup=cleanup, **kwargs)
+    assert result.timing is timing
+    assert result.cleanup is cleanup
+
+
+@pytest.mark.parametrize("kind", ["module", "script", "default_script_hook"])
+@pytest.mark.parametrize("kwargs,message", [
+    ({}, "not_run reason must be a bounded valid string"),
+    ({"not_run_reason": "skip", "returned": ReturnedValue(True, "direct", None)},
+     "failed or unrun handler cannot return normally"),
+])
+def test_not_run_validation_priority(kind, kwargs, message):
+    """Existing reason and returned-value errors precede the new timing error."""
+    with pytest.raises(ValidationError) as caught:
+        handler(kind, status="not_run", timing=ResultTiming(0), **kwargs)
+    assert str(caught.value) == message
+
+
+@pytest.mark.parametrize("kind", ["module", "script", "default_script_hook"])
+def test_not_run_timing_type_checked_before_access(kind):
+    """Reject malformed nested timing before reading its attributes."""
+    with pytest.raises(ValidationError, match="^invalid timing$"):
+        handler(kind, status="not_run", not_run_reason="skip", timing=object())

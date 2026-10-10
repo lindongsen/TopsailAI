@@ -184,6 +184,8 @@ class HandlerResult:
             raise ValidationError("unexpected not_run reason")
         if self.status in ("error", "timeout", "cancelled", "not_run") and self.returned.present:
             raise ValidationError("failed or unrun handler cannot return normally")
+        if self.status == "not_run" and self.timing.started_at is not None:
+            raise ValidationError("not_run handler cannot have a start timestamp")
         if self.status == "error" and self.error is None:
             raise ValidationError("error status requires diagnostic")
         if self.status == "completed_with_errors" and self.handler.kind != "default_script_hook":
