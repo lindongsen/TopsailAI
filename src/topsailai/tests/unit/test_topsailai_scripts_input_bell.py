@@ -125,6 +125,30 @@ class TestInputBellAudioDetection(TestCase):
             ["plughw:0,0", "plughw:0,3"],
         )
 
+    def test_alsa_playback_devices_falls_back_to_dev_snd_nodes(self):
+        """Missing /proc/asound falls back to /dev/snd playback nodes."""
+        missing_pcm = Path(self._tmpdir()) / "missing-pcm"
+        fake_entries = [
+            Path("/dev/snd/pcmC0D0p"),
+            Path("/dev/snd/pcmC0D3p"),
+            Path("/dev/snd/pcmC0D0c"),
+            Path("/dev/snd/controlC0"),
+            Path("/dev/snd/pcmC0D0p"),
+        ]
+
+        def fake_iterdir(self):
+            if str(self) == "/dev/snd":
+                return fake_entries
+            raise OSError("not a directory")
+
+        with mock.patch.object(
+            input_bell.Path, "iterdir", new=fake_iterdir
+        ):
+            self.assertEqual(
+                input_bell._alsa_playback_devices(missing_pcm),
+                ["plughw:0,0", "plughw:0,3"],
+            )
+
     def test_automatic_probe_selects_and_caches_first_successful_command(self):
         """A selected ffplay route is reused without probing again."""
         candidates = [
@@ -180,6 +204,24 @@ class TestInputBellAudioDetection(TestCase):
         result = SimpleNamespace(returncode=0, stderr="")
         with mock.patch.object(input_bell.subprocess, "run", return_value=result):
             self.assertTrue(input_bell._run_sound_command("ffplay -tone", None))
+
+    def test_sound_command_rejects_alsa_unable_to_open_slave(self):
+        """The dmix slave-open failure is recognized as a playback failure."""
+        result = SimpleNamespace(
+            returncode=0,
+            stderr="ALSA lib pcm_dmix.c:1000:(snd_pcm_dmix_open) unable to open slave",
+        )
+        with mock.patch.object(input_bell.subprocess, "run", return_value=result):
+            self.assertFalse(input_bell._run_sound_command("ffplay -tone", None))
+
+    def test_sound_command_rejects_device_or_resource_busy(self):
+        """A busy audio device is recognized as a playback failure."""
+        result = SimpleNamespace(
+            returncode=0,
+            stderr="SDL_OpenAudio: ALSA: Couldn't open audio device: Device or resource busy",
+        )
+        with mock.patch.object(input_bell.subprocess, "run", return_value=result):
+            self.assertFalse(input_bell._run_sound_command("ffplay -tone", None))
 
     def test_run_once_reports_detected_and_played_when_bell_succeeds(self):
         """A successful cycle reports both INPUT detection and playback."""

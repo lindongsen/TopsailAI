@@ -27,7 +27,7 @@ DEFAULT_INTERVAL_SEC = 30
 DEFAULT_TOPSAILAI_CMD = "topsailai"
 # ffplay generates a short sine tone without needing a display or audio files.
 DEFAULT_SOUND_CMD = (
-    "ffplay -nodisp -autoexit -loglevel quiet "
+    "ffplay -nodisp -autoexit -loglevel error "
     "-f lavfi -i sine=frequency=880:duration=0.3"
 )
 _ALSA_PCM_FILE = Path("/proc/asound/pcm")
@@ -147,16 +147,37 @@ def _alsa_playback_devices(pcm_file: Path = _ALSA_PCM_FILE) -> List[str]:
     try:
         lines = pcm_file.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return []
+        lines = None
     devices = []
-    for line in lines:
-        identifier, _, details = line.partition(":")
-        if "playback" not in details:
+    if lines is not None:
+        for line in lines:
+            identifier, _, details = line.partition(":")
+            if "playback" not in details:
+                continue
+            card, separator, device = identifier.partition("-")
+            if not separator or not card.isdigit() or not device.isdigit():
+                continue
+            candidate = "plughw:{},{}".format(int(card), int(device))
+            if candidate not in devices:
+                devices.append(candidate)
+        return devices
+    # Fallback: scan /dev/snd/pcmC*D*p device nodes when /proc/asound is absent.
+    snd_dir = Path("/dev/snd")
+    try:
+        entries = sorted(snd_dir.iterdir())
+    except OSError:
+        return []
+    for entry in entries:
+        name = entry.name
+        if not name.startswith("pcmC") or not name.endswith("p"):
             continue
-        card, separator, device = identifier.partition("-")
-        if not separator or not card.isdigit() or not device.isdigit():
+        rest = name[3:-1]
+        if not rest.startswith("C") or "D" not in rest:
             continue
-        candidate = "plughw:{},{}".format(int(card), int(device))
+        card_part, _, device_part = rest[1:].partition("D")
+        if not card_part.isdigit() or not device_part.isdigit():
+            continue
+        candidate = "plughw:{},{}".format(int(card_part), int(device_part))
         if candidate not in devices:
             devices.append(candidate)
     return devices
@@ -230,6 +251,8 @@ def _run_sound_command(
         "couldn't open audio device",
         "audio open failed",
         "failed to open file",
+        "unable to open slave",
+        "device or resource busy",
     )
     if result.returncode != 0 or any(marker in stderr for marker in failed_markers):
         logger.warning("bell sound command failed: %s", stderr.strip() or result.returncode)
