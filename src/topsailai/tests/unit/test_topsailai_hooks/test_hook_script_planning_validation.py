@@ -155,17 +155,17 @@ def test_contradictory_discovery_states_reject_and_valid_errors_survive() -> Non
     assert rejected.errors is errors
 
 
-def test_valid_states_preserve_configuration_order_and_detached_metadata() -> None:
+def test_valid_states_sort_names_and_preserve_detached_metadata() -> None:
     """Accept all legal states without mutating or aliasing entry metadata."""
     entries = (
-        HookScriptEntry(Path("/metadata/Zulu"), "Zulu"),
         HookScriptEntry(Path("/metadata/alpha"), "alpha"),
+        HookScriptEntry(Path("/metadata/Zulu"), "Zulu"),
     )
     discovery_result = HookScriptDiscoveryResult(True, entries=entries)
     cases = (
         (False, None, ()),
         (True, HookScriptDiscoveryResult(True), ()),
-        (True, discovery_result, entries),
+        (True, discovery_result, tuple(reversed(entries))),
     )
 
     for configured, candidate, expected_entries in cases:
@@ -189,7 +189,7 @@ def test_valid_states_preserve_configuration_order_and_detached_metadata() -> No
         terminal_entries[0] = terminal_entries[1]
     with pytest.raises((FrozenInstanceError, TypeError, AttributeError)):
         terminal_entries[0].basename = "changed"
-    assert [entry.basename for entry in discovery_result.entries] == ["Zulu", "alpha"]
+    assert [entry.basename for entry in discovery_result.entries] == ["alpha", "Zulu"]
 
 
 @pytest.mark.parametrize("handler_ref", (None, "", ":main", "plugin:", "plugin:run", "plugin:main:extra",
@@ -243,3 +243,13 @@ def test_discovery_bridge_accepts_python_identifiers_without_mutation(handler_re
     assert binding.handler_ref == handler_ref
     assert all(item.after == () for item in candidate)
     assert discovery == HookScriptDiscoveryResult(True)
+
+
+@pytest.mark.parametrize("source, basename", (("not-path", "physical"), (Path("relative"), "physical"), (Path("/metadata/a"), 1), (Path("/metadata/a"), ""), (Path("/metadata/a"), "a/b"), (Path("/metadata/a"), "a\\b")))
+def test_invalid_physical_metadata_rejects_atomically(source, basename):
+    """Validate physical admission metadata independently of registered identity."""
+    entry = HookScriptEntry(source, basename)
+    candidate = HookScriptDiscoveryResult(True, (entry,))
+    result = _build(configured=True, discovery_result=candidate)
+    assert not result.accepted and result.bindings == ()
+    assert candidate.entries == (entry,)

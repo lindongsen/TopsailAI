@@ -42,6 +42,12 @@ class HookScriptEntry:
 
     source_path: Path
     basename: str
+    registered_name: str | None = None
+
+    @property
+    def final_registered_name(self) -> str:
+        """Use the explicit identity verbatim, with legacy basename fallback."""
+        return self.basename if self.registered_name is None else self.registered_name
 
 
 @dataclass(frozen=True, slots=True)

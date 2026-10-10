@@ -239,10 +239,12 @@ def _valid_entries(entries: tuple[HookScriptEntry, ...]) -> bool:
             return False
         if "/" in entry.basename or "\\" in entry.basename:
             return False
-        if entry.source_path in paths or entry.basename in names:
+        if entry.registered_name is not None and type(entry.registered_name) is not str:
+            return False
+        if entry.source_path in paths or entry.final_registered_name in names:
             return False
         paths.add(entry.source_path)
-        names.add(entry.basename)
+        names.add(entry.final_registered_name)
     return True
 
 
@@ -454,8 +456,8 @@ def build_hook_point_binding_plan_from_discovery(
         return plan
 
     entries = tuple(
-        HookScriptEntry(entry.source_path, entry.basename)
-        for entry in discovery_result.entries
+        HookScriptEntry(entry.source_path, entry.basename, entry.registered_name)
+        for entry in sorted(discovery_result.entries, key=lambda entry: entry.final_registered_name)
     )
     terminal = replace(plan.bindings[-1], entries=entries)
     return replace(plan, bindings=(*plan.bindings[:-1], terminal))
@@ -567,6 +569,8 @@ def _validate_discovery_plan_input(
     if discovery_result.accepted:
         if discovery_result.errors:
             return "accepted discovery result must not contain errors"
+        if not _valid_entries(discovery_result.entries):
+            return "discovery_result entries must contain valid unique Script metadata"
         return None
     if discovery_result.entries:
         return "rejected discovery result must not contain entries"

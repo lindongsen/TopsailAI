@@ -23,7 +23,7 @@ from topsailai.tests.unit.test_topsailai_hooks.hook_script_planning_helpers impo
 
 def test_valid_discovery_entries_feed_one_terminal_binding_in_order(tmp_path: Path) -> None:
     """Accepted static entries become one ordered framework terminal node."""
-    discovery = accepted_discovery("Zulu", "alpha", "beta", root=tmp_path)
+    discovery = accepted_discovery("beta", "alpha", "Zulu", root=tmp_path)
 
     result = build_plan(discovery)
 

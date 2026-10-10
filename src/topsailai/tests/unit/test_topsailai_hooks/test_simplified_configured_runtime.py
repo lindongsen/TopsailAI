@@ -373,8 +373,8 @@ def _wait_for(predicate, timeout: float = 3.0) -> None:
         time.sleep(0.01)
 
 
-def test_real_scripts_execute_in_explicit_and_folder_order(tmp_path: Path) -> None:
-    """Real isolated processes must preserve explicit and normalized folder order."""
+def test_real_scripts_execute_in_final_name_order_with_legacy_fallback(tmp_path: Path) -> None:
+    """Execute final legacy names in sorted order, independently of source selection."""
     first = _protocol_script(tmp_path / "sources" / "z.py", "z")
     second = _protocol_script(tmp_path / "sources" / "nested" / "a.py", "a")
     runtime, scope = _real_runtime(tmp_path, (first, second))
@@ -389,7 +389,7 @@ def test_real_scripts_execute_in_explicit_and_folder_order(tmp_path: Path) -> No
             "hook_real_order", _real_event(runtime, scope, explicit_log)
         )
         assert tuple(outcome.status.value for outcome in report.outcomes) == ("success",)
-        assert explicit_log.read_text(encoding="utf-8").splitlines() == ["z", "a"]
+        assert explicit_log.read_text(encoding="utf-8").splitlines() == ["a", "z"]
 
         folder = runtime.register_configured(
             "hook_real_order", scope, folder=tmp_path / "sources"
