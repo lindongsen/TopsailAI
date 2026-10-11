@@ -291,3 +291,199 @@ def test_declaration_rejects_ambiguous_or_unauthorized_exposure():
         )
     with pytest.raises(ValueError, match="invalid Hook-point declaration"):
         _point("hook_bad_error", "error", error_fields=("traceback",))
+
+
+class _PolicyRuntime:
+    """Supply execution facts while leaving Catalog enforcement to the real facade."""
+
+    def __init__(self, status, cleanup="safe", interrupt=False):
+        """Track exact dispatch cardinality and immutable reports."""
+        self.status = status
+        self.cleanup = cleanup
+        self.interrupt = interrupt
+        self.calls = []
+        self.reports = []
+
+    def make_event(self, scope, name, version, payload, **metadata):
+        """Create a real event with the wrapper's occurrence metadata."""
+        from topsailai.hooks.contracts import HookEvent
+
+        return HookEvent("event", name, version, "owner", scope.scope_id,
+            metadata["operation_id"], metadata.get("parent_operation_id"),
+            1, "now", metadata["layer"], metadata["purpose"], payload)
+
+    def dispatch_configured(self, name, event):
+        """Return controlled unified facts without simulating policy enforcement."""
+        from topsailai.hooks.result_contracts import (
+            HandlerIdentity, HandlerResult, HookPointResult, ResultCleanup,
+            ResultDecision, ReturnedValue,
+        )
+
+        self.calls.append((name, event))
+        if self.interrupt:
+            raise asyncio.CancelledError("host cancellation")
+        handlers = () if self.status == "unavailable" else (
+            HandlerResult("execution", name, 1,
+                HandlerIdentity("default", "default", "default_script_hook"),
+                returned=ReturnedValue(True, "direct", {"decision": "block"}),
+                decision=ResultDecision("block", "catalog")),
+        )
+        result = HookPointResult("execution", name, 1, self.status, handlers,
+            cleanup=ResultCleanup(self.cleanup),
+            decision=ResultDecision("block", "catalog")
+            if self.status == "blocked" else ResultDecision())
+        report = DispatchReport(event.event_id, 1, unified_result=result)
+        self.reports.append(report)
+        return report
+
+    async def adispatch_configured(self, name, event):
+        """Drive the same fact source through the facade's asynchronous boundary."""
+        return self.dispatch_configured(name, event)
+
+    def emit_configured(self, name, event):
+        """Reject accidental non-waiting execution in wrapper regressions."""
+        raise AssertionError("wrapper must await execution, not emit")
+
+
+class _PolicyRegistrar:
+    """Record registration requests without owning external resources."""
+
+    def __init__(self):
+        """Start one exact registration ledger."""
+        self.calls = []
+
+    def ensure_registered(self, name):
+        """Authorize an already prepared configuration, not a block decision."""
+        from topsailai.hooks.configured_registration import RegistrationEnsureResult, RegistrationState
+
+        self.calls.append(name)
+        return RegistrationEnsureResult(RegistrationState.READY)
+
+    async def aensure_registered(self, name):
+        """Expose registration over the actual async facade path."""
+        return self.ensure_registered(name)
+
+
+@pytest.mark.parametrize("mode", ["sync", "async"])
+@pytest.mark.parametrize("phase", ["before", "success", "error"])
+@pytest.mark.parametrize("policy", ["report", "block"])
+@pytest.mark.parametrize("status", ["success", "completed_with_errors", "blocked", "timeout", "cancelled", "unavailable"])
+def test_real_executor_wrapper_policy_matrix(mode, phase, policy, status):
+    """Verify Catalog blocking, exactly-once work and original error preservation."""
+    from types import SimpleNamespace
+    from topsailai.hooks.configured_executor import ConfiguredHookExecutor
+    from topsailai.hooks.hook_point_catalog import HookPointCatalog
+
+    point = _point("hook_real_" + phase, phase, mode, policy,
+        success_block=phase == "success" and policy == "block")
+    runtime = _PolicyRuntime(status)
+    registrar = _PolicyRegistrar()
+    executor = ConfiguredHookExecutor(runtime, SimpleNamespace(scope_id="scope"),
+        registrar, HookPointCatalog((point,)))
+    entered = []
+    marker = object()
+    original = LookupError("original business failure")
+
+    def business():
+        """Publish the business side effect before returning or raising."""
+        entered.append("completed mutation")
+        if phase == "error":
+            raise original
+        return marker
+
+    async def async_business():
+        """Preserve the same business behavior under an asynchronous callable."""
+        return business()
+
+    wrapped = hook_point(**{phase: point}, executor_provider=lambda: executor)(
+        business if mode == "sync" else async_business)
+
+    def invoke():
+        """Call the wrapper in its declared mode without replacing the facade."""
+        return wrapped() if mode == "sync" else asyncio.run(wrapped())
+
+    blocked = policy == "block" and status != "success"
+    if phase == "error":
+        with pytest.raises(LookupError) as caught:
+            invoke()
+        assert caught.value is original
+        assert caught.value.__context__ is None
+        assert "business" in [frame.name for frame in traceback.extract_tb(original.__traceback__)]
+    elif blocked:
+        with pytest.raises(HookPointBlockedError) as caught:
+            invoke()
+        assert caught.value.point_name == point.name
+        assert caught.value.reason == status
+    else:
+        assert invoke() is marker
+    assert entered == ([] if phase == "before" and blocked else ["completed mutation"])
+    assert registrar.calls == [point.name]
+    assert len(runtime.calls) == len(runtime.reports) == 1
+    assert runtime.calls[0][1].purpose == phase
+    assert runtime.reports[0].unified_result.status == status
+
+
+@pytest.mark.parametrize("mode", ["sync", "async"])
+@pytest.mark.parametrize("cleanup", ["pending", "failed"])
+def test_real_executor_success_cleanup_does_not_rollback_or_block(mode, cleanup):
+    """Cleanup-only facts do not authorize a post-success business block."""
+    from types import SimpleNamespace
+    from topsailai.hooks.configured_executor import ConfiguredHookExecutor
+    from topsailai.hooks.hook_point_catalog import HookPointCatalog
+
+    point = _point("hook_real_success", "success", mode, "block", success_block=True)
+    runtime = _PolicyRuntime("success", cleanup)
+    registrar = _PolicyRegistrar()
+    executor = ConfiguredHookExecutor(runtime, SimpleNamespace(scope_id="scope"),
+        registrar, HookPointCatalog((point,)))
+    mutations = []
+    marker = object()
+
+    def business():
+        """Keep completed mutations independently of cleanup observations."""
+        mutations.append("committed")
+        return marker
+
+    async def async_business():
+        """Run the same mutation once in async mode."""
+        return business()
+
+    wrapped = hook_point(success=point, executor_provider=lambda: executor)(
+        business if mode == "sync" else async_business)
+    result = wrapped() if mode == "sync" else asyncio.run(wrapped())
+    assert result is marker
+    assert mutations == ["committed"]
+    assert registrar.calls == [point.name]
+    assert len(runtime.calls) == len(runtime.reports) == 1
+    assert runtime.reports[0].unified_result.cleanup.state == cleanup
+    assert runtime.reports[0].unified_result.decision.action == "continue"
+
+
+@pytest.mark.parametrize("phase", ["before", "success", "error"])
+def test_real_executor_async_host_cancellation_propagates(phase):
+    """Host interrupts propagate without replay or ordinary completion behavior."""
+    from types import SimpleNamespace
+    from topsailai.hooks.configured_executor import ConfiguredHookExecutor
+    from topsailai.hooks.hook_point_catalog import HookPointCatalog
+
+    point = _point("hook_real_" + phase, phase, "async")
+    runtime = _PolicyRuntime("success", interrupt=True)
+    registrar = _PolicyRegistrar()
+    executor = ConfiguredHookExecutor(runtime, SimpleNamespace(scope_id="scope"),
+        registrar, HookPointCatalog((point,)))
+    entered = []
+
+    @hook_point(**{phase: point}, executor_provider=lambda: executor)
+    async def business():
+        """Observe business entry separately from cancellation at Hook dispatch."""
+        entered.append(True)
+        if phase == "error":
+            raise LookupError("business failure before host interrupt")
+        return "result"
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(business())
+    assert entered == ([] if phase == "before" else [True])
+    assert registrar.calls == [point.name]
+    assert len(runtime.calls) == 1
+    assert runtime.reports == []
