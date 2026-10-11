@@ -25,6 +25,129 @@ from topsailai.hooks.script_runner import OwnedHookScriptRunner, _classify_resul
 from topsailai.hooks.temporary_storage import TemporaryStorageOwner
 
 
+from topsailai.hooks.script_runner import _StorageCustody
+
+_CANONICAL_CUSTODY_WRITE = _StorageCustody._write_state
+_CUSTODY_FAULT_STATES = {}
+_RUNNER_OBSERVATION_FAULTS = {}
+
+
+def _install_custody_state_fault(custody, shadow):
+    """Retain only detached test fault data indexed by exact invocation identity."""
+    _CUSTODY_FAULT_STATES[id(custody)] = (custody, shadow)
+
+
+def _fault_custody_write(custody, _retire=(), **changes):
+    """Publish fault-side effects through canonical transition even after interruption."""
+    entry = _CUSTODY_FAULT_STATES.get(id(custody))
+    if entry is None or entry[0] is not custody:
+        return _CANONICAL_CUSTODY_WRITE(custody, _retire=_retire, **changes)
+    shadow = entry[1]
+    before = dict(custody.__dict__)
+    dict.update(shadow, before)
+    try:
+        for name, value in changes.items():
+            shadow[name] = value
+    finally:
+        changed = {name: dict.get(shadow, name) for name in changes
+                   if dict.get(shadow, name) is not before.get(name)}
+        if changed or _retire:
+            _CANONICAL_CUSTODY_WRITE(custody, _retire=_retire, **changed)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_custody_fault_states(monkeypatch):
+    """Scope legacy detached fault seams to one test without production switches."""
+    native_get = _StorageCustody.__getattr__
+    def observe(custody, name):
+        """Inject field reads only for this exact registered test shadow."""
+        entry = _CUSTODY_FAULT_STATES.get(id(custody))
+        if entry is not None and entry[0] is custody:
+            value = native_get(custody, name)
+            dict.__setitem__(entry[1], name, value)
+            return entry[1][name]
+        return native_get(custody, name)
+    monkeypatch.setattr(_StorageCustody, "_write_state", _fault_custody_write)
+    monkeypatch.setattr(_StorageCustody, "__getattr__", observe)
+    native_observer = OwnedHookScriptRunner._observe_prelaunch_storage
+
+    def registry_observer(runner):
+        """Route trusted test observations by exact identity without production switches."""
+        entry = _RUNNER_OBSERVATION_FAULTS.get(id(runner))
+        if entry is not None and entry[0] is runner:
+            return entry[1]
+        return native_observer.__get__(runner, type(runner))
+
+    monkeypatch.setattr(OwnedHookScriptRunner, "_observe_prelaunch_storage", property(registry_observer))
+    yield
+    _CUSTODY_FAULT_STATES.clear()
+    _RUNNER_OBSERVATION_FAULTS.clear()
+
+
+def _custody_field_write(custody, name, value):
+    """Commit legacy fault-fixture fields only through the original legal writer."""
+    _fault_custody_write(custody, **{name: value})
+
+
+def _install_custody_assignment_fault(patch, assign):
+    """Translate old attribute interception into controlled field transition interception."""
+    def write(custody, _retire=(), **changes):
+        """Keep injected before/after exception identity without exposing canonical maps."""
+        if _retire:
+            _CANONICAL_CUSTODY_WRITE(custody, _retire=_retire)
+        for name, value in changes.items():
+            assign(custody, name, value)
+    patch.setattr(_StorageCustody, "_write_state", write)
+
+
+def _install_registry_fault(runner, fault):
+    """Translate legacy dictionary faults into controlled transition/observation faults."""
+    if not hasattr(runner, "_registry_fault_originals"):
+        runner._registry_fault_originals = (
+            runner._observe_prelaunch_storage, runner._write_prelaunch_storage,
+        )
+    observe, write = runner._registry_fault_originals
+    _RUNNER_OBSERVATION_FAULTS.pop(id(runner), None)
+    runner._write_prelaunch_storage = write
+    if type(fault) is dict:
+        return
+    deletion_attempts = {}
+
+    def canonical_write(changes=(), retire=()):
+        """Pass the private exact snapshot rather than a detached injected observation."""
+        if not runner._transition_prelaunch_storage(observe(), changes, retire):
+            raise RuntimeError("test registry transition lost exact snapshot authority")
+
+    def observe_fault():
+        """Inject lookup failure against a detached copy, never canonical storage."""
+        return type(fault)(observe())
+
+    def write_fault(changes=(), retire=()):
+        """Preserve before/after removal faults while committing only through authority."""
+        if changes:
+            canonical_write(changes, ())
+        for identity in retire:
+            view = type(fault)(observe())
+            try:
+                attempt = deletion_attempts.get(identity, 0)
+                deletion_attempts[identity] = attempt + 1
+                if attempt >= 2:
+                    canonical_write(retire=(identity,))
+                    return
+                if attempt == 1:
+                    del view[identity]
+                else:
+                    view.pop(identity, None)
+            finally:
+                if identity not in view:
+                    canonical_write(retire=(identity,))
+            if identity in observe():
+                canonical_write(retire=(identity,))
+
+    _RUNNER_OBSERVATION_FAULTS[id(runner)] = (runner, observe_fault)
+    runner._write_prelaunch_storage = write_fault
+
+
 def test_owned_runner_is_public_and_satisfies_runner_protocol() -> None:
     """The package export must expose a concrete structural runner implementation."""
     import topsailai.hooks as hooks
@@ -1307,12 +1430,12 @@ def test_recovery_state_boundary_preserves_primary(
 
     source, first = inspect.getsourcelines(OwnedHookScriptRunner.execute_entry)
     markers = {
-        "arming": "custody.recovering = True",
-        "pending": "custody.pending = True",
+        "arming": "custody._write_state(recovering=True)",
+        "pending": "custody._write_state(pending=True)",
         "receiver": "recovered = self._preserve_interrupted",
-        "completion": "custody.pending = not recovered.cleanup_confirmed",
+        "completion": "custody._write_state(pending=not recovered.cleanup_confirmed)",
         "accepted": "recovery_complete = True",
-        "disarming": "custody.recovering = False",
+        "disarming": "custody._write_state(recovering=False)",
     }
     start = next(i for i, line in enumerate(source) if "except (KeyboardInterrupt" in line)
     target = first + next(i for i in range(start, len(source)) if markers[boundary] in source[i])
@@ -1358,9 +1481,9 @@ def test_recovery_state_boundary_preserves_primary(
     def trace(frame, event, arg):
         """Disarm before injecting one secondary host interruption."""
         nonlocal armed
-        if prior is not None:
-            prior(frame, event, arg)
-            frame.f_trace = trace
+        if frame.f_code is not OwnedHookScriptRunner.execute_entry.__code__:
+            return prior(frame, event, arg) if prior is not None else trace
+        frame.f_trace = trace
         if armed and event == "line" and frame.f_code is OwnedHookScriptRunner.execute_entry.__code__ and frame.f_lineno == target:
             armed = False
             raise secondary_type("recovery boundary secondary")
@@ -1541,7 +1664,7 @@ def test_recovery_fallback_persistent_observation(
     prior = sys.gettrace()
     armed = fallback_boundary != "observation"
     source, first = inspect.getsourcelines(OwnedHookScriptRunner.execute_entry)
-    marker = "custody.recovering = False" if fallback_boundary == "entry" else "if custody.storage_settled:"
+    marker = "custody._write_state(recovering=False)" if fallback_boundary == "entry" else "if custody.storage_settled:"
     fallback_start = next(i for i, line in enumerate(source) if "Abandoned recovery" in line)
     target = first + next(i for i in range(fallback_start, len(source)) if marker in source[i])
 
@@ -1654,7 +1777,7 @@ def test_recovery_fallback_final_release_interruption(tmp_path, context, monkeyp
                 raise SystemExit("final release")
             return super().pop(key, default)
 
-    runner._prelaunch_storage = InterruptedRelease()
+    _install_registry_fault(runner, InterruptedRelease())
 
     def drain(*args, **kwargs):
         """Interrupt after the real process has been launched."""
@@ -1701,17 +1824,17 @@ def test_recovery_outer_repair_and_repeated_release(
     previous = sys.gettrace()
     source, first = inspect.getsourcelines(OwnedHookScriptRunner.execute_entry)
     outer = next(i for i, line in enumerate(source) if "if primary is not None and lease" in line)
-    target = first + next(i for i in range(outer, len(source)) if "custody.recovering = False" in source[i])
+    target = first + next(i for i in range(outer, len(source)) if "custody._write_state(recovering=False)" in source[i])
     if fault == "pending_release":
         target = first + next(i for i in range(outer, len(source)) if "if release_verified and not custody.pending and self._prelaunch_storage.get" in source[i])
     armed = fault in {"repair", "pending_release"}
     repair_armed = fault == "repair_method"
-    original_setattr = module._StorageCustody.__setattr__
+    original_setattr = _custody_field_write
 
     def fail_repair(custody, name, value):
         """Inject one real local state mutation failure without replacing the tracer."""
         nonlocal repair_armed
-        if repair_armed and name == "recovering" and sys._getframe(1).f_lineno == target:
+        if repair_armed and name == "recovering" and sys._getframe(2).f_lineno == target:
             repair_armed = False
             hits.append("repair")
             raise secondary_type("outer state mutation")
@@ -1762,7 +1885,7 @@ def test_recovery_outer_repair_and_repeated_release(
         else:
             original(initial, record, storage, started)
         # Leave exclusion armed to simulate interruption of the preceding finally.
-        runner._prelaunch_storage[id(storage)].recovering = True
+        runner._prelaunch_storage[id(storage)]._write_state(recovering=True)
         return FailedObservation()
 
     def drain(*args, **kwargs):
@@ -1770,12 +1893,12 @@ def test_recovery_outer_repair_and_repeated_release(
         raise primary
 
     if fault in {"release", "released_pop", "released_delete"}:
-        runner._prelaunch_storage = FailedRelease()
+        _install_registry_fault(runner, FailedRelease())
     try:
         with monkeypatch.context() as patch:
             patch.setattr(module, "drain_script_process", drain)
             patch.setattr(runner, "_preserve_interrupted", recover)
-            patch.setattr(module._StorageCustody, "__setattr__", fail_repair)
+            _install_custody_assignment_fault(patch, fail_repair)
             if settlement == "storage":
                 patch.setattr(TemporaryStorageOwner, "cleanup", lambda owner: False)
             now = time.monotonic()
@@ -1800,7 +1923,7 @@ def test_recovery_outer_repair_and_repeated_release(
                 tb = tb.tb_next
             assert tb.tb_frame.f_code.co_name == "drain"
         # Restore ordinary registry operations before the public retry.
-        runner._prelaunch_storage = dict(runner._prelaunch_storage)
+        _install_registry_fault(runner, dict(runner._prelaunch_storage))
         if settlement == "complete":
             assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
         else:
@@ -1819,7 +1942,7 @@ def test_recovery_outer_repair_and_repeated_release(
             stack.extend(e for e in (error.__cause__, error.__context__) if e is not None)
     finally:
         sys.settrace(previous)
-        runner._prelaunch_storage = dict(runner._prelaunch_storage)
+        _install_registry_fault(runner, dict(runner._prelaunch_storage))
         for record in records:
             backend._finish_record(record, "worker_lost", {"stdout": bytearray(), "stderr": bytearray()},
                                    {"stdout": 0, "stderr": 0}, "test_cleanup")
@@ -1853,7 +1976,7 @@ def test_final_release_without_primary_propagates(tmp_path, context, monkeypatch
             """Raise the same ordinary failure for the caller."""
             raise failure
 
-    runner._prelaunch_storage = FailedRelease()
+    _install_registry_fault(runner, FailedRelease())
     monkeypatch.setattr(TemporaryStorageOwner, "allocate", lambda owner: False)
     script = tmp_path / "ordinary-script"
     script.write_text("#!/bin/false\n")
@@ -1890,7 +2013,8 @@ def test_storage_settlement_journal_exact_handoff(
     runner = OwnedHookScriptRunner(backend)
     original = runner._preserve_interrupted
     cleanup = TemporaryStorageOwner.cleanup
-    native_set = module._StorageCustody.__setattr__
+    native_set = _custody_field_write
+    native_token_write = module._StorageCustody._write_retry_owner
     captured, hits, cleanups = [], [], []
     primary = primary_type("authoritative drain")
 
@@ -1905,7 +2029,7 @@ def test_storage_settlement_journal_exact_handoff(
 
     def set_fact(custody, name, value):
         """Interrupt publication before or after its native mutation."""
-        if name == "storage_settled" and value is True and fault.startswith("journal"):
+        if name == "storage_settled" and value is True and fault.startswith("journal") and not hits:
             hits.append("journal")
             if fault == "journal_after":
                 native_set(custody, name, value)
@@ -1938,8 +2062,8 @@ def test_storage_settlement_journal_exact_handoff(
     try:
         with monkeypatch.context() as patch:
             if fault == "lookup":
-                runner._prelaunch_storage = FailedLookup()
-            patch.setattr(module._StorageCustody, "__setattr__", set_fact)
+                _install_registry_fault(runner, FailedLookup())
+            _install_custody_assignment_fault(patch, set_fact)
             patch.setattr(TemporaryStorageOwner, "cleanup", remove)
             patch.setattr(runner, "_preserve_interrupted", recover)
             patch.setattr(module, "drain_script_process", drain)
@@ -1974,7 +2098,7 @@ def test_storage_settlement_journal_exact_handoff(
                 assert id(error) not in seen
                 seen.add(id(error))
                 error = error.__context__
-        runner._prelaunch_storage = dict(runner._prelaunch_storage)
+        _install_registry_fault(runner, dict(runner._prelaunch_storage))
         if not fault.startswith("journal"):
             debts = runner.cleanup_debts()
             assert len(debts) == 1
@@ -1982,7 +2106,7 @@ def test_storage_settlement_journal_exact_handoff(
         assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
         assert not path.exists() and unrelated.exists()
     finally:
-        runner._prelaunch_storage = dict(runner._prelaunch_storage)
+        _install_registry_fault(runner, dict(runner._prelaunch_storage))
         for record, owner, path in captured:
             backend._finish_record(record, "worker_lost", {"stdout": bytearray(), "stderr": bytearray()},
                                    {"stdout": 0, "stderr": 0}, "test_cleanup")
@@ -2019,9 +2143,9 @@ def test_storage_settlement_journal_protection_entry(tmp_path, context, monkeypa
     elif boundary == "fallback_entry":
         target = first + next(i for i, line in enumerate(source) if "if journal is not None and all" in line)
     elif boundary == "fallback_write":
-        target = first + next(i for i, line in enumerate(source) if 'journal["storage_settled"] = True' in line)
+        target = first + next(i for i, line in enumerate(source) if 'custody._write_state(storage_settled=True)' in line)
     else:
-        target = first + next(i for i, line in enumerate(source) if 'journal["storage_settled"] = True' in line)
+        target = first + next(i for i, line in enumerate(source) if 'custody._write_state(storage_settled=True)' in line)
     previous = sys.gettrace()
     armed = True
 
@@ -2029,17 +2153,18 @@ def test_storage_settlement_journal_protection_entry(tmp_path, context, monkeypa
         """Inject once at the exact journal boundary, not during cleanup."""
         nonlocal armed
         target_event = "return" if boundary == "fallback_exit" else "line"
-        if armed and event == target_event and frame.f_code is OwnedHookScriptRunner._settle_storage.__code__ and frame.f_lineno == target:
+        if armed and event == target_event and frame.f_code is OwnedHookScriptRunner._settle_storage.__code__ and (boundary == "fallback_exit" or frame.f_lineno == target):
             armed = False
             hits.append("entry")
             raise secondary_type("journal protection entry")
         return trace
 
-    native_set = module._StorageCustody.__setattr__
+    native_set = _custody_field_write
+    native_token_write = module._StorageCustody._write_retry_owner
 
     def interrupt_journal(custody, name, value):
         """Require fallback to publish the already-completed exact cleanup fact."""
-        if boundary.startswith("fallback") and name == "storage_settled" and value is True:
+        if boundary.startswith("fallback") and name == "storage_settled" and value is True and sys._getframe(2).f_code is OwnedHookScriptRunner._settle_storage.__code__:
             raise secondary_type("initial journal publication")
         native_set(custody, name, value)
 
@@ -2057,7 +2182,7 @@ def test_storage_settlement_journal_protection_entry(tmp_path, context, monkeypa
         with monkeypatch.context() as patch:
             patch.setattr(module, "drain_script_process", drain)
             patch.setattr(runner, "_preserve_interrupted", recover)
-            patch.setattr(module._StorageCustody, "__setattr__", interrupt_journal)
+            _install_custody_assignment_fault(patch, interrupt_journal)
             now = time.monotonic()
             with pytest.raises(primary_type) as caught:
                 runner.execute_entry(
@@ -2105,7 +2230,8 @@ def test_repeated_outer_observation_preserves_primary(tmp_path, monkeypatch, pri
     secondary = secondary_type('repeated terminal observation')
     captured, hits = [], []
     recover = runner._preserve_interrupted
-    native_set = module._StorageCustody.__setattr__
+    native_set = _custody_field_write
+    native_token_write = module._StorageCustody._write_retry_owner
     def drain(*args, **kwargs):
         """Raise the original interrupt after a real process launch."""
         raise primary
@@ -2115,7 +2241,7 @@ def test_repeated_outer_observation_preserves_primary(tmp_path, monkeypatch, pri
         return recover(initial, record, owner, started)
     def setter(custody, name, value):
         """Prevent initial journal publication after genuine cleanup."""
-        if name == 'storage_settled' and value is True:
+        if name == 'storage_settled' and value is True and sys._getframe(2).f_code is OwnedHookScriptRunner._settle_storage.__code__:
             raise secondary_type('journal interrupted')
         native_set(custody, name, value)
     def observe(values):
@@ -2129,7 +2255,7 @@ def test_repeated_outer_observation_preserves_primary(tmp_path, monkeypatch, pri
         with monkeypatch.context() as patch:
             patch.setattr(module, 'drain_script_process', drain)
             patch.setattr(runner, '_preserve_interrupted', recovery)
-            patch.setattr(module._StorageCustody, '__setattr__', setter)
+            _install_custody_assignment_fault(patch, setter)
             patch.setattr(module, 'all', observe, raising=False)
             now = time.monotonic()
             with pytest.raises(BaseException) as caught:
@@ -2191,7 +2317,7 @@ def test_outer_native_reconciliation_boundary(tmp_path, monkeypatch, primary_typ
     captured, hits, cleanups = [], [], []
     cleanup = TemporaryStorageOwner.cleanup
     source, first = inspect.getsourcelines(module.OwnedHookScriptRunner.execute_entry)
-    marker = 'if (owner_state["_path"]' if boundary == 'condition' else 'custody_state["pending"] = not custody_state["storage_settled"]'
+    marker = 'if (owner_state["_path"]' if boundary == 'condition' else 'custody._write_state(pending=not custody.storage_settled)'
     if boundary in {'exit', 'native'}:
         marker = 'break'
     fallback = next(i for i, line in enumerate(source) if 'Read prebound native authority' in line)
@@ -2228,7 +2354,8 @@ def test_outer_native_reconciliation_boundary(tmp_path, monkeypatch, primary_typ
                 return AuthorityView(state)
             return state
     recover = runner._preserve_interrupted
-    native_set = module._StorageCustody.__setattr__
+    native_set = _custody_field_write
+    native_token_write = module._StorageCustody._write_retry_owner
     def drain(*args, **kwargs):
         """Raise the original interrupt after a real process launch."""
         if boundary != 'native':
@@ -2250,7 +2377,7 @@ def test_outer_native_reconciliation_boundary(tmp_path, monkeypatch, primary_typ
         return cleanup(owner)
     def setter(custody, name, value):
         """Prevent initial journal publication after genuine cleanup."""
-        if name == 'storage_settled' and value is True:
+        if name == 'storage_settled' and value is True and sys._getframe(2).f_code is OwnedHookScriptRunner._settle_storage.__code__:
             raise secondary_type('journal interrupted')
         native_set(custody, name, value)
     def observe(values):
@@ -2267,7 +2394,7 @@ def test_outer_native_reconciliation_boundary(tmp_path, monkeypatch, primary_typ
             patch.setattr(module, 'drain_script_process', drain)
             patch.setattr(TemporaryStorageOwner, 'cleanup', remove)
             patch.setattr(runner, '_preserve_interrupted', recovery)
-            patch.setattr(module._StorageCustody, '__setattr__', setter)
+            _install_custody_assignment_fault(patch, setter)
             patch.setattr(module, 'all', observe, raising=False)
             now = time.monotonic()
             with pytest.raises(BaseException) as caught:
@@ -2352,7 +2479,7 @@ def test_outer_reconciliation_handler_interruption(tmp_path, monkeypatch, primar
     captured, hits, cleanups = [], [], []
     cleanup = TemporaryStorageOwner.cleanup
     source, first = inspect.getsourcelines(module.OwnedHookScriptRunner.execute_entry)
-    marker = 'if (owner_state["_path"]' if boundary == 'condition' else 'custody_state["pending"] = not custody_state["storage_settled"]'
+    marker = 'if (owner_state["_path"]' if boundary == 'condition' else 'custody._write_state(pending=not custody.storage_settled)'
     if boundary in {'exit', 'native'}:
         marker = 'continue'
     fallback = next(i for i, line in enumerate(source) if 'Read prebound native authority' in line)
@@ -2392,7 +2519,8 @@ def test_outer_reconciliation_handler_interruption(tmp_path, monkeypatch, primar
                 return AuthorityView(state)
             return state
     recover = runner._preserve_interrupted
-    native_set = module._StorageCustody.__setattr__
+    native_set = _custody_field_write
+    native_token_write = module._StorageCustody._write_retry_owner
     def drain(*args, **kwargs):
         """Raise the original interrupt after a real process launch."""
         if boundary not in {'native', 'exhaustion'}:
@@ -2414,7 +2542,7 @@ def test_outer_reconciliation_handler_interruption(tmp_path, monkeypatch, primar
         return cleanup(owner)
     def setter(custody, name, value):
         """Prevent initial journal publication after genuine cleanup."""
-        if name == 'storage_settled' and value is True:
+        if name == 'storage_settled' and value is True and sys._getframe(2).f_code is OwnedHookScriptRunner._settle_storage.__code__:
             raise secondary_type('journal interrupted')
         native_set(custody, name, value)
     def observe(values):
@@ -2431,7 +2559,7 @@ def test_outer_reconciliation_handler_interruption(tmp_path, monkeypatch, primar
             patch.setattr(module, 'drain_script_process', drain)
             patch.setattr(TemporaryStorageOwner, 'cleanup', remove)
             patch.setattr(runner, '_preserve_interrupted', recovery)
-            patch.setattr(module._StorageCustody, '__setattr__', setter)
+            _install_custody_assignment_fault(patch, setter)
             patch.setattr(module, 'all', observe, raising=False)
             now = time.monotonic()
             with pytest.raises(BaseException) as caught:
@@ -2504,8 +2632,8 @@ def test_unresolved_custody_observation_is_public_and_bounded(tmp_path, missing_
     owner = TemporaryStorageOwner(root)
     assert owner.allocate()
     custody = module._StorageCustody(owner)
-    custody.record = LaunchRecord("exact-reconciliation")
-    runner._prelaunch_storage[id(owner)] = custody
+    custody._write_state(record=LaunchRecord("exact-reconciliation"))
+    runner._write_prelaunch_storage(((id(owner), custody),))
     assert owner.cleanup()
     value = owner.__dict__.pop(missing_name)
     try:
@@ -2533,8 +2661,8 @@ def test_restored_incomplete_observation_must_not_release_owner(tmp_path):
     assert owner.allocate()
     path = owner.path
     custody = module._StorageCustody(owner)
-    custody.record = LaunchRecord("exact-incomplete-observation")
-    runner._prelaunch_storage[id(owner)] = custody
+    custody._write_state(record=LaunchRecord("exact-incomplete-observation"))
+    runner._write_prelaunch_storage(((id(owner), custody),))
     value = owner.__dict__.pop("_uncertain_path")
     try:
         runner._reconcile_custody(custody)
@@ -2564,17 +2692,17 @@ def test_final_reconciliation_interruption_is_public(tmp_path, secondary_type, b
     assert owner.allocate()
     path = owner.path
     custody = module._StorageCustody(owner)
-    custody.record = LaunchRecord("exact-helper-interruption")
-    runner._prelaunch_storage[id(owner)] = custody
+    custody._write_state(record=LaunchRecord("exact-helper-interruption"))
+    runner._write_prelaunch_storage(((id(owner), custody),))
     assert owner.cleanup()
-    custody.storage_settled = committed
-    custody.pending = not committed
-    custody.reconciliation_pending = not committed
+    custody._write_state(storage_settled=committed)
+    custody._write_state(pending=not committed)
+    custody._write_state(reconciliation_pending=not committed)
     source, first = inspect.getsourcelines(runner._reconcile_custody)
-    marker = {"entry": 'state = custody.__dict__', "arming": 'state["reconciliation_pending"] = True',
-              "pending": 'state["pending"] = True', "disarm": 'state["reconciliation_pending"] = False',
-              "return": 'state["reconciliation_pending"] = False', "condition": "if any(owner[name]", "publication": 'state["storage_settled"] = True',
-              "exit": 'state["pending"] = False'}[boundary]
+    marker = {"entry": 'state = custody', "arming": 'custody._write_state(reconciliation_pending=True)',
+              "pending": 'custody._write_state(pending=True)', "disarm": 'custody._write_state(reconciliation_pending=False)',
+              "return": 'custody._write_state(reconciliation_pending=False)', "condition": "if any(owner[name]", "publication": 'custody._write_state(storage_settled=True)',
+              "exit": 'custody._write_state(pending=False)'}[boundary]
     target = first + max(i for i, line in enumerate(source) if marker in line)
     previous = sys.gettrace()
     fired = []
@@ -2602,7 +2730,7 @@ def test_final_reconciliation_interruption_is_public(tmp_path, secondary_type, b
         else:
             # Match execute_entry final identity-checked release after completion.
             assert runner._prelaunch_storage[id(owner)] is custody
-            del runner._prelaunch_storage[id(owner)]
+            runner._write_prelaunch_storage(retire=(id(owner),))
         assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
         assert unrelated.exists()
     finally:
@@ -2637,11 +2765,11 @@ def test_public_obligation_arming_preserves_primary(tmp_path, monkeypatch, prima
     captured, hits, cleanups = [], [], []
     cleanup = TemporaryStorageOwner.cleanup
     source, first = inspect.getsourcelines(runner._reconcile_custody)
-    marker = {"native": 'state["reconciliation_pending"] = True',
-              "helper_entry": 'state = custody.__dict__',
-              "helper_pending": 'state["pending"] = True',
-              "helper_disarm": 'state["reconciliation_pending"] = False',
-              "helper_return": 'state["reconciliation_pending"] = False'}[boundary]
+    marker = {"native": 'custody._write_state(reconciliation_pending=True)',
+              "helper_entry": 'state = custody',
+              "helper_pending": 'custody._write_state(pending=True)',
+              "helper_disarm": 'custody._write_state(reconciliation_pending=False)',
+              "helper_return": 'custody._write_state(reconciliation_pending=False)'}[boundary]
     matches = [i for i, line in enumerate(source) if marker in line]
     target = first + (min(matches) if settlement != "complete" and boundary == "helper_disarm" else max(matches))
     previous = sys.gettrace()
@@ -2678,7 +2806,8 @@ def test_public_obligation_arming_preserves_primary(tmp_path, monkeypatch, prima
                 return AuthorityView(state)
             return state
     recover = runner._preserve_interrupted
-    native_set = module._StorageCustody.__setattr__
+    native_set = _custody_field_write
+    native_token_write = module._StorageCustody._write_retry_owner
     def drain(*args, **kwargs):
         """Raise the original interrupt after a real process launch."""
         raise primary
@@ -2697,7 +2826,7 @@ def test_public_obligation_arming_preserves_primary(tmp_path, monkeypatch, prima
         return cleanup(owner)
     def setter(custody, name, value):
         """Prevent initial journal publication after genuine cleanup."""
-        if name == 'storage_settled' and value is True:
+        if name == 'storage_settled' and value is True and sys._getframe(2).f_code is OwnedHookScriptRunner._settle_storage.__code__:
             raise secondary_type('journal interrupted')
         native_set(custody, name, value)
     def observe(values):
@@ -2713,7 +2842,7 @@ def test_public_obligation_arming_preserves_primary(tmp_path, monkeypatch, prima
             patch.setattr(module, 'drain_script_process', drain)
             patch.setattr(TemporaryStorageOwner, 'cleanup', remove)
             patch.setattr(runner, '_preserve_interrupted', recovery)
-            patch.setattr(module._StorageCustody, '__setattr__', setter)
+            _install_custody_assignment_fault(patch, setter)
             patch.setattr(module, 'all', observe, raising=False)
             now = time.monotonic()
             with pytest.raises(BaseException) as caught:
@@ -2806,12 +2935,12 @@ def test_precleanup_obligation_survives_exhaustion(tmp_path, monkeypatch, primar
     if boundary.startswith('precleanup'):
         target_code = runner._settle_storage.__func__.__code__
         source, first = inspect.getsourcelines(runner._settle_storage)
-    marker = {"precleanup_arming": 'journal["reconciliation_pending"] = True',
-              "precleanup_try": '        try:', "native": 'state["reconciliation_pending"] = True',
-              "helper_entry": 'state = custody.__dict__',
-              "helper_pending": 'state["pending"] = True',
-              "helper_disarm": 'state["reconciliation_pending"] = False',
-              "helper_return": 'state["reconciliation_pending"] = False'}[boundary]
+    marker = {"precleanup_arming": 'custody._write_state(reconciliation_pending=True)',
+              "precleanup_try": '        try:', "native": 'custody._write_state(reconciliation_pending=True)',
+              "helper_entry": 'state = custody',
+              "helper_pending": 'custody._write_state(pending=True)',
+              "helper_disarm": 'custody._write_state(reconciliation_pending=False)',
+              "helper_return": 'custody._write_state(reconciliation_pending=False)'}[boundary]
     matches = [i for i, line in enumerate(source) if marker in line]
     target = first + (min(matches) if settlement != "complete" and boundary == "helper_disarm" else max(matches))
     previous = sys.gettrace()
@@ -2848,7 +2977,8 @@ def test_precleanup_obligation_survives_exhaustion(tmp_path, monkeypatch, primar
                 return AuthorityView(state)
             return state
     recover = runner._preserve_interrupted
-    native_set = module._StorageCustody.__setattr__
+    native_set = _custody_field_write
+    native_token_write = module._StorageCustody._write_retry_owner
     def drain(*args, **kwargs):
         """Raise the original interrupt after a real process launch."""
         if boundary.startswith('precleanup'):
@@ -2874,7 +3004,7 @@ def test_precleanup_obligation_survives_exhaustion(tmp_path, monkeypatch, primar
         return cleanup(owner)
     def setter(custody, name, value):
         """Prevent initial journal publication after genuine cleanup."""
-        if name == 'storage_settled' and value is True:
+        if name == 'storage_settled' and value is True and sys._getframe(2).f_code is OwnedHookScriptRunner._settle_storage.__code__:
             raise secondary_type('journal interrupted')
         native_set(custody, name, value)
     def observe(values):
@@ -2890,7 +3020,7 @@ def test_precleanup_obligation_survives_exhaustion(tmp_path, monkeypatch, primar
             patch.setattr(module, 'drain_script_process', drain)
             patch.setattr(TemporaryStorageOwner, 'cleanup', remove)
             patch.setattr(runner, '_preserve_interrupted', recovery)
-            patch.setattr(module._StorageCustody, '__setattr__', setter)
+            _install_custody_assignment_fault(patch, setter)
             patch.setattr(module, 'all', observe, raising=False)
             now = time.monotonic()
             with pytest.raises(BaseException) as caught:
@@ -2983,12 +3113,12 @@ def test_retry_exclusion_real_interrupt_reentry(tmp_path, monkeypatch, primary_t
     if boundary.startswith('precleanup'):
         target_code = runner._settle_storage.__func__.__code__
         source, first = inspect.getsourcelines(runner._settle_storage)
-    marker = {"precleanup_arming": 'journal["reconciliation_pending"] = True',
-              "precleanup_try": '        try:', "native": 'state["reconciliation_pending"] = True',
-              "helper_entry": 'state = custody.__dict__',
-              "helper_pending": 'state["pending"] = True',
-              "helper_disarm": 'state["reconciliation_pending"] = False',
-              "helper_return": 'state["reconciliation_pending"] = False'}[boundary]
+    marker = {"precleanup_arming": 'custody._write_state(reconciliation_pending=True)',
+              "precleanup_try": '        try:', "native": 'custody._write_state(reconciliation_pending=True)',
+              "helper_entry": 'state = custody',
+              "helper_pending": 'custody._write_state(pending=True)',
+              "helper_disarm": 'custody._write_state(reconciliation_pending=False)',
+              "helper_return": 'custody._write_state(reconciliation_pending=False)'}[boundary]
     matches = [i for i, line in enumerate(source) if marker in line]
     target = first + (min(matches) if settlement != "complete" and boundary == "helper_disarm" else max(matches))
     previous = sys.gettrace()
@@ -3025,7 +3155,8 @@ def test_retry_exclusion_real_interrupt_reentry(tmp_path, monkeypatch, primary_t
                 return AuthorityView(state)
             return state
     recover = runner._preserve_interrupted
-    native_set = module._StorageCustody.__setattr__
+    native_set = _custody_field_write
+    native_token_write = module._StorageCustody._write_retry_owner
     def drain(*args, **kwargs):
         """Raise the original interrupt after a real process launch."""
         if boundary.startswith('precleanup'):
@@ -3051,7 +3182,7 @@ def test_retry_exclusion_real_interrupt_reentry(tmp_path, monkeypatch, primary_t
         return cleanup(owner)
     def setter(custody, name, value):
         """Prevent initial journal publication after genuine cleanup."""
-        if name == 'storage_settled' and value is True:
+        if name == 'storage_settled' and value is True and sys._getframe(2).f_code is OwnedHookScriptRunner._settle_storage.__code__:
             raise secondary_type('journal interrupted')
         native_set(custody, name, value)
     def observe(values):
@@ -3067,7 +3198,7 @@ def test_retry_exclusion_real_interrupt_reentry(tmp_path, monkeypatch, primary_t
             patch.setattr(module, 'drain_script_process', drain)
             patch.setattr(TemporaryStorageOwner, 'cleanup', remove)
             patch.setattr(runner, '_preserve_interrupted', recovery)
-            patch.setattr(module._StorageCustody, '__setattr__', setter)
+            _install_custody_assignment_fault(patch, setter)
             patch.setattr(module, 'all', observe, raising=False)
             now = time.monotonic()
             with pytest.raises(BaseException) as caught:
@@ -3166,9 +3297,9 @@ def test_retry_exclusion_alias_and_concurrency(tmp_path, monkeypatch, alias, mod
     storage_id = owner.cleanup_debts()[0].debt_id
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(root)))
     custody = module._StorageCustody(owner)
-    custody.record = LaunchRecord("exact-retry-alias")
-    custody.pending = True
-    runner._prelaunch_storage[id(owner)] = custody
+    custody._write_state(record=LaunchRecord("exact-retry-alias"))
+    custody._write_state(pending=True)
+    runner._write_prelaunch_storage(((id(owner), custody),))
     if registered:
         runner._storage[storage_id] = owner
     ids = (custody.record.debt_id, storage_id)
@@ -3237,11 +3368,12 @@ def test_retry_exclusion_interruption_handoff(tmp_path, monkeypatch, exception_t
     owner.retain_cleanup_debt()
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(root)))
     custody = module._StorageCustody(owner)
-    custody.record = LaunchRecord("exact-retry-interruption")
-    custody.pending = True
-    custody.reconciliation_pending = True
-    runner._prelaunch_storage[id(owner)] = custody
-    native_set = module._StorageCustody.__setattr__
+    custody._write_state(record=LaunchRecord("exact-retry-interruption"))
+    custody._write_state(pending=True)
+    custody._write_state(reconciliation_pending=True)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    native_set = _custody_field_write
+    native_token_write = module._StorageCustody._write_retry_owner
     helper, forget = runner._reconcile_custody, runner._forget_storage
     cleanup = TemporaryStorageOwner.cleanup
     interrupted = exception_type("retry handoff")
@@ -3256,9 +3388,9 @@ def test_retry_exclusion_interruption_handoff(tmp_path, monkeypatch, exception_t
         if armed and hit:
             armed = False
             if boundary == "acquire_after":
-                native_set(value, name, item)
+                native_token_write(value, item) if name == "retry_owner" else native_set(value, name, item)
             raise interrupted
-        native_set(value, name, item)
+        native_token_write(value, item) if name == "retry_owner" else native_set(value, name, item)
 
     def reconcile(value):
         """Try both aliases while helper still owns active retry exclusion."""
@@ -3287,7 +3419,8 @@ def test_retry_exclusion_interruption_handoff(tmp_path, monkeypatch, exception_t
 
     try:
         with monkeypatch.context() as patch:
-            patch.setattr(module._StorageCustody, "__setattr__", setter)
+            _install_custody_assignment_fault(patch, setter)
+            patch.setattr(module._StorageCustody, "_write_retry_owner", lambda value, item: setter(value, "retry_owner", item))
             patch.setattr(runner, "_reconcile_custody", reconcile)
             patch.setattr(TemporaryStorageOwner, "cleanup", remove)
             patch.setattr(runner, "_forget_storage", release)
@@ -3345,11 +3478,11 @@ def test_retry_exclusion_retained_alias_authority(tmp_path, monkeypatch, active,
         owner.retain_cleanup_debt()
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(root)))
     custody = module._StorageCustody(owner)
-    custody.record = LaunchRecord("active-process")
-    custody.recovering = active == "recovering"
+    custody._write_state(record=LaunchRecord("active-process"))
+    custody._write_state(recovering=active == "recovering")
     token = object() if active == "retry" else None
-    custody.retry_owner = token
-    runner._prelaunch_storage[id(owner)] = custody
+    custody._write_retry_owner(token)
+    runner._write_prelaunch_storage(((id(owner), custody),))
     debt_id = owner.cleanup_debts()[0].debt_id if debt_kind == "exact" else "other-debt"
     calls = []
 
@@ -3401,12 +3534,12 @@ def test_retry_exclusion_stable_alias_real_interrupt(tmp_path, monkeypatch, prim
     if boundary.startswith('precleanup'):
         target_code = runner._settle_storage.__func__.__code__
         source, first = inspect.getsourcelines(runner._settle_storage)
-    marker = {"precleanup_arming": 'journal["reconciliation_pending"] = True',
-              "precleanup_try": '        try:', "native": 'state["reconciliation_pending"] = True',
-              "helper_entry": 'state = custody.__dict__',
-              "helper_pending": 'state["pending"] = True',
-              "helper_disarm": 'state["reconciliation_pending"] = False',
-              "helper_return": 'state["reconciliation_pending"] = False'}[boundary]
+    marker = {"precleanup_arming": 'custody._write_state(reconciliation_pending=True)',
+              "precleanup_try": '        try:', "native": 'custody._write_state(reconciliation_pending=True)',
+              "helper_entry": 'state = custody',
+              "helper_pending": 'custody._write_state(pending=True)',
+              "helper_disarm": 'custody._write_state(reconciliation_pending=False)',
+              "helper_return": 'custody._write_state(reconciliation_pending=False)'}[boundary]
     matches = [i for i, line in enumerate(source) if marker in line]
     target = first + (min(matches) if settlement != "complete" and boundary == "helper_disarm" else max(matches))
     previous = sys.gettrace()
@@ -3443,7 +3576,8 @@ def test_retry_exclusion_stable_alias_real_interrupt(tmp_path, monkeypatch, prim
                 return AuthorityView(state)
             return state
     recover = runner._preserve_interrupted
-    native_set = module._StorageCustody.__setattr__
+    native_set = _custody_field_write
+    native_token_write = module._StorageCustody._write_retry_owner
     def drain(*args, **kwargs):
         """Raise the original interrupt after a real process launch."""
         if boundary.startswith('precleanup'):
@@ -3469,7 +3603,7 @@ def test_retry_exclusion_stable_alias_real_interrupt(tmp_path, monkeypatch, prim
         return cleanup(owner)
     def setter(custody, name, value):
         """Prevent initial journal publication after genuine cleanup."""
-        if name == 'storage_settled' and value is True:
+        if name == 'storage_settled' and value is True and sys._getframe(2).f_code is OwnedHookScriptRunner._settle_storage.__code__:
             raise secondary_type('journal interrupted')
         native_set(custody, name, value)
     def observe(values):
@@ -3485,7 +3619,7 @@ def test_retry_exclusion_stable_alias_real_interrupt(tmp_path, monkeypatch, prim
             patch.setattr(module, 'drain_script_process', drain)
             patch.setattr(TemporaryStorageOwner, 'cleanup', remove)
             patch.setattr(runner, '_preserve_interrupted', recovery)
-            patch.setattr(module._StorageCustody, '__setattr__', setter)
+            _install_custody_assignment_fault(patch, setter)
             patch.setattr(module, 'all', observe, raising=False)
             now = time.monotonic()
             with pytest.raises(BaseException) as caught:
@@ -3599,14 +3733,15 @@ def test_retry_exclusion_stable_alias_after_cleanup(tmp_path, monkeypatch, regis
     storage_id = owner.cleanup_debts()[0].debt_id
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(root)))
     custody = module._StorageCustody(owner)
-    custody.record = LaunchRecord("stable-alias-record")
-    custody.pending = True
-    runner._prelaunch_storage[id(owner)] = custody
+    custody._write_state(record=LaunchRecord("stable-alias-record"))
+    custody._write_state(pending=True)
+    runner._write_prelaunch_storage(((id(owner), custody),))
     if registered:
         runner._storage[storage_id] = owner
     cleanup = TemporaryStorageOwner.cleanup
     forget = runner._forget_storage
-    native_set = module._StorageCustody.__setattr__
+    native_set = _custody_field_write
+    native_token_write = module._StorageCustody._write_retry_owner
     entered, finished = threading.Event(), threading.Event()
     results, backend_calls, attempts, errors = [], [], [], []
     interruption = KeyboardInterrupt("after genuine cleanup")
@@ -3669,7 +3804,7 @@ def test_retry_exclusion_stable_alias_after_cleanup(tmp_path, monkeypatch, regis
             assert custody.storage_alias.debt_id == storage_id
             assert custody.retry_owner is not None
             raise interruption
-        native_set(value, name, item)
+        native_token_write(value, item) if name == "retry_owner" else native_set(value, name, item)
 
     thread = threading.Thread(target=competitor) if mode == "concurrent" else None
     try:
@@ -3681,7 +3816,8 @@ def test_retry_exclusion_stable_alias_after_cleanup(tmp_path, monkeypatch, regis
             if mode in {"partial_release", "released"}:
                 patch.setattr(runner, "_forget_storage", partial_release)
             if mode == "disarm":
-                patch.setattr(module._StorageCustody, "__setattr__", setter)
+                _install_custody_assignment_fault(patch, setter)
+                patch.setattr(module._StorageCustody, "_write_retry_owner", lambda value, item: setter(value, "retry_owner", item))
             if mode in {"interrupt", "partial_release", "disarm"}:
                 with pytest.raises(KeyboardInterrupt) as caught:
                     runner.retry_cleanup(custody.record.debt_id)
@@ -3721,7 +3857,7 @@ def test_prelaunch_recovery_alias_assignment_exclusion(tmp_path, monkeypatch, ki
                       '2026-10-10T00:00:00Z', 'test', 'review', {})
     context = HookContext(event, 'review-delivery', 'hook_script', 1, 5000)
     original = kind('stable alias write')
-    setter = module._StorageCustody.__setattr__
+    setter = _custody_field_write
     cleanup = TemporaryStorageOwner.cleanup
     armed = True
     attempts, nested, observation = [], [], []
@@ -3748,7 +3884,7 @@ def test_prelaunch_recovery_alias_assignment_exclusion(tmp_path, monkeypatch, ki
         return cleanup(owner)
     try:
         with monkeypatch.context() as patch:
-            patch.setattr(module._StorageCustody, '__setattr__', assign)
+            _install_custody_assignment_fault(patch, assign)
             patch.setattr(TemporaryStorageOwner, 'cleanup', remove)
             with pytest.raises(kind) as caught:
                 runner.execute_entry(entry_index=0,
@@ -3791,7 +3927,7 @@ def test_prelaunch_recovery_event_windows(tmp_path, monkeypatch, after, boundary
     context = HookContext(event, "review-delivery", "hook_script", 1, 5000)
     original = KeyboardInterrupt("alias assignment")
     secondary = SystemExit("recovery boundary")
-    setter = module._StorageCustody.__setattr__
+    setter = _custody_field_write
     cleanup = TemporaryStorageOwner.cleanup
     forget = runner._forget_storage
     entered, completed = threading.Event(), threading.Event()
@@ -3876,13 +4012,13 @@ def test_prelaunch_recovery_event_windows(tmp_path, monkeypatch, after, boundary
         """Install a one-shot native state seam only for teardown testing."""
         native_init(value, owner)
         if boundary in {"teardown", "teardown_after", "failure_teardown"}:
-            value.__dict__ = State(value.__dict__)
+            _install_custody_state_fault(value, State(value.__dict__))
 
     thread = threading.Thread(target=observe)
     thread.start()
     try:
         with monkeypatch.context() as patch:
-            patch.setattr(module._StorageCustody, "__setattr__", assign)
+            _install_custody_assignment_fault(patch, assign)
             patch.setattr(module._StorageCustody, "__init__", initialize)
             patch.setattr(TemporaryStorageOwner, "cleanup", remove)
             patch.setattr(runner, "_forget_storage", release)
@@ -3934,7 +4070,7 @@ def test_prelaunch_recovery_unowned_finalizer_interruption(tmp_path, monkeypatch
     def initialize(value, owner):
         """Retain the real custody with an isolated state observation seam."""
         native_init(value, owner)
-        value.__dict__ = State(value.__dict__)
+        _install_custody_state_fault(value, State(value.__dict__))
         states.append(value)
     event = HookEvent("review", "u06.arbitration", 1, "owner", "scope", "op", None, 1,
                       "2026-10-10T00:00:00Z", "test", "review", {})
@@ -3963,11 +4099,11 @@ def test_prelaunch_recovery_unrelated_reconciliation_alias(tmp_path):
     assert owner.allocate()
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
     custody = module._StorageCustody(owner)
-    custody.pending = True
-    custody.reconciliation_pending = True
-    custody.record = LaunchRecord("reconciliation-record")
-    custody.storage_alias = owner.cleanup_debts()[0]
-    runner._prelaunch_storage[id(owner)] = custody
+    custody._write_state(pending=True)
+    custody._write_state(reconciliation_pending=True)
+    custody._write_state(record=LaunchRecord("reconciliation-record"))
+    custody._write_state(storage_alias=owner.cleanup_debts()[0])
+    runner._write_prelaunch_storage(((id(owner), custody),))
     try:
         assert runner.retry_cleanup("unrelated-reconciliation")
         assert owner.path.exists() and custody.pending
@@ -3987,10 +4123,10 @@ def test_prelaunch_recovery_registered_owner_exclusion(tmp_path):
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
     custody = module._StorageCustody(owner)
     token = object()
-    custody.execution_owner = token
-    custody.pending = True
-    custody.storage_alias = owner.cleanup_debts()[0]
-    runner._prelaunch_storage[id(owner)] = custody
+    custody._write_state(execution_owner=token)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=owner.cleanup_debts()[0])
+    runner._write_prelaunch_storage(((id(owner), custody),))
     runner._storage["retained-registration"] = owner
     try:
         assert not runner.retry_cleanup("retained-registration")
@@ -3998,7 +4134,7 @@ def test_prelaunch_recovery_registered_owner_exclusion(tmp_path):
         assert runner._prelaunch_storage[id(owner)] is custody
         assert owner.path.exists()
     finally:
-        custody.execution_owner = None
+        custody._write_state(execution_owner=None)
         owner.cleanup()
         runner._forget_storage(owner)
 
@@ -4024,7 +4160,7 @@ def test_prelaunch_recovery_protected_arming(
     primary = kind("original alias interruption")
     secondary = SystemExit("arming") if kind is KeyboardInterrupt else KeyboardInterrupt("arming")
     initialize = module._StorageCustody.__init__
-    setter = module._StorageCustody.__setattr__
+    setter = _custody_field_write
     cleanup = TemporaryStorageOwner.cleanup
     entered, attempted, completed = threading.Event(), threading.Event(), threading.Event()
     captured, concurrent, nested, errors, backend_calls, removals = [], [], [], [], [], []
@@ -4046,7 +4182,7 @@ def test_prelaunch_recovery_protected_arming(
     def init(custody, owner):
         """Capture the real owner without synthesizing or deleting registry entries."""
         initialize(custody, owner)
-        custody.__dict__ = State(custody.__dict__)
+        _install_custody_state_fault(custody, State(custody.__dict__))
         captured.append((custody, owner))
 
     def assign(custody, name, value):
@@ -4096,7 +4232,7 @@ def test_prelaunch_recovery_protected_arming(
     try:
         with monkeypatch.context() as patch:
             patch.setattr(module._StorageCustody, "__init__", init)
-            patch.setattr(module._StorageCustody, "__setattr__", assign)
+            _install_custody_assignment_fault(patch, assign)
             patch.setattr(TemporaryStorageOwner, "cleanup", remove)
             patch.setattr(runner._backend, "retry_cleanup", backend_retry)
             with pytest.raises(BaseException) as caught:
@@ -4114,7 +4250,7 @@ def test_prelaunch_recovery_protected_arming(
         assert concurrent == [False] and nested == [False] and not errors
         assert backend_calls == ["unrelated-protected-arming"]
         custody, owner = captured[0]
-        assert custody.__dict__["hit"] and custody.execution_owner is None
+        assert _CUSTODY_FAULT_STATES[id(custody)][1]["hit"] and custody.execution_owner is None
         assert custody.retry_owner is None and removals == [owner]
         if failed_cleanup:
             alias = custody.storage_alias.debt_id
@@ -4157,21 +4293,24 @@ def test_prelaunch_first_publication_boundary(
     primary = kind("original alias assignment")
     secondary = SystemExit("publication") if kind is KeyboardInterrupt else KeyboardInterrupt("publication")
     initialize = module._StorageCustody.__init__
-    setter = module._StorageCustody.__setattr__
+    setter = _custody_field_write
     cleanup = TemporaryStorageOwner.cleanup
     captured, hits, removals = [], [], []
     alias_armed = True
     source = Path(module.__file__).read_text().splitlines()
+    publication_start = next(number for number, line in enumerate(source, 1)
+                             if "Publish responsibility before interruptible recovery authority writes" in line)
     lines = {number for number, line in enumerate(source, 1)
-             if 'dict.__setitem__(custody_state, "pending", True)' in line
-             and 270 < number < 325}
+             if 'custody._write_state(pending=True)' in line
+             and publication_start <= number
+             < OwnedHookScriptRunner._reconcile_custody.__code__.co_firstlineno}
     instructions = list(dis.get_instructions(OwnedHookScriptRunner.execute_entry))
     targets = set()
     for index, instruction in enumerate(instructions):
-        if instruction.opname == "CALL" and instruction.positions.lineno in lines:
+        if instruction.opname in ("CALL", "CALL_KW") and instruction.positions.lineno in lines:
             targets.add(instructions[index + 1].offset if after else instruction.offset)
     fallback_lines = {number for number, line in enumerate(source, 1)
-                      if 'dict.update(custody_state, pending=True, execution_owner=' in line}
+                      if 'custody._write_state(pending=True, execution_owner=' in line}
     fallback_targets = set()
     for index, instruction in enumerate(instructions):
         if instruction.opname in ("CALL", "CALL_KW") and instruction.positions.lineno in fallback_lines:
@@ -4195,12 +4334,13 @@ def test_prelaunch_first_publication_boundary(
 
     def profile(frame, event, arg):
         """Rearm a second one-shot opcode probe only inside the fallback."""
-        if (fallback and len(hits) == 1 and event == "c_call"
-                and frame.f_code is OwnedHookScriptRunner.execute_entry.__code__
-                and any(line <= frame.f_lineno <= line + 1 for line in fallback_lines)):
+        if (fallback and len(hits) == 1 and event == "call"
+                and frame.f_back is not None
+                and frame.f_back.f_code is OwnedHookScriptRunner.execute_entry.__code__
+                and frame.f_back.f_lineno in fallback_lines):
             sys.settrace(trace)
-            frame.f_trace = trace
-            frame.f_trace_opcodes = True
+            frame.f_back.f_trace = trace
+            frame.f_back.f_trace_opcodes = True
 
     def init(custody, owner):
         """Capture actual custody and preserve exact native state."""
@@ -4227,10 +4367,19 @@ def test_prelaunch_first_publication_boundary(
     try:
         with monkeypatch.context() as patch:
             patch.setattr(module._StorageCustody, "__init__", init)
-            patch.setattr(module._StorageCustody, "__setattr__", assign)
+            _install_custody_assignment_fault(patch, assign)
             patch.setattr(TemporaryStorageOwner, "cleanup", remove)
             sys.settrace(trace)
-            sys.setprofile(profile)
+            controlled = module._StorageCustody._write_state
+            def fallback_write(custody, _retire=(), **changes):
+                """Inject the second interruption at the exact controlled fallback commit."""
+                if fallback and len(hits) == 1 and "execution_owner" in changes:
+                    hits.append("controlled-fallback")
+                    if after:
+                        controlled(custody, _retire=_retire, **changes)
+                    raise secondary
+                return controlled(custody, _retire=_retire, **changes)
+            patch.setattr(module._StorageCustody, "_write_state", fallback_write)
             with pytest.raises(BaseException) as caught:
                 runner.execute_entry(entry_index=0, entry=HookScriptEntry(script, script.name),
                     context=context, options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
@@ -4272,7 +4421,7 @@ def test_prelaunch_first_publication_native_fallback_failure(tmp_path, monkeypat
     import topsailai.hooks.script_runner as module
 
     initialize = module._StorageCustody.__init__
-    setter = module._StorageCustody.__setattr__
+    setter = _custody_field_write
     primary = kind("original allocation handoff")
     captured = []
     native = dict
@@ -4298,7 +4447,7 @@ def test_prelaunch_first_publication_native_fallback_failure(tmp_path, monkeypat
     def init(custody, owner):
         """Capture the actual owner and isolate state injection to this custody."""
         initialize(custody, owner)
-        custody.__dict__ = State(custody.__dict__)
+        _install_custody_state_fault(custody, State(custody.__dict__))
         captured.append((custody, owner))
 
     def assign(custody, name, value):
@@ -4317,7 +4466,7 @@ def test_prelaunch_first_publication_native_fallback_failure(tmp_path, monkeypat
         with monkeypatch.context() as patch:
             patch.setattr(module, "dict", NativeDict, raising=False)
             patch.setattr(module._StorageCustody, "__init__", init)
-            patch.setattr(module._StorageCustody, "__setattr__", assign)
+            _install_custody_assignment_fault(patch, assign)
             with pytest.raises(BaseException) as caught:
                 runner.execute_entry(entry_index=0, entry=HookScriptEntry(script, script.name),
                     context=context, options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
@@ -4344,7 +4493,7 @@ def test_incomplete_arming_invocation_exclusion(tmp_path, monkeypatch, context, 
     import topsailai.hooks.script_runner as module
 
     initialize = module._StorageCustody.__init__
-    setter = module._StorageCustody.__setattr__
+    setter = _custody_field_write
     primary = kind("original allocation handoff")
     captured = []
     observed = []
@@ -4355,44 +4504,29 @@ def test_incomplete_arming_invocation_exclusion(tmp_path, monkeypatch, context, 
     native_list = list
     teardown_hit = False
 
-    class NativeDict(dict):
-        """Reject one fallback update while preserving real native ownership writes."""
-        @staticmethod
-        def update(state, **values):
-            """Inject fallback failure only during execution authority publication."""
-            if "execution_owner" in values:
-                nonlocal fallback_failed
-                fallback_failed = True
-                if fallback_after:
-                    native.update(state, **values)
-                raise SystemExit("native fallback")
-            native.update(state, **values)
-
-    class NativeList(list):
-        """Interrupt one exact invocation lease teardown before or after its write."""
-        @staticmethod
-        def __setitem__(lease, index, value):
-            """Leave the fallback independent of this one-shot native seam."""
-            nonlocal teardown_hit
-            if teardown != "none" and not teardown_hit:
-                teardown_hit = True
-                if teardown == "after":
-                    native_list.__setitem__(lease, index, value)
-                raise SystemExit("lease teardown")
-            native_list.__setitem__(lease, index, value)
-
-    class State(dict):
-        """Reject the ordinary arming write before native fallback."""
-        def __setitem__(self, name, value):
-            """Keep all writes except one execution arming assignment unchanged."""
-            if name == "execution_owner" and value is not None:
+    def write(custody, _retire=(), **changes):
+        """Interrupt exact normal, fallback and lease commits at reachable boundaries."""
+        nonlocal fallback_failed, teardown_hit
+        if "execution_owner" in changes and changes["execution_owner"] is not None:
+            if len(changes) == 1:
                 raise KeyboardInterrupt("ordinary arming")
-            native.__setitem__(self, name, value)
+            fallback_failed = True
+            if fallback_after:
+                _CANONICAL_CUSTODY_WRITE(custody, _retire=_retire, **changes)
+            raise SystemExit("native fallback")
+        if captured and custody is captured[0][0] and changes.get("execution_lease") == (None,) and teardown != "none" and not teardown_hit:
+            teardown_hit = True
+            if teardown == "after":
+                _CANONICAL_CUSTODY_WRITE(custody, _retire=_retire, **changes)
+            raise SystemExit("lease teardown")
+        if _retire:
+            _CANONICAL_CUSTODY_WRITE(custody, _retire=_retire)
+        for name, value in changes.items():
+            assign(custody, name, value)
 
     def init(custody, owner):
         """Capture the actual owner and isolate state injection to this custody."""
         initialize(custody, owner)
-        custody.__dict__ = State(custody.__dict__)
         captured.append((custody, owner))
 
     def assign(custody, name, value):
@@ -4445,11 +4579,9 @@ def test_incomplete_arming_invocation_exclusion(tmp_path, monkeypatch, context, 
 
     try:
         with monkeypatch.context() as patch:
-            patch.setattr(module, "dict", NativeDict, raising=False)
-            patch.setattr(module, "list", NativeList, raising=False)
             patch.setattr(runner._backend, "retry_cleanup", backend_retry)
             patch.setattr(module._StorageCustody, "__init__", init)
-            patch.setattr(module._StorageCustody, "__setattr__", assign)
+            patch.setattr(module._StorageCustody, "_write_state", write)
             with pytest.raises(BaseException) as caught:
                 runner.execute_entry(entry_index=0, entry=HookScriptEntry(script, script.name),
                     context=context, options=HookScriptExecutionOptions(), policy=HookScriptExecutionPolicy(),
@@ -4459,7 +4591,7 @@ def test_incomplete_arming_invocation_exclusion(tmp_path, monkeypatch, context, 
         custody, owner = captured[0]
         assert observed == [(False, True, True)]
         assert backend_calls == ["unrelated-incomplete-arming"]
-        assert custody.execution_lease == [None]
+        assert custody.execution_lease == (None,)
         assert teardown_hit == (teardown != "none")
         frames = []
         tb = caught.value.__traceback__
@@ -4489,7 +4621,7 @@ def test_terminal_invocation_lease_handoff(tmp_path, monkeypatch, context, kind)
     observations = []
     backend_calls = []
     initialize = module._StorageCustody.__init__
-    setter = module._StorageCustody.__setattr__
+    setter = _custody_field_write
     primary = kind("terminal original interruption")
     armed = True
 
@@ -4551,7 +4683,7 @@ def test_terminal_invocation_lease_handoff(tmp_path, monkeypatch, context, kind)
     try:
         with monkeypatch.context() as patch:
             patch.setattr(module._StorageCustody, "__init__", init)
-            patch.setattr(module._StorageCustody, "__setattr__", assign)
+            _install_custody_assignment_fault(patch, assign)
             patch.setattr(runner._backend, "retry_cleanup", backend_retry)
             with pytest.raises(BaseException) as caught:
                 runner.execute_entry(entry_index=0, entry=HookScriptEntry(script, script.name),
@@ -4569,7 +4701,7 @@ def test_terminal_invocation_lease_handoff(tmp_path, monkeypatch, context, kind)
         assert "assign" in frames and primary.__cause__ is None
         assert observations and all(row[:3] == (True, False, True) for row in observations)
         assert alias not in backend_calls and unrelated.exists()
-        assert not path.exists() and custody.execution_lease == [None]
+        assert not path.exists() and custody.execution_lease == (None,)
         assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
         assert runner.retry_cleanup(alias)
         print("terminal real resource observations", observations)
@@ -4588,10 +4720,10 @@ def test_forget_storage_retains_independent_execution_lease(tmp_path):
     assert owner.allocate()
     path = owner.path
     custody = _StorageCustody(owner)
-    custody.storage_alias = owner.cleanup_debts()[0]
+    custody._write_state(storage_alias=owner.cleanup_debts()[0])
     token = object()
-    custody.execution_lease = [token]
-    runner._prelaunch_storage[id(owner)] = custody
+    custody._write_state(execution_lease=(token,))
+    runner._write_prelaunch_storage(((id(owner), custody),))
     runner._remember_storage(owner)
     try:
         assert owner.cleanup() and not path.exists()
@@ -4610,7 +4742,7 @@ def test_execution_lease_mismatch_retains_exact_custody(tmp_path, monkeypatch, c
     import topsailai.hooks.script_runner as module
 
     initialize = module._StorageCustody.__init__
-    setter = module._StorageCustody.__setattr__
+    setter = _custody_field_write
     cleanup = TemporaryStorageOwner.cleanup
     primary = kind("original alias handoff")
     foreign = object()
@@ -4632,7 +4764,7 @@ def test_execution_lease_mismatch_retains_exact_custody(tmp_path, monkeypatch, c
 
     def remove(owner):
         """Replace authority before genuine cleanup to test exact release ownership."""
-        captured[0][0].execution_lease[0] = foreign
+        captured[0][0]._write_state(execution_lease=(foreign,))
         return cleanup(owner)
 
     script = tmp_path / "script"
@@ -4641,7 +4773,7 @@ def test_execution_lease_mismatch_retains_exact_custody(tmp_path, monkeypatch, c
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
     with monkeypatch.context() as patch:
         patch.setattr(module._StorageCustody, "__init__", init)
-        patch.setattr(module._StorageCustody, "__setattr__", assign)
+        _install_custody_assignment_fault(patch, assign)
         patch.setattr(TemporaryStorageOwner, "cleanup", remove)
         with pytest.raises(BaseException) as caught:
             runner.execute_entry(entry_index=0, entry=HookScriptEntry(script, script.name),
@@ -4657,8 +4789,8 @@ def test_execution_lease_mismatch_retains_exact_custody(tmp_path, monkeypatch, c
     assert runner.retry_cleanup("unrelated-foreign-lease")
     assert custody.execution_lease[0] is foreign
     # The simulated foreign owner alone hands back its own authority.
-    custody.execution_lease[0] = None
-    custody.pending = True
+    custody._write_state(execution_lease=(None,))
+    custody._write_state(pending=True)
     assert runner.retry_cleanup(custody.storage_alias.debt_id)
     assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
 
@@ -4706,7 +4838,7 @@ def test_allocation_false_requires_verified_no_resource(tmp_path, monkeypatch, a
     assert result.status is HookStatus.ERROR
     custody = custodies[0]
     owner = owners[0]
-    assert custody.execution_lease == [None]
+    assert custody.execution_lease == (None,)
     assert custody.storage_settled is (allocation_state == "empty")
     assert runner.retry_cleanup("unrelated-false-allocation")
     if allocation_state == "empty":
@@ -4752,16 +4884,17 @@ def test_verified_empty_allocation_teardown_interruption(tmp_path, monkeypatch, 
                 raise release_error
             super().__delitem__(key)
 
-    runner._prelaunch_storage = Registry()
+    _install_registry_fault(runner, Registry())
 
-    class NativeList(list):
-        """Interrupt the exact lease withdrawal before or after its native mutation."""
-        @staticmethod
-        def __setitem__(lease, index, value):
-            """Keep the actual invocation token seam bounded to its one teardown."""
+    hit = []
+    def write(custody, _retire=(), **changes):
+        """Interrupt one lease withdrawal while allowing exact fallback convergence."""
+        if captured and custody is captured[0] and changes.get("execution_lease") == (None,) and not hit:
+            hit.append(True)
             if after:
-                native_list.__setitem__(lease, index, value)
+                _CANONICAL_CUSTODY_WRITE(custody, _retire=_retire, **changes)
             raise interruption
+        _CANONICAL_CUSTODY_WRITE(custody, _retire=_retire, **changes)
 
     def init(custody, owner):
         """Retain exact custody for settlement and authority assertions."""
@@ -4772,7 +4905,7 @@ def test_verified_empty_allocation_teardown_interruption(tmp_path, monkeypatch, 
     script.write_text("unused")
     script.chmod(0o700)
     with monkeypatch.context() as patch:
-        patch.setattr(module, "list", NativeList, raising=False)
+        patch.setattr(module._StorageCustody, "_write_state", write)
         patch.setattr(module._StorageCustody, "__init__", init)
         patch.setattr(TemporaryStorageOwner, "allocate", lambda owner: False)
         with pytest.raises(SystemExit) as caught:
@@ -4786,9 +4919,9 @@ def test_verified_empty_allocation_teardown_interruption(tmp_path, monkeypatch, 
     while traceback is not None:
         frames.append(traceback.tb_frame.f_code.co_name)
         traceback = traceback.tb_next
-    assert "__setitem__" in frames
+    assert "write" in frames
     assert interruption.__context__ is None
-    assert captured[0].storage_settled and captured[0].execution_lease == [None]
+    assert captured[0].storage_settled and captured[0].execution_lease == (None,)
     assert runner.cleanup_debts() == ()
     assert runner.retry_cleanup("unrelated-empty-teardown")
     assert runner._prelaunch_storage == {}
@@ -4811,9 +4944,9 @@ def test_malformed_execution_lease_preserves_unrelated_retry(tmp_path, monkeypat
     def allocate(owner):
         """Invalidate only lease shape without inventing resource settlement."""
         if malformed == "missing":
-            del captured[0].execution_lease
+            captured[0]._write_state(_retire=("execution_lease",))
         else:
-            captured[0].execution_lease = malformed
+            captured[0]._write_state(execution_lease=malformed)
         return False
 
     script = tmp_path / "script"
@@ -4831,8 +4964,12 @@ def test_malformed_execution_lease_preserves_unrelated_retry(tmp_path, monkeypat
     if malformed == "missing":
         assert "execution_lease" not in captured[0].__dict__
     else:
-        assert captured[0].execution_lease is malformed
+        snapshot = module._observe_retry_owner(captured[0])
+        assert captured[0].execution_lease is snapshot["execution_lease"]
+        assert type(malformed) not in (list, dict) or captured[0].execution_lease is not malformed
     assert runner.retry_cleanup("unrelated-malformed-lease")
+    if malformed != "missing":
+        assert module._observe_retry_owner(captured[0]) is snapshot
 
 
 @pytest.mark.parametrize("shape", ["none", "empty", "long", "tuple", "mapping", "string", "wrong-token", "missing", "foreign"])
@@ -4846,16 +4983,16 @@ def test_execution_lease_shape_exact_custody_handback(tmp_path, shape):
     path = owner.path
     alias = owner.cleanup_debts()[0].debt_id
     custody = module._StorageCustody(owner)
-    custody.pending = True
-    custody.storage_alias = owner.cleanup_debts()[0]
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=owner.cleanup_debts()[0])
     foreign = object()
-    values = {"none": None, "empty": [], "long": [None, None], "tuple": (None,),
+    values = {"none": None, "empty": [], "long": [None, None], "tuple": ((None,),),
               "mapping": {0: None}, "string": "x", "wrong-token": [False], "foreign": [foreign]}
     if shape == "missing":
-        del custody.execution_lease
+        custody._write_state(_retire=("execution_lease",))
     else:
-        custody.execution_lease = values[shape]
-    runner._prelaunch_storage[id(owner)] = custody
+        custody._write_state(execution_lease=values[shape])
+    runner._write_prelaunch_storage(((id(owner), custody),))
     runner._storage[alias] = owner
     state = custody.__dict__.copy()
     assert runner.retry_cleanup("unrelated-shape")
@@ -4864,13 +5001,13 @@ def test_execution_lease_shape_exact_custody_handback(tmp_path, shape):
     assert custody.__dict__ == state
     assert runner.cleanup_debts() == ()
     # The legitimate authority alone repairs and hands back its exact obligation.
-    custody.execution_lease = [None]
+    custody._write_state(execution_lease=[None])
     assert runner.retry_cleanup(alias)
     assert not path.exists() and runner._prelaunch_storage == {}
     assert runner.cleanup_debts() == ()
 
 
-@pytest.mark.parametrize("lease", [None, [], [None, None], (None,), [False], [object()]])
+@pytest.mark.parametrize("lease", [None, [], [None, None], ((None,),), [False], [object()]])
 def test_forget_storage_retains_unprovable_lease(tmp_path, lease):
     """Keep exact settled custody reachable until authority is safely handed back."""
     import topsailai.hooks.script_runner as module
@@ -4879,13 +5016,2677 @@ def test_forget_storage_retains_unprovable_lease(tmp_path, lease):
     owner = TemporaryStorageOwner(tmp_path)
     assert owner.allocate()
     custody = module._StorageCustody(owner)
-    custody.execution_lease = lease
-    runner._prelaunch_storage[id(owner)] = custody
+    custody._write_state(execution_lease=lease)
+    runner._write_prelaunch_storage(((id(owner), custody),))
     assert owner.cleanup()
     runner._forget_storage(owner)
     assert runner._prelaunch_storage[id(owner)] is custody
-    assert custody.execution_lease is lease and custody.release_complete
+    assert custody.execution_lease is module._immutable_lease(custody.execution_lease) and custody.release_complete
+    assert type(lease) is not list or custody.execution_lease is not lease
     assert runner.retry_cleanup("unrelated-forget-shape")
-    custody.execution_lease = [None]
+    custody._write_state(execution_lease=[None])
     runner._forget_storage(owner)
     assert runner._prelaunch_storage == {}
+
+
+@pytest.mark.parametrize('replacement', ['foreign', 'malformed'])
+def test_retry_finalizer_preserves_replacement_authority(tmp_path, monkeypatch, replacement):
+    """Retain exact custody when cleanup handoff introduces unowned authority."""
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    path = owner.path
+    debt = owner.cleanup_debts()[0]
+    custody = _StorageCustody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    foreign = object()
+    authority = (foreign,) if replacement == 'foreign' else ()
+    native = TemporaryStorageOwner.retry_cleanup
+    captured = {}
+    def cleanup(storage, alias):
+        """Complete real cleanup then install exact replacement authority outside runner lock."""
+        result = native(storage, alias)
+        assert result and not path.exists()
+        captured['retry_token'] = custody.retry_owner
+        assert captured['retry_token'] is not None
+        custody._write_state(execution_lease=authority)
+        assert runner.retry_cleanup(debt.debt_id) is False
+        assert runner.retry_cleanup('unrelated-during-retry') is True
+        assert custody.retry_owner is captured['retry_token']
+        return result
+    with monkeypatch.context() as patch:
+        patch.setattr(TemporaryStorageOwner, 'retry_cleanup', cleanup)
+        result = runner.retry_cleanup(debt.debt_id)
+    captured.update(result=result, custody_reachable=runner._prelaunch_storage.get(id(owner)) is custody,
+                    foreign_unchanged=custody.execution_lease is authority,
+                    exact_after=runner.retry_cleanup(debt.debt_id),
+                    unrelated_after=runner.retry_cleanup('unrelated-after-retry'), directory_exists=path.exists())
+    print(captured)
+    assert result is False
+    assert custody.execution_lease is authority
+    assert custody.retry_owner is None
+    assert custody.release_complete
+    assert runner._prelaunch_storage.get(id(owner)) is custody
+    assert runner.retry_cleanup(debt.debt_id) is False
+    assert runner.retry_cleanup('unrelated-after-retry') is True
+    # Only the legitimate authority owner hands back the exact obligation.
+    custody._write_state(execution_lease=[None])
+    custody._write_state(pending=True)
+    assert runner.retry_cleanup(debt.debt_id)
+    assert runner._prelaunch_storage == {} and runner.cleanup_debts() == ()
+
+
+@pytest.mark.parametrize("shape", ["foreign", "missing", "none", "empty", "long", "tuple", "wrong-token"])
+@pytest.mark.parametrize("boundary", ["cleanup-before", "cleanup-after", "forget-before", "forget-after"])
+@pytest.mark.parametrize("outcome", ["success", "false", "raise"])
+def test_retry_finalizer_authority_matrix(tmp_path, monkeypatch, shape, boundary, outcome):
+    """Keep replacement authority reachable through cleanup and forget outcomes."""
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    path = owner.path
+    debt = owner.cleanup_debts()[0]
+    custody = _StorageCustody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    authority = {"foreign": (object(),), "none": None, "empty": (), "long": (None, None),
+                 "tuple": ((None,),), "wrong-token": (False,)}.get(shape)
+    interruption = SystemExit("retry cleanup boundary")
+    native_cleanup = TemporaryStorageOwner.retry_cleanup
+    native_forget = OwnedHookScriptRunner._forget_storage
+    captured = []
+
+    def replace_authority():
+        """Install foreign state outside the runner lock and observe exact exclusion."""
+        token = custody.retry_owner
+        assert token is not None
+        captured.append(token)
+        if shape == "missing":
+            custody._write_state(_retire=("execution_lease",))
+        else:
+            custody._write_state(execution_lease=authority)
+        assert runner.retry_cleanup(debt.debt_id) is False
+        assert runner.retry_cleanup("unrelated-matrix") is True
+        assert custody.retry_owner is token
+
+    def cleanup(storage, alias):
+        """Inject before or after the exact native cleanup without sleep races."""
+        if boundary == "cleanup-before":
+            replace_authority()
+        result = native_cleanup(storage, alias) if outcome == "success" or boundary.startswith("forget") else False
+        if boundary == "cleanup-after":
+            replace_authority()
+        if boundary.startswith("cleanup") and outcome == "raise":
+            raise interruption
+        return result
+
+    def forget(instance, storage):
+        """Inject the same authority handoff on either side of the exact forget."""
+        if boundary == "forget-before":
+            replace_authority()
+        native_forget(instance, storage)
+        if boundary == "forget-after":
+            replace_authority()
+        if boundary.startswith("forget") and outcome == "raise":
+            raise interruption
+
+    with monkeypatch.context() as patch:
+        patch.setattr(TemporaryStorageOwner, "retry_cleanup", cleanup)
+        patch.setattr(OwnedHookScriptRunner, "_forget_storage", forget)
+        if outcome == "raise":
+            with pytest.raises(SystemExit) as caught:
+                runner.retry_cleanup(debt.debt_id)
+            assert caught.value is interruption and interruption.__cause__ is None
+            assert interruption.__context__ is None
+            assert any(frame.name == ("cleanup" if boundary.startswith("cleanup") else "forget") for frame in caught.traceback)
+        else:
+            assert runner.retry_cleanup(debt.debt_id) is False
+    assert custody.retry_owner is None
+    assert runner._prelaunch_storage[id(owner)] is custody
+    assert custody.pending
+    if captured:
+        if shape == "missing":
+            assert "execution_lease" not in custody.__dict__
+        else:
+            assert custody.execution_lease is authority
+        assert runner.retry_cleanup(debt.debt_id) is False
+    assert runner.retry_cleanup("unrelated-after-matrix") is True
+    # Only the actual authority owner repairs and hands back this obligation.
+    custody._write_state(execution_lease=[None])
+    assert runner.retry_cleanup(debt.debt_id)
+    assert not path.exists() and runner._prelaunch_storage == {}
+    assert runner.cleanup_debts() == ()
+
+
+@pytest.mark.parametrize("primary_type", [RuntimeError, SystemExit, KeyboardInterrupt])
+@pytest.mark.parametrize("secondary_type", [RuntimeError, SystemExit, KeyboardInterrupt])
+@pytest.mark.parametrize("boundary", ["lock-enter", "lock-exit", "disarm-before", "disarm-after"])
+def test_retry_primary_preserved_across_finalizer(tmp_path, monkeypatch, primary_type, secondary_type, boundary):
+    """Preserve exact primary and source frames through bounded finalizer interruptions."""
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    path = owner.path
+    debt = owner.cleanup_debts()[0]
+    primary = primary_type("cleanup primary")
+    secondary = secondary_type("finalizer secondary")
+    failed = []
+    hits = []
+    native_lock = threading.Lock()
+
+    class Custody(_StorageCustody):
+        """Interrupt the normal token withdrawal without interfering with native fallback."""
+        def _write_retry_owner(self, value):
+            """Inject exactly once before or after the owned disarm mutation."""
+            name = "retry_owner"
+            if name == "retry_owner" and value is None and failed and not hits and boundary.startswith("disarm"):
+                hits.append(boundary)
+                if boundary == "disarm-after":
+                    _StorageCustody._write_retry_owner(self, value) if name == "retry_owner" else object.__setattr__(self, name, value)
+                raise secondary
+            _StorageCustody._write_retry_owner(self, value) if name == "retry_owner" else object.__setattr__(self, name, value)
+
+    class Lock:
+        """Keep deterministic lock interruption outside nested public recovery."""
+        def __enter__(self):
+            """Fail before acquire or acquire the real non-reentrant lock."""
+            if failed and not hits and boundary == "lock-enter":
+                hits.append(boundary)
+                raise secondary
+            native_lock.acquire()
+            return self
+
+        def __exit__(self, kind, error, tb):
+            """Release the real lock before the injected exit failure."""
+            native_lock.release()
+            if failed and not hits and boundary == "lock-exit":
+                hits.append(boundary)
+                raise secondary
+
+    custody = Custody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    tokens = []
+
+    def cleanup(storage, alias):
+        """Observe exact exclusion outside lock then emit the precise source exception."""
+        tokens.append(custody.retry_owner)
+        assert tokens[-1] is not None
+        assert runner.retry_cleanup(alias) is False
+        assert runner.retry_cleanup("unrelated-primary-matrix") is True
+        assert custody.retry_owner is tokens[-1]
+        failed.append(True)
+        raise primary
+
+    with monkeypatch.context() as patch:
+        runner._lock = Lock()
+        patch.setattr(TemporaryStorageOwner, "retry_cleanup", cleanup)
+        with pytest.raises(BaseException) as caught:
+            runner.retry_cleanup(debt.debt_id)
+    runner._lock = native_lock
+    assert caught.value is primary
+    assert any(frame.name == "cleanup" for frame in caught.traceback)
+    assert primary.__cause__ is None and primary.__context__ is None
+    assert hits == [boundary]
+    assert len(primary.__notes__) == 1
+    assert runner._prelaunch_storage[id(owner)] is custody
+    assert custody.retry_owner is None and path.exists()
+    assert runner.retry_cleanup("unrelated-after-primary") is True
+    assert runner.retry_cleanup(debt.debt_id) is True
+    assert not path.exists() and runner._prelaunch_storage == {}
+    assert runner.cleanup_debts() == ()
+
+
+def test_retry_double_disarm_preserves_public_convergence(tmp_path, monkeypatch):
+    """Retain a convergent public obligation when both withdrawal boundaries interrupt."""
+    import inspect
+    import sys
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    debt = owner.cleanup_debts()[0]
+    primary = SystemExit("cleanup primary")
+    secondary = KeyboardInterrupt("normal disarm")
+    fallback = RuntimeError("native fallback")
+    armed = []
+    hit = []
+
+    class Custody(_StorageCustody):
+        """Interrupt normal exact withdrawal once after cleanup failed."""
+        def _write_retry_owner(self, value):
+            """Leave the original token armed at the interrupted mutation."""
+            name = "retry_owner"
+            if name == "retry_owner" and value is None and armed:
+                armed.clear()
+                raise secondary
+            _StorageCustody._write_retry_owner(self, value) if name == "retry_owner" else object.__setattr__(self, name, value)
+
+    custody = Custody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    source, first = inspect.getsourcelines(OwnedHookScriptRunner._retry_cleanup_invocation)
+    target = first + next(i for i, line in enumerate(source) if '_commit_retry_owner(selected, None)' in line)
+
+    def trace(frame, event, arg):
+        """Interrupt native fallback before mutation without entering runner lock."""
+        if event == "line" and frame.f_code is OwnedHookScriptRunner._retry_cleanup_invocation.__code__ and frame.f_lineno == target and not hit:
+            hit.append(True)
+            raise fallback
+        return trace
+
+    def cleanup(storage, alias):
+        """Raise the precise primary while keeping the owned real directory."""
+        armed.append(True)
+        raise primary
+
+    previous = sys.gettrace()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(TemporaryStorageOwner, "retry_cleanup", cleanup)
+            sys.settrace(trace)
+            with pytest.raises(BaseException) as caught:
+                runner.retry_cleanup(debt.debt_id)
+            sys.settrace(previous)
+        assert caught.value is primary
+        assert hit and runner._prelaunch_storage[id(owner)] is custody
+        print("retry token retained:", custody.retry_owner is not None)
+        assert runner.retry_cleanup("unrelated-double-disarm") is True
+        assert runner.retry_cleanup(debt.debt_id) is True
+        assert runner._prelaunch_storage == {}
+    finally:
+        sys.settrace(previous)
+        assert owner.cleanup()
+
+
+def test_retry_terminal_identity_interruption_preserves_convergence(tmp_path, monkeypatch):
+    """Retain a convergent public obligation when both withdrawal boundaries interrupt."""
+    import sys
+    import inspect
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    debt = owner.cleanup_debts()[0]
+    primary = SystemExit("cleanup primary")
+    secondary = KeyboardInterrupt("normal disarm")
+    fallback = RuntimeError("native fallback")
+    armed = []
+    hit = []
+
+    class Custody(_StorageCustody):
+        """Interrupt normal exact withdrawal once after cleanup failed."""
+        def _write_retry_owner(self, value):
+            """Leave the original token armed at the interrupted mutation."""
+            name = "retry_owner"
+            if name == "retry_owner" and value is None and armed:
+                armed.clear()
+                raise secondary
+            _StorageCustody._write_retry_owner(self, value) if name == "retry_owner" else object.__setattr__(self, name, value)
+
+    custody = Custody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    class Registry(dict):
+        """Interrupt the final exact identity observation once without mutating custody."""
+        def get(self, key, default=None):
+            """Fail only after the native disarm fallback has been interrupted."""
+            if hit and not terminal_hit:
+                terminal_hit.append(True)
+                raise KeyboardInterrupt("terminal identity observation")
+            return super().get(key, default)
+
+    terminal_hit = []
+    _install_registry_fault(runner, Registry())
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    source, first = inspect.getsourcelines(OwnedHookScriptRunner._retry_cleanup_invocation)
+    target = first + next(i for i, line in enumerate(source) if '_commit_retry_owner(selected, None)' in line)
+
+    def trace(frame, event, arg):
+        """Interrupt native fallback before mutation without entering runner lock."""
+        if event == "line" and frame.f_code is OwnedHookScriptRunner._retry_cleanup_invocation.__code__ and frame.f_lineno == target and not hit:
+            hit.append(True)
+            raise fallback
+        return trace
+
+    def cleanup(storage, alias):
+        """Raise the precise primary while keeping the owned real directory."""
+        armed.append(True)
+        raise primary
+
+    previous = sys.gettrace()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(TemporaryStorageOwner, "retry_cleanup", cleanup)
+            sys.settrace(trace)
+            with pytest.raises(BaseException) as caught:
+                runner.retry_cleanup(debt.debt_id)
+            sys.settrace(previous)
+        assert caught.value is primary
+        assert hit and runner._prelaunch_storage[id(owner)] is custody
+        print("retry token retained:", custody.retry_owner is not None)
+        assert runner.retry_cleanup("unrelated-double-disarm") is True
+        assert runner.retry_cleanup(debt.debt_id) is True
+        assert runner._prelaunch_storage == {}
+    finally:
+        sys.settrace(previous)
+        assert owner.cleanup()
+
+
+def test_foreign_closed_invocation_cannot_authorize_token_withdrawal(tmp_path):
+    """A different closed invocation cannot prove this token has ended."""
+    from topsailai.hooks.script_runner import _StorageCustody
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    debt = owner.cleanup_debts()[0]
+    custody = _StorageCustody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    foreign_token = object()
+    custody._write_retry_owner(foreign_token)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    other = runner._retry_cleanup_invocation("unrelated-closed-invocation")
+    next(other)
+    try:
+        other.send(other)
+    except StopIteration as done:
+        assert done.value is True
+    assert other.gi_frame is None
+    custody._write_handback((custody, foreign_token, other))
+    try:
+        assert runner.retry_cleanup(debt.debt_id) is False
+        assert custody.retry_owner is foreign_token
+        assert runner._prelaunch_storage[id(owner)] is custody
+    finally:
+        assert owner.cleanup()
+
+
+@pytest.mark.parametrize("replacement", ["copy", "list", "dict", "missing", "foreign-token", "foreign-generator", "foreign-custody"])
+def test_retry_receipt_requires_exact_provenance(tmp_path, monkeypatch, replacement):
+    """Reject substitutions without stealing the original invocation authority."""
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    debt = owner.cleanup_debts()[0]
+    custody = _StorageCustody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    primary = SystemExit("receipt source")
+
+    def cleanup(storage, alias):
+        """Capture a genuine receipt while preserving the exact directory."""
+        raise primary
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(TemporaryStorageOwner, "retry_cleanup", cleanup)
+            with pytest.raises(SystemExit) as caught:
+                runner.retry_cleanup(debt.debt_id)
+        assert caught.value is primary
+        receipt = custody.retry_handback
+        assert runner._retry_receipts[id(custody)] is receipt
+        assert receipt[2].gi_frame is None
+        custody._write_retry_owner(receipt[1])
+        proof = tuple(list(receipt))
+        other = runner._retry_cleanup_invocation("other-receipt")
+        next(other)
+        with pytest.raises(StopIteration):
+            other.send(other)
+        if replacement == "list":
+            proof = list(receipt)
+        elif replacement == "dict":
+            proof = {"custody": custody, "token": receipt[1], "invocation": receipt[2]}
+        elif replacement == "missing":
+            proof = None
+        elif replacement == "foreign-token":
+            custody._write_retry_owner(object())
+            proof = receipt
+        elif replacement == "foreign-generator":
+            proof = (custody, receipt[1], other)
+        elif replacement == "foreign-custody":
+            proof = (_StorageCustody(owner), receipt[1], receipt[2])
+        custody._write_handback(proof)
+        token = custody.retry_owner
+        assert runner.retry_cleanup(debt.debt_id) is False
+        assert custody.retry_owner is token
+        assert runner._prelaunch_storage[id(owner)] is custody
+        assert runner.retry_cleanup("unrelated-receipt") is True
+        custody._write_handback(receipt)
+        custody._write_retry_owner(receipt[1])
+        assert runner.retry_cleanup(debt.debt_id) is True
+        assert runner._prelaunch_storage == {}
+        assert runner._retry_receipts == {}
+    finally:
+        assert owner.cleanup()
+
+
+def test_retry_lifecycle_rejects_foreign_driver(tmp_path):
+    """Reject compatible closed generators before publishing any authority."""
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    foreign = runner._retry_cleanup_invocation("foreign")
+    next(foreign)
+    with pytest.raises(StopIteration):
+        foreign.send(foreign)
+    invocation = runner._retry_cleanup_invocation("exact")
+    next(invocation)
+    with pytest.raises(ValueError, match="exact invocation"):
+        invocation.send(foreign)
+    assert runner._retry_receipts == {}
+
+
+@pytest.mark.parametrize("observation", ["native", "view", "missing", "malformed", "interrupt"])
+@pytest.mark.parametrize("alias_kind", ["storage", "record"])
+def test_active_exact_retry_precedes_owner_observation(tmp_path, monkeypatch, observation, alias_kind):
+    """Known exact aliases remain excluded despite unavailable owner observations."""
+    import builtins
+    from topsailai.hooks import script_runner as module
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    debt = owner.cleanup_debts()[0]
+    custody = _StorageCustody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    token = object()
+    custody._write_retry_owner(token)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    alias = debt.debt_id
+    if alias_kind == "record":
+        from topsailai.hooks.process_state import LaunchRecord
+        custody._write_state(record=LaunchRecord("exact-record-observation"))
+        custody._write_state(execution_owner=object())
+        alias = custody.record.debt_id
+    hits = []
+
+    class ObjectView:
+        """Expose bounded invalid observation without modifying shared builtins."""
+        @staticmethod
+        def __getattribute__(value, name):
+            """Only alter the exact owner's state observation."""
+            state = builtins.object.__getattribute__(value, name)
+            if value is not owner or name != "__dict__" or observation == "native":
+                return state
+            hits.append(True)
+            if observation == "interrupt":
+                raise KeyboardInterrupt("owner observation")
+            if observation == "missing":
+                return {}
+            if observation == "malformed":
+                return None
+            return type("AuthorityView", (), {})()
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "object", ObjectView, raising=False)
+            assert runner.retry_cleanup(alias) is False
+            assert hits == []
+            assert runner.retry_cleanup("unrelated-owner-observation") is True
+        assert custody.retry_owner is token
+        assert runner._prelaunch_storage[id(owner)] is custody
+        assert owner.path.exists()
+        custody._write_retry_owner(None)
+        custody._write_state(execution_owner=None)
+        assert runner.retry_cleanup(debt.debt_id) is True
+        assert runner._prelaunch_storage == {}
+    finally:
+        assert owner.cleanup()
+
+
+@pytest.mark.parametrize("registry_state", ["replacement", "missing"])
+def test_retry_registry_replacement_retains_exact_token_until_restoration(
+    tmp_path, monkeypatch, registry_state,
+):
+    """Detached invocation authority survives until the exact owner restores identity."""
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    owned_path = owner.path
+    debt = owner.cleanup_debts()[0]
+    original = _StorageCustody(owner)
+    original._write_state(pending=True, storage_alias=debt)
+    replacement = _StorageCustody(owner)
+    replacement._write_state(pending=True, storage_alias=debt)
+    foreign = object()
+    replacement._write_retry_owner(foreign)
+    runner._write_prelaunch_storage(((id(owner), original),))
+    runner._storage[debt.debt_id] = owner
+    captured = []
+
+    def cleanup(storage, alias):
+        """Replace only registry authority without deleting any owned resource."""
+        captured.append(original.retry_owner)
+        if registry_state == "replacement":
+            runner._write_prelaunch_storage(((id(owner), replacement),))
+            assert runner.retry_cleanup(alias) is False
+        else:
+            runner._write_prelaunch_storage(retire=(id(owner),))
+        assert runner.retry_cleanup("unrelated-replacement") is True
+        return False
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(TemporaryStorageOwner, "retry_cleanup", cleanup)
+            assert runner.retry_cleanup(debt.debt_id) is False
+        assert original.retry_owner is captured[0]
+        assert replacement.retry_owner is foreign
+        assert owner.path.exists()
+        receipt = runner._retry_receipts[id(original)]
+        assert receipt is original.retry_handback
+        assert receipt[2].gi_frame is None
+        runner._write_prelaunch_storage(((id(owner), original),))
+        assert runner.retry_cleanup(debt.debt_id) is True
+        assert original.retry_owner is None
+        assert replacement.retry_owner is foreign
+        assert id(owner) not in runner._prelaunch_storage
+        assert id(original) not in runner._retry_receipts
+        assert not owned_path.exists()
+    finally:
+        assert owner.cleanup()
+
+
+def test_retry_native_finalizer_exit_retains_exact_lock_release_responsibility(tmp_path, monkeypatch):
+    """A one-shot exit interruption must not strand global recovery exclusion."""
+    import dis
+    import sys
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    path = owner.path
+    debt = owner.cleanup_debts()[0]
+    custody = _StorageCustody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    code = OwnedHookScriptRunner._retry_cleanup_invocation.__code__
+    instructions = list(dis.get_instructions(code))
+    targets = {i.offset for n, i in enumerate(instructions) if i.opname == 'CALL'
+               and n >= 3 and all(x.opname == 'LOAD_CONST' and x.argval is None
+                                  for x in instructions[n-3:n])}
+    assert targets
+    failure = KeyboardInterrupt('finalizer-exit-one-shot')
+    armed = []
+    hits = []
+
+    def cleanup(storage, alias):
+        """Arm after retry admission without releasing real storage."""
+        armed.append(True)
+        return False
+
+    def trace(frame, event, arg):
+        """Interrupt normal context exit only after actual token withdrawal."""
+        if frame.f_code is code:
+            frame.f_trace_opcodes = True
+            if (event == 'opcode' and frame.f_lasti in targets and armed
+                    and frame.f_locals.get('selected') is custody
+                    and custody.retry_owner is None):
+                armed.clear()
+                hits.append(frame.f_lasti)
+                assert runner._lock.locked()
+                raise failure
+        return trace
+
+    previous = sys.gettrace()
+    try:
+        monkeypatch.setattr(TemporaryStorageOwner, 'retry_cleanup', cleanup)
+        sys.settrace(trace)
+        with pytest.raises(KeyboardInterrupt) as caught:
+            runner.retry_cleanup(debt.debt_id)
+        sys.settrace(previous)
+        assert caught.value is failure
+        assert len(hits) == 1
+        available = runner._lock.acquire(False)
+        if available:
+            runner._lock.release()
+        print('exit_opcode=', hits[0], 'lock_available=', available,
+              'token_withdrawn=', custody.retry_owner is None)
+        assert available, 'finalizer exit interruption stranded runner exclusion'
+    finally:
+        sys.settrace(previous)
+        if runner._lock.locked():
+            runner._lock.release()
+        print('Deleting probe-owned storage:', path)
+        assert owner.cleanup()
+
+
+def test_reused_primary_diagnostics_do_not_accumulate_duplicate_finalizer_notes(tmp_path, monkeypatch):
+    """Repeated exact finalizer diagnostics must not grow an identical primary forever."""
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    path = owner.path
+    debt = owner.cleanup_debts()[0]
+    custody = _StorageCustody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    primary = SystemExit('reused cleanup primary')
+    secondary = KeyboardInterrupt('repeated finalizer secondary')
+    native = runner._lock
+    armed = []
+    counts = []
+
+    class Lock:
+        """Release native exclusion before each one-shot finalizer exception."""
+        def __enter__(self):
+            """Acquire the exact probe-owned native lock."""
+            native.acquire()
+            return self
+
+        def __exit__(self, kind, error, tb):
+            """Hand back exclusion before emitting the bounded source failure."""
+            native.release()
+            if armed:
+                armed.clear()
+                raise secondary
+
+    def cleanup(storage, alias):
+        """Repeat the exact primary object without replacing real resource debt."""
+        armed.append(True)
+        raise primary
+
+    try:
+        runner._lock = Lock()
+        monkeypatch.setattr(TemporaryStorageOwner, 'retry_cleanup', cleanup)
+        for _ in range(8):
+            with pytest.raises(SystemExit) as caught:
+                runner.retry_cleanup(debt.debt_id)
+            assert caught.value is primary
+            assert any(frame.name == 'cleanup' for frame in caught.traceback)
+            assert primary.__cause__ is None and primary.__context__ is None
+            assert custody.retry_owner is None
+            counts.append(len(primary.__notes__))
+        print('diagnostic_counts=', counts, 'unique_notes=', len(set(primary.__notes__)))
+        assert len(primary.__notes__) == len(set(primary.__notes__)), 'identical finalizer diagnostics accumulate without bound'
+    finally:
+        runner._lock = native
+        print('Deleting exact diagnostic probe storage:', path)
+        assert owner.cleanup()
+
+
+@pytest.mark.parametrize("phase", ["finalizer", "terminal handback"])
+def test_retry_secondary_notes_bound_runner_owned_diagnostics(phase):
+    """Keep caller notes and cap distinct runner diagnostics across recovery attempts."""
+    from topsailai.hooks.script_runner import _note_retry_interruption
+
+    primary = SystemExit("cleanup")
+    primary.add_note("caller note")
+    for index in range(12):
+        kind = type("Secondary" + str(index), (BaseException,), {})
+        secondary = kind("unbounded text " * 500)
+        _note_retry_interruption(primary, phase, secondary)
+        _note_retry_interruption(primary, phase, secondary)
+    assert primary.__notes__[0] == "caller note"
+    assert len(primary.__notes__) == 5
+    assert len(set(primary.__notes__)) == 5
+    assert all(len(note) < 100 for note in primary.__notes__)
+    assert primary.__cause__ is None and primary.__context__ is None
+
+
+@pytest.mark.parametrize("notes", [None, "not a list", [object()]])
+def test_retry_secondary_notes_preserve_malformed_caller_state(notes):
+    """Malformed diagnostics must neither replace caller state nor escape as success."""
+    from topsailai.hooks.script_runner import _note_retry_interruption
+
+    primary = SystemExit("cleanup")
+    primary.__notes__ = notes
+    _note_retry_interruption(primary, "finalizer", KeyboardInterrupt("secondary"))
+    assert primary.__notes__ is notes
+
+
+def test_retry_secondary_notes_missing_and_failed_write():
+    """Missing notes initialize while a rejected write cannot replace primary failure."""
+    from topsailai.hooks.script_runner import _note_retry_interruption
+
+    class RejectNotes(SystemExit):
+        """Reject diagnostic storage without changing the cleanup exception object."""
+        def __setattr__(self, name, value):
+            """Refuse only notes publication."""
+            if name == "__notes__":
+                raise RuntimeError("notes write denied")
+            super().__setattr__(name, value)
+
+    primary = SystemExit("cleanup")
+    _note_retry_interruption(primary, "finalizer", KeyboardInterrupt("a"))
+    _note_retry_interruption(primary, "finalizer", KeyboardInterrupt("b"))
+    _note_retry_interruption(primary, "terminal handback", KeyboardInterrupt("c"))
+    assert primary.__notes__ == ["Retry finalizer interrupted: KeyboardInterrupt",
+                                 "Retry terminal handback interrupted: KeyboardInterrupt"]
+    rejected = RejectNotes("original")
+    _note_retry_interruption(rejected, "finalizer", KeyboardInterrupt())
+    assert not hasattr(rejected, "__notes__")
+    assert rejected.args == ("original",)
+
+
+
+def test_retry_secondary_notes_share_budget_without_owning_caller_text():
+    """Both phases share one budget without claiming identical caller-authored text."""
+    from topsailai.hooks.script_runner import _note_retry_interruption, _RetryInterruptionNote
+
+    primary = SystemExit("cleanup")
+    caller = "Retry finalizer interrupted: KeyboardInterrupt"
+    primary.add_note(caller)
+    for index in range(12):
+        phase = "finalizer" if index % 2 else "terminal handback"
+        kind = type("Distinct" + str(index), (BaseException,), {})
+        _note_retry_interruption(primary, phase, kind())
+    assert primary.__notes__[0] is caller
+    assert sum(type(note) is _RetryInterruptionNote for note in primary.__notes__) == 4
+    assert len(primary.__notes__) == 5
+
+
+def test_retry_secondary_notes_read_failure_keeps_primary():
+    """A hostile diagnostic read must not escape instead of the cleanup failure."""
+    from topsailai.hooks.script_runner import _note_retry_interruption
+
+    class RejectRead(SystemExit):
+        """Reject only diagnostic reads."""
+        def __getattribute__(self, name):
+            """Keep failure state available while denying notes observation."""
+            if name == "__notes__":
+                raise KeyboardInterrupt("notes read denied")
+            return super().__getattribute__(name)
+
+    primary = RejectRead("original")
+    _note_retry_interruption(primary, "finalizer", KeyboardInterrupt())
+    assert primary.args == ("original",)
+
+
+@pytest.mark.parametrize("override_mode", ["return", "raise", "malformed"])
+@pytest.mark.parametrize("finalizer_failure", [False, True])
+def test_retry_native_traceback_dispatch_preserves_cleanup_primary(tmp_path, monkeypatch, override_mode, finalizer_failure):
+    """Native rethrow must retain cleanup identity and source despite subclass overrides."""
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    calls = []
+    foreign = RuntimeError("foreign traceback error")
+
+    class Primary(SystemExit):
+        """Expose public exception dispatch without mutating private authority."""
+        def with_traceback(self, tb):
+            """Return or raise a foreign exception if dynamic dispatch occurs."""
+            calls.append(tb)
+            if override_mode == "raise":
+                raise foreign
+            return foreign
+
+        def __getattribute__(self, name):
+            """Expose malformed traceback observation only in the designated case."""
+            if name == "__traceback__" and override_mode == "malformed":
+                return object()
+            return super().__getattribute__(name)
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    debt = owner.cleanup_debts()[0]
+    custody = _StorageCustody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    primary = Primary("exact cleanup primary")
+    primary.add_note("caller diagnostic")
+    native = runner._lock
+    armed = []
+
+    class Lock:
+        """Hand back native exclusion before a secondary finalizer failure."""
+        def __enter__(self):
+            """Acquire only the exact test lock."""
+            native.acquire()
+            return self
+
+        def __exit__(self, kind, error, tb):
+            """Release before raising so this test isolates primary dispatch."""
+            native.release()
+            if armed and finalizer_failure:
+                armed.clear()
+                raise KeyboardInterrupt("secondary finalizer")
+
+    def cleanup(storage, alias):
+        """Raise the exact cleanup source and arm an optional secondary."""
+        armed.append(True)
+        raise primary
+
+    try:
+        runner._lock = Lock()
+        monkeypatch.setattr(TemporaryStorageOwner, "retry_cleanup", cleanup)
+        with pytest.raises(BaseException) as caught:
+            runner.retry_cleanup(debt.debt_id)
+        assert caught.value is primary
+        assert any(frame.name == "cleanup" for frame in caught.traceback)
+        assert not calls
+        assert primary.__cause__ is None and primary.__context__ is None
+        assert primary.__notes__[0] == "caller diagnostic"
+        assert len(primary.__notes__) <= 2
+        assert custody.retry_owner is None
+    finally:
+        runner._lock = native
+        print("Deleting exact native traceback test storage:", owner.path)
+        assert owner.cleanup()
+
+
+@pytest.mark.parametrize("kind", [StopIteration, StopAsyncIteration, GeneratorExit, SystemExit, KeyboardInterrupt, RuntimeError])
+@pytest.mark.parametrize("secondary", [False, True])
+def test_retry_lifecycle_preserves_exact_cleanup_failure(tmp_path, monkeypatch, kind, secondary):
+    """Transport cleanup failures separately from successful generator completion."""
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    class Primary(kind):
+        """Reject overridable traceback dispatch for every failure category."""
+        def with_traceback(self, tb):
+            """Fail if the runner dispatches through this override."""
+            raise AssertionError("dynamic traceback dispatch")
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    debt = owner.cleanup_debts()[0]
+    custody = _StorageCustody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    primary = Primary("exact cleanup failure")
+    primary.add_note("caller note")
+    native = runner._lock
+    armed = []
+
+    class Lock:
+        """Inject finalizer failure only after releasing the exact native lock."""
+        def __enter__(self):
+            """Acquire the test-owned exclusion."""
+            native.acquire()
+            return self
+
+        def __exit__(self, kind, error, tb):
+            """Release exclusion before the optional bounded secondary."""
+            native.release()
+            if secondary and armed:
+                armed.clear()
+                raise KeyboardInterrupt("finalizer secondary")
+
+    def cleanup(storage, alias):
+        """Raise the accurate primary from the actual storage boundary."""
+        armed.append(True)
+        raise primary
+
+    try:
+        runner._lock = Lock()
+        monkeypatch.setattr(TemporaryStorageOwner, "retry_cleanup", cleanup)
+        with pytest.raises(BaseException) as caught:
+            runner.retry_cleanup(debt.debt_id)
+        assert caught.value is primary
+        assert any(frame.name == "cleanup" for frame in caught.traceback)
+        assert primary.__cause__ is None and primary.__context__ is None
+        assert primary.__notes__[0] == "caller note"
+        assert len(primary.__notes__) <= 2
+        assert custody.retry_owner is None
+        assert native.acquire(False)
+        native.release()
+    finally:
+        runner._lock = native
+        print("Deleting exact lifecycle regression storage:", owner.path)
+        assert owner.cleanup()
+
+
+@pytest.mark.parametrize("kind", [StopIteration, StopAsyncIteration, GeneratorExit, SystemExit, KeyboardInterrupt, RuntimeError])
+@pytest.mark.parametrize("phase", ["finalizer", "terminal"])
+@pytest.mark.parametrize("cleanup_primary", [False, True])
+@pytest.mark.parametrize("hostile", [False, True])
+def test_retry_exit_origin_preserves_exact_failure(tmp_path, monkeypatch, kind, phase, cleanup_primary, hostile):
+    """Preserve exit-origin failures even when a normal completion is already pending."""
+    import inspect
+    import sys
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    calls = []
+
+    class ExitFailure(kind):
+        """Reject dynamic traceback dispatch and malformed public observation."""
+        def with_traceback(self, tb):
+            """Fail if an overridable method is used for lifecycle transport."""
+            calls.append(tb)
+            raise AssertionError("dynamic exit traceback dispatch")
+
+        def __getattribute__(self, name):
+            """Expose a malformed observation without modifying the native traceback."""
+            if name == "__traceback__":
+                return object()
+            return super().__getattribute__(name)
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    debt = owner.cleanup_debts()[0]
+    custody = _StorageCustody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    secondary = (ExitFailure if hostile else kind)("exact exit failure")
+    original = SystemExit("exact cleanup primary") if cleanup_primary else secondary
+    original.add_note("caller exit note")
+    native = runner._lock
+    armed = []
+    old_trace = sys.gettrace()
+    source, first = inspect.getsourcelines(OwnedHookScriptRunner._retry_cleanup_invocation)
+    terminal_line = first + next(index for index, line in enumerate(source)
+                                if "terminal_state = object.__getattribute__" in line)
+
+    class Lock:
+        """Inject only after releasing the exact native exclusion."""
+        def __enter__(self):
+            """Acquire the test's native lock."""
+            native.acquire()
+            return self
+
+        def __exit__(self, kind, error, tb):
+            """Hand back exclusion before the finalizer-origin failure."""
+            native.release()
+            if phase == "finalizer" and armed:
+                armed.clear()
+                raise secondary
+
+    def trace(frame, event, arg):
+        """Raise once inside terminal recovery without altering authority state."""
+        if (phase == "terminal" and event == "line" and armed
+                and frame.f_code is OwnedHookScriptRunner._retry_cleanup_invocation.__code__
+                and frame.f_lineno == terminal_line):
+            armed.clear()
+            raise secondary
+        return trace
+
+    def cleanup(storage, alias):
+        """Arm exit injection and optionally establish cleanup precedence."""
+        armed.append(True)
+        if cleanup_primary:
+            raise original
+        return False
+
+    try:
+        runner._lock = Lock()
+        monkeypatch.setattr(TemporaryStorageOwner, "retry_cleanup", cleanup)
+        sys.settrace(trace)
+        with pytest.raises(BaseException) as caught:
+            runner.retry_cleanup(debt.debt_id)
+        sys.settrace(old_trace)
+        assert caught.value is original
+        expected_source = "cleanup" if cleanup_primary else ("trace" if phase == "terminal" else "__exit__")
+        assert any(frame.name == expected_source for frame in caught.traceback)
+        assert not calls
+        assert original.__cause__ is None and original.__context__ is None
+        assert original.__notes__[0] == "caller exit note"
+        assert len(original.__notes__) == (2 if cleanup_primary else 1)
+        assert custody.retry_owner is None
+        assert native.acquire(False)
+        native.release()
+    finally:
+        sys.settrace(old_trace)
+        runner._lock = native
+        print("Deleting exact exit-origin regression storage:", owner.path)
+        assert owner.cleanup()
+
+
+def test_captured_primary_survives_failure_carrier_handoff(tmp_path, monkeypatch):
+    """A genuine handoff interruption must not replace the captured cleanup primary."""
+    import inspect
+    import sys
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    debt = owner.cleanup_debts()[0]
+    custody = _StorageCustody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    primary = SystemExit("accurate cleanup source")
+    secondary = KeyboardInterrupt("failure carrier handoff")
+    source, first = inspect.getsourcelines(OwnedHookScriptRunner._retry_cleanup_invocation)
+    target = first + next(i for i, line in enumerate(source)
+                          if "return _RetryFailure(primary, primary_traceback)" in line)
+    hits = []
+
+    def cleanup(storage, alias):
+        """Establish the exact main failure through the public storage boundary."""
+        raise primary
+
+    def trace(frame, event, arg):
+        """Interrupt once without modifying private state or frame locals."""
+        if (frame.f_code is OwnedHookScriptRunner._retry_cleanup_invocation.__code__
+                and event == "line" and frame.f_lineno == target and not hits):
+            hits.append(target)
+            raise secondary
+        return trace
+
+    previous = sys.gettrace()
+    try:
+        monkeypatch.setattr(TemporaryStorageOwner, "retry_cleanup", cleanup)
+        sys.settrace(trace)
+        with pytest.raises(BaseException) as caught:
+            runner.retry_cleanup(debt.debt_id)
+        sys.settrace(previous)
+        assert hits == [target]
+        assert custody.retry_owner is None
+        assert runner._lock.acquire(False)
+        runner._lock.release()
+        assert caught.value is primary
+        assert any(frame.name == "cleanup" for frame in caught.traceback)
+        assert primary.__cause__ is None and primary.__context__ is None
+    finally:
+        sys.settrace(previous)
+        print("Deleting exact failure-carrier probe storage:", owner.path)
+        assert owner.cleanup()
+
+
+@pytest.mark.parametrize("window", ["carrier", "completion_value", "driver_observation", "driver_rethrow", "recovery_rethrow"])
+def test_private_failure_custody_delivery_windows(tmp_path, monkeypatch, window):
+    """A genuine handoff interruption must not replace the captured cleanup primary."""
+    import inspect
+    import sys
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    debt = owner.cleanup_debts()[0]
+    custody = _StorageCustody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    primary = SystemExit("accurate cleanup source")
+    secondary = KeyboardInterrupt("failure carrier handoff")
+    function = (OwnedHookScriptRunner._retry_cleanup_invocation
+                if window in ("carrier", "capture_publication") else OwnedHookScriptRunner.retry_cleanup)
+    marker = {"capture_publication": "failure_custody[0] = (invocation, primary, primary_traceback)",
+              "recovery_rethrow": "prepared = BaseException.with_traceback(evidence[1], evidence[2])",
+              "carrier": "return _RetryFailure(primary, primary_traceback)",
+              "completion_value": "outcome = completed.value",
+              "driver_observation": "evidence = failure_custody[0]",
+              "driver_rethrow": "prepared = BaseException.with_traceback(evidence[1], evidence[2])"}[window]
+    source, first = inspect.getsourcelines(function)
+    matches = [first + i for i, line in enumerate(source) if marker in line]
+    target = matches[-1] if window == "recovery_rethrow" else matches[0]
+    hits = []
+    captured = []
+
+    def cleanup(storage, alias):
+        """Establish the exact main failure through the public storage boundary."""
+        captured.append(True)
+        raise primary
+
+    preparatory_hits = []
+
+    def trace(frame, event, arg):
+        """Interrupt once without modifying private state or frame locals."""
+        if (window == "recovery_rethrow" and frame.f_code is function.__code__
+                and event == "line" and frame.f_lineno == matches[0] and not preparatory_hits):
+            preparatory_hits.append(True)
+            raise secondary
+        if (frame.f_code is function.__code__
+                and event == "line" and frame.f_lineno == target and not hits
+                and (window != "driver_observation" or captured)):
+            hits.append(target)
+            raise secondary
+        return trace
+
+    previous = sys.gettrace()
+    try:
+        monkeypatch.setattr(TemporaryStorageOwner, "retry_cleanup", cleanup)
+        if window == "recovery_rethrow":
+            import topsailai.hooks.script_runner as module
+            original_note = module._note_retry_interruption
+
+            def rearm_note(*args):
+                """Rearm the one-shot tracer only for the second recovery boundary."""
+                original_note(*args)
+                sys.settrace(trace)
+                sys._getframe(1).f_trace = trace
+
+            monkeypatch.setattr(module, "_note_retry_interruption", rearm_note)
+        sys.settrace(trace)
+        with pytest.raises(BaseException) as caught:
+            runner.retry_cleanup(debt.debt_id)
+        sys.settrace(previous)
+        assert hits == [target]
+        assert custody.retry_owner is None
+        assert runner._lock.acquire(False)
+        runner._lock.release()
+        assert caught.value is primary
+        assert any(frame.name == "cleanup" for frame in caught.traceback)
+        assert primary.__cause__ is None and primary.__context__ is None
+    finally:
+        sys.settrace(previous)
+        print("Deleting exact failure-carrier probe storage:", owner.path)
+        assert owner.cleanup()
+
+
+
+def test_published_primary_survives_interrupted_recovery_bookkeeping(tmp_path, monkeypatch):
+    """Retain published primary when a finite second fault interrupts recovery bookkeeping."""
+    import inspect
+    import sys
+    import topsailai.hooks.script_runner as module
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    debt = owner.cleanup_debts()[0]
+    custody = _StorageCustody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    primary = SystemExit("exact published cleanup primary")
+    carrier_error = KeyboardInterrupt("carrier interruption")
+    diagnostic_error = KeyboardInterrupt("diagnostic interruption")
+    bookkeeping_error = KeyboardInterrupt("recovery bookkeeping interruption")
+    driver = OwnedHookScriptRunner.retry_cleanup
+    source, first = inspect.getsourcelines(driver)
+    bookkeeping = [first + i for i, line in enumerate(source)
+                   if "evidence = failure_custody[0]" in line][0]
+    source, first = inspect.getsourcelines(OwnedHookScriptRunner._retry_cleanup_invocation)
+    carrier = first + next(i for i, line in enumerate(source)
+                           if "return _RetryFailure(primary, primary_traceback)" in line)
+    hits = []
+    armed = []
+    previous = sys.gettrace()
+
+    def cleanup(storage, alias):
+        """Publish the genuine failure through the actual storage boundary."""
+        raise primary
+
+    def trace(frame, event, arg):
+        """Inject once at each legal intermediate boundary without changing frame state."""
+        if event != "line":
+            return trace
+        if (frame.f_code is OwnedHookScriptRunner._retry_cleanup_invocation.__code__
+                and frame.f_lineno == carrier and not hits):
+            hits.append("carrier")
+            raise carrier_error
+        if (armed and frame.f_code is driver.__code__ and frame.f_lineno == bookkeeping):
+            armed.clear()
+            hits.append("bookkeeping")
+            raise bookkeeping_error
+        return trace
+
+    def interrupted_note(*args):
+        """Interrupt diagnostics once and arm a fault at protected custody observation."""
+        if "bookkeeping" in hits:
+            return
+        armed.append(True)
+        sys.settrace(trace)
+        sys._getframe(1).f_trace = trace
+        raise diagnostic_error
+
+    try:
+        monkeypatch.setattr(TemporaryStorageOwner, "retry_cleanup", cleanup)
+        monkeypatch.setattr(module, "_note_retry_interruption", interrupted_note)
+        sys.settrace(trace)
+        with pytest.raises(BaseException) as caught:
+            runner.retry_cleanup(debt.debt_id)
+        sys.settrace(previous)
+        assert hits == ["carrier", "bookkeeping"]
+        assert custody.retry_owner is None
+        assert runner._lock.acquire(False)
+        runner._lock.release()
+        assert caught.value is primary
+        assert any(frame.name == "cleanup" for frame in caught.traceback)
+        assert primary.__cause__ is None and primary.__context__ is None
+    finally:
+        sys.settrace(previous)
+        print("Deleting exact recovery-bookkeeping regression storage:", owner.path)
+        assert owner.cleanup()
+
+
+def test_published_primary_survives_initial_delivery_recovery(tmp_path, monkeypatch):
+    """Preserve published cleanup primary across the first interrupted driver handler."""
+    import inspect
+    import sys
+    import topsailai.hooks.script_runner as module
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    debt = owner.cleanup_debts()[0]
+    custody = _StorageCustody(owner)
+    custody._write_state(pending=True)
+    custody._write_state(storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    primary = SystemExit("exact initial recovery primary")
+    carrier_error = KeyboardInterrupt("carrier construction interruption")
+    recovery_error = KeyboardInterrupt("initial recovery registration interruption")
+    driver = OwnedHookScriptRunner.retry_cleanup
+    source, first = inspect.getsourcelines(driver)
+    target = first + next(i for i, line in enumerate(source)
+                          if "evidence = failure_custody[0]" in line)
+    hits = []
+    previous = sys.gettrace()
+
+    def cleanup(storage, alias):
+        """Capture the genuine source exception through storage cleanup."""
+        raise primary
+
+    def trace(frame, event, arg):
+        """Interrupt one exact handler line without changing private execution state."""
+        if (frame.f_code is driver.__code__ and event == "line"
+                and frame.f_lineno == target and hits == ["carrier"]):
+            hits.append("initial recovery")
+            raise recovery_error
+        return trace
+
+    def interrupted_carrier(*args):
+        """Arm the legal intermediate interruption before failing carrier construction."""
+        hits.append("carrier")
+        sys.settrace(trace)
+        sys._getframe(1).f_back.f_trace = trace
+        raise carrier_error
+
+    try:
+        monkeypatch.setattr(TemporaryStorageOwner, "retry_cleanup", cleanup)
+        monkeypatch.setattr(module, "_RetryFailure", interrupted_carrier)
+        with pytest.raises(BaseException) as caught:
+            runner.retry_cleanup(debt.debt_id)
+        sys.settrace(previous)
+        assert hits == ["carrier", "initial recovery"]
+        assert custody.retry_owner is None
+        assert runner._lock.acquire(False)
+        runner._lock.release()
+        assert caught.value is primary
+        assert any(frame.name == "cleanup" for frame in caught.traceback)
+        assert primary.__cause__ is None and primary.__context__ is None
+    finally:
+        sys.settrace(previous)
+        print("Deleting exact initial-recovery regression storage:", owner.path)
+        assert owner.cleanup()
+
+
+@pytest.mark.parametrize("operation", ["acquire", "release"])
+@pytest.mark.parametrize("side", ["before", "after"])
+def test_production_retry_lock_native_boundary_converges(operation, side):
+    """Recover an exact published scope around both native lock transitions."""
+    import dis
+    import sys
+    from topsailai.hooks.script_runner import _RecoverableRunnerLock, _RetryLockScope
+
+    lock = _RecoverableRunnerLock()
+    scope = _RetryLockScope(lock, object())
+    code = lock._acquire_scope.__func__.__code__ if operation == "acquire" else scope.recover.__func__.__code__
+    instructions = list(dis.get_instructions(code))
+    method = next(n for n, i in enumerate(instructions)
+                  if i.opname in ("LOAD_ATTR", "LOAD_METHOD") and i.argval == operation)
+    call = next(n for n in range(method, len(instructions)) if instructions[n].opname == "CALL")
+    target = instructions[call if side == "before" else call + 1].offset
+    failure = KeyboardInterrupt("native transition")
+    hits = []
+
+    def trace(frame, event, arg):
+        """Inject once without writing private authority or execution frames."""
+        if frame.f_code is code:
+            frame.f_trace_opcodes = True
+            if event == "opcode" and frame.f_lasti == target and not hits:
+                hits.append(target)
+                raise failure
+        return trace
+
+    if operation == "release":
+        scope.__enter__()
+    previous = sys.gettrace()
+    try:
+        sys.settrace(trace)
+        with pytest.raises(KeyboardInterrupt) as caught:
+            scope.__enter__() if operation == "acquire" else scope.recover()
+    finally:
+        sys.settrace(previous)
+        assert scope.recover()
+    assert caught.value is failure and hits == [target]
+    assert not lock.locked()
+    assert lock.acquire(False)
+    lock.release()
+
+
+def test_production_retry_lock_foreign_and_nested_scope_cannot_release():
+    """Foreign and rejected nested scopes cannot borrow a live owner's ticket."""
+    import threading
+    from topsailai.hooks.script_runner import _RecoverableRunnerLock, _RetryLockScope
+
+    lock = _RecoverableRunnerLock()
+    entered, finish = threading.Event(), threading.Event()
+    observed = []
+
+    # Scope identity must be created in its actual owning thread.
+    def actual_owner():
+        """Create and expose a real thread-owned scope without mutating its fields."""
+        local_scope = _RetryLockScope(lock, object())
+        observed.append(local_scope)
+        with local_scope:
+            entered.set()
+            assert finish.wait(5)
+            observed.append(lock.locked())
+
+    worker = threading.Thread(target=actual_owner)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        exact = observed[0]
+        assert exact.recover() is False
+        assert lock.acquire(False) is False
+        assert lock.locked()
+    finally:
+        finish.set()
+        worker.join(5)
+    assert not worker.is_alive() and observed[1] is True
+    assert not lock.locked()
+    with lock:
+        nested = _RetryLockScope(lock, object())
+        with pytest.raises(RuntimeError, match="nonrecursive"):
+            nested.__enter__()
+        assert nested.recover()
+        assert lock.locked()
+    assert not lock.locked()
+
+
+@pytest.mark.parametrize("side", ["before", "after"])
+def test_production_retry_lock_finite_repeated_release_retains_ticket(side):
+    """A retained scope converges after multiple finite native release interruptions."""
+    import dis
+    import sys
+    from topsailai.hooks.script_runner import _RecoverableRunnerLock, _RetryLockScope
+
+    lock = _RecoverableRunnerLock()
+    scope = _RetryLockScope(lock, object())
+    scope.__enter__()
+    code = scope.recover.__func__.__code__
+    instructions = list(dis.get_instructions(code))
+    method = next(n for n, i in enumerate(instructions)
+                  if i.opname in ("LOAD_ATTR", "LOAD_METHOD") and i.argval == "release")
+    call = next(n for n in range(method, len(instructions)) if instructions[n].opname == "CALL")
+    target = instructions[call if side == "before" else call + 1].offset
+    hits = []
+    failures = [KeyboardInterrupt("release first"), SystemExit("release second")]
+
+    def trace(frame, event, arg):
+        """Interrupt each separately armed recovery without changing its ticket."""
+        if frame.f_code is code:
+            frame.f_trace_opcodes = True
+            if event == "opcode" and frame.f_lasti == target:
+                hits.append(target)
+                raise failures[len(hits) - 1]
+        return trace
+
+    previous = sys.gettrace()
+    try:
+        attempts = 2 if side == "before" else 1
+        for index in range(attempts):
+            sys.settrace(trace)
+            with pytest.raises(BaseException) as caught:
+                scope.recover()
+            sys.settrace(previous)
+            assert caught.value is failures[index]
+        assert scope.recover()
+        assert len(hits) == attempts and not lock.locked()
+        with lock:
+            assert scope.recover()
+            assert lock.locked(), "retired scope released an unrelated later ticket"
+    finally:
+        sys.settrace(previous)
+        scope.recover()
+    assert not lock.locked()
+
+
+def test_production_retry_lock_postrelease_foreign_owner_is_not_released():
+    """An unacknowledged native release cannot authorize release of a new owner."""
+    import dis
+    import sys
+    import threading
+    from topsailai.hooks.script_runner import _RecoverableRunnerLock, _RetryLockScope
+
+    lock = _RecoverableRunnerLock()
+    scope = _RetryLockScope(lock, object())
+    scope.__enter__()
+    code = scope.recover.__func__.__code__
+    instructions = list(dis.get_instructions(code))
+    method = next(n for n, i in enumerate(instructions)
+                  if i.opname in ("LOAD_ATTR", "LOAD_METHOD") and i.argval == "release")
+    call = next(n for n in range(method, len(instructions)) if instructions[n].opname == "CALL")
+    target = instructions[call + 1].offset
+    ready, finish = threading.Event(), threading.Event()
+    observed, hits = [], []
+    failure = KeyboardInterrupt("release acknowledgement")
+
+    def foreign():
+        """Own native exclusion until exact historical recovery is checked."""
+        with lock:
+            ready.set()
+            assert finish.wait(5)
+            observed.append(lock.locked())
+
+    worker = threading.Thread(target=foreign)
+
+    def trace(frame, event, arg):
+        """Transfer only after native release then interrupt acknowledgement once."""
+        if frame.f_code is code:
+            frame.f_trace_opcodes = True
+            if event == "opcode" and frame.f_lasti == target and not hits:
+                hits.append(target)
+                worker.start()
+                assert ready.wait(5)
+                raise failure
+        return trace
+
+    previous = sys.gettrace()
+    try:
+        sys.settrace(trace)
+        with pytest.raises(KeyboardInterrupt) as caught:
+            scope.recover()
+        sys.settrace(previous)
+        assert caught.value is failure and hits == [target]
+        assert scope.recover()
+        assert lock.acquire(False) is False
+    finally:
+        sys.settrace(previous)
+        finish.set()
+        if worker.ident is not None:
+            worker.join(5)
+        scope.recover()
+    assert not worker.is_alive() and observed == [True]
+    assert not lock.locked()
+
+
+def test_production_retry_lock_foreign_scope_entry_fails_before_acquisition():
+    """Reject a foreign scope before native acquire can create unowned debt."""
+    import threading
+    from topsailai.hooks.script_runner import _RecoverableRunnerLock, _RetryLockScope
+
+    lock = _RecoverableRunnerLock()
+    scope = _RetryLockScope(lock, object())
+    failures = []
+
+    def foreign():
+        """Attempt an actual foreign-thread entry without changing the scope."""
+        try:
+            scope.__enter__()
+        except RuntimeError as failure:
+            failures.append(failure)
+
+    worker = threading.Thread(target=foreign)
+    worker.start()
+    worker.join(5)
+    assert not worker.is_alive() and len(failures) == 1
+    assert not lock.locked()
+    with scope:
+        assert lock.locked()
+    assert not lock.locked()
+
+
+@pytest.mark.parametrize("surface", ["registry", "receipt", "custody", "attribute", "lease", "proof"])
+def test_authority_compatibility_raw_bypass_is_rejected(tmp_path, surface):
+    """Reject native compatibility writes without changing exact active authority."""
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    custody = _StorageCustody(owner)
+    token = object()
+    custody._write_retry_owner(token)
+    custody._write_state(execution_lease=(token,))
+    receipt = (custody, token, object())
+    custody._write_handback(receipt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._write_retry_receipts(((id(custody), receipt),))
+    operations = {
+        "registry": lambda: dict.__setitem__(runner._prelaunch_storage, id(owner), object()),
+        "receipt": lambda: dict.__setitem__(runner._retry_receipts, id(custody), tuple(list(receipt))),
+        "custody": lambda: dict.__setitem__(custody.__dict__, "retry_owner", None),
+        "attribute": lambda: object.__setattr__(custody, "retry_owner", None),
+        "lease": lambda: list.__setitem__(custody.execution_lease, 0, None),
+        "proof": lambda: object.__setattr__(custody, "retry_handback", tuple(list(receipt))),
+    }
+    with pytest.raises((TypeError, AttributeError)):
+        operations[surface]()
+    assert runner._prelaunch_storage[id(owner)] is custody
+    assert runner._retry_receipts[id(custody)] is receipt
+    assert custody.retry_owner is token
+    assert custody.execution_lease[0] is token
+    assert custody.retry_handback is receipt
+
+
+@pytest.mark.parametrize("authority", ["retry_receipts", "prelaunch_storage"])
+def test_receipt_authority_exact_snapshot_transition(tmp_path, authority):
+    """Reject stale snapshots and preserve detached exact receipt identities."""
+    projection = "_" + authority
+    transition_name = "_transition_" + authority
+    write_name = "_write_" + authority
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    initial = getattr(runner, projection)
+    receipt = (object(), object(), object())
+    assert getattr(runner, transition_name)(initial, ((1, receipt),))
+    published = getattr(runner, projection)
+    assert published[1] is receipt and dict(initial) == {}
+    assert not getattr(runner, transition_name)(initial, ((1, object()),))
+    assert getattr(runner, projection) is published
+    with pytest.raises((AttributeError, TypeError)):
+        object.__setattr__(runner, projection, {})
+    assert getattr(runner, transition_name)(published, retire=(1,))
+    assert dict(getattr(runner, projection)) == {} and published[1] is receipt
+
+
+@pytest.mark.parametrize("authority", ["retry_receipts", "prelaunch_storage"])
+def test_receipt_authority_concurrent_expected_snapshot(tmp_path, authority):
+    """Permit at most one concurrent writer for one exact immutable snapshot."""
+    projection = "_" + authority
+    transition_name = "_transition_" + authority
+    write_name = "_write_" + authority
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    expected = getattr(runner, projection)
+    ready = threading.Barrier(3)
+    outcomes = []
+
+    def publish(identity):
+        """Race legal transitions without sharing mutable canonical containers."""
+        ready.wait()
+        outcomes.append(getattr(runner, transition_name)(expected, ((identity, identity),)))
+
+    workers = [threading.Thread(target=publish, args=(identity,)) for identity in (1, 2)]
+    for worker in workers:
+        worker.start()
+    ready.wait()
+    for worker in workers:
+        worker.join(5)
+        assert not worker.is_alive()
+    assert sorted(outcomes) == [False, True]
+    assert len(getattr(runner, projection)) == 1 and dict(expected) == {}
+
+
+@pytest.mark.parametrize("phase", ["acquire", "before_commit", "after_commit"])
+@pytest.mark.parametrize("retirement", [False, True])
+@pytest.mark.parametrize("authority", ["retry_receipts", "prelaunch_storage"])
+def test_receipt_authority_interrupted_transition_converges(tmp_path, monkeypatch, phase, retirement, authority):
+    """Keep exact immutable authority and lock responsibility across finite interruptions."""
+    projection = "_" + authority
+    transition_name = "_transition_" + authority
+    write_name = "_write_" + authority
+    import inspect
+    import sys
+    import topsailai.hooks.script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    receipt = (object(), object(), object())
+    if retirement:
+        getattr(runner, write_name)(((1, receipt),))
+    expected = getattr(runner, projection)
+    changes = () if retirement else ((1, receipt),)
+    retire = (1,) if retirement else ()
+    failure = KeyboardInterrupt("exact receipt transition interruption")
+    hits = []
+    previous = sys.gettrace()
+    acquire = module._RecoverableRunnerLock._acquire_scope
+    source, first = inspect.getsourcelines(module._private_mapping_authority)
+    marker = "snapshot = types.MappingProxyType(replacement)" if phase == "before_commit" else "return True"
+    target = first + next(i for i, line in enumerate(source) if marker in line)
+
+    def interrupted_acquire(lock, scope, blocking=True, timeout=-1):
+        """Interrupt after the native acquisition while exact responsibility remains armed."""
+        result = acquire(lock, scope, blocking, timeout)
+        if not hits:
+            hits.append(phase)
+            raise failure
+        return result
+
+    def trace(frame, event, arg):
+        """Inject only at the selected production line without altering closure state."""
+        if (event == "line" and frame.f_code.co_name == "transition"
+                and frame.f_code.co_filename == module.__file__
+                and frame.f_lineno == target and not hits):
+            hits.append(phase)
+            raise failure
+        return trace
+
+    try:
+        if phase == "acquire":
+            monkeypatch.setattr(module._RecoverableRunnerLock, "_acquire_scope", interrupted_acquire)
+        else:
+            sys.settrace(trace)
+        with pytest.raises(KeyboardInterrupt) as caught:
+            getattr(runner, transition_name)(expected, changes, retire)
+        sys.settrace(previous)
+        assert hits == [phase] and caught.value is failure
+        current = getattr(runner, projection)
+        if phase == "after_commit":
+            assert current is not expected
+            assert not getattr(runner, transition_name)(expected, changes, retire)
+        else:
+            assert current is expected
+        assert dict(expected) == ({1: receipt} if retirement else {})
+        assert getattr(runner, transition_name)(current, changes, retire)
+        assert dict(getattr(runner, projection)) == ({} if retirement else {1: receipt})
+        assert failure.__cause__ is None and failure.__context__ is None
+    finally:
+        sys.settrace(previous)
+
+
+@pytest.mark.parametrize("authority", ["retry_receipts", "prelaunch_storage"])
+def test_receipt_authority_foreign_and_copied_snapshots(tmp_path, authority):
+    """Reject foreign and equal copied evidence without minting publication authority."""
+    projection = "_" + authority
+    transition_name = "_transition_" + authority
+    write_name = "_write_" + authority
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    other = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    expected = getattr(runner, projection)
+    for foreign in (getattr(other, projection), dict(expected), None, (), object()):
+        assert not getattr(runner, transition_name)(foreign, ((1, object()),))
+        assert getattr(runner, projection) is expected
+    assert getattr(runner, transition_name)(expected, ((1, object()),))
+
+
+@pytest.mark.parametrize("authority", ["retry_receipts", "prelaunch_storage"])
+def test_receipt_authority_finite_repeated_acquire_interruption(tmp_path, monkeypatch, authority):
+    """Recover the exact scope after each bounded interruption and eventually publish."""
+    projection = "_" + authority
+    transition_name = "_transition_" + authority
+    write_name = "_write_" + authority
+    import topsailai.hooks.script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    original = module._RecoverableRunnerLock._acquire_scope
+    failures = [KeyboardInterrupt("receipt acquire " + str(i)) for i in range(3)]
+    remaining = list(failures)
+    expected = getattr(runner, projection)
+    receipt = (object(), object(), object())
+
+    def acquire(lock, scope, blocking=True, timeout=-1):
+        """Consume a finite interruption after native ownership becomes observable."""
+        result = original(lock, scope, blocking, timeout)
+        if remaining:
+            raise remaining.pop(0)
+        return result
+
+    monkeypatch.setattr(module._RecoverableRunnerLock, "_acquire_scope", acquire)
+    for failure in failures:
+        with pytest.raises(KeyboardInterrupt) as caught:
+            getattr(runner, transition_name)(expected, ((1, receipt),))
+        assert caught.value is failure and getattr(runner, projection) is expected
+    assert getattr(runner, transition_name)(expected, ((1, receipt),))
+    assert getattr(runner, projection)[1] is receipt
+
+
+@pytest.mark.parametrize("after_release", [False, True])
+@pytest.mark.parametrize("authority", ["retry_receipts", "prelaunch_storage"])
+def test_receipt_authority_native_release_interruption(tmp_path, monkeypatch, after_release, authority):
+    """Retain exact scope through one interrupted native release and converge safely."""
+    projection = "_" + authority
+    transition_name = "_transition_" + authority
+    write_name = "_write_" + authority
+    import topsailai.hooks.script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    expected = getattr(runner, projection)
+    receipt = (object(), object(), object())
+    original = module._RetryLockScope.recover
+    failure = SystemExit("exact receipt release interruption")
+    hits = []
+
+    def recover(scope):
+        """Interrupt once before or after release without changing ticket ownership."""
+        if hits:
+            return original(scope)
+        hits.append(after_release)
+        if after_release:
+            original(scope)
+        raise failure
+
+    monkeypatch.setattr(module._RetryLockScope, "recover", recover)
+    with pytest.raises(SystemExit) as caught:
+        getattr(runner, transition_name)(expected, ((1, receipt),))
+    assert caught.value is failure and hits == [after_release]
+    published = getattr(runner, projection)
+    assert published is not expected and published[1] is receipt
+    assert getattr(runner, transition_name)(published, retire=(1,))
+    assert getattr(runner, projection) == {}
+    assert failure.__cause__ is None and failure.__context__ is None
+
+
+@pytest.mark.parametrize("replacement", [None, object(), (), (object(), object(), object())])
+def test_handback_authority_exact_snapshot_and_raw_shadow(tmp_path, replacement):
+    """Reject stale proof writers and ignore forged compatibility dictionary shadows."""
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    custody = _StorageCustody(TemporaryStorageOwner(tmp_path))
+    initial = custody._observe_handback()
+    proof = (custody, object(), object())
+    custody._write_handback(proof)
+    published = custody._observe_handback()
+    assert custody.retry_handback is proof and initial["proof"] is None
+    assert not custody._transition_handback(initial, (("proof", replacement),))
+    assert custody._observe_handback() is published
+    with pytest.raises(TypeError):
+        custody.__dict__["retry_handback"] = replacement
+    assert custody.retry_handback is proof
+    with pytest.raises(AttributeError):
+        object.__setattr__(custody, "retry_handback", replacement)
+    with pytest.raises(TypeError):
+        dict.__setitem__(published, "proof", replacement)
+    assert custody.retry_handback is proof
+    custody._write_handback(None)
+    assert custody.retry_handback is None and published["proof"] is proof
+
+
+@pytest.mark.parametrize("phase", ["acquire", "before_commit", "after_commit", "release_before", "release_after"])
+def test_handback_authority_interruption_converges(tmp_path, monkeypatch, phase):
+    """Preserve committed proof identity and exact release responsibility at writer boundaries."""
+    import inspect
+    import sys
+    import topsailai.hooks.script_runner as module
+
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    expected = custody._observe_handback()
+    proof = (custody, object(), object())
+    failure = KeyboardInterrupt("proof writer " + phase)
+    hits = []
+    previous = sys.gettrace()
+    acquire = module._RecoverableRunnerLock._acquire_scope
+    recover = module._RetryLockScope.recover
+    source, first = inspect.getsourcelines(module._private_mapping_authority)
+    target = first + next(i for i, line in enumerate(source)
+                          if ("snapshot = types.MappingProxyType(replacement)" if phase == "before_commit"
+                              else "return True") in line)
+
+    def interrupted_acquire(lock, scope, blocking=True, timeout=-1):
+        """Interrupt once after the exact native acquire without changing its ticket."""
+        result = acquire(lock, scope, blocking, timeout)
+        if not hits:
+            hits.append(phase)
+            raise failure
+        return result
+
+    def interrupted_recover(scope):
+        """Keep a single release interruption bounded and preserve native ownership."""
+        if hits:
+            return recover(scope)
+        hits.append(phase)
+        if phase == "release_after":
+            recover(scope)
+        raise failure
+
+    def trace(frame, event, arg):
+        """Target only the production writer line without accessing closure cells."""
+        if (event == "line" and frame.f_code.co_name == "transition"
+                and frame.f_code.co_filename == module.__file__
+                and frame.f_lineno == target and not hits):
+            hits.append(phase)
+            raise failure
+        return trace
+
+    try:
+        if phase == "acquire":
+            monkeypatch.setattr(module._RecoverableRunnerLock, "_acquire_scope", interrupted_acquire)
+        elif phase.startswith("release"):
+            monkeypatch.setattr(module._RetryLockScope, "recover", interrupted_recover)
+        else:
+            sys.settrace(trace)
+        with pytest.raises(KeyboardInterrupt) as caught:
+            custody._transition_handback(expected, (("proof", proof),))
+        sys.settrace(previous)
+        assert caught.value is failure and hits == [phase]
+        current = custody._observe_handback()
+        if phase in ("after_commit", "release_before", "release_after"):
+            assert current is not expected and custody.retry_handback is proof
+            assert not custody._transition_handback(expected, (("proof", None),))
+        else:
+            assert current is expected and custody.retry_handback is None
+        assert custody._transition_handback(current, (("proof", None),))
+        assert custody.retry_handback is None
+        assert failure.__cause__ is None and failure.__context__ is None
+    finally:
+        sys.settrace(previous)
+
+
+def test_handback_authority_concurrent_foreign_and_copied_snapshots(tmp_path):
+    """Allow one exact concurrent writer and reject copied or transplanted snapshot evidence."""
+    from topsailai.hooks.script_runner import _StorageCustody
+
+    custody = _StorageCustody(TemporaryStorageOwner(tmp_path))
+    other = _StorageCustody(TemporaryStorageOwner(tmp_path))
+    expected = custody._observe_handback()
+    for foreign in (other._observe_handback(), dict(expected), None, (), object()):
+        assert not custody._transition_handback(foreign, (("proof", object()),))
+        assert custody._observe_handback() is expected
+    barrier = threading.Barrier(3)
+    results = []
+    proofs = [(custody, object(), object()), (custody, object(), object())]
+
+    def write(proof):
+        """Race controlled writers without replacing capability or closure state."""
+        barrier.wait()
+        results.append((proof, custody._transition_handback(expected, (("proof", proof),))))
+
+    workers = [threading.Thread(target=write, args=(proof,)) for proof in proofs]
+    for worker in workers:
+        worker.start()
+    barrier.wait()
+    for worker in workers:
+        worker.join(5)
+        assert not worker.is_alive()
+    assert sum(success for proof, success in results) == 1
+    winner = next(proof for proof, success in results if success)
+    assert custody.retry_handback is winner
+    assert other.retry_handback is None and expected["proof"] is None
+
+
+@pytest.mark.parametrize("attack", ["attribute", "shadow", "accessor"])
+def test_retry_token_private_authority_compatibility_isolation(tmp_path, attack):
+    """Reject attribute writes and ignore compatibility shadows or accessor substitutions."""
+    from topsailai.hooks import script_runner as module
+
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    token = object()
+    custody._write_retry_owner(token)
+    if attack == "attribute":
+        with pytest.raises(AttributeError):
+            object.__setattr__(custody, "retry_owner", None)
+    elif attack == "shadow":
+        with pytest.raises(TypeError):
+            dict.__setitem__(custody.__dict__, "retry_owner", None)
+    else:
+        with pytest.raises(AttributeError):
+            custody._observe_retry_owner = lambda: {"token": None}
+        with pytest.raises(AttributeError):
+            custody._transition_retry_owner = lambda *args: True
+    assert custody.retry_owner is token
+    custody._write_retry_owner(None)
+    assert custody.retry_owner is None
+
+
+@pytest.mark.parametrize("expected_kind", ["stale", "copied", "foreign", "malformed"])
+def test_retry_token_transition_requires_exact_snapshot(tmp_path, expected_kind):
+    """Fail closed on lookalike snapshots while preserving exact immutable token identity."""
+    from topsailai.hooks import script_runner as module
+
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    initial = module._observe_retry_owner(custody)
+    token = object()
+    custody._write_retry_owner(token)
+    current = module._observe_retry_owner(custody)
+    foreign = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    expected = {"stale": initial, "copied": dict(current),
+                "foreign": module._observe_retry_owner(foreign), "malformed": None}[expected_kind]
+    assert not module._transition_retry_owner(custody, expected, (("token", None),))
+    assert module._observe_retry_owner(custody) is current
+    assert custody.retry_owner is token and initial["token"] is None
+    assert module._transition_retry_owner(custody, current, (("token", None),))
+    assert custody.retry_owner is None and current["token"] is token
+
+
+def test_retry_token_authority_does_not_retain_retired_custody(tmp_path):
+    """Allow custody collection after token retirement without authority-table ownership leaks."""
+    import gc
+    import weakref
+    from topsailai.hooks import script_runner as module
+
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    custody._write_retry_owner(object())
+    custody._write_retry_owner(None)
+    reference = weakref.ref(custody)
+    del custody
+    gc.collect()
+    assert reference() is None
+
+
+@pytest.mark.parametrize("kind", ["unhashable", "hostile", "equal"])
+def test_retry_token_authority_uses_referent_identity_not_hooks(tmp_path, kind):
+    """Keep exact and unrelated token authorities isolated from custody equality/hash hooks."""
+    from topsailai.hooks import script_runner as module
+
+    class Custody(module._StorageCustody):
+        """Provide hostile identity lookalikes without changing the trusted writer seam."""
+        def __eq__(self, other):
+            """Equality must never be invoked by authority lookup or retirement."""
+            if kind == "hostile":
+                raise AssertionError("authority invoked equality")
+            return True
+
+        def __hash__(self):
+            """Hashing must never be invoked by authority lookup or retirement."""
+            if kind == "hostile":
+                raise AssertionError("authority invoked hashing")
+            return 1
+
+    if kind == "unhashable":
+        Custody.__hash__ = None
+    first = Custody(TemporaryStorageOwner(tmp_path))
+    second = Custody(TemporaryStorageOwner(tmp_path))
+    token = object()
+    first._write_retry_owner(token)
+    assert first.retry_owner is token and second.retry_owner is None
+    assert not module._transition_retry_owner(second, module._observe_retry_owner(first), (("token", token),))
+    second._write_retry_owner(object())
+    assert first.retry_owner is token
+    first._write_retry_owner(None)
+    assert second.retry_owner is not None
+
+
+
+def test_retry_token_authority_concurrent_exact_snapshot(tmp_path):
+    """Allow only one competing writer for the same exact token snapshot."""
+    from topsailai.hooks import script_runner as module
+
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    expected = module._observe_retry_owner(custody)
+    barrier = threading.Barrier(3)
+    outcomes = []
+    failures = []
+
+    def writer(token):
+        """Compete through the production transition without sharing mutable authority."""
+        try:
+            barrier.wait()
+            outcomes.append((token, module._transition_retry_owner(custody, expected, (("token", token),))))
+        except BaseException as failure:
+            failures.append(failure)
+
+    threads = [threading.Thread(target=writer, args=(object(),)) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(5)
+    assert all(not thread.is_alive() for thread in threads) and not failures
+    winners = [token for token, accepted in outcomes if accepted]
+    assert len(winners) == 1 and custody.retry_owner is winners[0]
+    custody._write_retry_owner(None)
+
+
+def test_retry_token_authority_repeated_acquire_interruption(tmp_path, monkeypatch):
+    """Preserve exact token state and scope responsibility across finite repeated acquire faults."""
+    from topsailai.hooks import script_runner as module
+
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    expected = module._observe_retry_owner(custody)
+    original = module._RecoverableRunnerLock._acquire_scope
+    failures = [KeyboardInterrupt("token acquire " + str(i)) for i in range(3)]
+    remaining = list(failures)
+    token = object()
+
+    def acquire(lock, scope, blocking=True, timeout=-1):
+        """Interrupt only after native acquisition and consume each fault before recovery."""
+        result = original(lock, scope, blocking, timeout)
+        if remaining:
+            raise remaining.pop(0)
+        return result
+
+    monkeypatch.setattr(module._RecoverableRunnerLock, "_acquire_scope", acquire)
+    for failure in failures:
+        with pytest.raises(KeyboardInterrupt) as caught:
+            module._transition_retry_owner(custody, expected, (("token", token),))
+        assert caught.value is failure
+        assert module._observe_retry_owner(custody) is expected and custody.retry_owner is None
+        assert failure.__cause__ is None and failure.__context__ is None
+    assert module._transition_retry_owner(custody, expected, (("token", token),))
+    assert custody.retry_owner is token
+    custody._write_retry_owner(None)
+
+
+@pytest.mark.parametrize("field", ["pending", "owner", "execution_lease", "_observe_handback", "_transition_handback"])
+def test_custody_private_snapshot_raw_accessor_rejection(tmp_path, field):
+    """Reject native attributes and dictionary attacks without canonical changes."""
+    from topsailai.hooks import script_runner as module
+
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    before = module._observe_retry_owner(custody)
+    with pytest.raises(AttributeError):
+        object.__setattr__(custody, field, object())
+    with pytest.raises(TypeError):
+        dict.__setitem__(custody.__dict__, field, object())
+    assert module._observe_retry_owner(custody) is before
+
+
+def test_custody_deep_lease_detachment_and_exact_snapshot(tmp_path):
+    """Detach nested native containers and reject stale or transplanted writes."""
+    from topsailai.hooks import script_runner as module
+
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    other = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    token = object()
+    nested = [token, {"nested": [None]}]
+    custody._write_state(execution_lease=nested)
+    snapshot = module._observe_retry_owner(custody)
+    lease = custody.execution_lease
+    nested[0] = None
+    nested[1]["nested"][0] = token
+    assert lease[0] is token and lease[1]["nested"] == (None,)
+    with pytest.raises(TypeError):
+        lease[1]["nested"] = ()
+    with pytest.raises(TypeError):
+        list.__setitem__(lease, 0, None)
+    assert not module._transition_retry_owner(other, snapshot, (("pending", True),))
+    custody._write_state(execution_lease=(None,))
+    assert not module._transition_retry_owner(custody, snapshot, (("pending", True),))
+    assert snapshot["execution_lease"] is lease
+    assert module._execution_lease_inactive(custody)
+
+
+@pytest.mark.parametrize("shape", ["cycle", "mapping-cycle", "depth", "budget"])
+def test_custody_lease_invalid_graph_preserves_snapshot(tmp_path, shape):
+    """Reject excessive or cyclic native graphs before canonical state can change."""
+    from topsailai.hooks import script_runner as module
+
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    before = module._observe_retry_owner(custody)
+    value = []
+    if shape == "cycle":
+        value.append(value)
+    elif shape == "mapping-cycle":
+        value = {}
+        value["self"] = value
+    elif shape == "depth":
+        for _ in range(34):
+            value = [value]
+    else:
+        value = [None] * 4096
+    with pytest.raises(ValueError):
+        custody._write_state(execution_lease=value)
+    assert module._observe_retry_owner(custody) is before
+    assert module._execution_lease_inactive(custody)
+
+
+@pytest.mark.parametrize("shape", ["self", "linked"])
+def test_retired_proof_authority_releases_exact_custody(tmp_path, shape):
+    """Retire proof-bearing custody without retaining its self or linked authority graph."""
+    import gc
+    import weakref
+    from topsailai.hooks import script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    neighbor = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    neighbor_token = object()
+    neighbor._write_retry_owner(neighbor_token)
+    peer = module._StorageCustody(TemporaryStorageOwner(tmp_path)) if shape == "linked" else custody
+    custody._write_handback((peer, object(), object()))
+    if peer is not custody:
+        peer._write_handback((custody, object(), object()))
+        runner._write_prelaunch_storage(((id(peer.owner), peer),))
+    runner._write_prelaunch_storage(((id(custody.owner), custody),))
+    references = (weakref.ref(custody), weakref.ref(peer))
+    runner._forget_storage(custody.owner)
+    if peer is not custody:
+        runner._forget_storage(peer.owner)
+    assert not runner._prelaunch_storage
+    del custody, peer
+    gc.collect()
+    assert all(reference() is None for reference in references)
+    assert neighbor.retry_owner is neighbor_token
+    expected = module._observe_retry_owner(neighbor)
+    assert module._transition_retry_owner(neighbor, expected, (("token", None),))
+
+
+def test_custody_authority_unknown_and_duplicate_identity_rejection(tmp_path):
+    """Reject unknown fields and duplicate or absent exact custody registration."""
+    from topsailai.hooks import script_runner as module
+
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    before = module._observe_retry_owner(custody)
+    with pytest.raises(AttributeError, match="unknown_authority"):
+        getattr(custody, "unknown_authority")
+    with pytest.raises(RuntimeError, match="already initialized"):
+        module._initialize_retry_owner(custody)
+    with pytest.raises(RuntimeError, match="no exact custody"):
+        module._observe_retry_owner(object())
+    assert module._observe_retry_owner(custody) is before
+
+
+@pytest.mark.parametrize("writer", ["state", "token", "receipt", "registry"])
+def test_controlled_writer_rejection_preserves_authority(tmp_path, monkeypatch, writer):
+    """Surface denied transitions without silently mutating any canonical snapshot."""
+    from topsailai.hooks import script_runner as module
+
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    before = module._observe_retry_owner(custody)
+    receipts, registry = runner._retry_receipts, runner._prelaunch_storage
+
+    def deny(*args, **kwargs):
+        """Model rejection at the trusted controlled-writer seam only."""
+        return False
+
+    if writer in ("state", "token"):
+        monkeypatch.setattr(module, "_transition_retry_owner", deny)
+        operation = (lambda: custody._write_state(pending=True)) if writer == "state" else (lambda: custody._write_retry_owner(object()))
+    else:
+        seam = "_transition_retry_receipts" if writer == "receipt" else "_transition_prelaunch_storage"
+        original = getattr(OwnedHookScriptRunner, seam)
+
+        def denied(selected):
+            """Deny only this exact runner through the trusted class-level test seam."""
+            return deny if selected is runner else original.__get__(selected, type(selected))
+
+        monkeypatch.setattr(OwnedHookScriptRunner, seam, property(denied))
+        operation = runner._write_retry_receipts if writer == "receipt" else runner._write_prelaunch_storage
+    with pytest.raises(RuntimeError, match="lost exact snapshot authority"):
+        operation()
+    assert module._observe_retry_owner(custody) is before
+    assert runner._retry_receipts is receipts and runner._prelaunch_storage is registry
+
+
+def test_retry_lock_nonblocking_competition_and_foreign_release():
+    """Clear failed acquire tickets and deny foreign release of a live exact owner."""
+    from topsailai.hooks import script_runner as module
+
+    lock = module._RecoverableRunnerLock()
+    scope = module._RetryLockScope(lock, object())
+    outcomes = []
+    with scope:
+        def compete():
+            """Exercise native contention without inheriting the owner's thread ticket."""
+            assert not lock.acquire(False)
+            assert getattr(lock._local, "ticket", None) is None
+            with pytest.raises(RuntimeError, match="no exact owner"):
+                lock.release()
+            assert not scope.recover()
+            outcomes.append(True)
+        worker = threading.Thread(target=compete)
+        worker.start()
+        worker.join(5)
+        assert not worker.is_alive() and outcomes == [True] and lock.locked()
+    assert not lock.locked()
+
+
+@pytest.mark.parametrize("mode", ["yield", "carrier", "malformed", "foreign-scope"])
+def test_retry_outer_failure_delivery_rejects_invalid_invocation(tmp_path, monkeypatch, mode):
+    """Fail closed at the outer delivery boundary without accepting foreign custody evidence."""
+    from topsailai.hooks import script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+
+    def invocation(debt_id, failure_custody, lock_custody):
+        """Model malformed outcomes at the protected invocation interface only."""
+        driver = yield
+        if mode == "malformed":
+            failure_custody[0] = (object(), RuntimeError("foreign"), None)
+            return False
+        if mode == "foreign-scope":
+            scope = module._RetryLockScope(runner._lock, driver)
+            lock_custody[0] = scope
+
+            def reject_once(current):
+                """Withdraw the injection before rejecting the one exact recovery attempt."""
+                lock_custody[0] = None
+                return False
+
+            monkeypatch.setattr(module._RetryLockScope, "recover", reject_once)
+            failure_custody[0] = (object(), RuntimeError("foreign"), None)
+            return False
+        if mode == "carrier":
+            return module._RetryFailure(RuntimeError("unregistered"), None)
+        yield object()
+
+    monkeypatch.setattr(runner, "_retry_cleanup_invocation", invocation)
+    with pytest.raises(RuntimeError, match="retry (invocation yielded unexpectedly|failure has no exact invocation custody)"):
+        runner.retry_cleanup("outer-invalid")
+    assert not runner._lock.locked()
+
+
+def test_custody_deep_lease_set_projection(tmp_path):
+    """Detach native sets into immutable members without losing exact token identities."""
+    from topsailai.hooks import script_runner as module
+
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    token = object()
+    value = {token}
+    custody._write_state(execution_lease=[value])
+    value.clear()
+    assert custody.execution_lease == (frozenset({token}),)
+
+
+def test_retry_lock_nested_native_depth_denies_scope_exit():
+    """Reject depth mismatch without releasing an inner acquisition as an outer ticket."""
+    from topsailai.hooks import script_runner as module
+
+    lock = module._RecoverableRunnerLock()
+    scope = module._RetryLockScope(lock, object())
+    scope.__enter__()
+    lock._native.acquire()
+    try:
+        assert not scope.recover()
+        with pytest.raises(RuntimeError, match="no exact owner"):
+            scope.__exit__(None, None, None)
+        assert lock._native._recursion_count() == 2
+        assert lock._local.ticket is scope
+    finally:
+        lock._native.release()
+        assert scope.recover()
+    assert not lock.locked()
+
+
+def test_retry_native_acquire_error_recovers_ticket():
+    """Remove exact preacquisition responsibility after native parameter rejection."""
+    from topsailai.hooks import script_runner as module
+
+    lock = module._RecoverableRunnerLock()
+    with pytest.raises(ValueError):
+        lock.acquire(False, 1)
+    assert getattr(lock._local, "ticket", None) is None and not lock.locked()
+    assert lock.acquire(False)
+    lock.release()
+
+
+def test_retry_settled_proof_retirement_releases_receipt_and_custody(tmp_path):
+    """Retire the real published retry proof after exact token withdrawal and collection."""
+    import gc
+    import weakref
+    from topsailai.hooks import script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    debt = owner.cleanup_debts()[0]
+    custody = module._StorageCustody(owner)
+    custody._write_state(pending=True, storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    reference = weakref.ref(custody)
+    assert runner.retry_cleanup(debt.debt_id)
+    assert custody.retry_owner is None and custody.retry_handback is None
+    assert not runner._prelaunch_storage and not runner._retry_receipts
+    del custody
+    gc.collect()
+    assert reference() is None
+    assert runner.retry_cleanup(debt.debt_id)
+
+
+def test_retry_failure_delivery_finite_repeated_interruptions(tmp_path, monkeypatch):
+    """Deliver one captured primary after finite repeated recover faults without graph cycles."""
+    from topsailai.hooks import script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    primary = SystemExit("registered cleanup primary")
+    faults = [KeyboardInterrupt("delivery " + str(index)) for index in range(3)]
+    remaining = list(faults)
+    frames = []
+
+    def invocation(debt_id, failure_custody, lock_custody):
+        """Register native captured evidence before exposing fallible delivery recovery."""
+        driver = yield
+        scope = module._RetryLockScope(runner._lock, driver)
+        lock_custody[0] = scope
+        try:
+            raise primary
+        except BaseException as captured:
+            traceback = BaseException.__traceback__.__get__(captured)
+            frames.append(traceback)
+            failure_custody[0] = (driver, captured, traceback)
+        return False
+
+    recover = module._RetryLockScope.recover
+
+    def interrupt(scope):
+        """Consume each finite fault before raising so later reentry can converge."""
+        if remaining:
+            raise remaining.pop(0)
+        return recover(scope)
+
+    monkeypatch.setattr(runner, "_retry_cleanup_invocation", invocation)
+    monkeypatch.setattr(module._RetryLockScope, "recover", interrupt)
+    with pytest.raises(SystemExit) as caught:
+        runner.retry_cleanup("finite-delivery")
+    assert caught.value is primary and not remaining
+    traceback = BaseException.__traceback__.__get__(primary)
+    while traceback is not None and traceback is not frames[0]:
+        traceback = traceback.tb_next
+    assert traceback is frames[0]
+    assert primary.__cause__ is None and primary.__context__ is None
+    assert len([note for note in primary.__notes__ if "failure delivery" in note]) == 1
+    assert not runner._lock.locked()
+
+
+@pytest.mark.parametrize("after_release", [False, True])
+@pytest.mark.parametrize("authority", ["retry_receipts", "prelaunch_storage"])
+def test_authority_inner_outer_finite_release_converges(tmp_path, monkeypatch, after_release, authority):
+    """Prove distinct inner and outer finite release faults retain one exact scope."""
+    import sys
+    from topsailai.hooks import script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    projection = "_" + authority
+    transition = getattr(runner, "_transition_" + authority)
+    expected = getattr(runner, projection)
+    receipt = (object(), object(), object())
+    recover = module._RetryLockScope.recover
+    faults = {"transition": [KeyboardInterrupt("inner first"), SystemExit("inner second")],
+              "controlled_transition": [GeneratorExit("outer first"), KeyboardInterrupt("outer second")]}
+    remaining = {name: list(values) for name, values in faults.items()}
+    scopes = []
+    callers = []
+
+    def interrupted(scope):
+        """Route faults by the actual caller, never by a guessed invocation count."""
+        caller = sys._getframe(2).f_code.co_name
+        if caller in remaining and remaining[caller]:
+            scopes.append(scope)
+            callers.append(caller)
+            fault = remaining[caller].pop(0)
+            if after_release:
+                recover(scope)
+            raise fault
+        return recover(scope)
+
+    monkeypatch.setattr(module._RetryLockScope, "recover", interrupted)
+    try:
+        with pytest.raises(GeneratorExit) as caught:
+            transition(expected, ((1, receipt),))
+        assert caught.value is faults["controlled_transition"][0]
+        assert all(not values for values in remaining.values())
+        assert callers == ["transition", "transition", "controlled_transition", "controlled_transition"]
+        assert len(scopes) == 4 and all(scope is scopes[0] for scope in scopes)
+        assert scopes[0].lock._local.ticket is None
+        assert not scopes[0].lock.locked()
+        current = getattr(runner, projection)
+        assert current is not expected and current[1] is receipt
+        assert transition(current, retire=(1,)), "finite exit faults stranded the old exact scope"
+        assert not getattr(runner, projection)
+    finally:
+        monkeypatch.setattr(module._RetryLockScope, "recover", recover)
+        for scope in scopes:
+            assert recover(scope)
+
+
+@pytest.mark.parametrize("authority", ["retry_receipts", "prelaunch_storage"])
+def test_authority_native_finally_return_gap_outer_recovery(tmp_path, monkeypatch, authority):
+    """Observe actual inner RETURN_VALUE and prove outer recovery after each finite gap."""
+    import dis
+    import sys
+    import types
+    from topsailai.hooks import script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    transition = getattr(runner, "_transition_" + authority)
+    projection = "_" + authority
+    code = next(item for item in module._private_mapping_authority.__code__.co_consts
+                if isinstance(item, types.CodeType) and item.co_name == "transition")
+    targets = {item.offset for item in dis.get_instructions(code)
+               if item.opname in ("RETURN_VALUE", "RETURN_CONST")}
+    assert targets, "native-finally return instruction was not identified"
+    recover = module._RetryLockScope.recover
+    scopes = []
+    callers = []
+    hits = []
+    previous = sys.gettrace()
+    active = [None]
+
+    def observe(scope):
+        """Record exact responsibility at each real inner or outer finish entry."""
+        callers.append(sys._getframe(2).f_code.co_name)
+        scopes.append(scope)
+        return recover(scope)
+
+    def trace(frame, event, arg):
+        """Inject at the native-finally return opcode without editing trusted state."""
+        if frame.f_code is code:
+            frame.f_trace_opcodes = True
+            if event == "opcode" and frame.f_lasti in targets and active[0] is not None:
+                failure = active[0]
+                active[0] = None
+                hits.append((frame.f_lasti, frame.f_back.f_code.co_name))
+                raise failure
+            return trace
+        if previous is not None:
+            return previous(frame, event, arg)
+        return trace
+
+    monkeypatch.setattr(module._RetryLockScope, "recover", observe)
+    try:
+        for index in range(3):
+            failure = KeyboardInterrupt("native-finally gap " + str(index))
+            active[0] = failure
+            start = len(callers)
+            expected = getattr(runner, projection)
+            receipt = (object(), object(), object())
+            sys.settrace(trace)
+            try:
+                with pytest.raises(KeyboardInterrupt) as caught:
+                    transition(expected, ((index, receipt),))
+            finally:
+                sys.settrace(previous)
+            assert caught.value is failure and active[0] is None
+            assert callers[start:] == ["transition", "controlled_transition"]
+            assert scopes[-1] is scopes[-2]
+            assert scopes[-1].lock._local.ticket is None and not scopes[-1].lock.locked()
+            assert getattr(runner, projection)[index] is receipt
+            assert caught.value.__cause__ is None and caught.value.__context__ is None
+            traceback = caught.value.__traceback__
+            origins = []
+            while traceback is not None:
+                origins.append(traceback.tb_frame.f_code)
+                traceback = traceback.tb_next
+            assert code in origins
+        assert len(hits) == 3 and all(caller == "controlled_transition" for _, caller in hits)
+        assert transition(getattr(runner, projection), retire=(0, 1, 2))
+        assert not getattr(runner, projection)
+    finally:
+        sys.settrace(previous)
+        monkeypatch.setattr(module._RetryLockScope, "recover", recover)
+        for scope in scopes:
+            assert recover(scope)
+
+
+@pytest.mark.parametrize("cleanup_primary", [False, True])
+@pytest.mark.parametrize("journal", [False, True])
+def test_terminal_handback_repeated_fault_preserves_exact_authority(tmp_path, monkeypatch, cleanup_primary, journal):
+    """Preserve captured primary and exact token across finite disarm and terminal faults."""
+    from topsailai.hooks import script_runner as module
+
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    owner = TemporaryStorageOwner(tmp_path)
+    assert owner.allocate()
+    debt = owner.cleanup_debts()[0]
+    custody = module._StorageCustody(owner)
+    custody._write_state(pending=True, storage_alias=debt)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._storage[debt.debt_id] = owner
+    primary = SystemExit("cleanup primary")
+    faults = [KeyboardInterrupt("ordinary disarm"), RuntimeError("fallback disarm"),
+              GeneratorExit("terminal handback")]
+    remaining = list(faults)
+    commit = module._commit_retry_owner
+    retry = TemporaryStorageOwner.retry_cleanup
+    journal_state = [None] if journal else None
+    lock_state = [None]
+
+    def cleanup(storage, alias):
+        """Establish the requested real cleanup origin without changing custody authority."""
+        if cleanup_primary:
+            raise primary
+        return False
+
+    def interrupted(selected, token):
+        """Consume finite exact-custody withdrawal faults before allowing recovery."""
+        if selected is custody and token is None and remaining:
+            raise remaining.pop(0)
+        return commit(selected, token)
+
+    invocation = runner._retry_cleanup_invocation(debt.debt_id, journal_state, lock_state)
+    next(invocation)
+    monkeypatch.setattr(TemporaryStorageOwner, "retry_cleanup", cleanup)
+    monkeypatch.setattr(module, "_commit_retry_owner", interrupted)
+    try:
+        with pytest.raises(StopIteration) as completed:
+            invocation.send(invocation)
+        result = completed.value.value
+        assert type(result) is module._RetryFailure and not remaining
+        expected = primary if cleanup_primary else faults[1]
+        assert result.primary is expected
+        assert result.traceback is BaseException.__traceback__.__get__(expected)
+        assert custody.retry_owner is not None
+        assert not runner._lock.locked()
+        seen = set()
+        current = expected
+        while current is not None:
+            assert id(current) not in seen
+            seen.add(id(current))
+            current = current.__context__
+        with pytest.raises(BaseException) as delivered:
+            raise BaseException.with_traceback(result.primary, result.traceback) from None
+        assert delivered.value is expected and expected.__cause__ is None
+        if journal:
+            assert journal_state[0][0] is invocation and journal_state[0][1] is expected
+        if cleanup_primary:
+            assert len(expected.__notes__) == 2
+        monkeypatch.setattr(module, "_commit_retry_owner", commit)
+        monkeypatch.setattr(TemporaryStorageOwner, "retry_cleanup", retry)
+        assert runner.retry_cleanup(debt.debt_id)
+        assert custody.retry_owner is None and not runner._prelaunch_storage
+    finally:
+        monkeypatch.setattr(module, "_commit_retry_owner", commit)
+        monkeypatch.setattr(TemporaryStorageOwner, "retry_cleanup", retry)
+        invocation.close()
+        if owner._path is not None:
+            print("Deleting exact terminal handback regression storage:", owner.path)
+            assert owner.cleanup()
+
+
+@pytest.mark.parametrize("surface", ["prelaunch_storage", "retry_receipts"])
+@pytest.mark.parametrize("accessor", ["observe", "transition"])
+def test_runner_authority_accessors_reject_native_replacement(tmp_path, surface, accessor):
+    """Native attribute and dict shadows cannot replace exact canonical observation or writer."""
+    runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    name = "_" + accessor + "_" + surface
+    projection = "_" + surface
+    expected = getattr(runner, projection)
+    original = getattr(runner, name)
+    forged = lambda *args: False
+    with pytest.raises(AttributeError):
+        object.__setattr__(runner, name, forged)
+    dict.__setitem__(runner.__dict__, name, forged)
+    assert getattr(runner, name) is original
+    assert getattr(runner, projection) is expected
+    transition = getattr(runner, "_transition_" + surface)
+    receipt = (object(), object(), object())
+    assert transition(expected, ((1, receipt),))
+    assert getattr(runner, projection)[1] is receipt
+    assert transition(getattr(runner, projection), retire=(1,))
+
+
+@pytest.mark.parametrize("hostile", [False, True])
+def test_runner_authority_exact_identity_and_retirement(tmp_path, hostile):
+    """Retire exact runner authority without equality hooks or neighbor authority loss."""
+    import gc
+    import weakref
+    from topsailai.hooks import script_runner as module
+
+    class Runner(OwnedHookScriptRunner):
+        """Represent equal or hostile lookalikes outside trusted identity storage."""
+        def __eq__(self, other):
+            """Authority lookup must never call equality."""
+            if hostile:
+                raise AssertionError("runner authority invoked equality")
+            return True
+
+        __hash__ = None
+
+    runner = Runner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    neighbor = Runner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    receipt = (object(), object(), object())
+    neighbor._write_retry_receipts(((1, receipt),))
+    runner._write_prelaunch_storage(((1, object()),))
+    with pytest.raises(RuntimeError, match="already initialized"):
+        module._initialize_runner_authority(runner)
+    with pytest.raises(RuntimeError, match="no exact owner"):
+        module._access_runner_authority(object(), False)
+    assert neighbor._retry_receipts[1] is receipt
+    runner._write_prelaunch_storage(retire=(1,))
+    reference = weakref.ref(runner)
+    del runner
+    gc.collect()
+    assert reference() is None
+    assert neighbor._retry_receipts[1] is receipt
+    assert neighbor._transition_retry_receipts(neighbor._retry_receipts, retire=(1,))
+
+
+@pytest.mark.parametrize("cycle", [False, True])
+def test_custody_mapping_proxy_lease_detaches_or_rejects_cycle(tmp_path, cycle):
+    """A read-only native wrapper must not retain mutable backing lease authority."""
+    from types import MappingProxyType
+    from topsailai.hooks import script_runner as module
+
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    before = module._observe_retry_owner(custody)
+    child = [None]
+    backing = {"child": child}
+    proxy = MappingProxyType(backing)
+    if cycle:
+        child.append(proxy)
+        with pytest.raises(ValueError, match="cycle"):
+            custody._write_state(execution_lease=(proxy,))
+        assert module._observe_retry_owner(custody) is before
+        return
+    custody._write_state(execution_lease=(proxy,))
+    published = module._observe_retry_owner(custody)
+    lease = custody.execution_lease
+    token = object()
+    child[0] = token
+    backing["child"] = [token]
+    assert module._observe_retry_owner(custody) is published
+    assert lease[0] is not proxy
+    assert lease[0]["child"] == (None,)
+    with pytest.raises(TypeError):
+        lease[0]["child"] = ()
+
+
+def test_custody_mapping_proxy_backing_replacement_is_detached(tmp_path):
+    """Even immutable child values cannot authorize sharing a mutable backing mapping."""
+    from types import MappingProxyType
+    from topsailai.hooks import script_runner as module
+
+    custody = module._StorageCustody(TemporaryStorageOwner(tmp_path))
+    token = object()
+    backing = {"token": token}
+    proxy = MappingProxyType(backing)
+    custody._write_state(execution_lease=(proxy,))
+    snapshot = module._observe_retry_owner(custody)
+    backing["token"] = None
+    assert custody.execution_lease[0] is not proxy
+    assert custody.execution_lease[0]["token"] is token
+    assert module._observe_retry_owner(custody) is snapshot

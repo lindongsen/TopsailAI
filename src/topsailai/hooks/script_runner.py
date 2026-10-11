@@ -8,8 +8,10 @@ import os
 import re
 import sys
 import threading
+import types
 import time
 import uuid
+import weakref
 from pathlib import Path
 
 from topsailai.hooks.contracts import HookContext, HookStatus
@@ -46,33 +48,387 @@ _PROHIBITED_ENVIRONMENT = frozenset({"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS"}
 
 
 class _StorageCustody:
-    """Retain an exact prelaunch owner before recovery publication can fail."""
+    """Expose read-only custody while exact weak identity owns canonical snapshots."""
+
+    __slots__ = ("__weakref__",)
 
     def __init__(self, owner: TemporaryStorageOwner) -> None:
-        """Arm ownership without exposing healthy in-flight storage as debt."""
-        self.owner = owner
-        self.pending = False
-        self.recovering = False
-        self.retry_owner: object | None = None
-        self.execution_owner: object | None = None
-        self.execution_lease: list[object | None] = [None]
-        self.storage_alias: CleanupDebt | None = None
-        self.release_complete = False
-        self.storage_settled = False
-        self.reconciliation_pending = False
-        self.record: LaunchRecord | None = None
+        """Arm all canonical fields through the single exact-snapshot transition."""
+        _initialize_retry_owner(self)
+        self._write_state(owner=owner, pending=False, recovering=False,
+                          proof=None, execution_owner=None, execution_lease=(None,),
+                          storage_alias=None, release_complete=False,
+                          storage_settled=False, reconciliation_pending=False, record=None)
+
+    @property
+    def __dict__(self):
+        """Expose a read-only current snapshot rather than writable instance storage."""
+        return _observe_retry_owner(self)
+
+    def __getattr__(self, name):
+        """Read only known canonical fields without admitting compatibility shadows."""
+        state = _observe_retry_owner(self)
+        if name not in state:
+            raise AttributeError(name)
+        return state[name]
+
+    def _write_state(self, _retire=(), **changes):
+        """Publish all legal custody changes through the same expected-identity writer."""
+        if "execution_lease" in changes:
+            changes["execution_lease"] = _immutable_lease(changes["execution_lease"])
+        if not _transition_retry_owner(self, _observe_retry_owner(self), tuple(changes.items()), _retire):
+            raise RuntimeError("custody transition lost exact snapshot authority")
+
+    @property
+    def retry_owner(self):
+        """Observe exact token identity independently of compatibility shadows."""
+        return _observe_retry_owner(self)["token"]
+
+    def _write_retry_owner(self, token):
+        """Publish token ownership through the sole exact-snapshot transition."""
+        _commit_retry_owner(self, token)
+
+    def _observe_handback(self):
+        """Read proof from the same private canonical custody snapshot."""
+        return _observe_retry_owner(self)
+
+    def _transition_handback(self, expected, changes):
+        """Delegate the trusted proof seam to the sole custody transition."""
+        return _transition_retry_owner(self, expected, changes)
+
+    @property
+    def retry_handback(self):
+        """Expose exact proof identity without permitting compatibility attribute writes."""
+        return _observe_retry_owner(self)["proof"]
+
+    def _write_handback(self, proof):
+        """Publish proof through the sole exact-snapshot authority transition."""
+        self._write_state(proof=proof)
+
+
+def _immutable_lease(value):
+    """Detach bounded native containers before any canonical publication."""
+    active = set()
+    budget = [4096]
+
+    def freeze(member, depth):
+        """Reject cycles and aggregate excess without foreign conversion hooks."""
+        budget[0] -= 1
+        if budget[0] < 0 or depth > 32:
+            raise ValueError("lease snapshot exceeds immutable bounds")
+        kind = type(member)
+        if kind not in (type([]), tuple, type({}), set, types.MappingProxyType):
+            return member
+        identity = id(member)
+        if identity in active:
+            raise ValueError("lease snapshot contains a container cycle")
+        active.add(identity)
+        try:
+            if kind in (type({}), types.MappingProxyType):
+                return types.MappingProxyType({key: freeze(item, depth + 1)
+                                               for key, item in member.items()})
+            members = tuple(freeze(item, depth + 1) for item in member)
+            if kind is set:
+                return frozenset(members)
+            return member if kind is tuple and all(a is b for a, b in zip(member, members)) else members
+        finally:
+            active.remove(identity)
+
+    return freeze(value, 0)
 
 
 def _valid_execution_lease(lease: object) -> bool:
     """Accept only the bounded native invocation lease and its exact token shape."""
-    return (type(lease) is type([]) and len(lease) == 1
+    return (type(lease) is tuple and len(lease) == 1
             and (lease[0] is None or type(lease[0]) is object))
 
 
 def _execution_lease_inactive(custody: _StorageCustody) -> bool:
     """Fail closed on missing or malformed authority without invoking user methods."""
-    lease = dict.get(object.__getattribute__(custody, "__dict__"), "execution_lease")
+    lease = _observe_retry_owner(custody).get("execution_lease")
     return _valid_execution_lease(lease) and lease[0] is None
+
+
+def _observed_storage_debt(owner: TemporaryStorageOwner) -> CleanupDebt | None:
+    """Read only a proven native debt observation without granting settlement authority."""
+    try:
+        state = object.__getattribute__(owner, "__dict__")
+        if type(state) is not type({}):
+            return None
+        debt = state.get("_debt")
+        return debt if isinstance(debt, CleanupDebt) else None
+    except BaseException:
+        return None
+
+
+class _RetryInterruptionNote(str):
+    """Identify runner-owned text without retaining secondary exception objects."""
+
+
+def _note_retry_interruption(primary: BaseException, phase: str,
+                             secondary: BaseException) -> None:
+    """Bound best-effort runner notes while preserving caller state and failure identity."""
+    try:
+        notes = getattr(primary, "__notes__", [])
+        if type(notes) is not list or any(not isinstance(note, str) for note in notes):
+            return
+        message = "Retry " + phase + " interrupted: " + type(secondary).__name__[:64]
+        owned = [note for note in notes if type(note) is _RetryInterruptionNote]
+        if message in owned or len(owned) >= 4:
+            return
+        BaseException.add_note(primary, _RetryInterruptionNote(message))
+    except BaseException:
+        # Diagnostics must never replace the already captured cleanup exception.
+        pass
+
+
+class _RetryFailure:
+    """Carry an exact captured failure across normal generator termination."""
+
+    __slots__ = ("primary", "traceback")
+
+    def __init__(self, primary: BaseException, traceback: types.TracebackType) -> None:
+        """Retain native exception identity and source without exception graph edges."""
+        self.primary = primary
+        self.traceback = traceback
+
+
+class _RetryLockScope:
+    """Journal one exact native acquisition before its fallible entry."""
+
+    def __init__(self, lock, invocation):
+        """Bind release authority to a thread and an immutable invocation identity."""
+        self.lock = lock
+        self.invocation = invocation
+        self.thread = threading.get_ident()
+
+    def __enter__(self):
+        """Arm local responsibility before entering native exclusion."""
+        self.lock._acquire_scope(self)
+        return self
+
+    def recover(self):
+        """Release only this exact thread-local ticket at native depth one."""
+        lock = self.lock
+        if self.thread != threading.get_ident():
+            return False
+        if getattr(lock._local, "ticket", None) is not self:
+            return True
+        if lock._native._is_owned():
+            if lock._native._recursion_count() != 1:
+                return False
+            lock._native.release()
+        lock._local.ticket = None
+        return True
+
+    def finish(self):
+        """Recover finite release faults before delivering the first exact interruption."""
+        failure = None
+        traceback = None
+        while True:
+            try:
+                if not self.recover():
+                    return False
+                break
+            except BaseException as interrupted:
+                if failure is None:
+                    failure = interrupted
+                    traceback = BaseException.__traceback__.__get__(interrupted)
+        if failure is not None:
+            raise BaseException.with_traceback(failure, traceback) from None
+        return True
+
+    def __exit__(self, kind, error, traceback):
+        """Keep the exact ticket reachable if native exit is interrupted."""
+        if not self.recover():
+            raise RuntimeError("retry lock release has no exact owner")
+
+
+class _RecoverableRunnerLock:
+    """Provide nonrecursive exclusion with thread-isolated release responsibility."""
+
+    def __init__(self):
+        """Use native owner/depth facts rather than a global locked-state inference."""
+        self._native = threading.RLock()
+        self._local = threading.local()
+
+    def _acquire_scope(self, scope, blocking=True, timeout=-1):
+        """Publish the exact ticket before native acquire can complete."""
+        if (type(scope) is not _RetryLockScope or scope.lock is not self
+                or scope.thread != threading.get_ident()):
+            raise RuntimeError("runner lock acquire has no exact owner")
+        if getattr(self._local, "ticket", None) is not None or self._native._is_owned():
+            raise RuntimeError("runner lock is nonrecursive")
+        self._local.ticket = scope
+        try:
+            acquired = self._native.acquire(blocking, timeout)
+            if not acquired:
+                scope.recover()
+            return acquired
+        except BaseException:
+            scope.recover()
+            raise
+
+    def acquire(self, blocking=True, timeout=-1):
+        """Preserve the native lock acquisition interface for ordinary callers."""
+        return self._acquire_scope(_RetryLockScope(self, None), blocking, timeout)
+
+    def release(self):
+        """Reject foreign-thread release without touching native exclusion."""
+        scope = getattr(self._local, "ticket", None)
+        if scope is None or not scope.recover():
+            raise RuntimeError("runner lock release has no exact owner")
+
+    def locked(self):
+        """Observe exclusion without using that observation as release authority."""
+        if self._native._is_owned():
+            return True
+        if not self._native.acquire(False):
+            return True
+        self._native.release()
+        return False
+
+    def __enter__(self):
+        """Acquire ordinary runner exclusion."""
+        self.acquire()
+        return self
+
+    def __exit__(self, kind, error, traceback):
+        """Release only the calling thread's ordinary ticket."""
+        self.release()
+
+
+def _retry_lock_scope(lock, invocation, journal):
+    """Publish invocation release custody while preserving injected lock seams."""
+    if type(lock) is not _RecoverableRunnerLock:
+        return lock
+    scope = _RetryLockScope(lock, invocation)
+    journal[0] = scope
+    return scope
+
+
+def _private_mapping_authority():
+    """Keep canonical snapshots and exact writer capability inside private closures."""
+    snapshot = types.MappingProxyType({})
+    capability = object()
+    lock = _RecoverableRunnerLock()
+
+    def observe():
+        """Return the immutable canonical snapshot without exposing its backing map."""
+        return snapshot
+
+    def transition(key, expected, scope, changes=(), retire=()):
+        """Publish one replacement only for the exact capability and current snapshot."""
+        nonlocal snapshot
+        if key is not capability:
+            return False
+        try:
+            if not lock._acquire_scope(scope, False):
+                return False
+            if snapshot is not expected:
+                return False
+            replacement = type({})(snapshot)
+            replacement.update(changes)
+            for identity in retire:
+                replacement.pop(identity, None)
+            snapshot = types.MappingProxyType(replacement)
+            return True
+        finally:
+            scope.finish()
+
+    def controlled_transition(expected, changes=(), retire=()):
+        """Expose the legal execution-frame seam without exporting its capability."""
+        scope = _RetryLockScope(lock, capability)
+        try:
+            return transition(capability, expected, scope, changes, retire)
+        finally:
+            # Retain exact responsibility across the inner native-finally return gap.
+            scope.finish()
+
+    return observe, controlled_transition
+
+
+def _private_retry_owner_authority():
+    """Index exact weak custody identities without invoking equality or hashing hooks."""
+    authorities = {}
+
+    def initialize(custody):
+        """Create one authority and retire only its exact weak reference on collection."""
+        identity = id(custody)
+        current = authorities.get(identity)
+        if current is not None and current[0]() is custody:
+            raise RuntimeError("retry token authority already initialized")
+        observe, transition = _private_mapping_authority()
+        if not transition(observe(), (("token", None),)):
+            raise RuntimeError("retry token initialization lost snapshot authority")
+
+        def retire(reference):
+            """Never remove a replacement authority occupying a reused historical identity."""
+            entry = authorities.get(identity)
+            if entry is not None and entry[0] is reference:
+                authorities.pop(identity, None)
+
+        authorities[identity] = (weakref.ref(custody, retire), observe, transition)
+
+    def exact(custody):
+        """Require referent identity before granting snapshot or transition access."""
+        entry = authorities.get(id(custody))
+        if entry is None or entry[0]() is not custody:
+            raise RuntimeError("retry token authority has no exact custody")
+        return entry
+
+    def observe(custody):
+        """Return the immutable snapshot associated with the exact live custody."""
+        return exact(custody)[1]()
+
+    def transition(custody, expected, changes, retire=()):
+        """Delegate every legal token writer to the same private snapshot transition."""
+        return exact(custody)[2](expected, changes, retire)
+
+    return initialize, observe, transition
+
+
+_initialize_retry_owner, _observe_retry_owner, _transition_retry_owner = _private_retry_owner_authority()
+
+
+def _commit_retry_owner(custody, token):
+    """Use the single canonical transition for normal and interrupted fallback writers."""
+    if not _transition_retry_owner(custody, _observe_retry_owner(custody), (("token", token),)):
+        raise RuntimeError("retry token transition lost exact snapshot authority")
+
+
+
+def _private_runner_authority():
+    """Keep runner observer and writer custody outside mutable instance attributes."""
+    authorities = {}
+
+    def initialize(runner):
+        """Register exact weak runner identity without equality or hashing callbacks."""
+        identity = id(runner)
+        current = authorities.get(identity)
+        if current is not None and current[0]() is runner:
+            raise RuntimeError("runner authority already initialized")
+
+        def retire(reference):
+            """Remove only the exact historical reference, never a replacement entry."""
+            current = authorities.get(identity)
+            if current is not None and current[0] is reference:
+                authorities.pop(identity, None)
+
+        authorities[identity] = (weakref.ref(runner, retire),
+                                 _private_mapping_authority(), _private_mapping_authority())
+
+    def access(runner, receipt):
+        """Return authority only for the exact live runner referent."""
+        entry = authorities.get(id(runner))
+        if entry is None or entry[0]() is not runner:
+            raise RuntimeError("runner authority has no exact owner")
+        return entry[2 if receipt else 1]
+
+    return initialize, access
+
+
+_initialize_runner_authority, _access_runner_authority = _private_runner_authority()
 
 
 class OwnedHookScriptRunner:
@@ -83,12 +439,52 @@ class OwnedHookScriptRunner:
         if not isinstance(backend, IsolatedProcessBackend):
             raise TypeError("backend must be an IsolatedProcessBackend")
         self._backend = backend
-        self._lock = threading.Lock()
+        self._lock = _RecoverableRunnerLock()
         self._results: dict[int, HookScriptEntryResult] = {}
         self._storage: dict[str, TemporaryStorageOwner] = {}
         self._process_storage: dict[str, TemporaryStorageOwner] = {}
-        self._prelaunch_storage: dict[int, _StorageCustody] = {}
+        _initialize_runner_authority(self)
         self._nonretained_observed_bytes = 0
+
+    @property
+    def _observe_prelaunch_storage(self):
+        """Expose a read-only observer bound to exact private runner identity."""
+        return _access_runner_authority(self, False)[0]
+
+    @property
+    def _transition_prelaunch_storage(self):
+        """Expose the sole registry writer without a replaceable instance accessor."""
+        return _access_runner_authority(self, False)[1]
+
+    @property
+    def _observe_retry_receipts(self):
+        """Expose a read-only receipt observer from private canonical authority."""
+        return _access_runner_authority(self, True)[0]
+
+    @property
+    def _transition_retry_receipts(self):
+        """Expose the sole receipt writer without a compatibility second writer."""
+        return _access_runner_authority(self, True)[1]
+
+    @property
+    def _retry_receipts(self):
+        """Expose only the exact immutable receipt snapshot for compatibility reads."""
+        return self._observe_retry_receipts()
+
+    def _write_retry_receipts(self, changes=(), retire=()):
+        """Route all receipt publication and retirement through the single writer."""
+        if not self._transition_retry_receipts(self._retry_receipts, changes, retire):
+            raise RuntimeError("retry receipt transition lost exact snapshot authority")
+
+    @property
+    def _prelaunch_storage(self):
+        """Expose the exact immutable registry snapshot without a compatibility writer."""
+        return self._observe_prelaunch_storage()
+
+    def _write_prelaunch_storage(self, changes=(), retire=()):
+        """Publish and retire registry identities through the sole canonical writer."""
+        if not self._transition_prelaunch_storage(self._prelaunch_storage, changes, retire):
+            raise RuntimeError("prelaunch registry transition lost exact snapshot authority")
 
     def execute_entry(
         self,
@@ -135,12 +531,11 @@ class OwnedHookScriptRunner:
         storage = TemporaryStorageOwner(Path(self._backend.script_temp_root))
         custody = _StorageCustody(storage)
         owner_state = object.__getattribute__(storage, "__dict__")
-        custody_state = object.__getattribute__(custody, "__dict__")
         execution_token = object()
-        execution_lease = [execution_token]
-        object.__setattr__(custody, "execution_lease", execution_lease)
+        execution_lease = (execution_token,)
+        custody._write_state(execution_lease=execution_lease)
         with self._lock:
-            self._prelaunch_storage[id(storage)] = custody
+            self._write_prelaunch_storage(((id(storage), custody),))
         lease = None
         record = None
         recovery_complete = False
@@ -156,13 +551,12 @@ class OwnedHookScriptRunner:
                     for name in ("_candidate_path", "_path", "_uncertain_path", "_debt")
                 ))
                 if no_resource:
-                    dict.__setitem__(custody_state, "storage_settled", True)
+                    custody._write_state(storage_settled=True)
                 else:
-                    dict.update(custody_state, pending=True,
-                                storage_alias=dict.get(owner_state, "_debt"))
+                    custody._write_state(pending=True, storage_alias=dict.get(owner_state, "_debt"))
                     self._remember_storage(storage)
                 return self._publish(initial, HookStatus.ERROR, "hook_script_startup_failed")
-            custody.storage_alias = owner_state["_debt"]
+            custody._write_state(storage_alias=owner_state["_debt"])
             invocation_id = uuid.uuid4().hex
             try:
                 request = encode_script_input(
@@ -183,7 +577,7 @@ class OwnedHookScriptRunner:
                 cleanup_deadline=cleanup_deadline,
                 termination_grace=policy.terminate_grace_ms / 1_000,
             )
-            custody.record = record
+            custody._write_state(record=record)
             lease = None
             try:
                 spawned = self._backend.launch_script(
@@ -243,22 +637,22 @@ class OwnedHookScriptRunner:
                 return current
             except (KeyboardInterrupt, SystemExit, asyncio.CancelledError) as interrupted:
                 primary = interrupted
-                primary_traceback = interrupted.__traceback__
+                primary_traceback = BaseException.__traceback__.__get__(interrupted)
                 try:
                     if lease is not None:
                         try:
-                            custody.recovering = True
-                            custody.pending = True
+                            custody._write_state(recovering=True)
+                            custody._write_state(pending=True)
                             recovered = self._preserve_interrupted(initial, record, storage, started)
-                            custody.pending = not recovered.cleanup_confirmed
+                            custody._write_state(pending=not recovered.cleanup_confirmed)
                             recovery_complete = True
                         finally:
-                            custody.recovering = False
+                            custody._write_state(recovering=False)
                 except BaseException:
                     # Abandoned recovery must preserve the primary and release exclusion.
-                    custody.recovering = False
+                    custody._write_state(recovering=False)
                     if custody.storage_settled:
-                        custody.pending = False
+                        custody._write_state(pending=False)
                         recovery_complete = True
                 raise
             except Exception:
@@ -270,25 +664,25 @@ class OwnedHookScriptRunner:
         except BaseException as interrupted:
             if primary is not None and lease is not None:
                 try:
-                    custody.recovering = False
+                    custody._write_state(recovering=False)
                     if all(owner_state[name] is None for name in ("_path", "_uncertain_path", "_debt")):
-                        custody_state["storage_settled"] = True
-                    custody.pending = not custody.storage_settled
+                        custody._write_state(storage_settled=True)
+                    custody._write_state(pending=not custody.storage_settled)
                     if owner_state["_debt"] is not None:
-                        custody_state["reconciliation_pending"] = False
+                        custody._write_state(reconciliation_pending=False)
                 except BaseException:
                     try:
                         for attempt in range(3):
                             try:
                                 # Read prebound native authority without retrying the failed observer.
-                                custody_state["recovering"] = False
+                                custody._write_state(recovering=False)
                                 if (owner_state["_path"] is None
                                         and owner_state["_uncertain_path"] is None
                                         and owner_state["_debt"] is None):
-                                    custody_state["storage_settled"] = True
-                                custody_state["pending"] = not custody_state["storage_settled"]
+                                    custody._write_state(storage_settled=True)
+                                custody._write_state(pending=not custody.storage_settled)
                                 if owner_state["_debt"] is not None:
-                                    custody_state["reconciliation_pending"] = False
+                                    custody._write_state(reconciliation_pending=False)
                                 break
                             except BaseException:
                                 # Exact responsibility remains armed until publication completes.
@@ -297,29 +691,27 @@ class OwnedHookScriptRunner:
                         try:
                             self._reconcile_custody(custody)
                         finally:
-                            raise primary.with_traceback(primary_traceback) from None
-                raise primary.with_traceback(primary_traceback) from None
+                            raise BaseException.with_traceback(primary, primary_traceback) from None
+                raise BaseException.with_traceback(primary, primary_traceback) from None
             if lease is not None or (record is not None and record.process is not None):
                 # Retain exact ordered recovery even when the inner publication failed.
                 if not recovery_complete:
-                    custody.pending = True
+                    custody._write_state(pending=True)
                 raise
             primary = interrupted
-            primary_traceback = interrupted.__traceback__
+            primary_traceback = BaseException.__traceback__.__get__(interrupted)
             with self._lock:
                 # Publish responsibility before interruptible recovery authority writes.
                 try:
-                    dict.__setitem__(custody_state, "pending", True)
-                    custody_state["pending"] = True
-                    custody_state["execution_owner"] = execution_token
-                    custody_state["storage_alias"] = owner_state.get("_debt") or custody_state["storage_alias"]
+                    custody._write_state(pending=True)
+                    custody._write_state(execution_owner=execution_token)
+                    custody._write_state(storage_alias=owner_state.get("_debt") or custody.storage_alias)
                 except BaseException:
                     # Complete this invocation's handoff without repeating failed overrides.
                     try:
-                        dict.update(custody_state, pending=True, execution_owner=execution_token,
-                                    storage_alias=dict.get(owner_state, "_debt") or dict.get(custody_state, "storage_alias"))
+                        custody._write_state(pending=True, execution_owner=execution_token, storage_alias=dict.get(owner_state, "_debt") or _observe_retry_owner(custody).get("storage_alias"))
                     except BaseException:
-                        raise primary.with_traceback(primary_traceback) from None
+                        raise BaseException.with_traceback(primary, primary_traceback) from None
             try:
                 self._remember_storage(storage)
             except BaseException:
@@ -328,7 +720,7 @@ class OwnedHookScriptRunner:
             try:
                 if storage.cleanup():
                     self._forget_storage(storage)
-                    custody.pending = False
+                    custody._write_state(pending=False)
             except BaseException:
                 # Preserve the primary interruption and exact retryable custody.
                 pass
@@ -342,19 +734,18 @@ class OwnedHookScriptRunner:
                             name in owner_state and dict.get(owner_state, name) is None
                             for name in ("_path", "_uncertain_path", "_debt")
                         ):
-                            dict.update(custody_state, pending=True,
-                                        storage_alias=dict.get(owner_state, "_debt") or dict.get(custody_state, "storage_alias"))
-                        if custody_state["execution_owner"] is execution_token:
-                            if custody_state["release_complete"]:
-                                custody_state["pending"] = False
-                            custody_state["execution_owner"] = None
+                            custody._write_state(pending=True, storage_alias=dict.get(owner_state, "_debt") or _observe_retry_owner(custody).get("storage_alias"))
+                        if custody.execution_owner is execution_token:
+                            if custody.release_complete:
+                                custody._write_state(pending=False)
+                            custody._write_state(execution_owner=None)
                 except BaseException:
                     # Withdraw only native authority owned by this recovery invocation.
                     with self._lock:
-                        if dict.get(custody_state, "execution_owner") is execution_token:
-                            dict.__setitem__(custody_state, "execution_owner", None)
-                        if dict.get(custody_state, "release_complete"):
-                            dict.__setitem__(custody_state, "pending", False)
+                        if _observe_retry_owner(custody).get("execution_owner") is execution_token:
+                            custody._write_state(execution_owner=None)
+                        if _observe_retry_owner(custody).get("release_complete"):
+                            custody._write_state(pending=False)
                     if primary is None:
                         raise
             finally:
@@ -362,58 +753,58 @@ class OwnedHookScriptRunner:
                 terminal_traceback = None
                 # Withdraw only the independently preregistered invocation lease.
                 with self._lock:
-                    lease_owned = (dict.get(custody_state, "execution_lease") is execution_lease
+                    lease_owned = (_observe_retry_owner(custody).get("execution_lease") is execution_lease
                                    and _valid_execution_lease(execution_lease)
                                    and execution_lease[0] is execution_token)
                     if lease_owned:
                         try:
-                            list.__setitem__(execution_lease, 0, None)
+                            custody._write_state(execution_lease=(None,))
                         except BaseException as interrupted:
                             # Settle exact responsibility before propagating teardown failure.
-                            if execution_lease[0] is execution_token:
-                                execution_lease[0] = None
+                            if custody.execution_lease is execution_lease and execution_lease[0] is execution_token:
+                                custody._write_state(execution_lease=(None,))
                             if primary is None:
                                 terminal_error = interrupted
-                                terminal_traceback = interrupted.__traceback__
+                                terminal_traceback = BaseException.__traceback__.__get__(interrupted)
                     release_verified = (lease_owned and _execution_lease_inactive(custody)
-                                        and (dict.get(custody_state, "release_complete") is True
-                                             or dict.get(custody_state, "storage_settled") is True))
+                                        and (_observe_retry_owner(custody).get("release_complete") is True
+                                             or _observe_retry_owner(custody).get("storage_settled") is True))
                     try:
                         if release_verified and not custody.pending and self._prelaunch_storage.get(id(storage)) is custody:
-                            self._prelaunch_storage.pop(id(storage), None)
+                            self._write_prelaunch_storage(retire=(id(storage),))
                     except BaseException as interrupted:
                         if primary is None and terminal_error is None:
                             terminal_error = interrupted
-                            terminal_traceback = interrupted.__traceback__
+                            terminal_traceback = BaseException.__traceback__.__get__(interrupted)
                         try:
                             if release_verified and not custody.pending and self._prelaunch_storage.get(id(storage)) is custody:
-                                del self._prelaunch_storage[id(storage)]
+                                self._write_prelaunch_storage(retire=(id(storage),))
                         except BaseException:
                             # Bypass failed registry overrides, retaining exact identity authority.
                             registry = self._prelaunch_storage
-                            if release_verified and not custody.pending and dict.get(registry, id(storage)) is custody:
-                                dict.__delitem__(registry, id(storage))
+                            if release_verified and not custody.pending and registry.get(id(storage)) is custody:
+                                self._write_prelaunch_storage(retire=(id(storage),))
                         if primary is not None:
-                            raise primary.with_traceback(primary_traceback) from None
+                            raise BaseException.with_traceback(primary, primary_traceback) from None
                 if terminal_error is not None:
-                    raise terminal_error.with_traceback(terminal_traceback) from None
+                    raise BaseException.with_traceback(terminal_error, terminal_traceback) from None
 
     def _reconcile_custody(self, custody: _StorageCustody) -> None:
         """Publish exact completion or an enumerable observation obligation once."""
-        state = custody.__dict__
-        state["reconciliation_pending"] = True
-        state["recovering"] = False
-        state["pending"] = True
+        state = custody
+        custody._write_state(reconciliation_pending=True)
+        custody._write_state(recovering=False)
+        custody._write_state(pending=True)
         owner = custody.owner.__dict__
         names = ("_path", "_uncertain_path", "_debt")
         if any(name not in owner for name in names):
             return
         if any(owner[name] is not None for name in names):
-            state["reconciliation_pending"] = False
+            custody._write_state(reconciliation_pending=False)
             return
-        state["storage_settled"] = True
-        state["pending"] = False
-        state["reconciliation_pending"] = False
+        custody._write_state(storage_settled=True)
+        custody._write_state(pending=False)
+        custody._write_state(reconciliation_pending=False)
 
     def current_result(self, entry_index: int) -> HookScriptEntryResult:
         """Return the latest immutable recovery snapshot for this admission."""
@@ -469,11 +860,95 @@ class OwnedHookScriptRunner:
         return (*process.values(), *storage)
 
     def retry_cleanup(self, debt_id: str) -> bool:
+        """Drive first completion and repeated recovery from exact private custody."""
+        failure_custody = [None]
+        lock_custody = [None]
+        invocation = self._retry_cleanup_invocation(debt_id, failure_custody, lock_custody)
+        next(invocation)
+        # Only handler cleanup and reentry are trusted; all preparation stays protected.
+        while True:
+            try:
+                try:
+                    scope = lock_custody[0]
+                    if scope is not None:
+                        if (type(scope) is not _RetryLockScope or scope.invocation is not invocation
+                                or not scope.recover()):
+                            raise RuntimeError("retry lock has no exact invocation custody")
+                    evidence = failure_custody[0]
+                    if evidence is not None:
+                        if not (type(evidence) is tuple and len(evidence) == 3
+                                and evidence[0] is invocation
+                                and isinstance(evidence[1], BaseException)
+                                and type(evidence[2]) is types.TracebackType):
+                            prepared = RuntimeError("retry failure has no exact invocation custody")
+                            break
+                        prepared = BaseException.with_traceback(evidence[1], evidence[2])
+                        break
+                    try:
+                        invocation.send(invocation)
+                    except StopIteration as completed:
+                        outcome = completed.value
+                    else:
+                        raise RuntimeError("retry invocation yielded unexpectedly")
+                    if failure_custody[0] is not None:
+                        continue
+                    if type(outcome) is _RetryFailure:
+                        raise RuntimeError("retry failure has no exact invocation custody")
+                    return outcome
+                except BaseException as interrupted:
+                    # Human-approved capture/registration; never overwrite published custody.
+                    if failure_custody[0] is None:
+                        failure_custody[0] = (
+                            invocation, interrupted,
+                            BaseException.__traceback__.__get__(interrupted),
+                        )
+                    evidence = failure_custody[0]
+                    if (type(evidence) is tuple and len(evidence) == 3
+                            and evidence[0] is invocation
+                            and isinstance(evidence[1], BaseException)
+                            and type(evidence[2]) is types.TracebackType
+                            and interrupted is not evidence[1]):
+                        _note_retry_interruption(evidence[1], "failure delivery", interrupted)
+            except BaseException:
+                # No required bookkeeping: trusted stack cleanup exits directly to reentry.
+                pass
+        # Retirement and native departure form the approved final trusted transition.
+        failure_custody[0] = None
+        raise prepared from None
+
+    def _retry_cleanup_invocation(self, debt_id: str, failure_custody=None, lock_custody=None):
         """Own exact retry exclusion until cleanup and identity release complete."""
+        lock_custody = [None] if lock_custody is None else lock_custody
+        invocation = yield
+        if type(invocation) is not types.GeneratorType or invocation.gi_frame is not sys._getframe():
+            raise ValueError("retry lifecycle must be this exact invocation")
         token = object()
         selected = None
+        primary = None
+        primary_traceback = None
         try:
-            with self._lock:
+            with _retry_lock_scope(self._lock, invocation, lock_custody):
+                for custody in self._prelaunch_storage.values():
+                    state = object.__getattribute__(custody, "__dict__")
+                    proof = custody.retry_handback
+                    alias = state.get("storage_alias")
+                    record = state.get("record")
+                    exact = ((isinstance(alias, CleanupDebt) and alias.debt_id == debt_id)
+                             or (isinstance(record, LaunchRecord) and record.debt_id == debt_id))
+                    if not exact:
+                        debt = _observed_storage_debt(custody.owner)
+                        exact = isinstance(debt, CleanupDebt) and debt.debt_id == debt_id
+                    if (exact and type(proof) is tuple and len(proof) == 3
+                            and self._retry_receipts.get(id(custody)) is proof
+                            and proof[0] is custody and type(proof[1]) is object
+                            and custody.retry_owner is proof[1]
+                            and type(proof[2]) is types.GeneratorType
+                            and proof[2].gi_code is OwnedHookScriptRunner._retry_cleanup_invocation.__code__
+                            and proof[2].gi_frame is None
+                            and state.get("execution_owner") is None
+                            and _execution_lease_inactive(custody)
+                            and self._prelaunch_storage.get(id(custody.owner)) is custody):
+                        _commit_retry_owner(custody, None)
                 if any((c.recovering or c.retry_owner is not None or c.execution_owner is not None or not _execution_lease_inactive(c)) and c.record is not None and c.record.debt_id == debt_id
                        for c in self._prelaunch_storage.values()):
                     return False
@@ -483,7 +958,7 @@ class OwnedHookScriptRunner:
                     alias = custody.storage_alias
                     if isinstance(alias, CleanupDebt) and alias.debt_id == debt_id:
                         return False
-                    debt = object.__getattribute__(custody.owner, "__dict__").get("_debt")
+                    debt = _observed_storage_debt(custody.owner)
                     if isinstance(debt, CleanupDebt) and debt.debt_id == debt_id:
                         return False
                 pending = tuple(c for c in self._prelaunch_storage.values() if c.pending and not c.recovering and c.retry_owner is None and c.execution_owner is None and _execution_lease_inactive(c))
@@ -510,11 +985,15 @@ class OwnedHookScriptRunner:
                 if storage is not None:
                     selected = next((c for c in pending if c.owner is storage), selected)
                 if selected is not None:
-                    debt = object.__getattribute__(selected.owner, "__dict__").get("_debt")
+                    debt = _observed_storage_debt(selected.owner)
                     if isinstance(debt, CleanupDebt):
-                        selected.storage_alias = debt
-                    selected.retry_owner = token
-                    selected.reconciliation_pending = True
+                        selected._write_state(storage_alias=debt)
+                    # Publish recovery proof before exposing interruptible retry authority.
+                    receipt = (selected, token, invocation)
+                    self._write_retry_receipts(((id(selected), receipt),))
+                    selected._write_handback(receipt)
+                    selected._write_retry_owner(token)
+                    selected._write_state(reconciliation_pending=True)
             if storage is not None:
                 settled = storage.retry_cleanup(debt_id)
                 if settled:
@@ -539,14 +1018,14 @@ class OwnedHookScriptRunner:
                 if process_custody.storage_settled:
                     self._forget_storage(storage)
                     return True
-                process_custody.reconciliation_pending = True
+                process_custody._write_state(reconciliation_pending=True)
                 if not storage.cleanup():
                     return False
                 self._forget_storage(storage)
                 return True
             if not self._backend.retry_cleanup(debt_id):
                 return False
-            with self._lock:
+            with _retry_lock_scope(self._lock, invocation, lock_custody):
                 storage = self._process_storage.get(debt_id)
             if storage is None:
                 return True
@@ -555,22 +1034,72 @@ class OwnedHookScriptRunner:
                 return False
             self._forget_storage(storage)
             return True
+        except BaseException as interrupted:
+            primary = interrupted
+            primary_traceback = BaseException.__traceback__.__get__(interrupted)
+            if failure_custody is not None:
+                failure_custody[0] = (invocation, primary, primary_traceback)
+            raise
         finally:
-            if selected is not None:
-                try:
-                    with self._lock:
-                        if selected.retry_owner is token:
-                            owner_state = selected.owner.__dict__
-                            if "_debt" in owner_state and owner_state["_debt"] is not None:
-                                selected.reconciliation_pending = False
-                            selected.retry_owner = None
-                            if selected.release_complete and self._prelaunch_storage.get(id(selected.owner)) is selected:
-                                del self._prelaunch_storage[id(selected.owner)]
-                finally:
-                    # Only this invocation may withdraw its exact retry authority.
-                    state = object.__getattribute__(selected, "__dict__")
-                    if state["retry_owner"] is token:
-                        state["retry_owner"] = None
+            try:
+                if selected is not None:
+                    released = False
+                    try:
+                        with _retry_lock_scope(self._lock, invocation, lock_custody):
+                            if (self._prelaunch_storage.get(id(selected.owner)) is selected
+                                    and selected.retry_owner is token):
+                                owner_state = selected.owner.__dict__
+                                if "_debt" in owner_state and owner_state["_debt"] is not None:
+                                    selected._write_state(reconciliation_pending=False)
+                                selected._write_state(pending=True)
+                                selected._write_retry_owner(None)
+                                if (selected.release_complete is True
+                                        and selected.execution_owner is None
+                                        and _execution_lease_inactive(selected)
+                                        and self._prelaunch_storage.get(id(selected.owner)) is selected):
+                                    selected._write_handback(None)
+                                    self._write_retry_receipts(retire=(id(selected),))
+                                    self._write_prelaunch_storage(retire=(id(selected.owner),))
+                                    released = True
+                    finally:
+                        # Only this invocation may withdraw its exact retry authority.
+                        state = object.__getattribute__(selected, "__dict__")
+                        if (self._prelaunch_storage.get(id(selected.owner)) is selected
+                                and selected.retry_owner is token):
+                            _commit_retry_owner(selected, None)
+                        # Never replace a cleanup/finalizer exception with a completion value.
+                        if sys.exc_info()[0] is None and not released:
+                            return False
+            except BaseException as interrupted:
+                if primary is None:
+                    primary = interrupted
+                    primary_traceback = BaseException.__traceback__.__get__(interrupted)
+                    if failure_custody is not None:
+                        failure_custody[0] = (invocation, primary, primary_traceback)
+                else:
+                    # Text diagnostics do not create primary/secondary exception graph edges.
+                    _note_retry_interruption(primary, "finalizer", interrupted)
+            finally:
+                # Retain exact invocation withdrawal after both fallible disarm paths.
+                if selected is not None:
+                    try:
+                        terminal_state = object.__getattribute__(selected, "__dict__")
+                        if (self._prelaunch_storage.get(id(selected.owner)) is selected
+                                and selected.retry_owner is token):
+                            _commit_retry_owner(selected, None)
+                    except BaseException as terminal_interruption:
+                        if primary is None:
+                            # Publish before the fallible generator completion carrier.
+                            terminal_traceback = BaseException.__traceback__.__get__(terminal_interruption)
+                            if failure_custody is not None:
+                                failure_custody[0] = (invocation, terminal_interruption, terminal_traceback)
+                            return _RetryFailure(
+                                terminal_interruption,
+                                BaseException.__traceback__.__get__(terminal_interruption),
+                            )
+                        _note_retry_interruption(primary, "terminal handback", terminal_interruption)
+            if primary is not None:
+                return _RetryFailure(primary, primary_traceback)
 
     def _preflight(
         self,
@@ -690,20 +1219,20 @@ class OwnedHookScriptRunner:
             return _replace_cleanup_pending(result, result.cleanup_debt)
         custody = self._prelaunch_storage.get(id(storage))
         owner_state = object.__getattribute__(storage, "__dict__")
-        journal = None if custody is None else object.__getattribute__(custody, "__dict__")
+        journal = custody
         if journal is not None:
-            journal["reconciliation_pending"] = True
+            custody._write_state(reconciliation_pending=True)
         try:
             if storage.cleanup():
                 if custody is not None:
-                    custody.storage_settled = True
+                    custody._write_state(storage_settled=True)
                 return result
         finally:
             # The exact owner's revoked authority survives an interrupted cleanup return.
             if journal is not None and all(
                 owner_state[name] is None for name in ("_path", "_uncertain_path", "_debt")
             ):
-                journal["storage_settled"] = True
+                custody._write_state(storage_settled=True)
         self._remember_storage(storage)
         return _replace_cleanup_pending(result, storage.cleanup_debts()[0].debt_id)
 
@@ -750,9 +1279,12 @@ class OwnedHookScriptRunner:
             custody = self._prelaunch_storage.get(id(storage))
             if custody is not None and (custody.retry_owner is not None or custody.execution_owner is not None
                                         or not _execution_lease_inactive(custody)):
-                custody.release_complete = True
+                custody._write_state(release_complete=True)
             else:
-                self._prelaunch_storage.pop(id(storage), None)
+                if custody is not None:
+                    custody._write_handback(None)
+                    self._write_retry_receipts(retire=(id(custody),))
+                self._write_prelaunch_storage(retire=(id(storage),))
 
     def _remember_process_storage(
         self, debt_id: str, storage: TemporaryStorageOwner
