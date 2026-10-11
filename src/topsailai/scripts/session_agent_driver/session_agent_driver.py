@@ -99,7 +99,7 @@ _load_script_env()
 os.environ.setdefault(PLUGIN_TOOLS_ENV, "plugins.tools")
 os.environ.setdefault(
     PLUGIN_SKILLS_ENV,
-    str(SCRIPT_DIR / "plugins" / "skills" / "topsailai-skills"),
+    str(SCRIPT_DIR / "plugins" / "skills"),
 )
 
 SRC_DIR = str(SCRIPT_DIR.parent.parent.parent)  # /TopsailAI/src/

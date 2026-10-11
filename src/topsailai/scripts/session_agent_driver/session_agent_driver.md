@@ -53,7 +53,7 @@ tools:
 | `TOPSAILAI_SESSION_DRIVER_TIMEOUT` | `120` | Single analysis timeout in seconds (SIGALRM). |
 | `TOPSAILAI_SESSION_DRIVER_TASK_GOAL` | `Drive the target session to completion.` | Task goal injected into the analysis prompt. |
 | `TOPSAILAI_PLUGIN_TOOLS` | `plugins.tools` | Plugin tools package (set by the script before importing topsailai). |
-| `TOPSAILAI_PLUGIN_SKILLS` | `{script_dir}/plugins/skills/topsailai-skills` | Plugin skills directory (soft link to topsailai/skills, set by the script). |
+| `TOPSAILAI_PLUGIN_SKILLS` | `{script_dir}/plugins/skills` | Plugin skills directory (contains the `topsailai-skills` soft link to topsailai/skills, set by the script). |
 
 ## Plugin Tools
 
@@ -64,9 +64,10 @@ tools:
 
 ## Plugin Skills
 
-`plugins/skills/topsailai-skills` is a soft link to
-`/TopsailAI/src/topsailai/skills`, so the analysis agent can load the
-`topsailai-agent-worker` skill for session query and send instructions.
+`plugins/skills` is the plugin skills directory. It contains the
+`topsailai-skills` soft link to `/TopsailAI/src/topsailai/skills`, so the
+analysis agent can load the `topsailai-agent-worker` skill for session query
+and send instructions.
 
 ## Prompt Template
 
