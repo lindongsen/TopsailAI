@@ -445,3 +445,115 @@ def test_registrar_rejects_invalid_foundations_and_startup_reload_failure() -> N
     )
     with pytest.raises(RuntimeError, match="artifact_rejected"):
         registrar.reload(startup)
+
+
+@pytest.mark.parametrize("category", ["artifact_rejected", "cleanup_pending"])
+@pytest.mark.parametrize("mode", ["lazy", "startup"])
+def test_failed_replacement_keeps_exact_active_admission(category, mode):
+    """A rejected desired revision must retain usable exact publication evidence."""
+    from dataclasses import replace
+
+    runtime = _Runtime([
+        ConfiguredRegistrationResult(True, True, 1, active_revision=7),
+        ConfiguredRegistrationResult(False, errors=(category,)),
+        ConfiguredRegistrationResult(True, True, 1, active_revision=8),
+    ])
+    runtime.release.set()
+    bootstrap = _bootstrap("hook_a", mode=mode)
+    registrar = ConfiguredHookRegistrar(runtime, _Scope(), bootstrap, _catalog("hook_a"),
+        transient_backoff_seconds=0)
+    assert registrar.ensure_registered("hook_a").active_revision == 7
+    changed = replace(bootstrap, configuration_generation=2,
+        hooks=(ConfiguredHookBinding("hook_a", scripts=(Path("/trusted/new.py"),)),))
+    registrar.reload(changed)
+    failed = registrar.ensure_registered("hook_a")
+    assert failed.ready
+    assert failed.desired_revision == 2
+    assert failed.active_revision == 7
+    assert failed.update_failed_using_last_known_good
+    assert failed.error_category == category
+    assert runtime.dispatch_configured("hook_a") == "dispatched"
+    assert registrar.ensure_registered("hook_a") == failed
+    assert runtime.calls == 2
+    assert runtime.removed == []
+    registrar.reload(changed)
+    restored = registrar.ensure_registered("hook_a")
+    assert restored.ready and restored.active_revision == 8
+    assert not restored.update_failed_using_last_known_good
+    assert runtime.calls == 3
+
+
+def test_unchanged_reload_preserves_inflight_cell_publication():
+    """A global configuration advance must not invalidate an unchanged winner."""
+    runtime = _Runtime([ConfiguredRegistrationResult(True, True, 1, active_revision=9)])
+    registrar = ConfiguredHookRegistrar(runtime, _Scope(), _bootstrap("hook_a"), _catalog("hook_a"))
+    results = []
+    worker = threading.Thread(target=lambda: results.append(registrar.ensure_registered("hook_a")))
+    worker.start()
+    try:
+        assert runtime.started.wait(1)
+        registrar.reload(_bootstrap("hook_a", generation=2))
+        runtime.release.set()
+        worker.join(2)
+        assert not worker.is_alive()
+        assert results[0].ready and results[0].active_revision == 9
+        assert runtime.removed == []
+        assert registrar.ensure_registered("hook_a").ready
+        assert runtime.calls == 1
+    finally:
+        runtime.release.set()
+        worker.join(2)
+
+
+def test_first_failure_has_no_active_revision_or_admission():
+    """A failed first candidate cannot invent an active plan or blocking policy."""
+    runtime = _Runtime([ConfiguredRegistrationResult(False, errors=("artifact_rejected",))])
+    runtime.release.set()
+    registrar = ConfiguredHookRegistrar(runtime, _Scope(), _bootstrap("hook_a"), _catalog("hook_a"))
+    result = registrar.ensure_registered("hook_a")
+    assert not result.ready
+    assert result.desired_revision == 1 and result.active_revision is None
+    assert not result.update_failed_using_last_known_good
+    assert runtime.active == set()
+
+
+@pytest.mark.parametrize("revision", [True, 0, -1, "1"])
+def test_registration_rejects_invalid_publication_revision(revision):
+    """Publication evidence must be a positive integer, never a malformed alias."""
+    with pytest.raises(ValueError, match="invalid configured registration result"):
+        ConfiguredRegistrationResult(True, active_revision=revision)
+    with pytest.raises(ValueError, match="invalid configured registration result"):
+        ConfiguredRegistrationResult(False, active_revision=1)
+
+
+@pytest.mark.parametrize("policy", ["fail", "disable"])
+def test_startup_failure_preserves_prior_active_plan(policy):
+    """Rollback of new startup points must never retire prior valid custody."""
+    from dataclasses import replace
+
+    runtime = _Runtime([
+        ConfiguredRegistrationResult(True, True, 1, active_revision=7),
+        ConfiguredRegistrationResult(False, errors=("artifact_rejected",)),
+        ConfiguredRegistrationResult(False, errors=("artifact_rejected",)),
+    ])
+    runtime.release.set()
+    registrar = ConfiguredHookRegistrar(runtime, _Scope(), _bootstrap("hook_a"),
+        _catalog("hook_a", "hook_b"))
+    assert registrar.ensure_registered("hook_a").active_revision == 7
+    startup = replace(_bootstrap("hook_a", "hook_b", mode="startup", generation=2),
+        startup_policy=policy,
+        hooks=(ConfiguredHookBinding("hook_a", scripts=(Path("/trusted/new.py"),)),
+            ConfiguredHookBinding("hook_b", scripts=(Path("/trusted/b.py"),))))
+    if policy == "fail":
+        with pytest.raises(RuntimeError, match="artifact_rejected"):
+            registrar.reload(startup)
+    else:
+        registrar.reload(startup)
+    retained = registrar.ensure_registered("hook_a")
+    assert retained.ready and retained.active_revision == 7
+    assert retained.desired_revision == 2 and retained.update_failed_using_last_known_good
+    assert runtime.dispatch_configured("hook_a") == "dispatched"
+    assert "hook_a" not in runtime.removed
+    assert runtime.active == {"hook_a"}
+    assert not registrar.ensure_registered("hook_b").ready
+    assert runtime.calls == 3

@@ -47,11 +47,16 @@ class RegistrationEnsureResult:
     error_category: str | None = None
     failure_kind: RegistrationFailureKind = RegistrationFailureKind.NONE
     attempt: int = 0
+    desired_revision: int | None = None
+    active_revision: int | None = None
+    update_failed_using_last_known_good: bool = False
 
     @property
     def ready(self) -> bool:
         """Return whether configured dispatch may proceed."""
-        return self.state is RegistrationState.READY
+        return self.state is RegistrationState.READY or (
+            self.active_revision is not None and self.state in (
+                RegistrationState.FAILED_DETERMINISTIC, RegistrationState.FAILED_TRANSIENT))
 
 
 @dataclass(slots=True)
@@ -63,6 +68,8 @@ class _RegistrationCell:
     error_category: str | None = None
     retry_at: float = 0.0
     exception: BaseException | None = None
+    desired_revision: int | None = None
+    active_revision: int | None = None
 
 
 _TRANSIENT_ERRORS = frozenset({"capacity_exceeded", "cleanup_pending"})
@@ -101,7 +108,8 @@ class ConfiguredHookRegistrar:
         self._reloading = False
         self._bindings = self._binding_map(bootstrap)
         self._cells = {
-            name: _RegistrationCell(RegistrationState.UNINITIALIZED)
+            name: _RegistrationCell(RegistrationState.UNINITIALIZED,
+                desired_revision=bootstrap.configuration_generation)
             for name in self._bindings
         }
 
@@ -118,28 +126,35 @@ class ConfiguredHookRegistrar:
             return RegistrationEnsureResult(RegistrationState.UNCONFIGURED)
         if self._bootstrap.registration_mode != "startup":
             return RegistrationEnsureResult(RegistrationState.UNINITIALIZED)
+        with self._condition:
+            retained = {name for name, cell in self._cells.items()
+                if cell.active_revision is not None}
         newly_registered: list[str] = []
         for hook_name in tuple(self._bindings):
             prior_state = self.state(hook_name)
             result = self.ensure_registered(hook_name)
             if result.ready:
-                if prior_state is not RegistrationState.READY:
+                if hook_name not in retained and prior_state is not RegistrationState.READY:
                     newly_registered.append(hook_name)
                 continue
             disable = self._bootstrap.startup_policy == "disable"
-            retire_names = tuple(self._bindings) if disable else tuple(newly_registered)
+            retire_names = (tuple(name for name in self._bindings if name not in retained)
+                if disable else tuple(newly_registered))
             with self._condition:
                 if disable:
                     for active_name in retire_names:
                         self._runtime.retire_configured(active_name, self._scope)
-                    self._bindings = {}
-                    for cell in self._cells.values():
-                        cell.state = RegistrationState.UNCONFIGURED
+                    self._bindings = {name: binding for name, binding in self._bindings.items()
+                        if name in retained}
+                    for active_name in retire_names:
+                        self._cells[active_name].state = RegistrationState.UNCONFIGURED
+                        self._cells[active_name].active_revision = None
                     self._condition.notify_all()
                     return RegistrationEnsureResult(RegistrationState.UNCONFIGURED)
                 for active_name in retire_names:
                     cell = self._cells.get(active_name)
                     if cell is not None and cell.state is RegistrationState.READY:
+                        cell.active_revision = None
                         cell.state = RegistrationState.INVALIDATED
                         cell.error_category = None
                         cell.retry_at = 0.0
@@ -170,7 +185,6 @@ class ConfiguredHookRegistrar:
                     cell.state = RegistrationState.REGISTERING
                     cell.attempt += 1
                     binding = self._bindings[hook_name]
-                    generation = self._bootstrap.configuration_generation
                     break
                 self._condition.wait()
         try:
@@ -183,7 +197,7 @@ class ConfiguredHookRegistrar:
                     cell.error_category = "registration_exception"
                 self._condition.notify_all()
             raise
-        return self._publish_result(hook_name, generation, result)
+        return self._publish_result(hook_name, cell, result)
 
     def _ensure_budgeted(self, hook_name, deadline, cancellation):
         """Stop only this wait; the shared preparation owner completes independently."""
@@ -202,9 +216,8 @@ class ConfiguredHookRegistrar:
                     cell.state = RegistrationState.REGISTERING
                     cell.attempt += 1
                     binding = self._bindings[hook_name]
-                    generation = self._bootstrap.configuration_generation
                     owner = threading.Thread(target=self._prepare_shared,
-                        args=(hook_name, generation, binding, cell), daemon=True)
+                        args=(hook_name, binding, cell), daemon=True)
                     try:
                         owner.start()
                     except BaseException as exc:
@@ -215,11 +228,11 @@ class ConfiguredHookRegistrar:
                         raise
                 self._condition.wait(.01 if remaining is None else min(.01, remaining))
 
-    def _prepare_shared(self, hook_name, generation, binding, cell):
+    def _prepare_shared(self, hook_name, binding, cell):
         """Publish shared completion or original failure to all live waiters."""
         try:
             result = self._register(binding)
-            self._publish_result(hook_name, generation, result)
+            self._publish_result(hook_name, cell, result)
         except BaseException as exc:
             with self._condition:
                 if self._cells.get(hook_name) is cell and cell.state is RegistrationState.REGISTERING:
@@ -242,12 +255,12 @@ class ConfiguredHookRegistrar:
         if cell.exception is not None:
             raise cell.exception
         if cell.state is RegistrationState.READY:
-            return self._result(RegistrationState.READY, attempt=cell.attempt)
+            return self._cell_result(cell)
         if cell.state is RegistrationState.FAILED_DETERMINISTIC:
-            return self._result(cell.state, cell.error_category, RegistrationFailureKind.DETERMINISTIC, cell.attempt)
+            return self._cell_result(cell)
         if cell.state is RegistrationState.FAILED_TRANSIENT:
-            if cell.attempt >= self._max_transient_attempts or time.monotonic() < cell.retry_at:
-                return self._result(cell.state, cell.error_category, RegistrationFailureKind.TRANSIENT, cell.attempt)
+            if cell.active_revision is not None or cell.attempt >= self._max_transient_attempts or time.monotonic() < cell.retry_at:
+                return self._cell_result(cell)
             return True
         if cell.state is RegistrationState.REGISTERING:
             return False
@@ -268,29 +281,29 @@ class ConfiguredHookRegistrar:
     def _publish_result(
         self,
         hook_name: str,
-        generation: int,
+        expected_cell: _RegistrationCell,
         result: ConfiguredRegistrationResult,
     ) -> RegistrationEnsureResult:
         """Publish one winner result only if ownership remains current."""
         retire = False
         with self._condition:
             cell = self._cells.get(hook_name)
-            stale = generation != self._bootstrap.configuration_generation
+            stale = cell is not expected_cell
             if self._closed or cell is None or stale:
                 retire = result.accepted
                 final = self._result(RegistrationState.CLOSED if self._closed else RegistrationState.INVALIDATED, failure=RegistrationFailureKind.CLOSED if self._closed else RegistrationFailureKind.DETERMINISTIC)
             elif result.accepted:
                 cell.state = RegistrationState.READY
+                cell.active_revision = result.active_revision
                 cell.error_category = None
-                final = self._result(cell.state, attempt=cell.attempt)
+                final = self._cell_result(cell)
             else:
                 category = result.errors[0] if result.errors else "registration_rejected"
                 transient = category in _TRANSIENT_ERRORS
                 cell.state = RegistrationState.FAILED_TRANSIENT if transient else RegistrationState.FAILED_DETERMINISTIC
                 cell.error_category = category
                 cell.retry_at = time.monotonic() + self._transient_backoff_seconds
-                kind = RegistrationFailureKind.TRANSIENT if transient else RegistrationFailureKind.DETERMINISTIC
-                final = self._result(cell.state, category, kind, cell.attempt)
+                final = self._cell_result(cell)
             self._condition.notify_all()
         if retire:
             self._runtime.retire_configured(hook_name, self._scope)
@@ -315,6 +328,9 @@ class ConfiguredHookRegistrar:
                     name for name in set(old_bindings) | set(new_bindings)
                     if old_bindings.get(name) != new_bindings.get(name)
                 }
+                changed.update(name for name, cell in self._cells.items()
+                    if cell.state in (RegistrationState.FAILED_DETERMINISTIC,
+                        RegistrationState.FAILED_TRANSIENT))
                 while any(
                     self._cells.get(name) is not None
                     and self._cells[name].state is RegistrationState.REGISTERING
@@ -327,7 +343,10 @@ class ConfiguredHookRegistrar:
                 self._bindings = new_bindings
                 for name in changed:
                     if name in new_bindings:
-                        self._cells[name] = _RegistrationCell(RegistrationState.UNINITIALIZED)
+                        prior = self._cells.get(name)
+                        self._cells[name] = _RegistrationCell(RegistrationState.UNINITIALIZED,
+                            desired_revision=bootstrap.configuration_generation,
+                            active_revision=None if prior is None else prior.active_revision)
                     else:
                         self._cells.pop(name, None)
                 removed = sorted(set(old_bindings) - set(new_bindings))
@@ -348,9 +367,22 @@ class ConfiguredHookRegistrar:
                 return
             self._closed = True
             for cell in self._cells.values():
+                cell.active_revision = None
                 cell.state = RegistrationState.CLOSED
             self._condition.notify_all()
         self._scope.close()
+
+    @staticmethod
+    def _cell_result(cell: _RegistrationCell) -> RegistrationEnsureResult:
+        """Expose desired selection and exact active publication without authority."""
+        failure = RegistrationFailureKind.NONE
+        if cell.state is RegistrationState.FAILED_DETERMINISTIC:
+            failure = RegistrationFailureKind.DETERMINISTIC
+        elif cell.state is RegistrationState.FAILED_TRANSIENT:
+            failure = RegistrationFailureKind.TRANSIENT
+        return RegistrationEnsureResult(cell.state, cell.error_category, failure,
+            cell.attempt, cell.desired_revision, cell.active_revision,
+            cell.active_revision is not None and failure is not RegistrationFailureKind.NONE)
 
     @staticmethod
     def _result(

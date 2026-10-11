@@ -412,6 +412,7 @@ class ConfiguredRegistrationResult:
     changed: bool = False
     script_count: int = 0
     errors: tuple[str, ...] = ()
+    active_revision: int | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         """Validate the small caller-facing registration result."""
@@ -426,6 +427,9 @@ class ConfiguredRegistrationResult:
         if not self.accepted and (self.changed or self.script_count):
             raise ValueError("invalid configured registration result")
         if self.accepted and self.errors:
+            raise ValueError("invalid configured registration result")
+        if self.active_revision is not None and (not self.accepted or
+                type(self.active_revision) is not int or self.active_revision <= 0):
             raise ValueError("invalid configured registration result")
 
 

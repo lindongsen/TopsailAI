@@ -214,7 +214,7 @@ def register_configured(
         elif result.previous is not None:
             recovery.settle(previous_ticket)
         return ConfiguredRegistrationResult(True, changed=result.changed,
-            script_count=len(discovery.entries))
+            script_count=len(discovery.entries), active_revision=result.snapshot.active_version)
     except BaseException as error:
         owner = getattr(error, "recovery_owner", None)
         if owner is not None:

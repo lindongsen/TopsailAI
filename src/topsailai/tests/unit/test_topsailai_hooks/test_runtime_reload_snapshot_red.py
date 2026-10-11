@@ -234,3 +234,54 @@ def test_reload_racing_close_is_wholly_published_or_wholly_rejected(
         if reload_thread is not None:
             join_owned(reload_thread)
         runtime.close(deadline_ms=100)
+
+
+def test_configured_registrar_replacement_preserves_exact_old_reader(tmp_path):
+    """Real failed and successful replacements preserve captured old reader custody."""
+    from dataclasses import replace
+    from topsailai.hooks.configured_bootstrap import ConfiguredHookBinding, ConfiguredHookBootstrap
+    from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
+    from topsailai.tests.unit.test_topsailai_hooks.test_configured_registration import _catalog
+    from topsailai.tests.unit.test_topsailai_hooks.test_simplified_configured_runtime import (
+        _protocol_script, _real_runtime, _real_event,
+    )
+
+    old = _protocol_script(tmp_path / "sources" / "old.py", "old")
+    new = _protocol_script(tmp_path / "sources" / "new.py", "new")
+    runtime, scope = _real_runtime(tmp_path, (old, new))
+    bootstrap = ConfiguredHookBootstrap(True, registration_mode="lazy",
+        hooks=(ConfiguredHookBinding("hook_a", scripts=(old,)),),
+        trust=runtime._configured_trust, trust_identity="a" * 64)
+    registrar = ConfiguredHookRegistrar(runtime, scope, bootstrap, _catalog("hook_a"))
+    reader = None
+    try:
+        first = registrar.ensure_registered("hook_a")
+        assert first.active_revision == 1
+        reader = runtime._registry.acquire_hook_point(scope.scope_id, "hook_a")
+        captured = reader.snapshot.plan.default_script_hook.scripts[0].captured_path
+        assert captured.exists()
+        failed_bootstrap = replace(bootstrap, configuration_generation=2,
+            hooks=(ConfiguredHookBinding("hook_a", scripts=(tmp_path / "sources" / "missing.py",)),))
+        registrar.reload(failed_bootstrap)
+        failed = registrar.ensure_registered("hook_a")
+        assert failed.ready and failed.active_revision == 1
+        assert failed.desired_revision == 2 and failed.update_failed_using_last_known_good
+        log = tmp_path / "calls"
+        assert runtime.dispatch_configured("hook_a", _real_event(runtime, scope, log)).unified_result.status == "success"
+        assert log.read_text().splitlines() == ["old"]
+        registrar.reload(replace(bootstrap, configuration_generation=3,
+            hooks=(ConfiguredHookBinding("hook_a", scripts=(new,)),)))
+        activated = registrar.ensure_registered("hook_a")
+        assert activated.active_revision == 2 and activated.desired_revision == 3
+        assert reader.snapshot.active_version == 1 and captured.exists()
+        assert runtime.dispatch_configured("hook_a", _real_event(runtime, scope, log)).unified_result.status == "success"
+        assert log.read_text().splitlines() == ["old", "new"]
+        assert runtime._registry.release_hook_point(reader)
+        reader = None
+        assert not captured.exists()
+        assert runtime.cleanup_debts() == ()
+    finally:
+        if reader is not None:
+            runtime._registry.release_hook_point(reader)
+        registrar.close()
+        runtime.close()
