@@ -6,7 +6,7 @@ Feature: Simplified configured Hook runtime
   Scenario: Ordered scripts execute through the public Runtime boundary
     Given a simplified Hook runtime configured with ordered scripts
     When the configured Hook is executed through its exact public name
-    Then the configured Hook execution succeeds in explicit order
+    Then the configured Hook execution succeeds in name order
     And closing the simplified Hook runtime removes its captured artifacts
 
   Scenario: A recursive folder executes in deterministic relative-path order

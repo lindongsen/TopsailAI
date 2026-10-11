@@ -68,10 +68,10 @@ def when_replacement_rejected(simplified_hook_ctx):
     simplified_hook_ctx["scenario"].reject_invalid_replacement()
 
 
-@then("the configured Hook execution succeeds in explicit order")
+@then("the configured Hook execution succeeds in name order")
 def then_explicit_order(simplified_hook_ctx):
-    """Observe caller-owned ordering from real processes."""
-    simplified_hook_ctx["scenario"].assert_success(["z", "a"])
+    """Observe target name ordering from real processes despite reversed input."""
+    simplified_hook_ctx["scenario"].assert_success(["a", "z"])
 
 
 @then("the configured Hook execution succeeds in folder order")
