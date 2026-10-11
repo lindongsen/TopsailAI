@@ -178,6 +178,21 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
         return self._execute_delivery(handler_ref, context, timeout_ms,
                                       module=True, args=args, kwargs=kwargs)
 
+    def execute_captured_module(self, module, context: HookContext, timeout_ms: int) -> WorkerResult:
+        """Invoke a detached captured record using the existing process cleanup lease."""
+        from topsailai.hooks.hook_point_plan_contracts import CapturedModule
+        from topsailai.hooks.captured_module_protocol import CapturedModuleLocator
+        if type(module) is not CapturedModule:
+            return WorkerResult("invalid_request", error_category="invalid_request")
+        locator = CapturedModuleLocator(str(module.captured_path), module.source.logical_name,
+                                        module.source.kind, module.content_sha256)
+        from topsailai.hooks.contracts import _thaw_frozen_json
+        return self._execute_delivery(
+            module.source.handler_ref, context, timeout_ms, module=True,
+            args=_thaw_frozen_json(module.invocation.args),
+            kwargs=_thaw_frozen_json(module.invocation.kwargs), captured=locator,
+        )
+
     def _preflight(self, timeout_ms: int) -> WorkerResult | None:
         """Reject platforms outside the currently verified Linux capability scope."""
         if (

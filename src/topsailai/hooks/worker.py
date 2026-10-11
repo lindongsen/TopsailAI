@@ -15,6 +15,9 @@ from topsailai.hooks.contracts import ValidationError, _thaw_frozen_json
 from topsailai.hooks.module_invocation_protocol import (
     MODULE_PROTOCOL_VERSION, parse_module_request, build_module_response,
 )
+from topsailai.hooks.captured_module_protocol import (
+    CAPTURED_MODULE_PROTOCOL_VERSION, parse_captured_module_request,
+)
 from topsailai.hooks.validation import freeze_json
 from topsailai.hooks.worker_protocol import (
     PROTOCOL_VERSION,
@@ -141,10 +144,15 @@ def run_worker(result_fd: int, request_limit: int, response_limit: int) -> int:
         request_frame = _read_request_frame(request_limit)
         request = decode_frame(request_frame, request_limit)
         version = request.get("protocol_version") if type(request) is dict else None
-        if type(version) is not int or version not in (PROTOCOL_VERSION, MODULE_PROTOCOL_VERSION):
+        if type(version) is not int or version not in (PROTOCOL_VERSION, MODULE_PROTOCOL_VERSION, CAPTURED_MODULE_PROTOCOL_VERSION):
             raise ValidationError("unsupported worker protocol version")
-        module = version == MODULE_PROTOCOL_VERSION
-        if module:
+        module = version != PROTOCOL_VERSION
+        locator = None
+        if version == CAPTURED_MODULE_PROTOCOL_VERSION:
+            correlation_id, channel_token, handler_ref, context, invocation, locator = parse_captured_module_request(
+                request, limits=ProtocolLimits(request_limit, response_limit)
+            )
+        elif module:
             correlation_id, channel_token, handler_ref, context, invocation = parse_module_request(
                 request, limits=ProtocolLimits(request_limit, response_limit)
             )
@@ -152,7 +160,11 @@ def run_worker(result_fd: int, request_limit: int, response_limit: int) -> int:
             correlation_id, channel_token, handler_ref, context = parse_request(request)
         delivery_id = context.delivery_id
         try:
-            handler = _resolve_handler(handler_ref)
+            if locator is None:
+                handler = _resolve_handler(handler_ref)
+            else:
+                from topsailai.hooks.captured_module_loader import resolve_captured_handler
+                handler = resolve_captured_handler(locator)
             value = _invoke_module(handler, invocation) if module else _invoke(handler, context)
         except BaseException as exc:
             detached = None

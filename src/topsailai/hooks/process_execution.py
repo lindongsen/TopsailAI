@@ -11,6 +11,7 @@ from topsailai.hooks.contracts import HookContext, ValidationError
 from topsailai.hooks.module_invocation_protocol import (
     ModuleInvocation, build_module_request, validate_module_response,
 )
+from topsailai.hooks.captured_module_protocol import build_captured_module_request
 from topsailai.hooks.process_state import LaunchRecord as _LaunchRecord, WorkerResult
 from topsailai.hooks.worker_protocol import build_request, decode_frame, encode_frame
 
@@ -19,7 +20,7 @@ class ProcessExecutionMixin:
     """Reuse one deadline, transport and cleanup transaction for v1 and v2."""
 
     def _execute_delivery(self, handler_ref, context, timeout_ms, *, module=False,
-                          args=(), kwargs=None) -> WorkerResult:
+                          args=(), kwargs=None, captured=None) -> WorkerResult:
         """Admit a local codec and publish only through the existing cleanup owner."""
         unsupported = self._preflight(timeout_ms)
         if unsupported is not None:
@@ -43,10 +44,12 @@ class ProcessExecutionMixin:
         try:
             if module:
                 invocation = ModuleInvocation(args, {} if kwargs is None else kwargs)
-                request = build_module_request(
+                builder = build_module_request if captured is None else build_captured_module_request
+                extra = {} if captured is None else {"locator": captured}
+                request = builder(
                     correlation_id=correlation_id, channel_token=channel_token,
                     handler_ref=handler_ref, context=context, invocation=invocation,
-                    limits=self._limits,
+                    limits=self._limits, **extra,
                 )
             request_frame = encode_frame(request, self._limits.request_bytes)
         except ValidationError:
