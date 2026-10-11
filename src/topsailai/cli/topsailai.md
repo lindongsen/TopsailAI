@@ -1,6 +1,6 @@
 ---
 references:
-  - topsailai.py
+  - topsailai_cli.py
   - cli_topsailai/
   - topsailai.yaml
   - topsailai_models.py
@@ -36,6 +36,9 @@ references:
 
 ## Non-interactive subcommands
 
+- `runtime [-s SESSION] [-p PID] -i INSTRUCTION`
+- `runtime send|btw [-s SESSION] [-p PID] -m MESSAGE|--stdin`
+- `runtime control ACTION [-s SESSION] [-p PID] [-a JSON]`
 - `project add|del|list|launch|resume`
 - `models list|add|get|update|delete`
 

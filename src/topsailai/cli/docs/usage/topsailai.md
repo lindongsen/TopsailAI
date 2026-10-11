@@ -6,7 +6,7 @@ ProjectRootFolder: /TopsailAI/src/topsailai
 ProjectCode: TOPSAILAI
 programming_language: python
 references:
-  - topsailai.py
+  - topsailai_cli.py
   - cli_topsailai/
   - topsailai.yaml
 ---
@@ -17,18 +17,18 @@ Interactive task watcher and session manager for TopsailAI.
 
 ## Purpose
 
-`topsailai.py` is the main interactive CLI. It scans `{TOPSAILAI_HOME}/workspace/task/` for session and task stdout/stderr files, displays them as a numbered list, and lets you watch logs, send messages to running sessions, retrieve session context, launch agents, and switch between workspace, project, and session scopes.
+`topsailai_cli.py` is the main interactive CLI. It scans `{TOPSAILAI_HOME}/workspace/task/` for session and task stdout/stderr files, displays them as a numbered list, and lets you watch logs, send messages to running sessions, retrieve session context, launch agents, and switch between workspace, project, and session scopes.
 
 ## Invocation
 
 ```bash
-./topsailai.py
-./topsailai.py -t
-./topsailai.py --tui
-./topsailai.py -n 200
-./topsailai.py --tail-lines 200
-./topsailai.py -m raw
-./topsailai.py --agent-mode raw
+./topsailai_cli.py
+./topsailai_cli.py -t
+./topsailai_cli.py --tui
+./topsailai_cli.py -n 200
+./topsailai_cli.py --tail-lines 200
+./topsailai_cli.py -m raw
+./topsailai_cli.py --agent-mode raw
 ```
 
 Because the script is registered in `../bin/` as `topsailai`, you can also run it from anywhere in the project as:
@@ -111,10 +111,92 @@ The selected configuration is resolved immediately before `/agent` or `/resume`.
 | `/help` | Show the list of available streaming commands. |
 | `q` or `quit` | Leave runtime scope and return to the file list. |
 
+## Non-interactive Runtime
+
+`topsailai runtime` executes one operation and exits, without entering a scope, watching logs, initializing interactive input, or executing shell commands. Its entry point is `topsailai_cli.py`. The following commands are illustrative; replace selectors with the intended running session. They are not evidence of live-session delivery.
+
+### Syntax and actions
+
+```bash
+# Instruction form: slash command and literal body in one argument
+topsailai runtime -s SESSION -p PID -i '/send hello'
+topsailai runtime -s SESSION -i '/ctx.btw remember this detail'
+topsailai runtime -s SESSION -i '/control get_session_messages {}'
+topsailai runtime -s SESSION -i '/control.get_session_messages {}'
+
+# Structured form: same operations, without slash parsing
+topsailai runtime send -s SESSION -p PID -m 'hello'
+topsailai runtime btw -s SESSION --message 'remember this detail'
+topsailai runtime control get_session_messages -s SESSION -a '{}' --json
+
+# Explicit stdin: files or pipes, never an interactive terminal
+topsailai runtime btw -s SESSION --stdin < message.txt
+topsailai runtime -s SESSION -i '/send' --stdin < message.txt
+
+# A body beginning with -- requires an explicit assignment
+topsailai runtime send -s SESSION --message='--literal text'
+```
+
+`send` writes session input to its FIFO. `btw` queues an agent2llm injection through the existing writer. `control ACTION` sends a JSON-object payload, default `{}`, and requires a valid successful acknowledgement. Available control actions come from the existing dynamic registry, including plugins; this document intentionally does not duplicate its complete action list. ACTION is positional, not `-c`. `-a/--args` must be a JSON object, not an array or scalar. `get_session_messages` fills a missing `session_id` key from the selected target, without replacing an explicitly supplied value. `call_instruction` requires a nonempty `instruction` field; there is no interactive wizard.
+
+### Selectors and options
+
+| Option | Meaning |
+|---|---|
+| `-s`, `--session-id`, `--session_id` | Exact session identifier. |
+| `-p`, `--pid` | Positive session PID, not a task child PID. |
+| `--timeout` | Positive finite transport budget in seconds; default 5. |
+| `--json` | Emit one public result document on stdout, including failures. |
+| `-i`, `--instruction` | One allowed slash instruction; mutually exclusive with structured action syntax. |
+| `-m`, `--message` | Literal send/btw body, not the global interactive agent-mode option. |
+| `--stdin` | Explicit bounded non-TTY UTF-8 body source for send/btw only. |
+| `-a`, `--args` | Control JSON object; default `{}`. |
+
+At least session or PID is required. Providing both means strict intersection: neither may be relaxed. Discovery considers session stdout records under `{TOPSAILAI_HOME}/workspace/task/`, not task stdout as parent identities. No match, stale target, mismatch or multiple live candidates fails; the CLI never chooses the newest, falls back to another target, filters ambiguity by endpoint availability, or broadcasts.
+
+Common options may appear before or after the structured action. Identical repeated value options are permitted; conflicting repeated values are rejected. Unknown options, leftover arguments and option abbreviations are rejected. Runtime `-m raw` and `-m tmux` are literal messages. Use `--message=VALUE` (or `-m=VALUE`) when a body starts with `--`. Help is offline: `runtime --help`, `runtime send --help`, `runtime btw --help`, and `runtime control --help` do not resolve a target, read stdin, or load control handlers/injection writers.
+
+### Literal input and bounds
+
+Send/btw require exactly one body source: structured message, instruction body, or explicit stdin. With instruction plus stdin, the instruction must be only `/send` or `/ctx.btw`, without an inline body. Control does not support stdin or message arguments; there is no message-file option.
+
+The instruction starts immediately with its command token, without leading whitespace. Parsing consumes exactly one whitespace character between command and body (and between `/control` and ACTION); remaining body whitespace, quotes, Unicode and newlines are retained. Control payloads retain normal JSON whitespace. No `shlex` reconstruction or whole-body trimming occurs. Whitespace-only bodies are invalid. Shell operators and slash commands inside a send body are inert data, not recursively executed.
+
+Messages have a 1 MiB UTF-8 byte limit. Explicit stdin is checked only after syntax validation; TTY stdin is rejected. Reading is bounded to 1 MiB + 1 bytes, then decoded strictly as UTF-8. Malformed encoding, excess size and empty/blank content are usage errors. Ordinary stdin device failures, including `isatty()` and reads failing after partial input, instead produce `input_read_failed` with exit code 5 before target resolution or delivery.
+
+Send rejects a standalone `EOF` line (including CRLF framing equivalents) because it collides with the receiver terminator. An ordinary substring containing `EOF` is allowed. This FIFO restriction is not an injection-message terminator rule.
+
+### Output and exit codes
+
+Ordinary mode writes success to stdout and failure diagnostics to stderr, without echoing submitted bodies. `--json` produces exactly one JSON document on stdout on success or failure, including recognized parameter errors; help remains ordinary help. A body whose value is `--json` does not enable JSON output. Internal exceptions (`cause`) are never serialized.
+
+Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `delivery_state`, `error_code`, `message`, `bytes_written`, `request_id`, `response`, and `delivery_unknown`. Syntax errors can have empty action and absent selectors because normalization did not finish. Control responses may include receiver-provided application data; handle them according to that application's confidentiality requirements. Routine local diagnostics do not echo input bodies or raw stdin-device exceptions.
+
+| Exit | Meaning |
+|---|---|
+| 0 | Success at the stated delivery boundary. |
+| 2 | `usage_error`: invalid syntax, selectors, timeout, input, JSON, action, size or forbidden EOF line. |
+| 3 | Target not found, mismatch, stale target or ambiguity. |
+| 4 | Missing/invalid endpoint, permission denial or unsupported transport. |
+| 5 | Transport error, timeout, injection failure or `input_read_failed` device failure. |
+| 6 | Control rejected or invalid/oversized/uncorrelated response. |
+
+### Delivery guarantees and limitations
+
+- `pipe_written` means FIFO bytes were written, not that the agent processed them.
+- `injection_queued` means the writer queued the message, not that the next LLM call consumed it.
+- `control_acknowledged` means a correlated valid response reported `status=ok`, not that asynchronous business work finished.
+- Failed writes/sends/appends may carry partial evidence or `delivery_unknown=true`. Do not blindly retry: a duplicate operation can have real effects. The CLI never automatically retries the whole operation.
+- The default 5-second timeout bounds FIFO open/write or control connect/send/response operations. It does not cover stdin acquisition or the external writer's blocking injection append. No hard cancellation guarantee is provided for those boundaries.
+- FIFO requires platform FIFO support; control uses Unix-domain sockets and fails on unsupported platforms. No cross-platform fallback transport is silently selected.
+- The task directory is assumed to be trusted local per-user storage. Endpoint/type/path checks and PID liveness are not authenticated receiver identity. PID reuse and filesystem replacement races remain possible, especially between injection validation and the external writer opening the file. This interface is not a security boundary against a hostile task directory or other local users.
+- Non-interactive runtime supports only `/send`, `/ctx.btw`, `/control`, `/control.ACTION`. It does not support arbitrary shell/YAML dispatch, multiple commands, broadcast, log following, or runtime `/ctx.add_msg`. Existing interactive scope commands remain separate.
+
 ## Subcommands
 
 | Command | Description |
 |---------|-------------|
+| `runtime` | Execute one exact send, btw or control operation; see the contract above. |
 | `workspace [-f json]` | Display the workspace task list and exit. The default is the human-readable table; `-f json` or `--format json` emits one JSON document. |
 | `docs list` | List all usage documentation files and exit. |
 | `docs read <name>` | Read a specific usage documentation file and exit. |
@@ -136,46 +218,46 @@ The JSON workspace document contains `host`, `pwd`, `home`, `task_dir`, `items`,
 
 ```bash
 # Start the interactive CLI
-./topsailai.py
+./topsailai_cli.py
 
 # Display the workspace task list without entering interactive mode
-./topsailai.py workspace
+./topsailai_cli.py workspace
 
 # Display the workspace task list as JSON
 topsailai workspace -f json
 
 # List all usage documentation files
-./topsailai.py docs list
+./topsailai_cli.py docs list
 
 # Read a specific usage documentation file
-./topsailai.py docs read topsailai.md
+./topsailai_cli.py docs read topsailai.md
 
 # Add the current directory to the managed project list
-./topsailai.py project add .
+./topsailai_cli.py project add .
 
 # List managed projects
-./topsailai.py project list
+./topsailai_cli.py project list
 
 # List model registry entries
-./topsailai.py models list
+./topsailai_cli.py models list
 
 # Add a model with key=value pairs
-./topsailai.py models add name="My Model" provider=openai protocol=openai-compatible model=gpt-4o api_key_env=OPENAI_API_KEY
+./topsailai_cli.py models add name="My Model" provider=openai protocol=openai-compatible model=gpt-4o api_key_env=OPENAI_API_KEY
 
 # Add a model with a JSON object
-./topsailai.py models add '{"id":"my-model","name":"My Model","provider":"openai","protocol":"openai-compatible","model":"gpt-4o","api_key_env":"OPENAI_API_KEY"}'
+./topsailai_cli.py models add '{"id":"my-model","name":"My Model","provider":"openai","protocol":"openai-compatible","model":"gpt-4o","api_key_env":"OPENAI_API_KEY"}'
 
 # Update the first model's base URL
-./topsailai.py models update 1 base_url=https://api.example.com/v1
+./topsailai_cli.py models update 1 base_url=https://api.example.com/v1
 
 # Select the first model as the workspace default
-./topsailai.py models select 1
+./topsailai_cli.py models select 1
 
 # Show the current workspace selection
-./topsailai.py models current
+./topsailai_cli.py models current
 
 # Clear the workspace selection
-./topsailai.py models clear
+./topsailai_cli.py models clear
 ```
 
 ## Historical Reference

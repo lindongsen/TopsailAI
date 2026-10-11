@@ -39,7 +39,7 @@ Unit tests for each CLI tool are organized under `tests/unit/{cli-name}/`.
 
 For example:
 
-- `topsailai.py` → `tests/unit/topsailai/`
+- `topsailai_cli.py` → `tests/unit/topsailai/`
 - `topsailai_models.py` → `tests/unit/topsailai_models/`
 
 When adding a new CLI tool, create a matching folder under `tests/unit/` and place its tests there.
@@ -52,7 +52,7 @@ All CLI script names should start with `topsailai` to keep the command namespace
 
 For example:
 
-- `topsailai.py`
+- `topsailai_cli.py`
 - `topsailai_launch_agent.py`
 - `topsailai_session_status.py`
 - `topsailai_models.py`
@@ -143,7 +143,7 @@ The CLI and agent processes share a single workspace root referred to as `TOPSAI
 ├── skill/                 # Skill storage (local skill cache)
 ├── workspace/
 │   └── task/              # Session/task stdout, stderr, pipe, and inject files
-├── .topsailai_cli.history.jsonl # CLI command history (from topsailai.py)
+├── .topsailai_cli.history.jsonl # CLI command history (from topsailai_cli.py)
 ├── .input_history.jsonl   # Agent process input history
 ├── .input_completions.json # TAB completion definitions for interactive input
 ├── .project_history.jsonl # Project/workspace navigation history
@@ -158,12 +158,12 @@ The CLI and agent processes share a single workspace root referred to as `TOPSAI
 
 | File | Purpose | Produced By |
 |------|---------|-------------|
-| `.topsailai_cli.history.jsonl` | CLI command history (scope, session_id, timestamp, text) | `cli/topsailai.py` |
+| `.topsailai_cli.history.jsonl` | CLI command history (scope, session_id, timestamp, text) | `cli/topsailai_cli.py` |
 | `.input_history.jsonl` | Agent input history in JSONL format (`{"ts", "session_id", "text"}`) | Agent processes (e.g., `topsailai_agent_chats`, `topsailai_llm_chats`) |
 | `.input_completions.json` | TAB completion items for interactive input | Agent processes |
 | `.project_history.jsonl` | Project/workspace navigation history (`{"ts", "session_id", "project_workspace", "pwd"}`) | Agent processes |
 | `.models.jsonl` | Model registry with one non-secret configuration object per line | User |
-| `.model_selection.json` | Persistent workspace default and project-specific model selections | `cli/topsailai.py` |
+| `.model_selection.json` | Persistent workspace default and project-specific model selections | `cli/topsailai_cli.py` |
 | `memory.db` | SQLite memory database | Agent processes |
 | `topsailai_agent_daemon.db` | Agent daemon SQLite database | Agent daemon |
 | `tool_approval.json` | Tool approval rule set | User / external configuration |
@@ -182,7 +182,7 @@ Registry entries must reference credentials by environment-variable name through
 
 JSONL history files (`.topsailai_cli.history.jsonl`, `.input_history.jsonl`, `.project_history.jsonl`) are size-bounded and rotated automatically:
 
-- `TOPSAILAI_HISTORY_MAX_SIZE_MB` / `TOPSAILAI_HISTORY_MAX_ENTRIES` / `TOPSAILAI_HISTORY_MAX_BACKUPS` control `.topsailai_cli.history.jsonl` rotation in `topsailai.py`.
+- `TOPSAILAI_HISTORY_MAX_SIZE_MB` / `TOPSAILAI_HISTORY_MAX_ENTRIES` / `TOPSAILAI_HISTORY_MAX_BACKUPS` control `.topsailai_cli.history.jsonl` rotation in `topsailai_cli.py`.
 - `TOPSAILAI_INPUT_HISTORY_MAX_SIZE` controls `.input_history.jsonl` rotation.
 - `TOPSAILAI_PROJECT_HISTORY_MAX_SIZE` controls `.project_history.jsonl` rotation.
 - `TOPSAILAI_HISTORY_LOAD_MAX_ENTRIES` limits how many recent records are loaded into memory from `.input_history.jsonl` and `.project_history.jsonl`.
@@ -191,7 +191,7 @@ See `../src/topsailai/docs/Environment_Variables.md` for the full list of enviro
 
 ## Session Output Files
 
-The `topsailai.py` stream watcher discovers session and task stdout/stderr files in the task directory (`{TOPSAILAI_HOME}/workspace/task/`).
+The `topsailai_cli.py` stream watcher discovers session and task stdout/stderr files in the task directory (`{TOPSAILAI_HOME}/workspace/task/`).
 
 - **Session stdout** is produced by a session's main process.
   - Filename format: `{session_id}.{pid}.session.stdout`
@@ -329,9 +329,9 @@ These two commands append messages to a session, but they target different conve
 
 In short: use `topsailai_session_add_message` for persistent user-to-agent context, and `topsailai_session_add_agent2llm_message` when you want a running agent to pick up extra instruction right now.
 
-### Interactive message commands in `topsailai.py`
+### Interactive message commands in `topsailai_cli.py`
 
-When watching a session in `topsailai.py`, you can inject messages through three different paths. They differ in target layer, delivery mechanism, and when they take effect.
+When watching a session in `topsailai_cli.py`, you can inject messages through three different paths. They differ in target layer, delivery mechanism, and when they take effect.
 
 | Command | Target layer | Mechanism | When it takes effect |
 |---|---|---|---|
@@ -342,7 +342,7 @@ When watching a session in `topsailai.py`, you can inject messages through three
 Use `/send` for urgent process-level messages, `/ctx.btw` for extra instructions you want the current agent to pick up on the fly, and `/ctx.add_msg` for context that should persist until the next agent run.
 ### Runtime scope (dual-pane UI)
 
-When you choose to watch a session in `topsailai.py`, the CLI enters **runtime scope** and streams the selected log file. If the terminal supports it, a two-pane curses UI is used:
+When you choose to watch a session in `topsailai_cli.py`, the CLI enters **runtime scope** and streams the selected log file. If the terminal supports it, a two-pane curses UI is used:
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -367,9 +367,9 @@ The top pane shows the streaming log. The bottom pane is a fixed input bar where
 | `/help` | Show the list of available streaming commands. |
 | `q` or `quit` | Leave runtime scope and return to the file list. |
 
-## `topsailai.py` Workspace Task List
+## `topsailai_cli.py` Workspace Task List
 
-When `topsailai.py` starts, it prints the **workspace task list**.
+When `topsailai_cli.py` starts, it prints the **workspace task list**.
 This list is built by scanning `{TOPSAILAI_HOME}/workspace/task/` for `.stdout` and `.stderr` log files produced by running sessions and their tasks.
 
 Each row represents a discovered log file and shows:
@@ -396,13 +396,27 @@ You can also run the CLI in non-interactive documentation mode:
 
 ```bash
 # List all usage documentation files and exit
-./topsailai.py --list-docs
+./topsailai_cli.py --list-docs
 
 # Read a specific usage documentation file and exit
-./topsailai.py --read-doc topsailai.md
+./topsailai_cli.py --read-doc topsailai.md
 ```
 
 The prompt `[workspace]>` indicates that the CLI is in workspace scope (the task list). Choosing a session switches to `[session:<session_id>]>` scope.
+
+## Non-interactive Runtime Operations
+
+Use `topsailai runtime` to send input, queue a by-the-way message, or request control without entering the interactive log viewer:
+
+```bash
+topsailai runtime -s SESSION -p PID -i '/send hello'
+topsailai runtime btw -s SESSION --stdin < message.txt
+topsailai runtime control get_session_messages -s SESSION -a '{}' --json
+```
+
+These are illustrative commands: replace `SESSION` and `PID` with the intended running session. The entry point is `topsailai_cli.py`. Both instruction and structured syntax support send, btw and control. At least one exact session/PID selector is required; multiple live candidates are rejected, not automatically selected or broadcast to. Runtime `-m` means message, not agent mode.
+
+Success means FIFO bytes written, injection queued, or control acknowledged, not final business completion. Do not blindly retry partial or uncertain delivery. See [the runtime usage contract](docs/usage/topsailai.md#non-interactive-runtime) for syntax, stdin limits, JSON/exit codes, timeouts and platform/security caveats. `/ctx.add_msg` is not supported by this non-interactive runtime entry.
 
 ## Commands Available in All Scopes
 
