@@ -255,6 +255,36 @@ Supported actions: `call_instruction`, `hard_interrupt`, `soft_interrupt`,
 - To change agent behavior: look up the variable in `env_template`, add the
   override to `.env.local`, then restart the agent.
 
+## Skill overview preloading (`flag_overview`)
+
+A skill's `SKILL.md` frontmatter can declare a `flag_overview` marker to
+preload its full overview content into the skill registry prompt, with the
+same effect as the `TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS` environment
+variable. Either mechanism alone is enough to trigger preloading.
+
+```yaml
+---
+name: my-skill
+description: Demonstrates skill configuration items.
+preload_docs:
+  - references/
+  - docs/guide.md
+flag_overview: 1
+---
+```
+
+- `flag_overview: 1` / `flag_overview: true` — the skill's full overview
+  (SKILL.md body, `preload_docs` documents, and folder listing) is injected
+  into the Skill Registry prompt instead of only the description.
+- `flag_overview: 0` / `flag_overview: false` — preloading is disabled; an
+  explicit frontmatter value overrides the environment variable because the
+  parsed flag is no longer `None`.
+- When `flag_overview` is absent from the frontmatter, the skill hub falls
+  back to `TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS` (a `;`-separated list
+  of skill names, or `*` for all skills).
+- The marker is parsed in `parse_skill_folder()` and honored in
+  `SkillInfo.markdown` (`/TopsailAI/src/topsailai/skill_hub/skill_tool.py`).
+
 ## Model registry
 
 - The available model configuration file is `${HOME}/.topsailai/.models.jsonl`.
