@@ -41,3 +41,18 @@ def test_ordinary_runtime_exposes_only_waiting_execution() -> None:
     assert not hasattr(hooks.HookRuntime, "emit")
     assert callable(hooks.HookRuntime.dispatch)
     assert callable(hooks.HookRuntime.adispatch)
+
+
+def test_configured_execution_has_no_nonwaiting_api_or_receipt() -> None:
+    """Remove nonwaiting entries and the receipt from every public boundary."""
+    from topsailai.hooks import contracts, configured_runtime
+
+    assert not hasattr(hooks.HookRuntime, "emit_configured")
+    assert not hasattr(configured_runtime, "emit_configured")
+    assert not hasattr(hooks.ConfiguredHookExecutor, "aemit")
+    assert not hasattr(hooks.HookRuntime, "_observe_background_completion")
+    assert "DeliveryReceipt" not in hooks.__all__
+    assert not hasattr(hooks, "DeliveryReceipt")
+    assert not hasattr(contracts, "DeliveryReceipt")
+    assert callable(hooks.HookRuntime.dispatch_configured)
+    assert callable(hooks.HookRuntime.adispatch_configured)

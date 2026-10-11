@@ -340,10 +340,6 @@ class _PolicyRuntime:
         """Drive the same fact source through the facade's asynchronous boundary."""
         return self.dispatch_configured(name, event)
 
-    def emit_configured(self, name, event):
-        """Reject accidental non-waiting execution in wrapper regressions."""
-        raise AssertionError("wrapper must await execution, not emit")
-
 
 class _PolicyRegistrar:
     """Record registration requests without owning external resources."""

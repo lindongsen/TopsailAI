@@ -9,7 +9,6 @@ import os
 import threading
 import time
 import uuid
-from concurrent.futures import CancelledError as FutureCancelledError
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping
 
@@ -20,7 +19,6 @@ from topsailai.hooks.configured_runtime import (
     adispatch_configured as _adispatch_configured,
     detach_configured_trust,
     dispatch_configured as _dispatch_configured,
-    emit_configured as _emit_configured,
     get_configured_trust,
     prepare_configured as _prepare_configured,
     register_configured as _register_configured,
@@ -29,7 +27,6 @@ from topsailai.hooks.configured_runtime import (
 )
 from topsailai.hooks.contracts import (
     Binding,
-    DeliveryReceipt,
     DispatchReport,
     EventDefinition,
     HookEvent,
@@ -169,7 +166,6 @@ class HookRuntime:
     retire_configured = _retire_configured
     dispatch_configured = _dispatch_configured
     adispatch_configured = _adispatch_configured
-    emit_configured = _emit_configured
 
     def open_scope(
         self,
@@ -680,20 +676,6 @@ class HookRuntime:
             if type(value) is int and value > 0:
                 return min(value, default)
         return default
-
-    def _observe_background_completion(
-        self, work: ScheduledWork[DispatchReport], completed: object
-    ) -> None:
-        """Convert background host failure into safe diagnostics."""
-        del completed
-        try:
-            work.future.result()
-        except FutureCancelledError:
-            return
-        except BaseException as exc:
-            self._diagnostics.publish(
-                "dispatch_failed", scope_id=work.scope_id, error_category=type(exc).__name__
-            )
 
     def _rejected(self, event: HookEvent, reason: str) -> DispatchReport:
         """Build one structured admission rejection."""

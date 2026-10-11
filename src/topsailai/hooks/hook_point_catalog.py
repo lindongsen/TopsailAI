@@ -18,7 +18,7 @@ class HookPointDeclaration:
     name: str
     definition: EventDefinition
     phase: Literal["before", "success", "error"]
-    mode: Literal["sync", "async", "background"]
+    mode: Literal["sync", "async"]
     owner: str
     scope: Literal["application"] = "application"
     failure_policy: Literal["report", "block"] = "report"
@@ -44,7 +44,7 @@ class HookPointDeclaration:
             or type(self.definition) is not EventDefinition
             or bool(validate_event_definition(self.definition))
             or self.phase not in ("before", "success", "error")
-            or self.mode not in ("sync", "async", "background")
+            or self.mode not in ("sync", "async")
             or type(self.owner) is not str
             or not self.owner
             or self.scope != "application"

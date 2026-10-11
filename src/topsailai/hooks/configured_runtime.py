@@ -27,7 +27,6 @@ from topsailai.hooks.configured_contracts import (
 )
 from topsailai.hooks.configured_trust import artifact_capture_trust
 from topsailai.hooks.contracts import (
-    DeliveryReceipt,
     DispatchReport,
     HookContext,
     HookEvent,
@@ -237,7 +236,8 @@ def dispatch_configured(
     work, rejection = _admit_configured(runtime, hook_name, event, policy, True, deadline, cancellation)
     if rejection is not None:
         return rejection
-    assert work is not None
+    if work is None:
+        return runtime._rejected(event, "rejected_capacity")
     return work.future.result()
 
 
@@ -255,21 +255,6 @@ async def adispatch_configured(
     assert work is not None
     return await runtime._await_dispatch(work, signal, event.event_id)
 
-
-def emit_configured(
-    runtime: HookRuntime, hook_name: str, event: HookEvent, policy: Any = None
-) -> DeliveryReceipt:
-    """Admit one configured execution without waiting for completion."""
-    work, rejection = _admit_configured(runtime, hook_name, event, policy, False)
-    event_id = event.event_id if type(event) is HookEvent else ""
-    if rejection is not None:
-        return DeliveryReceipt(False, event_id, rejection.rejection_reason)
-    if work is None:
-        return DeliveryReceipt(False, event_id, "rejected_capacity")
-    work.future.add_done_callback(
-        lambda completed: runtime._observe_background_completion(work, completed)
-    )
-    return DeliveryReceipt(True, event_id)
 
 def retire_configured(runtime: HookRuntime, hook_name: str, scope: HookScope) -> bool:
     """Reserve recovery before removing an exact point from active membership."""

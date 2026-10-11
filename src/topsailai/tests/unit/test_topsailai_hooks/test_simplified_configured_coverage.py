@@ -388,10 +388,10 @@ async def test_async_configured_dispatch_preserves_admission_rejection(
         runtime.close()
 
 
-def test_background_configured_dispatch_reports_scheduler_capacity_and_releases_plan(
+def test_waiting_configured_dispatch_reports_scheduler_capacity_and_releases_plan(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Scheduler refusal rejects background work without retaining a plan reader."""
+    """Scheduler refusal rejects waiting work without retaining a plan reader."""
     runtime, scope = _runtime(tmp_path)
     try:
         registered = runtime.register_configured("hook_after_chat", scope, scripts=[])
@@ -402,12 +402,12 @@ def test_background_configured_dispatch_reports_scheduler_capacity_and_releases_
         assert isinstance(plan, HookPointOwner)
         monkeypatch.setattr(runtime._scheduler, "submit", lambda *args, **kwargs: None)
 
-        receipt = runtime.emit_configured(
+        report = runtime.dispatch_configured(
             "hook_after_chat", _event(runtime, scope)
         )
 
-        assert not receipt.admitted
-        assert receipt.rejection_reason == "rejected_capacity"
+        assert report.outcomes == ()
+        assert report.rejection_reason == "rejected_capacity"
         assert plan._readers == {}
     finally:
         runtime.close()

@@ -73,3 +73,11 @@ def test_declaration_rejects_post_success_flag_duplicates_and_invalid_catalog() 
     assert catalog.get(1) is None
     with pytest.raises(KeyError):
         catalog.require("hook_missing")
+
+
+def test_background_mode_is_rejected_without_async_conversion() -> None:
+    """Only explicit sync and async waiting declarations are supported."""
+    with pytest.raises(ValueError, match="invalid Hook-point declaration"):
+        _point("hook_test_background", mode="background")
+    for mode in ("sync", "async"):
+        assert _point("hook_test_waiting", mode=mode).mode == mode

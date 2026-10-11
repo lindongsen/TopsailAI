@@ -7,6 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from topsailai.tests.unit.test_topsailai_hooks.reload_helpers import (
+    invoke_thread, join_owned, wait_for_queue,
+)
+
 from topsailai.hooks import (
     ConfiguredRegistrationResult,
     ConfiguredTrustPolicy,
@@ -147,7 +151,7 @@ def test_exact_configured_plan_can_be_retired_without_closing_scope(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_async_and_background_execution_share_the_registered_plan(
+async def test_async_and_sync_execution_share_the_registered_plan(
     tmp_path: Path,
 ) -> None:
     """All execution modes must select the same scope-local configured plan."""
@@ -159,12 +163,21 @@ async def test_async_and_background_execution_share_the_registered_plan(
         event = _event(runtime, scope)
 
         report = await runtime.adispatch_configured("hook_after_chat", event)
-        receipt = runtime.emit_configured("hook_after_chat", event)
+        thread, reports, errors = invoke_thread(
+            lambda: runtime.dispatch_configured("hook_after_chat", event)
+        )
+        try:
+            join_owned(thread)
+        finally:
+            join_owned(thread)
+        assert not errors and len(reports) == 1
+        sync_report = reports[0]
 
         assert report.rejection_reason is None
         assert report.outcomes == ()
-        assert receipt.admitted
-        assert receipt.event_id == event.event_id
+        assert sync_report.rejection_reason is None
+        assert sync_report.outcomes == report.outcomes
+        assert sync_report.event_id == event.event_id
     finally:
         runtime.close()
 
@@ -454,16 +467,17 @@ def test_admitted_reader_delays_replacement_cleanup_and_releases_once(tmp_path: 
     runtime, scope = _real_runtime(tmp_path, (blocking, replacement))
     gate = tmp_path / "gate"
     log = tmp_path / "overlap.log"
+    owned = []
     try:
         assert runtime.register_configured(
             "hook_overlap", scope, scripts=(blocking,)
         ).accepted
         _, old_plan = runtime._registry.configured_plan(scope.scope_id, "hook_overlap")
         old_artifact = old_plan.entries[0].source_path.parents[1]
-        receipt = runtime.emit_configured(
+        call = invoke_thread(lambda: runtime.dispatch_configured(
             "hook_overlap", _real_event(runtime, scope, log, gate)
-        )
-        assert receipt.admitted
+        ))
+        owned.append(call)
         _wait_for(lambda: log.exists())
 
         changed = runtime.register_configured(
@@ -476,9 +490,19 @@ def test_admitted_reader_delays_replacement_cleanup_and_releases_once(tmp_path: 
         gate.touch()
         _wait_for(lambda: len(old_plan._readers) == 0)
         _wait_for(lambda: not old_artifact.exists())
+        _wait_for(lambda: old_plan.settled)
         assert old_plan.owner is None
     finally:
-        runtime.close()
+        gate.touch()
+        try:
+            for thread, _, _ in owned:
+                join_owned(thread)
+        finally:
+            runtime.close()
+    assert all(not errors and len(reports) == 1 for _, reports, errors in owned)
+    assert owned[0][1][0].outcomes[0].status.value == "success"
+    assert runtime._scheduler._work == {}
+    assert runtime.cleanup_debts() == ()
 
 
 def test_scope_and_runtime_close_remove_captured_artifacts(tmp_path: Path) -> None:
@@ -513,15 +537,16 @@ def test_queued_deadline_releases_configured_plan_once(tmp_path: Path) -> None:
     runtime, scope = _real_runtime(tmp_path, (blocking,))
     gate = tmp_path / "gate"
     log = tmp_path / "deadline.log"
+    owned = []
     try:
         assert runtime.register_configured(
             "hook_deadline", scope, scripts=(blocking,)
         ).accepted
         _, plan = runtime._registry.configured_plan(scope.scope_id, "hook_deadline")
-        first = runtime.emit_configured(
+        call = invoke_thread(lambda: runtime.dispatch_configured(
             "hook_deadline", _real_event(runtime, scope, log, gate)
-        )
-        assert first.admitted
+        ))
+        owned.append(call)
         _wait_for(lambda: log.exists())
 
         expired = runtime.dispatch_configured(
@@ -536,7 +561,16 @@ def test_queued_deadline_releases_configured_plan_once(tmp_path: Path) -> None:
         gate.touch()
         _wait_for(lambda: len(plan._readers) == 0)
     finally:
-        runtime.close()
+        gate.touch()
+        try:
+            for thread, _, _ in owned:
+                join_owned(thread)
+        finally:
+            runtime.close()
+    assert all(not errors and len(reports) == 1 for _, reports, errors in owned)
+    assert owned[0][1][0].outcomes[0].status.value == "success"
+    assert runtime._scheduler._work == {}
+    assert runtime.cleanup_debts() == ()
 
 
 def test_scope_cancellation_releases_queued_configured_plan_once(
@@ -549,20 +583,24 @@ def test_scope_cancellation_releases_queued_configured_plan_once(
     runtime, scope = _real_runtime(tmp_path, (blocking,))
     gate = tmp_path / "gate"
     log = tmp_path / "cancel.log"
+    owned = []
     try:
         assert runtime.register_configured(
             "hook_cancel", scope, scripts=(blocking,)
         ).accepted
         _, plan = runtime._registry.configured_plan(scope.scope_id, "hook_cancel")
         artifact = plan.entries[0].source_path.parents[1]
-        assert runtime.emit_configured(
+        call = invoke_thread(lambda: runtime.dispatch_configured(
             "hook_cancel", _real_event(runtime, scope, log, gate)
-        ).admitted
+        ))
+        owned.append(call)
         _wait_for(lambda: log.exists())
-        assert runtime.emit_configured(
+        call = invoke_thread(lambda: runtime.dispatch_configured(
             "hook_cancel", _real_event(runtime, scope, log, gate)
-        ).admitted
-        _wait_for(lambda: len(plan._readers) == 2)
+        ))
+        owned.append(call)
+        wait_for_queue(runtime, 1)
+        assert len(plan._readers) == 2
 
         scope.close()
         assert len(plan._readers) == 1
@@ -574,7 +612,14 @@ def test_scope_cancellation_releases_queued_configured_plan_once(
         assert plan.owner is None
     finally:
         gate.touch()
-        runtime.close()
+        try:
+            for thread, _, _ in owned:
+                join_owned(thread)
+        finally:
+            runtime.close()
+    assert all(not errors and len(reports) == 1 for _, reports, errors in owned)
+    assert runtime._scheduler._work == {}
+    assert runtime.cleanup_debts() == ()
 
 
 @pytest.mark.parametrize("count", (128, 129))

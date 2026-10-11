@@ -17,7 +17,6 @@ from topsailai.hooks.configured_registration import (
     RegistrationState,
 )
 from topsailai.hooks.contracts import (
-    DeliveryReceipt,
     DispatchReport,
     EventDefinition,
     HookOutcome,
@@ -92,10 +91,6 @@ class _Runtime:
         del name
         return DispatchReport(event.event_id, 1)
 
-    def emit_configured(self, name, event):
-        """Return one admitted background Receipt."""
-        del name
-        return DeliveryReceipt(True, event.event_id)
 
 
 def _point(
@@ -136,29 +131,26 @@ def test_sync_dispatch_constructs_catalog_event_and_uses_registrar() -> None:
     assert runtime.events[0].parent_operation_id == "parent"
 
 
-def test_async_dispatch_and_background_admission_use_async_registration() -> None:
-    """Async execution and lazy-safe admission must share async ensure."""
+def test_async_dispatch_uses_async_registration() -> None:
+    """Async waiting execution must use async ensure."""
     async_point = _point("hook_test_async", "async")
-    background = _point("hook_test_background", "background")
     runtime = _Runtime()
     registrar = _Registrar()
     executor = ConfiguredHookExecutor(
         runtime,
         _Scope(),
         registrar,
-        HookPointCatalog((async_point, background)),
+        HookPointCatalog((async_point,)),
     )
 
     async def run():
         report = await executor.adispatch(async_point, payload={})
-        receipt = await executor.aemit(background, payload={})
-        return report, receipt
+        return report
 
-    report, receipt = asyncio.run(run())
+    report = asyncio.run(run())
 
     assert report.rejection_reason is None
-    assert receipt.admitted
-    assert registrar.async_calls == 2
+    assert registrar.async_calls == 1
 
 
 def test_unconfigured_report_is_stable_noop_and_block_raises() -> None:
@@ -222,24 +214,24 @@ def test_executor_rejects_invalid_dependencies_points_and_operations() -> None:
         HookOperation("", depth=-1)
 
 
-def test_async_rejection_and_background_block_are_enforced() -> None:
-    """Async and background points must preserve typed registration rejection."""
+def test_async_rejection_and_async_block_are_enforced() -> None:
+    """Async report and block points preserve typed registration rejection."""
     async_point = _point("hook_test_async_rejected", "async")
-    background = _point("hook_test_background_block", "background", "block")
+    blocked = _point("hook_test_async_block", "async", "block")
     runtime = _Runtime()
     registrar = _Registrar(RegistrationState.UNCONFIGURED)
     executor = ConfiguredHookExecutor(
         runtime,
         _Scope(),
         registrar,
-        HookPointCatalog((async_point, background)),
+        HookPointCatalog((async_point, blocked)),
     )
 
     async def run() -> None:
         report = await executor.adispatch(async_point, payload={})
         assert report.rejection_reason == "unconfigured"
         with pytest.raises(HookPointBlockedError):
-            await executor.aemit(background, payload={})
+            await executor.adispatch(blocked, payload={})
 
     asyncio.run(run())
 

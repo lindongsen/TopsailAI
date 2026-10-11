@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from topsailai.hooks.configured_registration import ConfiguredHookRegistrar, RegistrationEnsureResult
-from topsailai.hooks.contracts import DeliveryReceipt, DispatchReport, HookStatus
+from topsailai.hooks.contracts import DispatchReport, HookStatus
 from topsailai.hooks.hook_point_catalog import HookPointCatalog, HookPointDeclaration
 from topsailai.hooks.runtime import HookRuntime, HookScope
 from topsailai.hooks.validation import validate_payload
@@ -67,7 +67,7 @@ class ConfiguredHookExecutor:
         catalog: HookPointCatalog,
     ) -> None:
         """Bind one application Scope and immutable declaration catalog."""
-        runtime_methods = ("make_event", "dispatch_configured", "adispatch_configured", "emit_configured")
+        runtime_methods = ("make_event", "dispatch_configured", "adispatch_configured")
         registrar_methods = ("ensure_registered", "aensure_registered")
         invalid = (
             any(not callable(getattr(runtime, name, None)) for name in runtime_methods)
@@ -135,25 +135,6 @@ class ConfiguredHookExecutor:
                 raise
         self._enforce_policy(declaration, report)
         return report
-
-    async def aemit(
-        self,
-        point: HookPointDeclaration,
-        *,
-        payload: Any,
-        operation: HookOperation | None = None,
-    ) -> DeliveryReceipt:
-        """Ensure asynchronously, then use existing fast background admission."""
-        declaration = self._require_point(point, "background")
-        event = self._make_event(declaration, payload, operation)
-        ensured = await self._registrar.aensure_registered(declaration.name)
-        if not ensured.ready:
-            receipt = DeliveryReceipt(False, event.event_id, self._ensure_reason(ensured))
-        else:
-            receipt = self._runtime.emit_configured(declaration.name, event)
-        if declaration.failure_policy == "block" and not receipt.admitted:
-            raise HookPointBlockedError(declaration.name, receipt.rejection_reason or "not_admitted")
-        return receipt
 
     def _require_point(self, point: HookPointDeclaration, mode: str) -> HookPointDeclaration:
         """Require an exact catalog declaration with the requested execution mode."""

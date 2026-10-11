@@ -51,7 +51,6 @@ from topsailai.hooks.configured_contracts import (
 )
 from topsailai.hooks.contracts import (
     Binding,
-    DeliveryReceipt,
     DispatchReport,
     EventDefinition,
     HookContext,
@@ -143,7 +142,6 @@ __all__ = [
     "ConfiguredScript",
     "ConfiguredTrustPolicy",
     "CloseReport",
-    "DeliveryReceipt",
     "DispatchReport",
     "EventDefinition",
     "ExecutablePlatformPolicy",

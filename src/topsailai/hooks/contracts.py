@@ -293,15 +293,6 @@ class DispatchReport:
 
 
 @dataclass(frozen=True, slots=True)
-class DeliveryReceipt:
-    """Report whether an event was admitted without implying execution success."""
-
-    admitted: bool
-    event_id: str
-    rejection_reason: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class RegistrationHandle:
     """Identify one exact registry-owned scope-local registration."""
 
