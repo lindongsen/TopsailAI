@@ -1007,7 +1007,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     if argv is None:
         argv = []
 
-    _TOP_LEVEL_COMMANDS = {"workspace", "docs", "project", "models"}
+    if argv and argv[0] == "runtime":
+        from cli_topsailai.runtime_cli import run_runtime_cli
+
+        sys.exit(run_runtime_cli(argv[1:]))
+
+    _TOP_LEVEL_COMMANDS = {"workspace", "docs", "project", "models", "runtime"}
     _TOP_LEVEL_OPTIONS = {
         "-h", "--help", "--version", "-w", "--workspace",
         "--list-docs", "--read-doc", "-t", "--tui", "--runtime-tui",
@@ -1147,6 +1152,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             help="manage the model registry",
             add_help=False,
         )
+        subparsers.add_parser("runtime", help="execute one runtime operation", add_help=False)
         help_parser.print_help()
         sys.exit(1)
 
@@ -1200,6 +1206,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
 
     subparsers = parser.add_subparsers(dest="subcommand", help="non-interactive commands")
+
+    subparsers.add_parser("runtime", help="execute one runtime operation", add_help=False)
 
     # Deprecated non-interactive options. They are kept for backward
     # compatibility and route to the new subcommand behavior with a warning.

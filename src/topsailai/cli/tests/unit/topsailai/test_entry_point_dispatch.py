@@ -174,6 +174,39 @@ class TestBinDispatchWiring(unittest.TestCase):
         self.assertTrue(os.path.islink(link))
         self.assertEqual(os.readlink(link), "topsailai.cli")
 
+class TestRuntimeEarlyDispatch(unittest.TestCase):
+    """Runtime bypasses the legacy agent-mode and interactive paths."""
+
+    def test_runtime_message_mode_literals(self):
+        """raw and tmux remain message text before any mode preprocessing."""
+        from cli_topsailai import runtime_cli
+        from cli_topsailai.runtime_operations import RuntimeResult
+
+        for body in ("raw", "tmux", "--json"):
+            with self.subTest(body=body):
+                with patch.object(cli_core, "_preprocess_agent_mode") as preprocess:
+                    with patch.object(cli_core, "_detect_agent_mode") as detect:
+                        with patch.object(runtime_cli, "execute_runtime_request") as execute:
+                            execute.return_value = RuntimeResult(
+                                True, 0, "send", delivery_state="pipe_written")
+                            with self.assertRaises(SystemExit) as result:
+                                cli_core.main(["runtime", "send", "-s", "fixture", f"--message={body}"])
+                            self.assertEqual(result.exception.code, 0)
+                            self.assertEqual(execute.call_args.args[0].message, body)
+                            execute.assert_called_once()
+                        detect.assert_not_called()
+                    preprocess.assert_not_called()
+
+    def test_runtime_help_does_not_initialize_interactive(self):
+        """Help exits early without mode probing or signal/history setup."""
+        with patch.object(cli_core, "_detect_agent_mode") as detect:
+            with patch.object(cli_core, "setup_signal_handlers") as signals:
+                with self.assertRaises(SystemExit) as result:
+                    cli_core.main(["runtime", "control", "--help"])
+                self.assertEqual(result.exception.code, 0)
+                detect.assert_not_called()
+                signals.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
