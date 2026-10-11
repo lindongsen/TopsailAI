@@ -111,6 +111,7 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
         self._debt_lock = threading.Lock()
         self._debts: dict[str, CleanupDebt] = {}
         self._debt_processes: dict[str, _DebtEntry] = {}
+        self._launch_debt_records: dict[str, _LaunchRecord] = {}
 
     @property
     def script_temp_root(self) -> str:
@@ -126,7 +127,8 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
         """Query only the debt still owned by this exact launch record."""
         with self._debt_lock:
             entry = self._debt_processes.get(record.debt_id)
-            if entry is None or entry.record is not record:
+            owner = self._launch_debt_records.get(record.debt_id) if entry is None else entry.record
+            if owner is not record:
                 return ()
             debt = self._debts.get(record.debt_id)
             return () if debt is None else (debt,)
@@ -333,7 +335,7 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         record.state = "abandoned"
-                        self._record_launch_debt(record.debt_id)
+                        self._record_launch_debt(record.debt_id, record)
                         return WorkerResult(
                             "timeout",
                             error_category="startup_timeout",
@@ -474,7 +476,7 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         record.state = "abandoned"
-                        self._record_launch_debt(record.debt_id)
+                        self._record_launch_debt(record.debt_id, record)
                         return WorkerResult(
                             "timeout",
                             error_category="startup_timeout",
@@ -503,7 +505,7 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
         with record.condition:
             if record.state == "launching":
                 record.state = "abandoned"
-                self._record_launch_debt(record.debt_id)
+                self._record_launch_debt(record.debt_id, record)
             elif record.state == "published":
                 lease = _LaunchLease(self, record)
         if lease is not None:

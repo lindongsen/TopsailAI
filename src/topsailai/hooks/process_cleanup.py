@@ -639,9 +639,10 @@ class ProcessCleanupMixin:
             return False
         return exited and not self._group_exists(pgid)
 
-    def _record_launch_debt(self, debt_id: str) -> None:
+    def _record_launch_debt(self, debt_id: str, record: _LaunchRecord) -> None:
         """Record an unsettled launch whose creator retains cleanup ownership."""
         with self._debt_lock:
+            self._launch_debt_records[debt_id] = record
             self._debts[debt_id] = CleanupDebt(debt_id, "launching", None, "late launch pending")
 
     def _record_process_debt(
@@ -672,6 +673,7 @@ class ProcessCleanupMixin:
                 owner.cleanup.termination_confirmed = True
             self._debts.pop(debt_id, None)
             self._debt_processes.pop(debt_id, None)
+            self._launch_debt_records.pop(debt_id, None)
 
     @staticmethod
     def _safe_close_fd(descriptor: int | None) -> None:
