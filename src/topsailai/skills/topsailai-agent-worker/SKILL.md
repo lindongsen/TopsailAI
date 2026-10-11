@@ -262,6 +262,34 @@ Delivery success means that the operation was sent or queued; it does not
 necessarily mean that the running agent has already consumed it. Use `--json`
 for machine-readable results and `--stdin` for bounded non-interactive input.
 
+Query recent session stdout without entering the watcher or contacting the
+agent:
+
+```bash
+# Query the latest 20 lines (default)
+topsailai runtime logs -s SESSION_ID -p PID
+
+# Query the latest 100 lines
+topsailai runtime logs -s SESSION_ID -p PID -n 100
+
+# Return machine-readable results
+topsailai runtime logs -s SESSION_ID -p PID -n 100 --json
+```
+
+The `logs` action supports running, idle, and exited sessions. Session ID and
+PID must both match when supplied together; ambiguous history requires an
+explicit PID. It reads only session stdout under
+`{TOPSAILAI_HOME}/workspace/task/`, with no fallback to task stdout.
+
+The default is 20 lines, with a maximum of 10,000. Reverse chunked reading has
+an 8 MiB scan budget; exceeding it marks the result as partial. JSON results
+use status `log_read` and put log data in `response`; `total_lines` is accurate
+only when reading reaches the beginning of the file, otherwise it is `null`.
+Plain output contains only log content, with partial-result warnings on stderr.
+Exit codes are `2` for invalid arguments, `3` for target errors, `4` for
+permission or endpoint errors, and `5` for read failures or detected file
+changes.
+
 The lower-level `topsailai_send_control` command remains available for
 compatibility, but `topsailai runtime control` is the preferred interface:
 
@@ -270,7 +298,7 @@ topsailai_send_control --session_id my-session --command call_instruction \
   --args '{"instruction":"ctx.history","args":[],"kwargs":{}}'
 ```
 
-Supported runtime actions include `send`, `btw`, and `control`; control
+Supported runtime actions include `send`, `btw`, `control`, and `logs`; control
 operations include `call_instruction`, `hard_interrupt`, `soft_interrupt`,
 `clear_interrupt`, and runtime message queries.
 
