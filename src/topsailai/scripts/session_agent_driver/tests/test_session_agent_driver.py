@@ -153,6 +153,7 @@ class TestRenderAnalysisPrompt:
         assert "input" in prompt
         assert "goal" in prompt
         assert "msgs" in prompt
+        assert "log" in prompt
 
     def test_missing_template_falls_back_to_default(self):
         info = {
@@ -164,6 +165,7 @@ class TestRenderAnalysisPrompt:
             prompt = sad.render_analysis_prompt(info)
             assert "s1" in prompt
             assert "goal" in prompt
+            assert "log" in prompt
 
     def test_safe_substitute_keeps_unknown_placeholder(self):
         info = {"session_id": "s1"}

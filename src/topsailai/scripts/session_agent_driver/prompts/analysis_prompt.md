@@ -20,6 +20,10 @@ $task_goal
 
 $messages_summary
 
+## Session Log Tail
+
+$log_tail
+
 ## Instructions
 
 1. Analyze the session context above and the session messages summary.

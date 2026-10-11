@@ -67,6 +67,9 @@ $task_goal
 ## Session Messages Summary
 $messages_summary
 
+## Session Log Tail
+$log_tail
+
 ## Instructions
 1. If the session is waiting for input and needs more input to make progress,
    call inject_input with the suggested input content.
