@@ -56,41 +56,20 @@ class TestSendRetrieveStreamPrompt(unittest.TestCase):
         action, value = prompt_selection([], "/task")
         self.assertEqual(action, "retrieve")
 
-    @patch("os.stat")
-    @patch("cli_topsailai.streaming._find_session_stdout_file")
-    @patch("cli_topsailai.streaming._get_pid_from_stdout_path")
-    @patch("cli_topsailai.streaming.get_file_pid")
-    @patch("os.path.exists")
-    @patch("stat.S_ISFIFO")
-    @patch("os.open")
-    @patch("os.write")
-    @patch("os.close")
-    def test_send_message_to_session(
-        self,
-        mock_close,
-        mock_write,
-        mock_open,
-        mock_isfifo,
-        mock_exists,
-        mock_get_pid,
-        mock_get_pid_from_path,
-        mock_find_stdout,
-        mock_stat,
-    ):
-        mock_find_stdout.return_value = "/tmp/s1.session.stdout"
-        mock_get_pid_from_path.return_value = 1234
-        mock_get_pid.return_value = 5678
-        mock_exists.return_value = True
-        mock_stat.return_value = MagicMock(st_mode=0o010000)
-        mock_isfifo.return_value = True
-        mock_open.return_value = 3
-        result = send_message_to_session("s1", "hello", "/tmp/fake_task_dir")
-        self.assertTrue(result)
-        mock_get_pid_from_path.assert_called_once_with("/tmp/s1.session.stdout")
-        mock_get_pid.assert_not_called()
-        mock_open.assert_called_once()
-        mock_write.assert_called_once()
-        mock_close.assert_called_once()
+    def test_send_message_to_session(self):
+        """Keep legacy PID discovery while delegating exact byte delivery."""
+        from cli_topsailai.runtime_pipe import PipeDeliveryResult
+        from pathlib import Path
+
+        with patch("cli_topsailai.streaming._find_session_stdout_file", return_value="/fixture/s1.session.stdout"), \
+             patch("cli_topsailai.streaming._get_pid_from_stdout_path", return_value=1234) as parsed_pid, \
+             patch("cli_topsailai.streaming.get_file_pid", return_value=5678) as fallback_pid, \
+             patch("cli_topsailai.streaming.os.path.exists", side_effect=lambda path: True), \
+             patch("cli_topsailai.streaming.send_to_pipe", return_value=PipeDeliveryResult(10)) as send:
+            self.assertTrue(send_message_to_session("s1", "hello", "/fixture"))
+        parsed_pid.assert_called_once_with("/fixture/s1.session.stdout")
+        fallback_pid.assert_not_called()
+        send.assert_called_once_with(Path("/fixture/s1.1234.session.pipe"), "hello", timeout=5.0)
 
     def test_multiline_send_stages_payload_and_removes_temporary_file(self):
         """Multi-line runtime payloads are staged, sent intact, and removed."""
@@ -141,7 +120,7 @@ class TestSendRetrieveStreamPrompt(unittest.TestCase):
                 stdout_file.write("running")
             os.mkfifo(pipe_path)
 
-            with patch("cli_topsailai.streaming.os.open") as mock_open:
+            with patch("cli_topsailai.runtime_pipe._open") as mock_open:
                 result = send_message_to_session(
                     "s1",
                     "before\nEOF\nafter",
@@ -179,7 +158,7 @@ class TestSendRetrieveStreamPrompt(unittest.TestCase):
             thread.start()
             try:
                 with patch(
-                    "cli_topsailai.streaming.os.write",
+                    "cli_topsailai.runtime_pipe._write",
                     side_effect=OSError("write failed"),
                 ):
                     result = send_message_to_session(
@@ -196,74 +175,37 @@ class TestSendRetrieveStreamPrompt(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(set(os.listdir(temporary_dir)), before)
 
-    @patch("os.stat")
-    @patch("cli_topsailai.streaming._find_session_stdout_file")
-    @patch("cli_topsailai.streaming._get_pid_from_stdout_path")
-    @patch("cli_topsailai.streaming.get_file_pid")
-    @patch("os.path.exists")
-    @patch("stat.S_ISFIFO")
-    @patch("os.open")
-    @patch("os.write")
-    @patch("os.close")
-    def test_send_message_to_session_fallback_to_file_pid(
-        self,
-        mock_close,
-        mock_write,
-        mock_open,
-        mock_isfifo,
-        mock_exists,
-        mock_get_pid,
-        mock_get_pid_from_path,
-        mock_find_stdout,
-        mock_stat,
-    ):
-        mock_find_stdout.return_value = "/tmp/s1.session.stdout"
-        mock_get_pid_from_path.return_value = None
-        mock_get_pid.return_value = 5678
-        mock_exists.return_value = True
-        mock_stat.return_value = MagicMock(st_mode=0o010000)
-        mock_isfifo.return_value = True
-        mock_open.return_value = 3
-        result = send_message_to_session("s1", "hello", "/tmp/fake_task_dir")
-        self.assertTrue(result)
-        mock_get_pid_from_path.assert_called_once_with("/tmp/s1.session.stdout")
-        mock_get_pid.assert_called_once_with("/tmp/s1.session.stdout")
-        mock_open.assert_called_once()
+    def test_send_message_to_session_fallback_to_file_pid(self):
+        """Keep legacy PID discovery while delegating exact byte delivery."""
+        from cli_topsailai.runtime_pipe import PipeDeliveryResult
+        from pathlib import Path
 
-    @patch("os.stat")
-    @patch("cli_topsailai.streaming._find_session_stdout_file")
-    @patch("cli_topsailai.streaming._get_pid_from_stdout_path")
-    @patch("cli_topsailai.streaming.get_file_pid")
-    @patch("os.path.exists")
-    @patch("stat.S_ISFIFO")
-    @patch("os.open")
-    @patch("os.write")
-    @patch("os.close")
-    def test_send_message_to_session_fallback_when_filename_pid_pipe_missing(
-        self,
-        mock_close,
-        mock_write,
-        mock_open,
-        mock_isfifo,
-        mock_exists,
-        mock_get_pid,
-        mock_get_pid_from_path,
-        mock_find_stdout,
-        mock_stat,
-    ):
-        mock_find_stdout.return_value = "/tmp/s1.session.stdout"
-        mock_get_pid_from_path.return_value = 1234
-        mock_get_pid.return_value = 5678
-        # Filename-derived pipe is missing; fuser-derived pipe exists.
-        mock_exists.side_effect = lambda path: "s1.5678.session.pipe" in path
-        mock_stat.return_value = MagicMock(st_mode=0o010000)
-        mock_isfifo.return_value = True
-        mock_open.return_value = 3
-        result = send_message_to_session("s1", "hello", "/tmp/fake_task_dir")
-        self.assertTrue(result)
-        mock_get_pid_from_path.assert_called_once_with("/tmp/s1.session.stdout")
-        mock_get_pid.assert_called_once_with("/tmp/s1.session.stdout")
-        mock_open.assert_called_once()
+        with patch("cli_topsailai.streaming._find_session_stdout_file", return_value="/fixture/s1.session.stdout"), \
+             patch("cli_topsailai.streaming._get_pid_from_stdout_path", return_value=None) as parsed_pid, \
+             patch("cli_topsailai.streaming.get_file_pid", return_value=5678) as fallback_pid, \
+             patch("cli_topsailai.streaming.os.path.exists", side_effect=lambda path: "5678" in path), \
+             patch("cli_topsailai.streaming.send_to_pipe", return_value=PipeDeliveryResult(10)) as send:
+            self.assertTrue(send_message_to_session("s1", "hello", "/fixture"))
+        parsed_pid.assert_called_once_with("/fixture/s1.session.stdout")
+        fallback_pid.assert_called_once_with("/fixture/s1.session.stdout")
+        send.assert_called_once_with(Path("/fixture/s1.5678.session.pipe"), "hello", timeout=5.0)
+
+
+    def test_send_message_to_session_fallback_when_filename_pid_pipe_missing(self):
+        """Keep legacy PID discovery while delegating exact byte delivery."""
+        from cli_topsailai.runtime_pipe import PipeDeliveryResult
+        from pathlib import Path
+
+        with patch("cli_topsailai.streaming._find_session_stdout_file", return_value="/fixture/s1.session.stdout"), \
+             patch("cli_topsailai.streaming._get_pid_from_stdout_path", return_value=1234) as parsed_pid, \
+             patch("cli_topsailai.streaming.get_file_pid", return_value=5678) as fallback_pid, \
+             patch("cli_topsailai.streaming.os.path.exists", side_effect=lambda path: "5678" in path), \
+             patch("cli_topsailai.streaming.send_to_pipe", return_value=PipeDeliveryResult(10)) as send:
+            self.assertTrue(send_message_to_session("s1", "hello", "/fixture"))
+        parsed_pid.assert_called_once_with("/fixture/s1.session.stdout")
+        fallback_pid.assert_called_once_with("/fixture/s1.session.stdout")
+        send.assert_called_once_with(Path("/fixture/s1.5678.session.pipe"), "hello", timeout=5.0)
+
 
 
     def test_send_message_to_session_task_stdout_uses_filename_pid(self):

@@ -1,15 +1,15 @@
 """Streaming session helpers for the TopsailAI CLI."""
 
-import errno
 import os
 import re
 import select
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 import unicodedata
+from pathlib import Path
+
 from typing import Any, Callable, Dict, List, Optional
 
 try:
@@ -40,6 +40,7 @@ from cli_topsailai.log_files import (
     get_file_pid,
 )
 from cli_topsailai.paths import get_topsailai_home
+from cli_topsailai.runtime_pipe import PipeDeliveryError, format_pipe_payload, send_to_pipe
 from cli_topsailai.shell_commands import execute_shell_command
 from cli_topsailai.process import register_process, unregister_process
 from cli_topsailai import yaml_commands
@@ -1673,17 +1674,8 @@ def _handle_stream_ctx_btw(
 
 
 def _format_pipe_payload(message: str) -> bytes:
-    """
-    Format a message for the pipe protocol.
-
-    Ensures the message body ends with a newline, then appends the EOF
-    marker on its own line.
-    """
-    if not message.endswith("\n"):
-        message += "\n"
-    if not message.endswith("EOF\n"):
-        message += "EOF\n"
-    return message.encode("utf-8")
+    """Return the shared FIFO payload for compatibility with existing callers."""
+    return format_pipe_payload(message)
 
 
 def send_message_to_session(
@@ -1719,7 +1711,7 @@ def send_message_to_session(
         session_id: Target session identifier.
         message: Message text to send.
         task_dir: Task directory containing stdout/pipe files.
-        timeout: Maximum seconds to wait for the receiver to open the pipe.
+        timeout: Maximum seconds for opening and writing to the pipe.
         stdout_path: Exact stdout file path when known (e.g. from numeric
             selection), used to target temporary sessions precisely.
         pid: Optional process PID known to own the session. When provided,
@@ -1784,83 +1776,23 @@ def send_message_to_session(
         )
         return False
 
-    if not stat.S_ISFIFO(os.stat(pipe_path).st_mode):
-        print(
-            f"{Colors.RED}[ERROR] Path exists but is not a named pipe: {pipe_path}.{Colors.RESET}"
-        )
-        return False
-
-    payload = _format_pipe_payload(message)
-    temporary_payload_path: Optional[str] = None
-    fd: Optional[int] = None
-    deadline = time.monotonic() + timeout
     try:
-        if "\n" in message or len(payload) >= 64 * 1024:
-            temporary_dir = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".tmp"
-            )
-            os.makedirs(temporary_dir, exist_ok=True)
-            temporary_fd, temporary_payload_path = tempfile.mkstemp(
-                dir=temporary_dir, prefix="runtime-send-", suffix=".tmp"
-            )
-            with os.fdopen(temporary_fd, "wb") as temporary_file:
-                temporary_file.write(payload)
-
-        while True:
-            try:
-                fd = os.open(pipe_path, os.O_WRONLY | os.O_NONBLOCK)
-                break
-            except OSError as exc:
-                if exc.errno == errno.ENXIO:
-                    if time.monotonic() >= deadline:
-                        print(
-                            f"{Colors.RED}[ERROR] Timed out waiting for session to open "
-                            f"the pipe for reading: {pipe_path}.{Colors.RESET}"
-                        )
-                        return False
-                    time.sleep(0.1)
-                    continue
-                raise
-
-        if temporary_payload_path is None:
-            os.write(fd, payload)
-        else:
-            with open(temporary_payload_path, "rb") as temporary_file:
-                while chunk := temporary_file.read(64 * 1024):
-                    offset = 0
-                    while offset < len(chunk):
-                        written = os.write(fd, chunk[offset:])
-                        if written == 0:
-                            raise OSError("Pipe write returned zero bytes")
-                        offset += written
+        result = send_to_pipe(Path(os.path.abspath(pipe_path)), message, timeout=timeout)
         print(
             f"{Colors.GREEN}[INFO] Message sent to session '{session_id}' via "
-            f"{pipe_path} ({len(payload)} bytes).{Colors.RESET}"
+            f"{pipe_path} ({result.bytes_written} bytes).{Colors.RESET}"
         )
         return True
-    except OSError as exc:
+    except PipeDeliveryError as exc:
+        detail = str(exc)
+        if exc.error_code == "timeout" and not exc.bytes_written:
+            detail = "Timed out waiting for session to open the pipe for reading or writing"
         print(
-            f"{Colors.RED}[ERROR] Failed to write to pipe {pipe_path}: {exc}{Colors.RESET}"
+            f"{Colors.RED}[ERROR] Failed to write to pipe {pipe_path}: {detail}"
+            f"{Colors.RESET}"
         )
         return False
-    finally:
-        if fd is not None:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-        if temporary_payload_path is not None:
-            try:
-                os.unlink(temporary_payload_path)
-                print(
-                    f"{Colors.CYAN}[INFO] Removed temporary send payload: "
-                    f"{temporary_payload_path}.{Colors.RESET}"
-                )
-            except OSError as exc:
-                print(
-                    f"{Colors.YELLOW}[WARNING] Failed to remove temporary send payload "
-                    f"{temporary_payload_path}: {exc}{Colors.RESET}"
-                )
+
 
 def handle_send_command(
     user_input: str, task_dir: str, log_files: List[dict]
