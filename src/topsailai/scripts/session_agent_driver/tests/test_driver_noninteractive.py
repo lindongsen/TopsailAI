@@ -42,5 +42,5 @@ def test_analysis_disables_input_and_interactive_run():
             mock.patch.object(sad.signal, "alarm"):
         sad.run_analysis_agent("target")
     assert factory.call_args.kwargs["need_input_message"] is False
-    assert factory.call_args.kwargs["disabled_tools"] == ["agent_tool", "human_tool"]
+    assert factory.call_args.kwargs["disabled_tools"] == ["agent_tool", "human_tool", "file_tool"]
     agent.run.assert_called_once_with(times=1, need_interactive=False)

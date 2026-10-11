@@ -98,14 +98,23 @@ def _configure_noninteractive_agent() -> None:
     name = "TOPSAILAI_CLI_AGENT_CHAT_DISABLED_TOOLS"
     excluded = [item.strip() for item in os.environ.get(name, "").split(";")]
     excluded = [item for item in excluded if item]
-    for tool in ("agent_tool", "human_tool"):
+    for tool in ("agent_tool", "human_tool", "file_tool"):
         if tool not in excluded:
             excluded.append(tool)
     os.environ[name] = ";".join(excluded)
 
 
+def _configure_file_tools() -> None:
+    """Replace writable file tools without changing other tool selections."""
+    enabled = os.environ.get("TOPSAILAI_ENABLED_TOOLS") or os.environ.get("ENABLED_TOOLS") or "*"
+    disabled = os.environ.get("TOPSAILAI_DISABLED_TOOLS") or os.environ.get("DISABLED_TOOLS") or ""
+    os.environ["TOPSAILAI_ENABLED_TOOLS"] = enabled + ";file_readonly_tool"
+    os.environ["TOPSAILAI_DISABLED_TOOLS"] = disabled + ";file_tool"
+
+
 _load_script_env()
 _configure_noninteractive_agent()
+_configure_file_tools()
 
 # P1: plugin tools and skills MUST be configured before importing topsailai,
 # because tools/base/__init__.py runs expand_plugin_tools() at import time.
@@ -309,7 +318,7 @@ def run_analysis_agent(session_id: str) -> None:
             agent_chat = get_agent_chat(
                 session_id=analysis_session_id,
                 message=prompt,
-                disabled_tools=["agent_tool", "human_tool"],
+                disabled_tools=["agent_tool", "human_tool", "file_tool"],
                 need_project_workspace_lock=False,  # P2: avoid lock contention
                 need_input_message=False,
             )
