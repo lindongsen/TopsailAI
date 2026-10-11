@@ -136,130 +136,33 @@ class TestDiscoverSocketPaths:
 
 
 class TestSendControlRequest:
-    def test_successful_request_response(self):
-        mock_sock = MagicMock()
-        mock_file = MagicMock()
-        mock_file.readline.return_value = json.dumps({
-            "request_id": "server-id",
-            "status": "ok",
-            "result": {"handled": True},
-        }) + "\n"
-        mock_sock.makefile.return_value = mock_file
+    def test_shared_transport_export(self):
+        """The old helper delegates to the same hardened public protocol."""
+        from cli_topsailai import runtime_control
+        assert send_control_request is runtime_control.send_control_request
 
-        with patch("socket.socket") as mock_socket_class:
-            mock_socket_class.return_value.__enter__ = MagicMock(return_value=mock_sock)
-            mock_socket_class.return_value.__exit__ = MagicMock(return_value=False)
-            success, response = send_control_request(
-                "/tmp/test.sock",
-                "hard_interrupt",
-                {"reason": "test"},
-                5.0,
-            )
+    @pytest.mark.parametrize("status", ["ok", "error"])
+    def test_valid_response_compatibility(self, monkeypatch, status):
+        """Correlated rejection remains a transport-success tuple."""
+        from cli_topsailai import runtime_control as transport
+        response = {"request_id": "id", "status": status}
+        def deliver(*args, **kwargs):
+            """Simulate structured response without opening a real endpoint."""
+            if status == "error":
+                raise transport.ControlDeliveryError("rejected", "control_rejected",
+                                                     6, "id", False, response)
+            return transport.ControlDeliveryResult("id", response)
+        monkeypatch.setattr(transport, "send_to_control", deliver)
+        assert send_control_request("/fixture/control.sock", "hard_interrupt", {}, 5) == (True, response)
 
-        assert success is True
-        assert response["status"] == "ok"
-        assert response["result"] == {"handled": True}
-
-        sent = mock_sock.sendall.call_args[0][0]
-        request = json.loads(sent.decode("utf-8").strip())
-        assert request["action"] == "hard_interrupt"
-        assert request["payload"] == {"reason": "test"}
-        assert "request_id" in request
-        assert len(request["request_id"]) > 0
-
-    def test_skips_empty_lines(self):
-        mock_sock = MagicMock()
-        mock_file = MagicMock()
-        mock_file.readline.side_effect = ["\n", "\n", json.dumps({
-            "request_id": "server-id",
-            "status": "ok",
-        }) + "\n"]
-        mock_sock.makefile.return_value = mock_file
-
-        with patch("socket.socket") as mock_socket_class:
-            mock_socket_class.return_value.__enter__ = MagicMock(return_value=mock_sock)
-            mock_socket_class.return_value.__exit__ = MagicMock(return_value=False)
-            success, response = send_control_request(
-                "/tmp/test.sock",
-                "hard_interrupt",
-                {},
-                5.0,
-            )
-
-        assert success is True
-        assert response["status"] == "ok"
-
-    def test_connection_timeout(self):
-        with patch("socket.socket") as mock_socket_class:
-            mock_sock = MagicMock()
-            mock_sock.connect.side_effect = socket.timeout("timed out")
-            mock_socket_class.return_value.__enter__ = MagicMock(return_value=mock_sock)
-            mock_socket_class.return_value.__exit__ = MagicMock(return_value=False)
-
-            success, response = send_control_request(
-                "/tmp/test.sock",
-                "hard_interrupt",
-                {},
-                5.0,
-            )
-
-        assert success is False
-        assert "timed out" in response["error"]
-
-    def test_os_error(self):
-        with patch("socket.socket") as mock_socket_class:
-            mock_sock = MagicMock()
-            mock_sock.connect.side_effect = OSError("no such file")
-            mock_socket_class.return_value.__enter__ = MagicMock(return_value=mock_sock)
-            mock_socket_class.return_value.__exit__ = MagicMock(return_value=False)
-
-            success, response = send_control_request(
-                "/tmp/test.sock",
-                "hard_interrupt",
-                {},
-                5.0,
-            )
-
-        assert success is False
-        assert "no such file" in response["error"]
-
-    def test_invalid_json_response(self):
-        mock_sock = MagicMock()
-        mock_file = MagicMock()
-        mock_file.readline.return_value = "not-json\n"
-        mock_sock.makefile.return_value = mock_file
-
-        with patch("socket.socket") as mock_socket_class:
-            mock_socket_class.return_value.__enter__ = MagicMock(return_value=mock_sock)
-            mock_socket_class.return_value.__exit__ = MagicMock(return_value=False)
-            success, response = send_control_request(
-                "/tmp/test.sock",
-                "hard_interrupt",
-                {},
-                5.0,
-            )
-
-        assert success is False
-        assert "invalid json" in response["error"]
-
-    def test_empty_response(self):
-        mock_sock = MagicMock()
-        mock_file = MagicMock()
-        mock_file.readline.return_value = ""
-        mock_sock.makefile.return_value = mock_file
-
-        with patch("socket.socket") as mock_socket_class:
-            mock_socket_class.return_value.__enter__ = MagicMock(return_value=mock_sock)
-            mock_socket_class.return_value.__exit__ = MagicMock(return_value=False)
-            success, response = send_control_request(
-                "/tmp/test.sock",
-                "hard_interrupt",
-                {},
-                5.0,
-            )
-
-        assert success is False
-        assert "closed connection" in response["error"]
+    def test_protocol_failure_compatibility(self, monkeypatch):
+        """Malformed correlation remains failure in the old tuple."""
+        from cli_topsailai import runtime_control as transport
+        def deliver(*args, **kwargs):
+            """Reject untrusted response via structured facts."""
+            raise transport.ControlDeliveryError("invalid response", "invalid_response", 6)
+        monkeypatch.setattr(transport, "send_to_control", deliver)
+        assert send_control_request("/fixture/control.sock", "hard_interrupt", {}, 5) == (False, {"error": "invalid response"})
 
 
 class TestFormatHumanResponse:

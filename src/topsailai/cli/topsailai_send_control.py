@@ -18,37 +18,22 @@ path(s) from each match.
 import argparse
 import json
 import os
-import socket
 import sys
-import uuid
 from typing import Any, List, Optional, Tuple
 
 import _import_topsailai  # noqa: F401
 
 from cli_topsailai.log_files import parse_stdout_filename
-from topsailai.workspace.control_channel.handler import ControlHandlerRegistry
-from topsailai.workspace.control_handlers import register_control_handlers
+from cli_topsailai.runtime_control import (
+    build_socket_path, get_control_actions, send_control_request,
+)
 from topsailai.workspace.folder_constants import (
     FOLDER_WORKSPACE_TASK,
 )
-from topsailai.workspace.folder_utils import (
-    get_control_socket_path,
-)
-
-
-def get_control_actions() -> List[str]:
-    """Return actions registered by the runtime control handlers."""
-    registry = ControlHandlerRegistry()
-    register_control_handlers(registry)
-    return registry.list_actions()
 
 
 CONTROL_ACTIONS = get_control_actions()
 
-
-def build_socket_path(task_folder: str, session_id: str, pid: str) -> str:
-    """Return the default UDS socket path for a session process."""
-    return get_control_socket_path(task_folder, session_id, pid)
 
 def discover_socket_paths(
     task_folder: str,
@@ -100,67 +85,6 @@ def discover_socket_paths(
 
     targets.sort(key=lambda x: x[1], reverse=True)
     return [socket_path for socket_path, _ in targets]
-
-
-def send_control_request(
-    socket_path: str,
-    action: str,
-    payload: dict,
-    timeout: float,
-) -> Tuple[bool, dict]:
-    """Send a ControlRequest to a UDS socket and read the response.
-
-    Args:
-        socket_path: Path to the UDS socket.
-        action: The raw action name to send.
-        payload: JSON object payload for the action.
-        timeout: Connection timeout in seconds.
-
-    Returns:
-        Tuple of (success, response_dict). On failure, response_dict contains
-        an "error" key.
-    """
-    request = {
-        "request_id": uuid.uuid4().hex,
-        "action": action,
-        "payload": payload,
-    }
-    request_bytes = json.dumps(request, ensure_ascii=False).encode("utf-8") + b"\n"
-
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(timeout)
-            sock.connect(socket_path)
-            sock.sendall(request_bytes)
-
-            file_obj = sock.makefile("r", encoding="utf-8")
-            try:
-                # The protocol is JSONL; skip any empty lines caused by
-                # buffering and read the first non-empty line.
-                line = ""
-                while line.strip() == "":
-                    line = file_obj.readline()
-                    if not line:
-                        break
-            finally:
-                file_obj.close()
-
-            if not line:
-                return False, {"error": "server closed connection without response"}
-
-            try:
-                response = json.loads(line)
-            except json.JSONDecodeError as e:
-                return False, {"error": f"invalid json response: {e}"}
-
-            if not isinstance(response, dict):
-                return False, {"error": "response is not a json object"}
-
-            return True, response
-    except socket.timeout:
-        return False, {"error": f"connection to {socket_path} timed out"}
-    except OSError as e:
-        return False, {"error": f"failed to connect to {socket_path}: {e}"}
 
 
 def format_human_response(response: dict) -> str:
