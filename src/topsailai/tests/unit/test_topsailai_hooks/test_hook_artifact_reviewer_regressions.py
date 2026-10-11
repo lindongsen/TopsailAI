@@ -361,7 +361,7 @@ def test_readback_rejects_excess_after_one_bounded_read(monkeypatch, tmp_path: P
     def excess_read(descriptor: int, size: int) -> bytes:
         nonlocal captured_reads
         target = os.readlink(f"/proc/self/fd/{descriptor}")
-        if "/capture-" in target:
+        if Path(target).is_relative_to(tmp_path / "artifacts"):
             captured_reads += 1
             return b"x" * size
         return real_read(descriptor, size)
