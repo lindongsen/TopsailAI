@@ -371,7 +371,7 @@ def _probe_and_plan(configuration, captured, ownership, discovery_root, operatio
                 raise _PreparationRejected("trust_rejected")
             entries.extend(result)
         failures = tuple(ConfiguredModuleFailure(f"{point.hook_name}:{entry.logical_name}", "invalid_entry" if entry.load_status == "invalid_entry" else "load_error") for entry, _ in entries if not entry.entry_valid)
-        module_bindings = tuple(Binding(binding_id=f"module:{entry.logical_name}", event_name=point.definition.name, event_version=point.definition.major_version, handler_ref=f"{entry.source_path}:main", max_concurrency=point.max_concurrency) for entry, _ in entries)
+        module_bindings = tuple(Binding(binding_id=f"module:{entry.logical_name}", event_name=point.definition.name, event_version=point.definition.major_version, handler_ref=f"{entry.logical_name}:main", max_concurrency=point.max_concurrency) for entry, _ in entries)
         script_result = None
         script_ids = tuple(item.lease.identity for item in scripts)
         if scripts:
