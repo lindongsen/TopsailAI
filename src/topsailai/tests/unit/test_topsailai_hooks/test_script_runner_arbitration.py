@@ -1482,7 +1482,10 @@ def test_recovery_state_boundary_preserves_primary(
         """Disarm before injecting one secondary host interruption."""
         nonlocal armed
         if frame.f_code is not OwnedHookScriptRunner.execute_entry.__code__:
-            return prior(frame, event, arg) if prior is not None else trace
+            if prior is not None:
+                prior(frame, event, arg)
+                sys.settrace(trace)
+            return trace
         frame.f_trace = trace
         if armed and event == "line" and frame.f_code is OwnedHookScriptRunner.execute_entry.__code__ and frame.f_lineno == target:
             armed = False
@@ -7473,7 +7476,8 @@ def test_authority_native_finally_return_gap_outer_recovery(tmp_path, monkeypatc
                 raise failure
             return trace
         if previous is not None:
-            return previous(frame, event, arg)
+            previous(frame, event, arg)
+            sys.settrace(trace)
         return trace
 
     monkeypatch.setattr(module._RetryLockScope, "recover", observe)
