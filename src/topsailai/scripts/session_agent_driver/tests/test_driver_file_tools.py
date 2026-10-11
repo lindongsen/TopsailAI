@@ -30,7 +30,7 @@ def test_file_selection_preserves_other_tools(environment, enabled, disabled):
 
 
 def test_fresh_process_registers_readonly_and_other_tools():
-    """Verify real import-time registration, not just factory arguments."""
+    """Verify registration and the actual agent runtime tool inventory."""
     environment = os.environ.copy()
     for name in ("TOPSAILAI_ENABLED_TOOLS", "ENABLED_TOOLS",
                  "TOPSAILAI_DISABLED_TOOLS", "DISABLED_TOOLS"):
@@ -43,6 +43,20 @@ assert any(name.startswith('file_readonly_tool-') for name in names)
 assert not any(name.startswith('file_tool-') for name in names)
 for prefix in ('cmd_tool-', 'skill_tool-', 'inject_input-', 'exit_process-'):
     assert any(name.startswith(prefix) for name in names), prefix
+from unittest import mock
+from topsailai.workspace.agent_shell import get_ai_agent
+with mock.patch('topsailai.ai_base.llm_base.LLMModel'):
+    agent = get_ai_agent(disabled_tools=['agent_tool', 'human_tool', 'file_tool'])
+    try:
+        supported = set(agent.runtime.available_tools)
+        for prefix in ('file_readonly_tool-', 'cmd_tool-', 'skill_tool-',
+                       'inject_input-', 'exit_process-'):
+            assert any(name.startswith(prefix) for name in supported), prefix
+        for prefix in ('file_tool-', 'human_tool-', 'agent_tool-'):
+            assert not any(name.startswith(prefix) for name in supported), prefix
+        assert all(callable(tool) for tool in agent.runtime.available_tools.values())
+    finally:
+        agent.close()
 """
     result = subprocess.run(
         [sys.executable, "-c", code],
