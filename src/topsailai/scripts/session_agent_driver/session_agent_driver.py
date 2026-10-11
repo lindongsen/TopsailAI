@@ -92,7 +92,20 @@ def _load_script_env(env_file: Path = SCRIPT_ENV_FILE) -> None:
         logger.warning("failed to load script environment file %s: %s", env_file, error)
 
 
+def _configure_noninteractive_agent() -> None:
+    """Disable interaction and preserve additional configured tool exclusions."""
+    os.environ["TOPSAILAI_INTERACTIVE_MODE"] = "0"
+    name = "TOPSAILAI_CLI_AGENT_CHAT_DISABLED_TOOLS"
+    excluded = [item.strip() for item in os.environ.get(name, "").split(";")]
+    excluded = [item for item in excluded if item]
+    for tool in ("agent_tool", "human_tool"):
+        if tool not in excluded:
+            excluded.append(tool)
+    os.environ[name] = ";".join(excluded)
+
+
 _load_script_env()
+_configure_noninteractive_agent()
 
 # P1: plugin tools and skills MUST be configured before importing topsailai,
 # because tools/base/__init__.py runs expand_plugin_tools() at import time.
@@ -287,20 +300,28 @@ def run_analysis_agent(session_id: str) -> None:
         analysis_session_id, session_id, session_info["status"],
     )
     try:
-        agent_chat = get_agent_chat(
-            session_id=analysis_session_id,
-            message=prompt,
-            disabled_tools=["agent_tool"],
-            need_project_workspace_lock=False,  # P2: avoid lock contention
-            need_input_message=False,
-        )
-        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(timeout)
+        # P15: isolate the driver argv from the analysis agent. get_message()
+        # reads sys.argv[1:] and would otherwise prepend the driver CLI args
+        # (e.g. "-s <session> --poll-interval 5") to the analysis prompt.
+        saved_argv = sys.argv
+        sys.argv = [saved_argv[0]]
         try:
-            agent_chat.run(times=1, need_interactive=False)
+            agent_chat = get_agent_chat(
+                session_id=analysis_session_id,
+                message=prompt,
+                disabled_tools=["agent_tool", "human_tool"],
+                need_project_workspace_lock=False,  # P2: avoid lock contention
+                need_input_message=False,
+            )
+            old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+            signal.alarm(timeout)
+            try:
+                agent_chat.run(times=1, need_interactive=False)
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, old_handler)
         finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
+            sys.argv = saved_argv
     except AgentEndProcess as error:
         # P14: injection failed -> analysis agent aborted; keep polling.
         logger.warning("analysis agent aborted: %s", error)
