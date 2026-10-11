@@ -223,3 +223,35 @@ def test_invalid_max_items_and_foreign_handles_preserve_registry_state() -> None
     )
     assert not invalid.accepted
     assert invalid.generation == 1
+
+
+def test_complete_point_versions_do_not_replace_binding_or_other_point_indexes(tmp_path):
+    """Independent point revisions and legacy bindings survive complete publication."""
+    from topsailai.tests.unit.test_topsailai_hooks.test_hook_point_plan_publication import empty_candidate
+    registry = HookRegistry()
+    candidates = (empty_candidate(tmp_path, "first"), empty_candidate(tmp_path, "second"))
+    owners = []
+    try:
+        binding = registry.register(_definition(), _binding("alpha"), "scope")
+        assert binding.accepted
+        first = registry.publish_hook_point("scope", "first", candidates[0])
+        second = registry.publish_hook_point("scope", "second", candidates[1])
+        assert first.snapshot.active_version == second.snapshot.active_version == 1
+        assert (first.generation, second.generation) == (2, 3)
+        assert registry.snapshot("scope", "conversation.started", 1).bindings == (_binding("alpha"),)
+        assert registry.unregister(binding.handle).accepted
+        for name, expected in (("first", first.snapshot), ("second", second.snapshot)):
+            reader = registry.acquire_hook_point("scope", name)
+            assert reader.snapshot is expected
+            assert registry.release_hook_point(reader)
+        owners.append(registry.remove_hook_point("scope", "first"))
+        assert registry.acquire_hook_point("scope", "first") is None
+        reader = registry.acquire_hook_point("scope", "second")
+        assert reader.snapshot is second.snapshot
+        assert registry.release_hook_point(reader)
+        owners.append(registry.remove_hook_point("scope", "second"))
+    finally:
+        for owner in owners:
+            assert owner.retire().accepted
+        for candidate in candidates:
+            candidate.close()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from topsailai.hooks.contracts import (
@@ -15,6 +15,10 @@ from topsailai.hooks.contracts import (
     RegistrySnapshot,
 )
 from topsailai.hooks.validation import validate_binding, validate_event_definition
+from topsailai.hooks.hook_point_plan_ownership import (
+    HookPointCandidate, HookPointOwner, HookPointReader, HookPointCleanupToken,
+    HookPointPublicationResult,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +37,7 @@ class _RegistryState:
     definitions: dict[tuple[str, int], EventDefinition]
     bindings: dict[tuple[str, str], _RegisteredBinding]
     configured: dict[tuple[str, str], tuple[object, object]]
+    deferred: dict[tuple[str, str], object]
 
 
 class HookRegistry:
@@ -44,7 +49,7 @@ class HookRegistry:
             raise ValueError("bindings_per_event must be a positive integer")
         self._bindings_per_event = bindings_per_event
         self._registry_id = uuid.uuid4().hex
-        self._state = _RegistryState(0, {}, {}, {})
+        self._state = _RegistryState(0, {}, {}, {}, {})
         self._lock = threading.Lock()
 
     @property
@@ -109,7 +114,7 @@ class HookRegistry:
             if plan_errors:
                 return RegistrationResult(False, state.generation, errors=plan_errors)
 
-            self._state = _RegistryState(generation, definitions, bindings, dict(state.configured))
+            self._state = _RegistryState(generation, definitions, bindings, dict(state.configured), state.deferred)
             handle = RegistrationHandle(
                 scope_id, binding.binding_id, generation, self._registry_id
             )
@@ -158,7 +163,7 @@ class HookRegistry:
                 return RegistrationResult(False, state.generation, errors=plan_errors)
 
             generation = state.generation + 1
-            self._state = _RegistryState(generation, dict(state.definitions), bindings, dict(state.configured))
+            self._state = _RegistryState(generation, dict(state.definitions), bindings, dict(state.configured), state.deferred)
             return RegistrationResult(True, generation)
 
     def unregister_scope(self, scope_id: str) -> RegistrationResult:
@@ -181,27 +186,91 @@ class HookRegistry:
                 return RegistrationResult(True, state.generation)
             generation = state.generation + 1
             self._state = _RegistryState(
-                generation, dict(state.definitions), bindings, configured
+                generation, dict(state.definitions), bindings, configured, state.deferred
             )
             return RegistrationResult(True, generation)
 
-    def publish_configured(
-        self, scope_id: str, hook_name: str, fingerprint: object, plan: object
-    ) -> tuple[bool, int, object | None]:
-        """Atomically publish one complete scope-local configured plan."""
-        key = (scope_id, hook_name)
+    def publish_hook_point(self, scope_id, hook_name, candidate, *, dispose_loser=True):
+        """Validate ownership, then swap exactly one complete immutable point."""
+        valid_key = type(scope_id) is str and bool(scope_id) and type(hook_name) is str
+        losing = None
         with self._lock:
             state = self._state
-            previous = state.configured.get(key)
-            if previous is not None and previous[0] == fingerprint:
-                return False, state.generation, None
-            configured = dict(state.configured)
-            configured[key] = (fingerprint, plan)
-            generation = state.generation + 1
-            self._state = _RegistryState(
-                generation, dict(state.definitions), dict(state.bindings), configured
-            )
-            return True, generation, None if previous is None else previous[1]
+            registered = state.configured.get((scope_id, hook_name)) if valid_key else None
+            previous = None if registered is None else registered[1]
+            snapshot = previous.snapshot if type(previous) is HookPointOwner else None
+            if not valid_key or type(candidate) is not HookPointCandidate:
+                return HookPointPublicationResult(False, False, state.generation, snapshot,
+                    errors=("invalid_candidate",))
+            try:
+                plan = candidate.plan
+                if plan.hook_point_name != hook_name:
+                    raise ValueError("candidate name mismatch")
+                from dataclasses import replace
+                detached = replace(plan)
+                if detached.fingerprint != plan.fingerprint:
+                    raise ValueError("candidate fingerprint mismatch")
+                if registered is not None and registered[0] == detached.fingerprint:
+                    losing = candidate
+                    result = HookPointPublicationResult(True, False, state.generation, snapshot)
+                else:
+                    version = 1 if snapshot is None else snapshot.active_version + 1
+                    owner = candidate.transfer(self, version)
+                    configured = dict(state.configured)
+                    configured[(scope_id, hook_name)] = (owner.snapshot.plan.fingerprint, owner)
+                    generation = state.generation + 1
+                    self._state = _RegistryState(generation, dict(state.definitions),
+                        dict(state.bindings), configured, state.deferred)
+                    result = HookPointPublicationResult(True, True, generation, owner.snapshot, previous)
+            except (ValueError, RuntimeError, TypeError, AttributeError):
+                return HookPointPublicationResult(False, False, state.generation, snapshot,
+                    errors=("invalid_candidate",))
+        if losing is not None and dispose_loser:
+            losing.close()
+        return result
+
+    def owns_hook_point_owner(self, owner):
+        """Prove exact active membership for interrupted publication reconciliation."""
+        with self._lock:
+            return any(value[1] is owner for value in self._state.configured.values())
+
+    def acquire_hook_point(self, scope_id, hook_name, receiver=None):
+        """Return a snapshot only after its reader is armed under this same lock."""
+        with self._lock:
+            registered = self._state.configured.get((scope_id, hook_name))
+            owner = None if registered is None else registered[1]
+            return owner.acquire(receiver) if type(owner) is HookPointOwner else None
+
+    def release_hook_point(self, reader):
+        """Reject foreign and copied admissions before consuming exact ownership."""
+        if type(reader) is not HookPointReader or reader.registry is not self:
+            return False
+        return reader.owner.release(reader) if type(reader.owner) is HookPointOwner else False
+
+    def retain_hook_point_cleanup(self, reader, custody=None):
+        """Retain execution cleanup independently while the exact reader is live."""
+        if type(reader) is not HookPointReader or reader.registry is not self:
+            return None
+        return reader.owner.retain_cleanup(reader, custody)
+
+    def release_hook_point_cleanup(self, token):
+        """Consume only this Registry's exact execution cleanup token."""
+        if type(token) is not HookPointCleanupToken or token.registry is not self:
+            return False
+        return token.owner.release(token, execution=True)
+
+    def remove_hook_point(self, scope_id, hook_name):
+        """Return removed ownership for caller-journaled retirement outside locks."""
+        return self.remove_configured(scope_id, hook_name)
+
+    def publish_configured(self, scope_id, hook_name, fingerprint, plan):
+        """Preserve the legacy shape without admitting arbitrary canonical writers."""
+        if type(plan) is not HookPointCandidate or plan.plan.fingerprint != fingerprint:
+            raise TypeError("configured publication requires an owned complete candidate")
+        result = self.publish_hook_point(scope_id, hook_name, plan)
+        if not result.accepted:
+            raise ValueError("invalid configured candidate")
+        return result.changed, result.generation, result.previous
 
     def configured_plan(self, scope_id: str, hook_name: str) -> tuple[int, object | None]:
         """Return one exact configured plan from a stable registry generation."""
@@ -224,9 +293,55 @@ class HookRegistry:
                 state.generation + 1,
                 dict(state.definitions),
                 dict(state.bindings),
-                configured,
+                configured, state.deferred,
             )
             return registered[1]
+
+    def defer_configured_scope(self, scope_id):
+        """Publish active removal and explicit close custody in one state assignment."""
+        with self._lock:
+            state = self._state
+            configured = {key: value for key, value in state.configured.items()
+                          if key[0] != scope_id}
+            if len(configured) == len(state.configured):
+                return
+            deferred = dict(state.deferred)
+            deferred.update((key, value[1]) for key, value in state.configured.items()
+                            if key[0] == scope_id)
+            self._state = _RegistryState(state.generation + 1,
+                state.definitions, state.bindings, configured, deferred)
+
+    def deferred_scope_count(self, scope_id):
+        """Inspect outstanding explicit custody without exposing mutable owners."""
+        with self._lock:
+            return sum(key[0] == scope_id for key in self._state.deferred)
+
+    def owns_deferred_owner(self, owner):
+        """Gate recovery disposal until exact deferred withdrawal is committed."""
+        with self._lock:
+            return any(current is owner for current in self._state.deferred.values())
+
+    def handoff_deferred_scope(self, scope_id, recovery):
+        """Reuse an armed bound reservation across an interrupted withdrawal."""
+        with self._lock:
+            state = self._state
+            key = next((key for key in state.deferred if key[0] == scope_id), None)
+            if key is None:
+                return None
+            owner = state.deferred[key]
+            ticket = recovery.reserve_deferred(owner, self)
+            if ticket is None:
+                return None
+            deferred = dict(state.deferred)
+            del deferred[key]
+            self._state = replace(state, deferred=deferred)
+            return ticket
+
+    def configured_scope_owners(self, scope_id):
+        """Observe exact owners for recovery reservation before scope removal."""
+        with self._lock:
+            return tuple(value[1] for key, value in self._state.configured.items()
+                if key[0] == scope_id)
 
     def remove_configured_scope(self, scope_id: str) -> tuple[object, ...]:
         """Atomically remove and return configured plans owned by one scope."""
@@ -248,7 +363,7 @@ class HookRegistry:
                 state.generation + 1,
                 dict(state.definitions),
                 dict(state.bindings),
-                configured,
+                configured, state.deferred,
             )
             return removed
 
@@ -262,7 +377,7 @@ class HookRegistry:
                 generation,
                 dict(state.definitions),
                 dict(state.bindings),
-                dict(state.configured),
+                dict(state.configured), state.deferred,
             )
             return generation
 

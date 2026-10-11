@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import threading
 import time
 import uuid
@@ -45,6 +46,13 @@ from topsailai.hooks.hook_script_discovery import (
     discover_configured_hook_scripts,
 )
 from topsailai.hooks.script_runner import OwnedHookScriptRunner
+from topsailai.hooks.hook_point_plan_publication import ExecutionCleanupCustody
+from topsailai.hooks.hook_point_plan_capture import build_hook_point_candidate
+from topsailai.hooks.hook_point_plan_ownership import (
+    HookPointCandidate, HookPointOwner, _preserve_body_diagnosis,
+)
+
+_ConfiguredPlan = HookPointCandidate
 
 if TYPE_CHECKING:
     from topsailai.hooks.runtime import HookRuntime, HookScope
@@ -59,6 +67,8 @@ class _ConfiguredAdmission:
     generation: int
     timeout_ms: int
     started: float
+    reader: object = None
+    registry: object = None
     released: bool = False
     release_lock: threading.Lock | None = None
 
@@ -69,57 +79,9 @@ class _ConfiguredAdmission:
         with self.release_lock:
             if self.released:
                 return
+            self.registry.release_hook_point(self.reader)
             self.released = True
-        self.plan.release()
 
-
-class _ConfiguredPlan:
-    """Own one immutable captured script plan until all readers release it."""
-
-    def __init__(
-        self,
-        hook_name: str,
-        entries: tuple[HookScriptEntry, ...],
-        owner: ArtifactCaptureOwner | None,
-        fingerprint: object,
-    ) -> None:
-        self.hook_name = hook_name
-        self.entries = entries
-        self.owner = owner
-        self.fingerprint = fingerprint
-        self.options = HookScriptExecutionOptions()
-        self.policy = HookScriptExecutionPolicy()
-        self._lock = threading.Lock()
-        self._readers = 0
-        self._retired = False
-
-    def acquire(self) -> bool:
-        """Retain this plan for one admitted execution."""
-        with self._lock:
-            if self._retired:
-                return False
-            self._readers += 1
-            return True
-
-    def release(self) -> None:
-        """Release one execution and clean a fully retired plan."""
-        owner = None
-        with self._lock:
-            self._readers -= 1
-            if self._retired and self._readers == 0:
-                owner, self.owner = self.owner, None
-        if owner is not None:
-            owner.close()
-
-    def retire(self) -> None:
-        """Prevent new use and clean once every admitted reader settles."""
-        owner = None
-        with self._lock:
-            self._retired = True
-            if self._readers == 0:
-                owner, self.owner = self.owner, None
-        if owner is not None:
-            owner.close()
 
 
 def detach_configured_trust(
@@ -210,24 +172,57 @@ def register_configured(
         return ConfiguredRegistrationResult(False, errors=(error,))
     if len(discovery.entries) > 128:
         return ConfiguredRegistrationResult(False, errors=("registration_capacity_exceeded",))
-    plan, error = _capture_plan(runtime, hook_name, discovery, platform, trust)
-    if plan is None:
-        return ConfiguredRegistrationResult(False, errors=(error or "artifact_rejected",))
-    with runtime._lock:
-        if not runtime._owns_open_scope(scope):
-            plan.retire()
-            return ConfiguredRegistrationResult(False, errors=("scope_closed",))
-        changed, _, previous = runtime._registry.publish_configured(
-            scope.scope_id, hook_name, plan.fingerprint, plan
-        )
-    if not changed:
-        plan.retire()
-        return ConfiguredRegistrationResult(True, script_count=len(discovery.entries))
-    if isinstance(previous, _ConfiguredPlan):
-        previous.retire()
-    return ConfiguredRegistrationResult(
-        True, changed=True, script_count=len(discovery.entries)
-    )
+    recovery = runtime._publication_recovery
+    reservations = []
+    ticket = previous_ticket = None
+    plan = None
+    previous_owner = None
+    try:
+        ticket = recovery.reserve(reservations)
+        previous_ticket = recovery.reserve(reservations) if ticket is not None else None
+        if ticket is None or previous_ticket is None:
+            return ConfiguredRegistrationResult(False, errors=("publication_capacity_exceeded",))
+        plan, error = _capture_plan(runtime, hook_name, discovery, platform, trust, recovery, ticket)
+        if plan is None:
+            return ConfiguredRegistrationResult(False, errors=(error or "artifact_rejected",))
+        recovery.bind(ticket, plan)
+        rejection = None
+        with runtime._lock:
+            if runtime._state != "running":
+                rejection = "runtime_closed"
+            elif not runtime._owns_open_scope(scope):
+                rejection = "scope_closed"
+            else:
+                _, previous_owner = runtime._registry.configured_plan(scope.scope_id, hook_name)
+                if previous_owner is not None:
+                    recovery.bind(previous_ticket, previous_owner)
+                result = runtime._registry.publish_hook_point(
+                    scope.scope_id, hook_name, plan, dispose_loser=False)
+                if result.changed:
+                    recovery.handoff(ticket)
+                elif not result.accepted:
+                    rejection = "artifact_rejected"
+        if rejection is not None:
+            recovery.settle(ticket)
+            return ConfiguredRegistrationResult(False, errors=(rejection,))
+        if not result.changed:
+            recovery.settle(ticket)
+        elif result.previous is not None:
+            recovery.settle(previous_ticket)
+        return ConfiguredRegistrationResult(True, changed=result.changed,
+            script_count=len(discovery.entries))
+    except BaseException as error:
+        owner = getattr(error, "recovery_owner", None)
+        if owner is not None:
+            recovery.bind(ticket, owner)
+        if not isinstance(error, Exception):
+            raise
+        return ConfiguredRegistrationResult(False, errors=("artifact_rejected",))
+    finally:
+        if previous_owner is not None and runtime._registry.owns_hook_point_owner(previous_owner):
+            recovery.handoff(previous_ticket)
+        for reservation in reservations:
+            recovery.release(reservation)
 
 
 def dispatch_configured(
@@ -268,25 +263,46 @@ def emit_configured(
     return DeliveryReceipt(True, event_id)
 
 def retire_configured(runtime: HookRuntime, hook_name: str, scope: HookScope) -> bool:
-    """Retire one exact configured plan owned by an open Runtime scope."""
+    """Reserve recovery before removing an exact point from active membership."""
     if not is_valid_hook_name(hook_name):
         return False
-    with runtime._lock:
-        if not runtime._owns_open_scope(scope):
-            return False
-        plan = runtime._registry.remove_configured(scope.scope_id, hook_name)
-    if isinstance(plan, _ConfiguredPlan):
-        plan.retire()
+    recovery = runtime._publication_recovery
+    reservations = []
+    try:
+        with runtime._lock:
+            if not runtime._owns_open_scope(scope):
+                return False
+            ticket = recovery.reserve(reservations)
+            if ticket is None:
+                return False
+            _, plan = runtime._registry.configured_plan(scope.scope_id, hook_name)
+            if plan is None:
+                return False
+            recovery.bind(ticket, plan)
+            try:
+                runtime._registry.remove_configured(scope.scope_id, hook_name)
+            finally:
+                if runtime._registry.owns_hook_point_owner(plan):
+                    recovery.handoff(ticket)
+        recovery.settle(ticket)
         return True
-    return plan is not None
+    finally:
+        for reservation in reservations:
+            recovery.release(reservation)
 
 
-
-def retire_configured_scope(runtime: HookRuntime, scope_id: str) -> None:
-    """Retire every configured plan removed with one closing scope."""
-    for plan in runtime._registry.remove_configured_scope(scope_id):
-        if isinstance(plan, _ConfiguredPlan):
-            plan.retire()
+def retire_configured_scope(runtime: HookRuntime, scope_id: str) -> bool:
+    """Advance a fixed batch of explicitly deferred owners outside cleanup locks."""
+    recovery = runtime._publication_recovery
+    with runtime._lock:
+        runtime._registry.defer_configured_scope(scope_id)
+    for _ in range(recovery.capacity):
+        with runtime._lock:
+            ticket = runtime._registry.handoff_deferred_scope(scope_id, recovery)
+        if ticket is None:
+            break
+        recovery.settle(ticket)
+    return runtime._registry.deferred_scope_count(scope_id) == 0
 
 
 def _platform_policy(trust: ConfiguredTrustPolicy) -> ExecutablePlatformPolicy:
@@ -298,43 +314,21 @@ def _platform_policy(trust: ConfiguredTrustPolicy) -> ExecutablePlatformPolicy:
     )
 
 
-def _capture_plan(runtime, hook_name, discovery, platform, trust):
-    """Capture discovered sources into one Runtime-owned immutable plan."""
+def _capture_plan(runtime, hook_name, discovery, platform, trust, recovery=None, ticket=None):
+    """Build a complete zero-Module candidate through the sealed U05A path."""
     if len(discovery.entries) > 128:
         return None, "registration_capacity_exceeded"
-    if not discovery.entries:
-        return _ConfiguredPlan(hook_name, (), None, ()), None
     root = Path(runtime._backend.script_temp_root) / "configured-artifacts" / uuid.uuid4().hex
-    owner = None
     try:
-        root.mkdir(mode=0o700, parents=True)
-        owner = ArtifactCaptureOwner(
-            artifact_root=str(root), trust=artifact_capture_trust(trust)
-        )
-        requests = tuple(
-            ArtifactCaptureRequest(entry.source_path, "script", entry.basename, platform)
-            for entry in discovery.entries
-        )
-        result = owner.capture(
-            requests,
-            policy=ArtifactCapturePolicy(max_entries=len(requests)),
-        )
-        if not result.accepted or result.artifact is None:
-            owner.close()
-            return None, "artifact_rejected"
-        artifact = result.artifact
-        entries = tuple(
-            HookScriptEntry(
-                (artifact.directory / item.relative_path).resolve(strict=True),
-                item.logical_name,
-            )
-            for item in artifact.entries
-        )
-        return _ConfiguredPlan(hook_name, entries, owner, artifact.identity), None
+        if discovery.entries:
+            root.mkdir(mode=0o700, parents=True)
+        return build_hook_point_candidate(hook_name, script_discovery=discovery,
+            platform_policy=platform, trust=artifact_capture_trust(trust),
+            artifact_root=str(root), probe_backend=runtime._backend,
+            policy=ArtifactCapturePolicy(max_entries=128),
+            receiver=None if recovery is None else lambda candidate: recovery.bind(ticket, candidate)), None
     except (OSError, RuntimeError, ValueError):
-        if owner is not None:
-            owner.close()
-        return None, "artifact_rejected"
+        raise
 
 
 def _admit_configured(runtime, hook_name, event, policy, reject_running_loop):
@@ -344,31 +338,68 @@ def _admit_configured(runtime, hook_name, event, policy, reject_running_loop):
         return None, rejection
     if not is_valid_hook_name(hook_name):
         return None, runtime._rejected(event, "invalid_hook_name")
-    with runtime._lock:
-        generation, plan = runtime._registry.configured_plan(event.scope_id, hook_name)
-        if not isinstance(plan, _ConfiguredPlan) or not plan.acquire():
-            return None, runtime._rejected(event, "unknown_configured_hook")
-        timeout_ms = runtime._policy_timeout(policy, runtime._settings)
-        admission = _ConfiguredAdmission(event, plan, generation, timeout_ms, time.monotonic())
-        deadline = admission.started + timeout_ms / 1000
-        work = runtime._scheduler.submit(
-            event.scope_id,
-            max(1, len(plan.entries)),
-            lambda: _execute_configured(runtime, admission),
-            cancellation_result=lambda: _terminal_configured(admission, "closed_scope"),
-            deadline_seconds=deadline,
-            deadline_result=lambda: _terminal_configured(admission, "deadline"),
-        )
+    receiver = []
+    work = None
+    rejection = None
+    admission = None
+    try:
+        with runtime._lock:
+            generation = runtime._registry.generation
+            reader = runtime._registry.acquire_hook_point(event.scope_id, hook_name, receiver)
+            if reader is None:
+                rejection = runtime._rejected(event, "unknown_configured_hook")
+            elif reader.snapshot.plan.modules:
+                rejection = runtime._rejected(event, "mixed_plan_unavailable")
+            else:
+                plan = reader.owner
+                timeout_ms = runtime._policy_timeout(policy, runtime._settings)
+                admission = _ConfiguredAdmission(event, plan, generation, timeout_ms,
+                    time.monotonic(), reader=reader, registry=runtime._registry)
+                deadline = admission.started + timeout_ms / 1000
+                work = runtime._scheduler.submit(
+                    event.scope_id,
+                    max(1, len(plan.entries)),
+                    lambda: _execute_configured(runtime, admission),
+                    cancellation_result=lambda: _terminal_configured(admission, "closed_scope"),
+                    deadline_seconds=deadline,
+                    deadline_result=lambda: _terminal_configured(admission, "deadline"),
+                )
+    except BaseException as primary:
+        for retained in receiver:
+            try:
+                runtime._registry.release_hook_point(retained)
+            except BaseException as cleanup:
+                if isinstance(primary, Exception) and not isinstance(cleanup, Exception):
+                    _preserve_body_diagnosis(primary, cleanup)
+                    raise
+                _preserve_body_diagnosis(cleanup, primary)
+        raise
     if work is None:
-        admission.release()
-    return work, None
+        if admission is not None:
+            admission.release()
+        else:
+            for retained in receiver:
+                runtime._registry.release_hook_point(retained)
+    return work, rejection
 
 
 def _execute_configured(runtime, admission):
     """Execute and release one admitted configured plan."""
+    recovery = runtime._publication_recovery
+    ticket = None
+    reservations = []
+    custody = None
     try:
         if not admission.plan.entries:
             return DispatchReport(admission.event.event_id, admission.generation)
+        ticket = recovery.reserve(reservations)
+        if ticket is None:
+            return DispatchReport(admission.event.event_id, admission.generation,
+                rejection_reason="registration_capacity_exceeded")
+        custody = ExecutionCleanupCustody(admission.registry, None)
+        recovery.bind(ticket, custody)
+        admission.registry.retain_hook_point_cleanup(admission.reader, custody)
+        custody.runner = OwnedHookScriptRunner(runtime._backend)
         context = HookContext(
             admission.event,
             uuid.uuid4().hex,
@@ -384,7 +415,7 @@ def _execute_configured(runtime, admission):
             context=context,
             options=admission.plan.options,
             policy=admission.plan.policy,
-            runner=OwnedHookScriptRunner(runtime._backend),
+            runner=custody.runner,
             dispatch_deadline=admission.started + admission.timeout_ms / 1000,
             cancellation=threading.Event(),
             clock=time.monotonic,
@@ -405,7 +436,33 @@ def _execute_configured(runtime, admission):
             elapsed_ms=outcome.duration_ms,
         )
     finally:
-        admission.release()
+        retained = reservations[0] if reservations else ticket
+        _finish_configured_execution(recovery, retained, custody, admission, sys.exc_info()[1])
+
+
+def _finish_configured_execution(recovery, ticket, custody, admission, primary):
+    """Attempt both cleanups without replacing primary identity or native evidence."""
+    selected = primary
+    selected_traceback = None if primary is None else primary.__traceback__
+    for operation in ("custody", "reader"):
+        try:
+            if operation == "reader":
+                admission.release()
+            elif custody is not None:
+                custody.completed = True
+                recovery.settle(ticket)
+            elif ticket is not None:
+                recovery.release(ticket)
+        except BaseException as cleanup:
+            if selected is None:
+                selected, selected_traceback = cleanup, cleanup.__traceback__
+            elif isinstance(selected, Exception) and not isinstance(cleanup, Exception):
+                _preserve_body_diagnosis(selected, cleanup)
+                selected, selected_traceback = cleanup, cleanup.__traceback__
+            else:
+                _preserve_body_diagnosis(cleanup, selected)
+    if selected is not None and selected is not primary:
+        raise selected.with_traceback(selected_traceback)
 
 
 def _terminal_configured(admission, category):

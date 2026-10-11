@@ -43,6 +43,7 @@ from topsailai.hooks.dispatcher import HookDispatcher
 from topsailai.hooks.process_backend import IsolatedProcessBackend
 from topsailai.hooks.process_state import CleanupDebt
 from topsailai.hooks.registry import HookRegistry
+from topsailai.hooks.hook_point_plan_publication import PublicationRecovery
 from topsailai.hooks.scheduler import HookScheduler, ScheduledWork
 from topsailai.hooks.validation import freeze_json, validate_payload
 
@@ -84,6 +85,7 @@ class HookScope:
         self.scope_id = scope_id
         self.parent_id = parent_id
         self.metadata = metadata
+        self._close_debt_id = "scope-close-" + uuid.uuid4().hex
 
     @property
     def closed(self) -> bool:
@@ -148,6 +150,7 @@ class HookRuntime:
             self._diagnostics.publish,
         )
         self._lock = threading.RLock()
+        self._publication_recovery = PublicationRecovery(self._lock)
         self._state = "running"
         self._scopes: dict[str, HookScope] = {}
         self._children: dict[str, set[str]] = {}
@@ -368,24 +371,47 @@ class HookRuntime:
         return self._diagnostics.drain(limit)
 
     def cleanup_debts(self) -> tuple[CleanupDebt, ...]:
-        """Return exact process-cleanup obligations retained by the backend."""
-        return self._backend.cleanup_debts()
+        """Return backend obligations first, followed by retained publication custody."""
+        with self._lock:
+            deferred = tuple(CleanupDebt(scope._close_debt_id, "scope_close_pending", None,
+                "scope retirement deferred") for key, scope in self._scopes.items()
+                if key in self._closing_scopes)
+        return self._backend.cleanup_debts() + self._publication_recovery.cleanup_debts() + deferred
+
+    def retry_cleanup(self, debt_id: str) -> bool:
+        """Retry one exact backend or publication debt without holding Runtime locks."""
+        if type(debt_id) is not str:
+            return False
+        with self._lock:
+            scope_id = next((key for key, scope in self._scopes.items()
+                if key in self._closing_scopes and scope._close_debt_id == debt_id), None)
+        if scope_id is not None:
+            self._close_scope(scope_id, None)
+            return True
+        if self._publication_recovery.owns_debt(debt_id):
+            return self._publication_recovery.retry_cleanup(debt_id)
+        if any(debt.debt_id == debt_id for debt in self._backend.cleanup_debts()):
+            return self._backend.retry_cleanup(debt_id)
+        return self._publication_recovery.retry_cleanup(debt_id)
 
     def close(self, deadline_ms: int | None = None) -> CloseReport:
         """Idempotently stop admission, close scopes, and report cleanup debt."""
         with self._lock:
-            if self._state == "closed":
-                return CloseReport(cleanup_debts=self.cleanup_debts(), already_closed=True)
-            if self._state == "closing":
-                return CloseReport(cleanup_debts=self.cleanup_debts(), already_closed=True)
-            self._state = "closing"
-            root_ids = sorted(
-                scope_id for scope_id, scope in self._scopes.items() if scope.parent_id is None
-            )
-            scope_ids: list[str] = []
-            for scope_id in root_ids:
-                scope_ids.extend(self._scope_tree_ids(scope_id))
-            self._closing_scopes.update(scope_ids)
+            already_closed = self._state in {"closed", "closing"}
+            if not already_closed:
+                self._state = "closing"
+                root_ids = sorted(
+                    scope_id for scope_id, scope in self._scopes.items() if scope.parent_id is None
+                )
+                scope_ids: list[str] = []
+                for scope_id in root_ids:
+                    scope_ids.extend(self._scope_tree_ids(scope_id))
+                self._closing_scopes.update(scope_ids)
+        if already_closed:
+            with self._lock:
+                pending_scope_ids = tuple(self._closing_scopes)
+            closed = self._close_scope_ids(pending_scope_ids)
+            return CloseReport(tuple(closed), cleanup_debts=self.cleanup_debts(), already_closed=True)
         timeout_ms = self._deadline_ms(deadline_ms, self._settings.limits.shutdown_timeout_ms)
         deadline = time.monotonic() + timeout_ms / 1_000
         closed = self._close_scope_ids(tuple(scope_ids))
@@ -594,14 +620,14 @@ class HookRuntime:
         return None
 
     def _close_scope(self, scope_id: str, deadline_ms: int | None) -> CloseReport:
-        """Close one scope tree without affecting parent or siblings."""
+        """Resume closing scope custody without cleanup observation under locks."""
         del deadline_ms
         with self._lock:
-            if scope_id not in self._scopes or scope_id in self._closing_scopes:
-                return CloseReport(already_closed=True, cleanup_debts=self.cleanup_debts())
-            scope_ids = self._scope_tree_ids(scope_id)
+            already_closed = scope_id not in self._scopes or scope_id in self._closing_scopes
+            scope_ids = () if scope_id not in self._scopes else self._scope_tree_ids(scope_id)
             self._closing_scopes.update(scope_ids)
-        return CloseReport(tuple(self._close_scope_ids(scope_ids)), self.cleanup_debts())
+        closed = self._close_scope_ids(scope_ids)
+        return CloseReport(tuple(closed), self.cleanup_debts(), already_closed=already_closed)
 
     def _scope_tree_ids(self, scope_id: str) -> tuple[str, ...]:
         """Return one descendant-first scope tree while the owner lock is held."""
@@ -621,7 +647,8 @@ class HookRuntime:
                     "dispatch_cancelled", scope_id=scope_id, cancelled_count=cancelled
                 )
             self._scheduler.release_scope(scope_id)
-            retire_configured_scope(self, scope_id)
+            if not retire_configured_scope(self, scope_id):
+                continue
             self._registry.unregister_scope(scope_id)
             with self._lock:
                 scope = self._scopes.pop(scope_id, None)

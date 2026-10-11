@@ -92,7 +92,8 @@ def _probe(candidate, item, path, hook_name, deadline):
 
 def build_hook_point_candidate(hook_name, *, modules=(), script_discovery=None,
         platform_policy, trust, artifact_root, probe_backend, policy=ArtifactCapturePolicy(),
-        deadline=None, options=HookScriptExecutionOptions(), execution_policy=HookScriptExecutionPolicy()):
+        deadline=None, options=HookScriptExecutionOptions(), execution_policy=HookScriptExecutionPolicy(),
+        receiver=None):
     """Return one complete unpublished candidate or raise with exact recovery owner."""
     modules, scripts, requests, options, execution_policy, backend = _inputs(hook_name, modules, script_discovery,
         platform_policy, trust, artifact_root, probe_backend, policy, deadline, options, execution_policy)
@@ -101,6 +102,8 @@ def build_hook_point_candidate(hook_name, *, modules=(), script_discovery=None,
         absolute = min(absolute, deadline)
     candidate = HookPointCandidate(backend)
     try:
+        if receiver is not None and not receiver(candidate):
+            raise RuntimeError("candidate recovery handoff rejected")
         _checkpoint(absolute)
         if not requests:
             candidate._plan = HookPointPlan(hook_name, (), DefaultScriptHook((), script_discovery is not None),
