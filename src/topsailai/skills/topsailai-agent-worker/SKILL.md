@@ -213,36 +213,66 @@ While watching a session's live log you can interact with the running agent:
 ### Non-interactive subcommands
 
 ```bash
-topsailai workspace              # show the task list and exit
-topsailai docs list              # list usage docs
-topsailai docs read topsailai.md # read a usage doc
-topsailai project list           # list managed projects
-topsailai project add <path>     # add a project
-topsailai models list            # list model registry entries
+topsailai workspace                  # show the human-readable task list and exit
+topsailai workspace --format json     # output task details as JSON
+topsailai docs list                   # list usage docs
+topsailai docs read topsailai.md      # read a usage doc
+topsailai project list                # list managed projects
+topsailai project add <path>          # add a project
+topsailai models list                 # list model registry entries
 ```
 
-## Controlling a running agent
+`topsailai workspace --format json` is recommended for scripts and operational
+queries. The output includes task/session details such as `session_name`,
+`session_id`, `pid`, `status`, `filename`, `created_at`, `project_workspace`,
+`is_task`, and `total`.
 
-Use `topsailai_send_control` to send JSONL control requests over the session's
-Unix domain socket:
+## Controlling and observing a running agent
+
+The non-interactive `topsailai runtime` command controls or queries one
+specific session without entering the interactive runtime watcher. Use the
+`session_id` and `pid` reported by `topsailai workspace --format json` when
+available:
 
 ```bash
-# Hard interrupt all running sessions
-topsailai_send_control --command hard_interrupt
+# Send input to a running session
+topsailai runtime send -s SESSION_ID -p PID -m 'message'
 
-# Soft interrupt a specific session
-topsailai_send_control --session_id my-session --command soft_interrupt
+# Inject a by-the-way message into the agent2llm context
+topsailai runtime btw -s SESSION_ID -m 'message'
 
-# Retrieve runtime messages from a specific process
-topsailai_send_control --pid 12345 --command get_runtime_messages
+# Query session messages
+topsailai runtime control get_session_messages \
+  -s SESSION_ID -p PID -a '{}' --json
 
-# Invoke a registered / instruction
+# Invoke an instruction in the running session
+topsailai runtime control call_instruction \
+  -s SESSION_ID -p PID -a '{"instruction": "agent.models"}' --json
+```
+
+The `-i` form accepts the same interactive runtime instructions directly:
+
+```bash
+topsailai runtime -s SESSION_ID -p PID -i '/send hello'
+topsailai runtime -s SESSION_ID -p PID -i '/ctx.btw remember this'
+topsailai runtime -s SESSION_ID -p PID -i '/control get_session_messages {}'
+```
+
+Delivery success means that the operation was sent or queued; it does not
+necessarily mean that the running agent has already consumed it. Use `--json`
+for machine-readable results and `--stdin` for bounded non-interactive input.
+
+The lower-level `topsailai_send_control` command remains available for
+compatibility, but `topsailai runtime control` is the preferred interface:
+
+```bash
 topsailai_send_control --session_id my-session --command call_instruction \
   --args '{"instruction":"ctx.history","args":[],"kwargs":{}}'
 ```
 
-Supported actions: `call_instruction`, `hard_interrupt`, `soft_interrupt`,
-`clear_interrupt`, `get_runtime_messages`.
+Supported runtime actions include `send`, `btw`, and `control`; control
+operations include `call_instruction`, `hard_interrupt`, `soft_interrupt`,
+`clear_interrupt`, and runtime message queries.
 
 ## Environment variables
 
