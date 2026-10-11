@@ -328,12 +328,16 @@ class HookRuntime:
             return rejection
         if work is None:
             return self._rejected(event, "rejected_capacity")
+        return await self._await_dispatch(work, cancellation_requested, event.event_id)
+
+    async def _await_dispatch(self, work, cancellation_requested, event_id):
+        """Signal cancellation and bound settlement without abandoning scheduler custody."""
         wrapped = asyncio.wrap_future(work.future)
         try:
             return await asyncio.shield(wrapped)
         except asyncio.CancelledError:
             cancellation_requested.set()
-            self._diagnostics.publish("dispatch_cancel_requested", event_id=event.event_id)
+            self._diagnostics.publish("dispatch_cancel_requested", event_id=event_id)
             settlement_deadline = time.monotonic() + self._settings.limits.shutdown_timeout_ms / 1_000
             while not work.future.done():
                 remaining = settlement_deadline - time.monotonic()
@@ -349,7 +353,7 @@ class HookRuntime:
                     continue
                 except BaseException:
                     break
-            self._diagnostics.publish("dispatch_cancelled", event_id=event.event_id)
+            self._diagnostics.publish("dispatch_cancelled", event_id=event_id)
             raise
 
     def emit(self, event: HookEvent, policy: Any = None) -> DeliveryReceipt:

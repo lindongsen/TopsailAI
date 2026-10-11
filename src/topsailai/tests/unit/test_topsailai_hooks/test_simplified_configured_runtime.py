@@ -570,6 +570,7 @@ def test_scope_cancellation_releases_queued_configured_plan_once(
         gate.touch()
         _wait_for(lambda: len(plan._readers) == 0)
         _wait_for(lambda: not artifact.exists())
+        _wait_for(lambda: plan.settled)
         assert plan.owner is None
     finally:
         gate.touch()

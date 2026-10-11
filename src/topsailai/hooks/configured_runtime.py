@@ -242,14 +242,18 @@ def dispatch_configured(
 
 
 async def adispatch_configured(
-    runtime: HookRuntime, hook_name: str, event: HookEvent, policy: Any = None
+    runtime: HookRuntime, hook_name: str, event: HookEvent, policy: Any = None,
+    *, deadline=None, cancellation=None,
 ) -> DispatchReport:
-    """Asynchronously execute one exact configured plan."""
-    work, rejection = _admit_configured(runtime, hook_name, event, policy, False)
+    """Await the same exact plan with caller-local cancellation and shared deadline."""
+    if cancellation is not None and type(cancellation) is not threading.Event:
+        raise ValueError("invalid cancellation signal")
+    signal = threading.Event() if cancellation is None else cancellation
+    work, rejection = _admit_configured(runtime, hook_name, event, policy, False, deadline, signal)
     if rejection is not None:
         return rejection
     assert work is not None
-    return await asyncio.shield(asyncio.wrap_future(work.future))
+    return await runtime._await_dispatch(work, signal, event.event_id)
 
 
 def emit_configured(

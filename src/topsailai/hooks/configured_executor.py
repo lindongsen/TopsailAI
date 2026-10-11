@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import uuid
 import time
 import threading
@@ -114,14 +116,23 @@ class ConfiguredHookExecutor:
         payload: Any,
         operation: HookOperation | None = None,
     ) -> DispatchReport:
-        """Ensure and asynchronously dispatch one catalog-owned async point."""
+        """Await registration and execution under one deadline without blocking the loop."""
         declaration = self._require_point(point, "async")
         event = self._make_event(declaration, payload, operation)
-        ensured = await self._registrar.aensure_registered(declaration.name)
-        if not ensured.ready:
-            report = DispatchReport(event.event_id, 0, rejection_reason=self._ensure_reason(ensured))
+        if not isinstance(self._runtime, HookRuntime) or not isinstance(self._registrar, ConfiguredHookRegistrar):
+            ensured = await self._registrar.aensure_registered(declaration.name)
+            report = DispatchReport(event.event_id, 0, rejection_reason=self._ensure_reason(ensured)) if not ensured.ready else await self._runtime.adispatch_configured(declaration.name, event)
         else:
-            report = await self._runtime.adispatch_configured(declaration.name, event)
+            deadline = time.monotonic() + self._runtime._settings.limits.dispatch_timeout_ms / 1000
+            signal = threading.Event()
+            try:
+                ensured = await asyncio.to_thread(self._registrar.ensure_registered,
+                    declaration.name, deadline=deadline, cancellation=signal)
+                report = DispatchReport(event.event_id, 0, rejection_reason=self._ensure_reason(ensured)) if not ensured.ready else await self._runtime.adispatch_configured(
+                    declaration.name, event, deadline=deadline, cancellation=signal)
+            except asyncio.CancelledError:
+                signal.set()
+                raise
         self._enforce_policy(declaration, report)
         return report
 

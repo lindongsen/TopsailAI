@@ -279,3 +279,151 @@ def test_repeated_cancellation_retains_observable_ownership(
     finally:
         backend.release.set()
         runtime.close(deadline_ms=100)
+
+
+@pytest.mark.parametrize("repeated", [False, True])
+def test_configured_async_cancellation_signals_owned_work(tmp_path, monkeypatch, repeated):
+    """Cancellation reaches the exact scheduler work before releasing its reader."""
+    from topsailai.tests.unit.test_topsailai_hooks.test_simplified_configured_runtime import _runtime, _event
+    import topsailai.hooks.configured_runtime as configured
+    runtime, scope = _runtime(tmp_path)
+    started = threading.Event()
+    release = threading.Event()
+    observed = []
+    original = configured._execute_configured
+
+    def execute(owner, admission):
+        """Pause with the real reader retained and observe its exact signal."""
+        observed.append(admission)
+        started.set()
+        assert release.wait(2)
+        return original(owner, admission)
+
+    monkeypatch.setattr(configured, "_execute_configured", execute)
+    async def exercise():
+        """Leave cancellation pending while verifying host-loop progress."""
+        task = asyncio.create_task(runtime.adispatch_configured("hook_before_chat", _event(runtime, scope)))
+        try:
+            assert await asyncio.to_thread(started.wait, 1)
+            task.cancel()
+            await asyncio.sleep(.01)
+            assert observed[0].cancellation.is_set()
+            assert not observed[0].released
+            if repeated:
+                task.cancel()
+                await asyncio.sleep(.01)
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert observed[0].released
+            assert not runtime._scheduler._work
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+    try:
+        assert runtime.register_configured("hook_before_chat", scope, scripts=[]).accepted
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        runtime.close()
+
+
+@pytest.mark.parametrize("invalid_signal", [False, True])
+def test_configured_async_rejection(tmp_path, invalid_signal):
+    """Invalid cancellation and unknown plans never allocate execution resources."""
+    from topsailai.tests.unit.test_topsailai_hooks.test_simplified_configured_runtime import _runtime, _event
+    runtime, scope = _runtime(tmp_path)
+    async def exercise():
+        """Exercise both pre-admission error boundaries."""
+        if invalid_signal:
+            with pytest.raises(ValueError, match="invalid cancellation"):
+                await runtime.adispatch_configured("hook_unknown", _event(runtime, scope), cancellation=object())
+        else:
+            report = await runtime.adispatch_configured("hook_unknown", _event(runtime, scope))
+            assert report.rejection_reason == "unknown_configured_hook"
+        assert not runtime._scheduler._work
+    try:
+        asyncio.run(exercise())
+    finally:
+        runtime.close()
+
+
+def test_configured_async_real_child_cancellation(tmp_path, monkeypatch):
+    """Host cancellation terminates the exact owned child and settles reader custody."""
+    import sys
+    from topsailai.tests.unit.test_topsailai_hooks.test_simplified_configured_runtime import (
+        _real_runtime, _real_event,
+    )
+    source_root = tmp_path / "sources"
+    source_root.mkdir(mode=0o700)
+    script = source_root / "sleeper"
+    script.write_text("#!" + str(Path(sys.executable).resolve()) + "\nimport time\ntime.sleep(20)\n")
+    script.chmod(0o700)
+    runtime, scope = _real_runtime(tmp_path, (script,))
+    processes = []
+    started = threading.Event()
+    launch = runtime._backend.launch_script
+    def observe(*args, **kwargs):
+        """Observe published Script process without transferring its armed lease."""
+        lease = launch(*args, **kwargs)
+        process = kwargs["record"].process
+        assert process is not None
+        processes.append(process)
+        started.set()
+        return lease
+    monkeypatch.setattr(runtime._backend, "launch_script", observe)
+    async def exercise():
+        """Cancel only the task that owns this captured execution."""
+        task = asyncio.create_task(runtime.adispatch_configured("hook_before_chat", _real_event(runtime, scope, tmp_path)))
+        observed = await asyncio.to_thread(started.wait, 1)
+        if not observed:
+            outcome = await task
+            pytest.fail(f"Script child was not observed: {outcome!r}")
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert processes and all(process.poll() is not None for process in processes)
+        assert not runtime._scheduler._work
+        assert not runtime.cleanup_debts()
+    try:
+        registration = runtime.register_configured("hook_before_chat", scope, scripts=[script])
+        assert registration.accepted, registration
+        asyncio.run(exercise())
+    finally:
+        runtime.close()
+
+
+def test_configured_async_expired_absolute_deadline(tmp_path, monkeypatch):
+    """An expired caller budget cannot restart at configured async admission."""
+    from topsailai.tests.unit.test_topsailai_hooks.test_simplified_configured_runtime import _runtime, _event
+    import topsailai.hooks.configured_runtime as configured
+    runtime, scope = _runtime(tmp_path)
+    executed = []
+    def execute(*args, **kwargs):
+        """Reject business Script execution after the supplied budget expired."""
+        executed.append(True)
+        pytest.fail("Script execution reached after absolute deadline")
+    monkeypatch.setattr(configured, "execute_configured_hook_script", execute)
+    async def exercise():
+        """Observe terminal deadline and exact scheduler ownership convergence."""
+        report = await runtime.adispatch_configured(
+            "hook_before_chat", _event(runtime, scope), deadline=time.monotonic() - 1)
+        if report.unified_result is None:
+            assert report.rejection_reason == "deadline", report
+            assert report.deadline_exhausted, report
+        else:
+            assert report.rejection_reason is None, report
+            result = report.unified_result
+            assert result.status == "timeout", report
+            assert result.handlers, report
+            assert all(handler.status == "not_run" and handler.not_run_reason == "deadline"
+                       for handler in result.handlers), report
+            assert result.cleanup.state == "safe", report
+        assert not executed
+        assert not runtime._scheduler._work
+        assert not runtime.cleanup_debts()
+    try:
+        assert runtime.register_configured("hook_before_chat", scope, scripts=[]).accepted
+        asyncio.run(exercise())
+    finally:
+        runtime.close()

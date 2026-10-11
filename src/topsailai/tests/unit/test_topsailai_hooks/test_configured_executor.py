@@ -242,3 +242,73 @@ def test_async_rejection_and_background_block_are_enforced() -> None:
             await executor.aemit(background, payload={})
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("mode", ["success", "unavailable", "cancel"])
+def test_real_async_facade_shared_budget(tmp_path, monkeypatch, mode):
+    """Registration and execution share a signal and deadline with local cancellation."""
+    import threading
+    import time
+    from topsailai.tests.unit.test_topsailai_hooks.test_simplified_configured_runtime import _runtime
+    from topsailai.hooks.configured_bootstrap import ConfiguredHookBinding, ConfiguredHookBootstrap
+    from topsailai.hooks.configured_contracts import ConfiguredTrustPolicy
+    from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
+    runtime, scope = _runtime(tmp_path)
+    point = _point(mode="async")
+    catalog = HookPointCatalog((point,))
+    folder = tmp_path / "sources"
+    folder.mkdir()
+    bootstrap = ConfiguredHookBootstrap(True, registration_mode="lazy", hooks=(
+        ConfiguredHookBinding(point.name, folder=folder),), trust=ConfiguredTrustPolicy((tmp_path,)),
+        trust_identity="a" * 64)
+    registrar = ConfiguredHookRegistrar(runtime, scope, bootstrap, catalog)
+    seen = []
+    started = threading.Event()
+    stopped = threading.Event()
+    original = registrar.ensure_registered
+
+    def ensure(name, **kwargs):
+        """Observe async preparation off the loop and its caller-local stop signal."""
+        seen.append(kwargs)
+        started.set()
+        try:
+            if mode == "cancel":
+                assert kwargs["cancellation"].wait(1)
+                return RegistrationEnsureResult(RegistrationState.REGISTERING, "cancelled")
+            if mode == "unavailable":
+                return RegistrationEnsureResult(RegistrationState.FAILED_DETERMINISTIC, "registration_rejected")
+            return original(name, **kwargs)
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(registrar, "ensure_registered", ensure)
+    original_submit = runtime._scheduler.submit
+    def submit(*args, **kwargs):
+        """Require the unchanged preparation deadline at execution admission."""
+        assert kwargs["deadline_seconds"] == seen[0]["deadline"]
+        return original_submit(*args, **kwargs)
+    monkeypatch.setattr(runtime._scheduler, "submit", submit)
+
+    async def exercise():
+        """Keep host progress observable while registration runs elsewhere."""
+        facade = ConfiguredHookExecutor(runtime, scope, registrar, catalog)
+        task = asyncio.create_task(facade.adispatch(point, payload={}))
+        assert await asyncio.to_thread(started.wait, 1)
+        if mode == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert await asyncio.to_thread(stopped.wait, 1)
+            assert seen[0]["cancellation"].is_set()
+        else:
+            report = await task
+            if mode == "success":
+                assert report.unified_result.status == "success"
+            else:
+                assert report.rejection_reason == "registration_rejected"
+        assert seen[0]["deadline"] <= time.monotonic() + 2
+    try:
+        asyncio.run(exercise())
+    finally:
+        registrar.close()
+        runtime.close()
