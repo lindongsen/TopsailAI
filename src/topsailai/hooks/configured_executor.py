@@ -199,7 +199,9 @@ class ConfiguredHookExecutor:
         if point.failure_policy != "block":
             return
         reason = report.rejection_reason
-        if reason is None:
+        if reason is None and report.unified_result is not None:
+            reason = None if report.unified_result.status == "success" else report.unified_result.status
+        elif reason is None:
             failure = next(
                 (outcome for outcome in report.outcomes if outcome.status is not HookStatus.SUCCESS),
                 None,

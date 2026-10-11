@@ -312,3 +312,63 @@ def test_real_async_facade_shared_budget(tmp_path, monkeypatch, mode):
     finally:
         registrar.close()
         runtime.close()
+
+
+@pytest.mark.parametrize("mode", ["sync", "async"])
+@pytest.mark.parametrize("policy", ["report", "block"])
+@pytest.mark.parametrize("status", ["success", "completed_with_errors", "blocked", "timeout", "cancelled", "unavailable"])
+def test_unified_catalog_policy_uses_terminal_status_only(mode, policy, status):
+    """Only Catalog block policy gates non-success unified execution facts."""
+    from topsailai.hooks.result_contracts import HandlerIdentity, HandlerResult, HookPointResult, ResultDecision
+
+    point = _point(mode=mode, policy=policy)
+    handlers = () if status == "unavailable" else (
+        HandlerResult("execution", point.name, 1, HandlerIdentity("default", "default", "default_script_hook")),
+    )
+    result = HookPointResult("execution", point.name, 1, status, handlers,
+        decision=ResultDecision("block", "catalog") if status == "blocked" else ResultDecision())
+    report = DispatchReport("event", 1, unified_result=result)
+    runtime = _Runtime()
+    runtime.dispatch_configured = lambda name, event: report
+
+    async def dispatch(name, event):
+        """Return exact controlled execution facts without assigning authority."""
+        return report
+
+    runtime.adispatch_configured = dispatch
+    executor = ConfiguredHookExecutor(runtime, _Scope(), _Registrar(), HookPointCatalog((point,)))
+
+    def invoke():
+        """Drive the actual facade in the declared execution mode."""
+        return executor.dispatch(point, payload={}) if mode == "sync" else asyncio.run(executor.adispatch(point, payload={}))
+
+    if policy == "block" and status != "success":
+        with pytest.raises(HookPointBlockedError) as caught:
+            invoke()
+        assert caught.value.reason == status
+    else:
+        assert invoke() is report
+    assert report.unified_result is result
+    assert result.status == status
+
+
+@pytest.mark.parametrize("cleanup", ["safe", "pending", "failed"])
+@pytest.mark.parametrize("value", [False, None, {"error": "failure", "decision": "block"}])
+def test_unified_success_ignores_cleanup_payload_and_legacy_failure(cleanup, value):
+    """Unified success is authoritative execution evidence, never payload policy."""
+    from topsailai.hooks.result_contracts import HandlerIdentity, HandlerResult, HookPointResult, ResultCleanup, ResultDecision, ReturnedValue
+
+    point = _point(policy="block")
+    handler = HandlerResult("execution", point.name, 1,
+        HandlerIdentity("default", "default", "default_script_hook"),
+        returned=ReturnedValue(True, "direct", value), decision=ResultDecision("block", "catalog"))
+    result = HookPointResult("execution", point.name, 1, handlers=(handler,), cleanup=ResultCleanup(cleanup))
+    report = DispatchReport("event", 1, (HookOutcome("delivery", "binding", HookStatus.ERROR),), unified_result=result)
+    runtime = _Runtime()
+    runtime.dispatch_configured = lambda name, event: report
+    executor = ConfiguredHookExecutor(runtime, _Scope(), _Registrar(), HookPointCatalog((point,)))
+    assert executor.dispatch(point, payload={}) is report
+    assert report.unified_result is result
+    assert result.cleanup.state == cleanup
+    assert handler.returned.value is value
+    assert result.decision.action == "continue"
