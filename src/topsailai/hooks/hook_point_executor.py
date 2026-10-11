@@ -42,19 +42,21 @@ def _module_result(context, plan, version, module, worker, elapsed):
         timing=ResultTiming(elapsed_ms=elapsed), cleanup=cleanup)
 
 
-def _script_result(context, plan, version, runner, deadline, cancellation, clock, capacity):
+def _script_result(context, plan, version, runner, deadline, cancellation, clock, capacity, settlement_receiver, script_executor):
     """Run the default Hook once and retain bounded stream and cleanup facts."""
     terminal = plan.default_script_hook
     if not terminal.scripts:
         return HandlerResult(context.delivery_id, plan.hook_point_name, version, terminal.identity)
     entries = tuple(HookScriptEntry(item.captured_path, item.logical_name, item.identity.name)
                     for item in terminal.scripts)
-    settlement = execute_configured_hook_script(
+    settlement = script_executor(
         hook_point=plan.hook_point_name, module_bindings=(), bindings_per_event=capacity,
         discovery_result=HookScriptDiscoveryResult(True, entries), context=context,
         options=plan.options, policy=plan.execution_policy, runner=runner,
         dispatch_deadline=deadline, cancellation=cancellation, clock=clock,
     )
+    if settlement_receiver is not None:
+        settlement_receiver(settlement)
     children = []
     for script, raw in zip(terminal.scripts, settlement.entry_results):
         status = raw.status.value
@@ -80,7 +82,8 @@ def _script_result(context, plan, version, runner, deadline, cancellation, clock
 
 
 def execute_hook_point(*, reader, context, module_executor, script_runner, deadline,
-                       cancellation, capacity, clock=time.monotonic):
+                       cancellation, capacity, clock=time.monotonic, settlement_receiver=None,
+                       script_executor=execute_configured_hook_script):
     """Execute exactly one acquired snapshot; caller keeps all ownership tokens."""
     if type(reader) is not HookPointReader:
         raise ValueError('exact acquired reader required')
@@ -122,7 +125,7 @@ def execute_hook_point(*, reader, context, module_executor, script_runner, deadl
         terminal_context = replace(context, binding_id='hook_script', registry_generation=version,
             remaining_budget_ms=max(1, int((deadline - clock()) * 1000)))
         terminal = _script_result(terminal_context, plan, version, script_runner,
-                                  deadline, cancellation, clock, capacity)
+                                  deadline, cancellation, clock, capacity, settlement_receiver, script_executor)
     handlers.append(terminal)
     cleanup = ResultCleanup('pending' if any(h.cleanup.state != 'safe' for h in handlers) else 'safe')
     statuses = {h.status for h in handlers} | {child.status for child in terminal.children}

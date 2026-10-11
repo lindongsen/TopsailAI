@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+import time
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -84,15 +86,24 @@ class ConfiguredHookExecutor:
         *,
         payload: Any,
         operation: HookOperation | None = None,
+        cancellation: threading.Event | None = None,
     ) -> DispatchReport:
         """Ensure and synchronously dispatch one catalog-owned sync point."""
         declaration = self._require_point(point, "sync")
+        if cancellation is not None and type(cancellation) is not threading.Event:
+            raise ValueError("invalid cancellation signal")
+        deadline = None
+        if isinstance(self._runtime, HookRuntime) and isinstance(self._registrar, ConfiguredHookRegistrar):
+            deadline = time.monotonic() + self._runtime._settings.limits.dispatch_timeout_ms / 1000
         event = self._make_event(declaration, payload, operation)
-        ensured = self._registrar.ensure_registered(declaration.name)
+        signal = threading.Event() if cancellation is None else cancellation
+        ensured = self._registrar.ensure_registered(declaration.name) if deadline is None else self._registrar.ensure_registered(
+            declaration.name, deadline=deadline, cancellation=signal)
         if not ensured.ready:
             report = DispatchReport(event.event_id, 0, rejection_reason=self._ensure_reason(ensured))
         else:
-            report = self._runtime.dispatch_configured(declaration.name, event)
+            report = self._runtime.dispatch_configured(declaration.name, event) if deadline is None else self._runtime.dispatch_configured(
+                declaration.name, event, deadline=deadline, cancellation=signal)
         self._enforce_policy(declaration, report)
         return report
 

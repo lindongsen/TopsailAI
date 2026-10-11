@@ -46,6 +46,8 @@ from topsailai.hooks.hook_script_discovery import (
     discover_configured_hook_scripts,
 )
 from topsailai.hooks.script_runner import OwnedHookScriptRunner
+from topsailai.hooks.module_runner import OwnedHookModuleRunner
+from topsailai.hooks.hook_point_executor import execute_hook_point
 from topsailai.hooks.hook_point_plan_publication import ExecutionCleanupCustody
 from topsailai.hooks.hook_point_plan_capture import build_hook_point_candidate
 from topsailai.hooks.hook_point_plan_ownership import (
@@ -69,6 +71,8 @@ class _ConfiguredAdmission:
     started: float
     reader: object = None
     registry: object = None
+    deadline: float | None = None
+    cancellation: threading.Event | None = None
     released: bool = False
     release_lock: threading.Lock | None = None
 
@@ -226,10 +230,11 @@ def register_configured(
 
 
 def dispatch_configured(
-    runtime: HookRuntime, hook_name: str, event: HookEvent, policy: Any = None
+    runtime: HookRuntime, hook_name: str, event: HookEvent, policy: Any = None,
+    *, deadline=None, cancellation=None,
 ) -> DispatchReport:
     """Synchronously execute one exact configured plan."""
-    work, rejection = _admit_configured(runtime, hook_name, event, policy, True)
+    work, rejection = _admit_configured(runtime, hook_name, event, policy, True, deadline, cancellation)
     if rejection is not None:
         return rejection
     assert work is not None
@@ -331,7 +336,7 @@ def _capture_plan(runtime, hook_name, discovery, platform, trust, recovery=None,
         raise
 
 
-def _admit_configured(runtime, hook_name, event, policy, reject_running_loop):
+def _admit_configured(runtime, hook_name, event, policy, reject_running_loop, deadline=None, cancellation=None):
     """Validate, acquire, and submit one configured plan through the scheduler."""
     rejection = runtime._admission_rejection(event, reject_running_loop=reject_running_loop)
     if rejection is not None:
@@ -348,20 +353,19 @@ def _admit_configured(runtime, hook_name, event, policy, reject_running_loop):
             reader = runtime._registry.acquire_hook_point(event.scope_id, hook_name, receiver)
             if reader is None:
                 rejection = runtime._rejected(event, "unknown_configured_hook")
-            elif reader.snapshot.plan.modules:
-                rejection = runtime._rejected(event, "mixed_plan_unavailable")
             else:
                 plan = reader.owner
                 timeout_ms = runtime._policy_timeout(policy, runtime._settings)
                 admission = _ConfiguredAdmission(event, plan, generation, timeout_ms,
                     time.monotonic(), reader=reader, registry=runtime._registry)
-                deadline = admission.started + timeout_ms / 1000
+                admission.deadline = admission.started + timeout_ms / 1000 if deadline is None else deadline
+                admission.cancellation = threading.Event() if cancellation is None else cancellation
                 work = runtime._scheduler.submit(
                     event.scope_id,
-                    max(1, len(plan.entries)),
+                    max(1, len(reader.snapshot.plan.handlers)),
                     lambda: _execute_configured(runtime, admission),
                     cancellation_result=lambda: _terminal_configured(admission, "closed_scope"),
-                    deadline_seconds=deadline,
+                    deadline_seconds=admission.deadline,
                     deadline_result=lambda: _terminal_configured(admission, "deadline"),
                 )
     except BaseException as primary:
@@ -383,15 +387,34 @@ def _admit_configured(runtime, hook_name, event, policy, reject_running_loop):
     return work, rejection
 
 
+class _ExecutionRunners:
+    """Aggregate only original records of this execution's Module and Script runners."""
+    def __init__(self, backend):
+        """Bind both local journals before any invocation."""
+        self.modules = OwnedHookModuleRunner(backend)
+        self.scripts = OwnedHookScriptRunner(backend)
+
+    def cleanup_debts(self):
+        """Observe local obligations, never shared backend inventory."""
+        return self.modules.cleanup_debts() + self.scripts.cleanup_debts()
+
+    def retry_cleanup(self, debt_id):
+        """Route an exact local debt without granting foreign retry authority."""
+        for runner in (self.modules, self.scripts):
+            if any(debt.debt_id == debt_id for debt in runner.cleanup_debts()):
+                return runner.retry_cleanup(debt_id)
+        return False
+
+
 def _execute_configured(runtime, admission):
-    """Execute and release one admitted configured plan."""
+    """Execute the complete acquired plan with a lossless compatibility carrier."""
     recovery = runtime._publication_recovery
     ticket = None
     reservations = []
     custody = None
+    deadline = admission.started + admission.timeout_ms / 1000 if admission.deadline is None else admission.deadline
+    cancellation = threading.Event() if admission.cancellation is None else admission.cancellation
     try:
-        if not admission.plan.entries:
-            return DispatchReport(admission.event.event_id, admission.generation)
         ticket = recovery.reserve(reservations)
         if ticket is None:
             return DispatchReport(admission.event.event_id, admission.generation,
@@ -399,42 +422,38 @@ def _execute_configured(runtime, admission):
         custody = ExecutionCleanupCustody(admission.registry, None)
         recovery.bind(ticket, custody)
         admission.registry.retain_hook_point_cleanup(admission.reader, custody)
-        custody.runner = OwnedHookScriptRunner(runtime._backend)
-        context = HookContext(
-            admission.event,
-            uuid.uuid4().hex,
-            "hook_script",
-            admission.generation,
-            admission.timeout_ms,
-        )
-        settlement = execute_configured_hook_script(
-            hook_point=admission.plan.hook_name,
-            module_bindings=(),
-            bindings_per_event=runtime._settings.limits.bindings_per_event,
-            discovery_result=HookScriptDiscoveryResult(True, admission.plan.entries),
-            context=context,
-            options=admission.plan.options,
-            policy=admission.plan.policy,
-            runner=custody.runner,
-            dispatch_deadline=admission.started + admission.timeout_ms / 1000,
-            cancellation=threading.Event(),
-            clock=time.monotonic,
-        )
-        status = HookStatus(settlement.status)
-        outcome = HookOutcome(
-            context.delivery_id,
-            "hook_script",
-            status,
-            duration_ms=int((time.monotonic() - admission.started) * 1000),
-            error_category=settlement.error_category,
-            started=settlement.started,
-        )
-        return DispatchReport(
-            admission.event.event_id,
-            admission.generation,
-            (outcome,),
-            elapsed_ms=outcome.duration_ms,
-        )
+        custody.runner = _ExecutionRunners(runtime._backend)
+        context = HookContext(admission.event, uuid.uuid4().hex, "hook_script",
+            admission.generation, admission.timeout_ms)
+        settlements = []
+        def invoke_module(*, module, context, deadline, cancellation):
+            """Forward the unchanged business boundary to the local Module runner."""
+            return custody.runner.modules.execute(module, context, context.remaining_budget_ms,
+                deadline=deadline, cancellation=cancellation)
+        result = execute_hook_point(reader=admission.reader, context=context,
+            module_executor=invoke_module, script_runner=custody.runner.scripts,
+            deadline=deadline, cancellation=cancellation,
+            capacity=runtime._settings.limits.bindings_per_event,
+            settlement_receiver=settlements.append,
+            script_executor=execute_configured_hook_script)
+        outcomes = []
+        for handler in result.handlers[:-1]:
+            status = HookStatus.SKIPPED_DEADLINE if handler.status == "not_run" else HookStatus(handler.status)
+            outcomes.append(HookOutcome(context.delivery_id, handler.handler.id, status,
+                duration_ms=handler.timing.elapsed_ms,
+                error_category=handler.not_run_reason if handler.error is None else handler.error.category,
+                started=handler.status != "not_run"))
+        if admission.plan.entries:
+            if settlements:
+                settlement = settlements[0]
+                status, category, started = HookStatus(settlement.status), settlement.error_category, settlement.started
+            else:
+                status, category, started = HookStatus.SKIPPED_DEADLINE, result.handlers[-1].not_run_reason, False
+            outcomes.append(HookOutcome(context.delivery_id, "hook_script", status,
+                duration_ms=int((time.monotonic() - admission.started) * 1000),
+                error_category=category, started=started))
+        return DispatchReport(admission.event.event_id, admission.generation, tuple(outcomes),
+            elapsed_ms=int((time.monotonic() - admission.started) * 1000), unified_result=result)
     finally:
         retained = reservations[0] if reservations else ticket
         _finish_configured_execution(recovery, retained, custody, admission, sys.exc_info()[1])

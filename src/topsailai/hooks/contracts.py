@@ -289,6 +289,7 @@ class DispatchReport:
     elapsed_ms: int = 0
     deadline_exhausted: bool = False
     rejection_reason: str | None = None
+    unified_result: object | None = None
 
 
 @dataclass(frozen=True, slots=True)

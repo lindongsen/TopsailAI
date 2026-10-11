@@ -858,29 +858,58 @@ def test_empty_adapter_publishes_complete_typed_plan(tmp_path):
         runtime.close()
 
 
-def test_mixed_plan_rejected_before_scheduler_submission(tmp_path, monkeypatch):
-    """U05B publication cannot silently dispatch only Scripts from a mixed plan."""
+def test_mixed_plan_executes_complete_captured_snapshot(tmp_path, monkeypatch):
+    """Execute sealed Modules and default Scripts with one deadline and local custody."""
+    import threading
+    import time
+    from dataclasses import replace
+    import topsailai.hooks.configured_runtime as configured
     from topsailai.tests.unit.test_topsailai_hooks.test_hook_point_plan_capture import fixtures
     capture_root = tmp_path / "candidate"
     capture_root.mkdir()
     build, inputs, output, imported, called = fixtures(capture_root)
+    scripts = tuple(_protocol_script(entry.source_path, entry.registered_name)
+                    for entry in inputs["script_discovery"].entries)
+    assertions = tuple(a for a in inputs["trust"].closure_assertions if a.kind == "python_source")
+    inputs["trust"] = replace(inputs["trust"], allowed_interpreters=(Path(sys.executable).resolve(),),
+        closure_assertions=assertions + tuple(_assertion(path) for path in scripts))
+    inputs["platform_policy"] = _platform_policy()
     candidate = build("hook_before_chat", **inputs)
+    plan = candidate.plan
     runtime, scope = _runtime(tmp_path)
-    submitted = []
+    deadline, signal = time.monotonic() + 2, threading.Event()
+    seen = []
+    original = configured.execute_hook_point
 
-    def forbidden_submit(*args, **kwargs):
-        """Record a forbidden scheduler boundary rather than mocking execution results."""
-        submitted.append((args, kwargs))
-        pytest.fail("mixed plan reached legacy scheduler")
+    def execute(**kwargs):
+        """Observe custody already bound before any real child invocation."""
+        runners = kwargs["module_executor"].__closure__
+        assert runners is not None
+        assert kwargs["deadline"] == deadline and kwargs["cancellation"] is signal
+        assert kwargs["script_runner"].cleanup_debts() == ()
+        seen.append(kwargs["reader"].snapshot.active_version)
+        return original(**kwargs)
 
     try:
-        result = runtime._registry.publish_hook_point(scope.scope_id, "hook_before_chat", candidate)
-        assert result.accepted
-        monkeypatch.setattr(runtime._scheduler, "submit", forbidden_submit)
-        report = runtime.dispatch_configured("hook_before_chat", _event(runtime, scope))
-        assert report.rejection_reason == "mixed_plan_unavailable"
-        assert report.outcomes == () and submitted == []
-        assert imported.exists() and not called.exists()
+        assert runtime._registry.publish_hook_point(scope.scope_id, "hook_before_chat", candidate).accepted
+        for module in plan.modules:
+            module.source_path.chmod(0o600)
+            module.source_path.write_text("raise RuntimeError('live source reopened')\n")
+        monkeypatch.setattr(configured, "execute_hook_point", execute)
+        log = tmp_path / "calls"
+        report = runtime.dispatch_configured("hook_before_chat", _real_event(runtime, scope, log),
+            deadline=deadline, cancellation=signal)
+        result = report.unified_result
+        assert report.rejection_reason is None and result.status == "success"
+        assert [h.handler.name for h in result.handlers[:-1]] == ["A", "Z"]
+        assert all(h.returned.present and h.returned.value is None for h in result.handlers[:-1])
+        assert result.handlers[-1].handler.kind == "default_script_hook"
+        assert [c.handler.name for c in result.handlers[-1].children] == ["A", "Z"]
+        assert log.read_text().splitlines() == ["A", "Z"]
+        assert called.exists() and imported.exists()
+        assert result.plan_version == seen[0] and result.cleanup.state == "safe"
+        assert all(o.status.value == "success" for o in report.outcomes)
+        assert runtime.cleanup_debts() == () and not runtime.retry_cleanup("foreign-execution")
     finally:
         runtime.close()
         candidate.close()

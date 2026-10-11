@@ -156,8 +156,10 @@ class ConfiguredHookRegistrar:
             cell = self._cells.get(hook_name)
             return RegistrationState.UNCONFIGURED if cell is None else cell.state
 
-    def ensure_registered(self, hook_name: str) -> RegistrationEnsureResult:
+    def ensure_registered(self, hook_name: str, *, deadline=None, cancellation=None) -> RegistrationEnsureResult:
         """Register one Hook through a sync/async shared singleflight cell."""
+        if deadline is not None or cancellation is not None:
+            return self._ensure_budgeted(hook_name, deadline, cancellation)
         with self._condition:
             while True:
                 decision = self._registration_decision(hook_name)
@@ -182,6 +184,49 @@ class ConfiguredHookRegistrar:
                 self._condition.notify_all()
             raise
         return self._publish_result(hook_name, generation, result)
+
+    def _ensure_budgeted(self, hook_name, deadline, cancellation):
+        """Stop only this wait; the shared preparation owner completes independently."""
+        with self._condition:
+            while True:
+                if cancellation is not None and cancellation.is_set():
+                    return self._result(RegistrationState.REGISTERING, "cancelled")
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    return self._result(RegistrationState.REGISTERING, "deadline")
+                decision = self._registration_decision(hook_name)
+                if type(decision) is RegistrationEnsureResult:
+                    return decision
+                if decision:
+                    cell = self._cells[hook_name]
+                    cell.state = RegistrationState.REGISTERING
+                    cell.attempt += 1
+                    binding = self._bindings[hook_name]
+                    generation = self._bootstrap.configuration_generation
+                    owner = threading.Thread(target=self._prepare_shared,
+                        args=(hook_name, generation, binding, cell), daemon=True)
+                    try:
+                        owner.start()
+                    except BaseException as exc:
+                        cell.exception = exc
+                        cell.state = RegistrationState.FAILED_DETERMINISTIC
+                        cell.error_category = "registration_exception"
+                        self._condition.notify_all()
+                        raise
+                self._condition.wait(.01 if remaining is None else min(.01, remaining))
+
+    def _prepare_shared(self, hook_name, generation, binding, cell):
+        """Publish shared completion or original failure to all live waiters."""
+        try:
+            result = self._register(binding)
+            self._publish_result(hook_name, generation, result)
+        except BaseException as exc:
+            with self._condition:
+                if self._cells.get(hook_name) is cell and cell.state is RegistrationState.REGISTERING:
+                    cell.exception = exc
+                    cell.state = RegistrationState.FAILED_DETERMINISTIC
+                    cell.error_category = "registration_exception"
+                self._condition.notify_all()
 
     async def aensure_registered(self, hook_name: str) -> RegistrationEnsureResult:
         """Await shared registration without blocking the event loop."""
