@@ -210,3 +210,28 @@ class TestRuntimeEarlyDispatch(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_runtime_logs_real_entry(tmp_path):
+    """The real shim reads fixture logs finitely in both public output modes."""
+    import json
+    from pathlib import Path
+    import subprocess
+
+    home = tmp_path / "home"
+    folder = home / "workspace" / "task"
+    folder.mkdir(parents=True)
+    (folder / "offline.987654.session.stdout").write_bytes(b"first\nsecond\nlast\n")
+    entry = Path(__file__).resolve().parents[3] / "topsailai_cli.py"
+    env = dict(os.environ, TOPSAILAI_HOME=str(home), HOME=str(home))
+    for json_mode in (False, True):
+        result = subprocess.run([sys.executable, str(entry), "runtime", "logs",
+            "-s", "offline", "-p", "987654", "-n", "2", *(["--json"] if json_mode else [])],
+            cwd=tmp_path, env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        if json_mode:
+            output = json.loads(result.stdout)
+            assert output["delivery_state"] == "log_read"
+            assert output["response"]["lines"] == ["second", "last"]
+        else:
+            assert result.stdout == "second\nlast\n"

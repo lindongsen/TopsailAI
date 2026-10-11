@@ -1152,7 +1152,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             help="manage the model registry",
             add_help=False,
         )
-        subparsers.add_parser("runtime", help="execute one runtime operation", add_help=False)
+        subparsers.add_parser("runtime", help="send, inject, control or read recent session logs", add_help=False)
         help_parser.print_help()
         sys.exit(1)
 
@@ -1207,7 +1207,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     subparsers = parser.add_subparsers(dest="subcommand", help="non-interactive commands")
 
-    subparsers.add_parser("runtime", help="execute one runtime operation", add_help=False)
+    subparsers.add_parser("runtime", help="send, inject, control or read recent session logs", add_help=False)
 
     # Deprecated non-interactive options. They are kept for backward
     # compatibility and route to the new subcommand behavior with a warning.

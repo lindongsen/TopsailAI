@@ -291,3 +291,48 @@ def test_lazy_import_and_writer(monkeypatch):
     monkeypatch.setitem(sys.modules, name, SimpleNamespace(write_message=writer))
     assert module.write_injection("/fixture/path", "x")
     writer.assert_called_once_with("/fixture/path", "x")
+
+
+@pytest.mark.parametrize("log_request", [operations.RuntimeRequest("logs", lines=True),
+    operations.RuntimeRequest("logs"), operations.RuntimeRequest("logs", lines=0),
+    operations.RuntimeRequest("logs", lines=10001), operations.RuntimeRequest("logs", "x", lines=20),
+    operations.RuntimeRequest("logs", payload={}, lines=20),
+    operations.RuntimeRequest("logs", control_action="x", lines=20),
+    operations.RuntimeRequest("logs", timeout=1, lines=20),
+    operations.RuntimeRequest("send", "x", lines=20)])
+def test_logs_invalid_before_discovery(log_request, tmp_path, monkeypatch):
+    """Python callers cannot bypass count or cross-action validation."""
+    resolver = Mock(side_effect=AssertionError("no discovery"))
+    monkeypatch.setattr(operations.runtime_logs, "resolve_log_target", resolver)
+    assert operations.execute_runtime_request(log_request, tmp_path).exit_code == 2
+    resolver.assert_not_called()
+
+
+def test_logs_delivery_isolation(target, monkeypatch):
+    """Offline logs never probe processes, register handlers or deliver."""
+    (target / "session.x.123.session.stdout").write_bytes(b"a\nb\nc\n")
+    live = Mock(side_effect=AssertionError("no live resolution"))
+    monkeypatch.setattr(operations.runtime_target, "resolve_runtime_target", live)
+    side_effect = Mock(side_effect=AssertionError("no delivery"))
+    result = operations.execute_runtime_request(operations.RuntimeRequest("logs", lines=2), target,
+        session_id="session.x", process_probe=side_effect, control_actions=side_effect,
+        pipe_sender=side_effect, control_sender=side_effect, injection_writer=side_effect)
+    assert result.ok and result.delivery_state == "log_read"
+    assert result.response["lines"] == ["b", "c"]
+    assert result.bytes_written is None and result.request_id is None
+    assert not result.delivery_unknown
+    live.assert_not_called()
+    side_effect.assert_not_called()
+
+
+@pytest.mark.parametrize("code,exit_code", [("permission_denied", 4), ("log_read_failed", 5),
+                                           ("log_changed", 5)])
+def test_logs_error_envelope(target, monkeypatch, code, exit_code):
+    """Local read failures expose safe classified results without partial data."""
+    error = operations.runtime_logs.RuntimeLogError(code, "Safe failure")
+    monkeypatch.setattr(operations.runtime_logs, "read_log_tail", Mock(side_effect=error))
+    result = operations.execute_runtime_request(operations.RuntimeRequest("logs", lines=20),
+                                               target, session_id="session.x")
+    assert not result.ok and result.exit_code == exit_code and result.error_code == code
+    assert result.response is None and result.delivery_state == "not_delivered"
+    assert result.session_id == "session.x" and result.pid == 123

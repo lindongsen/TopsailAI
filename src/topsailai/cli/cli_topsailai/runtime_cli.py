@@ -46,8 +46,9 @@ def build_parser():
     """Build offline help and a shared option namespace for either syntax."""
     parser = RuntimeParser(
         prog="topsailai runtime", allow_abbrev=False,
-        description="Execute one exact send, btw or control operation",
-        epilog=("Use send/btw -m TEXT or --stdin; control ACTION -a JSON; "
+        description="Execute one exact send, btw, control or logs operation",
+        epilog=("Use logs -n N (default 20, maximum 10000); "
+                "send/btw -m TEXT or --stdin; control ACTION -a JSON; "
                 "or -i '/send TEXT', '/ctx.btw TEXT', '/control ACTION JSON', "
                 "'/control.ACTION JSON'. A single whitespace delimiter is consumed; "
                 "remaining message whitespace is preserved. Timeout excludes stdin "
@@ -57,6 +58,7 @@ def build_parser():
         (("-s", "--session-id", "--session_id"), "session_id", str),
         (("-p", "--pid"), "pid", int),
         (("--timeout",), "timeout", float),
+        (("-n", "--lines"), "lines", int),
         (("-i", "--instruction"), "instruction", str),
         (("-m", "--message"), "message", str),
         (("-a", "--args"), "payload_text", str),
@@ -72,7 +74,7 @@ def build_parser():
 def _json_requested(argv):
     """Recognize option tokens without mistaking consumed values for flags."""
     value_flags = {"-s", "--session-id", "--session_id", "-p", "--pid",
-                   "--timeout", "-i", "--instruction", "-m", "--message", "-a", "--args"}
+                   "--timeout", "-n", "--lines", "-i", "--instruction", "-m", "--message", "-a", "--args"}
     index = 0
     while index < len(argv):
         token = argv[index]
@@ -118,6 +120,15 @@ def normalize(args):
     message = getattr(args, "message", None)
     payload_text = getattr(args, "payload_text", None)
     control_action = None
+    if args.positionals and args.positionals[0] == "logs":
+        count = getattr(args, "lines", 20)
+        if (len(args.positionals) != 1 or instruction is not None or message is not None or
+                payload_text is not None or args.stdin or hasattr(args, "timeout") or
+                not 1 <= count <= 10000):
+            raise RuntimeUsageError("Invalid logs arguments")
+        return RuntimeRequest("logs", lines=count)
+    if hasattr(args, "lines"):
+        raise RuntimeUsageError("Line counts apply only to logs")
     if instruction is not None:
         if args.positionals or message is not None or payload_text is not None:
             raise RuntimeUsageError("Conflicting instruction sources")
@@ -217,6 +228,11 @@ def run_runtime_cli(argv, *, stdin=None, executor=None, home_resolver=None):
                                message="Invalid runtime arguments")
     if json_mode:
         print(json.dumps(public_result(result), ensure_ascii=True))
+    elif result.ok and result.action == "logs":
+        for line in result.response["lines"]:
+            print(line)
+        if result.response["scan_limited"]:
+            print("Log scan limit reached; output is partial", file=sys.stderr)
     elif result.ok:
         print(f"Runtime {result.action}: {result.delivery_state}")
     else:

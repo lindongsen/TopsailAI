@@ -418,6 +418,14 @@ These are illustrative commands: replace `SESSION` and `PID` with the intended r
 
 Success means FIFO bytes written, injection queued, or control acknowledged, not final business completion. Do not blindly retry partial or uncertain delivery. See [the runtime usage contract](docs/usage/topsailai.md#non-interactive-runtime) for syntax, stdin limits, JSON/exit codes, timeouts and platform/security caveats. `/ctx.add_msg` is not supported by this non-interactive runtime entry.
 
+### Read recent session logs without a watcher
+
+```bash
+topsailai runtime logs -s SESSION -p PID -n 100 --json
+```
+
+This finite, read-only query also supports idle or exited sessions. It defaults to 20 physical lines and never substitutes task stdout for session stdout. See [the canonical runtime usage contract](docs/usage/topsailai.md#recent-session-logs) for bounds, partial-result flags and selection rules. Log reads are not message delivery.
+
 ## Commands Available in All Scopes
 
 Workspace, runtime, project, session, and doc scopes accept `!<command>` to execute a command line using the `/git` parsing and execution style. See `docs/usage/topsailai.md` for detailed behavior.

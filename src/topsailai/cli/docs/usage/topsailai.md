@@ -113,7 +113,7 @@ The selected configuration is resolved immediately before `/agent` or `/resume`.
 
 ## Non-interactive Runtime
 
-`topsailai runtime` executes one operation and exits, without entering a scope, watching logs, initializing interactive input, or executing shell commands. Its entry point is `topsailai_cli.py`. The following commands are illustrative; replace selectors with the intended running session. They are not evidence of live-session delivery.
+`topsailai runtime` executes one operation and exits, without entering a scope, following logs, initializing interactive input, or executing shell commands. Its entry point is `topsailai_cli.py`. The following commands are illustrative; replace selectors with the intended session (delivery operations require it to be running). They are not evidence of live-session delivery.
 
 ### Syntax and actions
 
@@ -152,9 +152,38 @@ topsailai runtime send -s SESSION --message='--literal text'
 | `--stdin` | Explicit bounded non-TTY UTF-8 body source for send/btw only. |
 | `-a`, `--args` | Control JSON object; default `{}`. |
 
-At least session or PID is required. Providing both means strict intersection: neither may be relaxed. Discovery considers session stdout records under `{TOPSAILAI_HOME}/workspace/task/`, not task stdout as parent identities. No match, stale target, mismatch or multiple live candidates fails; the CLI never chooses the newest, falls back to another target, filters ambiguity by endpoint availability, or broadcasts.
+At least session or PID is required. Providing both means strict intersection: neither may be relaxed. Discovery considers session stdout records under `{TOPSAILAI_HOME}/workspace/task/`, not task stdout as parent identities. For send/btw/control, no match, stale target, mismatch or multiple live candidates fails; the CLI never chooses the newest, falls back to another target, filters ambiguity by endpoint availability, or broadcasts.
 
-Common options may appear before or after the structured action. Identical repeated value options are permitted; conflicting repeated values are rejected. Unknown options, leftover arguments and option abbreviations are rejected. Runtime `-m raw` and `-m tmux` are literal messages. Use `--message=VALUE` (or `-m=VALUE`) when a body starts with `--`. Help is offline: `runtime --help`, `runtime send --help`, `runtime btw --help`, and `runtime control --help` do not resolve a target, read stdin, or load control handlers/injection writers.
+Common options may appear before or after the structured action. Identical repeated value options are permitted; conflicting repeated values are rejected. Unknown options, leftover arguments and option abbreviations are rejected. Runtime `-m raw` and `-m tmux` are literal messages. Use `--message=VALUE` (or `-m=VALUE`) when a body starts with `--`. Help is offline: `runtime --help`, `runtime send --help`, `runtime btw --help`, `runtime control --help`, and `runtime logs --help` do not resolve a target, read stdin, or load control handlers/injection writers.
+
+### Recent session logs
+
+```bash
+topsailai runtime logs -s SESSION -p PID
+topsailai runtime logs -s SESSION -p PID -n 100 --json
+```
+
+`logs` reads recent physical LF-delimited records once and exits; it does not follow a stream or contact the agent. `-n/--lines` defaults to 20, accepts integers 1–10000, and applies only to `logs`, not slash instructions. At least one exact session/PID selector is required; both mean strict intersection. Idle and exited sessions are supported without process probes. Multiple historical matches are ambiguous: supply PID, rather than choosing the newest. Discovery considers only immediate regular, non-symlink session stdout files. Task stdout is never a fallback or merged stream. A runtime command without an action remains invalid.
+
+Reject message, stdin, payload, instruction, explicit timeout and extra positional arguments for logs. Identical repeated counts are accepted; conflicting counts fail before filesystem access. The interactive top-level `-n/--tail-lines` option remains separate.
+
+Tail scanning uses portable binary reads in 64 KiB blocks, with an 8 MiB scan budget and a captured initial EOF. It never loads an unbounded file or counts the entire file in an extra pass. Blank records and unterminated final records count as lines; terminal LF creates no phantom line. LF and preceding CR are removed, lone CR is preserved, and malformed UTF-8 is decoded with replacement. Unicode separators are not line boundaries. If the byte budget cuts a leading record, that fragment is dropped: a huge single line can return zero records with `scan_limited=true`, which does not mean the file is empty.
+
+Plain output contains only chronological log records, one output newline each; empty logs emit nothing. Scan-limited plain output warns on stderr. JSON uses the existing envelope with `action="logs"`, `delivery_state="log_read"`, null `bytes_written`/`request_id`, and `delivery_unknown=false`. Its `response` contains:
+
+| Field | Meaning |
+|---|---|
+| `filename` | Absolute selected session stdout path. |
+| `lines` | Chronological decoded records without LF/CRLF terminators. |
+| `requested_lines`, `returned_lines` | Requested count and number actually returned. |
+| `total_lines` | Exact count only when scanning reaches file start; otherwise null. |
+| `truncated` | Earlier records or content were omitted. |
+| `scan_limited` | Byte budget prevented satisfying the count or proving file start. |
+| `bytes_read`, `snapshot_size_bytes` | Bounded bytes scanned and initial descriptor size. |
+
+Empty files return zero counts and false flags. Requests larger than available records return all records if the budget permits. Scan-limited results succeed with explicit partial flags, without a separate JSON warning. Exit 2 is invalid arguments, 3 is missing/mismatched/ambiguous target, 4 is permission or missing/invalid file endpoint, and 5 is `log_read_failed` or `log_changed`. Failed reads emit no partial log content. Missing task directories are target errors; a selected file disappearing before open is an endpoint error.
+
+Appends after snapshot capture are excluded. Rotation keeps reading the opened descriptor where supported. Short reads, shrinkage and detected identity changes fail without retries. Same-size in-place rewrites cannot always be detected: this is a best-effort snapshot, not a transactional guarantee. Filesystem I/O has no hard timeout. Portable checks require trusted per-user storage and cannot guarantee resistance to hostile replacement races. Log content may contain secrets or terminal escape sequences; handle raw output accordingly. Windows uses ordinary Python file I/O without shell tail or POSIX transports; real Windows validation is separate from portable-path unit tests.
 
 ### Literal input and bounds
 
@@ -196,7 +225,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 
 | Command | Description |
 |---------|-------------|
-| `runtime` | Execute one exact send, btw or control operation; see the contract above. |
+| `runtime` | Execute one exact send, btw, control or logs operation; see the contract above. |
 | `workspace [-f json]` | Display the workspace task list and exit. The default is the human-readable table; `-f json` or `--format json` emits one JSON document. |
 | `docs list` | List all usage documentation files and exit. |
 | `docs read <name>` | Read a specific usage documentation file and exit. |

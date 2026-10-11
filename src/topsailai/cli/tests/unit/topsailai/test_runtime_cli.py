@@ -350,3 +350,76 @@ def test_stdin_host_interrupt(boundary, interrupt_type, capsys):
     downstream.assert_not_called()
     output = capsys.readouterr()
     assert not output.out and not output.err
+
+
+@pytest.mark.parametrize("argv,count", [
+    (["logs", "-s", "s"], 20), (["-n", "1", "logs", "-s", "s"], 1),
+    (["logs", "-s", "s", "--lines", "10000"], 10000),
+    (["logs", "-s", "s", "-n", "2", "--lines", "2"], 2),
+])
+def test_logs_normalization(argv, count):
+    """Line counts use the strict shared namespace and default only for logs."""
+    args = cli.build_parser().parse_intermixed_args(argv)
+    request = cli.normalize(args)
+    assert request.action == "logs" and request.lines == count
+
+
+@pytest.mark.parametrize("extra", [
+    ["-n", "0"], ["-n", "-1"], ["-n", "10001"], ["-n", "x"],
+    ["-n", "1", "--lines", "2"], ["-m", "x"], ["--stdin"],
+    ["-a", "{}"], ["-i", "/send x"], ["--timeout", "5"], ["extra"],
+])
+def test_logs_invalid_offline(extra, capsys):
+    """Rejected syntax never resolves home or calls any operation."""
+    home, executor = Mock(), Mock()
+    assert cli.run_runtime_cli(["logs", "-s", "s", *extra, "--json"],
+                               home_resolver=home, executor=executor) == 2
+    assert json.loads(capsys.readouterr().out)["error_code"] == "usage_error"
+    home.assert_not_called()
+    executor.assert_not_called()
+
+
+@pytest.mark.parametrize("argv", [["send", "-m", "x"], ["btw", "-m", "x"],
+                                    ["control", "x"], ["-i", "/send x"]])
+def test_lines_reject_delivery(argv):
+    """New options never alter existing delivery actions."""
+    code, executor = invoke([*argv, "-s", "s", "-n", "2"])
+    assert code == 2
+    executor.assert_not_called()
+
+
+@pytest.mark.parametrize("lines,limited,json_mode", [([], False, False),
+    (["a", ""], False, False), (["a"], True, False), (["a"], True, True)])
+def test_logs_output(lines, limited, json_mode, capsys):
+    """Plain output is raw chronological text; JSON retains the envelope."""
+    result = RuntimeResult(True, 0, "logs", "s", 123, "log_read",
+                           response={"lines": lines, "scan_limited": limited})
+    code, _ = invoke(["logs", "-s", "s", *(["--json"] if json_mode else [])],
+                     executor=Mock(return_value=result))
+    output = capsys.readouterr()
+    assert code == 0
+    if json_mode:
+        assert json.loads(output.out) == cli.public_result(result)
+        assert output.err == ""
+    else:
+        assert output.out == "".join(line + "\n" for line in lines)
+        assert bool(output.err) == limited
+
+
+def test_logs_help_offline(capsys):
+    """Help requires neither home nor stdin nor target observation."""
+    home, executor = Mock(), Mock()
+    with pytest.raises(SystemExit) as error:
+        cli.run_runtime_cli(["logs", "--help"], home_resolver=home, executor=executor)
+    assert error.value.code == 0 and "--lines" in capsys.readouterr().out
+    home.assert_not_called()
+    executor.assert_not_called()
+
+
+def test_logs_json_value_not_output_switch(capsys):
+    """A consumed invalid line-count value never enables JSON output."""
+    code, executor = invoke(["logs", "-s", "s", "--lines", "--json"])
+    assert code == 2
+    executor.assert_not_called()
+    output = capsys.readouterr()
+    assert output.out == "" and "usage_error" in output.err

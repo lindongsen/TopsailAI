@@ -8,7 +8,7 @@ import json
 import math
 from pathlib import Path
 
-from cli_topsailai import runtime_control, runtime_pipe, runtime_target
+from cli_topsailai import runtime_control, runtime_pipe, runtime_target, runtime_logs
 
 MESSAGE_LIMIT = 1024 * 1024
 
@@ -22,6 +22,7 @@ class RuntimeRequest:
     control_action: str | None = None
     payload: dict | None = None
     timeout: float = 5.0
+    lines: int | None = None
 
 
 @dataclass
@@ -59,7 +60,15 @@ def _validate(request, control_actions):
     """Validate all request-dependent facts before any target enumeration."""
     if not isinstance(request, RuntimeRequest):
         raise _usage()
-    if not isinstance(request.action, str) or request.action not in ("send", "btw", "control"):
+    if not isinstance(request.action, str) or request.action not in ("send", "btw", "control", "logs"):
+        raise _usage()
+    if request.action == "logs":
+        if (request.message is not None or request.control_action is not None or
+                request.payload is not None or type(request.lines) is not int or
+                not 1 <= request.lines <= runtime_logs.MAX_LINES or request.timeout != 5.0):
+            raise _usage()
+        return None
+    if request.lines is not None:
         raise _usage()
     if type(request.timeout) not in (int, float):
         raise _usage()
@@ -153,6 +162,11 @@ def execute_runtime_request(
     action = request.action if isinstance(request, RuntimeRequest) and isinstance(request.action, str) else ""
     try:
         payload = _validate(request, control_actions or runtime_control.get_control_actions)
+        if request.action == "logs":
+            target = runtime_logs.resolve_log_target(task_dir, session_id=session_id, pid=pid)
+            tail = runtime_logs.read_log_tail(target, request.lines)
+            return RuntimeResult(True, 0, "logs", target.session_id, target.pid,
+                                 "log_read", response=tail.response())
         target = runtime_target.resolve_runtime_target(
             task_dir, session_id=session_id, pid=pid, process_probe=process_probe)
         if request.action == "control" and request.control_action == "get_session_messages":
