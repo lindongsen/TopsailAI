@@ -58,8 +58,7 @@ def test_queue_capacity_shrink_preserves_waiters_and_rejects_only_new_reservatio
         )
         changed = reload_runtime(runtime, settings(**changes))
         assert_reload_result(changed, accepted=True)
-        rejected = runtime.emit(event(runtime, scope, 3))
-        assert not rejected.admitted
+        rejected = runtime.dispatch(event(runtime, scope, 3))
         assert rejected.rejection_reason == "rejected_capacity"
         with runtime._scheduler._lock:
             assert len(runtime._scheduler._work) == 2
@@ -97,17 +96,22 @@ def test_queue_capacity_increase_allows_admission_after_atomic_publication(
         threads.append(second)
         wait_for_queue(runtime, 1)
         scheduler_identity = id(runtime._scheduler)
-        assert not runtime.emit(event(runtime, scope, 3)).admitted
+        assert runtime.dispatch(event(runtime, scope, 3)).rejection_reason == "rejected_capacity"
         changed = reload_runtime(runtime, settings(queue_items=2, queue_bytes=65_536))
         assert_reload_result(changed, accepted=True)
         assert id(runtime._scheduler) == scheduler_identity
-        assert runtime.emit(event(runtime, scope, 4)).admitted
+        fourth, fourth_reports, fourth_errors = invoke_thread(
+            lambda: runtime.dispatch(event(runtime, scope, 4))
+        )
+        threads.append(fourth)
         wait_for_queue(runtime, 2)
     finally:
         backend.release.set()
         for thread in threads:
             join_owned(thread)
         runtime.close(deadline_ms=100)
+    assert fourth_errors == []
+    assert fourth_reports[0].rejection_reason is None
 
 
 def test_queue_expiry_after_reload_releases_exact_reservation_without_late_start(
@@ -182,13 +186,18 @@ def test_worker_capacity_shrink_keeps_old_waiters_until_active_use_falls_below_c
         threads.append(third)
         wait_for_queue(runtime, 1)
         assert len(backend.calls) == 2
-        assert runtime.emit(event(runtime, scope, 4)).admitted
+        fourth, fourth_reports, fourth_errors = invoke_thread(
+            lambda: runtime.dispatch(event(runtime, scope, 4))
+        )
+        threads.append(fourth)
         wait_for_queue(runtime, 2)
         backend.release.set()
         for thread in threads:
             join_owned(thread)
         assert third_errors == []
-        assert len(backend.calls) >= 3
+        assert fourth_errors == []
+        assert fourth_reports[0].rejection_reason is None
+        assert len(backend.calls) == 4
     finally:
         backend.release.set()
         for thread in threads:

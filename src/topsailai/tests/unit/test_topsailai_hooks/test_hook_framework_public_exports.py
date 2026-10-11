@@ -34,3 +34,10 @@ def test_unified_result_contracts_are_publicly_exported() -> None:
     names = {"HandlerIdentity", "ReturnedValue", "ResultDiagnostic", "ResultTiming", "ResultCleanup", "ResultDecision", "HandlerResult", "HookPointResult"}
     assert names <= set(hooks.__all__)
     assert all(getattr(hooks, name, None) is not None for name in names)
+
+
+def test_ordinary_runtime_exposes_only_waiting_execution() -> None:
+    """Ordinary execution must not expose a nonwaiting compatibility entry."""
+    assert not hasattr(hooks.HookRuntime, "emit")
+    assert callable(hooks.HookRuntime.dispatch)
+    assert callable(hooks.HookRuntime.adispatch)

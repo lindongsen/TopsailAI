@@ -356,25 +356,6 @@ class HookRuntime:
             self._diagnostics.publish("dispatch_cancelled", event_id=event_id)
             raise
 
-    def emit(self, event: HookEvent, policy: Any = None) -> DeliveryReceipt:
-        """Admit bounded background dispatch without waiting for plugin execution."""
-        work, rejection = self._admit(event, policy, reject_running_loop=False)
-        if rejection is not None:
-            event_id = event.event_id if type(event) is HookEvent else ""
-            return DeliveryReceipt(False, event_id, rejection.rejection_reason)
-        if work is None:
-            self._diagnostics.publish(
-                "event_rejected", event_id=event.event_id, reason="rejected_capacity"
-            )
-            return DeliveryReceipt(False, event.event_id, "rejected_capacity")
-        work.future.add_done_callback(
-            lambda completed: self._observe_background_completion(work, completed)
-        )
-        self._diagnostics.publish(
-            "event_admitted", event_id=event.event_id, scope_id=event.scope_id
-        )
-        return DeliveryReceipt(True, event.event_id)
-
     def drain_diagnostics(self, limit: int) -> tuple[dict[str, object], ...]:
         """Return bounded safe diagnostic metadata."""
         return self._diagnostics.drain(limit)

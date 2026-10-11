@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from topsailai.hooks import HookLimits, HookRuntime, HookSettings
-from topsailai.hooks.contracts import DeliveryReceipt
 from topsailai.tests.unit.test_topsailai_hooks.red_runtime_helpers import (
     BlockingBackend,
     binding,
@@ -344,7 +343,7 @@ def test_repeated_queued_expiry_does_not_retain_waiting_payloads(tmp_path: Path)
 
 
 @pytest.mark.parametrize("invalid", [None, object(), {"event_id": "forged"}])
-def test_invalid_emit_is_a_structured_side_effect_free_rejection(
+def test_invalid_waiting_dispatch_is_a_structured_side_effect_free_rejection(
     tmp_path: Path, invalid: object
 ) -> None:
     """Each invalid exact type must be rejected without attribute access."""
@@ -352,7 +351,7 @@ def test_invalid_emit_is_a_structured_side_effect_free_rejection(
     runtime, _ = runtime_and_scope(tmp_path, backend=backend)
     try:
         queued_before = (runtime._scheduler._queued_items, runtime._scheduler._queued_bytes)
-        assert runtime.emit(invalid) == DeliveryReceipt(False, "", "invalid_event")
+        assert asyncio.run(runtime.adispatch(invalid)).rejection_reason == "invalid_event"
         assert runtime.dispatch(invalid).rejection_reason == "invalid_event"
         assert (runtime._scheduler._queued_items, runtime._scheduler._queued_bytes) == queued_before
         assert backend.calls == 0
@@ -407,7 +406,6 @@ def test_invalid_initial_configuration_creates_disabled_bounded_runtime(
         scope = runtime.open_scope()
         invalid_runtime_event = event(runtime, scope)
         assert runtime.dispatch(invalid_runtime_event).rejection_reason == "disabled"
-        assert runtime.emit(invalid_runtime_event).rejection_reason == "disabled"
 
         async def reject_async() -> None:
             report = await runtime.adispatch(invalid_runtime_event)

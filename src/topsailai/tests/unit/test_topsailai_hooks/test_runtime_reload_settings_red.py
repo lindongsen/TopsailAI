@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
@@ -148,7 +149,7 @@ def test_disable_preserves_owned_work_and_registration_then_reenable_restores_us
         assert_reload_result(disabled, accepted=True)
         hook_event = event(runtime, scope)
         assert runtime.dispatch(hook_event).rejection_reason == "disabled"
-        assert runtime.emit(hook_event).rejection_reason == "disabled"
+        assert asyncio.run(runtime.adispatch(hook_event)).rejection_reason == "disabled"
         rejected_registration = runtime.register(
             definition(), binding("new"), scope
         )

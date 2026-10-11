@@ -12,6 +12,9 @@ import pytest
 
 from topsailai.hooks import Binding, EventDefinition, HookLimits, HookSettings
 from topsailai.hooks.process_state import WorkerResult
+from topsailai.tests.unit.test_topsailai_hooks.reload_helpers import (
+    invoke_thread, join_owned, wait_for_queue,
+)
 
 HANDLERS = "topsailai.tests.unit.test_topsailai_hooks.fixture_handlers"
 
@@ -164,8 +167,8 @@ def test_parent_close_closes_open_descendants(tmp_path: Path) -> None:
         runtime.close()
 
 
-def test_emit_is_bounded_and_completion_is_observable(tmp_path: Path) -> None:
-    """Emit must return admission promptly and publish completion diagnostics."""
+def test_dispatch_completion_is_observable(tmp_path: Path) -> None:
+    """Waiting dispatch must publish completion diagnostics before owned shutdown."""
     records: list[dict[str, object]] = []
     from topsailai.hooks import HookRuntime
 
@@ -180,8 +183,9 @@ def test_emit_is_bounded_and_completion_is_observable(tmp_path: Path) -> None:
     scope = runtime.open_scope()
     try:
         assert runtime.register(_definition(), _binding("sync"), scope).accepted
-        receipt = runtime.emit(_event(runtime, scope))
-        assert receipt.admitted
+        report = runtime.dispatch(_event(runtime, scope))
+        assert report.rejection_reason is None
+        assert report.outcomes[0].status.value == "success"
         end = time.monotonic() + 2
         while time.monotonic() < end and not any(
             item.get("kind") == "dispatch_completed" for item in records
@@ -319,8 +323,8 @@ class _BlockingBackend:
         return ()
 
 
-def test_emit_captures_snapshot_and_rejects_bounded_queue_overload(tmp_path: Path) -> None:
-    """Emit must freeze registration state and reject excess queued work immediately."""
+def test_dispatch_captures_snapshot_and_rejects_bounded_queue_overload(tmp_path: Path) -> None:
+    """Owned waiting callers must freeze state and reject excess queued work."""
     from topsailai.hooks import HookRuntime
 
     backend = _BlockingBackend()
@@ -337,37 +341,41 @@ def test_emit_captures_snapshot_and_rejects_bounded_queue_overload(tmp_path: Pat
         process_backend=backend,
     )
     scope = runtime.open_scope()
+    owned = []
     try:
         registration = runtime.register(_definition(), _binding("blocked"), scope)
         assert registration.accepted
-        first = runtime.emit(_event(runtime, scope, 1))
-        assert first.admitted
+        first = invoke_thread(lambda: runtime.dispatch(_event(runtime, scope, 1)))
+        owned.append(first)
         assert backend.started.wait(1)
-        second = runtime.emit(_event(runtime, scope, 2))
-        assert second.admitted
-        third = runtime.emit(_event(runtime, scope, 3))
-        assert not third.admitted
+        second = invoke_thread(lambda: runtime.dispatch(_event(runtime, scope, 2)))
+        owned.append(second)
+        wait_for_queue(runtime, 1)
+        third = runtime.dispatch(_event(runtime, scope, 3))
         assert third.rejection_reason == "rejected_capacity"
         assert runtime.unregister(registration.handle).accepted
         backend.release.set()
-        end = time.monotonic() + 2
-        while time.monotonic() < end:
-            completed = [
-                item
-                for item in runtime.drain_diagnostics(50)
-                if item.get("kind") == "dispatch_completed"
-            ]
-            if completed:
-                break
-            time.sleep(0.01)
-        else:
-            pytest.fail("admitted snapshot dispatches did not settle")
+        for thread, reports, errors in owned:
+            join_owned(thread)
+            assert errors == []
+            assert reports[0].outcomes[0].binding_id == "blocked"
+            assert reports[0].outcomes[0].status.value == "success"
+        assert backend.calls == 2
     finally:
         backend.release.set()
-        runtime.close()
+        try:
+            for thread, _, _ in owned:
+                join_owned(thread)
+        finally:
+            runtime.close()
+        for _, reports, errors in owned:
+            assert errors == []
+            assert len(reports) == 1
+        assert runtime.cleanup_debts() == ()
+        assert runtime._scheduler._work == {}
 
 
-def test_scope_close_cancels_queued_emit_without_affecting_sibling(tmp_path: Path) -> None:
+def test_scope_close_cancels_queued_dispatch_without_affecting_sibling(tmp_path: Path) -> None:
     """Scope closure must cancel queued owned work while preserving sibling admission."""
     from topsailai.hooks import HookRuntime
 
@@ -380,12 +388,14 @@ def test_scope_close_cancels_queued_emit_without_affecting_sibling(tmp_path: Pat
     )
     scope = runtime.open_scope()
     sibling = runtime.open_scope()
+    owned = []
     try:
         assert runtime.register(_definition(), _binding("owned"), scope).accepted
         assert runtime.register(_definition(), _binding("sibling"), sibling).accepted
-        assert runtime.emit(_event(runtime, scope, 1)).admitted
+        owned.append(invoke_thread(lambda: runtime.dispatch(_event(runtime, scope, 1))))
         assert backend.started.wait(1)
-        assert runtime.emit(_event(runtime, scope, 2)).admitted
+        owned.append(invoke_thread(lambda: runtime.dispatch(_event(runtime, scope, 2))))
+        wait_for_queue(runtime, 1)
         scope.close()
         backend.release.set()
         end = time.monotonic() + 2
@@ -409,7 +419,16 @@ def test_scope_close_cancels_queued_emit_without_affecting_sibling(tmp_path: Pat
             pytest.fail("sibling dispatch capacity was not released")
     finally:
         backend.release.set()
-        runtime.close()
+        try:
+            for thread, _, _ in owned:
+                join_owned(thread)
+        finally:
+            runtime.close()
+        for _, reports, errors in owned:
+            assert errors == []
+            assert len(reports) == 1
+        assert runtime.cleanup_debts() == ()
+        assert runtime._scheduler._work == {}
 
 
 def test_host_cancellation_waits_for_owned_dispatch_settlement(tmp_path: Path) -> None:
@@ -455,13 +474,13 @@ def test_disabled_runtime_is_worker_free_and_rejects_optional_work(tmp_path: Pat
         assert runtime._scheduler._executor is None
         event = _event(runtime, scope)
         assert runtime.dispatch(event).rejection_reason == "disabled"
-        assert runtime.emit(event).rejection_reason == "disabled"
+        assert asyncio.run(runtime.adispatch(event)).rejection_reason == "disabled"
     finally:
         runtime.close()
 
 
 def test_queue_bytes_account_for_the_complete_admission_envelope(tmp_path: Path) -> None:
-    """Background admission must bound event metadata and captured plan as well as payload."""
+    """Waiting admission must bound metadata and captured plan as well as payload."""
     from topsailai.hooks import HookRuntime
 
     limits = replace(HookLimits(), queue_bytes=128, event_bytes=4_096)
@@ -469,9 +488,8 @@ def test_queue_bytes_account_for_the_complete_admission_envelope(tmp_path: Path)
     scope = runtime.open_scope()
     try:
         assert runtime.register(_definition(), _binding("sync"), scope).accepted
-        receipt = runtime.emit(_event(runtime, scope))
-        assert not receipt.admitted
-        assert receipt.rejection_reason == "rejected_capacity"
+        report = runtime.dispatch(_event(runtime, scope))
+        assert report.rejection_reason == "rejected_capacity"
     finally:
         runtime.close()
 
@@ -573,11 +591,13 @@ def test_queued_scope_cancellation_emits_one_aggregate_diagnostic(tmp_path: Path
         HookSettings(limits=limits), temp_root=str(tmp_path), process_backend=backend
     )
     scope = runtime.open_scope()
+    owned = []
     try:
         assert runtime.register(_definition(), _binding("owned"), scope).accepted
-        assert runtime.emit(_event(runtime, scope, 1)).admitted
+        owned.append(invoke_thread(lambda: runtime.dispatch(_event(runtime, scope, 1))))
         assert backend.started.wait(1)
-        assert runtime.emit(_event(runtime, scope, 2)).admitted
+        owned.append(invoke_thread(lambda: runtime.dispatch(_event(runtime, scope, 2))))
+        wait_for_queue(runtime, 1)
         scope.close()
         records = runtime.drain_diagnostics(50)
         cancellations = [
@@ -595,7 +615,16 @@ def test_queued_scope_cancellation_emits_one_aggregate_diagnostic(tmp_path: Path
         ]
     finally:
         backend.release.set()
-        runtime.close()
+        try:
+            for thread, _, _ in owned:
+                join_owned(thread)
+        finally:
+            runtime.close()
+        for _, reports, errors in owned:
+            assert errors == []
+            assert len(reports) == 1
+        assert runtime.cleanup_debts() == ()
+        assert runtime._scheduler._work == {}
 
 
 def test_host_cancellation_prevents_later_bindings_from_starting(tmp_path: Path) -> None:

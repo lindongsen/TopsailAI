@@ -131,34 +131,42 @@ def test_admitted_dispatch_retains_old_generation_and_handler_budget(tmp_path: P
         runtime.close(deadline_ms=100)
 
 
-def test_adispatch_and_emit_capture_generation_and_old_budget_before_reload(
+def test_adispatch_captures_generation_and_old_budget_before_reload(
     tmp_path: Path,
 ) -> None:
-    """Async and background admission paths must retain their captured generations."""
+    """Owned async waiting calls must retain their captured generations."""
     backend = GatedRecordingBackend()
     runtime, scope = runtime_scope(tmp_path, backend=backend)
     assert runtime.register(definition(), binding(), scope).accepted
 
     async def exercise() -> None:
-        async_task = asyncio.create_task(runtime.adispatch(event(runtime, scope, 1)))
-        assert await asyncio.to_thread(backend.started.wait, 1)
-        changed = reload_runtime(runtime, settings(handler_timeout_ms=120))
-        assert_reload_result(changed, accepted=True)
-        backend.release.set()
-        async_report = await asyncio.wait_for(async_task, 1)
-        first_context, first_timeout = backend.calls[0]
-        assert async_report.generation < changed.generation
-        assert first_context.registry_generation == async_report.generation
-        assert first_timeout > 120
+        tasks = []
+        try:
+            async_task = asyncio.create_task(runtime.adispatch(event(runtime, scope, 1)))
+            tasks.append(async_task)
+            assert await asyncio.to_thread(backend.started.wait, 1)
+            changed = reload_runtime(runtime, settings(handler_timeout_ms=120))
+            assert_reload_result(changed, accepted=True)
+            backend.release.set()
+            async_report = await asyncio.wait_for(async_task, 1)
+            first_context, first_timeout = backend.calls[0]
+            assert async_report.generation < changed.generation
+            assert first_context.registry_generation == async_report.generation
+            assert first_timeout > 120
 
-        backend.release.clear()
-        receipt = runtime.emit(event(runtime, scope, 2))
-        assert receipt.admitted
-        assert await asyncio.to_thread(backend.wait_calls, 2, 1)
-        second_context, second_timeout = backend.calls[1]
-        assert second_context.registry_generation == changed.generation
-        assert second_timeout <= 120
-        backend.release.set()
+            backend.release.clear()
+            later_task = asyncio.create_task(runtime.adispatch(event(runtime, scope, 2)))
+            tasks.append(later_task)
+            assert await asyncio.to_thread(backend.wait_calls, 2, 1)
+            second_context, second_timeout = backend.calls[1]
+            assert second_context.registry_generation == changed.generation
+            assert second_timeout <= 120
+            backend.release.set()
+            later_report = await later_task
+            assert later_report.generation == changed.generation
+        finally:
+            backend.release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     try:
         asyncio.run(exercise())
