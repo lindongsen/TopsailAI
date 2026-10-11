@@ -20,7 +20,7 @@ class ProcessExecutionMixin:
     """Reuse one deadline, transport and cleanup transaction for v1 and v2."""
 
     def _execute_delivery(self, handler_ref, context, timeout_ms, *, module=False,
-                          args=(), kwargs=None, captured=None) -> WorkerResult:
+                          args=(), kwargs=None, captured=None, record_receiver=None) -> WorkerResult:
         """Admit a local codec and publish only through the existing cleanup owner."""
         unsupported = self._preflight(timeout_ms)
         if unsupported is not None:
@@ -56,6 +56,8 @@ class ProcessExecutionMixin:
             return WorkerResult("invalid_request", error_category="invalid_request")
 
         record = _LaunchRecord(uuid.uuid4().hex)
+        if record_receiver is not None:
+            record_receiver(record)
         lease = None
         try:
             spawned = self._spawn(interpreter, deadline, record)

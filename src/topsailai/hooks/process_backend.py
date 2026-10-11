@@ -192,7 +192,8 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
         return self._execute_delivery(handler_ref, context, timeout_ms,
                                       module=True, args=args, kwargs=kwargs)
 
-    def execute_captured_module(self, module, context: HookContext, timeout_ms: int) -> WorkerResult:
+    def execute_captured_module(self, module, context: HookContext, timeout_ms: int,
+                                *, record_receiver=None) -> WorkerResult:
         """Invoke a detached captured record using the existing process cleanup lease."""
         from topsailai.hooks.hook_point_plan_contracts import CapturedModule
         from topsailai.hooks.captured_module_protocol import CapturedModuleLocator
@@ -205,6 +206,7 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
             module.source.handler_ref, context, timeout_ms, module=True,
             args=_thaw_frozen_json(module.invocation.args),
             kwargs=_thaw_frozen_json(module.invocation.kwargs), captured=locator,
+            record_receiver=record_receiver,
         )
 
     def _preflight(self, timeout_ms: int) -> WorkerResult | None:
