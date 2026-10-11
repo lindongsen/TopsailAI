@@ -62,6 +62,7 @@ class _RegistrationCell:
     attempt: int = 0
     error_category: str | None = None
     retry_at: float = 0.0
+    exception: BaseException | None = None
 
 
 _TRANSIENT_ERRORS = frozenset({"capacity_exceeded", "cleanup_pending"})
@@ -170,7 +171,16 @@ class ConfiguredHookRegistrar:
                     generation = self._bootstrap.configuration_generation
                     break
                 self._condition.wait()
-        result = self._register(binding)
+        try:
+            result = self._register(binding)
+        except BaseException as exc:
+            with self._condition:
+                if self._cells.get(hook_name) is cell and cell.state is RegistrationState.REGISTERING:
+                    cell.exception = exc
+                    cell.state = RegistrationState.FAILED_DETERMINISTIC
+                    cell.error_category = "registration_exception"
+                self._condition.notify_all()
+            raise
         return self._publish_result(hook_name, generation, result)
 
     async def aensure_registered(self, hook_name: str) -> RegistrationEnsureResult:
@@ -184,6 +194,8 @@ class ConfiguredHookRegistrar:
         cell = self._cells.get(hook_name)
         if cell is None:
             return self._result(RegistrationState.UNCONFIGURED)
+        if cell.exception is not None:
+            raise cell.exception
         if cell.state is RegistrationState.READY:
             return self._result(RegistrationState.READY, attempt=cell.attempt)
         if cell.state is RegistrationState.FAILED_DETERMINISTIC:
