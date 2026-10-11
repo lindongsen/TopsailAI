@@ -14,17 +14,58 @@ scope: standalone framework, configured bootstrap/registration wrappers, Catalog
 
 ## Status and scope
 
-This document records the approved architecture and implemented standalone framework boundary. The framework now includes explicit bindings, HookScript planning and orchestration, immutable configured-script capture, recursive configured discovery, exact-name configured execution, atomic replacement, and scope/Runtime-owned cleanup. Application-domain integrations remain separately reviewed work.
+This document defines the authoritative target architecture clarified by the Human on 2026-10-10. Implementation evidence is recorded separately and does not override the target. U06A–U06D unified synchronous execution is committed, including configured adapter `17d9e9ac` and ordinary public entry `14d61522`. [The open architecture issue](../issues/issue-hook-point-default-script-handler-architecture.md) now tracks remaining U07–U11 lifecycle/migration acceptance; application-domain integrations remain deferred.
 
 | Dimension | Current status |
 |---|---|
-| Implementation | Standalone contracts, validation, configuration, registry, scheduler, runtime, scope, diagnostics, HookScript orchestration, configured discovery/capture, and the simplified configured Runtime API are implemented. |
-| Verification | Focused API/resource tests, public Runtime BDD, affected Hook regression, the complete 294-file Unit runner, and strict post-implementation commit-scoped coverage pass; cross-platform, packaged-launcher, application-integration, and production-performance acceptance remain separate gates. |
+| Implementation | U06A–U06D complete unified synchronous Module/default-Hook execution, configured adaptation, ordinary source registration and execution-local custody; U07–U11 remain pending. |
+| Verification | U06D final affected verification: 208 passed with changed line/branch coverage 100%; two accepted provenance REDs remain separate known results. This is not full lifecycle or full-project GREEN acceptance. |
 | Integration | The configured API is available at `HookRuntime`; conversation, Agent, LLM, tool, memory, and skill lifecycle integrations remain deferred. |
 
 In scope now: the independent framework, its execution guarantees, interfaces, configuration, lifecycle, extension seams, current implementation status, and verification plan. Possible future integration families are conversation, User2Agent turns, Agent2LLM runs, LLM requests, prompt assembly, context summarization, persistence checkpoints, and task lifecycle.
 
 Explicitly out of scope for the current implementation: all tool-specific hooks under tools/, tool invocation and approval integrations, memory hooks, skill hooks, compatibility adapters, migration of existing TOPSAILAI_HOOK_* implementations, and insertion of Hook points into application owners. Existing mechanisms remain untouched. The implemented foundation introduces no environment variable. The framework-readiness extension below implements environment-driven bootstrap and insertion APIs; its variables are synchronized to `env_template` and `docs/Environment_Variables.md`.
+
+## Authoritative Hook Point contract
+
+The Human clarified: “准确地说，是每个hook点都会有一个内置/默认的hook去识别脚本和执行脚本”. The latest ordering and entry requirement is: “排序方面：优先执行 modules,再执行scripts，执行顺序都是按名字排序。 执行modules的方式是每个module都会有一个main(*args, **kwargs)函数，它是执行入口。” These are Human statements; the normalized keys below are the documented deterministic interpretation, not additional verbatim quotes.
+
+A **Hook Point** is a named extension location. A **Module Hook** is a plugin registered at that location. Each Hook Point has **0..N Module Hooks plus exactly one framework-owned built-in/default terminal Script Hook**, reserved as `hook_script`. This is one unified framework and one Hook-point execution plan, not two peer registration/dispatch models.
+
+- Public plugin registration supports Modules only. Every Module exposes callable `main(*args, **kwargs)` as its execution entry. The framework binds detached, validated arguments through its isolated worker protocol; internal context/envelope adapters do not replace `main` with a required public `handle(context)` entry.
+- Framework initialization of a Hook Point automatically supplies its one default `hook_script`, even with zero Modules or zero Scripts. It cannot be replaced, renamed, duplicated, removed, or reordered by plugins; it consumes one real binding-capacity slot. No Scripts means a successful zero-entry no-op, not absence of the default Hook.
+- Modules execute sequentially in ascending module-name order. After all predecessors reach the required terminal and cleanup-safe state, the default Hook identifies the point's configured Scripts and executes them sequentially in ascending script-name order. Settled Module failure does not itself prevent Scripts; unresolved cleanup, host cancellation, or exhausted aggregate deadline does prevent unsafe continuation.
+- Script files are internal entries of this default Hook, not peer Hooks, one Binding per script, or an independently dispatchable scripts-only plan. A result merely labelled `binding_id="hook_script"` does not satisfy the contract unless the default Hook is actually in the unified plan.
+- `hook_name` plus `scripts` or `folder` configures the default Hook. Explicit lists select members, not execution order. Startup/lazy registration, decorators, and function-body calls are convenience wrappers and must preserve the same unified plan and lifecycle.
+
+### Deterministic name keys
+
+Sorting is case-sensitive ascending Unicode code-point order, without locale collation, case folding, numeric/natural sorting, or Unicode normalization. Both Module and Script keys are their final registered name strings, not binding priorities or list positions. Duplicate registered names within the same handler kind and Hook Point reject the complete candidate before publication. Module discovery can derive a logical import name using the complete interpreter-recognized suffix, but the final registered name is the ordering authority.
+
+Script names have no framework-imposed format restriction: no required prefix, extension or basename-only rule. Executability, trust and path admission are separate safety checks, not naming restrictions. No case folding or name normalization changes the sorting key. Explicit lists select entries only; neither list position nor path is a tie-break for duplicate registered names. For directory discovery, generating a normalized root-relative path as the registered name is a proposed default to distinguish files in different subdirectories; the Human has not explicitly approved that generation rule. Display the generated names before publication rather than silently treating basename as authority.
+
+Configured preparation discovers, captures and validates executable sources for publication. Ordinary U06D registration retains source descriptors; dispatch prepares a fresh captured candidate under its shared deadline. Execution consumes an immutable admitted snapshot: later source changes cannot alter that snapshot, but can affect a subsequent ordinary dispatch or configured reload.
+
+```text
+Hook Point trigger
+  -> establish absolute deadline before discovery/capture/preparation
+  -> capture and publish one unified plan
+  -> module:Alpha.main(*args, **kwargs)
+  -> module:beta.main(*args, **kwargs)
+  -> required predecessor terminal/cleanup-safe barrier
+  -> framework-owned default hook_script
+       -> identify admitted Script entries
+       -> a.py -> z.py (name order)
+  -> one ordered report and owned cleanup
+```
+
+### Committed U06 implementation and remaining gates
+
+U06A–U06D wire synchronous execution to `execute_hook_point`: name-ordered Modules, cleanup-safe predecessor barriers and exactly one default terminal Hook, including an empty successful terminal. Configured execution is a compatibility adapter (`17d9e9ac`), not a direct scripts-only bypass. Ordinary `register_hook_point`/`dispatch_hook_point` (`14d61522`) store scope-local source descriptors, prepare/capture under one pre-preparation absolute deadline, publish exactly and acquire the corresponding reader before replacement can occur. Generic Binding `register/dispatch` remains explicitly legacy.
+
+Execution-local custody retains exact-reader ownership, exact-record debt query/retry authority, foreign-debt isolation and exception finalization responsibility. The [API](../docs/Hooks_API.md) documents the committed return carrier separately from target extensions. Final U06D affected tests are 208 passed; changed lines and branches are 100% covered. Two accepted provenance REDs remain unchanged; this does not establish full-project GREEN.
+
+Remaining gates: U07 last-known-good/desired-active diagnostics; U08 async cancellation and cleanup; U09 Catalog-authorized decisions; U10 nonwaiting API removal; U11 BDD/integration/documentation acceptance. No core Hook-point rollout is approved by synchronous completion alone.
 
 ## Architectural decision
 
@@ -43,7 +84,7 @@ Required application steps are not hooks. Authentication, authorization, context
 | Exception isolation | Plugin import errors, ordinary exceptions, plugin-originated control-flow exceptions, invalid output, worker crash, and protocol failure become structured outcomes, not host exceptions. |
 | Timeout isolation | Queue wait, worker startup/import, execution, and output validation consume finite deadlines. Expiry abandons the result and schedules bounded worker termination. |
 | Main-flow continuity | Failed hooks never change an otherwise valid application result into failure, cause provider retries, or prevent required cleanup. Overload rejects optional work rather than waiting for capacity. |
-| Latency | emit returns after bounded admission without waiting for handlers. dispatch waits only up to an aggregate deadline. Neither promises literal zero CPU cost. |
+| Latency | Target dispatch waits for completion within one aggregate deadline; adispatch awaits the same execution without blocking the host loop. Fire-and-observe is excluded. |
 | Delivery | Best effort, at most one execution attempt per admitted delivery, no automatic retries, no durable or exactly-once guarantee. |
 | Isolation boundary | Plugins are imported and executed only in managed child processes. There is no arbitrary in-process plugin execution mode in the initial framework. |
 | Limits | Process isolation is not a security sandbox or a real-time OS guarantee. OS failure, host termination, starvation, and machine-wide resource exhaustion cannot be fully masked. External side effects cannot be rolled back. |
@@ -99,14 +140,13 @@ Sequence is monotonically increasing per scope under the owner lock; it records 
 
 ## Unified handler and public interfaces
 
-The Runtime methods below are implemented, but this compact sketch is not an exact call signature reference. `HookScheduler` is implemented as a module-level API and is not currently a package-level export.
+The Runtime methods below exist; the Module entry shown is the required target, not a claim that current Binding validation enforces it. This compact sketch is not an exact call signature reference. `HookScheduler` is implemented as a module-level API and is not currently a package-level export.
 
 ```text
-handle(context: HookContext) -> JsonValue | Awaitable[JsonValue]
+main(*args, **kwargs) -> Any  # Public Module entry; no business-schema restriction
 
 runtime.register(definition, binding, scope) -> RegistrationResult
 runtime.unregister(handle) -> RegistrationResult
-runtime.emit(event, policy) -> DeliveryReceipt
 runtime.dispatch(event, policy) -> DispatchReport
 await runtime.adispatch(event, policy) -> DispatchReport
 runtime.open_scope(parent, metadata) -> HookScope
@@ -120,17 +160,17 @@ execute_configured_hook_script(..., runner: HookScriptRunner, ...) -> HookScript
 
 The standalone HookScript orchestration interfaces `HookScriptExecutionOptions`, `HookScriptExecutionPolicy`, `HookScriptEntryResult`, `HookScriptRunner`, and `execute_configured_hook_script` are implemented. `HookScriptRunner` is an injected trusted runner protocol. The simplified configured Runtime facade is also implemented through `register_configured()`, `dispatch_configured()`, `adispatch_configured()`, and `emit_configured()`; application-domain lifecycle integrations remain deferred.
 
-Every handler has the same signature and return envelope. Null, false, zero, empty text, empty list, and empty object are valid distinct JSON values. The framework does not interpret any of them as a veto, replacement, success marker, or request to retry. Execution success is represented by outcome.status, independently of outcome.value.
+Every public Module uses `main(*args, **kwargs)` with arbitrary arguments and arbitrary return content; the framework, not the Module, constructs the result envelope. The existing low-level worker context convention requires an adapter where necessary; it is not permission for an arbitrary public callable entry. `None`, `False`, zero, empty containers and `{"error": 1}` are normal return values, not framework errors. Values are not required to be JSON-serializable. The framework does not interpret any of them as a veto, replacement, success marker, or request to retry. Execution success is represented by outcome.status, independently of outcome.value.
 
 Host-side admission, serialization, configuration, queue, and backend errors return diagnostic statuses. Programmer-facing registration can expose detailed validation errors through RegistrationResult without raising through normal runtime emission. Genuine host cancellation and interrupts remain host control flow, not successful empty reports.
 
 Implemented `HookStatus` values include: success, error, timeout, invalid_output, worker_lost, cancelled, skipped_dependency, skipped_disabled, skipped_deadline, rejected_capacity. A rejected event yields an explicit receipt/report reason rather than pretending that no handlers matched. No matching bindings yields a successful empty dispatch.
 
-Reports remain bounded. emit does not store unlimited futures or reports; it sends completion summaries to the diagnostic sink. dispatch owns its short-lived report. Any future result polling API must have explicit retention and consumption rules.
+Reports and diagnostics remain bounded. Dispatch owns its short-lived report. Non-waiting admission, background handles and result polling are not part of the target API; existing emit APIs are implementation-only migration gaps.
 
 ## Registration, discovery and configuration
 
-Use an explicit manifest or typed API registration. Handler references are importable module:callable strings; closures, live instances, lambdas, and implicitly inherited thread-local agents are not supported. Configuration parsing must not import plugin modules.
+Use an explicit manifest or typed API registration. Target Module handler references identify importable `module:main` entries; the explicitly legacy generic Binding API still accepts arbitrary `module:callable` references and is not the ordinary target registration contract. Closures, live instances, lambdas, and implicitly inherited thread-local agents are not supported. Configuration parsing must not import plugin modules.
 
 The application reads a chosen config source once and passes settings to HookRuntime. `HookSettings.from_mapping()` accepts runtime settings (`schema_version`, `enabled`, and `limits`); definitions and bindings are registered through the typed API rather than embedded in that mapping. No new environment-variable family is prescribed. Configured module/script discovery is explicit and rooted at caller-supplied paths; there is no implicit crawling of the working directory, installed packages, or arbitrary search paths.
 
@@ -155,15 +195,15 @@ Illustrative configuration:
 
 These values match current finite code defaults, but they are not measured or approved production-performance budgets. Reject non-finite/negative durations, excessive graph sizes, unknown fields, incompatible versions, and undefined events. Enforce global hard caps above per-binding settings. Hook runtime disabled is a cheap no-op with no workers.
 
-A configuration candidate is validated as a whole. Initial invalid configuration produces a disabled runtime with diagnostics; invalid reload preserves the last valid generation. A successful reload atomically publishes an immutable new generation. An in-flight dispatch retains its captured generation. Explicit unregister affects new admissions only; scope close also cancels outstanding deliveries.
+The U07 target validates a configuration candidate as a whole. Initial invalid configuration leaves the affected Hook Point unavailable with diagnostics; business blocking follows only Catalog-authorized policy. Invalid reload rejects the new revision and retains the last known good active plan for new admissions, explicitly reporting desired_revision, active_revision, update_failed and safe diagnostics. A successful reload atomically publishes an immutable new generation. An in-flight dispatch retains its captured generation. Explicit unregister affects new admissions only; scope close also cancels outstanding deliveries.
 
 ## Ordering, dependencies and concurrency
 
 For matching bindings, resolve a directed acyclic graph. after specifies completion-before-start, regardless of predecessor success. requires_success additionally skips the dependent if the predecessor did not succeed; it implies an ordering edge. Targets must exist within the same event/version and effective scope snapshot. Cross-event dependencies and hidden lookups into previous reports are unsupported.
 
-Reject cycles and unknown references before activation. Priority cannot override dependency edges. Among ready nodes, choose ascending priority and then lexicographic binding_id; this avoids filesystem and discovery-order nondeterminism.
+Reject cycles and unknown references before activation. The required Hook-point plan compiles Modules into a strict logical-name chain and appends the default `hook_script` after every Module; priority, caller dependencies, and registration order cannot override that order. The current generic Registry selects ready nodes by ascending priority then binding ID; this is an internal low-level behavior, not the target public Hook-point ordering contract.
 
-Default dispatch concurrency is one for simple predictable behavior. Explicit bounded parallelism may run independent ready nodes; selection order remains deterministic but completion order does not. Reports are always ordered by the stable topological plan, not completion timing. A failing independent handler never suppresses later independent handlers. Dependency skips and deadline exhaustion are intentional exceptions to execution, not propagation of a plugin error.
+Within a Hook Point, Modules and Script entries are sequential and name-ordered; parallel execution within either stage is not part of this contract. Separate deliveries may use bounded Runtime concurrency without changing the order inside a captured plan. Reports are always ordered by the stable topological plan, not completion timing. A failing independent handler never suppresses later independent handlers. Dependency skips and deadline exhaustion are intentional exceptions to execution, not propagation of a plugin error.
 
 Per-binding max_concurrency defaults to one across an owning runtime. Ready deliveries for that binding use admission order. Cross-binding completion order and cross-process global ordering are not guaranteed. No dispatch holds a registry or application lock while waiting for a handler. Registration changes inside application code affect only future snapshots; workers do not receive registration authority.
 
@@ -171,25 +211,25 @@ Worker parallelism is bounded at runtime level, not multiplied without limit per
 
 ## Dispatch algorithm and deadlines
 
-All public emission paths use this same algorithm. emit returns after admission; dispatch/adispatch additionally wait for its terminal report.
+The target requires dispatch and awaited adispatch to use this unified algorithm and logically wait for completion. Configured synchronous execution is connected in U06; async lifecycle migration and non-waiting emit removal remain U08/U10 gates. Fire-and-observe is outside the target.
 
 ```text
-capture registry generation and matching bindings
+record absolute monotonic deadline at dispatch entry before discovery/capture/preparation
+capture and publish the complete immutable plan; acquire its exact reader
 validate and freeze bounded event snapshot
 try admission without waiting for queue space
-record absolute monotonic deadline at admission
 schedule ready graph nodes while deadline and capacity allow
 for each node:
     send detached payload to owned worker
-    import target and invoke handle in that worker
+    import Module and invoke main(*args, **kwargs) through the worker adapter
     accept only matching, bounded, valid result before deadline
     convert failure to outcome and update graph readiness
 finalize stable ordered report; discard every late result
 ```
 
-Absolute deadline includes queue residence, process launch, import, execution and result transport. Each delivery expires at min(dispatch_deadline, delivery_start + binding_timeout). For emit, delivery_start does not reset the event deadline after a long queue wait. Unstarted nodes at deadline become skipped_deadline. A deadline is never extended by retries, recursive publication, result parsing, or sequential handlers.
+Absolute deadline includes discovery, capture/preparation, queue residence, process launch, import, execution and result transport. Each delivery expires at min(dispatch_deadline, delivery_start + binding_timeout). Delivery start does not reset the event deadline after a long queue wait. Unstarted nodes at deadline become skipped_deadline. A deadline is never extended by retries, recursive publication, result parsing, or sequential handlers.
 
-Serialization limits include byte count, nesting depth, collection sizes, maximum string length, maximum bindings and output size. Do not invoke arbitrary __str__, repr, deepcopy, property access or custom JSON serializers on caller objects. Accept only validated JSON primitives/containers supplied by the publisher, detach them before dispatch, and reject cycles or oversized content without semantic truncation.
+Serialization limits include byte count, nesting depth, collection sizes, maximum string length, maximum bindings and output size. Do not invoke arbitrary __str__, repr, deepcopy, property access or custom JSON serializers on caller objects. There is no business-schema or JSON-only requirement on main arguments or return values. A separate safe worker transport may support only a bounded subset of representations; unsupported argument transport is explicitly reported, not silently coerced or executed inline. Arbitrary host objects never bypass isolation; transport limits are not plugin business schemas.
 
 The host owns all result acceptance. Check event ID, delivery ID, scope lifetime, captured generation, deadline, output schema, and duplicate completion before accepting a result. A newer registry generation alone does not invalidate an already admitted delivery; closed scope or expired deadline does. Host code never unpickles plugin output.
 
@@ -197,7 +237,7 @@ The host owns all result acceptance. Check event ID, delivery ID, scope lifetime
 
 Synchronous and coroutine handlers run in the same worker protocol. The worker invokes the declared callable and awaits an awaitable result on a worker-owned event loop. It never nests an event loop inside the caller's loop. A coroutine that blocks is still terminated through the process supervisor.
 
-emit supports synchronous and asynchronous callers with the same non-waiting admission semantics. dispatch is for synchronous callers; adispatch cooperatively awaits results without blocking the host loop. Calling dispatch from a running host event loop is rejected with a diagnostic report directing the caller to adispatch, rather than blocking that loop.
+Only waiting execution is in target scope: dispatch is for synchronous callers; adispatch cooperatively awaits results without blocking the host loop. Fire-and-observe (including emit/aemit and execution-handle polling) is explicitly excluded by the Human decision. Calling dispatch from a running host event loop is rejected with a diagnostic report directing the caller to adispatch, rather than blocking that loop.
 
 No automatic retry is performed for imports, plugin execution or worker loss. A timeout does not prove that no external side effect occurred. Consumers needing reliable external delivery must supply a separate durable outbox and idempotent reconciliation design; the hooks framework is not a transaction manager.
 
@@ -219,9 +259,36 @@ Host cancellation of adispatch cancels its pending deliveries and propagates the
 
 Payloads are detached snapshots, not references to mutable agent state. Default data is metadata: identifiers, counts, stage, outcome and elapsed time. Message content and sensitive application data require explicit domain opt-in and binding field allowlists. Credential values, live database/model objects, locks, runtime handles and executable objects are prohibited.
 
-No hook can mutate host objects merely by modifying its input. Mutating a worker copy and then raising leaves the host unchanged. JSON return values are data only; no implicit merging into event payloads, environment variables, session messages or application results.
+No hook can mutate host objects merely by modifying its input. Mutating a worker copy and then raising leaves the host unchanged. Arbitrary return values are data only; no implicit merging into event payloads, environment variables, session messages or application results.
 
 For lifecycle events, callers normally ignore values. For other capabilities, a domain extension can validate and consume values through the same DispatchReport. The core does not learn domain-specific meanings.
+
+### Unified handler and Hook Point result envelope
+
+This is the target framework-owned result format, not the current worker wire schema. A Module returns arbitrary content, not this envelope. A normal return of `False`, `None` or `{"error": 1}` is success; `returned.present=true` distinguishes returning None from an exception or a handler never invoked. No business meaning is inferred from the return value.
+
+| HandlerResult field | Contract |
+|---|---|
+| execution_id, hook_point_name, plan_version | Correlation and the exact captured active version. |
+| handler.id, handler.name, handler.kind | Stable identity and registered name; kind is module, default_script_hook or script. |
+| status, not_run_reason | success, error, timeout, cancelled, not_run, or completed_with_errors for a default Hook; explain every not-run entry. Protocol/worker failures carry an error category, not fabricated return content. |
+| returned.present, returned.representation | Presence of a normal return; representation is direct, transported, reference or unavailable. |
+| returned.value, returned.reference | Original value where safely available, or a bounded managed reference; unavailable is explicit and does not turn a normal return into a plugin exception. |
+| error.category, error.message | Safe bounded diagnostics, without arbitrary object formatting, credentials or unsafe exception deserialization. |
+| timing.started_at, timing.finished_at, timing.elapsed_ms | Observed timestamps and monotonic duration; absent starts for not-run handlers. |
+| cleanup.state, cleanup.diagnostic | safe, pending or failed, independently of execution status; pending cleanup prevents unsafe successors. |
+| decision.action, decision.authority | continue or block; block requires a Catalog-authorized policy, never an arbitrary plugin return field. |
+| children | Ordered Script HandlerResults for the default Script Hook; empty for a zero-script successful no-op. |
+
+HookPointResult contains execution_id, hook_point_name, plan_version, ordered handlers (Modules then the single default Hook), aggregate timing, cleanup and Catalog-authorized decision. Aggregate status is success, completed_with_errors, blocked, timeout, cancelled or unavailable. No valid initial plan means unavailable. Default report policy permits business continuation after settled plugin errors; ordering dependencies require terminal/cleanup-safe predecessors, not successful returns. Host cancellation and original business exceptions retain their established propagation rules.
+
+Arbitrary return objects do not necessarily cross a process boundary unchanged. `direct` describes an already safely owned framework value, not permission to invoke plugins in the host. `transported` uses a bounded allowlisted safe protocol, never untrusted pickle or arbitrary constructors. `reference` is permitted only if the owning isolated endpoint remains managed: the reference is scoped, expires or is explicitly released, and retirement/close cleans its resources. Reference support is a proposal, not an implemented guarantee; until available, untransportable returns use `unavailable` with a safe diagnostic. Worker exit invalidates references. Never keep unbounded workers alive merely to retain results, run arbitrary repr/serialization in the host, or weaken isolation to recover a value. Arbitrary argument content similarly has no business schema, but unsupported safe transport must be reported explicitly. A domain consumer may reject an unavailable representation without mislabelling the plugin's normal return as an exception.
+
+### Failed configuration update and last-known-good plan
+
+The Human chose: “新配置检查失败时:A；Fire-and-observe：A,不实现。” A build failure means a candidate cannot pass discovery/validation/capture (for example a newly added Module lacks callable main or a configured Script cannot be read), not a failure during an already admitted handler execution.
+
+If valid v1 is active and desired v2 fails, reject and clean v2, keep v1 active for new calls, and report desired_revision=v2, active_revision=v1, state=update_failed_using_last_known_good with bounded safe diagnostics. Do not report v2 as activated or retry it on every call. Initial failure without any prior valid plan makes the Hook Point unavailable; only authorized policy decides whether business is blocked. Successful replacement publishes the complete candidate atomically; old admitted executions keep their old snapshot until leases and cleanup are settled. Startup and lazy wrappers use this same state machine and singleflight publication, not separate Script-only paths.
 
 ### Result transformation as an extension
 
@@ -249,8 +316,8 @@ runtime = HookRuntime(
 scope = runtime.open_scope(parent=None, metadata={owner_id: conversation_id})
 runtime.register(conversation_started_v1, audit_binding, scope)
 
-receipt = runtime.emit(start_event, policy=bounded_delivery)
-continue_required_conversation_work()  # Does not depend on receipt success.
+report = runtime.dispatch(start_event, policy=bounded_delivery)
+continue_required_conversation_work()  # Report failures do not automatically block business flow.
 ```
 
 ```text
@@ -262,8 +329,8 @@ run_required_prompt_validation()
 ```
 
 ```text
-plugin handle(context):
-    read detached context.event.payload
+plugin main(*args, **kwargs):
+    read detached validated arguments supplied by the framework adapter
     return {"append_fragments": ["A permitted domain-specific fragment"]}
 ```
 
@@ -295,7 +362,7 @@ The following is a planning map based on the prior repository inspection, not a 
 
 | Proposed event family | Candidate owning boundary | Timing and minimum payload | Domain behavior |
 |---|---|---|---|
-| conversation.started / closing / closed | workspace/agent/agent_shell_base.py, AgentChat._run / run | After setup; before cleanup; after cleanup attempts. Conversation ID and cleanup outcomes. | Enqueue only; failures never delay required cleanup. |
+| conversation.started / closing / closed | workspace/agent/agent_shell_base.py, AgentChat._run / run | After setup; before cleanup; after cleanup attempts. Conversation ID and cleanup outcomes. | Await bounded completion; failures never prevent required application cleanup. |
 | user2agent.turn.started / finished | workspace/agent/agent_shell_base.py, AgentChat._run | Valid fresh input accepted; terminal branch settled. Turn ID, outcome, persistence checkpoint. | Distinguish succeeded, failed, abandoned and interrupted; no fake final answer. |
 | agent2llm.run.started / finished | ai_base/agent_base.py, AgentBase.run | Internal execution entry and after owned run cleanup. Run ID and outcome. | Separate from persistent user conversation. |
 | llm.attempt.started / finished | ai_base/llm_base.py, LLMModel.chat transport-attempt boundary | Actual provider attempt, not dequeue of an existing response. Attempt number, duration and safe outcome. | Cannot choose retries or change a response. |
@@ -356,7 +423,7 @@ After separate approval, add one event family at a time from the catalog, beginn
 
 | Risk | Decision |
 |---|---|
-| Strong isolation adds process-launch cost | Accept bounded cost initially; measure before adding reusable workers. Core business can use emit without waiting. |
+| Strong isolation adds process-launch cost | Accept bounded cost initially; measure before adding reusable workers. Target business calls wait synchronously or through await; non-waiting emission is excluded. |
 | Strict ordering lengthens dispatch | One aggregate deadline; optional explicit parallelism for independent nodes only. |
 | Hook outcome mistaken for business success | Separate reports from domain values and document exact lifecycle checkpoints. |
 | Optional result processing becomes another framework | Keep domain policy outside core and reuse the same registry, worker protocol and outcomes. |
@@ -369,60 +436,25 @@ After separate approval, add one event family at a time from the catalog, beginn
 
 One framework provides registration, event delivery, ordering, isolated execution, deadlines, outcomes and lifecycle management. Functional differences live in event schemas and caller-owned result policies, not hook categories. Optional extensions may propose data but never gain implicit authority over core application flow. Build and verify this component independently first; choose lifecycle integration points only after its non-disruptive behavior is proven.
 
-## Simplified configured Hook registration and execution
+## Configuration convenience and migration boundary
 
-This section records the implemented configured-script API and supersedes the former caller-managed configured-candidate design. The Human-approved design history is retained in the workspace task records; the durable tracked public contract is [`docs/Hooks_API.md`](../docs/Hooks_API.md).
+`hook_name` plus exactly one of `scripts` or `folder` is a convenience interface for the Hook Point's default Script Hook, not permission to publish a second first-class plan type. Both source forms use the name key above; list order is not an execution contract. Folder enumeration remains bounded, recursive and no-symlink, with shell-free format validation and deployment-owned trust. Invalid or duplicate entries reject the whole change and preserve the previous unified plan.
 
-### Implemented public boundary
+Hook names retain the exact case-sensitive `^hook_[a-z][a-z0-9_]*$` contract, without event-name, path, prefix or alias fallback. Identical complete plans are successful no-ops; replacement must preserve unrelated registrations and admitted old snapshots. Execution retains existing failure, timeout and cancellation policies with no automatic retry. Scope and Runtime close own plan removal, admitted-work settlement, artifact retirement and bounded cleanup recovery.
 
-Configured scripts belong at the existing `HookRuntime` boundary. A caller supplies one exact `hook_name` and exactly one source: an ordered `scripts` list or one recursively searched `folder`. The Runtime validates and captures the complete source, atomically registers one Runtime/scope-owned plan, executes it by exact Hook name, and cleans up internal resources when its scope or Runtime closes.
+Startup and lazy registration must atomically establish the complete Module/default-Hook plan and preserve immutable artifact capture, scope ownership, deadlines, cancellation and cleanup recovery. Callers need not manage candidates, leases, TTLs, publication or disposal. Hiding candidate mechanics does not supersede the terminal architecture.
 
-The implementation does not introduce an Agent-level `run_agent()` API, a second registry, or another scheduler. Existing explicit `register(definition, binding, scope)`, `dispatch(event)`, `adispatch(event)`, and `emit(event)` behavior remains unchanged.
+### Retained compatibility and legacy APIs
 
-Implemented additive Runtime methods are:
+The retained configured APIs are described in [Hooks API](../docs/Hooks_API.md). U06 synchronous dispatch is already a unified-plan adapter; U08 must verify async lifecycle equivalence, and U10 must remove/migrate nonwaiting emission. This documentation synchronization changes no production signatures.
 
-```python
-register_configured(hook_name, scope, *, scripts=None, folder=None)
-dispatch_configured(hook_name, event, policy=None)
-adispatch_configured(hook_name, event, policy=None)
-emit_configured(hook_name, event, policy=None)
-```
-
-The exact typed signatures, return contracts, and examples are maintained in [`docs/Hooks_API.md`](../docs/Hooks_API.md).
-
-### Caller contract
-
-- Hook names use the exact, case-sensitive `^hook_[a-z][a-z0-9_]*$` contract and never fall back to event names, binding IDs, handler references, filenames, prefixes, aliases, or case-folded values.
-- Exactly one of `scripts` and `folder` is accepted.
-- Explicit lists preserve caller order.
-- Folder mode recursively discovers supported entries without following symlinks and sorts accepted entries by normalized relative path using case-sensitive Unicode code-point order.
-- Existing shell-free executable-format, interpreter, trust, capture, deadline, and process-isolation rules remain authoritative.
-- Duplicate canonical files, duplicate basenames, unsafe paths, recognized-but-invalid candidates, capacity failures, or plan failures reject the entire operation without changing active state.
-- Re-registering the same configured `(scope incarnation, hook_name)` atomically replaces the complete plan; an identical plan is a successful no-op and unrelated explicit registrations are never overwritten.
-- Execution uses the existing Hook failure, timeout, cancellation, scheduler, diagnostic, and cleanup policies. There is no automatic retry and no second failure policy.
-- Scope and Runtime close own configured-plan removal, admitted-work settlement, artifact retirement, and internal cleanup recovery. A caller never disposes a registration candidate.
-
-### Candidate design superseded
-
-The caller contract excludes `PreparedConfigured`, candidate capacity/TTL/generation/provenance, caller-visible prepare/publish/dispose, caller-owned artifact leases, and caller-owned cleanup debt. Candidate result records were removed from the package-root exports. The fail-closed `HookRuntime.prepare_configured()` compatibility boundary and private candidate records remain only for historical internal tests and safety implementation; they are not advertised as public configured registration APIs.
-
-Internal bounded discovery, immutable capture, artifact leases, process identity, cleanup ownership, cancellation settlement, and interruption recovery remain implementation primitives. Keeping those safety mechanisms does not preserve or justify a public candidate lifecycle.
-
-### Current implementation boundary
-
-The standalone framework implements explicit Runtime/Registry APIs, exact configured Hook-name validation, ordered list and recursive folder discovery, immutable artifact capture, whole-plan publication/replacement, exact-name sync/async/background execution, and scope/Runtime cleanup integration. The configured API is verified by focused real-process tests, public Runtime BDD, affected Hook regression, and the complete Unit runner.
-
-### Historical design status
-
-Earlier direct-child discovery, terminal `hook_script`, configured-empty settlement, captured preparation, and candidate-publication documents remain useful implementation and safety history. They no longer define the caller-facing configured-script workflow. References to candidate caps, prepare-then-publish, public disposal, or future U09-C/U10 candidate acceptance are superseded for configured-script registration.
-
-The original standalone Runtime remains free of deep environment reads. The framework-readiness extension introduces six application-boundary bootstrap variables, synchronized in `env_template` and `docs/Environment_Variables.md`; no dispatch, decorator, Registrar, or worker reads them directly. `MEMO.md` remains index-only and does not require an entry because this feature already has an authoritative design document and durable API document.
+The prior claim that terminal `hook_script` was merely historical and no longer defined the public architecture is withdrawn. Earlier task records remain historical evidence, but cannot override the Human's clarification. The default terminal Handler, per-point cardinality, Module `main` entry and Module-before-Script name ordering remain authoritative.
 
 ## Framework-readiness extension before application Hook-point rollout
 
-The implemented extension makes the Hook framework ready before application owners add Hook points to core flows. This is a feature extension and convenience layer over the implemented Runtime, not a replacement for it. It adds environment-driven bootstrap, startup or first-use registration, a shared execution facade, and two insertion styles: decorators for ordinary callable boundaries and explicit function-body calls for precise lifecycle points.
+The implemented extension provides preparation and insertion conveniences, but complete architecture readiness remains gated by U07–U11 before application owners add Hook points to core flows. This is a feature extension and convenience layer over the implemented Runtime, not a replacement for it. It adds environment-driven bootstrap, startup or first-use registration, a shared execution facade, and two insertion styles: decorators for ordinary callable boundaries and explicit function-body calls for precise lifecycle points.
 
-These framework-readiness APIs are implemented and exported. Existing explicit Runtime APIs remain supported and unchanged:
+These framework-readiness APIs are implemented and exported. The following configured compatibility calls remain; synchronous dispatch is unified, while async acceptance and nonwaiting removal remain pending:
 
 ```python
 runtime.register_configured(...)
@@ -442,8 +474,9 @@ application configuration boundary
   -> ConfiguredHookRegistrar
        -> startup eager registration, or lazy singleflight registration
   -> ConfiguredHookExecutor
-       -> dispatch / adispatch / aemit
-  -> existing HookRuntime configured APIs
+       -> dispatch / awaited adispatch (no fire-and-observe)
+  -> unified Hook-point plan (Modules -> default hook_script -> Scripts)
+     U06 sync adapter is committed; U07/U08 lifecycle acceptance remains pending
 ```
 
 Core business modules receive a `ConfiguredHookExecutor` explicitly. They never read environment variables, parse Hook configuration, scan script folders, build trust assertions, or mutate Runtime trust. Decorator and explicit insertion styles must call the same Executor and Registrar; neither may duplicate discovery, registration, failure caching, reload, or cleanup logic.
@@ -465,11 +498,11 @@ The implemented variables are:
 | `TOPSAILAI_CONFIGURED_HOOKS_REGISTRATION_MODE` | `startup` | `startup` or `lazy`. |
 | `TOPSAILAI_CONFIGURED_HOOKS_STARTUP_POLICY` | `fail` | `fail` or explicit `disable`; silent partial enablement is prohibited. |
 
-Environment variables locate versioned files and choose policy; they do not embed per-Hook script lists or artifact assertions. The Hook configuration maps exact Hook names to `enabled` plus exactly one of ordered `scripts` or `folder`. Relative script paths resolve only against source roots authorized by the manifest. Configuration and manifest parsers validate shape and aggregate budgets before normalization, reject path escape and duplicate canonical files, and return immutable owned records.
+Environment variables locate versioned files and choose policy; they do not embed per-Hook script lists or artifact assertions. The current Hook configuration maps exact Hook names to `enabled` plus exactly one of `scripts` or `folder`. These fields configure the default Script Hook, and execution uses final registered-name order through the unified U06 adapter. Whole-plan startup/lazy/reload failure acceptance remains U07; this Script-source schema does not itself expose ordinary ModuleSource registration. Relative script paths resolve only against source roots authorized by the manifest. Configuration and manifest parsers validate shape and aggregate budgets before normalization, reject path escape and duplicate canonical files, and return immutable owned records.
 
 The implemented public trust-manifest loader verifies the pinned digest and constructs exact source-root, interpreter/native-policy, Python runtime, deployment closure, and `ArtifactClosureAssertion` authority. Runtime code never authorizes files it has just discovered by computing assertions on demand. Missing, malformed, stale, or mismatched trust fails closed. Trust changes require a replacement Runtime and application Scope; in-place trust mutation is not supported.
 
-In `startup` mode, bootstrap opens the application Scope and registers every enabled configured Hook before business admission. The default startup policy is `fail`: enabling Hooks with invalid configuration, trust, or registration prevents startup. Explicit `disable` returns a whole-layer disabled result and retires the complete configured-Hook layer; the bootstrap owner records the corresponding bounded diagnostic. It does not partially register a valid-looking subset.
+In target `startup` mode, bootstrap prepares complete unified plans before Hook admission. With no valid prior plan, a failing Hook Point is unavailable and produces a structured diagnostic; business startup is blocked only by Catalog-authorized policy. A failed update retains the last known good plan, never publishes a partial candidate, and reports the desired/active revision mismatch. The existing fail/disable bootstrap behavior is implementation evidence, not an unconditional target startup-block rule.
 
 ### Lazy registration at execution
 
@@ -482,7 +515,8 @@ UNCONFIGURED -> no-op/reported absence
 UNINITIALIZED -> REGISTERING -> READY
                          |-> FAILED_DETERMINISTIC
                          |-> FAILED_TRANSIENT
-READY -> INVALIDATED -> UNINITIALIZED
+READY(active) -> PREPARING(desired, active retained)
+PREPARING -> READY(new active) | UPDATE_FAILED(old active retained)
 any state -> CLOSED
 ```
 
@@ -492,19 +526,18 @@ Exactly one caller performs discovery/capture/publication for one key. Concurren
 
 Deterministic failures include invalid configuration, missing authority, digest or artifact mismatch, path escape, unsupported executable, invalid folder contents, and closed ownership. They are cached for the configuration generation and retried only after explicit reload. Narrowly classified transient resource or contention failures may be retried by one later caller after bounded backoff and attempt limits. Classification is typed; string matching is prohibited. There is no immediate retry loop.
 
-Reload consumes a complete, already validated snapshot and creates a new configuration generation. Unchanged entries retain `READY`; changed lazy entries become `INVALIDATED`; removed entries retire their plans; changed startup entries are eagerly replaced. Publication is atomic per complete Hook plan, admitted executions retain their immutable old plan, and failed replacement cannot expose a partial plan. Trust identity changes require Runtime replacement rather than Registrar reload.
+Reload consumes a complete, already validated snapshot and creates a new configuration generation. Unchanged entries retain `READY`; changed lazy entries acquire a pending desired revision while retaining their active last-known-good plan; removed entries retire their plans; changed startup entries are eagerly replaced. Publication is atomic per complete Hook plan, admitted executions retain their immutable old plan, and failed replacement cannot expose a partial plan. Failed candidates are cleaned and rejected; both new and existing calls may use the last known good active revision, with explicit desired/active mismatch diagnostics. No prior valid plan means unavailable, not an empty successful execution. Trust identity changes require Runtime replacement rather than Registrar reload.
 
-Existing synchronous `emit_configured()` remains fast admission and never gains hidden registration I/O. Lazy background use is exposed only as asynchronous `ConfiguredHookExecutor.aemit()`, which awaits registration and then delegates to `emit_configured()`.
+Existing `emit_configured()` and `ConfiguredHookExecutor.aemit()` are non-waiting implementation surfaces to migrate or withdraw; they are explicitly excluded from the target. Lazy dispatch and adispatch share registration singleflight and wait for the unified execution result. Failed desired-revision preparation retains the active valid revision; readiness must track both rather than erase the old plan.
 
 ### Shared execution facade
 
-The implemented public facade is intentionally small:
+The target waiting-only facade is sketched below; it is not a claim that current code enforces the result envelope:
 
 ```python
 class ConfiguredHookExecutor:
-    def dispatch(self, point, *, payload, operation=None) -> DispatchReport: ...
-    async def adispatch(self, point, *, payload, operation=None) -> DispatchReport: ...
-    async def aemit(self, point, *, payload, operation=None) -> DeliveryReceipt: ...
+    def dispatch(self, point, *, payload, operation=None) -> HookPointResult: ...
+    async def adispatch(self, point, *, payload, operation=None) -> HookPointResult: ...
 ```
 
 `point` is a catalog-owned `HookPointDeclaration`, not an arbitrary caller-created name/schema pair. The Executor creates the immutable event from the declaration, owning Scope, detached payload, and supplied correlation metadata; invokes the shared Registrar according to startup/lazy mode; then calls the existing Runtime method. Sync dispatch retains the existing rejection inside a running event loop. Async first-use preparation runs blocking discovery/capture in controlled infrastructure and does not block the event loop.
@@ -599,16 +632,16 @@ async def run_task(task, hook_executor):
     return result
 ```
 
-Background admission example:
+Waiting completion example:
 
 ```python
-receipt = await hook_executor.aemit(
+report = await hook_executor.adispatch(
     TASK_FINISHED,
     payload=safe_task_result(result),
 )
 ```
 
-The explicit owner retains business ordering, branching, mutation, return, and exception authority. It must not infer success before persistence/cleanup checkpoints or place a blocking Hook inside mandatory cleanup. `aemit` reports admission only and does not wait for handler completion.
+The explicit owner retains business ordering, branching, mutation, return, and exception authority. It must not infer success before persistence/cleanup checkpoints or place a blocking Hook inside mandatory cleanup. Both sync dispatch and async adispatch wait for completion; fire-and-observe is outside target scope.
 
 ### Hook-point declaration catalog
 
@@ -644,14 +677,14 @@ The framework tests must prove structural performance properties: disabled boots
 | Disabled | No config/manifest I/O; no registration. | Same. |
 | Unconfigured known point | No plan; stable no-op/report. | `UNCONFIGURED`; no discovery. |
 | Valid configuration/trust | Register before business admission. | Register once on first execution, then `READY`. |
-| Invalid config or manifest | Default startup failure; optional whole-layer disable. | Rejected at bootstrap, never deferred to core execution. |
-| Artifact mismatch | Startup registration fails closed. | Deterministic first-use failure cached for generation. |
+| Invalid desired config or manifest | Reject candidate; retain valid active plan with mismatch diagnostics, otherwise unavailable. | Same policy; cache failure for the desired revision. |
+| Artifact mismatch | Reject candidate; retain last known good, otherwise unavailable. | Same; deterministic failure cached for desired revision. |
 | Concurrent first execution | Already ready. | One registration winner; all callers share result. |
 | Runtime or Scope closed | No registration/admission. | `CLOSED`; waiters wake with stable rejection. |
 | Config reload unchanged | No publication/generation change. | Retain `READY`. |
-| Config reload changed/removed | Eager atomic replace/retire. | Invalidate changed; retire removed; next use registers. |
+| Config reload changed/removed | Eager atomic replace; failure retains active; explicit removal retires. | Prepare desired revision on next use while retaining active; explicit removal retires. |
 | Trust change | Replace Runtime and Scope. | Replace Runtime and Scope. |
-| Background first use | Existing emit after startup registration. | `aemit` awaits singleflight, then admits. |
+| Non-waiting execution | Excluded from target. | Excluded from target. |
 
 ### Framework-ready acceptance criteria
 
@@ -660,11 +693,11 @@ The Human may schedule core-code Hook-point rollout only when all of the followi
 - A public versioned trust-manifest loader and typed immutable bootstrap exist and fail closed against pinned deployment authority.
 - Both `startup` and `lazy` modes pass lifecycle, concurrency, reload, invalidation, closure, and cleanup tests; `startup` remains the default.
 - Registrar singleflight proves one discovery/capture/publication per Scope/Hook/configuration generation across sync and async first callers.
-- Executor `dispatch`, `adispatch`, and `aemit` delegate to existing Runtime APIs and preserve explicit API compatibility.
+- Executor dispatch and awaited adispatch capture the same unified plan and return the target HookPointResult; no fire-and-observe API is included.
 - Decorator support maps one wrapper to distinct before/success/error declarations, preserves sync/async contracts and binding, and proves phase cardinality: before once before entry, success exactly once only on normal return, and error exactly once only on callable failure.
 - Decorator error-path tests prove the exact original exception object and traceback frames survive ordinary and failing `report` Hooks and an explicitly blocking error Hook; no path returns a fallback, Hook report, converted exception, or replacement exception.
 - Blocking-before tests prove callable non-entry; blocking-success tests prove the catalog explicitly approved failure after completed business work. Generators and unsafe payload exposure remain rejected.
-- Explicit insertion supports exact before/success/error/background checkpoints without changing business ownership.
+- Explicit insertion supports exact before/success/error checkpoints without changing business ownership.
 - One catalog contract drives both insertion styles, with reviewed schema, sensitive fields, mode, Scope, failure policy, ordering, latency, and owner.
 - Trust changes replace Runtime; graceful close prevents stale publication and reports zero unexplained cleanup debt in acceptance runs.
 - Structural performance tests prove disabled and `READY` paths perform no hidden bootstrap filesystem I/O and async first use does not block the event loop; each concrete core Hook-point rollout records and approves its numeric latency and resource budgets.
@@ -673,6 +706,8 @@ The Human may schedule core-code Hook-point rollout only when all of the followi
 - Core integration remains absent until this gate is accepted.
 
 ### Readiness status and implementation roadmap
+
+**Full architecture acceptance remains gated by U07–U11.** U06A–U06D synchronous per-point execution, `main` invocation and both name-order stages are committed and verified in their selected affected scope; the older inventory below remains historical evidence, not full lifecycle/core-rollout approval.
 
 Already implemented and verified:
 

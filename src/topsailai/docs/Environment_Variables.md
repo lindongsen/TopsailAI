@@ -374,7 +374,7 @@ These variables are read once by the application configuration boundary and pass
 | `TOPSAILAI_CONFIGURED_HOOKS_REGISTRATION_MODE` | `startup` | Registration mode: `startup` registers enabled points before business admission; `lazy` registers one point on first execution through shared singleflight. |
 | `TOPSAILAI_CONFIGURED_HOOKS_STARTUP_POLICY` | `fail` | Startup registration failure policy: `fail` rejects startup; `disable` retires and disables the complete configured-Hook layer. Silent partial enablement is prohibited. |
 
-The configuration file maps known catalog Hook names to `enabled` and exactly one of ordered `scripts` or `folder`. Environment values do not embed per-Hook lists or trust assertions. Trust changes require constructing a replacement Runtime and application Scope.
+The current configuration file maps known catalog Hook names to `enabled` and exactly one of `scripts` or `folder`. These fields must configure the default terminal Script Hook in the [unified target design](../features/feature-unified-hooks-design.md), not a peer Script plan; list position is not the target execution order. The committed U06 configured adapter executes the unified Module/default-Hook plan via `execute_hook_point`; Script entries use final registered-name order, not caller list order. [Hooks API](Hooks_API.md) distinguishes synchronous completion from pending U07–U11 lifecycle/migration acceptance. Environment values do not embed per-Hook lists or trust assertions. Trust changes require constructing a replacement Runtime and application Scope.
 
 ### Legacy and LLM Hook Configuration
 

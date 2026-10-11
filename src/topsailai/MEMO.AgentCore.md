@@ -8,6 +8,10 @@ This document collects design notes, conventions, and known pitfalls for the **A
 - `context/` — Context Messages Management
 - `ai_base/` — LLM / Agent Engineering Framework
 
+## Unified Hook Point architecture
+
+The [authoritative Hook design](features/feature-unified-hooks-design.md) requires one plan per Hook Point: 0..N Modules exposing `main(*args, **kwargs)`, ordered by final registered name, followed by exactly one framework-owned default terminal `hook_script` whose internal Scripts are ordered by final registered name. Both orders are case-sensitive Unicode ascending; duplicate keys within each kind reject. Script names have no format restrictions. Failed updates retain the last known good plan with desired/active mismatch diagnostics; first-time failure is unavailable. Only sync wait and async await are in target scope, not fire-and-observe. Arbitrary Module returns are wrapped in a framework-owned result envelope without a JSON-only business restriction. Script lists/folders and startup/lazy/decorator/function wrappers must not create peer Script plans. U06A–U06D implement unified synchronous execution: the configured adapter (`17d9e9ac`) routes through `execute_hook_point`, and ordinary `register_hook_point`/`dispatch_hook_point` (`14d61522`) retain scope-local source descriptors and capture/publish an exact plan under a deadline established before preparation. Generic Binding `register/dispatch` remains legacy. [Hooks API](docs/Hooks_API.md) documents results and execution-local custody. [Remaining acceptance](issues/issue-hook-point-default-script-handler-architecture.md) is U07 last-known-good/diagnostics, U08 async cancellation, U09 Catalog authority, U10 nonwaiting API removal and U11 lifecycle verification. Core rollout remains deferred.
+
 ## Core Modules
 
 ### Memory Lifecycle Sync Dispatch

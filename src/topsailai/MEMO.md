@@ -84,3 +84,7 @@ Summary: `MEMO.md` is injected into the agent context, so each entry is only a h
 The full rule lives in [features/feature-plugin-mechanisms.md](./features/feature-plugin-mechanisms.md) — section "Plugin, Hook, and Event Responsibilities".
 
 Summary: Plugin extends what a component can do, Hook defines when and where additional behavior runs in an existing flow, and Event communicates what happened so decoupled components can observe or react; these are complementary dimensions that can be composed.
+
+## Unified Hook Point implementation and remaining acceptance
+
+[MEMO.AgentCore.md](MEMO.AgentCore.md#unified-hook-point-architecture) — Each Hook Point runs name-ordered Modules through `main(*args, **kwargs)` before its single default terminal Script Hook; U06 unified synchronous configured/ordinary execution is committed, while U07–U11 lifecycle and migration acceptance remains pending.
