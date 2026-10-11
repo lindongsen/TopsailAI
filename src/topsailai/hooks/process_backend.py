@@ -122,13 +122,25 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
         with self._debt_lock:
             return tuple(self._debts[key] for key in sorted(self._debts))
 
-    def retry_cleanup(self, debt_id: str) -> bool:
+    def cleanup_debts_for_record(self, record: _LaunchRecord) -> tuple[CleanupDebt, ...]:
+        """Query only the debt still owned by this exact launch record."""
+        with self._debt_lock:
+            entry = self._debt_processes.get(record.debt_id)
+            if entry is None or entry.record is not record:
+                return ()
+            debt = self._debts.get(record.debt_id)
+            return () if debt is None else (debt,)
+
+    def retry_cleanup(self, debt_id: str, *, record: _LaunchRecord | None = None) -> bool:
         """Independently retry process and channel cleanup under one exact lease."""
         entry: _DebtEntry | None = None
         debt_restore_required = False
         try:
             with self._debt_lock:
                 entry = self._debt_processes.get(debt_id)
+                if record is not None and (record.debt_id != debt_id or (
+                        entry is not None and entry.record is not record)):
+                    return False
                 if entry is None:
                     return debt_id not in self._debts
                 if entry.state != "pending":

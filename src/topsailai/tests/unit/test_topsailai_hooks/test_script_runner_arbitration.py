@@ -148,6 +148,44 @@ def _install_registry_fault(runner, fault):
     runner._write_prelaunch_storage = write_fault
 
 
+def _register_pending_process_probe(runner, root, debt_id):
+    """Bind an independently retryable process probe before fault installation."""
+    from types import SimpleNamespace
+
+    owner = TemporaryStorageOwner(root)
+    assert owner.allocate()
+    record = LaunchRecord(debt_id)
+    record.process = SimpleNamespace(pid=123)
+    custody = _StorageCustody(owner)
+    custody._write_state(record=record, pending=True)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    return custody
+
+
+def _settle_process_probe(custody, debt_id, record):
+    """Verify exact process authority before publishing controlled cleanup facts."""
+    assert record is custody.record and debt_id == record.debt_id
+    record.cleanup.debt_state = "settled"
+    record.cleanup.termination_confirmed = True
+    for channel in record.cleanup.channels.values():
+        channel.state = "closed"
+
+
+def _register_completed_process_probes(runner, root, *debt_ids):
+    """Retire real preregistered probe custody before installing interruption faults."""
+    for debt_id in debt_ids:
+        owner = TemporaryStorageOwner(root)
+        assert owner.allocate()
+        record = LaunchRecord(debt_id)
+        custody = _StorageCustody(owner)
+        custody._write_state(record=record, pending=True)
+        runner._write_prelaunch_storage(((id(owner), custody),))
+        assert owner.cleanup()
+        custody._write_state(storage_settled=True)
+        runner._forget_storage(owner)
+        assert runner.retry_cleanup(debt_id)
+
+
 def test_owned_runner_is_public_and_satisfies_runner_protocol() -> None:
     """The package export must expose a concrete structural runner implementation."""
     import topsailai.hooks as hooks
@@ -616,13 +654,16 @@ def test_incomplete_result_with_eof_is_invalid(
 class _SettledProcessDebtBackend(IsolatedProcessBackend):
     """Confirm one controlled process debt without mutating storage."""
 
-    def retry_cleanup(self, debt_id: str) -> bool:
-        """Confirm only the fixture process debt."""
-        return debt_id == "process-debt"
+    def retry_cleanup(self, debt_id: str, *, record=None) -> bool:
+        """Settle only the exact fixture record supplied by prelaunch custody."""
+        assert record is self.record
+        assert debt_id == record.debt_id
+        record.cleanup.debt_state = "settled"
+        record.cleanup.termination_confirmed = True
+        for channel in record.cleanup.channels.values():
+            channel.state = "closed"
+        return True
 
-    def cleanup_debts(self) -> tuple[CleanupDebt, ...]:
-        """Expose no process debt after the controlled retry succeeds."""
-        return ()
 
 
 def test_interrupted_process_to_storage_cleanup_retains_exact_ownership(
@@ -638,7 +679,15 @@ def test_interrupted_process_to_storage_cleanup_retains_exact_ownership(
     assert unrelated.allocate()
     storage_path = storage.path
     unrelated_path = unrelated.path
-    runner._remember_process_storage("process-debt", storage)
+    from types import SimpleNamespace
+
+    record = LaunchRecord("process-debt")
+    record.process = SimpleNamespace(pid=123)
+    runner._backend.record = record
+    custody = _StorageCustody(storage)
+    custody._write_state(record=record, pending=True)
+    runner._write_prelaunch_storage(((id(storage), custody),))
+    runner._remember_process_storage(record.debt_id, storage)
     runner._remember_storage(unrelated)
     storage_debt = storage.cleanup_debts()[0]
     unrelated_debt = unrelated.cleanup_debts()[0]
@@ -1576,7 +1625,7 @@ def test_partial_storage_publication_waits_for_authoritative_settlement(tmp_path
     storage_path = custody.owner.path
     assert runner.cleanup_debts()[0].debt_id == custody.record.debt_id
     with monkeypatch.context() as patch:
-        patch.setattr(backend, "retry_cleanup", lambda debt_id: True)
+        patch.setattr(backend, "retry_cleanup", lambda debt_id, *, record=None: True)
         patch.setattr(backend, "_finish_record", lambda *args: None)
         runner.retry_cleanup(storage_debt.debt_id)
         assert not runner.retry_cleanup(custody.record.debt_id)
@@ -3444,18 +3493,36 @@ def test_retry_exclusion_interruption_handoff(tmp_path, monkeypatch, exception_t
 
 @pytest.mark.parametrize("process_settled", [False, True])
 def test_retry_exclusion_unbound_fallback_remains_incomplete(tmp_path, monkeypatch, process_settled):
-    """Preserve legacy backend fallback failure and storage debt mapping."""
+    """Preserve owned process retry failure and exact storage debt mapping."""
     root = tmp_path / "private"
     root.mkdir(mode=0o700)
     backend = IsolatedProcessBackend(temp_root=str(root))
     runner = OwnedHookScriptRunner(backend)
     owner = TemporaryStorageOwner(root)
     assert owner.allocate()
-    runner._process_storage["legacy-process"] = owner
+    from types import SimpleNamespace
+
+    record = LaunchRecord("legacy-process")
+    record.process = SimpleNamespace(pid=123)
+    custody = _StorageCustody(owner)
+    custody._write_state(record=record, pending=True)
+    runner._write_prelaunch_storage(((id(owner), custody),))
+    runner._remember_process_storage(record.debt_id, owner)
     cleanup = TemporaryStorageOwner.cleanup
+
+    def retry_process(debt_id, *, record=None):
+        """Confirm only the exact preregistered record and preserve failure injection."""
+        assert record is custody.record and debt_id == record.debt_id
+        if process_settled:
+            record.cleanup.debt_state = "settled"
+            record.cleanup.termination_confirmed = True
+            for channel in record.cleanup.channels.values():
+                channel.state = "closed"
+        return process_settled
+
     try:
         with monkeypatch.context() as patch:
-            patch.setattr(backend, "retry_cleanup", lambda debt_id: process_settled)
+            patch.setattr(backend, "retry_cleanup", retry_process)
             patch.setattr(TemporaryStorageOwner, "cleanup", lambda value: False)
             assert not runner.retry_cleanup("legacy-process")
         assert runner._process_storage["legacy-process"] is owner
@@ -3470,7 +3537,7 @@ def test_retry_exclusion_unbound_fallback_remains_incomplete(tmp_path, monkeypat
 @pytest.mark.parametrize("active", ["recovering", "retry", "idle"])
 @pytest.mark.parametrize("debt_kind", ["exact", "other", "none"])
 def test_retry_exclusion_retained_alias_authority(tmp_path, monkeypatch, active, debt_kind):
-    """Only exact active owner authority blocks backend fallback without owner locks."""
+    """Only exact active authority blocks owned process retry without owner locks."""
     import topsailai.hooks.script_runner as module
 
     root = tmp_path / "private"
@@ -3487,10 +3554,27 @@ def test_retry_exclusion_retained_alias_authority(tmp_path, monkeypatch, active,
     custody._write_retry_owner(token)
     runner._write_prelaunch_storage(((id(owner), custody),))
     debt_id = owner.cleanup_debts()[0].debt_id if debt_kind == "exact" else "other-debt"
+    from types import SimpleNamespace
+
+    probe_owner = None
+    if debt_kind == "exact":
+        record = LaunchRecord(debt_id)
+        record.process = SimpleNamespace(pid=123)
+        custody._write_state(record=record, pending=True)
+    else:
+        probe_owner = TemporaryStorageOwner(root)
+        assert probe_owner.allocate()
+        record = LaunchRecord(debt_id)
+        record.process = SimpleNamespace(pid=123)
+        probe = _StorageCustody(probe_owner)
+        probe._write_state(record=record, pending=True)
+        runner._write_prelaunch_storage(((id(probe_owner), probe),))
     calls = []
 
-    def backend_retry(value):
-        """Record fallback and refuse completion for unrelated recovery authority."""
+    def backend_retry(value, *, record=None):
+        """Record only the exact preregistered process retry and refuse completion."""
+        assert record is (custody.record if debt_kind == "exact" else probe.record)
+        assert value == record.debt_id
         calls.append(value)
         return False
 
@@ -3505,6 +3589,8 @@ def test_retry_exclusion_retained_alias_authority(tmp_path, monkeypatch, active,
         assert owner.path.exists()
     finally:
         TemporaryStorageOwner.cleanup(owner)
+        if probe_owner is not None:
+            TemporaryStorageOwner.cleanup(probe_owner)
 
 
 @pytest.mark.parametrize("primary_type", [KeyboardInterrupt, SystemExit])
@@ -3741,6 +3827,14 @@ def test_retry_exclusion_stable_alias_after_cleanup(tmp_path, monkeypatch, regis
     runner._write_prelaunch_storage(((id(owner), custody),))
     if registered:
         runner._storage[storage_id] = owner
+    unrelated_owner = TemporaryStorageOwner(root)
+    assert unrelated_owner.allocate()
+    unrelated_record = LaunchRecord("unrelated-alias")
+    from types import SimpleNamespace
+    unrelated_record.process = SimpleNamespace(pid=123)
+    unrelated_custody = module._StorageCustody(unrelated_owner)
+    unrelated_custody._write_state(record=unrelated_record, pending=True)
+    runner._write_prelaunch_storage(((id(unrelated_owner), unrelated_custody),))
     cleanup = TemporaryStorageOwner.cleanup
     forget = runner._forget_storage
     native_set = _custody_field_write
@@ -3749,9 +3843,14 @@ def test_retry_exclusion_stable_alias_after_cleanup(tmp_path, monkeypatch, regis
     results, backend_calls, attempts, errors = [], [], [], []
     interruption = KeyboardInterrupt("after genuine cleanup")
 
-    def backend_retry(value):
-        """Record unrelated fallback without allowing exact alias fallback."""
+    def backend_retry(value, *, record=None):
+        """Settle only the independently preregistered unrelated record."""
+        assert record is unrelated_record and value == record.debt_id
         backend_calls.append(value)
+        record.cleanup.debt_state = "settled"
+        record.cleanup.termination_confirmed = True
+        for channel in record.cleanup.channels.values():
+            channel.state = "closed"
         return True
 
     def observe():
@@ -3775,6 +3874,8 @@ def test_retry_exclusion_stable_alias_after_cleanup(tmp_path, monkeypatch, regis
 
     def remove(value):
         """Clear genuine owner debt before probing the active recovery window."""
+        if value is unrelated_owner:
+            return cleanup(value)
         attempts.append(value)
         assert cleanup(value)
         assert not path.exists() and owner.cleanup_debts() == ()
@@ -3792,6 +3893,8 @@ def test_retry_exclusion_stable_alias_after_cleanup(tmp_path, monkeypatch, regis
 
     def partial_release(value):
         """Interrupt after exact storage registration removal, before custody release."""
+        if value is unrelated_owner:
+            return forget(value)
         if mode == "partial_release":
             runner._storage.pop(storage_id, None)
         else:
@@ -3840,6 +3943,7 @@ def test_retry_exclusion_stable_alias_after_cleanup(tmp_path, monkeypatch, regis
             thread.join(5)
             assert not thread.is_alive()
         cleanup(owner)
+        cleanup(unrelated_owner)
 
 
 @pytest.mark.parametrize('kind', [KeyboardInterrupt, SystemExit])
@@ -3925,6 +4029,7 @@ def test_prelaunch_recovery_event_windows(tmp_path, monkeypatch, after, boundary
     script.write_text("#!/bin/false\n")
     script.chmod(0o700)
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(root)))
+    process_probe = _register_pending_process_probe(runner, root, 'unrelated-prelaunch')
     event = HookEvent("review", "u06.arbitration", 1, "owner", "scope", "op", None, 1,
                       "2026-10-10T00:00:00Z", "test", "review", {})
     context = HookContext(event, "review-delivery", "hook_script", 1, 5000)
@@ -3972,6 +4077,8 @@ def test_prelaunch_recovery_event_windows(tmp_path, monkeypatch, after, boundary
 
     def remove(owner):
         """Use real owner deletion and interrupt at one selected boundary."""
+        if owner is process_probe.owner:
+            return cleanup(owner)
         attempts.append(owner)
         custody = runner._prelaunch_storage[id(owner)]
         captured.append((owner, custody, custody.storage_alias.debt_id))
@@ -3987,6 +4094,8 @@ def test_prelaunch_recovery_event_windows(tmp_path, monkeypatch, after, boundary
 
     def release(owner):
         """Observe before and after identity registry release without synthetic cleanup."""
+        if owner is process_probe.owner:
+            return forget(owner)
         if boundary == "partial":
             runner._storage.pop(captured[0][2], None)
             probe()
@@ -4025,9 +4134,10 @@ def test_prelaunch_recovery_event_windows(tmp_path, monkeypatch, after, boundary
             patch.setattr(module._StorageCustody, "__init__", initialize)
             patch.setattr(TemporaryStorageOwner, "cleanup", remove)
             patch.setattr(runner, "_forget_storage", release)
-            def backend_retry(alias):
+            def backend_retry(alias, *, record=None):
                 """Record only unrelated backend completion requests."""
                 backend_calls.append(alias)
+                _settle_process_probe(process_probe, alias, record)
                 return True
             patch.setattr(runner._backend, "retry_cleanup", backend_retry)
             with pytest.raises(BaseException) as caught:
@@ -4101,6 +4211,7 @@ def test_prelaunch_recovery_unrelated_reconciliation_alias(tmp_path):
     owner = TemporaryStorageOwner(tmp_path)
     assert owner.allocate()
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-reconciliation')
     custody = module._StorageCustody(owner)
     custody._write_state(pending=True)
     custody._write_state(reconciliation_pending=True)
@@ -4160,6 +4271,7 @@ def test_prelaunch_recovery_protected_arming(
     script.write_text("#!/bin/false\n")
     script.chmod(0o700)
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(root)))
+    process_probe = _register_pending_process_probe(runner, root, 'unrelated-protected-arming')
     primary = kind("original alias interruption")
     secondary = SystemExit("arming") if kind is KeyboardInterrupt else KeyboardInterrupt("arming")
     initialize = module._StorageCustody.__init__
@@ -4212,6 +4324,8 @@ def test_prelaunch_recovery_protected_arming(
 
     def remove(owner):
         """Probe nested admission and either remove real storage or leave exact debt."""
+        if owner is process_probe.owner:
+            return cleanup(owner)
         removals.append(owner)
         custody = runner._prelaunch_storage[id(owner)]
         token = custody.execution_owner
@@ -4225,9 +4339,10 @@ def test_prelaunch_recovery_protected_arming(
             raise secondary
         return cleanup(owner)
 
-    def backend_retry(alias):
+    def backend_retry(alias, *, record=None):
         """Record unrelated completion without accepting the exact storage alias."""
         backend_calls.append(alias)
+        _settle_process_probe(process_probe, alias, record)
         return True
 
     thread = threading.Thread(target=observe)
@@ -4293,6 +4408,7 @@ def test_prelaunch_first_publication_boundary(
     script.write_text("#!/bin/false\n")
     script.chmod(0o700)
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(root)))
+    _register_completed_process_probes(runner, root, 'unrelated-first-publication')
     primary = kind("original alias assignment")
     secondary = SystemExit("publication") if kind is KeyboardInterrupt else KeyboardInterrupt("publication")
     initialize = module._StorageCustody.__init__
@@ -4544,6 +4660,7 @@ def test_incomplete_arming_invocation_exclusion(tmp_path, monkeypatch, context, 
     script.write_text("#!/bin/false\n")
     script.chmod(0o700)
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    process_probe = _register_pending_process_probe(runner, tmp_path, 'unrelated-incomplete-arming')
     original_lock = runner._lock
     class ReleaseSeam:
         """Observe exact retry only after recovery lock release before finalizer."""
@@ -4575,9 +4692,10 @@ def test_incomplete_arming_invocation_exclusion(tmp_path, monkeypatch, context, 
                 observed.append((result, path.exists(), id(owner) in runner._prelaunch_storage))
     runner._lock = ReleaseSeam()
 
-    def backend_retry(alias):
+    def backend_retry(alias, *, record=None):
         """Accept only the unrelated alias at the observed handoff."""
         backend_calls.append(alias)
+        _settle_process_probe(process_probe, alias, record)
         return True
 
     try:
@@ -4648,6 +4766,7 @@ def test_terminal_invocation_lease_handoff(tmp_path, monkeypatch, context, kind)
     unrelated = tmp_path / "unrelated"
     unrelated.mkdir()
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-terminal')
     lock = runner._lock
     observing = False
 
@@ -4774,6 +4893,7 @@ def test_execution_lease_mismatch_retains_exact_custody(tmp_path, monkeypatch, c
     script.write_text("#!/bin/false\n")
     script.chmod(0o700)
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-foreign-lease')
     with monkeypatch.context() as patch:
         patch.setattr(module._StorageCustody, "__init__", init)
         _install_custody_assignment_fault(patch, assign)
@@ -4804,6 +4924,7 @@ def test_allocation_false_requires_verified_no_resource(tmp_path, monkeypatch, a
     import topsailai.hooks.script_runner as module
 
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-false-allocation')
     native_allocate = TemporaryStorageOwner.allocate
     owners = []
     custodies = []
@@ -4865,6 +4986,7 @@ def test_verified_empty_allocation_teardown_interruption(tmp_path, monkeypatch, 
     import topsailai.hooks.script_runner as module
 
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-empty-teardown')
     initialize = module._StorageCustody.__init__
     captured = []
     native_list = list
@@ -4936,6 +5058,7 @@ def test_malformed_execution_lease_preserves_unrelated_retry(tmp_path, monkeypat
     import topsailai.hooks.script_runner as module
 
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-malformed-lease')
     initialize = module._StorageCustody.__init__
     captured = []
 
@@ -4981,6 +5104,7 @@ def test_execution_lease_shape_exact_custody_handback(tmp_path, shape):
     import topsailai.hooks.script_runner as module
 
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-shape')
     owner = TemporaryStorageOwner(tmp_path)
     assert owner.allocate()
     path = owner.path
@@ -5016,6 +5140,7 @@ def test_forget_storage_retains_unprovable_lease(tmp_path, lease):
     import topsailai.hooks.script_runner as module
 
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-forget-shape')
     owner = TemporaryStorageOwner(tmp_path)
     assert owner.allocate()
     custody = module._StorageCustody(owner)
@@ -5038,6 +5163,7 @@ def test_retry_finalizer_preserves_replacement_authority(tmp_path, monkeypatch, 
     from topsailai.hooks.script_runner import _StorageCustody
 
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-during-retry', 'unrelated-after-retry')
     owner = TemporaryStorageOwner(tmp_path)
     assert owner.allocate()
     path = owner.path
@@ -5092,6 +5218,7 @@ def test_retry_finalizer_authority_matrix(tmp_path, monkeypatch, shape, boundary
     from topsailai.hooks.script_runner import _StorageCustody
 
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-matrix', 'unrelated-after-matrix')
     owner = TemporaryStorageOwner(tmp_path)
     assert owner.allocate()
     path = owner.path
@@ -5178,6 +5305,7 @@ def test_retry_primary_preserved_across_finalizer(tmp_path, monkeypatch, primary
     from topsailai.hooks.script_runner import _StorageCustody
 
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-primary-matrix', 'unrelated-after-primary')
     owner = TemporaryStorageOwner(tmp_path)
     assert owner.allocate()
     path = owner.path
@@ -5260,6 +5388,7 @@ def test_retry_double_disarm_preserves_public_convergence(tmp_path, monkeypatch)
     from topsailai.hooks.script_runner import _StorageCustody
 
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-double-disarm')
     owner = TemporaryStorageOwner(tmp_path)
     assert owner.allocate()
     debt = owner.cleanup_debts()[0]
@@ -5325,6 +5454,7 @@ def test_retry_terminal_identity_interruption_preserves_convergence(tmp_path, mo
     from topsailai.hooks.script_runner import _StorageCustody
 
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-double-disarm')
     owner = TemporaryStorageOwner(tmp_path)
     assert owner.allocate()
     debt = owner.cleanup_debts()[0]
@@ -5398,6 +5528,7 @@ def test_foreign_closed_invocation_cannot_authorize_token_withdrawal(tmp_path):
     """A different closed invocation cannot prove this token has ended."""
     from topsailai.hooks.script_runner import _StorageCustody
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-closed-invocation')
     owner = TemporaryStorageOwner(tmp_path)
     assert owner.allocate()
     debt = owner.cleanup_debts()[0]
@@ -5430,6 +5561,7 @@ def test_retry_receipt_requires_exact_provenance(tmp_path, monkeypatch, replacem
     from topsailai.hooks.script_runner import _StorageCustody
 
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-receipt')
     owner = TemporaryStorageOwner(tmp_path)
     assert owner.allocate()
     debt = owner.cleanup_debts()[0]
@@ -5510,6 +5642,7 @@ def test_active_exact_retry_precedes_owner_observation(tmp_path, monkeypatch, ob
     from topsailai.hooks.script_runner import _StorageCustody
 
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-owner-observation')
     owner = TemporaryStorageOwner(tmp_path)
     assert owner.allocate()
     debt = owner.cleanup_debts()[0]
@@ -5570,6 +5703,7 @@ def test_retry_registry_replacement_retains_exact_token_until_restoration(
     from topsailai.hooks.script_runner import _StorageCustody
 
     runner = OwnedHookScriptRunner(IsolatedProcessBackend(temp_root=str(tmp_path)))
+    _register_completed_process_probes(runner, tmp_path, 'unrelated-replacement')
     owner = TemporaryStorageOwner(tmp_path)
     assert owner.allocate()
     owned_path = owner.path
@@ -7331,13 +7465,26 @@ def test_retry_settled_proof_retirement_releases_receipt_and_custody(tmp_path):
     runner._write_prelaunch_storage(((id(owner), custody),))
     runner._storage[debt.debt_id] = owner
     reference = weakref.ref(custody)
+    owner_reference = weakref.ref(owner)
+    peer = OwnedHookScriptRunner(runner._backend)
+    backend_calls = []
+    def retry_backend(debt_id, *, record=None):
+        """Observe forbidden backend calls without granting storage authority."""
+        backend_calls.append((debt_id, record))
+        return False
+    runner._backend.retry_cleanup = retry_backend
     assert runner.retry_cleanup(debt.debt_id)
     assert custody.retry_owner is None and custody.retry_handback is None
     assert not runner._prelaunch_storage and not runner._retry_receipts
-    del custody
+    del custody, owner
     gc.collect()
     assert reference() is None
+    assert owner_reference() is None
     assert runner.retry_cleanup(debt.debt_id)
+    assert runner.retry_cleanup(debt.debt_id)
+    assert not peer.retry_cleanup(debt.debt_id)
+    assert not runner.retry_cleanup("unknown-storage-debt")
+    assert backend_calls == []
 
 
 def test_retry_failure_delivery_finite_repeated_interruptions(tmp_path, monkeypatch):

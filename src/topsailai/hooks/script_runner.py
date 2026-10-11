@@ -23,6 +23,7 @@ from topsailai.hooks.hook_script_contracts import (
 from topsailai.hooks.hook_script_discovery import HookScriptEntry
 from topsailai.hooks.process_backend import IsolatedProcessBackend
 from topsailai.hooks.process_state import CleanupDebt, LaunchRecord, WorkerResult
+from topsailai.hooks.process_state import LaunchRecord as _CanonicalLaunchRecord
 from topsailai.hooks.process_transport import ScriptTransportFacts, drain_script_process
 from topsailai.hooks.script_protocol import (
     ScriptProtocolError,
@@ -416,14 +417,15 @@ def _private_runner_authority():
                 authorities.pop(identity, None)
 
         authorities[identity] = (weakref.ref(runner, retire),
-                                 _private_mapping_authority(), _private_mapping_authority())
+                                 _private_mapping_authority(), _private_mapping_authority(),
+                                 _private_mapping_authority())
 
     def access(runner, receipt):
         """Return authority only for the exact live runner referent."""
         entry = authorities.get(id(runner))
         if entry is None or entry[0]() is not runner:
             raise RuntimeError("runner authority has no exact owner")
-        return entry[2 if receipt else 1]
+        return entry[1 + receipt]
 
     return initialize, access
 
@@ -483,6 +485,18 @@ class OwnedHookScriptRunner:
 
     def _write_prelaunch_storage(self, changes=(), retire=()):
         """Publish and retire registry identities through the sole canonical writer."""
+        for identity in retire:
+            custody = self._prelaunch_storage.get(identity)
+            if (type(custody) is _StorageCustody
+                    and (custody.release_complete or custody.storage_settled)
+                    and custody.retry_owner is None and custody.execution_owner is None
+                    and _execution_lease_inactive(custody) and self._storage_ready(custody)):
+                observe, transition = _access_runner_authority(self, 2)
+                evidence = tuple((proof.debt_id, proof) for proof in
+                                 (custody.record, custody.storage_alias)
+                                 if isinstance(proof, (_CanonicalLaunchRecord, CleanupDebt)))
+                if evidence and not transition(observe(), evidence):
+                    raise RuntimeError("settled completion publication lost exact authority")
         if not self._transition_prelaunch_storage(self._prelaunch_storage, changes, retire):
             raise RuntimeError("prelaunch registry transition lost exact snapshot authority")
 
@@ -825,10 +839,13 @@ class OwnedHookScriptRunner:
 
     def cleanup_debts(self) -> tuple[object, ...]:
         """Return exact process obligations before independently removable storage."""
-        process = {debt.debt_id: debt for debt in self._backend.cleanup_debts()}
+        process = {}
         with self._lock:
             owners = {id(storage): storage for storage in self._storage.values()}
             for owner_id, custody in self._prelaunch_storage.items():
+                if custody.record is not None:
+                    for debt in self._backend.cleanup_debts_for_record(custody.record):
+                        process[debt.debt_id] = debt
                 if not custody.pending or custody.recovering or custody.retry_owner is not None or custody.execution_owner is not None or not _execution_lease_inactive(custody):
                     owners.pop(owner_id, None)
                     continue
@@ -1002,7 +1019,7 @@ class OwnedHookScriptRunner:
             if process_custody is not None:
                 record = process_custody.record
                 if not self._storage_ready(process_custody):
-                    if not self._backend.retry_cleanup(debt_id):
+                    if not self._backend.retry_cleanup(record.debt_id, record=record):
                         return False
                     if not self._storage_ready(process_custody):
                         self._backend._finish_record(
@@ -1023,17 +1040,7 @@ class OwnedHookScriptRunner:
                     return False
                 self._forget_storage(storage)
                 return True
-            if not self._backend.retry_cleanup(debt_id):
-                return False
-            with _retry_lock_scope(self._lock, invocation, lock_custody):
-                storage = self._process_storage.get(debt_id)
-            if storage is None:
-                return True
-            self._remember_storage(storage)
-            if not storage.cleanup():
-                return False
-            self._forget_storage(storage)
-            return True
+            return debt_id in _access_runner_authority(self, 2)[0]()
         except BaseException as interrupted:
             primary = interrupted
             primary_traceback = BaseException.__traceback__.__get__(interrupted)
@@ -1292,6 +1299,9 @@ class OwnedHookScriptRunner:
         """Keep invocation storage until corresponding process debt settles."""
         storage.retain_cleanup_debt()
         with self._lock:
+            custody = self._prelaunch_storage.get(id(storage))
+            if custody is not None and custody.record is not None and custody.record.debt_id == debt_id:
+                custody._write_state(pending=True)
             self._process_storage[debt_id] = storage
 
     def _set_result(self, result: HookScriptEntryResult) -> None:
