@@ -12,7 +12,6 @@ import pytest
 from topsailai.hooks import ConfiguredRegistrationResult
 from topsailai.hooks.configured_runtime import (
     _ConfiguredAdmission,
-    _ConfiguredPlan,
     _capture_plan,
     _platform_policy,
     _terminal_configured,
@@ -27,7 +26,11 @@ from topsailai.hooks.hook_script_discovery import (
     HookScriptEntry,
     discover_configured_hook_scripts,
 )
+from topsailai.hooks.artifact_contracts import ArtifactDisposeResult
+from topsailai.hooks.hook_point_plan_ownership import CandidateBuildError, HookPointOwner
+from topsailai.hooks.hook_script_contracts import HookScriptExecutionOptions
 from topsailai.hooks.registry import HookRegistry
+from topsailai.tests.unit.test_topsailai_hooks.test_hook_point_plan_publication import empty_candidate
 from topsailai.tests.unit.test_topsailai_hooks.test_simplified_configured_runtime import (
     _event,
     _runtime,
@@ -41,9 +44,21 @@ class _Owner:
     def __init__(self) -> None:
         self.close_count = 0
 
-    def close(self) -> None:
+    def close(self) -> ArtifactDisposeResult:
         """Record one close operation."""
         self.close_count += 1
+        return ArtifactDisposeResult(True)
+
+
+def _publish(registry, tmp_path, *, scope_id="scope-a", candidate=None):
+    """Publish a real complete candidate and return its exact custody owner."""
+    if candidate is None:
+        candidate = empty_candidate(tmp_path, "hook_test")
+    changed, generation, previous = registry.publish_configured(
+        scope_id, "hook_test", candidate.plan.fingerprint, candidate
+    )
+    owner = registry.configured_plan(scope_id, "hook_test")[1]
+    return owner, (changed, generation, previous)
 
 
 @pytest.mark.parametrize(
@@ -66,17 +81,22 @@ def test_registration_result_rejects_inconsistent_boundary_values(arguments: dic
         ConfiguredRegistrationResult(**arguments)
 
 
-def test_configured_plan_retires_after_last_reader_and_release_is_idempotent() -> None:
+def test_configured_plan_retires_after_last_reader_and_release_is_idempotent(tmp_path) -> None:
     """Retirement closes ownership only after the final admission releases once."""
+    registry = HookRegistry()
     owner = _Owner()
-    plan = _ConfiguredPlan("hook_test", (), owner, "fingerprint")
-    assert plan.acquire()
+    candidate = empty_candidate(tmp_path, "hook_test")
+    candidate._capture_owner = owner
+    plan, _ = _publish(registry, tmp_path, candidate=candidate)
+    reader = registry.acquire_hook_point("scope-a", "hook_test")
+    assert reader is not None
     plan.retire()
-    assert not plan.acquire()
+    assert plan.acquire() is None
     assert owner.close_count == 0
 
     admission = _ConfiguredAdmission(
-        SimpleNamespace(event_id="event"), plan, 3, 100, 0.0
+        SimpleNamespace(event_id="event"), plan, 3, 100, 0.0,
+        reader=reader, registry=registry,
     )
     admission.release()
     admission.release()
@@ -97,38 +117,39 @@ def test_detach_trust_validates_type_and_copies_mutable_boundary(tmp_path: Path)
     assert detached is not policy
 
 
-def test_registry_configured_publication_lookup_replacement_and_scope_removal() -> None:
+def test_registry_configured_publication_lookup_replacement_and_scope_removal(tmp_path) -> None:
     """Configured state publishes atomically and is removed by exact owning scope."""
-    registry = HookRegistry()
-    first = object()
-    replacement = object()
+    from dataclasses import replace
 
-    changed, generation, previous = registry.publish_configured(
-        "scope-a", "hook_test", "one", first
-    )
-    assert (changed, generation, previous) == (True, 1, None)
+    registry = HookRegistry()
+    first, result = _publish(registry, tmp_path)
+    assert result == (True, 1, None)
     assert registry.configured_plan("scope-a", "hook_test") == (1, first)
     assert registry.configured_plan("scope-b", "hook_test") == (1, None)
 
-    assert registry.publish_configured(
-        "scope-a", "hook_test", "one", object()
-    ) == (False, 1, None)
-    assert registry.publish_configured(
-        "scope-a", "hook_test", "two", replacement
-    ) == (True, 2, first)
+    _, repeated = _publish(registry, tmp_path)
+    assert repeated == (False, 1, None)
+    candidate = empty_candidate(tmp_path, "hook_test")
+    candidate._plan = replace(candidate.plan, options=HookScriptExecutionOptions(argv=("two",)))
+    replacement, replaced = _publish(registry, tmp_path, candidate=candidate)
+    assert replaced == (True, 2, first)
+    assert first.retire().accepted
     assert registry.remove_configured_scope("missing") == ()
     assert registry.remove_configured_scope("scope-a") == (replacement,)
+    assert replacement.retire().accepted
     assert registry.configured_plan("scope-a", "hook_test") == (3, None)
 
 
-def test_unregister_scope_handles_configured_only_and_empty_state() -> None:
+def test_unregister_scope_handles_configured_only_and_empty_state(tmp_path) -> None:
     """Generic scope cleanup observes configured plans without requiring bindings."""
     registry = HookRegistry()
     unchanged = registry.unregister_scope("scope-a")
     assert unchanged.accepted and unchanged.generation == 0
-    registry.publish_configured("scope-a", "hook_test", "one", object())
+    owner, _ = _publish(registry, tmp_path)
     removed = registry.unregister_scope("scope-a")
     assert removed.accepted and removed.generation == 2
+    assert registry.configured_plan("scope-a", "hook_test") == (2, None)
+    assert owner.retire().accepted
 
 
 def test_recursive_discovery_validates_source_shape_and_target_kind(tmp_path: Path) -> None:
@@ -227,7 +248,7 @@ def test_register_rejection_paths_preserve_runtime_state(tmp_path: Path, monkeyp
 
 def test_capture_plan_empty_rejection_and_exception_cleanup(tmp_path: Path, monkeypatch) -> None:
     """Capture handles no-op plans and closes ownership on rejection or expected failure."""
-    from topsailai.hooks import configured_runtime as module
+    from topsailai.hooks import hook_point_plan_capture as module
 
     runtime, _ = _runtime(tmp_path)
     trust = runtime.configured_trust
@@ -235,7 +256,9 @@ def test_capture_plan_empty_rejection_and_exception_cleanup(tmp_path: Path, monk
     empty, error = _capture_plan(
         runtime, "hook_test", HookScriptDiscoveryResult(True), platform, trust
     )
-    assert error is None and empty.entries == () and empty.owner is None
+    assert error is None and empty.plan.default_script_hook.scripts == ()
+    assert empty._capture_owner is None
+    assert empty.close().accepted
 
     script = _script(tmp_path / "script.py")
     discovery = HookScriptDiscoveryResult(
@@ -252,11 +275,13 @@ def test_capture_plan_empty_rejection_and_exception_cleanup(tmp_path: Path, monk
 
         def capture(self, *args, **kwargs):
             """Reject the capture."""
-            return SimpleNamespace(accepted=False, artifact=None)
+            return SimpleNamespace(accepted=False, artifact=None, errors=("artifact_rejected",))
 
     monkeypatch.setattr(module, "ArtifactCaptureOwner", RejectingOwner)
-    plan, error = _capture_plan(runtime, "hook_test", discovery, platform, trust)
-    assert plan is None and error == "artifact_rejected"
+    with pytest.raises(CandidateBuildError) as raised:
+        _capture_plan(runtime, "hook_test", discovery, platform, trust)
+    assert raised.value.category == "artifact_rejected"
+    assert raised.value.recovery_owner._capture_owner is owners[-1]
     assert owners[-1].close_count == 1
 
     class RaisingOwner(RejectingOwner):
@@ -267,8 +292,10 @@ def test_capture_plan_empty_rejection_and_exception_cleanup(tmp_path: Path, monk
             raise RuntimeError("capture failed")
 
     monkeypatch.setattr(module, "ArtifactCaptureOwner", RaisingOwner)
-    plan, error = _capture_plan(runtime, "hook_test", discovery, platform, trust)
-    assert plan is None and error == "artifact_rejected"
+    with pytest.raises(CandidateBuildError) as raised:
+        _capture_plan(runtime, "hook_test", discovery, platform, trust)
+    assert raised.value.category == "capture failed"
+    assert raised.value.recovery_owner._capture_owner is owners[-1]
     assert owners[-1].close_count == 1
     runtime.close()
 
@@ -280,7 +307,9 @@ def test_registration_scope_close_during_capture_retires_candidate(
     from topsailai.hooks import configured_runtime as module
 
     runtime, scope = _runtime(tmp_path)
-    plan = _ConfiguredPlan("hook_test", (), _Owner(), "fingerprint")
+    owner = _Owner()
+    plan = empty_candidate(tmp_path, "hook_test")
+    plan._capture_owner = owner
 
     def capture(*args, **kwargs):
         scope.close()
@@ -289,7 +318,9 @@ def test_registration_scope_close_during_capture_retires_candidate(
     monkeypatch.setattr(module, "_capture_plan", capture)
     result = runtime.register_configured("hook_test", scope, scripts=())
     assert result.errors == ("scope_closed",)
-    assert plan.owner is None
+    assert owner.close_count == 1
+    with pytest.raises(RuntimeError, match="candidate is not live"):
+        _ = plan.plan
     runtime.close()
 
 
@@ -306,10 +337,15 @@ def test_platform_policy_and_terminal_report_cover_host_policy(
     )
 
     owner = _Owner()
-    plan = _ConfiguredPlan("hook_test", (), owner, "fingerprint")
-    assert plan.acquire()
+    registry = HookRegistry()
+    candidate = empty_candidate(tmp_path, "hook_test")
+    candidate._capture_owner = owner
+    plan, _ = _publish(registry, tmp_path, candidate=candidate)
+    reader = registry.acquire_hook_point("scope-a", "hook_test")
+    assert reader is not None
     admission = _ConfiguredAdmission(
-        SimpleNamespace(event_id="event"), plan, 7, 100, 0.0
+        SimpleNamespace(event_id="event"), plan, 7, 100, 0.0,
+        reader=reader, registry=registry
     )
     report = _terminal_configured(admission, "deadline")
     assert report.rejection_reason == "deadline"
@@ -318,14 +354,21 @@ def test_platform_policy_and_terminal_report_cover_host_policy(
     assert owner.close_count == 1
 
 
-def test_retire_configured_scope_ignores_foreign_plan_and_retires_owned_plan() -> None:
-    """Scope retirement closes configured plans and ignores non-plan registry values."""
-    owned = _ConfiguredPlan("hook_test", (), _Owner(), "one")
-    runtime = SimpleNamespace(
-        _registry=SimpleNamespace(remove_configured_scope=lambda scope_id: (object(), owned))
-    )
-    retire_configured_scope(runtime, "scope-a")
-    assert owned.owner is None
+def test_retire_configured_scope_ignores_foreign_plan_and_retires_owned_plan(tmp_path) -> None:
+    """Scope retirement closes owned plans without retiring another scope's plan."""
+    runtime, scope = _runtime(tmp_path)
+    owned, _ = _publish(runtime._registry, tmp_path, scope_id=scope.scope_id)
+    foreign, _ = _publish(runtime._registry, tmp_path, scope_id="foreign")
+    try:
+        assert retire_configured_scope(runtime, scope.scope_id)
+        assert owned.settled and owned.owner is None
+        assert not foreign.settled
+        assert runtime._registry.configured_plan("foreign", "hook_test")[1] is foreign
+        assert runtime.cleanup_debts() == ()
+    finally:
+        assert runtime._registry.remove_configured_scope("foreign") == (foreign,)
+        assert foreign.retire().accepted
+        runtime.close()
 
 
 @pytest.mark.asyncio
@@ -356,7 +399,7 @@ def test_background_configured_dispatch_reports_scheduler_capacity_and_releases_
         _, plan = runtime._registry.configured_plan(
             scope.scope_id, "hook_after_chat"
         )
-        assert isinstance(plan, _ConfiguredPlan)
+        assert isinstance(plan, HookPointOwner)
         monkeypatch.setattr(runtime._scheduler, "submit", lambda *args, **kwargs: None)
 
         receipt = runtime.emit_configured(
@@ -365,7 +408,7 @@ def test_background_configured_dispatch_reports_scheduler_capacity_and_releases_
 
         assert not receipt.admitted
         assert receipt.rejection_reason == "rejected_capacity"
-        assert plan._readers == 0
+        assert plan._readers == {}
     finally:
         runtime.close()
 
