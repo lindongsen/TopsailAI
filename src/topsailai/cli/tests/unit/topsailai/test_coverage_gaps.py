@@ -968,19 +968,26 @@ class TestSendMessageErrors(unittest.TestCase):
 
     @patch("cli_topsailai.streaming.get_file_pid", return_value=1234)
     def test_unexpected_oserror_on_open(self, mock_get_pid):
-        """Unexpected OSError while opening pipe is reported."""
+        """Inject EIO at the consumer open seam rather than time out."""
         os.mkfifo(self.pipe_path)
-        with patch("os.open", side_effect=OSError(errno.EIO, "io error")):
-            with patch("builtins.print"):
-                result = send_message_to_session("s1", "hello", self.task_dir)
+        with patch("cli_topsailai.runtime_pipe._open", side_effect=OSError(errno.EIO, "io error")) as mock_open, patch(
+            "cli_topsailai.runtime_pipe._write"
+        ) as mock_write, patch("builtins.print") as mock_print:
+            result = send_message_to_session("s1", "hello", self.task_dir)
         self.assertFalse(result)
+        mock_open.assert_called_once()
+        mock_write.assert_not_called()
+        diagnostics = str(mock_print.call_args_list)
+        self.assertIn("io error", diagnostics)
+        self.assertNotIn("timed out", diagnostics.lower())
 
     @patch("cli_topsailai.streaming.get_file_pid", return_value=1234)
     def test_oserror_on_write(self, mock_get_pid):
-        """OSError while writing to pipe is reported."""
+        """Inject EPIPE at the consumer write seam and finish the reader."""
         os.mkfifo(self.pipe_path)
 
         def reader():
+            """Drain the fixture FIFO until the owned writer closes."""
             with open(self.pipe_path, "rb") as f:
                 f.read()
 
@@ -989,14 +996,17 @@ class TestSendMessageErrors(unittest.TestCase):
         t = threading.Thread(target=reader)
         t.start()
         try:
-            with patch("os.write", side_effect=OSError(errno.EPIPE, "broken pipe")):
-                with patch("builtins.print"):
+            with patch("cli_topsailai.runtime_pipe._write", side_effect=OSError(errno.EPIPE, "broken pipe")) as mock_write:
+                with patch("builtins.print") as mock_print:
                     result = send_message_to_session(
                         "s1", "hello", self.task_dir, timeout=2.0
                     )
             self.assertFalse(result)
+            mock_write.assert_called_once()
+            self.assertIn("broken pipe", str(mock_print.call_args_list))
         finally:
             t.join(timeout=3)
+            self.assertFalse(t.is_alive(), "Fixture FIFO reader did not exit")
 
 
 class TestHandleSendCommandNoParts(unittest.TestCase):
@@ -1496,43 +1506,32 @@ class TestStreamFileNoBuffer(unittest.TestCase):
 class TestSendMessageCloseError(unittest.TestCase):
     """Tests for send_message_to_session close error handling."""
 
-    @patch("os.close", side_effect=OSError("close failed"))
-    @patch("os.write")
-    @patch("os.open", return_value=3)
-    @patch("stat.S_ISFIFO", return_value=True)
-    @patch("os.stat")
-    @patch("os.path.exists", return_value=True)
-    @patch("cli_topsailai.streaming.get_file_pid", return_value=1234)
-    @patch(
-        "cli_topsailai.streaming._get_pid_from_stdout_path",
-        return_value=None,
-    )
-    @patch(
-        "cli_topsailai.streaming._find_session_stdout_file",
-        return_value="/tmp/s1.session.stdout",
-    )
-    @patch("builtins.print")
-    def test_close_fd_error_ignored(
-        self,
-        mock_print,
-        mock_find,
-        mock_getpid_from_path,
-        mock_getpid,
-        mock_exists,
-        mock_stat,
-        mock_isfifo,
-        mock_open,
-        mock_write,
-        mock_close,
-    ):
-        """OSError from os.close in finally is ignored."""
-        task_dir = tempfile.mkdtemp()
-        try:
-            result = send_message_to_session("s1", "hello", task_dir, timeout=0.1)
+    def test_close_fd_error_ignored(self):
+        """Consumer-local close failure preserves completed FIFO delivery."""
+        import stat
+        from types import SimpleNamespace
+
+        identity = SimpleNamespace(st_mode=stat.S_IFIFO | 0o600, st_dev=11, st_ino=22)
+        with tempfile.TemporaryDirectory() as task_dir:
+            stdout_path = os.path.join(task_dir, "s1.1234.session.stdout")
+            with open(stdout_path, "w") as stream:
+                stream.write("log")
+            os.mkfifo(os.path.join(task_dir, "s1.1234.session.pipe"))
+            with patch("cli_topsailai.runtime_pipe._lstat", return_value=identity), patch(
+                "cli_topsailai.runtime_pipe._fstat", return_value=identity
+            ) as mock_fstat, patch("cli_topsailai.runtime_pipe._open", return_value=333) as mock_open, patch(
+                "cli_topsailai.runtime_pipe._write", side_effect=lambda fd, data: len(data)
+            ) as mock_write, patch(
+                "cli_topsailai.runtime_pipe._close", side_effect=OSError("close failed")
+            ) as mock_close, patch("builtins.print") as mock_print:
+                result = send_message_to_session("s1", "hello", task_dir, timeout=0.1)
             self.assertTrue(result)
-            mock_close.assert_called_once_with(3)
-        finally:
-            shutil.rmtree(task_dir, ignore_errors=True)
+            mock_open.assert_called_once()
+            mock_fstat.assert_called_once_with(333)
+            mock_write.assert_called_once_with(333, b"hello\nEOF\n")
+            mock_close.assert_called_once_with(333)
+            self.assertIn("Failed to close pipe descriptor", str(mock_print.call_args_list))
+            self.assertIn("close failed", str(mock_print.call_args_list))
 
 
 class TestGetPidFromStdoutPath(unittest.TestCase):
