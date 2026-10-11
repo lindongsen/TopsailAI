@@ -171,6 +171,7 @@ def test_capture_zero_write_enospc_and_readback_corruption(monkeypatch, tmp_path
     import errno
     import os
 
+    real_write = os.write
     owner, request, _ = _owner(tmp_path / "zero")
     monkeypatch.setattr("topsailai.hooks.artifact_store.os.write", lambda *_: 0)
     result = owner.capture((request,))
@@ -189,18 +190,23 @@ def test_capture_zero_write_enospc_and_readback_corruption(monkeypatch, tmp_path
     assert result.recovery_owner is None
     owner.close()
 
+    monkeypatch.setattr("topsailai.hooks.artifact_store.os.write", real_write)
     owner, request, _ = _owner(tmp_path / "corrupt")
     real_read = os.read
+    corrupted_reads = []
+    artifact_root = tmp_path / "corrupt" / "artifacts"
 
     def corrupt_captured_read(descriptor: int, size: int) -> bytes:
         value = real_read(descriptor, size)
         target = os.readlink(f"/proc/self/fd/{descriptor}")
-        if value and "/capture-" in target:
+        if value and Path(target).is_relative_to(artifact_root):
+            corrupted_reads.append(target)
             return bytes([value[0] ^ 1]) + value[1:]
         return value
 
     monkeypatch.setattr("topsailai.hooks.artifact_store.os.read", corrupt_captured_read)
     result = owner.capture((request,))
+    assert corrupted_reads
     assert result.errors == ("artifact_storage_unavailable",)
     assert result.recovery_owner is None
     owner.close()
