@@ -13,6 +13,7 @@ from concurrent.futures import CancelledError as FutureCancelledError
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping
 
+from topsailai.hooks.ordinary_runtime import register_hook_point, dispatch_hook_point
 from topsailai.hooks.configuration import HookSettings
 from topsailai.hooks.configured_contracts import ConfiguredTrustPolicy
 from topsailai.hooks.configured_runtime import (
@@ -157,6 +158,10 @@ class HookRuntime:
         self._closing_scopes: set[str] = set()
         self._sequences: dict[str, int] = {}
         self._local = threading.local()
+        self._ordinary_sources = {}
+
+    register_hook_point = register_hook_point
+    dispatch_hook_point = dispatch_hook_point
 
     configured_trust = property(get_configured_trust)
     prepare_configured = _prepare_configured
@@ -651,6 +656,9 @@ class HookRuntime:
                 continue
             self._registry.unregister_scope(scope_id)
             with self._lock:
+                for key in tuple(self._ordinary_sources):
+                    if key[0] == scope_id:
+                        del self._ordinary_sources[key]
                 scope = self._scopes.pop(scope_id, None)
                 self._children.pop(scope_id, None)
                 self._sequences.pop(scope_id, None)
