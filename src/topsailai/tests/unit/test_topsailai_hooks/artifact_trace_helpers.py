@@ -66,6 +66,7 @@ def composed_line_interruption(
         frame_id = id(frame)
         if event == "call":
             delegate = original_trace(frame, event, argument)
+            sys.settrace(interruption_trace)
             if delegate is None:
                 declined.add(frame_id)
             else:
@@ -73,6 +74,7 @@ def composed_line_interruption(
         elif frame_id in delegated:
             delegate = delegated[frame_id]
             next_delegate = delegate(frame, event, argument)
+            sys.settrace(interruption_trace)
             if next_delegate is None:
                 delegated.pop(frame_id, None)
             else:
