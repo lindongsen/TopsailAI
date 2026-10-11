@@ -167,6 +167,17 @@ def is_need_load_overview(folder_path:str) -> bool:
             return True
     return False
 
+def _resolve_load_overview(skill_info, folder_path: str) -> bool:
+    """Resolve the effective load-overview flag for a skill.
+
+    The frontmatter ``flag_overview`` takes precedence when explicitly set;
+    otherwise fall back to the environment-variable based check. This keeps
+    the ``Skill loaded`` log consistent with the actual overview rendering.
+    """
+    if skill_info.flag_overview is not None:
+        return skill_info.flag_overview
+    return is_need_load_overview(folder_path)
+
 
 class SkillInfo(object):
     """Container for skill metadata extracted from a skill folder.
@@ -209,7 +220,7 @@ class SkillInfo(object):
 """
 
         if self.flag_overview is None:
-            self.flag_overview = is_need_load_overview(self.folder)
+            self.flag_overview = _resolve_load_overview(self, self.folder)
         if self.flag_overview and flag_able_to_overview:
             result += overview_skill_native(self.folder)
 
@@ -364,7 +375,7 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
 
     if skill_info.name:
         preload = bool(skill_info.all.get("preload_docs"))
-        load_overview = is_need_load_overview(folder_path)
+        load_overview = _resolve_load_overview(skill_info, folder_path)
         print_tool.print_info(
             f"Skill loaded:\n  folder={folder_path}\n  name={skill_info.name}\n"
             f"  preload={preload}\n  load_overview={load_overview}"
