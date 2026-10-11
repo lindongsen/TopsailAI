@@ -95,6 +95,7 @@ class LaunchRecord:
     error: BaseException | None = None
     cleanup_confirmed: bool = True
     cleanup_debt: str | None = None
+    cancellation: threading.Event | None = None
     cleanup_deadline: float | None = None
     termination_grace: float | None = None
     group_authorized: bool = False

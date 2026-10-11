@@ -193,7 +193,7 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
                                       module=True, args=args, kwargs=kwargs)
 
     def execute_captured_module(self, module, context: HookContext, timeout_ms: int,
-                                *, record_receiver=None) -> WorkerResult:
+                                *, record_receiver=None, deadline=None, cancellation=None) -> WorkerResult:
         """Invoke a detached captured record using the existing process cleanup lease."""
         from topsailai.hooks.hook_point_plan_contracts import CapturedModule
         from topsailai.hooks.captured_module_protocol import CapturedModuleLocator
@@ -206,7 +206,7 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
             module.source.handler_ref, context, timeout_ms, module=True,
             args=_thaw_frozen_json(module.invocation.args),
             kwargs=_thaw_frozen_json(module.invocation.kwargs), captured=locator,
-            record_receiver=record_receiver,
+            record_receiver=record_receiver, deadline=deadline, cancellation=cancellation,
         )
 
     def _preflight(self, timeout_ms: int) -> WorkerResult | None:
@@ -227,6 +227,14 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
     def _validate_terminal(self, response: Any, **expected: str) -> dict[str, JsonValue]:
         """Validate a terminal response through an observable test seam."""
         return validate_response(response, **expected)
+
+    def _execution_stop(self, deadline, cancellation):
+        """Give local cancellation precedence over the unchanged absolute deadline."""
+        if cancellation is not None and cancellation.is_set():
+            return "cancelled"
+        if time.monotonic() >= deadline:
+            return "timeout"
+        return None
 
     def _deadline_expired(self, deadline: float) -> bool:
         """Check terminal acceptance against the absolute monotonic deadline."""
@@ -328,6 +336,15 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
                     record.state = "failed"
                     record.condition.notify_all()
 
+        stop = self._execution_stop(deadline, record.cancellation)
+        if stop is not None:
+            with record.condition:
+                record.state = "failed"
+                record.cleanup.termination_confirmed = True
+                for channel in record.cleanup.channels.values():
+                    channel.state = "closed"
+                record.condition.notify_all()
+            return WorkerResult(stop, error_category=stop)
         thread = threading.Thread(target=launch, name="hook-worker-launch", daemon=True)
         try:
             thread.start()
@@ -335,16 +352,17 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
             with record.condition:
                 while record.state == "launching":
                     remaining = deadline - time.monotonic()
-                    if remaining <= 0:
+                    stop = self._execution_stop(deadline, record.cancellation)
+                    if stop is not None:
                         record.state = "abandoned"
                         self._record_launch_debt(record.debt_id, record)
                         return WorkerResult(
-                            "timeout",
-                            error_category="startup_timeout",
+                            stop,
+                            error_category="startup_timeout" if stop == "timeout" else "cancelled",
                             cleanup_confirmed=False,
                             cleanup_debt=record.debt_id,
                         )
-                    self._wait_for_launch(record, remaining)
+                    self._wait_for_launch(record, min(remaining, 0.05) if record.cancellation is not None else remaining)
                 if record.state == "failed":
                     return WorkerResult(
                         "worker_lost",
@@ -577,14 +595,18 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
             expected: int | None = None
             while selector.get_map():
                 remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return "timeout"
+                stop = self._execution_stop(deadline, record.cancellation)
+                if stop is not None:
+                    return stop
                 try:
-                    events = selector.select(remaining)
+                    events = selector.select(min(remaining, 0.05) if record.cancellation is not None else remaining)
                 except OSError:
-                    return "transport_error"
+                    return self._execution_stop(deadline, record.cancellation) or "transport_error"
+                stop = self._execution_stop(deadline, record.cancellation)
+                if stop is not None:
+                    return stop
                 if not events:
-                    return "timeout"
+                    continue
                 for key, mask in events:
                     name = key.data
                     if name == "stdin" and mask & selectors.EVENT_WRITE:

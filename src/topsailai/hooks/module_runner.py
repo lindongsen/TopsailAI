@@ -10,10 +10,11 @@ class OwnedHookModuleRunner:
         self._records = []
         self._lock = threading.RLock()
 
-    def execute(self, module, context, timeout_ms):
+    def execute(self, module, context, timeout_ms, *, deadline=None, cancellation=None):
         """Invoke captured bytes through the backend's existing cleanup transaction."""
         return self._backend.execute_captured_module(
             module, context, timeout_ms, record_receiver=self._receive_record,
+            deadline=deadline, cancellation=cancellation,
         )
 
     def _receive_record(self, record):

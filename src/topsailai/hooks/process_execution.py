@@ -3,8 +3,10 @@
 Author: DawsonLin. Process and cleanup authority remain in the backend lease.
 """
 from __future__ import annotations
+import math
 import os
 import secrets
+import threading
 import time
 import uuid
 from topsailai.hooks.contracts import HookContext, ValidationError
@@ -20,11 +22,20 @@ class ProcessExecutionMixin:
     """Reuse one deadline, transport and cleanup transaction for v1 and v2."""
 
     def _execute_delivery(self, handler_ref, context, timeout_ms, *, module=False,
-                          args=(), kwargs=None, captured=None, record_receiver=None) -> WorkerResult:
+                          args=(), kwargs=None, captured=None, record_receiver=None,
+                          deadline=None, cancellation=None) -> WorkerResult:
         """Admit a local codec and publish only through the existing cleanup owner."""
         unsupported = self._preflight(timeout_ms)
         if unsupported is not None:
             return unsupported
+        if deadline is not None and (type(deadline) not in (int, float) or not math.isfinite(deadline)):
+            return WorkerResult("invalid_request", error_category="invalid_deadline")
+        if cancellation is not None and type(cancellation) is not threading.Event:
+            return WorkerResult("invalid_request", error_category="invalid_cancellation")
+        deadline = time.monotonic() + timeout_ms / 1_000 if deadline is None else deadline
+        stop = self._execution_stop(deadline, cancellation)
+        if stop is not None:
+            return WorkerResult(stop, error_category=stop)
         interpreter = self._resolve_interpreter()
         if interpreter is None:
             return WorkerResult("unsupported_backend", error_category="missing_interpreter")
@@ -33,7 +44,6 @@ class ProcessExecutionMixin:
         except OSError:
             return WorkerResult("unsupported_backend", error_category="invalid_temp_root")
 
-        deadline = time.monotonic() + timeout_ms / 1_000
         correlation_id = uuid.uuid4().hex
         channel_token = secrets.token_urlsafe(32)
         if not module:
@@ -55,7 +65,11 @@ class ProcessExecutionMixin:
         except ValidationError:
             return WorkerResult("invalid_request", error_category="invalid_request")
 
+        stop = self._execution_stop(deadline, cancellation)
+        if stop is not None:
+            return WorkerResult(stop, error_category=stop)
         record = _LaunchRecord(uuid.uuid4().hex)
+        record.cancellation = cancellation
         if record_receiver is not None:
             record_receiver(record)
         lease = None
@@ -76,7 +90,9 @@ class ProcessExecutionMixin:
                     record, process, result_fd, request_frame, buffers, dropped, deadline
                 )
                 if read_status != "result":
-                    if read_status == "timeout":
+                    if read_status == "cancelled":
+                        status, category = "cancelled", "cancelled"
+                    elif read_status == "timeout":
                         status, category = "timeout", "deadline"
                     elif read_status in ("invalid_output", "worker_lost"):
                         status, category = read_status, "protocol_error"
@@ -98,6 +114,8 @@ class ProcessExecutionMixin:
                     return lease.finish(
                         "invalid_output", buffers, dropped, "protocol_error"
                     )
+                if cancellation is not None and cancellation.is_set():
+                    return lease.finish("cancelled", buffers, dropped, "cancelled")
                 if self._deadline_expired(deadline):
                     return lease.finish("timeout", buffers, dropped, "deadline")
                 metadata = {}
