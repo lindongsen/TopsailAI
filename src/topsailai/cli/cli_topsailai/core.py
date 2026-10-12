@@ -509,24 +509,18 @@ def get_prompt() -> str:
 
 
 def _driver_authority(environment):
-    """Read explicit deployment configuration once at the CLI boundary."""
-    from pathlib import Path
-    from cli_topsailai.session_driver_launcher import DriverAuthority
+    """Resolve validated defaults and optional overrides at the CLI boundary."""
+    from cli_topsailai.session_driver_config import resolve_driver_authority
 
-    entry = environment.get("TOPSAILAI_SESSION_DRIVER_ENTRY")
-    interpreter = environment.get("TOPSAILAI_SESSION_DRIVER_PYTHON")
-    if not entry or not interpreter:
-        return None
-    authority = DriverAuthority(Path(entry), Path(interpreter))
     try:
-        authority.validate()
-    except (ValueError, OSError):
+        return resolve_driver_authority(environment)
+    except (ValueError, OSError) as error:
+        print(f"[ERROR] Driver configuration unavailable: {error}")
         return None
-    return authority
 
 
 def _enrich_driver_rows(rows, home, authority):
-    """Use the same explicit entry authority for table, JSON and status reads."""
+    """Use the same resolved entry authority for table, JSON and status reads."""
     from cli_topsailai.formatting import enrich_workspace_rows
 
     if authority is None:
@@ -544,8 +538,13 @@ def _handle_driver_action(action, index, rows, home, authority, environment, dis
         result = launch_driver(rows, index, topsailai_home=Path(home),
                                authority=authority, environment=environment,
                                discover=discover)
-        print(f"[INFO] Driver: {result.outcome}; reason={result.reason}; "
-              f"exit_code={result.exit_code}")
+        if result.reason == "authority_unavailable":
+            print("[ERROR] Driver launch blocked: configuration unavailable; "
+                  "check TOPSAILAI_SESSION_DRIVER_ENTRY and "
+                  "TOPSAILAI_SESSION_DRIVER_PYTHON diagnostics and restart the CLI")
+        else:
+            print(f"[INFO] Driver: {result.outcome}; reason={result.reason}; "
+                  f"exit_code={result.exit_code}")
         observation = result.observation
         child = result.child
     else:

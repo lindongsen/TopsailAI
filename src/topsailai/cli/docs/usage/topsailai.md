@@ -311,16 +311,18 @@ The original high-level scope outline is preserved in `../../topsailai.md`:
 
 Use `/driver <number>` to start the driver for a currently running (`RUN`) or waiting-for-input (`INPUT`) session row. Use `/driver status <number>` to read state, reason, driver PID, run ID and verification. Both commands are restricted to the ordinary workspace task list; project, session, runtime, doc and managed-project views reject them. Task rows, temporary sessions, malformed or legacy identities, changed targets and multiple live PIDs for one session are not eligible. Status can inspect an exited authoritative session row.
 
-### Explicit deployment authority
+### Default deployment paths and optional overrides
 
-The deployment must supply both CLI-specific environment variables before starting the CLI:
+No additional configuration is needed in the standard installation layout. The CLI resolves the driver entry from its own package location (not the current working directory), preferring the sibling compiled executable `scripts/session_agent_driver/session_agent_driver` and otherwise using `scripts/session_agent_driver/session_agent_driver.py`. Compiled entries run directly without a Python interpreter; an existing but invalid compiled entry is rejected rather than silently replaced with source. For a `.py` entry, it prefers its current Python interpreter (`sys.executable`), falling back to a validated `sys._base_executable` when necessary. A packaged non-Python executable is not accepted, and arbitrary `PATH` entries are not searched.
+
+Each CLI-specific environment variable independently overrides its default when set before starting the CLI:
 
 | Variable | Meaning |
 |---|---|
-| `TOPSAILAI_SESSION_DRIVER_ENTRY` | Absolute path to the installed driver entry; no default or source-tree discovery. |
-| `TOPSAILAI_SESSION_DRIVER_PYTHON` | Absolute path to its executable Python interpreter; no default or packaged-runtime assumption. |
+| `TOPSAILAI_SESSION_DRIVER_ENTRY` | Optional absolute path to a driver entry file; `.py` requires read access, compiled entries require execute access; defaults to the standard sibling scripts layout. |
+| `TOPSAILAI_SESSION_DRIVER_PYTHON` | Optional absolute path to a compatible executable Python interpreter whose filename starts with `python`; defaults to the validated CLI runtime for `.py` entries and is unused for compiled entries. |
 
-The CLI validates these files once at its configuration boundary. Missing or invalid authority safely blocks launch. Read-only metadata remains available, but unverifiable running evidence shows `?`. Configuration changes require restarting the CLI. The driver receives the resolved `TOPSAILAI_HOME` explicitly, with noninteractive detached standard streams. Environment contents and process command lines are not printed.
+The CLI validates these files once at its configuration boundary. An invalid explicit override is rejected rather than silently replaced with a default. Missing default files or an invalid interpreter print an `[ERROR]` with correction guidance and safely block launch. The chosen interpreter must have the driver dependencies installed; file validation alone does not prove import compatibility. Read-only metadata remains available, but unverifiable running evidence shows `?`. Configuration changes require restarting the CLI. The driver receives the resolved `TOPSAILAI_HOME` explicitly, with noninteractive detached standard streams. Environment contents and process command lines are not printed.
 
 ### Driver column and outcomes
 

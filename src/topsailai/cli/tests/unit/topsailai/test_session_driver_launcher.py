@@ -307,3 +307,18 @@ def test_unverified_on_does_not_acknowledge(setup):
     unverified = DriverObservation("ON", "unverified", observation("ON").metadata)
     setup.observer.side_effect = [observation()] + [unverified] * 10
     assert launch(setup).outcome == "unconfirmed"
+
+
+def test_compiled_launch(setup):
+    """A validated compiled entry is launched without any interpreter argv."""
+    setup.entry.chmod(0o700)
+    result = launch(setup, authority=launcher.DriverAuthority(setup.entry, None))
+    assert result.outcome == "launched"
+    assert setup.spawn.call_args.args[0] == [str(setup.entry), "--session", "session"]
+
+
+def test_compiled_launch_permission_rejection(setup):
+    """A compiled entry without execute permission cannot launch."""
+    setup.entry.chmod(0o600)
+    assert launch(setup, authority=launcher.DriverAuthority(setup.entry, None)).reason == "entry_not_executable"
+    setup.spawn.assert_not_called()

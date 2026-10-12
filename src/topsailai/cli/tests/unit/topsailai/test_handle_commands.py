@@ -2243,10 +2243,9 @@ class TestWorkspaceDriverCommands(unittest.TestCase):
                 self.assertIn("only available in the ordinary workspace", output.getvalue())
 
     def test_explicit_authority(self):
-        """Never infer installation layout or a packaged interpreter."""
+        """Preserve explicit overrides and fail closed on invalid configuration."""
         from cli_topsailai.core import _driver_authority
-        self.assertIsNone(_driver_authority({}))
-        with patch("cli_topsailai.session_driver_launcher.DriverAuthority.validate"):
+        with patch("pathlib.Path.is_file", return_value=True), patch("cli_topsailai.session_driver_config.os", new=type("Access", (), {"R_OK": 4, "access": staticmethod(lambda *args: True)})()), patch("cli_topsailai.session_driver_launcher.DriverAuthority.validate"):
             authority = _driver_authority({"TOPSAILAI_SESSION_DRIVER_ENTRY": "/installed/driver.py", "TOPSAILAI_SESSION_DRIVER_PYTHON": "/installed/python3"})
             self.assertEqual(str(authority.entry), "/installed/driver.py")
         with patch("cli_topsailai.session_driver_launcher.DriverAuthority.validate", side_effect=ValueError("bad")):

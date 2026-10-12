@@ -1,7 +1,7 @@
 """Launch explicitly authorized drivers without owning their runtime records.
 
 Author: DawsonLin
-Deployment supplies absolute entry/interpreter paths; no layout discovery occurs.
+The CLI supplies validated entry authority; compiled entries run directly.
 """
 
 from dataclasses import dataclass, field
@@ -27,16 +27,21 @@ LOGGER = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class DriverAuthority:
-    """Carry installation-supplied entry and actual Python interpreter paths."""
+    """Carry a validated entry and optional Python interpreter for source entries."""
 
     entry: Path
-    interpreter: Path
+    interpreter: Path | None
 
     def validate(self) -> None:
         """Reject absent or relative authority and packaged non-Python runtimes."""
-        for path in (self.entry, self.interpreter):
+        paths = (self.entry,) if self.interpreter is None else (self.entry, self.interpreter)
+        for path in paths:
             if not isinstance(path, Path) or not path.is_absolute() or not path.is_file():
                 raise ValueError("authority_unavailable")
+        if self.interpreter is None:
+            if self.entry.suffix == ".py" or not os.access(self.entry, os.X_OK):
+                raise ValueError("entry_not_executable")
+            return
         if (not self.interpreter.name.lower().startswith("python")
                 or not os.access(self.interpreter, os.X_OK)):
             raise ValueError("interpreter_unavailable")
@@ -184,7 +189,9 @@ def launch_driver(rows: Sequence[dict], index: int, *, topsailai_home: Path,
             kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
         else:
             kwargs["start_new_session"] = True
-        child = spawn([str(authority.interpreter), str(authority.entry), "--session", session], **kwargs)
+        command = ([str(authority.entry)] if authority.interpreter is None else
+                   [str(authority.interpreter), str(authority.entry)])
+        child = spawn(command + ["--session", session], **kwargs)
     except (ValueError, TypeError, OSError) as error:
         LOGGER.warning("Driver launch rejected: type=%s", type(error).__name__, exc_info=True)
         return LaunchResult("rejected" if not isinstance(error, OSError) else "failed",
