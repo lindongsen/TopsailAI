@@ -62,6 +62,7 @@ tools:
 After argument validation, the driver creates its records under
 `{TOPSAILAI_HOME}/workspace/task/session_agent_driver/`:
 
+- `{session_id}.lock` — stable cross-process lock file retained after exit.
 - `{session_id}.meta` — an atomically replaced JSON snapshot of the latest driver run.
 - `{session_id}.log` — driver logs retained only while the script runs.
 - `{session_id}.log.1` through `.log.5` — rotated backups with default settings.
@@ -95,9 +96,18 @@ begins cannot be captured in these files. SIGKILL, power loss, or failed metadat
 writes can leave a stale `running` snapshot; verify process liveness rather than
 using metadata alone as proof of a live driver.
 
-Run only one driver per target session: concurrent writers to the same record
-files are not supported. A sequential restart replaces the previous metadata
-with a new `run_id`. After a clean exit no runtime records remain. SIGKILL,
+Startup takes a nonblocking exclusive OS lock before opening logs or publishing
+metadata. A competing driver for the same session is rejected without changing
+or deleting the owner's records. Existing metadata with a live PID also rejects
+startup; malformed or unverifiable owner evidence fails closed. Only a confirmed
+dead PID permits recovery of stale metadata. Different sessions use separate locks.
+
+The lock remains held through runtime-record cleanup. Its stable `.lock` file is
+intentionally retained: deleting it could let competitors lock different file
+objects. File existence does not mean the lock is held; closing the descriptor
+releases the OS lock, including when the process is forcibly terminated. Do not
+remove lock files while drivers may be running. A sequential restart publishes
+a new `run_id`. After a clean exit only the lock file remains. SIGKILL,
 power loss, or filesystem permission/I/O failures can prevent cleanup; failures
 are reported when the process can still execute. No other session files are
 removed, and no automatic cross-target purge is provided.

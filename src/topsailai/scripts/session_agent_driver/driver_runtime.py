@@ -12,6 +12,8 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from driver_mutex import SessionMutex
+
 
 def _timestamp():
     """Return a local timestamp including the UTC offset."""
@@ -31,6 +33,7 @@ class DriverRuntime:
         self.directory = Path(directory)
         self.meta_path = self.directory / (session_id + ".meta")
         self.log_path = self.directory / (session_id + ".log")
+        self.mutex = SessionMutex(self.meta_path)
         self.logger = logger
         self.handler = None
         self.original_level = logger.level
@@ -61,17 +64,21 @@ class DriverRuntime:
     def __enter__(self):
         """Open the bounded log and publish startup state before polling."""
         self.directory.mkdir(parents=True, exist_ok=True)
-        handler = RotatingFileHandler(self.log_path, maxBytes=self.max_bytes,
-                                      backupCount=self.backups, encoding="utf-8")
-        self.handler = handler
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-        self.logger.addHandler(handler)
-        self.logger.setLevel(logging.INFO)
+        self.mutex.acquire()
         try:
+            handler = RotatingFileHandler(self.log_path, maxBytes=self.max_bytes,
+                                          backupCount=self.backups, encoding="utf-8")
+            self.handler = handler
+            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+            self.logger.addHandler(handler)
+            self.logger.setLevel(logging.INFO)
             self._publish()
             return self
         except BaseException:
-            self._cleanup()
+            try:
+                self._cleanup()
+            finally:
+                self.mutex.release()
             raise
 
     def update_target(self, status):
@@ -140,5 +147,8 @@ class DriverRuntime:
             if error is None:
                 raise
         finally:
-            self._cleanup()
+            try:
+                self._cleanup()
+            finally:
+                self.mutex.release()
         return False
