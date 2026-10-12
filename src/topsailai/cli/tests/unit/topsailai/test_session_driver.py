@@ -226,7 +226,8 @@ def test_workspace_snapshot_table_json_parity(tmp_path, monkeypatch, state, caps
     fmt.print_table([row])
     lines = capsys.readouterr().out.splitlines()
     assert [cell.strip() for cell in lines[0].split("|")][4:6] == ["Status", "Driver"]
-    assert [cell.strip() for cell in lines[2].split("|")][4:6] == ["INPUT", state]
+    display = {"ON": ":)", "STALE": ":(", "EXIT": "x(", "FAIL": "x("}.get(state, state)
+    assert [cell.strip() for cell in lines[2].split("|")][4:6] == ["INPUT", display]
     item = _workspace_json_item(row, 1)
     assert item["status"] == "input" and item["pid"] == 456
     assert item["driver"] == dict(state=state, reason="fixture", driver_pid=123,

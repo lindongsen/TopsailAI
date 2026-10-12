@@ -12,6 +12,11 @@ from cli_topsailai.colors import Colors
 from cli_topsailai.log_files import _display_session_id, is_session_pipe_open
 
 
+def _driver_display(state: str) -> str:
+    """Map semantic driver states to human-readable table markers only."""
+    return {"ON": ":)", "STALE": ":(", "EXIT": "x(", "FAIL": "x("}.get(state, state)
+
+
 def format_size(size_bytes: int) -> str:
     """Format a byte count as a human-readable string."""
     if size_bytes < 1024:
@@ -173,7 +178,7 @@ def print_table(files: List[dict]) -> None:
                 "session": session,
                 "pid": pid_str,
                 "status": status_str,
-                "driver": observation.state if observation else "-",
+                "driver": _driver_display(observation.state) if observation else "-",
                 "created": format_timestamp(file_info["ctime"]),
                 "project_workspace": file_info.get("project_workspace") or "-",
                 "color": Colors.YELLOW
@@ -245,8 +250,8 @@ def print_table(files: List[dict]) -> None:
         f"{Colors.DIM}(Total: {len(files)} files){Colors.RESET}"
     )
 
-    print("Driver: - no record/ineligible; ON verified; STALE absent process; "
-          "EXIT/FAIL residual terminal record; ? unverified")
+    print("Driver: - no record/ineligible; :) ON verified; :( STALE absent process; "
+          "x( EXIT/FAIL residual terminal record; ? unverified")
 
 
 def format_file_table(files: List[dict]) -> str:

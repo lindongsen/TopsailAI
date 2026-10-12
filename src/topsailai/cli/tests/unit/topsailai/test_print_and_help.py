@@ -358,3 +358,39 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
         self.assertIn("...", workspace_cell)
         self.assertIn("path/project-tail", workspace_cell)
         self.assertNotIn("/very/long", workspace_cell)
+
+
+def test_driver_display_preserves_json_states():
+    """Render every marker without mutating shared observations or JSON states."""
+    from cli_topsailai.core import _workspace_json_item
+    from cli_topsailai.session_driver import DriverObservation
+
+    ansi_escape = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+    cases = (("ON", ":)"), ("STALE", ":("), ("EXIT", "x("),
+             ("FAIL", "x("), ("-", "-"), ("?", "?"), (None, "-"))
+    rows = [
+        {"session_id": f"s{index}", "ctime": 1700000000.0,
+         "workspace_pid": 1234, "workspace_status": "running",
+         "driver_observation": DriverObservation(state, "fixture") if state else None}
+        for index, (state, _) in enumerate(cases)
+    ]
+    before = [_workspace_json_item(row, index) for index, row in enumerate(rows, 1)]
+    output = ansi_escape.sub("", format_file_table(rows))
+    lines = output.splitlines()
+    header = lines[0]
+    assert header.split("|")[5].strip() == "Driver"
+    boundaries = [index for index, char in enumerate(header) if char == "|"]
+    for index, ((state, marker), row) in enumerate(zip(cases, rows), 1):
+        rendered = lines[index + 1]
+        assert rendered.split("|")[5].strip() == marker
+        assert [offset for offset, char in enumerate(rendered) if char == "|"] == boundaries
+        payload = _workspace_json_item(row, index)
+        assert payload == before[index - 1]
+        if state is None:
+            assert payload["driver"] is None
+        else:
+            assert payload["driver"]["state"] == state
+            assert row["driver_observation"].state == state
+    assert ":) ON verified" in output
+    assert ":( STALE absent process" in output
+    assert "x( EXIT/FAIL" in output
