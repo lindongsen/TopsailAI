@@ -38,19 +38,33 @@ class TestBuildDocList(unittest.TestCase):
         return docs_dir
 
     def test_lists_docs_grouped_by_folder(self):
+        """Check creation-time ordering and alphabetical ties deterministically."""
+        list_docs = doc_scope._list_docs_in_folder
+        scenarios = (
+            ({"design.md": 1, "launch.md": 1, "topsailai.md": 1},
+             ["memo/design.md", "usage/launch.md", "usage/topsailai.md"]),
+            ({"design.md": 2, "launch.md": 3, "topsailai.md": 1},
+             ["usage/topsailai.md", "memo/design.md", "usage/launch.md"]),
+        )
         with tempfile.TemporaryDirectory() as tmp:
             self._make_docs(tmp)
-            with patch.object(
-                doc_scope, "get_docs_dir", return_value=str(Path(tmp) / "docs")
-            ):
-                entries = doc_scope.build_doc_list()
-        self.assertEqual(len(entries), 3)
-        folders = [e["folder"] for e in entries]
-        # Folders are sorted alphabetically: memo, usage.
-        self.assertEqual(folders, ["memo", "usage", "usage"])
-        self.assertEqual(entries[0]["rel_path"], "memo/design.md")
-        self.assertEqual(entries[1]["rel_path"], "usage/launch.md")
-        self.assertEqual(entries[2]["rel_path"], "usage/topsailai.md")
+            for created, expected in scenarios:
+                with self.subTest(created=created):
+                    def controlled_docs(folder_path):
+                        """Detach ordering evidence from filesystem ctime granularity."""
+                        entries = list_docs(folder_path)
+                        for entry in entries:
+                            entry["created"] = created[entry["filename"]]
+                        return entries
+
+                    with patch.object(
+                        doc_scope, "get_docs_dir", return_value=str(Path(tmp) / "docs")
+                    ), patch.object(
+                        doc_scope, "_list_docs_in_folder", side_effect=controlled_docs
+                    ):
+                        entries = doc_scope.build_doc_list()
+                    self.assertEqual([e["rel_path"] for e in entries], expected)
+                    self.assertEqual([e["row_number"] for e in entries], [1, 2, 3])
 
     def test_row_numbers_are_global(self):
         with tempfile.TemporaryDirectory() as tmp:
