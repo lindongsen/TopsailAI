@@ -511,25 +511,18 @@ def get_prompt() -> str:
 def _driver_authority(environment):
     """Read explicit deployment configuration once at the CLI boundary."""
     from pathlib import Path
-    from types import SimpleNamespace
+    from cli_topsailai.session_driver_launcher import DriverAuthority
 
     entry = environment.get("TOPSAILAI_SESSION_DRIVER_ENTRY")
     interpreter = environment.get("TOPSAILAI_SESSION_DRIVER_PYTHON")
     if not entry or not interpreter:
         return None
-    entry, interpreter = Path(entry), Path(interpreter)
+    authority = DriverAuthority(Path(entry), Path(interpreter))
     try:
-        if not entry.is_absolute() or not interpreter.is_absolute():
-            return None
-        if not entry.is_file() or not interpreter.is_file():
-            return None
-        if not interpreter.name.lower().startswith("python"):
-            return None
-        if not os.access(interpreter, os.X_OK) or not os.access(entry, os.R_OK):
-            return None
-    except OSError:
+        authority.validate()
+    except (ValueError, OSError):
         return None
-    return SimpleNamespace(entry=entry, interpreter=interpreter)
+    return authority
 
 
 def _enrich_driver_rows(rows, home, authority):
@@ -540,6 +533,52 @@ def _enrich_driver_rows(rows, home, authority):
         enrich_workspace_rows(rows, home)
     else:
         enrich_workspace_rows(rows, home, driver_entry=authority.entry)
+
+
+def _handle_driver_action(action, index, rows, home, authority, environment, discover):
+    """Dispatch workspace-only operations without publishing CLI runtime records."""
+    from pathlib import Path
+    from cli_topsailai.session_driver_launcher import launch_driver, _row_identity
+
+    if action == "driver_start":
+        result = launch_driver(rows, index, topsailai_home=Path(home),
+                               authority=authority, environment=environment,
+                               discover=discover)
+        print(f"[INFO] Driver: {result.outcome}; reason={result.reason}; "
+              f"exit_code={result.exit_code}")
+        observation = result.observation
+        child = result.child
+    else:
+        child = None
+        try:
+            if type(index) is not int or index < 1 or index > len(rows):
+                raise ValueError("invalid_row_index")
+            identity = _row_identity(rows[index - 1], Path(home))
+            fresh = discover()
+            _enrich_driver_rows(fresh, home, authority)
+            matches = [row for row in fresh
+                       if row.get("session_id") == identity[0]
+                       and row.get("pid") == identity[1]
+                       and row.get("filename") == rows[index - 1].get("filename")]
+            if not matches or matches[0].get("driver_observation") is None:
+                raise ValueError("ineligible_or_changed_row")
+            observation = matches[0]["driver_observation"]
+        except (ValueError, TypeError):
+            print("[ERROR] Driver status rejected: ineligible_or_changed_row")
+            return None
+    if observation is not None:
+        print(f"[INFO] Driver state={observation.state}; reason={observation.reason}; "
+              f"pid={observation.driver_pid}; run_id={observation.run_id}; "
+              f"verification={observation.verification.value}")
+    return child
+
+
+def _reap_driver_children(children):
+    """Reap only exited detached children; never signal a resident driver."""
+    for child in tuple(children):
+        if child.poll() is not None:
+            child.wait()
+            children.remove(child)
 
 
 def prompt_selection(
@@ -608,6 +647,19 @@ def prompt_selection(
 
                 execute_shell_command(user_input)
                 continue
+
+            if lower_input.split() and lower_input.split()[0] == "/driver":
+                if state.current_scope != "workspace" or state.workspace_showing_managed_projects:
+                    print("[ERROR] /driver is only available in the ordinary workspace task list.")
+                    continue
+                parts = lower_input.split()
+                status = len(parts) > 1 and parts[1] == "status"
+                number = parts[-1]
+                expected = 3 if status else 2
+                if len(parts) != expected or len(number) > 9 or not re.fullmatch(r"[0-9]+", number) or int(number) < 1:
+                    print("[ERROR] Usage: /driver <number> or /driver status <number>")
+                    continue
+                return ("driver_status" if status else "driver_start", int(number))
 
             # Restricted command set when workspace is showing the managed
             # project list. Only r/recent, p/projects, q/quit/cd, and
@@ -929,7 +981,9 @@ def prompt_selection(
                     print(
                         f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
                         f"Please enter a number, /refresh, /session {{number}}, "
-                        f"/agent {{number|folder}}, /resume {{number}}, /clean, /send, /help, or 'q'.{Colors.RESET}"
+                        f"/agent {{number|folder}}, /resume {{number}}, "
+                        f"{'/driver <number>, /driver status <number>, ' if state.current_scope == 'workspace' else ''}"
+                        f"/clean, /send, /help, or 'q'.{Colors.RESET}"
                     )
                 _consecutive_unrecognized += 1
                 if _consecutive_unrecognized >= _MAX_CONSECUTIVE_UNRECOGNIZED:
@@ -1475,6 +1529,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     enrich_files_with_session_names(log_files)
     enrich_running_unnamed_sessions(log_files)
     _enrich_driver_rows(log_files, topsailai_home, driver_authority)
+    driver_children = []
     project_entries: List[Dict[str, Any]] = []
     managed_project_entries: List[Dict[str, Any]] = []
     doc_entries: List[Dict[str, Any]] = []
@@ -1576,6 +1631,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             print(f"  {task_dir}")
     try:
         while state.running:
+            _reap_driver_children(driver_children)
             if state.current_scope == "project":
                 active_items = (
                     managed_project_entries
@@ -1610,6 +1666,19 @@ def main(argv: Optional[List[str]] = None) -> None:
                     _refresh_doc()
                 else:
                     _refresh_workspace()
+                continue
+
+            if action in ("driver_start", "driver_status"):
+                if state.current_scope != "workspace" or state.workspace_showing_managed_projects:
+                    print("[ERROR] /driver is only available in the ordinary workspace task list.")
+                    continue
+                child = _handle_driver_action(
+                    action, value, log_files, topsailai_home, driver_authority,
+                    dict(os.environ), lambda: discover_log_files(task_dir))
+                if child is not None:
+                    driver_children.append(child)
+                _reap_driver_children(driver_children)
+                _refresh_workspace()
                 continue
 
             if action == "help":
@@ -1844,6 +1913,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     except KeyboardInterrupt:
         print(f"\n{Colors.YELLOW}[INFO] Interrupted by user.{Colors.RESET}")
     finally:
+        _reap_driver_children(driver_children)
         cleanup_children()
 
     print(f"\n{Colors.CYAN}Goodbye!{Colors.RESET}\n")

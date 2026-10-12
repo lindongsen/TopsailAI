@@ -160,3 +160,23 @@ class TestControlCompleter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_driver_completion_scope(monkeypatch):
+    """Offer workspace driver and status without other-scope leakage."""
+    from cli_topsailai.completer import get_available_completions
+    monkeypatch.setattr(cli_state, "yaml_commands", [])
+    monkeypatch.setattr(cli_state, "workspace_showing_managed_projects", False)
+    monkeypatch.setattr(cli_state, "current_scope", "workspace")
+    assert "/driver" in get_available_completions()
+    assert "/driver status" in get_available_completions()
+    import readline
+    monkeypatch.setattr(readline, "get_line_buffer", lambda: "/driver st")
+    monkeypatch.setattr(readline, "get_begidx", lambda: 8)
+    assert tab_completer("st", 0) == "status"
+    for scope in ("runtime", "project", "session", "doc"):
+        monkeypatch.setattr(cli_state, "current_scope", scope)
+        assert "/driver" not in get_available_completions()
+    monkeypatch.setattr(cli_state, "current_scope", "workspace")
+    monkeypatch.setattr(cli_state, "workspace_showing_managed_projects", True)
+    assert "/driver" not in get_available_completions()

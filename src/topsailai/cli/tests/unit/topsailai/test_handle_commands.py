@@ -2202,3 +2202,157 @@ def test_workspace_main_refresh_reobserves(tmp_path):
     finally:
         cli_state.running, cli_state.current_scope = old_running, old_scope
         cli_state.history_manager, cli_state.yaml_commands = old_history, old_yaml
+
+
+class TestWorkspaceDriverCommands(unittest.TestCase):
+    """Checklist: syntax, scope, authority, dispatch, status and child reaping."""
+
+    def setUp(self):
+        """Isolate interactive scope state."""
+        cli_state.current_scope = "workspace"
+        cli_state.workspace_showing_managed_projects = False
+        cli_state.history_manager = None
+        cli_state.yaml_commands = []
+
+    def tearDown(self):
+        """Restore workspace state for existing tests."""
+        self.setUp()
+
+    def test_parse_driver(self):
+        """Dispatch both valid syntaxes before YAML matching."""
+        for text, action in (("/driver 2", "driver_start"), ("/driver status 2", "driver_status")):
+            with patch("cli_topsailai.core.input", return_value=text), patch("cli_topsailai.yaml_commands.match_yaml_command") as match:
+                self.assertEqual(prompt_selection([], "/task"), (action, 2))
+                match.assert_not_called()
+
+    def test_invalid_syntax(self):
+        """Reject malformed arguments without YAML fallback."""
+        for text in ("/driver", "/driver status", "/driver 0", "/driver -1", "/driver x", "/driver 1 2", "/driver status 1 2", "/driver +1", "/driver 1.0", "/driver stop 1", "/driver " + "1" * 5000):
+            with self.subTest(text=text), patch("cli_topsailai.core.input", side_effect=[text, "q"]), patch("cli_topsailai.yaml_commands.match_yaml_command") as match, patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(prompt_selection([], "/task"), ("quit", None))
+                self.assertIn("Usage: /driver <number> or /driver status <number>", output.getvalue())
+                match.assert_not_called()
+
+    def test_other_scopes(self):
+        """Explicitly reject non-workspace and managed-project modes."""
+        for scope, managed in (("project", False), ("session", False), ("doc", False), ("runtime", False), ("workspace", True)):
+            cli_state.current_scope = scope
+            cli_state.workspace_showing_managed_projects = managed
+            with patch("cli_topsailai.core.input", side_effect=["/driver 1", "q"]), patch("sys.stdout", new_callable=io.StringIO) as output:
+                prompt_selection([], "/task")
+                self.assertIn("only available in the ordinary workspace", output.getvalue())
+
+    def test_explicit_authority(self):
+        """Never infer installation layout or a packaged interpreter."""
+        from cli_topsailai.core import _driver_authority
+        self.assertIsNone(_driver_authority({}))
+        with patch("cli_topsailai.session_driver_launcher.DriverAuthority.validate"):
+            authority = _driver_authority({"TOPSAILAI_SESSION_DRIVER_ENTRY": "/installed/driver.py", "TOPSAILAI_SESSION_DRIVER_PYTHON": "/installed/python3"})
+            self.assertEqual(str(authority.entry), "/installed/driver.py")
+        with patch("cli_topsailai.session_driver_launcher.DriverAuthority.validate", side_effect=ValueError("bad")):
+            self.assertIsNone(_driver_authority({"TOPSAILAI_SESSION_DRIVER_ENTRY": "relative", "TOPSAILAI_SESSION_DRIVER_PYTHON": "relative"}))
+
+    def test_launch_dispatch(self):
+        """Pass explicit context and retain the live child without killing it."""
+        from cli_topsailai.core import _handle_driver_action, _reap_driver_children
+        from cli_topsailai.session_driver_launcher import LaunchResult
+        child = MagicMock()
+        child.poll.return_value = None
+        rows = [{"pid": 123}]
+        discover = MagicMock()
+        with patch("cli_topsailai.session_driver_launcher.launch_driver", return_value=LaunchResult("unconfirmed", "missing", child=child)) as launch:
+            self.assertIs(_handle_driver_action("driver_start", 1, rows, "/home", None, {}, discover), child)
+            self.assertIs(launch.call_args.kwargs["discover"], discover)
+            self.assertIsNone(launch.call_args.kwargs["authority"])
+        children = [child]
+        _reap_driver_children(children)
+        child.wait.assert_not_called()
+        child.poll.return_value = 0
+        _reap_driver_children(children)
+        self.assertEqual(children, [])
+        child.wait.assert_called_once()
+        child.kill.assert_not_called()
+        child.terminate.assert_not_called()
+
+    def test_status_shared_observation(self):
+        """Read fresh evidence rather than a stale display snapshot."""
+        from cli_topsailai.core import _handle_driver_action
+        from cli_topsailai.session_driver import DriverObservation
+        row = {"session_id": "sample", "pid": 123, "filename": "sample.123.session.stdout"}
+        observation = DriverObservation("-", "metadata_missing")
+        def enrich(rows, home, authority):
+            """Inject a detached fixture observation."""
+            rows[0]["driver_observation"] = observation
+        with patch("cli_topsailai.core._enrich_driver_rows", side_effect=enrich), patch("sys.stdout", new_callable=io.StringIO) as output:
+            _handle_driver_action("driver_status", 1, [row], "/home", None, {}, lambda: [dict(row)])
+            self.assertIn("state=-", output.getvalue())
+            self.assertIn("verification=", output.getvalue())
+        for index in (0, 2):
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                _handle_driver_action("driver_status", index, [row], "/home", None, {}, lambda: [])
+                self.assertIn("rejected", output.getvalue())
+
+    def test_runtime_rejection(self):
+        """Runtime commands must not dispatch a driver or fall through to YAML."""
+        from cli_topsailai.streaming import _handle_stream_command
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            _handle_stream_command("/driver 1", "/task", [], None, None)
+            self.assertIn("only available in the ordinary workspace", output.getvalue())
+
+
+def test_driver_main_dispatch_refresh(tmp_path):
+    """Both commands dispatch with authority, refresh once, and retain live handles."""
+    from contextlib import ExitStack
+    from cli_topsailai import core
+    from cli_topsailai.session_driver_launcher import DriverAuthority
+
+    row = dict(filename="team.456.session.stdout", session_id="team", pid=456, ctime=1)
+    authority = DriverAuthority(tmp_path / "entry", tmp_path / "python3")
+    child = MagicMock()
+    child.poll.return_value = None
+    old = (cli_state.running, cli_state.current_scope, cli_state.history_manager,
+           cli_state.yaml_commands, cli_state.workspace_showing_managed_projects)
+    try:
+        for action in ("driver_start", "driver_status"):
+            cli_state.running, cli_state.current_scope = True, "workspace"
+            cli_state.workspace_showing_managed_projects = False
+            with ExitStack() as stack:
+                for target in ("cli_topsailai.core.setup_signal_handlers", "cli_topsailai.history.HistoryManager",
+                    "cli_topsailai.history.load_readline_history", "cli_topsailai.completer.setup_tab_completion",
+                    "cli_topsailai.session_info.enrich_files_with_session_names",
+                    "cli_topsailai.session_info.enrich_running_unnamed_sessions",
+                    "cli_topsailai.process.cleanup_children", "cli_topsailai.formatting.print_header",
+                    "cli_topsailai.formatting.print_table"):
+                    stack.enter_context(patch(target))
+                stack.enter_context(patch("cli_topsailai.paths.get_topsailai_home", return_value=str(tmp_path)))
+                stack.enter_context(patch("cli_topsailai.yaml_commands.load_yaml_commands", return_value=[]))
+                discover = stack.enter_context(patch("cli_topsailai.log_files.discover_log_files", return_value=[row]))
+                enrich = stack.enter_context(patch("cli_topsailai.core._enrich_driver_rows"))
+                stack.enter_context(patch("cli_topsailai.core._driver_authority", return_value=authority))
+                dispatch = stack.enter_context(patch("cli_topsailai.core._handle_driver_action", return_value=child))
+                stack.enter_context(patch("cli_topsailai.core.prompt_selection", side_effect=[(action, 1), ("quit", None)]))
+                core.main([])
+                assert dispatch.call_args.args[:5] == (action, 1, [row], str(tmp_path), authority)
+                assert discover.call_count == 2
+                assert enrich.call_count == 2
+                assert dispatch.call_args.args[6]() == [row]
+                child.wait.assert_not_called()
+                child.terminate.assert_not_called()
+                child.kill.assert_not_called()
+        assert not list(tmp_path.iterdir())
+    finally:
+        (cli_state.running, cli_state.current_scope, cli_state.history_manager,
+         cli_state.yaml_commands, cli_state.workspace_showing_managed_projects) = old
+
+
+def test_driver_authority_observation_injection(monkeypatch):
+    """Table/status observation uses the installation-provided entry."""
+    from pathlib import Path
+    from cli_topsailai.core import _enrich_driver_rows
+    from cli_topsailai.session_driver_launcher import DriverAuthority
+    from cli_topsailai.session_driver import DriverObservation
+    row = dict(session_id="sample", pid=123, filename="sample.123.session.stdout")
+    authority = DriverAuthority(Path("/installed/entry"), Path("/installed/python3"))
+    with patch("cli_topsailai.formatting.os.kill"), patch("cli_topsailai.formatting.is_session_pipe_open", return_value=False), patch("cli_topsailai.session_driver.observe_driver", return_value=DriverObservation("-", "missing")) as observe:
+        _enrich_driver_rows([row], "/home", authority)
+        assert observe.call_args.kwargs["process_probe"].keywords["driver_entry"] == authority.entry

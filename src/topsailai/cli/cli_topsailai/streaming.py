@@ -1434,6 +1434,9 @@ def _handle_stream_command(
 
     parts = cmd_line.split(None, 1)
     cmd = parts[0].lower()
+    if cmd == "/driver":
+        print("[ERROR] /driver is only available in the ordinary workspace task list.")
+        return
     if cmd == "/send":
         _handle_stream_send(
             cmd_line,

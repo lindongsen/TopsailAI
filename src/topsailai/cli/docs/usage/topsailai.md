@@ -76,6 +76,8 @@ The command uses the same parsing and execution mechanism as `/git`: `shlex.spli
 | Command | Description |
 |---------|-------------|
 | `<number>` | Watch the selected log file (workspace) or enter the selected session (project). |
+| `/driver <number>` | Start a driver for an eligible RUN/INPUT session (ordinary workspace only). |
+| `/driver status <number>` | Read current driver evidence (ordinary workspace only). |
 | `/refresh` | Re-scan the task directory and refresh the list. |
 | `/session <number\|session_id>` | Retrieve full context messages for a session. |
 | `/agent [<number\|folder>]` | Launch an agent. With no argument, run the YAML-configured agent command. With an argument, change to the selected folder and run `topsailai_launch_agent`. The effective model selection is applied to the child process. |
@@ -303,3 +305,40 @@ The original high-level scope outline is preserved in `../../topsailai.md`:
 
 - Interactive parameters use option flags, for example `--agent-mode`.
 - Non-interactive parameters use subcommands, for example `project list`.
+
+
+## Workspace session drivers
+
+Use `/driver <number>` to start the driver for a currently running (`RUN`) or waiting-for-input (`INPUT`) session row. Use `/driver status <number>` to read state, reason, driver PID, run ID and verification. Both commands are restricted to the ordinary workspace task list; project, session, runtime, doc and managed-project views reject them. Task rows, temporary sessions, malformed or legacy identities, changed targets and multiple live PIDs for one session are not eligible. Status can inspect an exited authoritative session row.
+
+### Explicit deployment authority
+
+The deployment must supply both CLI-specific environment variables before starting the CLI:
+
+| Variable | Meaning |
+|---|---|
+| `TOPSAILAI_SESSION_DRIVER_ENTRY` | Absolute path to the installed driver entry; no default or source-tree discovery. |
+| `TOPSAILAI_SESSION_DRIVER_PYTHON` | Absolute path to its executable Python interpreter; no default or packaged-runtime assumption. |
+
+The CLI validates these files once at its configuration boundary. Missing or invalid authority safely blocks launch. Read-only metadata remains available, but unverifiable running evidence shows `?`. Configuration changes require restarting the CLI. The driver receives the resolved `TOPSAILAI_HOME` explicitly, with noninteractive detached standard streams. Environment contents and process command lines are not printed.
+
+### Driver column and outcomes
+
+The Driver column follows Status and is independent of the target session status:
+
+| Driver | Meaning |
+|---|---|
+| `-` | Metadata absent, normally also after clean exit. |
+| `ON` | Running metadata with verified driver process identity. |
+| `STALE` | Running metadata whose recorded driver PID is confirmed absent. |
+| `EXIT` | Residual stopped metadata without a contradictory live process. |
+| `FAIL` | Residual failed metadata without a contradictory live process. |
+| `?` | Invalid, inaccessible, conflicting or unverifiable evidence. |
+
+Workspace JSON adds nullable `driver` with `state`, `reason`, `driver_pid`, `run_id`, `metadata_status` and `verification`. Ineligible rows have `driver: null`. Table, JSON and status use shared read-only observations. Commands refresh the table afterward; there is no automatic refresh polling.
+
+The external driver alone owns duplicate-start exclusion, its lock, metadata and log cleanup. The CLI never writes, acquires or deletes these records. Lock-file presence does not prove a running owner. Clean finalization normally removes metadata and logs, so EXIT/FAIL are residual observations, not durable exit history. There is no `/driver stop` command.
+
+Launch reports `launched` only for fresh verified publication matching the new child. `already_running` identifies verified existing ownership; `failed` means spawn failure or exit before confirmation; `rejected` means validation/preflight did not authorize startup. `unconfirmed` means a live child did not publish matching evidence before the bounded confirmation deadline: do not blindly retry. Publication proves liveness, not model readiness or analysis completion. The CLI retains live child handles in memory and reaps exits on later interactions without terminating resident drivers when leaving the CLI.
+
+Process identity checks are conservative and cannot prove complete PID-reuse protection without an authoritative stored birth baseline. Target checks occur before launch; the external driver selects by session ID, not a strictly bound target PID. A preflight/spawn race is possible and driver-owned exclusion is the final authority. This does not promise exactly one spawned process or full descendant supervision.

@@ -162,3 +162,16 @@ class TestPrintInstructionHelp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_driver_help_scope(capsys):
+    """Keep both driver syntaxes discoverable only in workspace help."""
+    print_help([], "workspace")
+    output = capsys.readouterr().out
+    assert "/driver <number>" in output
+    assert "/driver status <number>" in output
+    for scope in ("runtime", "project", "session", "doc"):
+        print_help([], scope)
+        assert "/driver" not in capsys.readouterr().out
+    print_scopes()
+    assert "/driver status <number>" in capsys.readouterr().out
