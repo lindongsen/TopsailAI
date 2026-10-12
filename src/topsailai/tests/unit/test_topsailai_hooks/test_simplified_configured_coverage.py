@@ -119,8 +119,6 @@ def test_detach_trust_validates_type_and_copies_mutable_boundary(tmp_path: Path)
 
 def test_registry_configured_publication_lookup_replacement_and_scope_removal(tmp_path) -> None:
     """Configured state publishes atomically and is removed by exact owning scope."""
-    from dataclasses import replace
-
     registry = HookRegistry()
     first, result = _publish(registry, tmp_path)
     assert result == (True, 1, None)
@@ -129,8 +127,9 @@ def test_registry_configured_publication_lookup_replacement_and_scope_removal(tm
 
     _, repeated = _publish(registry, tmp_path)
     assert repeated == (False, 1, None)
-    candidate = empty_candidate(tmp_path, "hook_test")
-    candidate._plan = replace(candidate.plan, options=HookScriptExecutionOptions(argv=("two",)))
+    candidate = empty_candidate(
+        tmp_path, "hook_test", options=HookScriptExecutionOptions(argv=("two",))
+    )
     replacement, replaced = _publish(registry, tmp_path, candidate=candidate)
     assert replaced == (True, 2, first)
     assert first.retire().accepted

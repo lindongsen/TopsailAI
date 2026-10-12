@@ -8,11 +8,13 @@ from topsailai.hooks import EventDefinition
 from topsailai.hooks.hook_point_catalog import HookPointCatalog, HookPointDeclaration
 
 
-def _point(name: str, phase: str = "before", **kwargs: object) -> HookPointDeclaration:
+def _point(
+    name: str, phase: str = "before", *, event_name: str | None = None, **kwargs: object
+) -> HookPointDeclaration:
     """Build one ordinary test declaration."""
     values = {
         "name": name,
-        "definition": EventDefinition(f"test.{name}", 1),
+        "definition": EventDefinition(f"test.{name}" if event_name is None else event_name, 1),
         "phase": phase,
         "mode": "sync",
         "owner": "tests/example.py:operation",
@@ -81,3 +83,51 @@ def test_background_mode_is_rejected_without_async_conversion() -> None:
         _point("hook_test_background", mode="background")
     for mode in ("sync", "async"):
         assert _point("hook_test_waiting", mode=mode).mode == mode
+
+
+@pytest.mark.parametrize(("name_phase", "phase"), [
+    ("before", "before"), ("after", "success"), ("error", "error"),
+])
+def test_unified_declaration_identity_and_phase_survive_catalog(
+    name_phase: str, phase: str
+) -> None:
+    """Catalog defensive reconstruction preserves valid unified declarations."""
+    name = f"hook__context__{name_phase}__summary_generate_user2agent"
+    point = _point(name, phase, event_name=name)
+    catalog = HookPointCatalog((point,))
+    assert catalog.require(name) == point
+    assert catalog.require(name).definition.name == name
+    assert catalog.require(name).phase == phase
+
+
+@pytest.mark.parametrize(("name_phase", "phase"), [
+    ("before", "before"), ("after", "success"), ("error", "error"),
+])
+def test_unified_declaration_rejects_independent_event_name(
+    name_phase: str, phase: str
+) -> None:
+    """A valid new-format point cannot publish under another event identity."""
+    name = f"hook__context__{name_phase}__summary_generate_agent2llm"
+    with pytest.raises(ValueError, match="^invalid Hook-point declaration$"):
+        _point(name, phase, event_name="event.independent")
+
+
+@pytest.mark.parametrize(("name_phase", "phase"), [
+    ("before", "success"), ("before", "error"),
+    ("after", "before"), ("after", "error"),
+    ("error", "before"), ("error", "success"),
+])
+def test_unified_declaration_rejects_phase_mismatch(name_phase: str, phase: str) -> None:
+    """Each unified name phase permits only its corresponding framework phase."""
+    name = f"hook__context__{name_phase}__summary_generate_user2agent"
+    with pytest.raises(ValueError, match="^invalid Hook-point declaration$"):
+        _point(name, phase, event_name=name)
+
+
+@pytest.mark.parametrize("phase", ["before", "success", "error"])
+def test_legacy_declaration_keeps_independent_name_and_phase(phase: str) -> None:
+    """Legacy names retain independent event identity without deriving a phase."""
+    point = _point("hook_legacy_before", phase, event_name="event.independent")
+    catalog = HookPointCatalog((point,))
+    assert catalog.require(point.name).definition.name == "event.independent"
+    assert catalog.require(point.name).phase == phase

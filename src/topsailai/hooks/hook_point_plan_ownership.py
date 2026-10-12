@@ -23,19 +23,31 @@ class HookPointCandidate:
         self._publication_owner = None
         self._transfer_lock = threading.Lock()
 
+    def __setattr__(self, name, value):
+        """Bind the internally completed plan before exposing mutable attributes."""
+        if name == "_plan" and value is not None and self._plan is None:
+            _arm_candidate(self, value)
+        if name == "_capture_owner" and value is not None and self._capture_owner is None:
+            _arm_candidate_capture(self, value)
+        object.__setattr__(self, name, value)
+
     @property
     def plan(self):
         """Expose only a completed live unpublished plan."""
         if self._plan is None or self._closed:
             raise RuntimeError("candidate is not live and complete")
-        return self._plan
+        canonical = _observe_candidate(self)
+        capture_owner = None if self._capture_owner is None else _observe_candidate_capture(self)
+        if self._plan is not canonical or self._capture_owner is not capture_owner:
+            raise ValueError("candidate authority mismatch")
+        return canonical
 
     def transfer(self, registry, version):
         """Detach validated semantics and move cleanup rights exactly once."""
         with self._transfer_lock:
             if self._transferred or self._closed or type(self._plan) is not HookPointPlan:
                 raise ValueError("candidate is not transferable")
-            plan = replace(self._plan)
+            plan = replace(self.plan)
             if plan.fingerprint != self._plan.fingerprint or self._probe_debts:
                 raise ValueError("candidate authority mismatch")
             owner = HookPointOwner(registry, PublishedHookPoint(plan, version), self)
@@ -180,6 +192,8 @@ def _private_publication_authority():
 
 
 _arm_publication, _observe_publication = _private_publication_authority()
+_arm_candidate, _observe_candidate = _private_publication_authority()
+_arm_candidate_capture, _observe_candidate_capture = _private_publication_authority()
 
 
 class PublishedHookPoint:

@@ -137,7 +137,7 @@ def test_explicit_retry_has_new_budget_without_extending_close(
 
     retried = manager.recovery().retry(deadline=6.0)
     assert retried.accepted and retried.removed == 1
-    assert manager._close_deadline == 4.0
+    assert manager._close_deadline is None
     assert manager.snapshot().manager_state == "closed"
 
 

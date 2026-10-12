@@ -37,6 +37,7 @@ from topsailai.hooks.artifact_retention import (
     valid_reclaim_limit,
 )
 from topsailai.hooks.artifact_store import ArtifactCaptureOwner, CapturedArtifact
+from topsailai.hooks.configured_preparation_ownership import ArtifactLeaseCloseEpochMixin
 
 _MAX_CANDIDATES = 16
 _MAX_VERSIONS = 128
@@ -149,7 +150,8 @@ class CaptureReceipt:
 
 
 class ArtifactLeaseManager(ArtifactLeaseReceiptMixin, ArtifactLeaseScopeMixin,
-        ArtifactLeaseTransactionMixin, ArtifactPublicationMixin, CandidateRegistryMixin):
+        ArtifactLeaseTransactionMixin, ArtifactPublicationMixin, CandidateRegistryMixin,
+        ArtifactLeaseCloseEpochMixin):
     """Own one U07 owner and bound all lease, debt, and cleanup metadata."""
 
     _max_tokens = _MAX_TOKENS
@@ -175,6 +177,7 @@ class ArtifactLeaseManager(ArtifactLeaseReceiptMixin, ArtifactLeaseScopeMixin,
         self._publication_stage = None
         self._cleanup_debt_views: dict[str, ArtifactLeaseDebt] = {}
         self._close_deadline: float | None = None
+        self._close_attempts = 0
         self._execution_identity = object()
         self._recovery = ManagedArtifactRecovery(self)
         self._execution = ExecutionLeasePort(self, self._execution_identity)
@@ -406,7 +409,7 @@ class ArtifactLeaseManager(ArtifactLeaseReceiptMixin, ArtifactLeaseScopeMixin,
         """Attempt bounded zero-reference slot passes between deadline checks."""
         if not valid_deadline(deadline) or not valid_reclaim_limit(max_versions) or type(pressure) is not bool:
             return LeaseReclaimResult(False, errors=("invalid_lease_argument",))
-        if self._clock() >= deadline:
+        if self._cleanup_deadline_expired(deadline):
             return LeaseReclaimResult(False, cleanup_pending=self._cleanup_pending(), errors=("artifact_lease_timeout",))
         physical_owner = object()
         try:
@@ -416,7 +419,7 @@ class ArtifactLeaseManager(ArtifactLeaseReceiptMixin, ArtifactLeaseScopeMixin,
             examined = removed = 0
             timeout = False
             for version in self._eligible_versions(pressure)[:max_versions]:
-                if self._clock() >= deadline:
+                if self._cleanup_deadline_expired(deadline):
                     timeout = True
                     break
                 examined += 1
@@ -427,18 +430,18 @@ class ArtifactLeaseManager(ArtifactLeaseReceiptMixin, ArtifactLeaseScopeMixin,
                     removed += 1
                 else:
                     version.cleanup_pending = True
-                if self._clock() >= deadline:
+                if self._cleanup_deadline_expired(deadline):
                     timeout = bool(self._eligible_versions(pressure))
                     break
             if not timeout:
                 for debt in self._owner.cleanup_debts()[: max_versions - examined]:
-                    if self._clock() >= deadline:
+                    if self._cleanup_deadline_expired(deadline):
                         timeout = True
                         break
                     examined += 1
                     if self._owner.retry_cleanup(debt.debt_id):
                         removed += 1
-                    if self._clock() >= deadline:
+                    if self._cleanup_deadline_expired(deadline):
                         timeout = bool(self._owner.cleanup_debts())
                         break
         finally:
@@ -447,6 +450,7 @@ class ArtifactLeaseManager(ArtifactLeaseReceiptMixin, ArtifactLeaseScopeMixin,
         if (self._state == "closing" and not pending and not self._groups
                 and not self._candidate_groups and self._receipt is None):
             self._state = "closed"
+            self._close_deadline = None
         if timeout:
             return LeaseReclaimResult(False, examined, removed, pending, ("artifact_lease_timeout",))
         errors = ("artifact_cleanup_pending",) if pending else ()
@@ -463,31 +467,18 @@ class ArtifactLeaseManager(ArtifactLeaseReceiptMixin, ArtifactLeaseScopeMixin,
         with self._lock:
             if self._cleanup_debt_views.get(debt.debt_id) is not debt:
                 return LeaseReclaimResult(False, errors=("invalid_cleanup_debt",))
-        result = self.reclaim(deadline=deadline, max_versions=16, pressure=True)
+        if not valid_deadline(deadline):
+            return LeaseReclaimResult(False, errors=("invalid_lease_argument",))
+        with self._lock:
+            closing = self._state == "closing"
+        result = self._close_attempt(deadline) if closing else self.reclaim(
+            deadline=deadline, max_versions=16, pressure=True)
         current_ids = {item.debt_id for item in self._owner.cleanup_debts()}
         if debt.debt_id not in current_ids:
             debt._settled = True
             with self._lock:
                 self._cleanup_debt_views.pop(debt.debt_id, None)
         return result
-
-    def close(self, *, deadline: float) -> LeaseReclaimResult:
-        """Logically close once and schedule bounded physical cleanup."""
-        if not valid_deadline(deadline):
-            return LeaseReclaimResult(False, errors=("invalid_lease_argument",))
-        with self._lock:
-            if self._publication_stage is not None:
-                return LeaseReclaimResult(
-                    False, cleanup_pending=True, errors=("artifact_lease_busy",)
-                )
-            self._close_deadline = deadline if self._close_deadline is None else min(self._close_deadline, deadline)
-            self._state = "closing" if self._state != "closed" else "closed"
-            for group in tuple(self._groups.values()):
-                self._reconcile_group_mutation(group)
-                if self._valid_group(group) and group._state in ("candidate", "active"):
-                    self._settle_group_tokens(group, state="retired")
-            budget = self._close_deadline
-        return self.reclaim(deadline=budget, pressure=True)
 
     def snapshot(self) -> ArtifactLeaseSnapshot:
         """Return bounded counts without reversing owner-to-manager lock order."""

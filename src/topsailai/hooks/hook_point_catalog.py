@@ -60,6 +60,11 @@ class HookPointDeclaration:
         )
         if invalid:
             raise ValueError("invalid Hook-point declaration")
+        if self.name.startswith("hook__"):
+            name_phase = self.name.split("__")[2]
+            expected_phase = {"before": "before", "after": "success", "error": "error"}[name_phase]
+            if self.definition.name != self.name or self.phase != expected_phase:
+                raise ValueError("invalid Hook-point declaration")
         if self.failure_policy == "block" and not self.security_critical:
             raise ValueError("invalid Hook-point declaration")
         if self.allow_post_success_block and self.phase != "success":

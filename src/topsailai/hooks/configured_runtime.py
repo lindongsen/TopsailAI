@@ -117,6 +117,10 @@ def prepare_configured(
     cancellation: threading.Event | None = None,
 ) -> PrepareConfiguredResult:
     """Retain the superseded fail-closed U09-A compatibility boundary."""
+    from topsailai.hooks.configured_contracts import SummaryPreparationRequest
+
+    if type(configuration) is SummaryPreparationRequest:
+        return register_summary_prepared(runtime, configuration, scope, cancellation=cancellation)
     from topsailai.hooks.runtime import HookScope
 
     with runtime._lock:
@@ -482,3 +486,142 @@ def _terminal_configured(admission, category):
         rejection_reason=category,
         deadline_exhausted=category == "deadline",
     )
+
+
+def register_summary_prepared(runtime, request, scope, *, cancellation=None):
+    """Prepare and publish isolated complete points with safe disposition inputs."""
+    from topsailai.hooks.configured_contracts import (
+        SummaryPreparationRequest, SummaryPreparationResult, SummaryPointDisposition,
+        _SUMMARY_REASONS,
+    )
+    from topsailai.hooks.points.catalog import PHASE_ONE_DECLARATIONS
+
+    if type(request) is not SummaryPreparationRequest:
+        raise ValueError("invalid summary preparation request")
+    eligible = {point.name: point for point in PHASE_ONE_DECLARATIONS}
+    dispositions = []
+    for point in request.configuration.hook_points:
+        declaration = request.catalog.get(point.hook_name)
+        if (declaration is None or eligible.get(point.hook_name) != declaration
+                or point.definition.name != declaration.definition.name
+                or point.definition.major_version != declaration.definition.major_version):
+            reason = "catalog_rejected"
+        elif point.hook_name in request.disabled_hook_names:
+            dispositions.append(SummaryPointDisposition(point.hook_name,
+                "disabled_by_configuration", "disabled_by_configuration"))
+            continue
+        else:
+            single = ConfiguredHooks((point,), request.configuration.settings, request.configuration.policy)
+            reason = _prepare_summary_point(runtime, single, scope, point.hook_name, cancellation)
+        if reason not in _SUMMARY_REASONS:
+            reason = "internal_error"
+        dispositions.append(SummaryPointDisposition(point.hook_name,
+            "registered" if reason == "registered" else "unavailable_preparation_failure", reason))
+    return SummaryPreparationResult(tuple(dispositions))
+
+
+def _publish_prepared_image(runtime, scope, hook_name, image):
+    """Reserve exact recovery before adoption and revalidate before publication."""
+    recovery = runtime._publication_recovery
+    reservations = []
+    ticket = previous_ticket = image_ticket = None
+    previous_owner = candidate = None
+    try:
+        image_ticket = recovery.reserve(reservations)
+        if image_ticket is not None:
+            recovery.bind(image_ticket, image)
+        ticket = recovery.reserve(reservations)
+        previous_ticket = recovery.reserve(reservations) if ticket is not None else None
+        if ticket is None or previous_ticket is None:
+            result = image.close()
+            if not result.accepted:
+                error = RuntimeError("cleanup_pending")
+                error.recovery_owner = image
+                raise error
+            return "publication_capacity_exceeded"
+        if image_ticket is None:
+            result = image.close()
+            if not result.accepted:
+                error = RuntimeError("cleanup_pending")
+                error.recovery_owner = image
+                raise error
+            return "publication_capacity_exceeded"
+        candidate = image.adopt(runtime._backend,
+            receiver=lambda owner: recovery.bind(ticket, owner))
+        recovery.settle(image_ticket)
+        rejection = None
+        with runtime._lock:
+            if runtime._state != "running":
+                rejection = "runtime_closed"
+            elif not runtime._owns_open_scope(scope):
+                rejection = "scope_closed"
+            else:
+                _, previous_owner = runtime._registry.configured_plan(scope.scope_id, hook_name)
+                if previous_owner is not None:
+                    recovery.bind(previous_ticket, previous_owner)
+                result = runtime._registry.publish_hook_point(scope.scope_id, hook_name,
+                    candidate, dispose_loser=False)
+                if result.changed:
+                    recovery.handoff(ticket)
+                elif not result.accepted:
+                    rejection = "artifact_rejected"
+        if rejection is not None:
+            return rejection if recovery.settle(ticket) else "cleanup_pending"
+        if not result.changed and not recovery.settle(ticket):
+            return "cleanup_pending"
+        if result.changed and result.previous is not None:
+            recovery.settle(previous_ticket)
+        return "registered"
+    except BaseException as error:
+        if not isinstance(error, Exception):
+            error.recovery_owner = getattr(error, "recovery_owner", None) or candidate or image
+            raise
+        if getattr(error, "recovery_owner", None) is not None:
+            raise
+        if ticket is not None:
+            recovery.settle(ticket)
+        return "artifact_rejected"
+    finally:
+        if previous_owner is not None and runtime._registry.owns_hook_point_owner(previous_owner):
+            recovery.handoff(previous_ticket)
+        for reservation in reservations:
+            recovery.release(reservation)
+
+
+def _prepare_summary_point(runtime, configuration, scope, hook_name, cancellation):
+    """Prearm exact failed-preparation recovery before starting isolated work."""
+    from topsailai.hooks.configured_preparation import (
+        prepare_private, _PreparationCleanupPending, _PreparedCaptureOwner,
+        get_preparation_recovery_owner,
+    )
+
+    recovery = runtime._publication_recovery
+    reservations = []
+    ticket = recovery.reserve(reservations)
+    image = None
+    if ticket is None:
+        return "publication_capacity_exceeded"
+    try:
+        try:
+            image = prepare_private(runtime, configuration, scope,
+                cancellation=cancellation, _executable=True)
+        except BaseException as error:
+            owner = get_preparation_recovery_owner(error)
+            if owner is not None:
+                adapter = _PreparedCaptureOwner(owner, prepared=False)
+                recovery.bind(ticket, adapter)
+                error.recovery_owner = adapter
+            if isinstance(error, _PreparationCleanupPending):
+                return "cleanup_pending"
+            raise
+        if not image.accepted:
+            return image.errors[0] if image.errors else "internal_error"
+        recovery.bind(ticket, image)
+        reason = _publish_prepared_image(runtime, scope, hook_name, image)
+        recovery.settle(ticket)
+        return reason
+    finally:
+        if image is not None and image.accepted and image._ownership is None:
+            recovery.handoff(ticket)
+        for reservation in reservations:
+            recovery.release(reservation)

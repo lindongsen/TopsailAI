@@ -557,3 +557,39 @@ def test_startup_failure_preserves_prior_active_plan(policy):
     assert runtime.active == {"hook_a"}
     assert not registrar.ensure_registered("hook_b").ready
     assert runtime.calls == 3
+
+
+def test_stop_admission_does_not_close_scope_and_legacy_close_still_does():
+    """Application stop wakes admission without taking the Scope close stage."""
+    runtime = _Runtime()
+    scope = _Scope()
+    registrar = ConfiguredHookRegistrar(runtime, scope, _bootstrap("hook_a"), _catalog("hook_a"))
+    registrar.stop_admission()
+    registrar.stop_admission()
+    assert not scope.closed
+    assert registrar.ensure_registered("hook_a").state is RegistrationState.CLOSED
+    assert runtime.calls == 0
+    registrar.close()
+    assert scope.closed
+    registrar.close()
+
+
+def test_stop_admission_wakes_waiter_and_retires_late_winner():
+    """No in-flight winner can advertise readiness after application admission stop."""
+    runtime = _Runtime()
+    scope = _Scope()
+    registrar = ConfiguredHookRegistrar(runtime, scope, _bootstrap("hook_a"), _catalog("hook_a"))
+    results = []
+    winner = threading.Thread(target=lambda: results.append(registrar.ensure_registered("hook_a")))
+    waiter = threading.Thread(target=lambda: results.append(registrar.ensure_registered("hook_a")))
+    winner.start()
+    assert runtime.started.wait(1)
+    waiter.start()
+    registrar.stop_admission()
+    waiter.join(1)
+    assert not waiter.is_alive() and not scope.closed
+    runtime.release.set()
+    winner.join(1)
+    assert not winner.is_alive()
+    assert all(item.state is RegistrationState.CLOSED for item in results)
+    assert not runtime.active and runtime.removed == ["hook_a"]

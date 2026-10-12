@@ -26,6 +26,7 @@ class MockServerConfig:
     stream_chunks: tuple[str, ...] | None = None
     stream_response_chunks: tuple[tuple[str, ...], ...] | None = None
     stream_error_messages: tuple[str | None, ...] | None = None
+    stream_http_error_responses: tuple[tuple[int, str], ...] | None = None
     report_cache_usage: bool = True
     report_usage: bool = True
     tool_call_responses: tuple[tuple[dict[str, Any], ...], ...] | None = None
@@ -395,6 +396,12 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
             tool_choice=payload.get("tool_choice"),
         )
         if payload.get("stream"):
+            scripted_errors = self.server.config.stream_http_error_responses or ()
+            response_index = cache_result["request_number"] - 1
+            if response_index < len(scripted_errors):
+                status, message = scripted_errors[response_index]
+                self._error(status, message)
+                return
             self._write_stream(payload, cache_result)
             return
 

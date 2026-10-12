@@ -53,6 +53,10 @@ class U07:
         self.calls.append(deadline)
         return self.result
 
+    def recovery(self):
+        """Expose bounded recovery through the existing result recorder."""
+        return SimpleNamespace(retry=self.close)
+
     def retry_cleanup(self, debt, *, deadline):
         self.calls.append((debt, deadline))
         if debt in self.debts:
@@ -412,3 +416,62 @@ def test_root_debt_snapshot_excludes_closed_slots_after_exact_retry(monkeypatch,
     for debt in remaining:
         assert aggregate.retry_cleanup(debt.debt_id)
     assert aggregate.cleanup_debts() == ()
+
+
+@pytest.mark.parametrize("budget", [0, -1, True, 600001])
+def test_retirement_budget_rejects_invalid_values(budget):
+    """Require an independent positive bounded cleanup budget."""
+    from topsailai.hooks.configured_contracts import ConfiguredPreparationPolicy
+    with pytest.raises(ValueError):
+        ConfiguredPreparationPolicy(retirement_cleanup_timeout_ms=budget)
+    with pytest.raises(ValueError):
+        PreparationOwnership(None, 1.0, retirement_cleanup_timeout_ms=budget)
+
+
+def test_prepared_cleanup_has_fresh_budget_without_extending_preparation():
+    """Retire transferred captures after preparation expiry with a finite budget."""
+    now = [20.0]
+    manager = U07()
+    aggregate = PreparationOwnership(None, 1.0, retirement_cleanup_timeout_ms=250, _clock=lambda: now[0])
+    aggregate.register_shard(CaptureShard(0, manager, object()))
+    with pytest.raises(RuntimeError, match="ownership_not_transferred"):
+        aggregate.settle_prepared_cleanup()
+    aggregate.transfer_to_image()
+    assert aggregate.settle_prepared_cleanup()
+    assert manager.calls == [20.25]
+    assert aggregate.deadline == 1.0
+    assert aggregate.state == "closed"
+
+
+def test_prepared_retry_uses_exact_debt_and_fresh_budget():
+    """Keep the exact aggregate debt and reject foreign retry authority."""
+    now = [20.0]
+    manager = U07(result=SimpleNamespace(accepted=False, cleanup_pending=True))
+    aggregate = PreparationOwnership(None, 1.0, retirement_cleanup_timeout_ms=250, _clock=lambda: now[0])
+    aggregate.register_shard(CaptureShard(0, manager, object()))
+    aggregate.transfer_to_image()
+    assert not aggregate.settle_prepared_cleanup()
+    debt = SimpleNamespace(debt_id="exact")
+    manager.debts.append(debt)
+    manager.result = SimpleNamespace(accepted=True, cleanup_pending=False)
+    assert not aggregate.retry_prepared_cleanup("foreign")
+    now[0] = 30.0
+    assert aggregate.retry_prepared_cleanup("u07:0:exact")
+    assert manager.calls[-1] == (debt, 30.25)
+    assert aggregate.settle_prepared_cleanup()
+    assert aggregate.deadline == 1.0
+
+
+@pytest.mark.parametrize("interrupt_type", [KeyboardInterrupt, SystemExit])
+def test_prepared_cleanup_propagates_host_interruption(interrupt_type):
+    """Retain original aggregate custody when a host interrupt escapes cleanup."""
+    primary = interrupt_type("cleanup")
+    manager = U07(error=primary)
+    aggregate = PreparationOwnership(None, 1.0)
+    aggregate.register_shard(CaptureShard(0, manager, object()))
+    aggregate.transfer_to_image()
+    with pytest.raises(interrupt_type) as caught:
+        aggregate.settle_prepared_cleanup()
+    assert caught.value is primary
+    assert aggregate.requires_recovery()
+    assert aggregate.shards[0].manager is manager

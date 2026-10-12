@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from topsailai.hooks import ConfiguredHookPoint, ConfiguredHooks, EventDefinition
+from topsailai.hooks.configured_contracts import is_valid_hook_name
 
 def test_configured_hooks_mapping_is_sorted_and_exactly_selectable() -> None:
     """Mapping keys define canonical hook identity and deterministic order."""
@@ -237,3 +238,54 @@ def test_script_decoder_detaches_environment_and_platform_sequences(tmp_path: Pa
     assert saved.options.environment == (("SAFE_NAME", "value"),)
     assert saved.environment_snapshot == (("SAFE_NAME", "snapshot"),)
     assert saved.platform_policy.allowed_interpreters == ()
+
+
+@pytest.mark.parametrize("hook_name", [
+    f"hook__context__{phase}__{action}_{layer}"
+    for phase, action in (
+        ("before", "summary_generate"), ("after", "summary_generate"),
+        ("after", "summary_apply"), ("error", "summary_generate"),
+        ("error", "summary_apply"),
+    )
+    for layer in ("user2agent", "agent2llm")
+] + ["hook__orders2__after__invoice_send_2", "hook__a__before__" + "a" * 111])
+def test_unified_hook_names_are_valid_and_decoded(hook_name: str) -> None:
+    """New generic names and the exact length boundary survive mapping decoding."""
+    assert is_valid_hook_name(hook_name)
+    point = ConfiguredHookPoint(hook_name, EventDefinition(hook_name, 1))
+    configured = ConfiguredHooks.from_mapping({
+        "hooks": {hook_name: {"definition": {"name": hook_name, "major_version": 1}}}
+    })
+    assert configured.get_hook(hook_name) == point
+
+
+@pytest.mark.parametrize("hook_name", [
+    "hook__context__before", "hook__context__before__summary__user2agent",
+    "hook__context__success__summary", "hook__Context__before__summary",
+    "hook__context__before__Summary", "hook__café__before__summary",
+    "hook__context__before__résumé", "hook__context__before__summary ",
+    "hook__context__before__summary\n", "hook__context_part__before__summary",
+    "hook__context__before___summary", "hook__context__before__summary_",
+    "hook__context__before__summary__apply", "hook__context__before__",
+    "hook____before__summary", "hook__1context__before__summary",
+    "hook__context__Before__summary", "hook__context__before__1summary",
+    "hook__context__before__summary-apply", "hook__context__before__sum mary",
+    "hook__a__before__" + "a" * 112,
+])
+def test_invalid_unified_names_fail_direct_and_mapping_validation(hook_name: str) -> None:
+    """Malformed strict-prefix candidates cannot fall back to legacy matching."""
+    assert not is_valid_hook_name(hook_name)
+    with pytest.raises(ValueError, match="^invalid configured hook name$"):
+        ConfiguredHookPoint(hook_name, EventDefinition("event.invalid", 1))
+    with pytest.raises(ValueError, match="^invalid configured hook name$"):
+        ConfiguredHooks.from_mapping({
+            "hooks": {hook_name: {"definition": {"name": "event.invalid", "major_version": 1}}}
+        })
+
+
+@pytest.mark.parametrize("hook_name", ["hook_a", "hook_a__b_", "hook_" + "a" * 123])
+def test_legacy_hook_names_keep_independent_event_identity(hook_name: str) -> None:
+    """The unchanged legacy grammar permits independent event names."""
+    assert is_valid_hook_name(hook_name)
+    point = ConfiguredHookPoint(hook_name, EventDefinition("event.legacy", 1))
+    assert point.definition.name == "event.legacy"

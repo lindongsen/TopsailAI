@@ -11,7 +11,7 @@ from topsailai.hooks.registry import HookRegistry
 from topsailai.tests.unit.test_topsailai_hooks.test_hook_point_plan_capture import fixtures
 
 
-def empty_candidate(tmp_path, name="point"):
+def empty_candidate(tmp_path, name="point", options=None):
     """Build a real empty complete candidate without physical resource allocation."""
     return build_hook_point_candidate(
         name, platform_policy=ExecutablePlatformPolicy("posix"),
@@ -19,6 +19,7 @@ def empty_candidate(tmp_path, name="point"):
         artifact_root=str(tmp_path / "absent"),
         probe_backend=IsolatedProcessBackend(temp_root=str(tmp_path)),
         policy=ArtifactCapturePolicy(),
+        **({} if options is None else {"options": options}),
     )
 
 

@@ -14,6 +14,8 @@ Purpose:
 """
 
 from topsailai.logger import logger
+from topsailai.hooks.points.context.summary_adapter import SummaryHookAdapter
+from topsailai.workspace.context.base import SUMMARY_CONTROL_EXCEPTIONS
 from topsailai.ai_base.constants import (
     ROLE_USER,
     ROLE_ASSISTANT,
@@ -427,7 +429,14 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         # The summarizer is called with the current runtime messages. In
         # runtime mode the LLM actually consumes self.messages, but the
         # wrapper-level contract is to pass the runtime messages.
-        llm_chat, answer = self._summarize_messages(messages, extra_prompt=story_tool.PROMPT_SUMMARY_MEMORY)
+        summary_hook_operation = None
+        summary_hooks_executor = getattr(self, "summary_hooks_executor", None)
+        if summary_hooks_executor is not None:
+            summary_hook_operation = SummaryHookAdapter(summary_hooks_executor).begin("user2agent")
+        summary_hook_kwargs = {}
+        if summary_hook_operation is not None:
+            summary_hook_kwargs["summary_hook_operation"] = summary_hook_operation
+        llm_chat, answer = self._summarize_messages(messages, extra_prompt=story_tool.PROMPT_SUMMARY_MEMORY, **summary_hook_kwargs)
         if not answer:
             print_critical("!!! [User2Agent] [Summarization] NO ANSWER")
             return None
@@ -437,6 +446,8 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                 print(SPLIT_LINE)
                 if not input_yes(">>> Is this answer acceptable? [yes/no] "):
                     return answer
+            except SUMMARY_CONTROL_EXCEPTIONS:
+                raise
             except Exception:
                 return answer
 
@@ -450,110 +461,132 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
 
         print_info(f"!!! [User2Agent] [Summarization] head_offset_to_keep={head_offset_to_keep}, tail_offset_to_keep={tail_offset_to_keep}, last_user_message_to_keep=1")
 
-        if self.session_id:
-            raw_messages_from_session = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
+        failed_stage = "memory_update"
+        error_category = "state_update"
+        partial_apply_possible = False
+        try:
+            if self.session_id:
+                failed_stage = "session_write"
+                error_category = "persistence"
+                raw_messages_from_session = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
 
-            # add answer to session
-            summary_answer = llm_chat.prompt_ctl.messages[-1]
-            ctx_manager.add_session_message(self.session_id, summary_answer)
+                # add answer to session
+                summary_answer = llm_chat.prompt_ctl.messages[-1]
+                partial_apply_possible = True
+                ctx_manager.add_session_message(self.session_id, summary_answer)
 
-            # Reuse the in-memory intrinsic-head policy instead of duplicating
-            # task/observation rules in the persistence branch. The helper
-            # always returns a prefix, so its length maps directly to the same
-            # ordered raw records and preserves their storage identifiers.
-            raw_message_values = [raw_msg.message for raw_msg in raw_messages_from_session]
-            raw_head_messages = self._get_summary_head_messages(raw_message_values)
-            raw_msg_ids_to_keep = [
-                raw_msg.msg_id
-                for raw_msg in raw_messages_from_session[:len(raw_head_messages)]
-            ]
-            print_info(f"!!! [User2Agent] [Summarization] intrinsic_head_messages_to_keep(session_raw_messages)={len(raw_msg_ids_to_keep)}")
+                failed_stage = "history_delete"
+                # Reuse the in-memory intrinsic-head policy instead of duplicating
+                # task/observation rules in the persistence branch. The helper
+                # always returns a prefix, so its length maps directly to the same
+                # ordered raw records and preserves their storage identifiers.
+                raw_message_values = [raw_msg.message for raw_msg in raw_messages_from_session]
+                raw_head_messages = self._get_summary_head_messages(raw_message_values)
+                raw_msg_ids_to_keep = [
+                    raw_msg.msg_id
+                    for raw_msg in raw_messages_from_session[:len(raw_head_messages)]
+                ]
+                print_info(f"!!! [User2Agent] [Summarization] intrinsic_head_messages_to_keep(session_raw_messages)={len(raw_msg_ids_to_keep)}")
 
-            # keep last user message
-            last_user_raw_msg = None
-            for raw_msg in reversed(raw_messages_from_session):
-                msg_dict = json_tool.json_load(raw_msg.message)
-                if msg_dict["role"] == ROLE_USER:
-                    last_user_raw_msg = raw_msg
-                    break
+                # keep last user message
+                last_user_raw_msg = None
+                for raw_msg in reversed(raw_messages_from_session):
+                    msg_dict = json_tool.json_load(raw_msg.message)
+                    if msg_dict["role"] == ROLE_USER:
+                        last_user_raw_msg = raw_msg
+                        break
 
-            # delete history messages. The preserved tail window is expanded
-            # backwards so a tool observation is never deleted together with
-            # nothing else while its owning assistant message survives (and the
-            # other way round), which would produce an orphan tool message.
-            raw_tail_start = len(raw_messages_from_session)
-            if tail_offset_to_keep > 0:
-                raw_tail_floor = max(len(raw_head_messages), head_offset_to_keep)
-                raw_tail_start = message_tool.expand_tail_start_for_tool_pairing(
-                    raw_message_values,
-                    len(raw_messages_from_session) - tail_offset_to_keep,
-                    min_start=raw_tail_floor,
-                )
-            if raw_messages_from_session:
-                for raw_msg in raw_messages_from_session[head_offset_to_keep:max(raw_tail_start, head_offset_to_keep)]:
-                    if last_user_raw_msg and raw_msg.msg_id == last_user_raw_msg.msg_id:
-                        continue
-                    if raw_msg_ids_to_keep and raw_msg.msg_id in raw_msg_ids_to_keep:
-                        continue
-                    ctx_manager.del_session_messages(self.session_id, [raw_msg.msg_id])
+                # delete history messages. The preserved tail window is expanded
+                # backwards so a tool observation is never deleted together with
+                # nothing else while its owning assistant message survives (and the
+                # other way round), which would produce an orphan tool message.
+                raw_tail_start = len(raw_messages_from_session)
+                if tail_offset_to_keep > 0:
+                    raw_tail_floor = max(len(raw_head_messages), head_offset_to_keep)
+                    raw_tail_start = message_tool.expand_tail_start_for_tool_pairing(
+                        raw_message_values,
+                        len(raw_messages_from_session) - tail_offset_to_keep,
+                        min_start=raw_tail_floor,
+                    )
+                if raw_messages_from_session:
+                    for raw_msg in raw_messages_from_session[head_offset_to_keep:max(raw_tail_start, head_offset_to_keep)]:
+                        if last_user_raw_msg and raw_msg.msg_id == last_user_raw_msg.msg_id:
+                            continue
+                        if raw_msg_ids_to_keep and raw_msg.msg_id in raw_msg_ids_to_keep:
+                            continue
+                        ctx_manager.del_session_messages(self.session_id, [raw_msg.msg_id])
+                else:
+                    logger.critical("BUG: how did it happend? null of messages from session: [%s]", self.session_id)
+
+                # reset messages
+                failed_stage = "session_reload"
+                error_category = "state_update"
+                self.reset_messages()
             else:
-                logger.critical("BUG: how did it happend? null of messages from session: [%s]", self.session_id)
+                failed_stage = "memory_update"
+                # keep last user message
+                last_user_msg = self.last_user_message
+                # new messages: start with head_offset, then add tail_offset,
+                # then add summary answer. The final structure is completed by
+                # merging keeping_messages (head_portion) back in below and then
+                # appending last_user_message.
+                new_messages = messages[:head_offset_to_keep]
+                # add tail_offset messages. The window is expanded backwards so it
+                # never starts on a tool observation whose owning assistant message
+                # would be summarized away. Bounded by the head region.
+                tail_messages = []
+                if tail_offset_to_keep > 0:
+                    tail_floor = max(len(keeping_messages), head_offset_to_keep)
+                    tail_start = message_tool.expand_tail_start_for_tool_pairing(
+                        messages,
+                        len(messages) - tail_offset_to_keep,
+                        min_start=tail_floor,
+                    )
+                    tail_messages = messages[tail_start:]
+                for msg in tail_messages:
+                    if not self._message_in_list(msg, new_messages):
+                        new_messages.append(msg)
 
-            # reset messages
-            self.reset_messages()
-        else:
-            # keep last user message
-            last_user_msg = self.last_user_message
-            # new messages: start with head_offset, then add tail_offset,
-            # then add summary answer. The final structure is completed by
-            # merging keeping_messages (head_portion) back in below and then
-            # appending last_user_message.
-            new_messages = messages[:head_offset_to_keep]
-            # add tail_offset messages. The window is expanded backwards so it
-            # never starts on a tool observation whose owning assistant message
-            # would be summarized away. Bounded by the head region.
-            tail_messages = []
-            if tail_offset_to_keep > 0:
-                tail_floor = max(len(keeping_messages), head_offset_to_keep)
-                tail_start = message_tool.expand_tail_start_for_tool_pairing(
-                    messages,
-                    len(messages) - tail_offset_to_keep,
-                    min_start=tail_floor,
+                # add answer(summary) to messages
+                summary_answer = llm_chat.prompt_ctl.messages[-1]
+                new_messages.append(summary_answer)
+
+                # Re-insert the head_portion in chronological order so the final
+                # list follows head_portion + tail_portion + [summary_answer] + [last_user_message].
+                if keeping_messages:
+                    new_messages = self._merge_task_messages(original_messages, new_messages, keeping_messages)
+
+                if last_user_msg:
+                    if not self._message_in_list(last_user_msg, new_messages):
+                        new_messages.append(last_user_msg)
+
+                self._log_summarize_message_identity_changes(
+                    "summarize_messages_for_processed",
+                    original_messages,
+                    new_messages,
+                    summary_answer,
                 )
-                tail_messages = messages[tail_start:]
-            for msg in tail_messages:
-                if not self._message_in_list(msg, new_messages):
-                    new_messages.append(msg)
+                partial_apply_possible = True
+                self.set_messages(new_messages)
 
-            # add answer(summary) to messages
-            summary_answer = llm_chat.prompt_ctl.messages[-1]
-            new_messages.append(summary_answer)
-
-            # Re-insert the head_portion in chronological order so the final
-            # list follows head_portion + tail_portion + [summary_answer] + [last_user_message].
-            if keeping_messages:
-                new_messages = self._merge_task_messages(original_messages, new_messages, keeping_messages)
-
-            if last_user_msg:
-                if not self._message_in_list(last_user_msg, new_messages):
-                    new_messages.append(last_user_msg)
-
-            self._log_summarize_message_identity_changes(
+            # Log message count and token usage after summarization
+            _token_count_after = self._get_current_tokens(self.messages)
+            logger.info("[summarize_processed] after: messages=%s, tokens=%s", len(self.messages), _token_count_after)
+            self._check_summarize_token_reduction(
                 "summarize_messages_for_processed",
-                original_messages,
-                new_messages,
-                summary_answer,
+                _token_count_before,
+                _token_count_after,
             )
-            self.set_messages(new_messages)
-
-        # Log message count and token usage after summarization
-        _token_count_after = self._get_current_tokens(self.messages)
-        logger.info("[summarize_processed] after: messages=%s, tokens=%s", len(self.messages), _token_count_after)
-        self._check_summarize_token_reduction(
-            "summarize_messages_for_processed",
-            _token_count_before,
-            _token_count_after,
-        )
+        except SUMMARY_CONTROL_EXCEPTIONS:
+            raise
+        except Exception:
+            self._emit_summary_checkpoint(
+                summary_hook_operation, "error_summary_apply",
+                error_category=error_category, failed_stage=failed_stage,
+                partial_apply_possible=partial_apply_possible,
+            )
+            raise
+        self._emit_summary_checkpoint(summary_hook_operation, "after_summary_apply")
         return answer
 
 

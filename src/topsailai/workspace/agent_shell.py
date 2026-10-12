@@ -7,6 +7,10 @@
 
 import logging
 import os
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from topsailai.hooks.configured_contracts import SummaryPreparationRequest, ConfiguredTrustPolicy
 
 from topsailai.utils import (
     env_tool,
@@ -154,8 +158,22 @@ def _get_agent_chat_impl(
         need_input_message:bool=True,
         need_set_agent_name_to_thread_local:bool=True,
         need_project_workspace_lock:bool=True,
+        *,
+        summary_preparation_request: "SummaryPreparationRequest | None" = None,
+        summary_trust_policy: "ConfiguredTrustPolicy | None" = None,
+        summary_hooks_temp_root: str | None = None,
     ) -> AgentChat:
     """Internal implementation of get_agent_chat()."""
+    supplied = (summary_preparation_request is not None,
+        summary_trust_policy is not None, summary_hooks_temp_root is not None)
+    if any(supplied) and not all(supplied):
+        raise ValueError("summary Hooks inputs must be supplied together")
+    summary_executor = None
+    if all(supplied):
+        from topsailai.workspace.summary_hooks_owner import acquire_summary_hooks_owner
+        summary_executor = acquire_summary_hooks_owner(
+            request=summary_preparation_request, trust_policy=summary_trust_policy,
+            temp_root=summary_hooks_temp_root).executor
     if need_print_session is None:
         if env_tool.is_debug_mode():
             need_print_session = False
@@ -180,7 +198,7 @@ def _get_agent_chat_impl(
             system_prompt = sys_prompt_content
 
     # context runtime xxx
-    ctx_runtime_data = ContextRuntimeData()
+    ctx_runtime_data = ContextRuntimeData(summary_hooks_executor=summary_executor)
     ctx_rt_aiagent = ContextRuntimeAIAgent(ctx_runtime_data)
     ctx_rt_instruction = ContextRuntimeInstructions(ctx_runtime_data)
 
@@ -318,6 +336,10 @@ def get_agent_chat(
         need_input_message:bool=True,
         need_set_agent_name_to_thread_local:bool=True,
         need_project_workspace_lock:bool=True,
+        *,
+        summary_preparation_request: "SummaryPreparationRequest | None" = None,
+        summary_trust_policy: "ConfiguredTrustPolicy | None" = None,
+        summary_hooks_temp_root: str | None = None,
     ) -> AgentChat:
     """Create and return an AgentChat instance with all required components.
 
@@ -343,6 +365,10 @@ def get_agent_chat(
     Returns:
         AgentChat: A fully initialized AgentChat instance ready for conversation.
     """
+    supplied = (summary_preparation_request is not None,
+        summary_trust_policy is not None, summary_hooks_temp_root is not None)
+    if any(supplied) and not all(supplied):
+        raise ValueError("summary Hooks inputs must be supplied together")
     lock_ctx = ctxm_project_workspace_lock if need_project_workspace_lock else ctxm_void
     with lock_ctx() as has_lock:
         return _get_agent_chat_impl(
@@ -361,4 +387,7 @@ def get_agent_chat(
             need_input_message=need_input_message,
             need_set_agent_name_to_thread_local=need_set_agent_name_to_thread_local,
             need_project_workspace_lock=need_project_workspace_lock,
+            summary_preparation_request=summary_preparation_request,
+            summary_trust_policy=summary_trust_policy,
+            summary_hooks_temp_root=summary_hooks_temp_root,
         )

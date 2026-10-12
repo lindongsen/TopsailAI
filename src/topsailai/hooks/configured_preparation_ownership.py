@@ -2,15 +2,62 @@
 
 from __future__ import annotations
 
+import time
+
 import os
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from topsailai.hooks.artifact_cleanup import require_fd_metadata_absent
-from topsailai.hooks.artifact_leases import ArtifactLeaseManager
-from topsailai.hooks.module_discovery import ModuleCleanupOwner
+from topsailai.hooks.artifact_lease_contracts import LeaseReclaimResult
+from topsailai.hooks.artifact_retention import valid_deadline
 
+if TYPE_CHECKING:
+    from topsailai.hooks.artifact_leases import ArtifactLeaseManager
+    from topsailai.hooks.module_discovery import ModuleCleanupOwner
+
+
+class ArtifactLeaseCloseEpochMixin:
+    """Bound manager-owned cleanup epochs without changing aggregate custody."""
+
+    def _cleanup_deadline_expired(self, deadline: float) -> bool:
+        """Observe concurrent tightening without extending an active attempt."""
+        with self._lock:
+            budget = deadline if not self._close_attempts or self._close_deadline is None else min(deadline, self._close_deadline)
+        return self._clock() >= budget
+
+    def _close_attempt(self, deadline: float) -> LeaseReclaimResult:
+        """Retain the first close budget until terminal cleanup commits."""
+        with self._lock:
+            if self._state == "closed":
+                return LeaseReclaimResult(True)
+            self._close_attempts += 1
+            self._close_deadline = deadline if self._close_deadline is None else min(self._close_deadline, deadline)
+        try:
+            return self.reclaim(deadline=deadline, pressure=True)
+        finally:
+            with self._lock:
+                self._close_attempts -= 1
+
+    def close(self, *, deadline: float) -> LeaseReclaimResult:
+        """Logically close once and schedule a finite physical cleanup epoch."""
+        if not valid_deadline(deadline):
+            return LeaseReclaimResult(False, errors=("invalid_lease_argument",))
+        with self._lock:
+            if self._state == "closed":
+                return LeaseReclaimResult(True)
+            if self._publication_stage is not None:
+                return LeaseReclaimResult(
+                    False, cleanup_pending=True, errors=("artifact_lease_busy",)
+                )
+            self._state = "closing"
+            for group in tuple(self._groups.values()):
+                self._reconcile_group_mutation(group)
+                if self._valid_group(group) and group._state in ("candidate", "active"):
+                    self._settle_group_tokens(group, state="retired")
+        return self._close_attempt(deadline)
 
 @dataclass(slots=True)
 class CaptureShard:
@@ -229,15 +276,20 @@ def get_configured_root_recovery_owner(error: BaseException) -> ConfiguredRootOw
 class PreparationOwnership:
     """Aggregate all recovery authorities and enforce cleanup precedence."""
 
-    __slots__ = ("root_owner", "shards", "module_owners", "state", "deadline", "_debts", "_u07_debts", "_module_hook_names")
+    __slots__ = ("root_owner", "shards", "module_owners", "state", "deadline", "_debts", "_u07_debts", "_module_hook_names", "_prepared_cleanup_timeout_ms", "_clock", "_retirement_timeout_ms")
 
-    def __init__(self, root_owner: ConfiguredRootOwner | None, deadline: float) -> None:
+    def __init__(self, root_owner: ConfiguredRootOwner | None, deadline: float, *, retirement_cleanup_timeout_ms: int = 10_000, _clock=time.monotonic) -> None:
         """Create an empty open aggregate."""
+        if type(retirement_cleanup_timeout_ms) is not int or not 0 < retirement_cleanup_timeout_ms <= 600_000:
+            raise ValueError("invalid retirement cleanup budget")
+        self._prepared_cleanup_timeout_ms = None
+        self._clock = _clock
         self.root_owner = root_owner
         self.shards: list[CaptureShard] = []
         self.module_owners: list[ModuleCleanupOwner] = []
         self.state = "open"
         self.deadline = deadline
+        self._retirement_timeout_ms = retirement_cleanup_timeout_ms
         self._debts: dict[str, AggregateCleanupDebt] = {}
         self._u07_debts: dict[str, object] = {}
         self._module_hook_names: dict[int, str] = {}
@@ -310,6 +362,10 @@ class PreparationOwnership:
 
     def retry_cleanup(self, debt_id: str) -> bool:
         """Route one exact aggregate debt to its owning authority."""
+        return self._retry_cleanup_with_deadline(debt_id, self.deadline)
+
+    def _retry_cleanup_with_deadline(self, debt_id: str, deadline: float) -> bool:
+        """Route recorded debt without changing preparation lifetime."""
         for debt in self.cleanup_debts():
             if debt.debt_id != debt_id:
                 continue
@@ -319,7 +375,7 @@ class PreparationOwnership:
                 exact_debt = self._u07_debts.get(debt_id)
                 if exact_debt is None:
                     return False
-                result = debt.owner.retry_cleanup(exact_debt, deadline=self.deadline)
+                result = debt.owner.retry_cleanup(exact_debt, deadline=deadline)
                 return result.accepted
             close_slot = getattr(debt.owner, "close_slot", None)
             if close_slot is not None:
@@ -329,6 +385,10 @@ class PreparationOwnership:
 
     def settle(self) -> bool:
         """Settle U03 first, then U07 shards, then root."""
+        return self._settle_with_deadline(self.deadline)
+
+    def _settle_with_deadline(self, deadline: float, *, recovery: bool = False) -> bool:
+        """Settle the exact aggregate under one supplied finite budget."""
         if self.state == "closed":
             return True
         if any(not _settle_module_owner(owner) for owner in self.module_owners):
@@ -337,7 +397,8 @@ class PreparationOwnership:
         for shard in self.shards:
             try:
                 shard.manager.release_group(shard.group)
-                result = shard.manager.close(deadline=self.deadline)
+                result = (shard.manager.recovery().retry(deadline=deadline) if recovery
+                          else shard.manager.close(deadline=deadline))
             except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception:
@@ -352,12 +413,27 @@ class PreparationOwnership:
         self.state = "closed"
         return True
 
+    def settle_prepared_cleanup(self) -> bool:
+        """Use a fresh finite retirement budget for transferred custody only."""
+        if self._prepared_cleanup_timeout_ms is None:
+            raise RuntimeError("ownership_not_transferred")
+        deadline = self._clock() + self._prepared_cleanup_timeout_ms / 1000
+        return self._settle_with_deadline(deadline, recovery=self.state == "cleanup_pending")
+
+    def retry_prepared_cleanup(self, debt_id: str) -> bool:
+        """Retry only an exact recorded debt with a new retirement budget."""
+        if self._prepared_cleanup_timeout_ms is None:
+            raise RuntimeError("ownership_not_transferred")
+        deadline = self._clock() + self._prepared_cleanup_timeout_ms / 1000
+        return self._retry_cleanup_with_deadline(debt_id, deadline)
+
     def transfer_to_image(self) -> None:
         """Freeze the aggregate only after all resources are settled or retained."""
         if self.state != "open" or self.cleanup_debts():
             raise RuntimeError("cleanup_pending")
         if self.root_owner is not None:
             self.root_owner.revalidate()
+        self._prepared_cleanup_timeout_ms = self._retirement_timeout_ms
         self.state = "transferred"
 
 

@@ -14,7 +14,6 @@ from tests.unit.test_topsailai_hooks.artifact_lease_helpers import (
     lease_fixture,
 )
 
-
 def test_capture_reserves_adopts_and_reclaims_exact_version(tmp_path: Path) -> None:
     """Adopt one real capture and reclaim it only after exact release."""
     manager, requests, policy = lease_fixture(tmp_path)
@@ -27,7 +26,6 @@ def test_capture_reserves_adopts_and_reclaims_exact_version(tmp_path: Path) -> N
     assert result.accepted and result.removed == 1
     assert manager.snapshot().capture_slots == 0
     assert manager.release_group(group).accepted
-
 
 def test_repeated_acquire_creates_distinct_tokens_and_scope_is_exact(tmp_path: Path) -> None:
     """Release an inner scoped acquisition without releasing its outer source."""
@@ -194,7 +192,6 @@ def test_close_retry_reconciles_interrupted_group_settlement(
     assert snapshot.stored_versions == 0
     assert snapshot.manager_state == "closed"
 
-
 def test_reclaim_reports_interrupted_close_metadata_pending(tmp_path: Path) -> None:
     """Report a retained settlement journal until close alone reconciles it."""
     import inspect
@@ -231,9 +228,6 @@ def test_reclaim_reports_interrupted_close_metadata_pending(tmp_path: Path) -> N
     assert snapshot.stored_versions == 0
     assert snapshot.manager_state == "closed"
 
-
-
-
 def test_capture_adoption_reconciles_interrupted_token_publication(
     monkeypatch, tmp_path: Path,
 ) -> None:
@@ -259,7 +253,6 @@ def test_capture_adoption_reconciles_interrupted_token_publication(
     assert not group._mutation and len(group._tokens) == 1
     assert manager.release_group(group).accepted
     assert manager.reclaim(deadline=manager._clock() + 1.0, pressure=True).removed == 1
-
 
 def test_staged_candidate_cannot_release_and_commit_revalidates_authority(
     tmp_path: Path,
@@ -666,3 +659,41 @@ def test_capture_caller_first_instruction_interruption_is_group_recoverable(
     assert manager.snapshot().live_tokens == 1
     assert manager.release_group(group).accepted
     assert manager.reclaim(deadline=manager._clock() + 1.0, pressure=True).removed == 1
+
+
+def test_close_timeout_can_be_followed_by_finite_new_epoch(tmp_path):
+    """Pending close retains its epoch until explicit bounded recovery completes."""
+    manager, requests, policy = lease_fixture(tmp_path)
+    group, lease = captured_candidate(manager, requests, policy)
+    captured_directory = lease.directory
+    expired = manager._clock() - 1
+    first = manager.close(deadline=expired)
+    assert not first.accepted and first.cleanup_pending
+    assert manager._close_deadline == expired
+    assert manager.recovery().retry(deadline=manager._clock() + 1).accepted
+    assert not captured_directory.exists()
+    assert manager.snapshot().manager_state == "closed"
+    assert manager._close_deadline is None
+    assert manager.close(deadline=expired).accepted
+
+
+def test_concurrent_close_can_only_tighten_active_epoch(monkeypatch, tmp_path):
+    """A reentrant fresh budget cannot extend physical cleanup in progress."""
+    manager, requests, policy = lease_fixture(tmp_path)
+    captured_candidate(manager, requests, policy)
+    original = manager._owner.dispose
+    observed = []
+    def dispose(artifact):
+        """Attempt a nested longer budget while the exact physical lock is held."""
+        before = manager._close_deadline
+        nested = manager.close(deadline=manager._clock() + 100)
+        observed.append((before, manager._close_deadline, nested))
+        return original(artifact)
+    monkeypatch.setattr(manager._owner, "dispose", dispose)
+    assert manager.close(deadline=manager._clock() + 1).accepted
+    assert len(observed) == 1
+    before, after, nested = observed[0]
+    assert before == after
+    assert not nested.accepted and nested.cleanup_pending
+    assert manager._close_deadline is None
+    assert manager._close_attempts == 0

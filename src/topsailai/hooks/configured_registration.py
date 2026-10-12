@@ -105,6 +105,7 @@ class ConfiguredHookRegistrar:
         self._transient_backoff_seconds = float(transient_backoff_seconds)
         self._condition = threading.Condition()
         self._closed = False
+        self._prepared_result = None
         self._reloading = False
         self._bindings = self._binding_map(bootstrap)
         self._cells = {
@@ -112,6 +113,39 @@ class ConfiguredHookRegistrar:
                 desired_revision=bootstrap.configuration_generation)
             for name in self._bindings
         }
+
+    @classmethod
+    def from_prepared(cls, runtime, scope, request, *, cancellation=None):
+        """Publish an explicit summary request without a legacy bootstrap path."""
+        from topsailai.hooks.configured_contracts import SummaryPreparationRequest
+        from topsailai.hooks.configured_runtime import register_summary_prepared
+
+        if type(request) is not SummaryPreparationRequest:
+            raise ValueError("invalid summary preparation request")
+        registrar = cls.__new__(cls)
+        registrar._runtime = runtime
+        registrar._scope = scope
+        registrar._catalog = request.catalog
+        registrar._condition = threading.Condition()
+        registrar._closed = False
+        registrar._reloading = False
+        registrar._bindings = {}
+        registrar._cells = {}
+        registrar._prepared_result = register_summary_prepared(runtime, request, scope,
+            cancellation=cancellation)
+        for item in registrar._prepared_result.dispositions:
+            ready = item.kind == "registered"
+            _, owner = runtime._registry.configured_plan(scope.scope_id, item.hook_name)
+            registrar._cells[item.hook_name] = _RegistrationCell(
+                RegistrationState.READY if ready else RegistrationState.UNCONFIGURED,
+                error_category=None if ready else item.reason,
+                active_revision=owner.snapshot.active_version if ready and owner is not None else None)
+        return registrar
+
+    @property
+    def dispositions(self):
+        """Expose detached per-point state, not a process startup report."""
+        return () if self._prepared_result is None else self._prepared_result.dispositions
 
     @staticmethod
     def _binding_map(bootstrap: ConfiguredHookBootstrap) -> dict[str, ConfiguredHookBinding]:
@@ -122,6 +156,9 @@ class ConfiguredHookRegistrar:
 
     def start(self) -> RegistrationEnsureResult:
         """Eagerly register the complete startup snapshot or disable it wholly."""
+        if self._prepared_result is not None:
+            with self._condition:
+                return self._result(RegistrationState.CLOSED, "scope_closed") if self._closed else self._result(RegistrationState.READY)
         if not self._bootstrap.enabled:
             return RegistrationEnsureResult(RegistrationState.UNCONFIGURED)
         if self._bootstrap.registration_mode != "startup":
@@ -173,6 +210,12 @@ class ConfiguredHookRegistrar:
 
     def ensure_registered(self, hook_name: str, *, deadline=None, cancellation=None) -> RegistrationEnsureResult:
         """Register one Hook through a sync/async shared singleflight cell."""
+        if self._prepared_result is not None:
+            with self._condition:
+                if self._closed:
+                    return self._result(RegistrationState.CLOSED, "scope_closed")
+                cell = self._cells.get(hook_name)
+                return self._result(RegistrationState.UNCONFIGURED) if cell is None else self._cell_result(cell)
         if deadline is not None or cancellation is not None:
             return self._ensure_budgeted(hook_name, deadline, cancellation)
         with self._condition:
@@ -311,6 +354,8 @@ class ConfiguredHookRegistrar:
 
     def reload(self, bootstrap: ConfiguredHookBootstrap) -> None:
         """Invalidate one same-trust snapshot without dropping active replacements."""
+        if self._prepared_result is not None:
+            raise ValueError("prepared Registrar requires explicit replacement")
         if type(bootstrap) is not ConfiguredHookBootstrap or bootstrap.trust_identity != self._bootstrap.trust_identity:
             raise ValueError("configured trust change requires Runtime replacement")
         for binding in bootstrap.hooks:
@@ -360,16 +405,22 @@ class ConfiguredHookRegistrar:
             if not result.ready and bootstrap.startup_policy == "fail":
                 raise RuntimeError(result.error_category or "configured Hook startup registration failed")
 
-    def close(self) -> None:
-        """Close registration admission, wake waiters, then close the owned Scope."""
+    def stop_admission(self) -> None:
+        """Stop registration and wake waiters without closing application resources."""
         with self._condition:
-            if self._closed:
-                return
             self._closed = True
             for cell in self._cells.values():
                 cell.active_revision = None
                 cell.state = RegistrationState.CLOSED
             self._condition.notify_all()
+
+    def close(self) -> None:
+        """Stop registration admission and close the owned Scope compatibly."""
+        self.stop_admission()
+        with self._condition:
+            if getattr(self, "_scope_close_requested", False):
+                return
+            self._scope_close_requested = True
         self._scope.close()
 
     @staticmethod

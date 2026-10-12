@@ -30,6 +30,9 @@ if TYPE_CHECKING:
 
 _INVALID_TRUST = "invalid configured trust policy"
 _HOOK_NAME = re.compile(r"^hook_[a-z][a-z0-9_]*$")
+_UNIFIED_HOOK_NAME = re.compile(
+    r"^hook__[a-z][a-z0-9]*__(?:before|after|error)__[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+)
 _ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _RESERVED_ENVIRONMENT = frozenset(
     {
@@ -114,11 +117,13 @@ class ConfiguredPreparationPolicy:
     max_scanned_entries: int = 4_096
     max_candidates: int = 1_024
     max_artifact_bytes: int = 67_108_864
+    retirement_cleanup_timeout_ms: int = 10_000
 
     def __post_init__(self) -> None:
         """Reject non-positive or out-of-contract preparation limits."""
         limits = (
             self.timeout_ms,
+            self.retirement_cleanup_timeout_ms,
             self.max_hook_points,
             self.max_scanned_entries,
             self.max_candidates,
@@ -126,7 +131,7 @@ class ConfiguredPreparationPolicy:
         )
         if any(type(value) is not int or value <= 0 for value in limits):
             raise ValueError("invalid configured preparation policy")
-        if self.timeout_ms > 600_000 or self.max_hook_points > 32:
+        if max(self.timeout_ms, self.retirement_cleanup_timeout_ms) > 600_000 or self.max_hook_points > 32:
             raise ValueError("invalid configured preparation policy")
         if self.max_scanned_entries > 4_096 or self.max_candidates > 1_024:
             raise ValueError("invalid configured preparation policy")
@@ -344,7 +349,10 @@ class ConfiguredHooks:
 
 def is_valid_hook_name(value: object) -> bool:
     """Return whether a value is a canonical configured hook name."""
-    return type(value) is str and len(value) <= 128 and _HOOK_NAME.fullmatch(value) is not None
+    if type(value) is not str or len(value) > 128:
+        return False
+    pattern = _UNIFIED_HOOK_NAME if value.startswith("hook__") else _HOOK_NAME
+    return pattern.fullmatch(value) is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -648,3 +656,45 @@ class DisposeConfiguredResult:
         elif len(errors) != 1 or self.already_disposed or self.cleanup_pending:
             raise ValueError(error)
         object.__setattr__(self, "errors", errors)
+
+@dataclass(frozen=True, slots=True)
+class SummaryPreparationRequest:
+    """Select explicit catalog-owned summary preparation without global policy."""
+    configuration: ConfiguredHooks
+    catalog: object
+    disabled_hook_names: frozenset[str] = frozenset()
+    def __post_init__(self) -> None:
+        """Validate exact request structure and phase-one disablement membership."""
+        from topsailai.hooks.points.catalog import PHASE_ONE_DECLARATIONS
+        from topsailai.hooks.hook_point_catalog import HookPointCatalog
+        if (type(self.configuration) is not ConfiguredHooks or type(self.catalog) is not HookPointCatalog
+                or type(self.disabled_hook_names) is not frozenset):
+            raise ValueError("invalid summary preparation request")
+        eligible = {point.name: point for point in PHASE_ONE_DECLARATIONS}
+        for name in self.disabled_hook_names:
+            if type(name) is not str or name not in eligible or self.catalog.get(name) != eligible[name]:
+                raise ValueError("invalid summary disabled point")
+_SUMMARY_REASONS = frozenset(
+    "registered disabled_by_configuration catalog_rejected invalid_configuration invalid_scope runtime_closed "
+    "scope_closed trust_policy_missing trust_rejected discovery_rejected artifact_rejected binding_conflict cleanup_pending capacity_exceeded publication_capacity_exceeded cancelled prepare_timeout unsupported_platform internal_error".split())
+@dataclass(frozen=True, slots=True)
+class SummaryPointDisposition:
+    """Expose only a point identity and bounded non-sensitive status token."""
+    hook_name: str
+    kind: Literal["registered", "disabled_by_configuration", "unavailable_preparation_failure"]
+    reason: str
+    def __post_init__(self) -> None:
+        """Reject arbitrary status text or mismatched successful/disabled reasons."""
+        if (not is_valid_hook_name(self.hook_name) or self.reason not in _SUMMARY_REASONS
+                or self.kind not in ("registered", "disabled_by_configuration", "unavailable_preparation_failure")
+                or (self.kind != "unavailable_preparation_failure" and self.reason != self.kind)):
+            raise ValueError("invalid summary point disposition")
+@dataclass(frozen=True, slots=True)
+class SummaryPreparationResult:
+    """Carry detached per-point inputs for later application-owned reporting."""
+    dispositions: tuple[SummaryPointDisposition, ...]
+    def __post_init__(self) -> None:
+        """Require an immutable duplicate-free disposition inventory."""
+        if (type(self.dispositions) is not tuple or any(type(item) is not SummaryPointDisposition for item in self.dispositions)
+                or len({item.hook_name for item in self.dispositions}) != len(self.dispositions)):
+            raise ValueError("invalid summary preparation result")

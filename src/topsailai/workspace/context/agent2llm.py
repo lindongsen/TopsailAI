@@ -14,6 +14,8 @@ import math
 import random
 
 from topsailai.logger import logger
+from topsailai.hooks.points.context.summary_adapter import SummaryHookAdapter
+from topsailai.workspace.context.base import SUMMARY_CONTROL_EXCEPTIONS
 from topsailai.ai_base.constants import (
     ROLE_SYSTEM,
 )
@@ -369,96 +371,121 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         )
         logger.info("[summarize_processing] before: messages=%s, tokens=%s", len(messages), _token_count_before)
 
-        llm_chat, answer = self._summarize_messages(messages)
+        summary_hook_operation = None
+        summary_hooks_executor = getattr(self, "summary_hooks_executor", None)
+        if summary_hooks_executor is not None:
+            summary_hook_operation = SummaryHookAdapter(summary_hooks_executor).begin("agent2llm")
+        summary_hook_kwargs = {}
+        if summary_hook_operation is not None:
+            summary_hook_kwargs["summary_hook_operation"] = summary_hook_operation
+        llm_chat, answer = self._summarize_messages(messages, **summary_hook_kwargs)
         if not answer:
             print_critical("!!! [Agent2LLM] [Summarization] NO ANSWER")
             return None
 
-        # keep last user message
-        # IMPORTANT DESIGN NOTE:
-        # ``self.last_user_message`` intentionally reads from ``self.messages``
-        # (the User2Agent persisted session layer), NOT from
-        # ``self.ai_agent.messages`` (the Agent2LLM ephemeral ReAct context).
-        # The message to preserve here is the most recent real human input to
-        # the agent, not an internal tool observation or ReAct turn. This
-        # ensures the summarized Agent2LLM context still ends with a clear
-        # user prompt for the next LLM call.
-        last_user_msg = self.last_user_message
+        failed_stage = "runtime_rebuild"
+        error_category = "state_update"
+        partial_apply_possible = False
+        try:
+            # keep last user message
+            # IMPORTANT DESIGN NOTE:
+            # ``self.last_user_message`` intentionally reads from ``self.messages``
+            # (the User2Agent persisted session layer), NOT from
+            # ``self.ai_agent.messages`` (the Agent2LLM ephemeral ReAct context).
+            # The message to preserve here is the most recent real human input to
+            # the agent, not an internal tool observation or ReAct turn. This
+            # ensures the summarized Agent2LLM context still ends with a clear
+            # user prompt for the next LLM call.
+            last_user_msg = self.last_user_message
 
-        print_info(f"!!! [Agent2LLM] [Summarization] head_offset_to_keep={head_offset_to_keep}, tail_offset_to_keep={tail_offset_to_keep}, last_user_message_to_keep=1")
+            print_info(f"!!! [Agent2LLM] [Summarization] head_offset_to_keep={head_offset_to_keep}, tail_offset_to_keep={tail_offset_to_keep}, last_user_message_to_keep=1")
 
-        # new messages: start with head_offset, then add session messages
-        # if configured, then add tail_offset, then add summary answer, then
-        # append last_user_message. The final structure is completed by merging
-        # keeping_messages (head_portion) back in below.
-        new_messages = messages[:head_offset_to_keep]
+            # new messages: start with head_offset, then add session messages
+            # if configured, then add tail_offset, then add summary answer, then
+            # append last_user_message. The final structure is completed by merging
+            # keeping_messages (head_portion) back in below.
+            new_messages = messages[:head_offset_to_keep]
 
-        # add session messages
-        if need_session_messages:
-            if not new_messages:
-                # Note that they are different objects, so use '+=', DONOT use '='
-                new_messages += self.messages
-            else:
-                _len = len(new_messages)
-                for msg in self.messages:
-                    if self._message_in_list(msg, new_messages[:_len]):
-                        continue
+            # add session messages
+            if need_session_messages:
+                if not new_messages:
+                    # Note that they are different objects, so use '+=', DONOT use '='
+                    new_messages += self.messages
+                else:
+                    _len = len(new_messages)
+                    for msg in self.messages:
+                        if self._message_in_list(msg, new_messages[:_len]):
+                            continue
+                        new_messages.append(msg)
+
+            # add tail_offset messages
+            # The tail window is selected by message count, so it can start on a
+            # tool observation whose owning assistant message is summarized away.
+            # Expand the window backwards to that owner so the preserved tail stays
+            # pair-atomic; the head region bounds the expansion.
+            tail_messages = []
+            if tail_offset_to_keep > 0:
+                tail_floor = max(len(keeping_messages), head_offset_to_keep)
+                failed_stage = "tool_pairing"
+                tail_start = message_tool.expand_tail_start_for_tool_pairing(
+                    messages,
+                    len(messages) - tail_offset_to_keep,
+                    min_start=tail_floor,
+                )
+                tail_messages = messages[tail_start:]
+                failed_stage = "runtime_rebuild"
+            for msg in tail_messages:
+                if not self._message_in_list(msg, new_messages):
                     new_messages.append(msg)
 
-        # add tail_offset messages
-        # The tail window is selected by message count, so it can start on a
-        # tool observation whose owning assistant message is summarized away.
-        # Expand the window backwards to that owner so the preserved tail stays
-        # pair-atomic; the head region bounds the expansion.
-        tail_messages = []
-        if tail_offset_to_keep > 0:
-            tail_floor = max(len(keeping_messages), head_offset_to_keep)
-            tail_start = message_tool.expand_tail_start_for_tool_pairing(
-                messages,
-                len(messages) - tail_offset_to_keep,
-                min_start=tail_floor,
+            # add answer(summary) to messages
+            summary_answer = llm_chat.prompt_ctl.messages[-1]
+            new_messages.append(summary_answer)
+
+            # Re-insert the head_portion in chronological order so the final
+            # list follows head_portion + tail_portion + [summary_answer] + [last_user_message].
+            if keeping_messages:
+                new_messages = self._merge_task_messages(original_messages, new_messages, keeping_messages)
+
+            if last_user_msg:
+                if not self._message_in_list(last_user_msg, new_messages):
+                    new_messages.append(last_user_msg)
+
+            self._log_summarize_message_identity_changes(
+                "summarize_messages_for_processing",
+                original_messages + self.messages,
+                new_messages,
+                summary_answer,
             )
-            tail_messages = messages[tail_start:]
-        for msg in tail_messages:
-            if not self._message_in_list(msg, new_messages):
-                new_messages.append(msg)
+            partial_apply_possible = True
+            self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
 
-        # add answer(summary) to messages
-        summary_answer = llm_chat.prompt_ctl.messages[-1]
-        new_messages.append(summary_answer)
+            failed_stage = "token_stat_update"
+            self.ai_agent.runtime.token_stat.add_msgs(
+                self.ai_agent.messages,
+                reset_cached_tokens=False,
+            )
+            # Log message count and token usage after summarization
+            _token_count_after = self._get_current_tokens(realtime=True)
+            logger.info("[summarize_processing] after: messages=%s, tokens=%s", len(self.ai_agent.messages), _token_count_after)
+            self._check_summarize_token_reduction(
+                "summarize_messages_for_processing",
+                _token_count_before,
+                _token_count_after,
+            )
 
-        # Re-insert the head_portion in chronological order so the final
-        # list follows head_portion + tail_portion + [summary_answer] + [last_user_message].
-        if keeping_messages:
-            new_messages = self._merge_task_messages(original_messages, new_messages, keeping_messages)
-
-        if last_user_msg:
-            if not self._message_in_list(last_user_msg, new_messages):
-                new_messages.append(last_user_msg)
-
-        self._log_summarize_message_identity_changes(
-            "summarize_messages_for_processing",
-            original_messages + self.messages,
-            new_messages,
-            summary_answer,
-        )
-        self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
-
-        self.ai_agent.runtime.token_stat.add_msgs(
-            self.ai_agent.messages,
-            reset_cached_tokens=False,
-        )
-        # Log message count and token usage after summarization
-        _token_count_after = self._get_current_tokens(realtime=True)
-        logger.info("[summarize_processing] after: messages=%s, tokens=%s", len(self.ai_agent.messages), _token_count_after)
-        self._check_summarize_token_reduction(
-            "summarize_messages_for_processing",
-            _token_count_before,
-            _token_count_after,
-        )
-
-        print_info(f"!!! [Agent2LLM] [Summarization] New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]")
-        logger.info("new context messages: %s", self.ai_agent.messages)
+            print_info(f"!!! [Agent2LLM] [Summarization] New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]")
+            logger.info("new context messages: %s", self.ai_agent.messages)
+        except SUMMARY_CONTROL_EXCEPTIONS:
+            raise
+        except Exception:
+            self._emit_summary_checkpoint(
+                summary_hook_operation, "error_summary_apply",
+                error_category=error_category, failed_stage=failed_stage,
+                partial_apply_possible=partial_apply_possible,
+            )
+            raise
+        self._emit_summary_checkpoint(summary_hook_operation, "after_summary_apply")
         return answer
 
     def is_need_summarize_for_processing(self) -> bool:

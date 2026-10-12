@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from topsailai.hooks.artifact_contracts import ArtifactCapturePolicy, ArtifactCaptureRequest
+from topsailai.hooks.artifact_contracts import ArtifactCapturePolicy, ArtifactCaptureRequest, ArtifactDisposeResult
 from topsailai.hooks.artifact_leases import ArtifactLeaseManager
 from topsailai.hooks.configured_contracts import ConfiguredHooks, ConfiguredModuleFailure, ConfiguredPlanSummary, PrepareConfiguredResult
 from topsailai.hooks.configured_preparation_ownership import CaptureShard, ConfiguredRootOwner, PreparationOwnership
@@ -135,6 +135,7 @@ class _PrivatePlan:
     module_args: tuple[object, ...] = ()
     module_kwargs: tuple[tuple[str, object], ...] = ()
     script_artifact_identities: tuple[str, ...] = ()
+    executable: object = None
 
     @property
     def hook_point(self):
@@ -177,21 +178,57 @@ class _CapturedWork:
 class PrivatePreparationImage:
     """Own one unpublished preparation aggregate until close."""
 
-    __slots__ = ("accepted", "generation", "plans", "_ownership")
+    __slots__ = ("accepted", "generation", "plans", "_ownership", "_adoption_lock", "_executable")
 
-    def __init__(self, generation, ownership: PreparationOwnership, plans) -> None:
+    def __init__(self, generation, ownership: PreparationOwnership, plans, *, executable=False) -> None:
         """Create an image after aggregate transfer."""
         self.accepted = True
         self.generation = generation
         self.plans = tuple(plans)
         self._ownership = ownership
+        self._adoption_lock = threading.Lock()
+        self._executable = executable
+
+    def adopt(self, backend, *, receiver=None):
+        """Move the exact prepared aggregate into one candidate without new I/O."""
+        from topsailai.hooks.hook_point_plan_ownership import HookPointCandidate
+
+        with self._adoption_lock:
+            if not self._executable or self._ownership is None or len(self.plans) != 1:
+                raise RuntimeError("prepared image is not adoptable")
+            candidate = HookPointCandidate(backend)
+            candidate._plan = self.plans[0].executable
+            candidate._capture_owner = _PreparedCaptureOwner(self._ownership)
+            if receiver is not None and not receiver(candidate):
+                raise RuntimeError("candidate recovery handoff rejected")
+            self._ownership = None
+            return candidate
+
+    def cleanup_debts(self):
+        """Observe only still-owned preparation recovery debt."""
+        with self._adoption_lock:
+            return () if self._ownership is None else self._ownership.cleanup_debts()
+
+    def retry_cleanup(self, debt_id):
+        """Keep image retry authority only before candidate adoption."""
+        with self._adoption_lock:
+            if self._ownership is None:
+                return False
+            return (self._ownership.retry_prepared_cleanup(debt_id) if self._executable
+                    else self._ownership.retry_cleanup(debt_id))
 
     def close(self):
         """Close idempotently through the aggregate authority."""
-        return type("PrivateCloseResult", (), {"accepted": self._ownership.settle()})()
+        with self._adoption_lock:
+            if self._ownership is None:
+                return ArtifactDisposeResult(True, True)
+            settled = (self._ownership.settle_prepared_cleanup() if self._executable
+                       else self._ownership.settle())
+            return ArtifactDisposeResult(settled, False, not settled,
+                () if settled else ("cleanup_pending",))
 
 
-def prepare_private(runtime, configuration: ConfiguredHooks, scope, *, cancellation=None):
+def prepare_private(runtime, configuration: ConfiguredHooks, scope, *, cancellation=None, _executable=False):
     """Discover, capture, probe, and plan configured modules without publication."""
     from topsailai.hooks.runtime import HookScope
 
@@ -217,14 +254,14 @@ def prepare_private(runtime, configuration: ConfiguredHooks, scope, *, cancellat
     operation = _Operation(configuration.policy.timeout_ms, cancellation)
     budget = _PreparationBudget(max_scanned_entries=configuration.policy.max_scanned_entries, max_candidates=configuration.policy.max_candidates, max_artifact_bytes=configuration.policy.max_artifact_bytes)
     if not configuration.hook_points:
-        ownership = PreparationOwnership(None, operation.deadline)
+        ownership = PreparationOwnership(None, operation.deadline, **({"retirement_cleanup_timeout_ms": configuration.policy.retirement_cleanup_timeout_ms} if _executable else {}))
         ownership.transfer_to_image()
         return PrivatePreparationImage(generation, ownership, ())
     ownership = None
     root_owner = None
     try:
         operation.checkpoint()
-        ownership = PreparationOwnership(None, operation.deadline)
+        ownership = PreparationOwnership(None, operation.deadline, **({"retirement_cleanup_timeout_ms": configuration.policy.retirement_cleanup_timeout_ms} if _executable else {}))
         if not trust.source_roots:
             raise _PreparationRejected("trust_rejected")
         temp_root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -241,11 +278,11 @@ def prepare_private(runtime, configuration: ConfiguredHooks, scope, *, cancellat
         if len(works) > _MAX_CAPTURE_ENTRIES * _MAX_CAPTURE_SHARDS:
             raise _PreparationRejected("capacity_exceeded")
         captured = _capture_work_sequence(works, ownership, artifact_root, operation, budget, trust, cancellation)
-        plans = _probe_and_plan(configuration, captured, ownership, discovery_root, operation, budget, cancellation)
+        plans = _probe_and_plan(configuration, captured, ownership, discovery_root, operation, budget, cancellation, **({"executable": True} if _executable else {}))
         operation.checkpoint()
         root_owner.revalidate()
         ownership.transfer_to_image()
-        return PrivatePreparationImage(generation, ownership, plans)
+        return PrivatePreparationImage(generation, ownership, plans, executable=_executable)
     except _PreparationRejected as exc:
         return _settle_failed_preparation(
             generation, exc.token, ownership
@@ -335,7 +372,7 @@ def _capture_work_sequence(works, ownership, artifact_root, operation, budget, t
     return tuple(captured)
 
 
-def _probe_and_plan(configuration, captured, ownership, discovery_root, operation, budget, cancellation):
+def _probe_and_plan(configuration, captured, ownership, discovery_root, operation, budget, cancellation, *, executable=False):
     """Probe captured module work by Hook and build passive plans."""
     by_hook: dict[int, list[_CapturedWork]] = {index: [] for index in range(len(configuration.hook_points))}
     for item in captured:
@@ -359,6 +396,10 @@ def _probe_and_plan(configuration, captured, ownership, discovery_root, operatio
                     operation.checkpoint()
                     if not result.cleanup_confirmed or session.state == "cleanup_pending":
                         raise _PreparationRejected("cleanup_pending")
+                    if executable and (not entry.entry_valid or entry.load_status != "ready"
+                            or result.status != "success" or entry.source_path != item.captured_path
+                            or entry.logical_name != item.work.candidate.logical_name):
+                        raise _PreparationRejected("binding_conflict")
                     result_entries.append((entry, item.lease.identity))
                 if not session.close():
                     raise _PreparationRejected("cleanup_pending")
@@ -384,7 +425,8 @@ def _probe_and_plan(configuration, captured, ownership, discovery_root, operatio
         if scripts:
             binding_ids += ("hook_script",)
         summary = ConfiguredPlanSummary(point.hook_name, point.definition.name, point.definition.major_version, binding_ids, tuple(sorted(set([identity for _, identity in entries] + list(script_ids)))), failures)
-        plans.append(_PrivatePlan(summary, point.module_args, tuple(sorted(point.module_kwargs.items())), script_ids))
+        complete = _build_executable_plan(point, by_hook[hook_index]) if executable else None
+        plans.append(_PrivatePlan(summary, point.module_args, tuple(sorted(point.module_kwargs.items())), script_ids, complete))
     return tuple(plans)
 
 
@@ -481,3 +523,67 @@ class _Operation:
             raise _PreparationRejected("cancelled")
         if time.monotonic() >= self.deadline:
             raise _PreparationRejected("prepare_timeout")
+
+
+class _PreparedCaptureOwner:
+    """Adapt exact aggregate custody to the candidate disposal protocol."""
+
+    def __init__(self, ownership, *, prepared=True):
+        """Retain the original aggregate, never reconstruct captured leases."""
+        self._ownership = ownership
+        self._prepared = prepared
+
+    def close(self):
+        """Start one bounded prepared retirement attempt."""
+        settled = (self._ownership.settle_prepared_cleanup() if self._prepared
+                   else self._ownership.settle())
+        return ArtifactDisposeResult(settled, False, not settled,
+            () if settled else ("cleanup_pending",))
+
+    def cleanup_debts(self):
+        """Expose exact aggregate-issued debt identities."""
+        return self._ownership.cleanup_debts()
+
+    def retry_cleanup(self, debt_id):
+        """Retry only the exact debt with a fresh finite cleanup budget."""
+        return (self._ownership.retry_prepared_cleanup(debt_id) if self._prepared
+                else self._ownership.retry_cleanup(debt_id))
+
+
+def _build_executable_plan(point, captured):
+    """Build complete semantics solely from correlated original capture records."""
+    from topsailai.hooks.hook_point_plan_contracts import (
+        CapturedModule, CapturedScript, DefaultScriptHook, HookPointPlan, ModuleSource,
+    )
+    from topsailai.hooks.hook_script_contracts import HookScriptExecutionOptions, HookScriptExecutionPolicy
+    from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
+    from topsailai.hooks.module_invocation_protocol import ModuleInvocation
+    from topsailai.hooks.result_contracts import HandlerIdentity
+
+    if not captured or len(captured) > 128 or len({item.lease.identity for item in captured}) != 1:
+        raise _PreparationRejected("binding_conflict")
+    modules, scripts = [], []
+    for index, item in enumerate(captured):
+        entry = item.lease.entries[index]
+        work = item.work
+        request = _request_for_work(work)
+        if (entry.index, entry.kind, entry.logical_name, entry.validation.source_path) != (
+                index, request.kind, request.logical_name, request.source_path):
+            raise _PreparationRejected("artifact_rejected")
+        if isinstance(work, _ModuleWork):
+            logical = work.candidate.logical_name
+            source = ModuleSource(f"{point.hook_name}:{logical}", work.candidate.source_path,
+                logical, work.candidate.kind, f"{logical}:main",
+                ModuleInvocation(point.module_args, dict(point.module_kwargs)))
+            modules.append(CapturedModule(HandlerIdentity(f"module-{index}", source.registered_name, "module"),
+                source, item.lease.identity, index, entry.relative_path, item.captured_path,
+                entry.content_sha256, entry.validation.deployment_sha256))
+        else:
+            scripts.append(CapturedScript(HandlerIdentity(f"script-{index}", "hook_script", "script"),
+                item.lease.identity, index, work.entry.source_path, work.entry.basename,
+                entry.relative_path, item.captured_path, entry.content_sha256, entry.validation.deployment_sha256))
+    return HookPointPlan(point.hook_name, tuple(modules), DefaultScriptHook(tuple(scripts), point.script is not None),
+        point.script.options if point.script else HookScriptExecutionOptions(),
+        point.script.policy if point.script else HookScriptExecutionPolicy(),
+        ArtifactCapturePolicy(max_entries=len(captured)),
+        platform_policy=point.script.platform_policy if point.script else ExecutablePlatformPolicy("posix"))

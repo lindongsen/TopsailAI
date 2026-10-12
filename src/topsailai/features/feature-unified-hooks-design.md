@@ -14,7 +14,7 @@ scope: standalone framework, configured bootstrap/registration wrappers, Catalog
 
 ## Status and scope
 
-This document defines the authoritative target architecture clarified by the Human on 2026-10-10. Implementation evidence is recorded separately and does not override the target. U06–U10 unified waiting execution, desired/active reload diagnostics, async cancellation custody, Catalog authority and breaking nonwaiting removal are committed. U11A–E add real target business/process evidence. [The open architecture issue](../issues/issue-hook-point-default-script-handler-architecture.md) still requires U11H final acceptance and a Human decision on accepted provenance REDs; application-domain integrations remain deferred.
+This document defines the authoritative target architecture clarified by the Human on 2026-10-10 and the subsequently approved [Summarize Hooks Application](#summarize-hooks-application) design. That application design is recorded here; implementation remains unstarted and separately gated. Implementation evidence is recorded separately and does not override the target. U06–U10 unified waiting execution, desired/active reload diagnostics, async cancellation custody, Catalog authority and breaking nonwaiting removal are committed. U11A–E add real target business/process evidence. [The open architecture issue](../issues/issue-hook-point-default-script-handler-architecture.md) still requires U11H final acceptance and a Human decision on accepted provenance REDs; application-domain integrations remain deferred.
 
 | Dimension | Current status |
 |---|---|
@@ -28,7 +28,7 @@ Explicitly out of scope for the current implementation: all tool-specific hooks 
 
 ## Authoritative Hook Point contract
 
-The Human clarified: “准确地说，是每个hook点都会有一个内置/默认的hook去识别脚本和执行脚本”. The latest ordering and entry requirement is: “排序方面：优先执行 modules,再执行scripts，执行顺序都是按名字排序。 执行modules的方式是每个module都会有一个main(*args, **kwargs)函数，它是执行入口。” These are Human statements; the normalized keys below are the documented deterministic interpretation, not additional verbatim quotes.
+Human clarified that every Hook point has a built-in/default Hook to identify and execute Scripts; Modules execute first, then Scripts, with both stages ordered by name, and every Module exposes `main(*args, **kwargs)` as its entry. This is an English rendering of the Human statements; the normalized keys below are the documented deterministic interpretation, not additional verbatim quotes.
 
 A **Hook Point** is a named extension location. A **Module Hook** is a plugin registered at that location. Each Hook Point has **0..N Module Hooks plus exactly one framework-owned built-in/default terminal Script Hook**, reserved as `hook_script`. This is one unified framework and one Hook-point execution plan, not two peer registration/dispatch models.
 
@@ -134,7 +134,7 @@ Use typed records internally; mappings are limited to JSON boundary encoding and
 
 Event identity and subscription identity differ. Event name describes a stable boundary, binding_id identifies one registration, event_id identifies one occurrence, and delivery_id identifies one binding's attempt for that occurrence. Reusing a handler for different events does not deduplicate subscriptions. Duplicate binding IDs within a scope are rejected, never silently overwritten.
 
-Names use dot-separated namespaces such as conversation.started and context.summary.finished. Schema major version is a separate integer; incompatible changes require a new major version. Initial matching is exact name plus major version, without wildcards or arbitrary filter callbacks. Category labels may be metadata but never choose a different execution engine.
+Legacy event declarations may use dot-separated namespaces such as conversation.started. New unified Hook points use `hook__<module>__<before|after|error>__<business_action>`, with identical point and event names from one NAME constant; see [Naming, Phases, and Framework Validation](#naming-phases-and-framework-validation) for phase mapping and the pending strict-validation extension. Legacy independent point/event names remain compatible. Schema major version is a separate integer; incompatible changes require a new major version. For SummarySnapshot, event major version and snapshot schema version MUST remain equal; see [Data Contract](#data-contract) for the phase-one equality and evolution rules. Initial matching is exact name plus major version, without wildcards or arbitrary filter callbacks. Category labels may be metadata but never choose a different execution engine.
 
 Sequence is monotonically increasing per scope under the owner lock; it records publication order, not completion order. IDs are correlation data, not credentials or authorization. Payload schema definitions are bounded declarative schemas, not custom application callbacks invoked during core validation.
 
@@ -249,7 +249,7 @@ On timeout, mark the outcome terminal immediately, reject late results, request 
 
 Keep reserved worker capacity for processes not yet confirmed dead. If termination cannot be confirmed, quarantine the slot, retain an explicit cleanup-debt record and stop spawning beyond the resource cap. The main flow continues; diagnostics must not falsely report successful cleanup. Unsupported platform containment or an unavailable validated worker launcher rejects delivery instead of executing inline. Packaged/Cython launchers must be validated; do not assume the current executable is a Python interpreter.
 
-Runtime lifecycle: created → running → closing → closed. Scope lifecycle follows its owner's actual lifetime. Conversation scope survives multiple user turns; run scope closes after one Agent2LLM run. Closing a child never closes its parent or siblings.
+Runtime lifecycle: created → running → closing → closed. Scope lifecycle follows its owner's actual lifetime. Conversation scope survives multiple user turns; run scope closes after one Agent2LLM run. Closing a child never closes its parent or siblings. The approved summarize application instead shares application-lifetime resources across AgentChats/sessions; its [composition and shutdown decisions](#integration-and-division-of-responsibilities-with-existing-mechanisms) do not let a session close the shared Runtime.
 
 Shutdown stops new business emissions, optionally admits a reserved bounded terminal notification, cancels queued work, allows a finite drain, and stops owned workers. Required application teardown runs independently of plugin completion. close is idempotent and returns pending cleanup debt instead of waiting forever. No atexit callback may introduce an unbounded wait or re-open a closed diagnostics sink.
 
@@ -257,7 +257,7 @@ Host cancellation of adispatch cancels its pending deliveries and propagates the
 
 ## Payload and result semantics
 
-Payloads are detached snapshots, not references to mutable agent state. Default data is metadata: identifiers, counts, stage, outcome and elapsed time. Message content and sensitive application data require explicit domain opt-in and binding field allowlists. Credential values, live database/model objects, locks, runtime handles and executable objects are prohibited.
+Payloads are detached snapshots, not references to mutable agent state. The summarize application freezes a narrower metadata-only, versioned SummarySnapshot v1 with point-specific allowlists; see its [Data Contract](#data-contract). Default data is metadata: identifiers, counts, stage, outcome and elapsed time. Message content and sensitive application data require explicit domain opt-in and binding field allowlists. Credential values, live database/model objects, locks, runtime handles and executable objects are prohibited.
 
 No hook can mutate host objects merely by modifying its input. Mutating a worker copy and then raising leaves the host unchanged. Arbitrary return values are data only; no implicit merging into event payloads, environment variables, session messages or application results.
 
@@ -286,7 +286,7 @@ Arbitrary return objects do not necessarily cross a process boundary unchanged. 
 
 ### Failed configuration update and last-known-good plan
 
-The Human chose: “新配置检查失败时:A；Fire-and-observe：A,不实现。” A build failure means a candidate cannot pass discovery/validation/capture (for example a newly added Module lacks callable main or a configured Script cannot be read), not a failure during an already admitted handler execution.
+Human selected Option A for failed configuration updates (retain the last known good plan) and Option A for fire-and-observe (do not implement it). A build failure means a candidate cannot pass discovery/validation/capture (for example a newly added Module lacks callable main or a configured Script cannot be read), not a failure during an already admitted handler execution.
 
 If valid v1 is active and desired v2 fails, reject and clean v2, keep v1 active for new calls, and report desired_revision=v2, active_revision=v1, state=update_failed_using_last_known_good with bounded safe diagnostics. Do not report v2 as activated or retry it on every call. Initial failure without any prior valid plan makes the Hook Point unavailable; only authorized policy decides whether business is blocked. Successful replacement publishes the complete candidate atomically; old admitted executions keep their old snapshot until leases and cleanup are settled. Startup and lazy wrappers use this same state machine and singleflight publication, not separate Script-only paths.
 
@@ -367,15 +367,356 @@ The following is a planning map based on the prior repository inspection, not a 
 | agent2llm.run.started / finished | ai_base/agent_base.py, AgentBase.run | Internal execution entry and after owned run cleanup. Run ID and outcome. | Separate from persistent user conversation. |
 | llm.attempt.started / finished | ai_base/llm_base.py, LLMModel.chat transport-attempt boundary | Actual provider attempt, not dequeue of an existing response. Attempt number, duration and safe outcome. | Cannot choose retries or change a response. |
 | prompt.extension.requested | ai_base/prompt_base.py, prompt assembly before authoritative validation | Detached allowed extension fields and source revision. | Optional ResultPolicy validates append proposals. |
-| context.summary.started / finished | workspace/context/agent2llm.py and workspace/context/ctx_runtime.py, respective summarize methods | After feasibility; after apply or failure. Layer, before/after counts and exact checkpoint. | Generated does not imply applied or persisted. |
+| Summarize lifecycle: `hook__context__before__summary_generate_user2agent` / `hook__context__before__summary_generate_agent2llm`, layer-specific after-apply and generation/application error points | workspace/context/agent2llm.py and workspace/context/ctx_runtime.py, respective summarize methods; shared generation in workspace/context/base.py | Exact checkpoints and minimal v1 metadata in [Summarize Hooks Application](#summarize-hooks-application); generation-success observation is a phase-two candidate. | Generated does not imply applied or persisted; replaces the earlier illustrative context.summary.started / finished names for this application, not a legacy migration. |
 | session.messages.changed | context/ctx_manager.py, add_session_message / del_session_messages | After facade result. IDs/counts and partial-backend outcome. | Notification only; no claim of transaction atomicity. |
 | task.started / finished | workspace/task/task_tool.py, ctxm_process_task | After admission; after owned settlement attempts. Task ID, result and cleanup status. | Hook success never marks task done. |
 
 User2Agent messages are persistent user/session data. Agent2LLM messages are ephemeral execution context. Never automatically insert hook events or failures into either history. The envelope carries layer and purpose, including summary or background work, rather than conflating every model request with a user turn. No tool, memory or skill integration is included in this catalog or rollout.
 
+## Summarize Hooks Application
+
+This chapter integrates the approved summarize design into the framework specification. Its naming rules govern new unified points; its business checkpoints, metadata contract, activation choices, and application owner specialize the generic framework without claiming implementation readiness.
+
+### Goals and Decision Background
+
+Human requested: “Execution boundaries should use before/after or pre/post; Hook point code should be managed centrally in a dedicated folder under hooks, grouped by module.” “Clarify the rules as much as possible and save them in a features/design document.” Human later requested: “Put layer inside business_action.” Human then confirmed: “Hook point names should align with event names to avoid two standards and use a single naming convention. Modules should have their own subdirectories under each Hook point for clear, intuitive management.” Approval: “I agree, update doc.” For “Where do scripts go?”, see the directory section for placement and loading rules.
+
+This application chapter governs new unified Hook points, using summarize as the concrete integration. Recording or merging the design does not authorize implementation, migration of existing interfaces, or commits. The preceding framework sections remain authoritative for generic execution, registration, trust, and resource guarantees; this chapter specifies the application decisions and pending extensions.
+
+Existing `pre_run_input.py`, `pre_run_agent2llm_source.py`, and `post_final_answer.py` under `workspace/agent/hooks/`, `hook_before_chat/` and `hook_after_chat/` under `ai_base/llm_hooks/`, and `hooks_pre_chat`, `hook_after_init_prompt`, `hook_after_new_session`, etc. retain their names. Public methods, environment variables, plugin imports, and discovery rules are not renamed incidentally in this task.
+
+### Naming, Phases, and Framework Validation
+
+New points use `hook__<module>__<before|after|error>__<business_action>`: four lowercase segments separated by `__`, with words within the action separated by `_`. For summarize points, business_action embeds the layer as `<action>_<layer>`: `summary_generate_user2agent`, `summary_generate_agent2llm`, `summary_apply_user2agent`, or `summary_apply_agent2llm`. The layer suffix is part of the fourth segment, not a fifth `__` segment; each layer has its own declaration and point plan. Human requested that layer be placed inside business_action. SummarySnapshot has no separate layer field; derive layer only from the validated point name. The module is a stable business domain matching `hooks/points/<module>/` and containing no separators; summarize uses `context`, not a class name, caller, or full Python import path. This is an external string, not a function identifier; use before/after without introducing mixed pre/post terminology. Names must remain unique within the Catalog; the module provides neither permission nor namespace isolation.
+
+**For new declarations, `HookPointDeclaration.name == EventDefinition.name`; both use the same `NAME` constant, without separate dot-separated event names or aliases.**
+
+| Name phase | Framework phase | Business semantics |
+|---|---|---|
+| before | before | Required validation and preparation are complete and the action is about to execute; not a condition query |
+| after | success | The action completed successfully; not finally |
+| error | error | Observation of an action failure; does not authorize recovery, retries, or exception replacement |
+
+Names must identify the action: do not use `after_summary` to conflate generation with application. `HookPointDeclaration.phase` and the `hook_point` decorator continue to use before/success/error; no after parameter is added.
+
+The current Executor uses `point.name` for Catalog, registration, and configuration lookup, and `point.definition.name` to create events. The framework validates them separately and does not yet require equality. Implementation requirements:
+
+- `_HOOK_NAME` in `hooks/configured_contracts.py` is currently `^hook_[a-z][a-z0-9_]*$`; `is_valid_hook_name()` uses fullmatch with a 128-character limit and rejects the new format. Extend it with strict four-segment validation, for example `^hook__[a-z][a-z0-9]*__(?:before|after|error)__[a-z][a-z0-9]*(?:_[a-z0-9]+)*$`; retain the length limit and legacy rule, but `hook__` must use the strict branch rather than fall back to the permissive legacy rule.
+- The event-name regex in `hooks/validation.py`, `^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$`, already permits zero dot-separated suffixes and underscores within segments, accepts the new names, and needs no change.
+- For new-format declarations, validate name equality and phase consistency with the table above; legacy `hook_*` declarations may retain independent point and event names. Do not silently rename existing configuration, bindings, or consumers; migration requires a separate compatibility plan and regression verification.
+
+### Directories, Responsibilities, and Execution Protocols
+
+Use Option B: an independent subdirectory per point. The following proposed layout is relative to ProjectFolder and is not yet implemented:
+
+```text
+hooks/points/
+├── __init__.py
+├── catalog.py
+└── context/
+    ├── __init__.py
+    ├── summary_contracts.py
+    ├── summary_payloads.py
+    ├── summary_adapter.py
+    ├── before_summary_generate_user2agent/
+    │   ├── __init__.py
+    │   ├── point.py
+    │   ├── payloads.py
+    │   ├── modules/                  # Optional
+    │   │   ├── __init__.py
+    │   │   └── observer.py
+    │   └── scripts/                  # Optional
+    │       └── audit.py
+    ├── before_summary_generate_agent2llm/
+    ├── after_summary_generate_user2agent/  # Phase-two candidate
+    ├── after_summary_generate_agent2llm/   # Phase-two candidate
+    ├── after_summary_apply_user2agent/
+    ├── after_summary_apply_agent2llm/
+    ├── error_summary_generate_user2agent/
+    ├── error_summary_generate_agent2llm/
+    ├── error_summary_apply_user2agent/
+    └── error_summary_apply_agent2llm/
+```
+
+Other points use the same structure as the expanded point; do not create empty modules/scripts directories or placeholder execution modules without actual execution resources. Subdirectory names are path representations omitting the fixed prefix and parent domain, not event aliases.
+
+| Location | Sole responsibility |
+|---|---|
+| Existing framework files in `hooks/` | Generic Runtime, Registrar, Executor, and Catalog |
+| `hooks/points/catalog.py` | Explicitly import points at the composition layer and aggregate phase scope |
+| `context/summary_contracts.py` | Shared versioned schema, snapshot types, field boundaries, and security constraints |
+| `context/summary_payloads.py` | Shared bounded, sanitized payload construction detached from business objects |
+| `context/summary_adapter.py` | Shared operation, dispatch, and report checks; begin()/emit() span the operation |
+| `<point>/point.py` | Single-point NAME, EventDefinition, and HookPointDeclaration |
+| `<point>/payloads.py` | Point-specific field/state validation reusing the shared builder |
+| `<point>/modules/` | Point-specific configured Python Module with a main(...) entry point |
+| `<point>/scripts/` | Point-specific separate-process Script |
+
+Execution sources are specified by trusted configuration, not the directory names above: Modules use `ConfiguredHookPoint.module_folder`; Scripts use `ConfiguredScript.target`; simplified configuration uses either `ConfiguredHookBinding.scripts` or a recursively scanned `folder` (mutually exclusive). The folder should target the point's scripts directory, not the entire point directory. The framework does not automatically locate a subdirectory named scripts; file placement does not imply automatic discovery, registration, authorization, or activation.
+
+Reference cross-point shared resources from a shared location through configuration rather than duplicating them. Top-level `scripts/` is for standalone tools/operational scripts, not point-specific resources. Legacy generic Binding observers using `handler(context)` (Binding.handler_ref), configured Modules using `main(*args, **kwargs)`, and the Script protocol are not interchangeable. The ordinary target registration contract remains Module `main`, as defined in [Registration, discovery and configuration](#registration-discovery-and-configuration).
+
+Each point retains the [Authoritative Hook Point contract](#authoritative-hook-point-contract), including its single built-in terminal `hook_script`, Module-before-Script name ordering, and cleanup-safe prerequisites. Business resources must not replace, duplicate, or bypass that unified plan; no scripts-only dispatch chain is added.
+
+Dependency and import boundaries:
+
+- Business code calls only the adapter, which references point declarations. Declarations and payload builders must not import business classes such as ContextRuntime, AgentChat, or LLM models in the reverse direction, or obtain state through a hidden global agent.
+- The framework core does not import business modules; Catalog aggregation is performed explicitly by application composition. Module top levels must not create a Runtime, scan handlers, register resources, or invoke business code, avoiding side effects and circular dependencies.
+- Catalog declarations are only one link in the authorization chain; trusted bootstrap, Registrar, Runtime validation, and resource governance are still required. Legacy HOOKS and pre_run/post_final_answer prefix discovery do not scan the new points subtree.
+- Centralize declarations, contracts, payloads, and adaptation; precise trigger sites remain in business code. Do not move generation, human confirmation, persistence, or message reconstruction into Hooks.
+
+#### Essential Examples
+
+Single-point `before_summary_generate_user2agent/point.py` (requires the point-name validation extension first):
+
+```python
+from topsailai.hooks.contracts import EventDefinition
+from topsailai.hooks.hook_point_catalog import HookPointDeclaration
+from topsailai.hooks.points.context.summary_contracts import SUMMARY_SCHEMA
+
+NAME = "hook__context__before__summary_generate_user2agent"
+POINT = HookPointDeclaration(
+    name=NAME,
+    definition=EventDefinition(
+        name=NAME, major_version=1,
+        payload_schema=SUMMARY_SCHEMA, payload_limit_bytes=8192,
+    ),
+    phase="before", mode="sync", owner="context.summary",
+    failure_policy="report",
+)
+```
+
+Other points reuse this structure, changing the name, phase, and point-specific schema restrictions as specified in the next section. The shared builder handles all fields, unknown values, and budgets; `after_summary_apply_user2agent/payloads.py` adds only point-specific validation:
+
+```python
+from topsailai.hooks.points.context.summary_payloads import build_summary_payload
+
+
+def build_payload(snapshot):
+    """Require completed application before publishing success."""
+    if snapshot.outcome != "success":
+        raise ValueError("after_apply requires an applied summary")
+    return build_summary_payload(snapshot)
+```
+
+Example `before_summary_generate_user2agent/modules/observer.py`, with parameters explicitly mapped through trusted configuration:
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def main(operation_id, point_name):
+    """Observe validated scalar metadata without mutating history."""
+    logger.info("Summary generation: operation=%s point=%s", operation_id, point_name)
+    return {"observed": True}
+```
+
+The Catalog explicitly imports each subdirectory's POINT and constructs `HookPointCatalog(declarations=PHASE_ONE_POINTS)`. The first-phase set contains eight declarations: BEFORE_GENERATE, AFTER_APPLY, ERROR_GENERATE, and ERROR_APPLY for each of user2agent and agent2llm; the second-phase set contains only the two layer-specific AFTER_GENERATE declarations. Importing the second-phase declaration does not activate it; aggregation neither creates a Runtime nor registers modules.
+
+### Summarize Points and Lifecycle
+
+Current synchronous generation entry points are `workspace/context/base.py::_summarize_messages()` / `_summarize_runtime_messages()`; the two layer entry points are `workspace/context/ctx_runtime.py::summarize_messages_for_processed()` and `workspace/context/agent2llm.py::summarize_messages_for_processing()`. `workspace/agent/agent_chat_base.py::hook_summarize_messages()` evaluates triggering conditions.
+
+| Name (point and event) | phase | Exact checkpoint | Scope |
+|---|---|---|---|
+| hook__context__before__summary_generate_user2agent | before | After feasibility checks pass and the prompt and actual model are determined, before the LLM request | Phase one |
+| hook__context__before__summary_generate_agent2llm | before | After feasibility checks pass and the prompt and actual model are determined, before the LLM request | Phase one |
+| hook__context__after__summary_generate_user2agent | success | After a valid nonempty summary is generated, before human confirmation/application | Phase-two candidate, inactive |
+| hook__context__after__summary_generate_agent2llm | success | After a valid nonempty summary is generated, before human confirmation/application | Phase-two candidate, inactive |
+| hook__context__after__summary_apply_user2agent | success | After the named layer completes application | Phase one |
+| hook__context__after__summary_apply_agent2llm | success | After the named layer completes application | Phase one |
+| hook__context__error__summary_generate_user2agent | error | Generation-stage exception in the named layer | Phase one |
+| hook__context__error__summary_generate_agent2llm | error | Generation-stage exception in the named layer | Phase one |
+| hook__context__error__summary_apply_user2agent | error | Application-stage exception in the named layer | Phase one |
+| hook__context__error__summary_apply_agent2llm | error | Application-stage exception in the named layer | Phase one |
+
+There are ten definitions, eight active in phase one and two phase-two candidates. The adapter selects checkpoints for the operation's named layer; it must never dispatch the other layer's counterpart. The normal sequence within that layer is before_generate → optional after_generate → after_apply. Generation failure emits neither after point; application failure emits no after_apply. Each actual checkpoint notifies at most once per operation; report-type Hook failures must not be misrepresented as business failures.
+
+**generated ≠ applied**: User2Agent may wait for human acceptance, then write the session, delete compressed history, and reload; without a session, it updates memory. Agent2LLM updates runtime messages and required token statistics. Application success is notified only after all these steps succeed in the corresponding layer. Empty input, feasibility rejection, an empty summary, and human nonacceptance are normal skips, not applied results or errors.
+
+Writes, deletions, and reloads are not a single transaction, so failures may leave partial application. Report that state accurately; adding Hooks provides no transaction, retry, or automatic rollback. Do not execute plugins in `is_need_summarize_*()` query functions.
+
+### Data Contract
+
+**DECIDED — Human approved the phase-one SummarySnapshot v1 rules and boundary.** The snapshot is serializable, metadata-only, validated, and detached from business objects. It includes no summary content, raw messages, live Python objects, full tracebacks, credentials, or secrets. Unknown/unregistered fields are rejected by the framework, never silently passed through. Apply the generic [Payload and result semantics](#payload-and-result-semantics) with these stricter application boundaries. Each point receives only fields appropriate to its lifecycle stage; before points cannot see application results, and error points receive limited error classification rather than raw exception text.
+
+| Field set | Approved field names and stage boundary |
+|---|---|
+| Common | `schema_version`, `operation_id`, `point_name`, `outcome`; one summary shares a HookOperation, with separate checkpoint dispatches |
+| Error points only | `error_category`, `failed_stage`; bounded classification, not exception objects, messages, or traceback text |
+| Application-error point only | `partial_apply_possible`; report possible partial application without claiming rollback |
+
+
+Layer is derived authoritatively from the validated point-name suffix; a separate `layer` payload key is prohibited and rejected as an unknown field, including null or a matching value. Any existing generic HookEvent envelope layer metadata must be derived from and agree with that name, never independently selected. This does not remove generic envelope fields or change generic event contracts.
+
+The following revised precise v1 field table is a PROPOSAL awaiting Human confirmation, not a frozen executable schema. Codes use U for user2agent and A for agent2llm. All string lengths are character counts.
+
+| Code | Point name | Outcome | Activation |
+|---|---|---|---|
+| BG-U | hook__context__before__summary_generate_user2agent | before | Phase one |
+| BG-A | hook__context__before__summary_generate_agent2llm | before | Phase one |
+| AG-U | hook__context__after__summary_generate_user2agent | success | Phase-two candidate, inactive |
+| AG-A | hook__context__after__summary_generate_agent2llm | success | Phase-two candidate, inactive |
+| AA-U | hook__context__after__summary_apply_user2agent | success | Phase one |
+| AA-A | hook__context__after__summary_apply_agent2llm | success | Phase one |
+| EG-U | hook__context__error__summary_generate_user2agent | error | Phase one |
+| EG-A | hook__context__error__summary_generate_agent2llm | error | Phase one |
+| EA-U | hook__context__error__summary_apply_user2agent | error | Phase one |
+| EA-A | hook__context__error__summary_apply_agent2llm | error | Phase one |
+
+| Field | JSON type | Required | Enum / constraint | Maximum string length | Absence representation | Allowed points |
+|---|---|---|---|---|---|---|
+| schema_version | integer | Yes | Exactly 1 in v1; MUST equal EventDefinition.major_version; boolean not accepted | Not applicable | Missing/null invalid | All ten |
+| operation_id | string | Yes | Nonempty opaque host-generated HookOperation.operation_id, ASCII [A-Za-z0-9_-]+; must equal envelope operation ID, not a credential | 128 characters | Missing/null/empty invalid | All ten |
+| point_name | string | Yes | Exactly one of the ten full names above; must equal declaration and event name; suffix is the authoritative layer | 128 characters | Missing/null/empty invalid | All ten |
+| outcome | string | Yes | before for BG-U/BG-A; success for AG-U/AG-A/AA-U/AA-A; error for EG-U/EG-A/EA-U/EA-A | 7 characters | Missing/null/empty invalid | All ten |
+| error_category | string | Conditional: required at error points, forbidden elsewhere | EG-U/EG-A: timeout, transport, provider, invalid_response, unknown. EA-U/EA-A: persistence, state_update, unknown | 16 characters | Non-error points: omitted (presence even null invalid); error points: missing/null/empty invalid; unknown is explicit safe fallback | EG-U, EG-A, EA-U, EA-A |
+| failed_stage | string | Conditional: required at error points, forbidden elsewhere | EG-U/EG-A: generation_request, generation_validate, generation_unknown. EA-U: session_write, history_delete, session_reload, memory_update, application_unknown. EA-A: runtime_rebuild, tool_pairing, token_stat_update, application_unknown | 19 characters | Non-error points: omitted; error points: missing/null/empty invalid; corresponding *_unknown for unclassified stage | EG-U, EG-A, EA-U, EA-A |
+| partial_apply_possible | boolean | Conditional: required at EA-U/EA-A, forbidden elsewhere | true or false; false only when host proves no application mutation could have occurred, otherwise true | Not applicable | Other points: omitted; EA-U/EA-A: missing/null invalid; unknown risk represented by true, not null | EA-U, EA-A |
+
+| Points | Exact allowed field set |
+|---|---|
+| BG-U, BG-A, AG-U, AG-A, AA-U, AA-A | schema_version, operation_id, point_name, outcome (four fields) |
+| EG-U, EG-A | Four common fields plus error_category, failed_stage (six fields) |
+| EA-U, EA-A | Four common fields plus error_category, failed_stage, partial_apply_possible (seven fields) |
+
+Reject unknown or out-of-point fields; null never substitutes for omission. Apply-error stage validation derives its layer from point_name: reject the other layer's stages. For User2Agent, session_write/history_delete/session_reload apply only to session-backed execution; memory_update applies to sessionless execution. The host verifies that finer execution-path consistency. Classification uses host exception types, not exception text. Host cancellation and interrupts propagate. partial_apply_possible becomes true before the first potentially mutating application step; unknown mutation risk is true, not null, and does not prove persistence or rollback. Proposed total serialized payload cap: 8192 UTF-8 bytes; never truncate identity to meet a limit. Verify the existing operation-ID generator against the proposed ASCII/128-character bound before implementation; mismatch requires renewed confirmation. Empty summaries and human nonacceptance remain skips, not errors.
+
+`schema_version` identifies the contract version. For SummarySnapshot v1, `schema_version` MUST equal the EventDefinition `major_version`. Any incompatible SummarySnapshot change MUST create a new EventDefinition major version AND the matching `schema_version`; independently changing only one is invalid. Runtime matches on event major version; Snapshot validation uses `schema_version`; equality keeps both views consistent. Independent evolution requires an explicit compatibility matrix first; phase one does not introduce that complexity. Freeze v1 once the precise field table is confirmed; future incompatible changes MUST bump the version, not silently extend v1. Before coding, the implementer must submit a short table specifying exact names/types, required fields, enums, length limits, absence semantics, and per-point availability for Human confirmation. The approved list above establishes the boundary, not an already implemented executable schema. Examples in this document are illustrative and must conform to that confirmed table and point-specific validation.
+
+Unknown values must have the confirmed absence representation, not be disguised as zero. Earlier candidate fields such as trigger reasons, input counts, processor/model identifiers, generation timing, and post-update counts are not part of the approved minimal v1 field set; adding them requires explicit contract review rather than implicit pass-through.
+
+Length limits do not equal sanitization. The host retains full internal diagnostics; future summary-body access requires a separate policy for permissions, transfer scope, limits, retention/deletion, and sanitization. Authorization does not permit unlimited output.
+
+### Integration and Division of Responsibilities with Existing Mechanisms
+
+Use the generic [Layering and ownership](#layering-and-ownership) and [Shared execution facade](#shared-execution-facade) contracts, with the following summarize-specific composition decisions. Application-startup composition structure: EventDefinition + HookPointDeclaration → explicit HookPointCatalog → trusted ConfiguredHookBootstrap → HookRuntime + application HookScope → Registrar → Executor → explicit injection into ContextRuntime. The selected ConfiguredHookPoint preparation pipeline must feed this structure; prepared-plan handoff wiring is determined during implementation (see [Design Review Findings](#design-review-findings)). The simplified bootstrap currently exposes scripts/folder and whole-layer disablement; the approved prepared-Module handoff and per-Hook disablement require implementation and must not be inferred from those existing wrappers.
+
+- Compose Runtime/Scope/Registrar/Executor once at application startup, shared by all AgentChats and sessions in that application process. Eagerly prepare ConfiguredHookPoint resources, validate Modules/Scripts, and register into Runtime before normal operation; no lazy first-dispatch registration. The Executor coordinates registration readiness.
+- A single configured Hook registration failure disables that Hook, not the application. In phase one, "single Hook" means ONE `HookPointDeclaration` and its complete point plan, NOT the entire application layer and NOT an arbitrary individual Script; partial plan admission requires a later explicit policy. A Module or Script preparation failure invalidates and disables that point plan; other valid points remain active. Valid Modules/Scripts within a valid point plan remain active, but none execute while their containing plan is invalid or disabled; do not silently discard a failed entry and publish a partial plan. Emit high-visibility logs, metrics, and a startup report identifying the unavailable point; because the Runtime is shared, the disabled point affects ALL sessions.
+- The summarize application composition MUST explicitly select and enforce disable-not-fail independently of the generic bootstrap default. Generic `fail` / `disable` environment semantics (`TOPSAILAI_CONFIGURED_HOOKS_STARTUP_POLICY`) MUST NOT silently override this approved summarize policy. This is a pending composition requirement, not existing per-point bootstrap capability. The startup report MUST distinguish "disabled by configured startup policy" from "unavailable due to preparation failure", identifying the affected point and reason without exposing sensitive exception text.
+- `ConfiguredHookExecutor(runtime, scope, registrar, catalog)`; business code calls `executor.dispatch(point, payload=..., operation=...)` through the adapter.
+- Check DispatchReport rejection_reason, outcomes, and unified_result; a returned report does not imply business success.
+- At application shutdown, close in order: Registrar stops accepting registrations → Scope stops new operations and waits for/cancels in-flight work → Runtime records final state and closes internal resources. Coordinate Executor-owned execution resources within that shutdown flow.
+- Return CloseReport to the application owner, record it, and make it testable: closed Hooks, waited/cancelled operations, cleanup failures, cleanup debt, and `fully_closed`. Check cleanup_debts() and use bounded retry_cleanup(debt_id) attempts under application ownership; unresolved debt stays explicit and must never be reported as a full close.
+
+The application lifecycle owns composition and cleanup; AgentChat/session exit must not close the shared resources, and summarize calls must not recreate them. Each summary still has its own HookOperation and host-owned checkpoint state. Shared resources require cross-session isolation, locks/coordination, and attributable operation/session diagnostics to prevent state contamination. Phase one does not support cross-process/cross-worker runtime persistence or persist runtime resources into session history; per-session scoping may be revisited in P2. Inject the Executor explicitly downward, without adding global mutable test switches or authorization-bypass modes. Prefer explicit dispatch: early returns/human rejection mean function success is not equivalent to applied. Use decorators only when function return semantics exactly match business checkpoints; do not wrap the entire function and claim persistence success.
+
+| Existing mechanism | Retained responsibility |
+|---|---|
+| hooks_pre_chat / hook_summarize_messages | Evaluate summary triggers without changing the algorithm |
+| HookInstruction / manual summarize | Human entry point reaching the same business observation points |
+| pre-run / post-final-answer | Outer session lifecycle |
+| BEFORE/AFTER_LLM_CHAT, AFTER_LLM_RESPONSE | Generic request/content processing, not proof that history updates completed |
+| New unified points | Read-only business lifecycle observation, configured execution, and resource governance |
+
+Ordinary Hook returns of False, None, or dictionaries grant no authority to cancel, rewrite the summary, or replace history. The first version permits neither transformation nor blocking; future support requires separate authorization and contract/atomicity validation.
+
+### Synchronous Execution, Failure, and Resource Risks
+
+- Currently use mode="sync" and waiting dispatch(). Only after genuine asynchronous conversion use mode="async" and await adispatch(), while addressing blocking LLM/persistence work. Prohibit fire-and-forget, nonwaiting APIs, and bare background tasks that bypass governance; asynchronous auditing requires a separate bounded queue, consumer lifecycle, and cleanup design.
+- Default to failure_policy="report"; after_apply must be report-type and must not portray completed application as never having occurred. Ordinary handler failures do not change business outcomes; host cancellation/interrupts must not be swallowed.
+- Preserve the original business exception's identity, traceback, and propagation semantics. Hook diagnostics must not override the primary exception; error-observer failures must not recursively generate error events.
+- Hooks must not retrigger summarize within the same operation. Protection state explicitly belongs to the host operation; external workers must not assume context inheritance, and uncorrelated reentry is not allowed by default.
+- Discovery, registration, and execution all contribute to latency. A latency_budget_ms declaration does not equal an enforced deadline; verify Runtime dispatch timeout and separately define the total Hook dispatch budget and whole-summary budget.
+
+### Minimal Implementation Scope and Acceptance
+
+The first step integrates only the eight first-phase points in the table above, retaining business control flow, human confirmation, persistence, and token updates. File responsibilities:
+
+| Scope | Responsibility |
+|---|---|
+| workspace/context/base.py | Start and exceptions for message/runtime generation |
+| workspace/context/ctx_runtime.py | User2Agent application completion and exceptions |
+| workspace/context/agent2llm.py | Agent2LLM application completion and exceptions |
+| hooks/points/context/ | Declarations, payloads, and adaptation; avoid expanding shared base.py |
+| Application composition layer (exact file to be confirmed) | Eagerly compose/register once per application, inject the shared Executor into all AgentChats/sessions, and own application shutdown and bounded cleanup-debt retries |
+
+Prepare a test plan before implementation, covering at least:
+
+- New-name equality, phase consistency, malformed four-segment rejection; all ten layer-suffixed names, eight active points and two inactive candidates; compatibility with legacy names and independent event names; Catalog does not activate the second phase.
+- Both layers × message/runtime: order, notification count, correlation ID, and actual processor fallback.
+- Empty input, rejection, empty answers, and human nonacceptance do not falsely report application or exceptions.
+- LLM and persistence/reload failures preserve original exception identity/traceback, with correct stage and partial-application markers.
+- Behavior remains unchanged without configured Hooks; report-type failures/timeouts do not alter normal business behavior.
+- Payloads cannot mutate original messages; tool-call pairing, head/tail, and token updates remain intact.
+- Real Registrar/Runtime/Executor and built-in hook_script execution; eager application-startup registration, single-Hook disable-not-fail with visible logs/metrics/startup report, and shared availability across sessions.
+- Application shutdown order Registrar → Scope → Runtime; CloseReport contents and bounded cleanup-debt handling, including unresolved debt with `fully_closed=false`. AgentChat/session exit does not close the shared Runtime; independent operations/sessions do not contaminate checkpoint state.
+- Reentry and error-observer failures do not recursively trigger summary/error; cancellation is not swallowed.
+- BDD through real HTTP/SSE with llm_mock_server verifies requests and user-visible history/runtime outcomes, not just callbacks.
+
+Run all unit tests through `tests/run_tests.py`, not `pytest tests/unit`; single-file pytest is allowed. Temporary artifacts go in the designated .tmp; do not depend on a real external LLM.
+
+### Design Review Findings
+
+Reviewer: AIMember.gpt56terra-programmer. Human approved recording the review, then selected Option B (ConfiguredHookPoint) for activation and Option A for idempotency/recursion suppression. Human subsequently approved P0-4 and explicitly chose application-level ownership for P0-5, NOT the recommended AgentChat-instance level. These decisions refine the existing baseline without authorizing implementation; refer to the preceding sections for established naming, lifecycle, payload, and execution rules.
+
+#### P0 — Human Decisions
+
+P0-1 through P0-5 are DECIDED below. The precise v1 field table still requires Human confirmation before coding; application composition file selection and prepared-plan handoff remain implementation details. Option labels refer to the Human-facing choices; the historical Path A/Path B labels below identify existing framework paths, not those choices.
+
+| Gap | Decision status and implementation requirements |
+|---|---|
+| P0-1: Resource activation chain | **DECIDED — Option B (ConfiguredHookPoint preparation pipeline).** Both `modules/` and `scripts/` use `ConfiguredHookPoint` (`module_folder` / `ConfiguredScript.target`) → discovery → security check → capture → probe `main(...)` for Modules → build runnable plan → register to Runtime → dispatch executes. Existing Path A is this preparation path; existing Path B is `ConfiguredHookBootstrap → ConfiguredHookRegistrar → Runtime.register_configured`, carrying only `scripts` or `folder`, not `module_folder`, `module_args`, `module_kwargs`, or `ConfiguredScript.target`. How prepared plans are handed to Catalog/Registrar/Runtime remains an implementation-time wiring decision, not a design blocker or evidence that the paths are already connected. |
+| P0-2: Error-point recursion suppression | **DECIDED — Option A.** Only summary business exceptions emit error points. Handler/Module/Script failures enter DispatchReport/logs/metrics only and never trigger a new error point. Use the per-summary operation state in P0-3; current `HookOperation` identity/parent/depth (≤1000) alone provides no summary-level guard. Preserve the existing primary-exception and cancellation rules. |
+| P0-3: Checkpoint idempotency | **DECIDED — Option A.** Create one `HookOperation` per summary operation; host-owned per-operation state enforces at-most-once dispatch for `(operation_id, point_name)`. Mark the checkpoint before dispatch; duplicates are skipped and return already-handled, without observer re-execution. Retries within the same operation do not redispatch that checkpoint; a new summary operation has its own state. Correlation alone does not enforce this rule: repeated raw dispatch currently creates distinct HookEvents. |
+| P0-4: Executable snapshot schema | **DECIDED — Human approved.** Freeze metadata-only, versioned SummarySnapshot v1; reject unknown fields and enforce per-point lifecycle availability. Common fields: `schema_version`, `operation_id`, `point_name`, `outcome`. Derive layer from the business_action suffix in point_name; reject a separate layer payload field. Error points add `error_category`/`failed_stage`; application-error adds `partial_apply_possible`. Exclude summary content, raw messages, live objects, full tracebacks, and credentials. Incompatible changes MUST bump both `schema_version` and EventDefinition `major_version` together, preserving equality as specified in [Data Contract](#data-contract). The implementer proposes a short exact field table (types, required/enums/lengths/absence and point availability) for Human confirmation BEFORE coding; approval covers the rules and boundary, not a completed executable schema. |
+| P0-5: Composition and shutdown ownership | **DECIDED — Human explicitly selected application level, not AgentChat-instance level.** Compose Runtime/Scope/Registrar/Executor once at application startup and close at application shutdown; all AgentChats/sessions share them. Eager preparation/validation/registration precedes normal operation. Single-Hook registration failure disables that Hook with high-visibility logs/metrics/startup report, while the application continues; disablement affects ALL sessions. Close Registrar → Scope → Runtime; return and record testable CloseReport under application ownership (closed Hooks, waited/cancelled operations, cleanup failures, `fully_closed`). Explicit cleanup debt receives bounded application-owner retry; never fake full close. No cross-process/cross-worker runtime persistence or runtime resources in session history in phase one. Address contamination, isolation/locks/coordination, and harder state attribution; per-session scoping is a P2 revisit. |
+
+#### P1 — Before Coding
+
+- **RESOLVED — Version relationship:** SummarySnapshot `schema_version` MUST equal EventDefinition `major_version`; incompatible changes upgrade both together. Independent evolution requires a compatibility matrix and is out of phase-one scope; see [Data Contract](#data-contract).
+- **RESOLVED — Startup disable unit and policy precedence:** disable one complete `HookPointDeclaration` / point plan on preparation or registration failure, never the entire application layer or an arbitrary Script; no silent partial plan admission. Other valid points remain active. Summarize composition explicitly enforces disable-not-fail independently of generic startup defaults; startup reporting distinguishes configured-policy disablement from preparation unavailability. See [Integration and Division of Responsibilities with Existing Mechanisms](#integration-and-division-of-responsibilities-with-existing-mechanisms).
+- **Confirmed field table:** submit the minimal v1 names/types, required fields, enums, lengths, absence semantics, and per-point availability for Human confirmation before coding.
+- **Report disposition:** define a matrix for registration failure, rejection, timeout, Script cleanup pending, and Hook error: host outcome, log level, metrics, retryability, and cleanup follow-up. This makes the existing DispatchReport checks actionable. The point-plan disable unit, summarize policy precedence, and startup reason distinction are RESOLVED above; remaining disposition fields and runtime failure cases remain open.
+- **Application checkpoints:** specify the last completed step per layer using the lifecycle above: User2Agent human acceptance and persistent write/delete/reload; Agent2LLM runtime rebuild, tool-call pairing, and token-stat update. Define `failed_stage` and `partial_apply_possible` markers for intervening failures.
+- **Module loading boundaries:** discovery considers direct children only, excludes `__init__.py`, and does not discover nested modules. Capture/isolation is not normal import; `main` must be a plain function. Interpret “execute by name” in the directory section within this captured-module model, not as ordinary package import.
+- **Script admission:** document platform-specific executable-bit and allowlisted shebang/native-format requirements, symlink/path-escape rejection, timeout/output limits, and cleanup debts. The inspected recursive-folder path deduplicates entries by basename: `scripts/a/audit.py` and `scripts/b/audit.py` collide. This is current-path behavior to test, not a general Script-name restriction; [Deterministic name keys](#deterministic-name-keys) keeps final registered names authoritative and root-relative discovery naming pending Human approval. Recursive discovery depends on the selected Runtime registration implementation, not Executor/Registrar alone.
+- **Phase-two activation gate:** decide whether the two `after_summary_generate_<layer>` points enter the Catalog and how disabled configuration references are handled; Registrar calls `catalog.require()` for every binding. Preserve the established phase-one scope.
+- **Timeout supervision:** decompose whole-summary, dispatch, declaration `latency_budget_ms`, Module/Script entry, and cleanup budgets; specify who measures, who cancels, and how the host continues after timeout.
+
+#### P2 — After Phase One Stabilizes
+
+- Design async mode / `adispatch` and context propagation without converting synchronous observers to fire-and-forget.
+- Define cross-worker operation identity and reentry coordination; retain phase-one sync-only execution and no external reentry. Revisit per-session scoping if shared application resources require stronger isolation or easier attribution; do not change the approved application owner implicitly.
+- Develop the separate controlled summary-body access policy identified in Data Contract: permissions, audit, retention/deletion, transport scope, and sanitization.
+- Specify per-point dispatch duration, registration duration, rejection category, and cleanup-debt-count observability.
+- Develop the separate legacy migration plan: dual-write/dual-trigger allowance, retirement window, configuration migration, and rollback.
+
+#### Additional Review Acceptance Tests
+
+Extend, rather than duplicate, the acceptance checklist above:
+
+- Make old/new name validation table-driven; explicitly reject new-format name/event and phase mismatches while accepting legacy independent names.
+- Exercise duplicate dispatch for the same operation/checkpoint against the decided P0-3 semantics; negatively assert that observer failure emits no `error_summary_*`.
+- Assert after-apply emission occurs only after the last step in each layer; human nonacceptance, empty summary, and feasibility skip emit neither success nor error. Retain the existing partial-apply markers and original exception identity/traceback assertions.
+- Exercise the selected ConfiguredHookPoint preparation pipeline and its implemented Catalog/Registrar/Runtime handoff; prove Modules are actually discovered, captured, probed, and executed, not merely declared.
+- Reject Script nested-folder basename collisions, symlinks, path escape, non-executable files, and invalid shebangs.
+- Verify eager application-startup preparation/registration occurs once before normal operation, shared across AgentChats/sessions without first-dispatch lazy registration.
+- Inject one configured-Hook registration failure: only that Hook is disabled, the application continues, all sessions see the same disablement, and logs/metrics/startup report expose it.
+- Verify Registrar → Scope → Runtime shutdown order, in-flight wait/cancel behavior, complete CloseReport contents, bounded cleanup-debt retries, and honest unresolved-debt reporting. AgentChat/session exit must not close shared resources; concurrent sessions must not share checkpoint-handled state.
+- Validate the confirmed v1 field table for all ten points, reject the removed layer payload field, missing/invalid layer suffixes, cross-layer dispatch, envelope mismatch, cross-layer failed_stage values, unknown/out-of-stage fields and sensitive content, and verify version/absence handling and incompatible-version rejection.
+- Retain the existing real HTTP/SSE BDD requirement using `llm_mock_server` and user-visible session results.
+
+### Open Questions
+
+| Question | Decision pending |
+|---|---|
+| after_generate | Second phase by default; if Human requires generation-success observation in the first step, adjust scope and tests |
+| summary_retry | Distinguish network-request attempts from whole-business attempts; do not infer the latter from the former |
+| triggered/skipped/finally | First freeze reason enums, notification counts, names, available phases, and failure semantics; do not broaden after |
+| Legacy Hook migration | Separate task, not automatic |
+| Precise v1 field table | P0-4 rules/boundary approved; implementer submits exact types, required/enums/lengths/absence and per-point availability for Human confirmation before coding |
+| Application wiring/cross-worker reentry | Application owner is decided; confirm composition files, shared Executor injection/isolation boundaries, and identification mechanisms. Cross-worker runtime persistence is outside phase one; per-session scoping is a P2 revisit |
+| timeout | Determine each point's timeout and the total business budget to prevent prolonged plugin blocking |
+
+Open items are not allowed by default: security, behavior, and permissions require prior confirmation; subsequent plans resolve other implementation details within the agreed rules.
+
 ## Verification plan
 
-Plan tests before each implementation or integration unit. Existing focused tests use a standalone test publisher and isolated fixture plugins without importing application owners. Test artifacts, logs, caches and worker temporary data must be confined to the workspace .tmp directory. Only owned processes/resources may be cleaned up.
+Plan tests before each implementation or integration unit. The [summarize acceptance checklist](#minimal-implementation-scope-and-acceptance) and [additional review tests](#additional-review-acceptance-tests) specialize this general plan without replacing framework verification. Existing focused tests use a standalone test publisher and isolated fixture plugins without importing application owners. Test artifacts, logs, caches and worker temporary data must be confined to the workspace .tmp directory. Only owned processes/resources may be cleaned up.
 
 | Test dimension | Required evidence |
 |---|---|
@@ -440,7 +781,7 @@ One framework provides registration, event delivery, ordering, isolated executio
 
 `hook_name` plus exactly one of `scripts` or `folder` is a convenience interface for the Hook Point's default Script Hook, not permission to publish a second first-class plan type. Both source forms use the name key above; list order is not an execution contract. Folder enumeration remains bounded, recursive and no-symlink, with shell-free format validation and deployment-owned trust. Invalid or duplicate entries reject the whole change and preserve the previous unified plan.
 
-Hook names retain the exact case-sensitive `^hook_[a-z][a-z0-9_]*$` contract, without event-name, path, prefix or alias fallback. Identical complete plans are successful no-ops; replacement must preserve unrelated registrations and admitted old snapshots. Execution retains existing failure, timeout and cancellation policies with no automatic retry. Scope and Runtime close own plan removal, admitted-work settlement, artifact retirement and bounded cleanup recovery.
+The implemented legacy Hook-name validator retains the exact case-sensitive `^hook_[a-z][a-z0-9_]*$` contract, without event-name, path, prefix or alias fallback. The approved new-point design requires a separate strict double-underscore branch, matching point/event names and phase validation while preserving the legacy branch; this extension is not yet implemented (see [Naming, Phases, and Framework Validation](#naming-phases-and-framework-validation)). Identical complete plans are successful no-ops; replacement must preserve unrelated registrations and admitted old snapshots. Execution retains existing failure, timeout and cancellation policies with no automatic retry. Scope and Runtime close own plan removal, admitted-work settlement, artifact retirement and bounded cleanup recovery.
 
 Startup and lazy registration must atomically establish the complete Module/default-Hook plan and preserve immutable artifact capture, scope ownership, deadlines, cancellation and cleanup recovery. Callers need not manage candidates, leases, TTLs, publication or disposal. Hiding candidate mechanics does not supersede the terminal architecture.
 
@@ -480,7 +821,7 @@ application configuration boundary
 
 Core business modules receive a `ConfiguredHookExecutor` explicitly. They never read environment variables, parse Hook configuration, scan script folders, build trust assertions, or mutate Runtime trust. Decorator and explicit insertion styles must call the same Executor and Registrar; neither may duplicate discovery, registration, failure caching, reload, or cleanup logic.
 
-The first release owns configured registrations in one application-level Scope with the Runtime lifetime. Short-lived request-level configured scopes are deferred because they would repeat capture and retirement. Runtime close first closes admission, settles Registrar waiters and owned deliveries under existing deadlines, retires plans and artifacts, and reports bounded cleanup debt.
+The first release owns configured registrations in one application-level Scope with the Runtime lifetime. The [summarize application](#integration-and-division-of-responsibilities-with-existing-mechanisms) explicitly selects that owner with eager registration, per-Hook disable-not-fail visibility, and Registrar → Scope → Runtime shutdown; generic lazy mode remains available to other integrations. Short-lived request-level configured scopes are deferred because they would repeat capture and retirement. Runtime close first closes admission, settles Registrar waiters and owned deliveries under existing deadlines, retires plans and artifacts, and reports bounded cleanup debt.
 
 ### Environment-driven bootstrap
 
@@ -663,7 +1004,7 @@ The catalog is the source of event construction truth for both decorators and ex
 
 ### Lifecycle, diagnostics, and performance gates
 
-The bootstrap owner creates one Runtime, one long-lived application Scope, one Registrar, and one Executor. It publishes them only after startup registration succeeds or explicit whole-layer disablement is recorded. Shutdown prevents new ensure/dispatch admission, wakes registration waiters, settles work, closes Scope and Runtime, and reports cleanup debt without allowing a late registration to republish.
+The bootstrap owner creates one Runtime, one long-lived application Scope, one Registrar, and one Executor. The current bootstrap publishes them only after startup registration succeeds or explicit whole-layer disablement is recorded. The approved summarize integration requires per-Hook disable-not-fail startup reporting instead; it is a pending application wiring requirement, not a claim that the current whole-layer bootstrap already implements that policy. Shutdown prevents new ensure/dispatch admission, wakes registration waiters, settles work, closes Scope and Runtime, and reports cleanup debt without allowing a late registration to republish.
 
 The framework currently reuses the Runtime's implemented bounded, non-recursive diagnostic path and returns typed bootstrap, registration, dispatch, and cleanup results. Dedicated lifecycle event names for bootstrap loaded/rejected/disabled, startup registration started/completed/rejected, lazy registration winner/wait/completion/rejection/retry, invalidation, and Runtime replacement are rollout observability requirements; they are not claimed as emitted by the current wrapper modules. Before a concrete core Hook point is enabled, its integration must either map those states into the owning application's bounded diagnostic sink or document the equivalent existing signal. Safe fields are Hook name, Scope ID, configuration generation, trust identity, mode, duration, attempt, and typed error category. Configuration bodies, environment values, script contents, credentials, and raw paths must not be logged.
 
