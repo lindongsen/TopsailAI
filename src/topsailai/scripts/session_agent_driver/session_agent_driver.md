@@ -52,8 +52,51 @@ tools:
 | `TOPSAILAI_SESSION_DRIVER_POLL_INTERVAL` | `5` | Poll interval in seconds. |
 | `TOPSAILAI_SESSION_DRIVER_TIMEOUT` | `120` | Single analysis timeout in seconds (SIGALRM). |
 | `TOPSAILAI_SESSION_DRIVER_TASK_GOAL` | `Drive the target session to completion.` | Task goal injected into the analysis prompt. |
+| `TOPSAILAI_SESSION_DRIVER_LOG_MAX_BYTES` | `10485760` | Positive maximum log size in bytes before rotation (10 MiB). |
+| `TOPSAILAI_SESSION_DRIVER_LOG_MAX_BACKUPS` | `5` | Positive number of rotated log backups to retain. |
 | `TOPSAILAI_PLUGIN_TOOLS` | `plugins.tools` | Plugin tools package (set by the script before importing topsailai). |
 | `TOPSAILAI_PLUGIN_SKILLS` | `{script_dir}/plugins/skills` | Plugin skills directory (contains the `topsailai-skills` soft link to topsailai/skills, set by the script). |
+
+## Runtime Records
+
+After argument validation, the driver creates its records under
+`{TOPSAILAI_HOME}/workspace/task/session_agent_driver/`:
+
+- `{session_id}.meta` — an atomically replaced JSON snapshot of the latest driver run.
+- `{session_id}.log` — appended driver logs across sequential restarts.
+- `{session_id}.log.1` through `.log.5` — rotated backups with default settings.
+
+The filename uses the **target session ID**, not the temporary analysis-agent
+session ID. `TOPSAILAI_HOME` follows the framework's home-directory configuration;
+the record directory does not depend on the current working directory.
+
+| Metadata field | Meaning |
+|---|---|
+| `version` | Record format version, currently `1`. |
+| `session_id`, `run_id` | Target session ID and a unique identifier for this driver run. |
+| `pid` | Driver process ID, not the target process ID. |
+| `start_time`, `end_time`, `updated_at` | Local ISO timestamps with timezone offset; `end_time` is null while running. |
+| `status` | `running`, `stopped` for a successful exit, or `failed` for a nonzero exit. |
+| `target_status` | Latest observed target state; initially null. |
+| `poll_interval` | Effective polling interval in seconds. |
+| `exit_code` | Null while running; recorded on termination. |
+| `stop_reason` | For example `target_exited`, `exit_requested`, `signal:15`, or an exception type. |
+
+SIGINT and SIGTERM terminate gracefully and publish a stopped record with exit
+code zero and a signal stop reason. Unhandled ordinary exceptions publish a
+failed record and a traceback in the log. Errors caught by the polling loop are
+logged while polling continues; they do not imply the driver has stopped.
+
+The log captures the driver's own logging, not all model responses or arbitrary
+stdout/stderr from dependencies. Startup/import errors before lifecycle recording
+begins cannot be captured in these files. SIGKILL, power loss, or failed metadata
+writes can leave a stale `running` snapshot; verify process liveness rather than
+using metadata alone as proof of a live driver.
+
+Run only one driver per target session: concurrent writers to the same record
+files are not supported. A sequential restart replaces the previous metadata
+with a new `run_id` and continues appending to the bounded log. Old target records
+are retained for inspection; no automatic cross-target purge is provided.
 
 ## Plugin Tools
 

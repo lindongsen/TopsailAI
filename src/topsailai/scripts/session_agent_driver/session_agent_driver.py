@@ -161,6 +161,8 @@ from cli_topsailai.log_files import discover_log_files, is_session_pipe_open  # 
 from cli_topsailai.paths import get_topsailai_home  # noqa: E402
 from cli_topsailai.runtime_logs import resolve_log_target, read_log_tail  # noqa: E402
 from plugins.tools import exit_process  # noqa: E402
+from driver_runtime import DriverRuntime  # noqa: E402
+from topsailai.workspace.folder_constants import TOPSAILAI_HOME  # noqa: E402
 
 
 class _AnalysisTimeout(Exception):
@@ -386,7 +388,7 @@ def _parse_args(argv=None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv=None) -> int:
+def main(argv=None, *, record_directory=None) -> int:
     """Run the session agent driver polling loop."""
     args = _parse_args(argv)
     session_id = args.session_id or os.environ.get(SESSION_ID_ENV)
@@ -403,6 +405,22 @@ def main(argv=None) -> int:
     if poll_interval <= 0:
         poll_interval = DEFAULT_POLL_INTERVAL
 
+    directory = record_directory or Path(TOPSAILAI_HOME) / "workspace" / "task" / "session_agent_driver"
+    max_bytes = _read_int_env("TOPSAILAI_SESSION_DRIVER_LOG_MAX_BYTES", 10 * 1024 * 1024)
+    backups = _read_int_env("TOPSAILAI_SESSION_DRIVER_LOG_MAX_BACKUPS", 5)
+    with DriverRuntime(directory, session_id, poll_interval, logger,
+                       max_bytes=max_bytes, backups=backups) as runtime:
+        old_int = signal.getsignal(signal.SIGINT)
+        old_term = signal.getsignal(signal.SIGTERM)
+        try:
+            return _poll_session(session_id, poll_interval, runtime)
+        finally:
+            signal.signal(signal.SIGINT, old_int)
+            signal.signal(signal.SIGTERM, old_term)
+
+
+def _poll_session(session_id, poll_interval, runtime) -> int:
+    """Poll the target while publishing driver lifecycle observations."""
     exit_process.reset_exit_flag()
     logger.info(
         "session agent driver started: session=%s poll_interval=%ss",
@@ -411,6 +429,7 @@ def main(argv=None) -> int:
 
     def _on_signal(signum, frame):  # noqa: ARG001
         """Exit gracefully on SIGINT/SIGTERM."""
+        runtime.set_stop_reason("signal:" + str(signum))
         logger.info("received signal %s, exiting", signum)
         raise SystemExit(0)
 
@@ -420,8 +439,10 @@ def main(argv=None) -> int:
     while not exit_process.is_exit_requested():
         try:
             status = check_session_status(session_id)
+            runtime.update_target(status)
             logger.info("session %s status: %s", session_id, status)
             if status == "idle":
+                runtime.set_stop_reason("target_exited")
                 logger.info("session %s is idle (process exited), driver exits", session_id)
                 break
             if status == "input":
@@ -434,6 +455,8 @@ def main(argv=None) -> int:
             logger.error("polling loop error: %s", error)
         time.sleep(poll_interval)
 
+    if exit_process.is_exit_requested():
+        runtime.set_stop_reason("exit_requested")
     logger.info("session agent driver exiting")
     return 0
 
