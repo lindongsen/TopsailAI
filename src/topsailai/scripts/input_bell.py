@@ -2,6 +2,7 @@
 """Periodically check `topsailai workspace` for INPUT sessions and ring a bell."""
 
 import argparse
+import json
 import logging
 import os
 import shlex
@@ -72,10 +73,10 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _has_input_sessions(topsailai_cmd: str) -> bool:
-    """Return True when `topsailai workspace` lists at least one INPUT session."""
+    """Return True when `topsailai workspace -f json` lists an INPUT session."""
     try:
         result = subprocess.run(
-            [topsailai_cmd, "workspace"],
+            [topsailai_cmd, "workspace", "-f", "json"],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -88,7 +89,16 @@ def _has_input_sessions(topsailai_cmd: str) -> bool:
     if result.returncode != 0:
         logger.warning("%s workspace exited with code %s", topsailai_cmd, result.returncode)
         return False
-    return any(line.strip() for line in result.stdout.splitlines() if "INPUT" in line)
+    try:
+        data = json.loads(result.stdout)
+    except (ValueError, TypeError) as error:
+        logger.warning("invalid JSON from %s workspace: %s", topsailai_cmd, error)
+        return False
+    items = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        logger.warning("%s workspace JSON has no items list", topsailai_cmd)
+        return False
+    return any(isinstance(item, dict) and item.get("status") == "input" for item in items)
 
 
 def _pulseaudio_sessions(

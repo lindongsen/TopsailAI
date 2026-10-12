@@ -444,6 +444,56 @@ description: A skill without preload docs
             self.assertIn("preload=False", logged_message)
             self.assertIn("load_overview=False", logged_message)
 
+
+    @patch('topsailai.skill_hub.skill_tool.print_tool')
+    @patch('topsailai.skill_hub.skill_tool.is_need_load_overview')
+    def test_logs_load_overview_true_from_frontmatter_flag(self, mock_is_need, mock_print_tool):
+        """Log load_overview=True when frontmatter flag_overview=1 even if env check is False."""
+        mock_is_need.return_value = False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "SKILL.md")
+            yaml_content = """---
+name: FlagOverviewSkill
+description: A skill with flag_overview enabled
+flag_overview: 1
+---
+"""
+            with open(skill_file, "w", encoding="utf-8") as f:
+                f.write(yaml_content)
+
+            result = parse_skill_folder(tmpdir)
+
+            self.assertEqual(result.name, "FlagOverviewSkill")
+            self.assertIn(tmpdir, g_skills)
+            mock_print_tool.print_info.assert_called_once()
+            logged_message = mock_print_tool.print_info.call_args[0][0]
+            self.assertIn("Skill loaded:", logged_message)
+            self.assertIn("load_overview=True", logged_message)
+
+    @patch('topsailai.skill_hub.skill_tool.print_tool')
+    @patch('topsailai.skill_hub.skill_tool.is_need_load_overview')
+    def test_logs_load_overview_false_from_frontmatter_flag(self, mock_is_need, mock_print_tool):
+        """Log load_overview=False when frontmatter flag_overview=0 even if env check is True."""
+        mock_is_need.return_value = True
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "SKILL.md")
+            yaml_content = """---
+name: FlagOverviewDisabledSkill
+description: A skill with flag_overview disabled
+flag_overview: 0
+---
+"""
+            with open(skill_file, "w", encoding="utf-8") as f:
+                f.write(yaml_content)
+
+            result = parse_skill_folder(tmpdir)
+
+            self.assertEqual(result.name, "FlagOverviewDisabledSkill")
+            self.assertIn(tmpdir, g_skills)
+            mock_print_tool.print_info.assert_called_once()
+            logged_message = mock_print_tool.print_info.call_args[0][0]
+            self.assertIn("Skill loaded:", logged_message)
+            self.assertIn("load_overview=False", logged_message)
     @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
     def test_name_disabled_skill_is_not_cached(self, mock_env):
         """A skill disabled by its SKILL.md name is not registered."""

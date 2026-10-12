@@ -44,11 +44,13 @@ harmless.
 | `TOPSAILAI_INPUT_BELL_INTERVAL_SEC` | `30` | Polling interval in seconds between checks. Must be a positive integer. |
 | `TOPSAILAI_INPUT_BELL_ONCE` | `false` | When `true`, run a single check and exit; exit code `0` when INPUT sessions were found, `1` otherwise. |
 | `TOPSAILAI_INPUT_BELL_SOUND` | automatic ffplay output detection | Optional shell command that plays the bell sound. When set, it is run unchanged; when unset, the script probes active desktop PulseAudio sessions, ffplay's normal output, and available direct ALSA `plughw` playback devices. |
-| `TOPSAILAI_INPUT_BELL_TOPSAILAI_CMD` | `topsailai` | Command used to query the workspace task list. |
+| `TOPSAILAI_INPUT_BELL_TOPSAILAI_CMD` | `topsailai` | Command used to query the workspace session list as JSON. |
 
 ## Behavior
 
-- Runs `topsailai workspace` and looks for lines containing the `INPUT` status.
+- Runs `topsailai workspace -f json` and checks the `status` field of every
+  listed session; a session whose `status` equals `input` marks the workspace
+  as having INPUT.
 - When at least one INPUT session is found, plays the configured bell sound once
   per check cycle.
 - With no sound override, synthesizes a short 880 Hz tone with `ffplay`, trying

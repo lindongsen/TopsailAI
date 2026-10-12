@@ -1,5 +1,6 @@
-"""Unit tests for automatic ffplay output selection in input_bell."""
+"""Unit tests for input_bell INPUT detection and ffplay output selection."""
 
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -348,3 +349,69 @@ class TestInputBellInterval(TestCase):
 
         env_int.assert_called_once_with("TOPSAILAI_INPUT_BELL_INTERVAL_SEC", 30)
         sleep.assert_called_once_with(7)
+
+class TestInputBellJsonDetection(TestCase):
+    """Verify INPUT detection through the `workspace -f json` status field."""
+
+    def _workspace_result(self, items, returncode=0):
+        """Build a fake subprocess result carrying a JSON workspace payload."""
+        payload = {"host": "topsail", "items": items, "total": len(items)}
+        return SimpleNamespace(
+            returncode=returncode,
+            stdout=json.dumps(payload),
+        )
+
+    def test_detects_input_session_from_json_status(self):
+        """An item with status `input` marks the workspace as having INPUT."""
+        result = self._workspace_result(
+            [
+                {"no": 1, "pid": 100, "status": "running"},
+                {"no": 2, "pid": 200, "status": "input"},
+            ]
+        )
+        with mock.patch.object(input_bell.subprocess, "run", return_value=result) as run:
+            self.assertTrue(input_bell._has_input_sessions("topsailai"))
+
+        self.assertEqual(run.call_args.args[0], ["topsailai", "workspace", "-f", "json"])
+
+    def test_returns_false_when_no_input_status_present(self):
+        """Running and idle sessions alone do not trigger the bell."""
+        result = self._workspace_result(
+            [
+                {"no": 1, "pid": 100, "status": "running"},
+                {"no": 2, "pid": None, "status": "idle"},
+            ]
+        )
+        with mock.patch.object(input_bell.subprocess, "run", return_value=result):
+            self.assertFalse(input_bell._has_input_sessions("topsailai"))
+
+    def test_returns_false_on_nonzero_exit(self):
+        """A failing workspace command never reports INPUT sessions."""
+        result = self._workspace_result([], returncode=1)
+        with mock.patch.object(input_bell.subprocess, "run", return_value=result):
+            self.assertFalse(input_bell._has_input_sessions("topsailai"))
+
+    def test_returns_false_on_invalid_json(self):
+        """Malformed JSON output is treated as no INPUT sessions."""
+        result = SimpleNamespace(returncode=0, stdout="not-json{")
+        with mock.patch.object(input_bell.subprocess, "run", return_value=result):
+            self.assertFalse(input_bell._has_input_sessions("topsailai"))
+
+    def test_returns_false_when_items_key_missing(self):
+        """A JSON payload without an items list cannot prove INPUT sessions."""
+        result = SimpleNamespace(returncode=0, stdout='{"host": "topsail"}')
+        with mock.patch.object(input_bell.subprocess, "run", return_value=result):
+            self.assertFalse(input_bell._has_input_sessions("topsailai"))
+
+    def test_returns_false_when_items_is_not_a_list(self):
+        """A non-list items value is rejected instead of crashing."""
+        result = SimpleNamespace(returncode=0, stdout='{"items": {"no": 1}}')
+        with mock.patch.object(input_bell.subprocess, "run", return_value=result):
+            self.assertFalse(input_bell._has_input_sessions("topsailai"))
+
+    def test_returns_false_when_command_missing(self):
+        """A missing executable degrades to no INPUT sessions."""
+        with mock.patch.object(
+            input_bell.subprocess, "run", side_effect=OSError("no such file")
+        ):
+            self.assertFalse(input_bell._has_input_sessions("topsailai"))
