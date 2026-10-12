@@ -14,12 +14,12 @@ scope: standalone framework, configured bootstrap/registration wrappers, Catalog
 
 ## Status and scope
 
-This document defines the authoritative target architecture clarified by the Human on 2026-10-10. Implementation evidence is recorded separately and does not override the target. U06A–U06D unified synchronous execution is committed, including configured adapter `17d9e9ac` and ordinary public entry `14d61522`. [The open architecture issue](../issues/issue-hook-point-default-script-handler-architecture.md) now tracks remaining U07–U11 lifecycle/migration acceptance; application-domain integrations remain deferred.
+This document defines the authoritative target architecture clarified by the Human on 2026-10-10. Implementation evidence is recorded separately and does not override the target. U06–U10 unified waiting execution, desired/active reload diagnostics, async cancellation custody, Catalog authority and breaking nonwaiting removal are committed. U11A–E add real target business/process evidence. [The open architecture issue](../issues/issue-hook-point-default-script-handler-architecture.md) still requires U11H final acceptance and a Human decision on accepted provenance REDs; application-domain integrations remain deferred.
 
 | Dimension | Current status |
 |---|---|
-| Implementation | U06A–U06D complete unified synchronous Module/default-Hook execution, configured adaptation, ordinary source registration and execution-local custody; U07–U11 remain pending. |
-| Verification | U06D final affected verification: 208 passed with changed line/branch coverage 100%; two accepted provenance REDs remain separate known results. This is not full lifecycle or full-project GREEN acceptance. |
+| Implementation | U06A–U06D complete unified synchronous Module/default-Hook execution, configured adaptation, ordinary source registration and execution-local custody; U07–U10 are committed; U11A–E are verified in selected scope, with U11H final acceptance pending. |
+| Verification | U11E latest selected affected verification: 480 passed, no skipped/xfail; two accepted provenance REDs remain separate known results. This is not full lifecycle or full-project GREEN acceptance. |
 | Integration | The configured API is available at `HookRuntime`; conversation, Agent, LLM, tool, memory, and skill lifecycle integrations remain deferred. |
 
 In scope now: the independent framework, its execution guarantees, interfaces, configuration, lifecycle, extension seams, current implementation status, and verification plan. Possible future integration families are conversation, User2Agent turns, Agent2LLM runs, LLM requests, prompt assembly, context summarization, persistence checkpoints, and task lifecycle.
@@ -140,7 +140,7 @@ Sequence is monotonically increasing per scope under the owner lock; it records 
 
 ## Unified handler and public interfaces
 
-The Runtime methods below exist; the Module entry shown is the required target, not a claim that current Binding validation enforces it. This compact sketch is not an exact call signature reference. `HookScheduler` is implemented as a module-level API and is not currently a package-level export.
+The target Module entry is enforced by unified source capture/execution; generic Binding validation remains a legacy contract. This compact sketch is not an exact call signature reference. `HookScheduler` is implemented as a module-level API and is not currently a package-level export.
 
 ```text
 main(*args, **kwargs) -> Any  # Public Module entry; no business-schema restriction
@@ -158,7 +158,7 @@ settle_configured_empty_hook_script(...) -> HookScriptSettlement
 execute_configured_hook_script(..., runner: HookScriptRunner, ...) -> HookScriptSettlement
 ```
 
-The standalone HookScript orchestration interfaces `HookScriptExecutionOptions`, `HookScriptExecutionPolicy`, `HookScriptEntryResult`, `HookScriptRunner`, and `execute_configured_hook_script` are implemented. `HookScriptRunner` is an injected trusted runner protocol. The simplified configured Runtime facade is also implemented through `register_configured()`, `dispatch_configured()`, `adispatch_configured()`, and `emit_configured()`; application-domain lifecycle integrations remain deferred.
+The standalone HookScript orchestration interfaces `HookScriptExecutionOptions`, `HookScriptExecutionPolicy`, `HookScriptEntryResult`, `HookScriptRunner`, and `execute_configured_hook_script` are implemented. `HookScriptRunner` is an injected trusted runner protocol. The simplified configured Runtime facade is also implemented through `register_configured()`, `dispatch_configured()`, `adispatch_configured()`; application-domain lifecycle integrations remain deferred.
 
 Every public Module uses `main(*args, **kwargs)` with arbitrary arguments and arbitrary return content; the framework, not the Module, constructs the result envelope. The existing low-level worker context convention requires an adapter where necessary; it is not permission for an arbitrary public callable entry. `None`, `False`, zero, empty containers and `{"error": 1}` are normal return values, not framework errors. Values are not required to be JSON-serializable. The framework does not interpret any of them as a veto, replacement, success marker, or request to retry. Execution success is represented by outcome.status, independently of outcome.value.
 
@@ -166,7 +166,7 @@ Host-side admission, serialization, configuration, queue, and backend errors ret
 
 Implemented `HookStatus` values include: success, error, timeout, invalid_output, worker_lost, cancelled, skipped_dependency, skipped_disabled, skipped_deadline, rejected_capacity. A rejected event yields an explicit receipt/report reason rather than pretending that no handlers matched. No matching bindings yields a successful empty dispatch.
 
-Reports and diagnostics remain bounded. Dispatch owns its short-lived report. Non-waiting admission, background handles and result polling are not part of the target API; existing emit APIs are implementation-only migration gaps.
+Reports and diagnostics remain bounded. Dispatch owns its short-lived report. Non-waiting admission, background handles and result polling are not part of the target API; U10 removed emission APIs and receipts without aliases or background substitutes.
 
 ## Registration, discovery and configuration
 
@@ -195,7 +195,7 @@ Illustrative configuration:
 
 These values match current finite code defaults, but they are not measured or approved production-performance budgets. Reject non-finite/negative durations, excessive graph sizes, unknown fields, incompatible versions, and undefined events. Enforce global hard caps above per-binding settings. Hook runtime disabled is a cheap no-op with no workers.
 
-The U07 target validates a configuration candidate as a whole. Initial invalid configuration leaves the affected Hook Point unavailable with diagnostics; business blocking follows only Catalog-authorized policy. Invalid reload rejects the new revision and retains the last known good active plan for new admissions, explicitly reporting desired_revision, active_revision, update_failed and safe diagnostics. A successful reload atomically publishes an immutable new generation. An in-flight dispatch retains its captured generation. Explicit unregister affects new admissions only; scope close also cancels outstanding deliveries.
+The implemented U07 path validates a configuration candidate as a whole. Initial invalid configuration leaves the affected Hook Point unavailable with diagnostics; business blocking follows only Catalog-authorized policy. Invalid reload rejects the new revision and retains the last known good active plan for new admissions, explicitly reporting desired_revision, active_revision, update_failed and safe diagnostics. A successful reload atomically publishes an immutable new generation. An in-flight dispatch retains its captured generation. Explicit unregister affects new admissions only; scope close also cancels outstanding deliveries.
 
 ## Ordering, dependencies and concurrency
 
@@ -211,7 +211,7 @@ Worker parallelism is bounded at runtime level, not multiplied without limit per
 
 ## Dispatch algorithm and deadlines
 
-The target requires dispatch and awaited adispatch to use this unified algorithm and logically wait for completion. Configured synchronous execution is connected in U06; async lifecycle migration and non-waiting emit removal remain U08/U10 gates. Fire-and-observe is outside the target.
+The target requires dispatch and awaited adispatch to use this unified algorithm and logically wait for completion. U06 synchronous and U08 awaited configured paths execute the same immutable plan under one absolute budget; cancellation propagates while exact cleanup custody is retained. U10 removes nonwaiting emission without aliases. Fire-and-observe is outside the target.
 
 ```text
 record absolute monotonic deadline at dispatch entry before discovery/capture/preparation
@@ -446,21 +446,20 @@ Startup and lazy registration must atomically establish the complete Module/defa
 
 ### Retained compatibility and legacy APIs
 
-The retained configured APIs are described in [Hooks API](../docs/Hooks_API.md). U06 synchronous dispatch is already a unified-plan adapter; U08 must verify async lifecycle equivalence, and U10 must remove/migrate nonwaiting emission. This documentation synchronization changes no production signatures.
+The retained configured APIs are described in [Hooks API](../docs/Hooks_API.md). U06 synchronous dispatch and U08 awaited dispatch use unified execution; U10 removed nonwaiting emission and receipts as a breaking change, with no alias. This documentation synchronization changes no production signatures.
 
 The prior claim that terminal `hook_script` was merely historical and no longer defined the public architecture is withdrawn. Earlier task records remain historical evidence, but cannot override the Human's clarification. The default terminal Handler, per-point cardinality, Module `main` entry and Module-before-Script name ordering remain authoritative.
 
 ## Framework-readiness extension before application Hook-point rollout
 
-The implemented extension provides preparation and insertion conveniences, but complete architecture readiness remains gated by U07–U11 before application owners add Hook points to core flows. This is a feature extension and convenience layer over the implemented Runtime, not a replacement for it. It adds environment-driven bootstrap, startup or first-use registration, a shared execution facade, and two insertion styles: decorators for ordinary callable boundaries and explicit function-body calls for precise lifecycle points.
+The implemented extension provides preparation and insertion conveniences, but U07–U10 are implemented and U11A–E have selected acceptance evidence; complete readiness remains gated by U11H and the accepted provenance exception decision before core rollout. This is a feature extension and convenience layer over the implemented Runtime, not a replacement for it. It adds environment-driven bootstrap, startup or first-use registration, a shared execution facade, and two insertion styles: decorators for ordinary callable boundaries and explicit function-body calls for precise lifecycle points.
 
-These framework-readiness APIs are implemented and exported. The following configured compatibility calls remain; synchronous dispatch is unified, while async acceptance and nonwaiting removal remain pending:
+These framework-readiness APIs are implemented and exported. The following configured compatibility calls remain; sync and awaited async dispatch are unified, and nonwaiting APIs have been removed:
 
 ```python
 runtime.register_configured(...)
 runtime.dispatch_configured(...)
 await runtime.adispatch_configured(...)
-runtime.emit_configured(...)
 ```
 
 ### Layering and ownership
@@ -476,7 +475,7 @@ application configuration boundary
   -> ConfiguredHookExecutor
        -> dispatch / awaited adispatch (no fire-and-observe)
   -> unified Hook-point plan (Modules -> default hook_script -> Scripts)
-     U06 sync adapter is committed; U07/U08 lifecycle acceptance remains pending
+     U06 sync/U08 awaited execution and U07 desired-active diagnostics are implemented
 ```
 
 Core business modules receive a `ConfiguredHookExecutor` explicitly. They never read environment variables, parse Hook configuration, scan script folders, build trust assertions, or mutate Runtime trust. Decorator and explicit insertion styles must call the same Executor and Registrar; neither may duplicate discovery, registration, failure caching, reload, or cleanup logic.
@@ -528,16 +527,16 @@ Deterministic failures include invalid configuration, missing authority, digest 
 
 Reload consumes a complete, already validated snapshot and creates a new configuration generation. Unchanged entries retain `READY`; changed lazy entries acquire a pending desired revision while retaining their active last-known-good plan; removed entries retire their plans; changed startup entries are eagerly replaced. Publication is atomic per complete Hook plan, admitted executions retain their immutable old plan, and failed replacement cannot expose a partial plan. Failed candidates are cleaned and rejected; both new and existing calls may use the last known good active revision, with explicit desired/active mismatch diagnostics. No prior valid plan means unavailable, not an empty successful execution. Trust identity changes require Runtime replacement rather than Registrar reload.
 
-Existing `emit_configured()` and `ConfiguredHookExecutor.aemit()` are non-waiting implementation surfaces to migrate or withdraw; they are explicitly excluded from the target. Lazy dispatch and adispatch share registration singleflight and wait for the unified execution result. Failed desired-revision preparation retains the active valid revision; readiness must track both rather than erase the old plan.
+U10 removed nonwaiting Runtime/facade methods and receipts; Catalog background mode is rejected, with no alias or hidden replacement. Lazy dispatch and adispatch share registration singleflight and wait for the unified execution result. Failed desired-revision preparation retains the active valid revision; readiness must track both rather than erase the old plan.
 
 ### Shared execution facade
 
-The target waiting-only facade is sketched below; it is not a claim that current code enforces the result envelope:
+The implemented waiting-only facade returns the compatibility `DispatchReport` with `unified_result`; it does not return a bare HookPointResult or derive/rewrite the unified decision:
 
 ```python
 class ConfiguredHookExecutor:
-    def dispatch(self, point, *, payload, operation=None) -> HookPointResult: ...
-    async def adispatch(self, point, *, payload, operation=None) -> HookPointResult: ...
+    def dispatch(self, point, *, payload, operation=None) -> DispatchReport: ...
+    async def adispatch(self, point, *, payload, operation=None) -> DispatchReport: ...
 ```
 
 `point` is a catalog-owned `HookPointDeclaration`, not an arbitrary caller-created name/schema pair. The Executor creates the immutable event from the declaration, owning Scope, detached payload, and supplied correlation metadata; invokes the shared Registrar according to startup/lazy mode; then calls the existing Runtime method. Sync dispatch retains the existing rejection inside a running event loop. Async first-use preparation runs blocking discovery/capture in controlled infrastructure and does not block the event loop.
@@ -545,13 +544,13 @@ class ConfiguredHookExecutor:
 An unconfigured or disabled ordinary point returns a stable no-op/report outcome. A configured registration or execution failure follows the declaration policy:
 
 - `report` is the default and preserves host flow while recording the structured result.
-- `block` is allowed only when the catalog explicitly marks a security-critical point and its owner defines the host exception contract.
+- `block` is allowed only when the catalog explicitly marks a security-critical point and its owner defines the host exception contract. Rejection or unified non-success triggers it; successful execution with cleanup pending/failed alone does not. Normal False/None/error-shaped data never grants blocking authority.
 
 No Hook return value implicitly replaces a business result. Any future transformation requires a separately reviewed domain reducer.
 
 ### Decorator Hook-point insertion
 
-Decorators are intended only for callable boundaries whose timing aligns with function entry, successful return, or exceptional exit. They are not appropriate when the point belongs between statements, after a partial commit, around a branch, before mandatory cleanup, or when background admission is required.
+Decorators are intended only for callable boundaries whose timing aligns with function entry, successful return, or exceptional exit. They are not appropriate when the point belongs between statements, after a partial commit, around a branch, before mandatory cleanup, or for a fire-and-observe requirement, which the framework does not support.
 
 Implemented shape:
 
@@ -653,7 +652,7 @@ No core Hook point may be added before an AI-maintained catalog declaration is r
 | Owning module and callable/checkpoint | Project-relative owner and precise publication location. |
 | Phase | Exactly one of `before`, `success`, or `error`; decorator slots always reference separate declarations, even when schemas happen to match. `success` is post-normal-return only. |
 | Event schema and payload budget | Detached JSON schema, required fields, maximum bytes, and example without secrets. |
-| Invocation mode | `sync`, `async`, or async background admission. |
+| Invocation mode | `sync` or `async` only; background is rejected. |
 | Scope | Initially the application Scope; deviations require lifecycle justification. |
 | Failure policy | Default `report`; security-critical `block` requires explicit approval and host error contract. A blocking `success` declaration must approve post-business-work failure risk; an `error` declaration can never replace an active business exception. |
 | Sensitive-field policy | Allowlist, redaction, exception-summary rules, and prohibited fields. |
@@ -707,12 +706,12 @@ The Human may schedule core-code Hook-point rollout only when all of the followi
 
 ### Readiness status and implementation roadmap
 
-**Full architecture acceptance remains gated by U07–U11.** U06A–U06D synchronous per-point execution, `main` invocation and both name-order stages are committed and verified in their selected affected scope; the older inventory below remains historical evidence, not full lifecycle/core-rollout approval.
+**U07–U10 are implemented; full architecture acceptance remains gated by U11H and the accepted provenance exception decision.** U06A–U06D synchronous per-point execution, `main` invocation and both name-order stages are committed and verified in their selected affected scope; the older inventory below remains historical evidence, not full lifecycle/core-rollout approval.
 
 Already implemented and verified:
 
 - Generic Runtime/Scope/Registry/Scheduler, process isolation, diagnostics, deadlines, cleanup, explicit binding APIs, and settings reload.
-- Exact configured Hook names, ordered scripts/folder discovery, immutable capture, atomic plan replacement, sync/async/background configured execution, and Scope/Runtime cleanup.
+- Exact configured Hook names, ordered scripts/folder discovery, immutable capture, atomic plan replacement, sync/awaited-async configured execution (background removed by U10), and Scope/Runtime cleanup.
 - Public Runtime BDD, interruption validation, the 294-file Unit runner, strict commit-scoped coverage, and maintained generic real-worker demos.
 
 Framework-readiness implementation units completed in dependency order:
@@ -720,8 +719,8 @@ Framework-readiness implementation units completed in dependency order:
 1. **Versioned trust-manifest loader and typed bootstrap:** implemented in `hooks/configured_bootstrap.py` with pinned digest, strict schema/path/budget validation, and immutable authority records.
 2. **Startup application-Scope registration:** implemented in `hooks/configured_registration.py` with `fail` and whole-layer `disable` behavior.
 3. **Lazy Registrar singleflight:** implemented with shared sync/async state, deterministic failure caching, typed bounded transient retry, reload/invalidation, and close arbitration.
-4. **ConfiguredHookExecutor facade:** implemented in `hooks/configured_executor.py` with `dispatch`, `adispatch`, and lazy-safe async `aemit` over the existing Runtime APIs.
+4. **ConfiguredHookExecutor facade:** implemented in `hooks/configured_executor.py` with `dispatch` and awaited `adispatch` returning DispatchReport with unified_result; U09 enforces Catalog authorization, and U10 removes `aemit`.
 5. **Hook-point catalog and explicit insertion contract:** implemented in `hooks/hook_point_catalog.py` with exact declaration ownership and policy validation.
 6. **Decorator adapter:** implemented in `hooks/hook_point_decorator.py` with distinct before/success/error declarations, cardinality, identity-preserving error propagation, recursion metadata, idempotency, binding/metadata preservation, and generator rejection.
-7. **Framework acceptance:** focused Unit, BDD, real-worker integration, a non-empty configured startup demo, scoped coverage, and environment/API/design synchronization have implementation evidence. Final full regression and per-file completion review remain pending and must pass before the framework is accepted. Production performance budgets remain a rollout-specific acceptance input rather than a reason to change framework semantics.
+7. **Framework acceptance:** U11A–E provide real isolated-process ordering/returns, LKG reload, cancellation/deadline barriers, sync/async wrapper business semantics and configured startup/demo exit evidence; the latest selected affected run is 480 passed without skips/xfails. Accepted provenance REDs are excluded unchanged, not unrestricted ALL GREEN. U11F–G synchronize limited documentation only. Final full regression and per-file completion review remain pending and must pass before the framework is accepted. Production performance budgets remain a rollout-specific acceptance input rather than a reason to change framework semantics.
 Prerequisites before core rollout are final acceptance of units 1–7 plus a reviewed initial Hook-point catalog. Explicitly deferred to the later core-integration phase: adding decorators or function-body calls to `workspace/`, `ai_base/`, `context/`, tasks, tools, memory, or skills; choosing concrete payloads from live business objects; and changing domain results based on Hook outputs. Each later core point is one separately reviewed logical unit with its own invariants and BDD/integration evidence.

@@ -10,7 +10,7 @@ programming_language: python
 
 # Hooks Python API
 
-This document distinguishes the authoritative target public contract from the currently implemented `topsailai.hooks` APIs. U06 unified synchronous configured and ordinary execution is committed; legacy generic/background APIs and pending U07–U11 acceptance are explicitly distinguished below. The architecture and security rationale are maintained in [`features/feature-unified-hooks-design.md`](../features/feature-unified-hooks-design.md).
+This document distinguishes the authoritative target public contract from the currently implemented `topsailai.hooks` APIs. U06–U10 unified waiting execution, reload diagnostics, cancellation custody and Catalog authority are committed; U11A–E have focused business/process evidence. U11H final regression and architecture acceptance remain pending, with accepted provenance REDs recorded separately. The architecture and security rationale are maintained in [`features/feature-unified-hooks-design.md`](../features/feature-unified-hooks-design.md).
 
 ## Authoritative target and current gap
 
@@ -20,7 +20,7 @@ Scripts are internal entries, not public peer Hook registrations. `scripts`/`fol
 
 **Committed synchronous implementation:** U06A–U06D connect complete immutable plans to the unified executor. The configured adapter (`17d9e9ac`) calls `execute_hook_point`, not a direct Script-only execution with `module_bindings=()`. Ordinary target entry points (`14d61522`) are `HookRuntime.register_hook_point` and `HookRuntime.dispatch_hook_point`. The low-level generic Binding `register/dispatch` API remains legacy and does not imply the target default-Hook invariant.
 
-U07 last-known-good/diagnostics, U08 async cancellation migration, U09 Catalog authority, U10 nonwaiting API removal and U11 broad lifecycle acceptance remain pending in the [architecture issue](../issues/issue-hook-point-default-script-handler-architecture.md). Synchronous implementation evidence is not full framework/core-rollout acceptance.
+U07 last-known-good/desired-active diagnostics (`33bafa42`), U08 awaited cancellation custody (`87e756d5`), U09 Catalog authority (`3168fecd`, `0f4c6f46`) and U10 nonwaiting removal (`035b270a`, `0b6dbc4b`) are implemented. U11A–E verify real target order/returns, reload, cancellation/deadline barriers, wrappers and configured startup process exit; the latest selected affected run is 480 passed. This is not unrestricted ALL GREEN or core-rollout approval: the [architecture issue](../issues/issue-hook-point-default-script-handler-architecture.md) stays open for U11H and the accepted provenance exception decision.
 
 ## Ordinary source registration and exact dispatch
 
@@ -38,19 +38,19 @@ A successful Script child returns process facts: `exit_code`, byte-valued `stdou
 
 ## Target waiting-only execution and results
 
-Human has excluded fire-and-observe. The target supports only synchronous dispatch and asynchronous awaited dispatch; both logically wait for completion of one immutable unified plan. Existing emit/emit_configured/aemit signatures and background examples below are legacy implementation evidence, explicitly outside target scope and not APIs to add or adopt. Keeping existing configured dispatch names as adapters versus removal remains a migration decision; non-waiting APIs are not a target option.
+Only synchronous wait and async await are supported; both execute the same immutable unified plan under one absolute deadline, including registration/preparation. U10 removed `emit`, `emit_configured`, `aemit` and `DeliveryReceipt` as a breaking change, without aliases, observers or hidden background replacement. Catalog declarations accept only `sync` or `async` and reject background mode. Awaited host cancellation propagates genuine cancellation while exact cleanup custody remains recoverable; it is not a normal completion report.
 
 Module main(*args, **kwargs) accepts uncertain arguments and returns arbitrary content without a required business schema or JSON serializability. The framework wraps the return, not the plugin. `False`, `None` and `{"error": 1}` are successful normal returns; returning None has returned.present=true, whereas exceptions/not-run have no normal return. Arbitrary arguments still require a safe isolated transport; unsupported transport is reported without unsafe coercion or host invocation.
 
 Target HandlerResult fields: execution_id, hook_point_name, plan_version; handler {id, name, kind}; status and not_run_reason; returned {present, representation, value, reference}; safe error {category, message}; timing {started_at, finished_at, elapsed_ms}; cleanup {state, diagnostic}; decision {action, authority}; and ordered children for the default Script Hook. Status is success/error/timeout/cancelled/not_run, or completed_with_errors for the default Hook. Cleanup safe/pending/failed is independent of status. The default Hook with no Scripts succeeds with children=[].
 
-HookPointResult holds correlation/version, ordered handlers, aggregate status (success/completed_with_errors/blocked/timeout/cancelled/unavailable), timing, cleanup and Catalog-authorized continue/block decision. Normal return data cannot grant blocking authority. Before/success/error wrappers preserve the original business exception; Error Hook failure never replaces it.
+HookPointResult holds correlation/version, ordered handlers, aggregate status (success/completed_with_errors/blocked/timeout/cancelled/unavailable), timing, cleanup and Catalog-authorized continue/block decision. Normal return data cannot grant blocking authority. The facade returns `DispatchReport` carrying `unified_result`, not a bare `HookPointResult`, and does not rewrite its decision. A Catalog-authorized `block` raises on rejection or unified non-success status; cleanup pending/failed alone on unified success does not block. A blocking before Hook prevents business entry; a blocking success Hook cannot roll back completed mutation; an error Hook preserves the original business exception identity and traceback.
 
 Return representation is direct/transported/reference/unavailable. No promise is made that arbitrary objects can cross a process boundary unchanged. Transport must be safe and bounded, without untrusted pickle; direct is not permission for host-process plugin invocation. A reference requires a live managed isolated owner, bounded retention and explicit release/expiration/close cleanup; this support remains proposed. Otherwise mark untransportable content unavailable, preserve the normal execution status and report a safe diagnostic. See [the complete envelope](../features/feature-unified-hooks-design.md#unified-handler-and-hook-point-result-envelope).
 
 ## Target reload failure policy
 
-Reject a failing new candidate and continue using the last known good active plan. Example: v1 is valid; desired v2 adds a Module without main. Reject/clean v2, retain v1 for new admissions, and explicitly report desired_revision=v2, active_revision=v1 and update_failed_using_last_known_good. Initial failure without a valid prior plan yields unavailable; business blocking follows Catalog policy, not an unconditional startup failure. Successful replacement is atomic, and in-flight calls retain their captured plan. This whole-plan facade/bootstrap acceptance is the pending U07 target, not a claim that all reload/failure cases have passed.
+Reject a failing new candidate and continue using the last known good active plan. Example: v1 is valid; desired v2 adds a Module without main. Reject/clean v2, retain v1 for new admissions, and explicitly report desired_revision=v2, active_revision=v1 and update_failed_using_last_known_good. Initial failure without a valid prior plan yields unavailable; business blocking follows Catalog policy, not an unconditional startup failure. Successful replacement is atomic, and in-flight calls retain their captured plan. U07 implements these desired/active diagnostics and failed-revision caching; U11B supplies real Registrar/Executor reload and first-failure-unavailable evidence. This selected evidence does not replace U11H final acceptance.
 
 Script names have no format restriction. Ordering uses the exact final registered name string with case-sensitive Unicode ascending comparison; duplicates within the same kind/Hook Point reject the candidate. Root-relative directory names are a proposal awaiting confirmation, not a basename restriction.
 
@@ -121,19 +121,6 @@ with tempfile.TemporaryDirectory() as temporary_directory:
             async_report = asyncio.run(dispatch_async(runtime, scope))
             assert async_report.outcomes == ()
 
-            background_event = runtime.make_event(
-                scope,
-                "demo.business-event",
-                1,
-                {"message": "background"},
-                operation_id="demo-background",
-                layer="demo",
-                purpose="configured-hook-example",
-            )
-            receipt = runtime.emit_configured("hook_demo", background_event)
-            if not receipt.admitted:
-                print(f"background work rejected: {receipt.rejection_reason}")
-
             invalid_registration = runtime.register_configured(
                 "hook_demo_missing_source",
                 scope,
@@ -145,7 +132,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
             assert unknown.rejection_reason == "unknown_configured_hook"
 ```
 
-`asyncio.run()` is used only because this example starts in synchronous code. An application already running an event loop should directly use `await runtime.adispatch_configured(...)` and must not call `dispatch_configured()` from that loop. `emit_configured()` returns admission status only; there is intentionally no Receipt wait method. Exiting the Scope and Runtime context managers settles owned work and closes resources.
+`asyncio.run()` is used only because this example starts in synchronous code. An application already running an event loop should directly use `await runtime.adispatch_configured(...)` and must not call `dispatch_configured()` from that loop. There is no background admission API. Exiting the Scope and Runtime context managers closes ownership; inspect retained cleanup debts and use the public exact `retry_cleanup(debt_id)` when needed before asserting complete resource convergence.
 
 ## Non-empty script deployment prerequisite
 
@@ -184,6 +171,9 @@ class HookRuntime:
         hook_name: str,
         event: HookEvent,
         policy: Any = None,
+        *,
+        deadline: float | None = None,
+        cancellation: threading.Event | None = None,
     ) -> DispatchReport: ...
 
     async def adispatch_configured(
@@ -191,14 +181,11 @@ class HookRuntime:
         hook_name: str,
         event: HookEvent,
         policy: Any = None,
+        *,
+        deadline: float | None = None,
+        cancellation: threading.Event | None = None,
     ) -> DispatchReport: ...
 
-    def emit_configured(
-        self,
-        hook_name: str,
-        event: HookEvent,
-        policy: Any = None,
-    ) -> DeliveryReceipt: ...
 ```
 
 The registration result is exported from `topsailai.hooks`:
@@ -275,28 +262,9 @@ report = await runtime.adispatch_configured(
 
 Current asynchronous execution admits the same immutable registered plan and returns the existing `DispatchReport`. It shares the Runtime cancellation, deadline, settlement, and cleanup behavior; it does not use a second executor or registry.
 
-## Legacy background admission outside target scope
+## Removed background admission
 
-```python
-receipt = runtime.emit_configured(
-    "hook_post_final_answer",
-    event,
-)
-if not receipt.admitted:
-    handle_rejection(receipt.rejection_reason)
-```
-
-`DeliveryReceipt` reports admission only:
-
-```python
-@dataclass(frozen=True, slots=True)
-class DeliveryReceipt:
-    admitted: bool
-    event_id: str
-    rejection_reason: str | None = None
-```
-
-Admission does not imply successful script completion. No Receipt waiting method is provided. Completion failures use the existing bounded diagnostic path, and raw script output is not automatically logged.
+U10 removes ordinary/configured emission, facade `aemit`, `DeliveryReceipt` and completion observers. This is a breaking removal with no alias or polling substitute. Migrate callers to `dispatch`/`dispatch_configured` for synchronous wait or awaited `adispatch`/`adispatch_configured`; Catalog background declarations are rejected.
 
 ## Scope selection
 
@@ -335,25 +303,24 @@ Closing a scope stops new admissions, settles or cancels its queued/running work
 
 ## Existing explicit API compatibility
 
-The explicit binding API remains supported and unchanged:
+The explicit binding waiting APIs remain supported; U10 removed only their nonwaiting emission surface:
 
 ```python
 runtime.register(definition, binding, scope)
 runtime.unregister(handle)
 runtime.dispatch(event, policy=None)
 await runtime.adispatch(event, policy=None)
-runtime.emit(event, policy=None)
 ```
 
-Generic explicit Bindings remain in the legacy `bindings` index; target complete Hook-point plans use exact publication through the configured plan index. Separate indexes do not imply a Script-only target executor: configured and ordinary synchronous target paths execute the complete Module/default-Hook plan. Configured replacement does not invalidate unrelated explicit registration handles.
+Generic explicit Bindings remain in the legacy `bindings` index; target complete Hook-point plans use exact publication through the configured plan index. Separate indexes do not imply a Script-only target executor: configured waiting and ordinary synchronous target paths execute the complete Module/default-Hook plan. Configured replacement does not invalidate unrelated explicit registration handles.
 
 ## Candidate API migration
 
-The retained configured compatibility workflow is shown below. Synchronous dispatch is a unified-plan adapter; async lifecycle acceptance belongs to U08 and background removal to U10:
+The retained configured adapters execute the unified plan. U08 awaited lifecycle and U10 breaking nonwaiting removal are committed:
 
 ```text
 register_configured(hook_name, scope, scripts=... or folder=...)
-  -> dispatch_configured / adispatch_configured / emit_configured
+  -> dispatch_configured / awaited adispatch_configured
 ```
 
 The former caller-managed `PreparedConfigured` and prepare/publish/dispose lifecycle is superseded and is not exported from the package root. A fail-closed `HookRuntime.prepare_configured()` compatibility boundary and candidate record implementations remain internal historical safety surfaces only; new callers must not depend on them.
@@ -367,14 +334,13 @@ The former caller-managed `PreparedConfigured` and prepare/publish/dispose lifec
 
 ## Framework-readiness convenience APIs
 
-The Runtime methods above remain callable in current code. The synchronous convenience layer now delegates to unified execution through the U06C configured adapter. Whole-plan startup/lazy/reload diagnostics, async cancellation, Catalog authority and waiting-only migration remain U07–U10 acceptance gates before U11 and core rollout. It is exported from `topsailai.hooks`.
+The waiting Runtime methods above and the convenience layer are exported from `topsailai.hooks`. U07–U10 implement desired/active diagnostics, awaited cancellation custody, Catalog authority and waiting-only migration. U11A–E provide selected real-process evidence; U11H and core-rollout approval remain separate gates.
 
 The `ConfiguredHookExecutor` uses one shared Registrar for startup or lazy registration and exposes:
 
 ```python
 executor.dispatch(POINT, payload=safe_payload)
 await executor.adispatch(POINT, payload=safe_payload)
-receipt = await executor.aemit(POINT, payload=safe_payload)
 ```
 
 One decorator may publish three distinct cataloged Hook points around an ordinary sync or async callable. `success` means success-only; it is never emitted when the callable raises:
@@ -391,7 +357,7 @@ async def lookup_user(self, user_id):
     return await self.repository.get(user_id)
 ```
 
-Use explicit function-body calls instead when timing belongs between statements, around branches or mutation, at precise before/success/error checkpoints, or in background admission:
+Use explicit function-body calls instead when timing belongs between statements, around branches or mutation, at precise before/success/error checkpoints, with waiting completion:
 
 ```python
 async def run_task(task, executor):
@@ -402,7 +368,6 @@ async def run_task(task, executor):
         await executor.adispatch(TASK_ERROR, payload=safe_error(error))
         raise
     await executor.adispatch(TASK_SUCCESS, payload=safe_task_result(result))
-    await executor.aemit(TASK_FINISHED, payload=safe_task_result(result))
     return result
 ```
 
