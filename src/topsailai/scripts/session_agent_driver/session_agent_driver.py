@@ -106,7 +106,7 @@ def _configure_noninteractive_agent() -> None:
 
 def _configure_file_tools() -> None:
     """Replace writable file tools without changing other tool selections."""
-    enabled = os.environ.get("TOPSAILAI_ENABLED_TOOLS") or os.environ.get("ENABLED_TOOLS") or "*"
+    enabled = os.environ.get("TOPSAILAI_ENABLED_TOOLS") or os.environ.get("ENABLED_TOOLS") or "+"
     disabled = os.environ.get("TOPSAILAI_DISABLED_TOOLS") or os.environ.get("DISABLED_TOOLS") or ""
     mandatory = ("file_readonly_tool", "inject_input", "exit_process")
     exclusions = [item.strip() for item in disabled.replace(",", ";").split(";")

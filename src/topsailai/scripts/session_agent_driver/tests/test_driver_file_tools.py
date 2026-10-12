@@ -15,7 +15,10 @@ import session_agent_driver as sad
 
 
 @pytest.mark.parametrize("environment, enabled, disabled", [
-    ({}, "*", ""),
+    ({}, "+", ""),
+    ({"TOPSAILAI_ENABLED_TOOLS": "", "ENABLED_TOOLS": ""}, "+", ""),
+    ({"TOPSAILAI_ENABLED_TOOLS": "*"}, "*", ""),
+    ({"TOPSAILAI_ENABLED_TOOLS": "+"}, "+", ""),
     ({"TOPSAILAI_ENABLED_TOOLS": "cmd_tool;skill_tool",
       "TOPSAILAI_DISABLED_TOOLS": "ssh_tool"}, "cmd_tool;skill_tool", "ssh_tool"),
     ({"ENABLED_TOOLS": "cmd_tool,skill_tool", "DISABLED_TOOLS": "ssh_tool"},
@@ -29,7 +32,7 @@ def test_file_selection_preserves_other_tools(environment, enabled, disabled):
         assert os.environ["TOPSAILAI_DISABLED_TOOLS"] == disabled + ";file_tool"
 
 
-@pytest.mark.parametrize("selector", ["*", "cmd_tool;skill_tool"])
+@pytest.mark.parametrize("selector", [None, "", "+", "*", "cmd_tool;skill_tool"])
 @pytest.mark.parametrize("plugin_tools", [None, "", " \t ", "plugins.tools", "plugins.tools,plugins.tools"])
 def test_fresh_process_registers_readonly_and_other_tools(plugin_tools, selector):
     """Verify registration and the actual agent runtime tool inventory."""
@@ -37,13 +40,15 @@ def test_fresh_process_registers_readonly_and_other_tools(plugin_tools, selector
     for name in ("TOPSAILAI_ENABLED_TOOLS", "ENABLED_TOOLS",
                  "TOPSAILAI_DISABLED_TOOLS", "DISABLED_TOOLS"):
         environment.pop(name, None)
-    environment["TOPSAILAI_ENABLED_TOOLS"] = selector
+    if selector is not None:
+        environment["TOPSAILAI_ENABLED_TOOLS"] = selector
     environment.pop("PLUGIN_TOOLS", None)
     if plugin_tools is None:
         environment.pop("TOPSAILAI_PLUGIN_TOOLS", None)
     else:
         environment["TOPSAILAI_PLUGIN_TOOLS"] = plugin_tools
     code = """
+import sys
 import session_agent_driver
 assert session_agent_driver.os.environ["TOPSAILAI_PLUGIN_TOOLS"] == "plugins.tools"
 from topsailai.tools.base.common import TOOLS, get_tools_for_chat
@@ -63,6 +68,20 @@ with mock.patch('topsailai.ai_base.llm_base.LLMModel'):
             assert any(name.startswith(prefix) for name in supported), prefix
         for prefix in ('file_tool-', 'human_tool-', 'agent_tool-'):
             assert not any(name.startswith(prefix) for name in supported), prefix
+        if '*' not in session_agent_driver.os.environ['TOPSAILAI_ENABLED_TOOLS'].replace(',', ';').split(';'):
+            for module in tuple(sys.modules.values()):
+                module_name = getattr(module, '__name__', '')
+                if not module_name.startswith('topsailai.tools.'):
+                    continue
+                if getattr(module, 'FLAG_TOOL_ENABLED', None) is not False:
+                    continue
+                name = module_name.rsplit('.', 1)[-1]
+                if name == 'file_readonly_tool':
+                    continue
+                assert not any(tool.startswith(name + '-') for tool in names), name
+                assert not any(tool.startswith(name + '-') for tool in supported), name
+        else:
+            assert any(name.startswith('sandbox_tool-') for name in supported)
         assert all(callable(tool) for tool in agent.runtime.available_tools.values())
         schemas = get_tools_for_chat(agent.runtime.available_tools)
         for prefix, required in (('inject_input-', ['session_id', 'content']),
