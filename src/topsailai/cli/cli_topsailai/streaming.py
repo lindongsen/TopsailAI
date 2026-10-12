@@ -450,7 +450,7 @@ def _build_stream_command_handler(
                     output_callback=ui.append_status,
                     input_callback=ui.read_multi_line_blocking,
                 )
-        return _maybe_exit_on_dead_session(default_stdout_path, default_pid)
+        return True
 
     return handler
 
@@ -1270,10 +1270,6 @@ def _stream_file_raw(
                                             original_stdout,
                                             raw_mode_active,
                                         )
-                                if keep_running and not _maybe_exit_on_dead_session(
-                                    default_stdout_path, default_pid
-                                ):
-                                    break
                                 if not keep_running:
                                     break
                         else:
@@ -1387,10 +1383,6 @@ def _stream_file_legacy(
                             _persist_runtime_command(
                                 cmd_line, default_session_id, runtime_history
                             )
-                            if not _maybe_exit_on_dead_session(
-                                default_stdout_path, default_pid
-                            ):
-                                break
                     else:
                         time.sleep(0.05)
     except FileNotFoundError:

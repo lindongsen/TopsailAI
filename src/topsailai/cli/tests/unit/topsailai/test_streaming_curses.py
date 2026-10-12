@@ -396,7 +396,7 @@ class TestBuildStreamCommandHandler(unittest.TestCase):
 
     @patch("cli_topsailai.streaming._is_session_alive", return_value=False)
     @patch("cli_topsailai.streaming._handle_stream_command")
-    def test_dead_session_returns_false(self, mock_handle, mock_alive):
+    def test_dead_session_remains_readable(self, mock_handle, mock_alive):
         handler = _build_stream_command_handler(
             self.ui,
             "/tmp/tasks",
@@ -406,7 +406,8 @@ class TestBuildStreamCommandHandler(unittest.TestCase):
             default_pid=123,
         )
         result = handler("/send hello")
-        self.assertFalse(result)
+        self.assertTrue(result)
+        self.assertFalse(handler("q"))
         mock_handle.assert_called_once()
 
 class TestPromptSendAsMessage(unittest.TestCase):
