@@ -324,7 +324,7 @@ The CLI validates these files once at its configuration boundary. Missing or inv
 
 ### Driver column and outcomes
 
-The Driver column follows Status and is independent of the target session status:
+The Driver column follows Status and is independent of the target session status. Its legend is part of the `/driver <number>` command description in workspace `/help` and `/help driver`, not a separate help footer or a line beneath the task list:
 
 | Driver display | Semantic state | Meaning |
 |---|---|---|

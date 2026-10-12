@@ -391,6 +391,5 @@ def test_driver_display_preserves_json_states():
         else:
             assert payload["driver"]["state"] == state
             assert row["driver_observation"].state == state
-    assert ":) ON verified" in output
-    assert ":( STALE absent process" in output
-    assert "x( EXIT/FAIL" in output
+    assert "Driver:" not in output
+    assert "residual terminal record" not in output

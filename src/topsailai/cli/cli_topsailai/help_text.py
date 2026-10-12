@@ -144,7 +144,12 @@ def print_help(
     commands = [
         {
             "cmd": "/driver <number>",
-            "desc": "Start a session driver for an unambiguous RUN/INPUT session in the ordinary workspace task list only.",
+            "desc": (
+                "Start a session driver for an unambiguous RUN/INPUT session in the ordinary workspace task list only."
+                + (" Driver: - no record/ineligible; :) ON verified; :( STALE absent process; "
+                   "x( EXIT/FAIL residual terminal record; ? unverified"
+                   if current_scope == "workspace" else "")
+            ),
             "example": "Example: /driver 3",
             "scopes": ["workspace"],
         },

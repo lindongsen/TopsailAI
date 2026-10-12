@@ -175,3 +175,24 @@ def test_driver_help_scope(capsys):
         assert "/driver" not in capsys.readouterr().out
     print_scopes()
     assert "/driver status <number>" in capsys.readouterr().out
+
+
+def test_driver_legend_in_workspace_help_only(capsys):
+    """Keep the legend inside the workspace driver description, never the footer."""
+    legend = ("Driver: - no record/ineligible; :) ON verified; :( STALE absent process; "
+              "x( EXIT/FAIL residual terminal record; ? unverified")
+    for keyword in (None, "driver"):
+        print_help([], "workspace", keyword=keyword)
+        output = capsys.readouterr().out
+        assert output.count(legend) == 1
+        driver_entry = output.split("/driver <number>", 1)[1].split("Example: /driver 3", 1)[0]
+        assert "Start a session driver" in driver_entry
+        assert legend in driver_entry
+        assert "task list only. Driver:" in driver_entry
+        assert "Driver:" not in output.split("Example: /driver 3", 1)[1]
+    for scope in ("runtime", "project", "session", "doc"):
+        for keyword in (None, "driver"):
+            print_help([], scope, keyword=keyword)
+            assert "Driver:" not in capsys.readouterr().out
+    print_help([], "workspace", keyword="refresh")
+    assert "Driver:" not in capsys.readouterr().out

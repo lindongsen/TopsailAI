@@ -250,9 +250,6 @@ def print_table(files: List[dict]) -> None:
         f"{Colors.DIM}(Total: {len(files)} files){Colors.RESET}"
     )
 
-    print("Driver: - no record/ineligible; :) ON verified; :( STALE absent process; "
-          "x( EXIT/FAIL residual terminal record; ? unverified")
-
 
 def format_file_table(files: List[dict]) -> str:
     """Return a formatted table of log files as a string.
