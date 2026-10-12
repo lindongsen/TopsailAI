@@ -640,7 +640,7 @@ def test_b16_execution_is_pure_and_preserves_inputs(monkeypatch):
         patch.setattr(builtins, "__import__", guarded_import); patch.setattr(script, "build_hook_point_binding_plan_from_discovery", bridge)
         patch.setattr(script.os if hasattr(script, "os") else os, "environ", NoEnvironment())
         scheduler_type = getattr(__import__("topsailai.hooks.scheduler", fromlist=["HookScheduler"]), "HookScheduler")
-        for owner, methods in ((hooks.HookRuntime, ("__init__", "dispatch", "emit")), (hooks.HookRegistry, ("__init__", "register")), (scheduler_type, ("__init__",))):
+        for owner, methods in ((hooks.HookRuntime, ("__init__", "dispatch", "adispatch")), (hooks.HookRegistry, ("__init__", "register")), (scheduler_type, ("__init__",))):
             for method in methods: patch.setattr(owner, method, forbidden(f"{owner.__name__}.{method}"))
         result = _invoke(resolved, actual, runner)
     _assert_settlement(result, "success", None, 1, True)

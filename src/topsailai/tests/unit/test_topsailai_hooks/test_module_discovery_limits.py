@@ -103,9 +103,15 @@ def test_policy_public_identity_signature_defaults_and_immutability(tmp_path: Pa
     ],
 )
 def test_policy_validation_boundaries(
-    tmp_path: Path, policy: ModuleDiscoveryPolicy, accepted: bool
+    tmp_path: Path, policy: ModuleDiscoveryPolicy, accepted: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Policy validation is exact, bounded, and rejects before filesystem access."""
+    """Validate exact policy bounds independently of filesystem scheduling latency."""
+    monkeypatch.setattr(
+        discovery,
+        "make_discovery_budget",
+        lambda timeout_ms, cancellation: DiscoveryBudget(timeout_ms, cancellation, _Clock()),
+    )
     result = _discover(tmp_path, policy=policy)
     if accepted:
         assert result.accepted
