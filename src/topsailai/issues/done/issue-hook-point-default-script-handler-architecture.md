@@ -1,7 +1,7 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: pending
+status: resolved
 ---
 # Hook Point default Script Hook architecture mismatch
 
@@ -9,7 +9,7 @@ status: pending
 
 Human clarified on 2026-10-10: each Hook Point has a built-in/default Hook that identifies and executes Scripts; Modules execute first, Scripts second, both by name; every Module exposes `main(*args, **kwargs)`. This issue tracks production architecture correction only. U01–U06 source/test corrections are committed; this issue stays open for U07–U11 lifecycle/migration acceptance and does not authorize core rollout.
 
-References: [target design](../features/feature-unified-hooks-design.md), [API target/current distinction](../docs/Hooks_API.md).
+References: [target design](../../features/feature-unified-hooks-design.md), [API target/current distinction](../../docs/Hooks_API.md).
 
 ## Historical pre-repair evidence
 
@@ -58,3 +58,14 @@ Evidence append only; status remains pending and this Issue is not closed. U07 `
 U11A `57925ffa` verifies isolated Module-main order, one default Hook and returns; U11B `f7c0db22` verifies real Registrar/Executor LKG reload and initial unavailable; U11C `ad7ae5ca` verifies cancellation and in-flight shared-deadline successor barriers with a 300ms shared budget below 1000ms local budgets; U11D `dc0df4c4` verifies real sync/async before/success/error wrappers, original exception identity/traceback and no return-derived authority; U11E `0f708a36` verifies public pinned-manifest startup and exact demo/worker exit. Latest selected affected evidence: 480 passed, no skipped/xfail. Evidence is retained under `.tmp/u11/final/`; it is not unrestricted ALL GREEN.
 
 U11F–G are limited documentation synchronization. U11H final regression remains pending; two accepted provenance REDs in `tests/unit/test_topsailai_hooks/test_hook_point_plan_publication.py` remain unchanged and require a Human acceptance-exception decision before Issue closure. Managed references and application-core Hook-point rollout remain deferred. The public facade returns DispatchReport with unified_result, not a bare HookPointResult; trust prerequisites are not weakened.
+
+
+## Final U11 acceptance and Human-authorized resolution
+
+On 2026-10-12, Human explicitly decided to close this architecture Issue, accepting the two provenance RED cases in `tests/unit/test_topsailai_hooks/test_hook_point_plan_publication.py` as a KNOWN acceptance exception. The test file remains in place unchanged: neither case is deleted, weakened, skipped or marked xfail. The exception file was excluded from the final GREEN selection and was not executed in that run; this resolution does not claim unrestricted ALL GREEN or remediation of those RED cases.
+
+U11F–G documentation synchronization committed as `f67b5da4`; U11H final regression repair committed as `72d0bf802bb0a573fa73224657ef389eabf19f50`. Final regression through unchanged `tests/run_tests.py`: 319/319 selected unit files PASS, 0 FAIL, four workers, zero retries, 196.257 seconds runner elapsed. The only excluded unit file is the accepted provenance exception above. Final 22-file affected selection, including BDD/integration, reports 480 passed in 22.09 seconds, two upstream Gherkin deprecation warnings and no reported skipped/xfail. Runner PASS summaries do not expose full-unit skipped/xfail counts.
+
+Affected public resource convergence, cleanup-debt, scope, capture and exact process-exit assertions passed. The post-run process snapshot found no matching runner/pytest/Hook worker; this observation is not a global leak proof. U11H changed-production coverage is N/A because its repair changed tests only. Evidence and timing records remain under `.tmp/u11/final/`, including `h-final-acceptance.json`, `h-final-unit-results.txt` and `h-final-affected.log`; the JSON's earlier pending-Human closure field is historical pre-decision evidence, superseded by this explicit resolution. No tests are rerun for this documentation-only closure.
+
+U01–U11 architecture correction and lifecycle acceptance are complete subject to the Human-accepted provenance exception. Status is resolved and the Issue is archived under issues/done according to the established lifecycle. Historical pending statements above describe earlier checkpoints and are superseded by this final acceptance. Application-core Hook-point rollout and managed-reference support remain separately deferred and are not authorized or claimed by Issue closure.
