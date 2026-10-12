@@ -71,7 +71,7 @@ class DriverRuntime:
             self._publish()
             return self
         except BaseException:
-            self._close()
+            self._cleanup()
             raise
 
     def update_target(self, status):
@@ -91,6 +91,33 @@ class DriverRuntime:
             self.handler = None
         self.logger.setLevel(self.original_level)
 
+    def _cleanup(self):
+        """Close logging and remove this session's records without masking errors."""
+        try:
+            self._close()
+        except OSError as error:
+            self.logger.error("cannot close driver runtime log: %s", error)
+        finally:
+            paths = [self.meta_path, self.log_path,
+                     self.meta_path.with_name(self.meta_path.name + "." + self.data["run_id"] + ".tmp")]
+            try:
+                backups = [path for path in self.directory.iterdir()
+                           if path.name.startswith(self.log_path.name + ".")
+                           and path.name[len(self.log_path.name) + 1:].isascii()
+                           and path.name[len(self.log_path.name) + 1:].isdigit()]
+                paths.extend(backups)
+            except OSError as error:
+                self.logger.error("cannot enumerate driver log backups: %s", error)
+            for path in paths:
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    continue
+                except OSError as error:
+                    self.logger.error("cannot delete driver runtime file %s: %s", path, error)
+                else:
+                    self.logger.warning("deleted driver runtime file %s", path)
+
     def __exit__(self, kind, error, traceback):
         """Finalize state for normal, signaled and failed termination."""
         code = 0
@@ -108,6 +135,10 @@ class DriverRuntime:
             self.logger.info("driver stopped: reason=%s exit_code=%s",
                              self.data["stop_reason"], code)
             self._publish()
+        except OSError as publish_error:
+            self.logger.error("cannot finalize driver metadata: %s", publish_error)
+            if error is None:
+                raise
         finally:
-            self._close()
+            self._cleanup()
         return False

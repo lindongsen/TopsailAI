@@ -63,7 +63,7 @@ After argument validation, the driver creates its records under
 `{TOPSAILAI_HOME}/workspace/task/session_agent_driver/`:
 
 - `{session_id}.meta` — an atomically replaced JSON snapshot of the latest driver run.
-- `{session_id}.log` — appended driver logs across sequential restarts.
+- `{session_id}.log` — driver logs retained only while the script runs.
 - `{session_id}.log.1` through `.log.5` — rotated backups with default settings.
 
 The filename uses the **target session ID**, not the temporary analysis-agent
@@ -82,9 +82,11 @@ the record directory does not depend on the current working directory.
 | `exit_code` | Null while running; recorded on termination. |
 | `stop_reason` | For example `target_exited`, `exit_requested`, `signal:15`, or an exception type. |
 
-SIGINT and SIGTERM terminate gracefully and publish a stopped record with exit
-code zero and a signal stop reason. Unhandled ordinary exceptions publish a
-failed record and a traceback in the log. Errors caught by the polling loop are
+Normal exit, handled SIGINT/SIGTERM, and exceptional exit remove the session's
+metadata, current log and numeric rotation backups after closing the log handler.
+Failed lifecycle initialization also attempts cleanup. Every deletion is logged
+to the remaining terminal/logging handlers. Unhandled ordinary exceptions record
+a traceback before cleanup; these files are not a persistent exit history. Errors caught by the polling loop are
 logged while polling continues; they do not imply the driver has stopped.
 
 The log captures the driver's own logging, not all model responses or arbitrary
@@ -95,8 +97,10 @@ using metadata alone as proof of a live driver.
 
 Run only one driver per target session: concurrent writers to the same record
 files are not supported. A sequential restart replaces the previous metadata
-with a new `run_id` and continues appending to the bounded log. Old target records
-are retained for inspection; no automatic cross-target purge is provided.
+with a new `run_id`. After a clean exit no runtime records remain. SIGKILL,
+power loss, or filesystem permission/I/O failures can prevent cleanup; failures
+are reported when the process can still execute. No other session files are
+removed, and no automatic cross-target purge is provided.
 
 ## Plugin Tools
 
