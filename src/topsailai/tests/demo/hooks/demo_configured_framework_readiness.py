@@ -27,6 +27,7 @@ from topsailai.hooks import (
     load_configured_hook_bootstrap,
 )
 from topsailai.hooks.artifact_identity import shebang_runtime_fingerprint
+from topsailai.utils.env_tool import resolve_python_interpreter
 
 
 def _write_json(path: Path, value: object) -> str:
@@ -39,7 +40,7 @@ def _write_json(path: Path, value: object) -> str:
 def _write_protocol_script(path: Path) -> None:
     """Write one self-contained configured script implementing the worker protocol."""
     path.write_text(
-        f'''#!{Path(sys.executable).resolve()}
+        f'''#!{Path(resolve_python_interpreter()).resolve()}
 import json
 import os
 import pathlib
@@ -68,7 +69,7 @@ def prepare_deployment_files(root: Path) -> dict[str, str]:
     source_root.mkdir(mode=0o700)
     script = source_root / "observe.py"
     _write_protocol_script(script)
-    interpreter = Path(sys.executable).resolve()
+    interpreter = Path(resolve_python_interpreter()).resolve()
     interpreter_digest = hashlib.sha256(interpreter.read_bytes()).hexdigest()
     status = interpreter.stat()
     runtime_digest = shebang_runtime_fingerprint(
@@ -169,24 +170,61 @@ def run_application(environment: dict[str, str], root: Path) -> None:
         outcome = report.outcomes[0]
         if outcome.status.value != "success":
             raise RuntimeError(f"unexpected configured outcome: {outcome}")
+        unified = report.unified_result
+        if unified is None or unified.status != "success" or unified.cleanup.state != "safe":
+            raise RuntimeError(f"unexpected unified result: {unified}")
+        if unified.decision.action != "continue" or len(unified.handlers) != 1:
+            raise RuntimeError(f"unexpected unified plan: {unified}")
+        default = unified.handlers[0]
+        if default.handler.kind != "default_script_hook" or default.status != "success" or default.cleanup.state != "safe":
+            raise RuntimeError(f"unexpected default Hook: {default}")
+        if not default.returned.present or default.returned.representation != "direct" or len(default.children) != 1:
+            raise RuntimeError(f"unexpected default return or children: {default}")
+        child = default.children[0]
+        if child.handler.kind != "script" or child.handler.name != "observe.py" or child.status != "success" or child.cleanup.state != "safe":
+            raise RuntimeError(f"unexpected Script child: {child}")
+        expected = {"exit_code": 0, "stdout": b"", "stderr": b"", "stdout_dropped": 0, "stderr_dropped": 0}
+        if not child.returned.present or child.returned.representation != "direct" or child.returned.value != expected:
+            raise RuntimeError(f"unexpected Script process facts: {child.returned}")
         worker_pid = int(evidence_file.read_text(encoding="utf-8"))
         if worker_pid == os.getpid():
             raise RuntimeError("configured script did not run in an isolated worker")
         print(f"Registration mode: {bootstrap.registration_mode}")
         print(f"Trust identity: {bootstrap.trust_identity}")
+        print(f"Demo PID: {os.getpid()}")
         print(f"Worker PID: {worker_pid}")
+        print(f"Unified status: {unified.status}; default Hooks: 1; Script children: 1")
+        print("Script process exit: 0")
         print(f"Outcome: {outcome.status.value}")
     finally:
         registrar.close()
         close_report = runtime.close()
-        print(f"Cleanup debts: {len(close_report.cleanup_debts)}")
-        if close_report.cleanup_debts:
-            raise RuntimeError("runtime cleanup debt remains")
+        for debt in close_report.cleanup_debts:
+            if not runtime.retry_cleanup(debt.debt_id):
+                raise RuntimeError(f"runtime cleanup debt remains: {debt}")
+        print(f"Cleanup debts: {len(runtime.cleanup_debts())}")
+        if runtime.cleanup_debts() or not scope.closed:
+            raise RuntimeError("runtime scope or cleanup remains unsettled")
+        print(f"Scope closed: {scope.closed}")
+        if (root / "worker.pid").exists():
+            worker_pid = int((root / "worker.pid").read_text(encoding="utf-8"))
+            try:
+                os.kill(worker_pid, 0)
+            except ProcessLookupError:
+                print("Worker exited: True")
+            else:
+                raise RuntimeError(f"owned worker still exists: {worker_pid}")
+        artifacts = runtime_root / "configured-artifacts"
+        if artifacts.exists():
+            for parent in artifacts.iterdir():
+                if parent.is_symlink() or not parent.is_dir() or list(parent.iterdir()):
+                    raise RuntimeError(f"captured artifact remains: {parent}")
+        print("Capture converged: True")
 
 
 def main() -> int:
     """Run the complete configured framework demonstration."""
-    temp_parent = PROJECT_ROOT / ".tmp"
+    temp_parent = PROJECT_ROOT / ".tmp" / "u11" / "final"
     temp_parent.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix="configured-framework-demo-", dir=temp_parent))
     root.chmod(0o700)
@@ -197,6 +235,7 @@ def main() -> int:
     finally:
         shutil.rmtree(root)
         print(f"Deleted demo temporary directory: {root}")
+        print(f"Demo temporary directory removed: {not root.exists()}")
 
 
 if __name__ == "__main__":

@@ -21,3 +21,13 @@ runs. Each demo owns a temporary directory below `.tmp`, closes its runtime in
 `finally`, reports cleanup debt, and prints whether its temporary directory was
 removed. The demos do not access the network, an LLM, credentials, or project
 configuration, and they do not terminate unrelated processes.
+
+The configured startup demo simulates deployment-owned manifest generation only
+for its isolated source and interpreter. Real deployments must supply their own
+versioned manifest and pinned digest before loading the public bootstrap; the
+demo is not a trust-authority generator for arbitrary plugins. It verifies the
+unified default Hook and Script child process facts, closes the scope, reconciles
+cleanup debt through the public API, and checks exact worker exit and captured
+artifact convergence. Its integration test also checks the demo process exits
+and its owned directory under `.tmp/u11/final` is removed. Async and lazy demos
+are separate future increments, not evidence claimed by this startup demo.
