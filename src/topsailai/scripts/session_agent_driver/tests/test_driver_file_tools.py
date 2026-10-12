@@ -25,17 +25,19 @@ def test_file_selection_preserves_other_tools(environment, enabled, disabled):
     """Keep existing selectors and only add readonly file tool selection."""
     with mock.patch.dict(os.environ, environment, clear=True):
         sad._configure_file_tools()
-        assert os.environ["TOPSAILAI_ENABLED_TOOLS"] == enabled + ";file_readonly_tool"
+        assert os.environ["TOPSAILAI_ENABLED_TOOLS"] == enabled + ";file_readonly_tool;inject_input;exit_process"
         assert os.environ["TOPSAILAI_DISABLED_TOOLS"] == disabled + ";file_tool"
 
 
+@pytest.mark.parametrize("selector", ["*", "cmd_tool;skill_tool"])
 @pytest.mark.parametrize("plugin_tools", [None, "", " \t ", "plugins.tools", "plugins.tools,plugins.tools"])
-def test_fresh_process_registers_readonly_and_other_tools(plugin_tools):
+def test_fresh_process_registers_readonly_and_other_tools(plugin_tools, selector):
     """Verify registration and the actual agent runtime tool inventory."""
     environment = os.environ.copy()
     for name in ("TOPSAILAI_ENABLED_TOOLS", "ENABLED_TOOLS",
                  "TOPSAILAI_DISABLED_TOOLS", "DISABLED_TOOLS"):
         environment.pop(name, None)
+    environment["TOPSAILAI_ENABLED_TOOLS"] = selector
     environment.pop("PLUGIN_TOOLS", None)
     if plugin_tools is None:
         environment.pop("TOPSAILAI_PLUGIN_TOOLS", None)
@@ -95,3 +97,11 @@ def test_plugin_configuration_is_incremental(environment, expected):
         assert os.environ["TOPSAILAI_PLUGIN_TOOLS"] == expected
         sad._configure_plugin_tools()
         assert os.environ["TOPSAILAI_PLUGIN_TOOLS"] == expected
+
+
+@pytest.mark.parametrize("excluded", ["inject_input", "exit_process", "file_readonly_tool", "inject"])
+def test_mandatory_tool_disable_conflict_is_explicit(excluded):
+    """Reject conflicting exclusions rather than silently running without tools."""
+    with mock.patch.dict(os.environ, {"TOPSAILAI_DISABLED_TOOLS": excluded}, clear=True):
+        with pytest.raises(ValueError, match="Required driver tools are disabled"):
+            sad._configure_file_tools()

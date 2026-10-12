@@ -108,7 +108,14 @@ def _configure_file_tools() -> None:
     """Replace writable file tools without changing other tool selections."""
     enabled = os.environ.get("TOPSAILAI_ENABLED_TOOLS") or os.environ.get("ENABLED_TOOLS") or "*"
     disabled = os.environ.get("TOPSAILAI_DISABLED_TOOLS") or os.environ.get("DISABLED_TOOLS") or ""
-    os.environ["TOPSAILAI_ENABLED_TOOLS"] = enabled + ";file_readonly_tool"
+    mandatory = ("file_readonly_tool", "inject_input", "exit_process")
+    exclusions = [item.strip() for item in disabled.replace(",", ";").split(";")
+                  if item.strip()]
+    conflicts = [name for name in mandatory
+                 if any(name.startswith(item) for item in exclusions)]
+    if conflicts:
+        raise ValueError("Required driver tools are disabled: " + ", ".join(conflicts))
+    os.environ["TOPSAILAI_ENABLED_TOOLS"] = enabled + ";" + ";".join(mandatory)
     os.environ["TOPSAILAI_DISABLED_TOOLS"] = disabled + ";file_tool"
 
 
@@ -122,6 +129,15 @@ def _configure_plugin_tools() -> None:
     os.environ[PLUGIN_TOOLS_ENV] = ";".join(dict.fromkeys(configured))
 
 
+def _configure_plugin_skills() -> None:
+    """Preserve external skill directories and append mandatory local skills."""
+    configured = os.environ.get(PLUGIN_SKILLS_ENV, "")
+    directories = [item.strip() for item in configured.replace(",", ";").split(";")
+                   if item.strip()]
+    directories.append(str(SCRIPT_DIR / "plugins" / "skills"))
+    os.environ[PLUGIN_SKILLS_ENV] = ";".join(dict.fromkeys(directories))
+
+
 _load_script_env()
 _configure_noninteractive_agent()
 _configure_file_tools()
@@ -129,10 +145,7 @@ _configure_file_tools()
 # P1: plugin tools and skills MUST be configured before importing topsailai,
 # because tools/base/__init__.py runs expand_plugin_tools() at import time.
 _configure_plugin_tools()
-os.environ.setdefault(
-    PLUGIN_SKILLS_ENV,
-    str(SCRIPT_DIR / "plugins" / "skills"),
-)
+_configure_plugin_skills()
 
 SRC_DIR = str(SCRIPT_DIR.parent.parent.parent)  # /TopsailAI/src/
 PROJECT_DIR = str(SCRIPT_DIR.parent.parent)  # /TopsailAI/src/topsailai/
