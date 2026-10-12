@@ -29,15 +29,22 @@ def test_file_selection_preserves_other_tools(environment, enabled, disabled):
         assert os.environ["TOPSAILAI_DISABLED_TOOLS"] == disabled + ";file_tool"
 
 
-def test_fresh_process_registers_readonly_and_other_tools():
+@pytest.mark.parametrize("plugin_tools", [None, "", " \t ", "plugins.tools", "plugins.tools,plugins.tools"])
+def test_fresh_process_registers_readonly_and_other_tools(plugin_tools):
     """Verify registration and the actual agent runtime tool inventory."""
     environment = os.environ.copy()
     for name in ("TOPSAILAI_ENABLED_TOOLS", "ENABLED_TOOLS",
                  "TOPSAILAI_DISABLED_TOOLS", "DISABLED_TOOLS"):
         environment.pop(name, None)
+    environment.pop("PLUGIN_TOOLS", None)
+    if plugin_tools is None:
+        environment.pop("TOPSAILAI_PLUGIN_TOOLS", None)
+    else:
+        environment["TOPSAILAI_PLUGIN_TOOLS"] = plugin_tools
     code = """
 import session_agent_driver
-from topsailai.tools.base.common import TOOLS
+assert session_agent_driver.os.environ["TOPSAILAI_PLUGIN_TOOLS"] == "plugins.tools"
+from topsailai.tools.base.common import TOOLS, get_tools_for_chat
 names = set(TOOLS)
 assert any(name.startswith('file_readonly_tool-') for name in names)
 assert not any(name.startswith('file_tool-') for name in names)
@@ -55,6 +62,13 @@ with mock.patch('topsailai.ai_base.llm_base.LLMModel'):
         for prefix in ('file_tool-', 'human_tool-', 'agent_tool-'):
             assert not any(name.startswith(prefix) for name in supported), prefix
         assert all(callable(tool) for tool in agent.runtime.available_tools.values())
+        schemas = get_tools_for_chat(agent.runtime.available_tools)
+        for prefix, required in (('inject_input-', ['session_id', 'content']),
+                                 ('exit_process-', [])):
+            tool_name = next(name for name in supported if name.startswith(prefix))
+            schema = schemas[tool_name]['function']
+            assert schema['name'] == tool_name
+            assert schema['parameters']['required'] == required
     finally:
         agent.close()
 """
@@ -64,3 +78,20 @@ with mock.patch('topsailai.ai_base.llm_base.LLMModel'):
         capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("environment, expected", [
+    ({"TOPSAILAI_PLUGIN_TOOLS": "custom.first,custom.second"},
+     "custom.first;custom.second;plugins.tools"),
+    ({"PLUGIN_TOOLS": "legacy.tools"}, "legacy.tools;plugins.tools"),
+    ({"TOPSAILAI_PLUGIN_TOOLS": "custom.tools;plugins.tools",
+      "PLUGIN_TOOLS": "custom.tools;legacy.tools"},
+     "custom.tools;plugins.tools;legacy.tools"),
+])
+def test_plugin_configuration_is_incremental(environment, expected):
+    """Preserve configured packages and append mandatory plugins exactly once."""
+    with mock.patch.dict(os.environ, environment, clear=True):
+        sad._configure_plugin_tools()
+        assert os.environ["TOPSAILAI_PLUGIN_TOOLS"] == expected
+        sad._configure_plugin_tools()
+        assert os.environ["TOPSAILAI_PLUGIN_TOOLS"] == expected

@@ -112,13 +112,23 @@ def _configure_file_tools() -> None:
     os.environ["TOPSAILAI_DISABLED_TOOLS"] = disabled + ";file_tool"
 
 
+def _configure_plugin_tools() -> None:
+    """Append mandatory driver plugins without replacing configured packages."""
+    configured = []
+    for name in (PLUGIN_TOOLS_ENV, "PLUGIN_TOOLS"):
+        items = os.environ.get(name, "").replace(",", ";").split(";")
+        configured.extend(item.strip() for item in items if item.strip())
+    configured.append("plugins.tools")
+    os.environ[PLUGIN_TOOLS_ENV] = ";".join(dict.fromkeys(configured))
+
+
 _load_script_env()
 _configure_noninteractive_agent()
 _configure_file_tools()
 
 # P1: plugin tools and skills MUST be configured before importing topsailai,
 # because tools/base/__init__.py runs expand_plugin_tools() at import time.
-os.environ.setdefault(PLUGIN_TOOLS_ENV, "plugins.tools")
+_configure_plugin_tools()
 os.environ.setdefault(
     PLUGIN_SKILLS_ENV,
     str(SCRIPT_DIR / "plugins" / "skills"),
