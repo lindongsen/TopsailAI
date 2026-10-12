@@ -85,6 +85,65 @@ def print_header(title: str) -> None:
     print(f"{Colors.BOLD}{Colors.CYAN}{'=' * width}{Colors.RESET}")
 
 
+def enrich_workspace_rows(files: List[dict], topsailai_home: str, *, driver_entry=None) -> None:
+    """Refresh session state and attach one read-only driver snapshot per identity."""
+    from cli_topsailai.session_driver import metadata_path, observe_driver
+
+    eligible = []
+    live_pids = {}
+    for file_info in files:
+        pid = file_info.get("pid")
+        source_pid = file_info.get("session_pid", pid)
+        valid_pid = type(pid) is int and pid > 0
+        if not valid_pid:
+            pid = None
+        else:
+            try:
+                os.kill(pid, 0)
+            except (ProcessLookupError, PermissionError, OSError):
+                pid = None
+        file_info["workspace_pid"] = pid
+        file_info["workspace_status"] = (
+            "input" if pid and is_session_pipe_open(file_info)
+            else "running" if pid else "idle"
+        )
+        file_info["driver_observation"] = None
+        if not valid_pid:
+            continue
+        session_id = file_info.get("session_id")
+        filename = file_info.get("filename", "")
+        if file_info.get("is_task") or type(source_pid) is not int or source_pid <= 0:
+            continue
+        try:
+            metadata_path(topsailai_home, session_id)
+        except (ValueError, TypeError):
+            continue
+        if pid:
+            live_pids.setdefault(session_id, set()).add(pid)
+        if filename != f"{session_id}.{source_pid}.session.stdout":
+            continue
+        if pid is not None and pid != source_pid:
+            continue
+        eligible.append(file_info)
+
+    observations = {}
+    for file_info in eligible:
+        session_id = file_info["session_id"]
+        if len(live_pids.get(session_id, ())) > 1:
+            continue
+        if session_id not in observations:
+            if driver_entry is None:
+                observations[session_id] = observe_driver(topsailai_home, session_id)
+            else:
+                from functools import partial
+                from cli_topsailai.session_driver import probe_driver_process
+
+                observations[session_id] = observe_driver(
+                    topsailai_home, session_id,
+                    process_probe=partial(probe_driver_process, driver_entry=driver_entry))
+        file_info["driver_observation"] = observations[session_id]
+
+
 def print_table(files: List[dict]) -> None:
     """Print a table of discovered .stdout log files."""
     if not files:
@@ -98,24 +157,15 @@ def print_table(files: List[dict]) -> None:
     rows = []
 
     for idx, file_info in enumerate(files, start=1):
-        pid = file_info.get("pid")
-        if pid is not None:
-            try:
-                os.kill(pid, 0)
-            except (ProcessLookupError, PermissionError, OSError):
-                pid = None
-        file_info["pid"] = pid
-
+        pid = file_info.get("workspace_pid")
         session = _display_session_id(
             file_info["session_id"], file_info.get("is_task", False)
         )
         pid_str = str(pid) if pid else "-"
-        if pid and is_session_pipe_open(file_info):
-            status_str = "INPUT"
-        elif pid:
-            status_str = "RUN"
-        else:
-            status_str = "-"
+        status_str = {"input": "INPUT", "running": "RUN"}.get(
+            file_info.get("workspace_status"), "-"
+        )
+        observation = file_info.get("driver_observation")
         rows.append(
             {
                 "no": str(idx),
@@ -123,6 +173,7 @@ def print_table(files: List[dict]) -> None:
                 "session": session,
                 "pid": pid_str,
                 "status": status_str,
+                "driver": observation.state if observation else "-",
                 "created": format_timestamp(file_info["ctime"]),
                 "project_workspace": file_info.get("project_workspace") or "-",
                 "color": Colors.YELLOW
@@ -142,6 +193,7 @@ def print_table(files: List[dict]) -> None:
     w_no = dynamic_width("No", "no")
     w_pid = dynamic_width("PID", "pid")
     w_status = dynamic_width("Status", "status")
+    w_driver = dynamic_width("Driver", "driver")
 
     header = (
         f"{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE}"
@@ -150,6 +202,7 @@ def print_table(files: List[dict]) -> None:
         f" {_fit_table_cell('Session ID', w_session, 'center')} |"
         f" {_fit_table_cell('PID', w_pid, 'center')} |"
         f" {_fit_table_cell('Status', w_status, 'center')} |"
+        f" {_fit_table_cell('Driver', w_driver, 'center')} |"
         f" {_fit_table_cell('Created', w_created, 'center')} |"
         f" {_fit_table_cell('Project Workspace', w_project, 'center')} "
         f"{Colors.RESET}"
@@ -161,6 +214,7 @@ def print_table(files: List[dict]) -> None:
         f"{'-' * (w_session + 2)}+"
         f"{'-' * (w_pid + 2)}+"
         f"{'-' * (w_status + 2)}+"
+        f"{'-' * (w_driver + 2)}+"
         f"{'-' * (w_created + 2)}+"
         f"{'-' * (w_project + 1)}"
         f"{Colors.RESET}"
@@ -176,6 +230,7 @@ def print_table(files: List[dict]) -> None:
             f" {_fit_table_cell(row_info['session'], w_session)} |"
             f" {_fit_table_cell(row_info['pid'], w_pid, 'center')} |"
             f" {_fit_table_cell(row_info['status'], w_status, 'center')} |"
+            f" {_fit_table_cell(row_info['driver'], w_driver, 'center')} |"
             f" {_fit_table_cell(row_info['created'], w_created, 'center')} |"
             f" {_fit_table_cell(row_info['project_workspace'], w_project, truncate_from='head')} "
             f"{Colors.RESET}"
@@ -189,6 +244,9 @@ def print_table(files: List[dict]) -> None:
         f"{Colors.YELLOW}● Inputting{Colors.RESET}  "
         f"{Colors.DIM}(Total: {len(files)} files){Colors.RESET}"
     )
+
+    print("Driver: - no record/ineligible; ON verified; STALE absent process; "
+          "EXIT/FAIL residual terminal record; ? unverified")
 
 
 def format_file_table(files: List[dict]) -> str:

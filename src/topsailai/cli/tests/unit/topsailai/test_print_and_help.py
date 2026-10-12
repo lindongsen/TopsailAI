@@ -21,6 +21,7 @@ sys.path.insert(
 import cli_topsailai.state as cli_state
 from cli_topsailai.colors import Colors
 from cli_topsailai.formatting import (
+    enrich_workspace_rows,
     format_command_table,
     format_file_table,
     print_table,
@@ -69,6 +70,7 @@ class TestPrintTablePidDetection(unittest.TestCase):
     def _capture_print_table(self, files):
         captured = StringIO()
         with patch("sys.stdout", new=captured):
+            enrich_workspace_rows(files, "/fake/home")
             print_table(files)
         return captured.getvalue()
 
@@ -182,6 +184,7 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
     def _capture_print_table(self, files):
         captured = StringIO()
         with patch("sys.stdout", new=captured):
+            enrich_workspace_rows(files, "/fake/home")
             print_table(files)
         return captured.getvalue()
 
@@ -251,7 +254,7 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
                 if not unicodedata.combining(character)
             )
 
-        expected_widths = [4, 25, 20, 5, 8, 15, 26]
+        expected_widths = [4, 25, 20, 5, 8, 8, 15, 26]
         for line in (header, row):
             plain_line = ansi_escape.sub("", line)
             column_widths = [display_width(column) for column in plain_line.split("|")]
@@ -270,8 +273,9 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
             "pid": 123456789,
             "ctime": 1700000000.0,
         }
+        enrich_workspace_rows([file_info], "/fake/home")
         with patch("builtins.enumerate", return_value=iter([(12345, file_info)])):
-            output = self._capture_print_table([file_info])
+            output = format_file_table([file_info])
 
         header, _, row = output.splitlines()[:3]
         ansi_escape = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")

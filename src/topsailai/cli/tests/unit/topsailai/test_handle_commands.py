@@ -1682,6 +1682,14 @@ class TestWorkspaceFlag(unittest.TestCase):
 class TestWorkspaceFormat(unittest.TestCase):
     """Tests for the workspace JSON output format."""
 
+    def _enriched_json_item(self, row, index):
+        """Exercise the shared observation boundary before JSON rendering."""
+        from cli_topsailai.core import _workspace_json_item
+        from cli_topsailai.formatting import enrich_workspace_rows
+
+        enrich_workspace_rows([row], "/fake/home")
+        return _workspace_json_item(row, index)
+
     @patch("cli_topsailai.core._print_workspace_json")
     def test_short_format_option_dispatches_json(self, mock_print_json: MagicMock) -> None:
         """The short format option selects JSON output."""
@@ -1752,7 +1760,7 @@ class TestWorkspaceFormat(unittest.TestCase):
         mock_enrich.assert_called_once_with([])
 
     @patch("sys.stdout", new_callable=io.StringIO)
-    @patch("cli_topsailai.log_files.is_session_pipe_open", return_value=False)
+    @patch("cli_topsailai.formatting.is_session_pipe_open", return_value=False)
     @patch("cli_topsailai.core.os.kill")
     @patch("cli_topsailai.session_info.enrich_files_with_session_names")
     @patch("cli_topsailai.log_files.discover_log_files")
@@ -1815,11 +1823,11 @@ class TestWorkspaceFormat(unittest.TestCase):
         """A log record without a creation time emits a JSON null value."""
         from cli_topsailai.core import _workspace_json_item
 
-        item = _workspace_json_item({}, 1)
+        item = self._enriched_json_item({}, 1)
 
         self.assertIsNone(item["created_at"])
 
-    @patch("cli_topsailai.log_files.is_session_pipe_open", return_value=True)
+    @patch("cli_topsailai.formatting.is_session_pipe_open", return_value=True)
     @patch("cli_topsailai.core.os.kill")
     def test_json_item_status_is_input_when_session_pipe_is_open(
         self,
@@ -1829,14 +1837,14 @@ class TestWorkspaceFormat(unittest.TestCase):
         """A live session with an open input pipe is reported as input."""
         from cli_topsailai.core import _workspace_json_item
 
-        item = _workspace_json_item({"pid": 1234}, 1)
+        item = self._enriched_json_item({"pid": 1234}, 1)
 
         self.assertEqual(item["status"], "input")
         self.assertEqual(item["pid"], 1234)
         mock_kill.assert_called_once_with(1234, 0)
         mock_pipe.assert_called_once()
 
-    @patch("cli_topsailai.log_files.is_session_pipe_open", return_value=False)
+    @patch("cli_topsailai.formatting.is_session_pipe_open", return_value=False)
     @patch("cli_topsailai.core.os.kill")
     def test_json_item_status_is_idle_when_process_is_not_alive(
         self,
@@ -1847,7 +1855,7 @@ class TestWorkspaceFormat(unittest.TestCase):
         from cli_topsailai.core import _workspace_json_item
 
         mock_kill.side_effect = ProcessLookupError()
-        item = _workspace_json_item({"pid": 1234}, 1)
+        item = self._enriched_json_item({"pid": 1234}, 1)
 
         self.assertEqual(item["status"], "idle")
         self.assertIsNone(item["pid"])
@@ -1858,12 +1866,12 @@ class TestWorkspaceFormat(unittest.TestCase):
         """A log record without a PID is reported as idle."""
         from cli_topsailai.core import _workspace_json_item
 
-        item = _workspace_json_item({}, 1)
+        item = self._enriched_json_item({}, 1)
 
         self.assertEqual(item["status"], "idle")
         self.assertIsNone(item["pid"])
 
-    @patch("cli_topsailai.log_files.is_session_pipe_open")
+    @patch("cli_topsailai.formatting.is_session_pipe_open")
     @patch("cli_topsailai.core.os.kill", side_effect=PermissionError())
     def test_json_item_status_is_idle_on_permission_error(
         self,
@@ -1873,13 +1881,13 @@ class TestWorkspaceFormat(unittest.TestCase):
         """A permission error during the PID probe is reported as idle."""
         from cli_topsailai.core import _workspace_json_item
 
-        item = _workspace_json_item({"pid": 1234}, 1)
+        item = self._enriched_json_item({"pid": 1234}, 1)
 
         self.assertEqual(item["status"], "idle")
         self.assertIsNone(item["pid"])
         mock_pipe.assert_not_called()
 
-    @patch("cli_topsailai.log_files.is_session_pipe_open")
+    @patch("cli_topsailai.formatting.is_session_pipe_open")
     @patch("cli_topsailai.core.os.kill", side_effect=OSError("probe failed"))
     def test_json_item_status_is_idle_on_other_os_error(
         self,
@@ -1889,7 +1897,7 @@ class TestWorkspaceFormat(unittest.TestCase):
         """An unexpected OS error during the PID probe is reported as idle."""
         from cli_topsailai.core import _workspace_json_item
 
-        item = _workspace_json_item({"pid": 1234}, 1)
+        item = self._enriched_json_item({"pid": 1234}, 1)
 
         self.assertEqual(item["status"], "idle")
         self.assertIsNone(item["pid"])
@@ -2148,3 +2156,49 @@ class TestProjectSubcommand(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_workspace_main_refresh_reobserves(tmp_path):
+    """Initial display and refresh both consume freshly enriched observations."""
+    from contextlib import ExitStack
+    from cli_topsailai import core
+    from cli_topsailai.session_driver import DriverObservation
+
+    rows = [dict(filename="team.456.session.stdout", session_id="team", pid=456,
+                 session_pid=456, ctime=1)]
+    snapshots = []
+    old_running, old_scope = cli_state.running, cli_state.current_scope
+    old_history, old_yaml = cli_state.history_manager, cli_state.yaml_commands
+    cli_state.running, cli_state.current_scope = True, "workspace"
+    try:
+        with ExitStack() as stack:
+            for target in (
+                "cli_topsailai.core.setup_signal_handlers",
+                "cli_topsailai.history.HistoryManager",
+                "cli_topsailai.history.load_readline_history",
+                "cli_topsailai.completer.setup_tab_completion",
+                "cli_topsailai.session_info.enrich_files_with_session_names",
+                "cli_topsailai.session_info.enrich_running_unnamed_sessions",
+                "cli_topsailai.process.cleanup_children",
+                "cli_topsailai.formatting.print_header",
+            ):
+                stack.enter_context(patch(target))
+            stack.enter_context(patch("cli_topsailai.paths.get_topsailai_home", return_value=str(tmp_path)))
+            stack.enter_context(patch("cli_topsailai.yaml_commands.load_yaml_commands", return_value=[]))
+            stack.enter_context(patch("cli_topsailai.log_files.discover_log_files", return_value=rows))
+            stack.enter_context(patch("cli_topsailai.formatting.os.kill"))
+            stack.enter_context(patch("cli_topsailai.formatting.is_session_pipe_open", return_value=False))
+            observe = stack.enter_context(patch("cli_topsailai.session_driver.observe_driver",
+                side_effect=[DriverObservation("-", "first"), DriverObservation("?", "second")]))
+            stack.enter_context(patch("cli_topsailai.formatting.print_table",
+                side_effect=lambda items: snapshots.append(items[0]["driver_observation"])))
+            stack.enter_context(patch("cli_topsailai.core.prompt_selection",
+                side_effect=[("refresh", None), ("quit", None)]))
+            core.main([])
+            assert observe.call_count == 2
+        assert [snapshot.reason for snapshot in snapshots] == ["first", "second"]
+        assert rows[0]["pid"] == 456 and rows[0]["workspace_status"] == "running"
+        assert not list(tmp_path.iterdir())
+    finally:
+        cli_state.running, cli_state.current_scope = old_running, old_scope
+        cli_state.history_manager, cli_state.yaml_commands = old_history, old_yaml

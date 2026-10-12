@@ -508,6 +508,40 @@ def get_prompt() -> str:
     return f"\n{Colors.GREEN}[workspace]{Colors.RESET}> "
 
 
+def _driver_authority(environment):
+    """Read explicit deployment configuration once at the CLI boundary."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    entry = environment.get("TOPSAILAI_SESSION_DRIVER_ENTRY")
+    interpreter = environment.get("TOPSAILAI_SESSION_DRIVER_PYTHON")
+    if not entry or not interpreter:
+        return None
+    entry, interpreter = Path(entry), Path(interpreter)
+    try:
+        if not entry.is_absolute() or not interpreter.is_absolute():
+            return None
+        if not entry.is_file() or not interpreter.is_file():
+            return None
+        if not interpreter.name.lower().startswith("python"):
+            return None
+        if not os.access(interpreter, os.X_OK) or not os.access(entry, os.R_OK):
+            return None
+    except OSError:
+        return None
+    return SimpleNamespace(entry=entry, interpreter=interpreter)
+
+
+def _enrich_driver_rows(rows, home, authority):
+    """Use the same explicit entry authority for table, JSON and status reads."""
+    from cli_topsailai.formatting import enrich_workspace_rows
+
+    if authority is None:
+        enrich_workspace_rows(rows, home)
+    else:
+        enrich_workspace_rows(rows, home, driver_entry=authority.entry)
+
+
 def prompt_selection(
     files: List[dict], task_dir: str
 ) -> Tuple[str, Optional[Any]]:
@@ -924,6 +958,7 @@ def _print_workspace_table() -> None:
     from cli_topsailai.session_info import enrich_files_with_session_names
 
     topsailai_home = get_topsailai_home()
+    driver_authority = _driver_authority(os.environ)
     task_dir = os.path.join(topsailai_home, "workspace", "task")
 
     print_header("TopsailAI Task Watcher")
@@ -934,6 +969,7 @@ def _print_workspace_table() -> None:
 
     log_files = discover_log_files(task_dir)
     enrich_files_with_session_names(log_files)
+    _enrich_driver_rows(log_files, topsailai_home, driver_authority)
     if log_files:
         print_table(log_files)
     else:
@@ -943,20 +979,19 @@ def _print_workspace_table() -> None:
 
 def _workspace_json_item(file_info: dict, index: int) -> dict:
     """Build one stable JSON item from a discovered workspace log file."""
-    from cli_topsailai.log_files import is_session_pipe_open
-
-    pid = file_info.get("pid")
-    if pid is not None:
-        try:
-            os.kill(pid, 0)
-        except (ProcessLookupError, PermissionError, OSError):
-            pid = None
-    if pid and is_session_pipe_open(file_info):
-        status = "input"
-    elif pid:
-        status = "running"
-    else:
-        status = "idle"
+    pid = file_info.get("workspace_pid")
+    status = file_info.get("workspace_status", "idle")
+    observation = file_info.get("driver_observation")
+    driver = None
+    if observation is not None:
+        driver = {
+            "state": observation.state,
+            "reason": observation.reason,
+            "driver_pid": observation.driver_pid,
+            "run_id": observation.run_id,
+            "metadata_status": observation.metadata.status if observation.metadata else None,
+            "verification": observation.verification.value,
+        }
     ctime = file_info.get("ctime")
     created_at = None
     if ctime is not None:
@@ -971,6 +1006,7 @@ def _workspace_json_item(file_info: dict, index: int) -> dict:
         "is_task": bool(file_info.get("is_task", False)),
         "pid": pid,
         "status": status,
+        "driver": driver,
         "created_at": created_at,
         "project_workspace": file_info.get("project_workspace"),
     }
@@ -983,9 +1019,11 @@ def _print_workspace_json() -> None:
     from cli_topsailai.session_info import enrich_files_with_session_names
 
     topsailai_home = get_topsailai_home()
+    driver_authority = _driver_authority(os.environ)
     task_dir = os.path.join(topsailai_home, "workspace", "task")
     log_files = discover_log_files(task_dir)
     enrich_files_with_session_names(log_files)
+    _enrich_driver_rows(log_files, topsailai_home, driver_authority)
     items = [
         _workspace_json_item(file_info, index)
         for index, file_info in enumerate(log_files, start=1)
@@ -1403,6 +1441,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     state.yaml_commands = load_yaml_commands()
 
     topsailai_home = get_topsailai_home()
+    driver_authority = _driver_authority(os.environ)
     task_dir = os.path.join(topsailai_home, "workspace", "task")
 
     # Initialize command history
@@ -1435,6 +1474,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     log_files = discover_log_files(task_dir, on_item=_print_refresh_item)
     enrich_files_with_session_names(log_files)
     enrich_running_unnamed_sessions(log_files)
+    _enrich_driver_rows(log_files, topsailai_home, driver_authority)
     project_entries: List[Dict[str, Any]] = []
     managed_project_entries: List[Dict[str, Any]] = []
     doc_entries: List[Dict[str, Any]] = []
@@ -1447,6 +1487,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         log_files = discover_log_files(task_dir, on_item=_print_refresh_item)
         enrich_files_with_session_names(log_files)
         enrich_running_unnamed_sessions(log_files)
+        _enrich_driver_rows(log_files, topsailai_home, driver_authority)
         print_table(log_files)
 
     def _refresh_managed_projects() -> None:
