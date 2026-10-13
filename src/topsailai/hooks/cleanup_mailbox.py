@@ -39,6 +39,26 @@ class CleanupAdmissionReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class CleanupAdmissionIntent:
+    """Prehold one exact logical operation before attempting admission."""
+
+    receipt: CleanupAdmissionReceipt
+
+    def __post_init__(self) -> None:
+        """Reject receipt lookalikes before mailbox synchronization."""
+        if type(self.receipt) is not CleanupAdmissionReceipt:
+            raise ValueError("intent requires an exact admission receipt")
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupAdmissionObservation:
+    """Describe only one exact association, never backend resource absence."""
+
+    state: str
+    debts: tuple[CleanupDebt, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CleanupCommand:
     """Request one observation tick using exact receipt and bounded sequence."""
 
@@ -90,6 +110,7 @@ class _Slot:
     command: CleanupCommand | None = None
     delivery: CleanupDeliveryReceipt | None = None
     completed_delivery: CleanupDeliveryReceipt | None = None
+    intent: CleanupAdmissionIntent | None = None
 
 
 class CleanupMailbox:
@@ -114,6 +135,10 @@ class CleanupMailbox:
         self._unavailable = CleanupDebtSnapshot(
             "unavailable", (self._handle.unavailable_debt,)
         )
+        self._admission_unavailable = CleanupAdmissionObservation(
+            "unavailable", self._unavailable.debts
+        )
+        self._catalog = tuple(self._catalog_receipt() for _ in range(capacity))
         self._capacity = capacity
         self._slots: tuple[_Slot, ...] = ()
         self._lock = threading.Lock()
@@ -122,6 +147,85 @@ class CleanupMailbox:
     def handle(self) -> CleanupMailboxHandle:
         """Return construction-time immutable data without protected reads."""
         return self._handle
+
+    def _catalog_receipt(self) -> CleanupAdmissionReceipt:
+        """Construct a fixed resource-free identity before publishing the mailbox."""
+        generation = uuid.uuid4().hex
+        slot_id = "cleanup-slot:" + generation
+        return CleanupAdmissionReceipt(
+            self._handle.incarnation, slot_id, generation,
+            CleanupDebt(slot_id, "admission_pending", None,
+                        "cleanup admission remains pending"),
+        )
+
+    def prepare_admission(self, index: int) -> CleanupAdmissionReceipt:
+        """Return a stable catalog identity without admission or mutable reads."""
+        if type(index) is not int or not 0 <= index < len(self._catalog):
+            raise ValueError("admission index must be an exact in-range integer")
+        return self._catalog[index]
+
+    def admit(self, intent: CleanupAdmissionIntent, *,
+              deadline: float) -> CleanupAdmissionObservation:
+        """Bind exact preheld intent and capacity once, without resource authority."""
+        return self._admission_query(intent, deadline=deadline, admit=True)
+
+    def admission_status(self, intent: CleanupAdmissionIntent, *,
+                         deadline: float) -> CleanupAdmissionObservation:
+        """Reconcile exact admission; absent is only point-in-time observation."""
+        return self._admission_query(intent, deadline=deadline, admit=False)
+
+    def _admission_query(self, intent: CleanupAdmissionIntent, *, deadline: float,
+                         admit: bool) -> CleanupAdmissionObservation:
+        """Protect bounded association checks and one atomic metadata commit."""
+        if type(intent) is not CleanupAdmissionIntent:
+            raise ValueError("expected an exact CleanupAdmissionIntent")
+        if type(intent.receipt) is not CleanupAdmissionReceipt:
+            raise ValueError("intent requires an exact admission receipt")
+        end = finite_deadline(deadline)
+        receipt = intent.receipt
+        candidate = _Slot(receipt, intent=intent)
+        pending = (receipt.pending_debt,)
+        observations = {
+            state: CleanupAdmissionObservation(state, debts)
+            for state, debts in (("absent", ()), ("foreign", ()), ("full", ()),
+                                 ("admitted", pending), ("conflict", pending))
+        }
+        ticket = _AcquisitionTicket(self._handle)
+        result = self._admission_unavailable
+        try:
+            try:
+                if self._acquire(end, ticket):
+                    result = self._admission_locked(
+                        intent, candidate, observations, end, admit
+                    )
+            finally:
+                self._finish(ticket)
+        except BaseException as error:
+            error.cleanup_mailbox_ticket = ticket
+            raise
+        if time.monotonic() >= end:
+            return self._admission_unavailable
+        return result
+
+    def _admission_locked(self, intent, candidate, observations, end, admit):
+        """Use exact identity only under proven custody, with the original horizon."""
+        if time.monotonic() >= end:
+            return self._admission_unavailable
+        receipt = intent.receipt
+        if not any(item is receipt for item in self._catalog):
+            return observations["foreign"]
+        index = self._index(receipt)
+        if index is not None:
+            state = "admitted" if self._slots[index].intent is intent else "conflict"
+            return observations[state]
+        if not admit:
+            return observations["absent"]
+        if len(self._slots) >= self._capacity:
+            return observations["full"]
+        if time.monotonic() >= end:
+            return self._admission_unavailable
+        self._slots = self._slots + (candidate,)
+        return observations["admitted"]
 
     def _acquire(self, deadline: float, ticket: _AcquisitionTicket) -> bool:
         """Acquire inside the caller's armed finalizer and journal uncertainty."""
@@ -298,8 +402,10 @@ class CleanupMailbox:
                     return "not_started"
                 if slot.delivery is not delivery or delivery.command is not command:
                     return "foreign"
-                self._publish(index, _Slot(slot.receipt, command.sequence,
-                                           completed_delivery=delivery))
+                self._publish(index, _Slot(
+                    receipt=slot.receipt, acknowledged=command.sequence,
+                    completed_delivery=delivery, intent=slot.intent,
+                ))
                 return "acknowledged"
             finally:
                 self._finish(ticket)
