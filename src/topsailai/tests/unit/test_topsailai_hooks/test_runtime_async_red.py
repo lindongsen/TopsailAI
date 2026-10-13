@@ -415,6 +415,7 @@ def test_configured_async_expired_absolute_deadline(tmp_path, monkeypatch):
             assert report.rejection_reason is None, report
             result = report.unified_result
             assert result.status == "timeout", report
+            assert report.deadline_exhausted, report
             assert result.handlers, report
             assert all(handler.status == "not_run" and handler.not_run_reason == "deadline"
                        for handler in result.handlers), report

@@ -102,7 +102,7 @@ class ConfiguredHookExecutor:
         ensured = self._registrar.ensure_registered(declaration.name) if deadline is None else self._registrar.ensure_registered(
             declaration.name, deadline=deadline, cancellation=signal)
         if not ensured.ready:
-            report = DispatchReport(event.event_id, 0, rejection_reason=self._ensure_reason(ensured))
+            report = self._ensure_rejection(event.event_id, ensured)
         else:
             report = self._runtime.dispatch_configured(declaration.name, event) if deadline is None else self._runtime.dispatch_configured(
                 declaration.name, event, deadline=deadline, cancellation=signal)
@@ -121,14 +121,14 @@ class ConfiguredHookExecutor:
         event = self._make_event(declaration, payload, operation)
         if not isinstance(self._runtime, HookRuntime) or not isinstance(self._registrar, ConfiguredHookRegistrar):
             ensured = await self._registrar.aensure_registered(declaration.name)
-            report = DispatchReport(event.event_id, 0, rejection_reason=self._ensure_reason(ensured)) if not ensured.ready else await self._runtime.adispatch_configured(declaration.name, event)
+            report = self._ensure_rejection(event.event_id, ensured) if not ensured.ready else await self._runtime.adispatch_configured(declaration.name, event)
         else:
             deadline = time.monotonic() + self._runtime._settings.limits.dispatch_timeout_ms / 1000
             signal = threading.Event()
             try:
                 ensured = await asyncio.to_thread(self._registrar.ensure_registered,
                     declaration.name, deadline=deadline, cancellation=signal)
-                report = DispatchReport(event.event_id, 0, rejection_reason=self._ensure_reason(ensured)) if not ensured.ready else await self._runtime.adispatch_configured(
+                report = self._ensure_rejection(event.event_id, ensured) if not ensured.ready else await self._runtime.adispatch_configured(
                     declaration.name, event, deadline=deadline, cancellation=signal)
             except asyncio.CancelledError:
                 signal.set()
@@ -170,6 +170,13 @@ class ConfiguredHookExecutor:
                    else "hooks"),
             purpose=point.phase,
         )
+
+    @classmethod
+    def _ensure_rejection(cls, event_id: str, result: RegistrationEnsureResult) -> DispatchReport:
+        """Preserve the exact registration deadline fact across all facade branches."""
+        reason = cls._ensure_reason(result)
+        return DispatchReport(event_id, 0, rejection_reason=reason,
+            deadline_exhausted=reason == "deadline")
 
     @staticmethod
     def _ensure_reason(result: RegistrationEnsureResult) -> str:

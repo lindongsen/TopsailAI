@@ -446,7 +446,8 @@ def _execute_configured(runtime, admission):
                 duration_ms=int((time.monotonic() - admission.started) * 1000),
                 error_category=category, started=started))
         return DispatchReport(admission.event.event_id, admission.generation, tuple(outcomes),
-            elapsed_ms=int((time.monotonic() - admission.started) * 1000), unified_result=result)
+            elapsed_ms=int((time.monotonic() - admission.started) * 1000),
+            deadline_exhausted=time.monotonic() >= deadline, unified_result=result)
     finally:
         retained = reservations[0] if reservations else ticket
         _finish_configured_execution(recovery, retained, custody, admission, sys.exc_info()[1])

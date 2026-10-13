@@ -679,7 +679,8 @@ class HookRuntime:
 
     def _rejected(self, event: HookEvent, reason: str) -> DispatchReport:
         """Build one structured admission rejection."""
-        return DispatchReport(event.event_id, self._registry.generation, rejection_reason=reason)
+        return DispatchReport(event.event_id, self._registry.generation,
+            rejection_reason=reason, deadline_exhausted=reason == "deadline")
 
     @staticmethod
     def _admission_size(

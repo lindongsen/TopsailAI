@@ -281,7 +281,13 @@ class HookOutcome:
 
 @dataclass(frozen=True, slots=True)
 class DispatchReport:
-    """Collect bounded outcomes for one event in stable plan order."""
+    """Collect bounded outcomes for one event in stable plan order.
+
+    deadline_exhausted records observed aggregate deadline exhaustion at report
+    construction, or an exact early deadline rejection, not a handler timeout.
+    False on an early non-deadline rejection does not guarantee remaining time.
+    This flag neither proves cleanup completion nor changes exception precedence.
+    """
 
     event_id: str
     generation: int

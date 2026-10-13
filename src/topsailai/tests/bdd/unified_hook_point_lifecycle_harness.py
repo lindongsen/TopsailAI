@@ -117,6 +117,7 @@ class TargetLifecycleScenario:
                 assert self.mode == "expired" and self.rows() == []
                 return
             result = self.report.unified_result
+            assert self.report.deadline_exhausted, self.report
             assert result.status == "timeout", result
             assert result.cleanup.state == "safe", result
             if self.mode == "expired":
