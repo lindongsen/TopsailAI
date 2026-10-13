@@ -1,0 +1,268 @@
+"""Explicit configured observer lifecycle regressions. Author: DawsonLin."""
+
+import importlib
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+from topsailai.hooks import ConfiguredHookPoint, ConfiguredHooks, ConfiguredTrustPolicy, HookSettings
+from topsailai.hooks.configured_contracts import SummaryPreparationRequest
+from topsailai.hooks.configured_executor import ConfiguredHookExecutor, HookOperation
+from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
+from topsailai.hooks.contracts import ValidationError
+from topsailai.hooks.points.catalog import SUMMARY_CATALOG, PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
+from topsailai.hooks.points.context import SummaryHookAdapter
+from topsailai.hooks.points.context.summary_contracts import SUMMARY_POINTS
+from topsailai.tests.unit.test_topsailai_hooks.test_configured_preparation import _runtime, _assertion
+from topsailai.tests.unit.test_topsailai_hooks.test_summary_hook_points import classification
+
+OBSERVER = Path(__file__).resolve().parents[3] / "hooks/points/context/summary_events_observer"
+ACTIVE = tuple(point for point in SUMMARY_POINTS if point.phase_one_eligible)
+
+
+def configuration():
+    """Opt in only the eight exact Catalog-owned definitions, without scripts."""
+    return ConfiguredHooks(hook_points=tuple(ConfiguredHookPoint(
+        hook_name=point.name, definition=SUMMARY_CATALOG.require(point.name).definition,
+        module_folder=OBSERVER, inject_hook_context=True,
+    ) for point in PHASE_ONE_DECLARATIONS), settings=HookSettings())
+
+
+@pytest.fixture
+def lifecycle(tmp_path, monkeypatch):
+    """Own a private runtime and explicitly pin the real observer source."""
+    for name in tuple(os.environ):
+        if name.startswith("TOPSAILAI_EVENTS_"):
+            monkeypatch.delenv(name)
+    root = tmp_path / "runtime"
+    root.mkdir(mode=0o700)
+    runtime, scope = _runtime(OBSERVER, root)
+    trust = runtime._configured_trust
+    runtime._configured_trust = ConfiguredTrustPolicy(trust.source_roots,
+        closure_assertions=(_assertion(OBSERVER / "observer.py", "observer"),),
+        python_runtime=trust.python_runtime)
+    try:
+        yield runtime, scope, root
+    finally:
+        runtime.close()
+        assert not runtime._backend.cleanup_debts()
+
+
+def prepare(lifecycle, config=None, disabled=frozenset()):
+    """Use the actual request, prepared registrar, executor, and summary adapter."""
+    runtime, scope, _ = lifecycle
+    request = SummaryPreparationRequest(configuration=config if config is not None else configuration(),
+        catalog=SUMMARY_CATALOG, disabled_hook_names=disabled)
+    registrar = ConfiguredHookRegistrar.from_prepared(runtime, scope, request)
+    executor = ConfiguredHookExecutor(runtime, scope, registrar, SUMMARY_CATALOG)
+    return registrar, executor, SummaryHookAdapter(executor)
+
+
+def emit(adapter, point, identity="lifecycle-1"):
+    """Deliver a contract-valid checkpoint through the adapter and real executor."""
+    checkpoint = point.name.split("__")[2] + "_" + point.name.split("__")[3].rsplit("_", 1)[0]
+    return adapter.begin(point.layer, operation=HookOperation(identity)).emit(
+        checkpoint, **classification(point))
+
+
+def events(lifecycle):
+    """Inspect actual JSONL files written by isolated workers, not recorder mocks."""
+    result = []
+    for path in lifecycle[2].rglob("*.events"):
+        result.extend(json.loads(line) for line in path.read_text().splitlines() if line)
+    return [event for event in result if event["event_type"] == "summary.hook.observed"]
+
+
+def assert_recorded(result, recorded=True):
+    """Require the transported observer acknowledgement and successful isolation."""
+    assert result.report.rejection_reason is None, result.report
+    handlers = [item for item in result.report.unified_result.handlers if item.handler.kind == "module"]
+    assert len(handlers) == 1
+    assert handlers[0].status == "success", handlers[0]
+    assert handlers[0].returned.value == {"recorded": recorded}
+
+
+def test_all_eight_points_emit_real_safe_events(lifecycle):
+    """Explicit preparation captures and executes the real observer for every point."""
+    registrar, _, adapter = prepare(lifecycle)
+    assert len(registrar.dispositions) == 8
+    assert all(item.kind == "registered" for item in registrar.dispositions), registrar.dispositions
+    config = configuration()
+    assert [item.hook_name for item in config.hook_points] == [p.name for p in PHASE_ONE_DECLARATIONS]
+    for item in config.hook_points:
+        assert item.inject_hook_context and item.module_folder == OBSERVER
+        assert item.script is None and not item.module_args and not item.module_kwargs
+    for point in ACTIVE:
+        before = len(events(lifecycle))
+        assert_recorded(emit(adapter, point))
+        observed = events(lifecycle)
+        assert len(observed) == before + 1
+        event = next(event for event in observed if event["payload"]["point_name"] == point.name)
+        assert event["source"] == "hooks.summary_events_observer"
+        assert set(event["payload"]) == point.allowed_fields
+        assert event["payload"]["operation_id"] == "lifecycle-1"
+        assert event["payload"]["schema_version"] == 1
+        assert event["payload"]["outcome"] == point.outcome
+        assert str(OBSERVER) not in json.dumps(event["payload"])
+    assert len(events(lifecycle)) == 8
+
+
+@pytest.mark.parametrize("point", PHASE_TWO_DECLARATIONS, ids=lambda point: point.name)
+def test_phase_two_not_configured_or_emitted(lifecycle, point):
+    """Inactive configuration is rejected before observer discovery or dispatch."""
+    assert point.name not in {p.hook_name for p in configuration().hook_points}
+    config = ConfiguredHooks((ConfiguredHookPoint(point.name, point.definition,
+        module_folder=OBSERVER, inject_hook_context=True),), HookSettings())
+    registrar, executor, adapter = prepare(lifecycle, config)
+    assert registrar.dispositions[0].reason == "catalog_rejected"
+    with pytest.raises(KeyError):
+        executor.dispatch(point, payload={}, operation=HookOperation("inactive"))
+    with pytest.raises(ValidationError):
+        adapter.begin("user2agent").emit("after_summary_generate")
+    assert events(lifecycle) == []
+
+
+@pytest.mark.parametrize("disabled", [False, True])
+def test_unconfigured_and_disabled_do_not_emit(lifecycle, disabled):
+    """Importing packages never enables an empty or explicitly disabled request."""
+    runtime, _, _ = lifecycle
+    generation = runtime._registry.generation
+    importlib.import_module("topsailai.hooks.points.context.summary_events_observer")
+    importlib.import_module("topsailai.workspace.agent_shell")
+    assert runtime._registry.generation == generation
+    config = configuration() if disabled else ConfiguredHooks((), HookSettings())
+    names = frozenset(point.name for point in PHASE_ONE_DECLARATIONS) if disabled else frozenset()
+    _, _, adapter = prepare(lifecycle, config, names)
+    result = emit(adapter, ACTIVE[0])
+    assert result.report.rejection_reason is not None
+    assert events(lifecycle) == []
+
+
+def test_standard_agent_chat_construction_does_not_enable_observer(tmp_path, monkeypatch):
+    """Construct the real ordinary chat without summary configuration or model I/O."""
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from topsailai.events import EventCollector, EventConfig
+    from topsailai.events import collector as event_module
+    from topsailai.workspace import agent_shell, hook_instruction, summary_hooks_owner
+    from topsailai.workspace.plugin_instruction.base import cache
+
+    path = tmp_path / "standard-chat.events"
+    collector = EventCollector(EventConfig(file_path=str(path), retention_days=0))
+    monkeypatch.setattr(event_module, "_collector_instance", collector)
+    monkeypatch.setattr(summary_hooks_owner, "_owner", None)
+    monkeypatch.setattr(cache, "g_ai_agent", None)
+    monkeypatch.setattr(hook_instruction, "FILE_INPUT_COMPLETIONS", str(tmp_path / "completions"))
+    monkeypatch.setattr(hook_instruction.HookInstruction, "setup_readline_completion", Mock())
+    agent = SimpleNamespace(runtime=SimpleNamespace(llm_model=SimpleNamespace(
+        max_tokens=3000, temperature=0.3)), hooks_after_init_prompt=[],
+        hooks_after_new_session=[], hooks_pre_chat=[], messages=[],
+        run=Mock(side_effect=AssertionError("LLM conversation must not start")))
+    factory = Mock(return_value=agent)
+    monkeypatch.setattr(agent_shell, "get_ai_agent", factory)
+    monkeypatch.setattr(agent_shell, "get_message", Mock(return_value=""))
+    for name in ("record_project_history", "create_session_meta", "cleanup_session_meta_files"):
+        monkeypatch.setattr(agent_shell, name, Mock())
+    try:
+        chat = agent_shell.get_agent_chat(system_prompt="isolated construction", session_id="",
+            agent_name="observer-regression", message="do not run", need_input_message=False,
+            need_print_session=False, need_project_workspace_lock=False,
+            need_set_agent_name_to_thread_local=False)
+        assert isinstance(chat, agent_shell.AgentChat)
+        factory.assert_called_once()
+        assert chat.ctx_runtime_data.summary_hooks_executor is None
+        assert summary_hooks_owner._owner is None
+        assert chat.control_server is None
+        agent.run.assert_not_called()
+        collector.record("test.collector.ready", payload={}, flush=True)
+        observed = [json.loads(line) for line in path.read_text().splitlines()]
+        assert any(event["event_type"] == "test.collector.ready" for event in observed)
+        assert not any(event["event_type"] == "summary.hook.observed" for event in observed)
+    finally:
+        collector.close()
+
+
+def test_legacy_module_still_usable_without_observer(lifecycle, tmp_path):
+    """An explicit legacy module retains its original static invocation contract."""
+    runtime, _, _ = lifecycle
+    folder = tmp_path / "legacy"
+    folder.mkdir(mode=0o700)
+    source = folder / "legacy.py"
+    source.write_text("def main(value):\n    return value\n")
+    trust = runtime._configured_trust
+    runtime._configured_trust = ConfiguredTrustPolicy((folder,),
+        closure_assertions=(_assertion(source, "legacy"),), python_runtime=trust.python_runtime)
+    point = ACTIVE[0]
+    config = ConfiguredHooks((ConfiguredHookPoint(point.name, point.definition,
+        module_folder=folder, module_args=("legacy",)),), HookSettings())
+    _, _, adapter = prepare(lifecycle, config)
+    result = emit(adapter, point)
+    assert result.report.unified_result.handlers[0].returned.value == "legacy"
+    assert events(lifecycle) == []
+
+
+def test_checkpoint_idempotency_and_distinct_identity(lifecycle):
+    """Adapter-wide identity custody suppresses duplicates but permits new operations."""
+    _, _, adapter = prepare(lifecycle)
+    assert_recorded(emit(adapter, ACTIVE[0], "same"))
+    duplicate = emit(adapter, ACTIVE[0], "same")
+    assert duplicate.already_handled and duplicate.report is None
+    assert len(events(lifecycle)) == 1
+    assert_recorded(emit(adapter, ACTIVE[0], "distinct"))
+    assert {event["payload"]["operation_id"] for event in events(lifecycle)} == {"same", "distinct"}
+
+
+@pytest.mark.parametrize("field", ["layer", "path", "messages", "history", "session", "config",
+    "environment", "credentials", "exception", "traceback"])
+def test_sensitive_payload_rejected_at_lifecycle_boundary(lifecycle, field):
+    """Representative nonempty secrets cannot cross configured payload validation."""
+    _, executor, _ = prepare(lifecycle)
+    point = ACTIVE[0]
+    payload = {"schema_version": 1, "operation_id": "unsafe", "point_name": point.name,
+        "outcome": point.outcome, field: "/private/path token=secret message history"}
+    with pytest.raises(ValidationError):
+        executor.dispatch(SUMMARY_CATALOG.require(point.name), payload=payload,
+            operation=HookOperation("unsafe"))
+    assert events(lifecycle) == []
+
+
+def test_recorder_exception_isolated_in_real_worker(lifecycle, tmp_path, monkeypatch):
+    """Inject only a child recorder failure while retaining real captured delivery."""
+    runtime, _, _ = lifecycle
+    _, _, adapter = prepare(lifecycle)
+    injection = tmp_path / "child-injection"
+    injection.mkdir(mode=0o700)
+    (injection / "sitecustomize.py").write_text(
+        "import topsailai.events, logging\n"
+        "logging.getLogger().addHandler(logging.StreamHandler())\n"
+        "logging.getLogger().setLevel(logging.WARNING)\n"
+        "def fail(**kwargs):\n"
+        "    raise RuntimeError('/private/path token=secret recorder failure')\n"
+        "topsailai.events.record_event = fail\n")
+    original = runtime._backend._worker_environment
+    received = []
+    execute = runtime._backend.execute_captured_module
+
+    def environment():
+        """Add a test-only startup injection without propagating event settings."""
+        values = original()
+        values["PYTHONPATH"] = str(injection) + os.pathsep + values["PYTHONPATH"]
+        return values
+
+    def capture(*args, **kwargs):
+        """Observe the unchanged backend result and worker stderr for leak checks."""
+        result = execute(*args, **kwargs)
+        received.append(result)
+        return result
+
+    monkeypatch.setattr(runtime._backend, "_worker_environment", environment)
+    monkeypatch.setattr(runtime._backend, "execute_captured_module", capture)
+    assert_recorded(emit(adapter, ACTIVE[0]), recorded=False)
+    assert len(received) == 1 and received[0].cleanup_confirmed
+    assert b"summary_hook_event_record_failed" in received[0].stderr
+    assert b"token=secret" not in received[0].stderr
+    assert b"/private/path" not in received[0].stderr
+    assert b"Traceback" not in received[0].stderr
+    assert events(lifecycle) == []

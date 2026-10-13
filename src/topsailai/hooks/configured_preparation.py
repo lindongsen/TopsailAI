@@ -136,6 +136,7 @@ class _PrivatePlan:
     module_kwargs: tuple[tuple[str, object], ...] = ()
     script_artifact_identities: tuple[str, ...] = ()
     executable: object = None
+    inject_hook_context: bool = False
 
     @property
     def hook_point(self):
@@ -426,7 +427,7 @@ def _probe_and_plan(configuration, captured, ownership, discovery_root, operatio
             binding_ids += ("hook_script",)
         summary = ConfiguredPlanSummary(point.hook_name, point.definition.name, point.definition.major_version, binding_ids, tuple(sorted(set([identity for _, identity in entries] + list(script_ids)))), failures)
         complete = _build_executable_plan(point, by_hook[hook_index]) if executable else None
-        plans.append(_PrivatePlan(summary, point.module_args, tuple(sorted(point.module_kwargs.items())), script_ids, complete))
+        plans.append(_PrivatePlan(summary, point.module_args, tuple(sorted(point.module_kwargs.items())), script_ids, complete, point.inject_hook_context))
     return tuple(plans)
 
 
@@ -574,7 +575,8 @@ def _build_executable_plan(point, captured):
             logical = work.candidate.logical_name
             source = ModuleSource(f"{point.hook_name}:{logical}", work.candidate.source_path,
                 logical, work.candidate.kind, f"{logical}:main",
-                ModuleInvocation(point.module_args, dict(point.module_kwargs)))
+                ModuleInvocation(point.module_args, dict(point.module_kwargs),
+                                 inject_hook_context=point.inject_hook_context))
             modules.append(CapturedModule(HandlerIdentity(f"module-{index}", source.registered_name, "module"),
                 source, item.lease.identity, index, entry.relative_path, item.captured_path,
                 entry.content_sha256, entry.validation.deployment_sha256))

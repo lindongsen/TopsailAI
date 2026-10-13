@@ -206,6 +206,7 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
             module.source.handler_ref, context, timeout_ms, module=True,
             args=_thaw_frozen_json(module.invocation.args),
             kwargs=_thaw_frozen_json(module.invocation.kwargs), captured=locator,
+            inject_hook_context=module.invocation.inject_hook_context,
             record_receiver=record_receiver, deadline=deadline, cancellation=cancellation,
         )
 
@@ -560,6 +561,15 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
             "TOPSAILAI_HOME": self._temp_root,
             "TOPSAILAI_HOOK_WORKER": "1",
         }
+        for name in (
+            "TOPSAILAI_EVENTS_ENABLED", "TOPSAILAI_EVENTS_BUFFER_SIZE",
+            "TOPSAILAI_EVENTS_FLUSH_INTERVAL_MS", "TOPSAILAI_EVENTS_BACKEND",
+            "TOPSAILAI_EVENTS_FILE_PATH", "TOPSAILAI_EVENTS_FILE_RETENTION_DAYS",
+            "TOPSAILAI_EVENTS_FILE_MAX_COUNT", "TOPSAILAI_EVENTS_FILE_DELETE_ON_EXIT",
+            "TOPSAILAI_EVENTS_FILE_FSYNC",
+        ):
+            if name in os.environ:
+                environment[name] = os.environ[name]
         for name in ("LANG", "LC_ALL", "SYSTEMROOT", "WINDIR"):
             if name in os.environ:
                 environment[name] = os.environ[name]

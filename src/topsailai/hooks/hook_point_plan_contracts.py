@@ -164,6 +164,8 @@ def _preflight_configuration(name, modules, scripts, configured, options, execut
                 raise ValidationError("invalid candidate invocation")
             value += [item.kind, item.logical_name, item.handler_ref, item.enabled,
                       item.invocation.args, item.invocation.kwargs]
+            if getattr(item.invocation, "inject_hook_context", False):
+                value += [True]
         else:
             value += [item.basename]
         records.append(value)
@@ -187,7 +189,8 @@ def _invocation(value):
     """Deeply reconstruct already-frozen invocation arguments."""
     if type(value) is not ModuleInvocation:
         raise ValidationError("invalid candidate invocation")
-    return ModuleInvocation(_thaw_frozen_json(value.args), _thaw_frozen_json(value.kwargs))
+    return ModuleInvocation(_thaw_frozen_json(value.args), _thaw_frozen_json(value.kwargs),
+                            inject_hook_context=getattr(value, "inject_hook_context", False))
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,6 +419,8 @@ def _semantic(plan):
             source = item.source
             value += [source.kind, source.logical_name, source.handler_ref, source.enabled,
                       source.invocation.args, source.invocation.kwargs]
+            if source.invocation.inject_hook_context:
+                value += [True]
         else:
             value += [item.logical_name]
         records.append(value)

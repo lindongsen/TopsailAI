@@ -224,11 +224,9 @@ class ConfiguredScript:
         object.__setattr__(self, "options", options)
         object.__setattr__(self, "policy", policy)
 
-
 @dataclass(frozen=True, slots=True)
 class ConfiguredHookPoint:
     """Describe one complete configured hook-point replacement."""
-
     hook_name: str
     definition: EventDefinition
     module_folder: Path | None = None
@@ -236,12 +234,11 @@ class ConfiguredHookPoint:
     module_kwargs: Mapping[str, JsonValue] = field(default_factory=dict)
     script: ConfiguredScript | None = None
     max_concurrency: int = 1
-
+    inject_hook_context: bool = False
     @property
     def hook_point(self) -> str:
         """Return the deprecated configured-name alias."""
         return self.hook_name
-
     def __post_init__(self) -> None:
         """Validate and deeply detach caller-owned configured values."""
         if not is_valid_hook_name(self.hook_name):
@@ -269,6 +266,8 @@ class ConfiguredHookPoint:
             raise ValueError("invalid configured hook point")
         if type(self.module_args) is not tuple or not isinstance(self.module_kwargs, MappingABC):
             raise ValueError("invalid configured hook point")
+        if type(self.inject_hook_context) is not bool or (self.inject_hook_context and "hook_context" in self.module_kwargs):
+            raise ValueError("invalid configured context injection")
         if self.script is not None and type(self.script) is not ConfiguredScript:
             raise ValueError("invalid configured hook point")
         if type(self.max_concurrency) is not int or self.max_concurrency <= 0:

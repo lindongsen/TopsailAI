@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from topsailai.hooks.contracts import ValidationError
+from topsailai.hooks.contracts import ValidationError, _snapshot_json
 from topsailai.hooks.points.context.summary_contracts import (
     SUMMARY_POINTS_BY_NAME,
     SUMMARY_SCHEMA_VERSION,
@@ -102,3 +102,18 @@ def build_summary_payload(
         "point_name": point.name, "outcome": point.outcome, **classification,
     }
     return validate_summary_payload(point, payload, operation_id=operation_id).to_payload()
+
+
+def build_summary_hook_context(*, event_name, event_version, operation_id, payload):
+    """Validate exact active summary metadata and own an immutable projection."""
+    from topsailai.hooks.points.context.summary_contracts import active_summary_point
+    try:
+        point = active_summary_point(event_name)
+    except ValueError:
+        raise ValidationError("invalid summary injection point") from None
+    if type(event_version) is not int or event_version != SUMMARY_SCHEMA_VERSION:
+        raise ValidationError("invalid summary injection version")
+    snapshot = validate_summary_payload(point, payload, operation_id=operation_id)
+    return _snapshot_json({"event_name": event_name, "event_version": event_version,
+                           "operation_id": operation_id, "payload": snapshot.to_payload()},
+                          immutable=True, max_bytes=131072)

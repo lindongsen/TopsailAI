@@ -56,11 +56,16 @@ class ModuleInvocation:
     """Own deeply immutable safe arguments under a single request budget."""
     args: Any
     kwargs: Any
+    inject_hook_context: bool = False
 
     def __post_init__(self) -> None:
         """Reject lookalikes before iterating and detach both fields together."""
         if type(self.args) not in (list, tuple) or type(self.kwargs) is not dict:
             raise ValidationError('invalid module invocation containers')
+        if type(self.inject_hook_context) is not bool:
+            raise ValidationError('invalid context injection declaration')
+        if self.inject_hook_context and 'hook_context' in self.kwargs:
+            raise ValidationError('reserved context injection keyword')
         if len(self.args) > 1024 or len(self.kwargs) > 1024:
             raise ValidationError('module invocation exceeds maximum item count')
         owned = _snapshot_json({'args': list(self.args), 'kwargs': self.kwargs},
@@ -83,6 +88,8 @@ def build_module_request(*, correlation_id: str, channel_token: str, handler_ref
     wire['protocol_version'] = MODULE_PROTOCOL_VERSION
     wire['invocation'] = {'args': _thaw_frozen_json(invocation.args),
                           'kwargs': _thaw_frozen_json(invocation.kwargs)}
+    if invocation.inject_hook_context:
+        wire['invocation']['inject_hook_context'] = True
     parse_module_request(wire, limits=limits)
     return wire
 
@@ -94,9 +101,10 @@ def parse_module_request(value: Any, *, limits: ProtocolLimits = ProtocolLimits(
     _text(safe['channel_token'])
     _main(safe['handler_ref'])
     raw = safe.pop('invocation')
-    if type(raw) is not dict or set(raw) != {'args', 'kwargs'} or type(raw['args']) is not list:
+    if type(raw) is not dict or set(raw) not in ({'args', 'kwargs'}, {'args', 'kwargs', 'inject_hook_context'}) or type(raw['args']) is not list:
         raise ValidationError('invalid module invocation envelope')
-    invocation = ModuleInvocation(raw['args'], raw['kwargs'])
+    invocation = ModuleInvocation(raw['args'], raw['kwargs'],
+                                  inject_hook_context=raw.get('inject_hook_context', False))
     safe['protocol_version'] = 1
     correlation, token, ref, context = parse_request(safe)
     return correlation, token, ref, context, invocation

@@ -111,7 +111,7 @@ def decode_configured_hooks(value: Mapping[str, Any]):
     _allowed(raw, {"hooks", "settings", "policy"})
     hooks = _dictionary(raw.get("hooks"))
     points = []
-    point_fields = {"definition", "module_folder", "module_args", "module_kwargs", "script", "max_concurrency"}
+    point_fields = {"definition", "module_folder", "module_args", "module_kwargs", "script", "max_concurrency", "inject_hook_context"}
     definition_fields = {"name", "major_version", "payload_schema", "payload_limit_bytes"}
     for hook_name in sorted(hooks):
         if not is_valid_hook_name(hook_name):
@@ -140,6 +140,7 @@ def decode_configured_hooks(value: Mapping[str, Any]):
                 module_folder=None if folder is None else Path(folder),
                 module_args=tuple(module_args), module_kwargs=module_kwargs,
                 script=script, max_concurrency=declaration.get("max_concurrency", 1),
+                inject_hook_context=declaration.get("inject_hook_context", False),
             ))
         except (TypeError, ValueError):
             raise ValueError(_ERROR) from None

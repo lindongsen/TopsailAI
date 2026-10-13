@@ -125,3 +125,13 @@ SUMMARY_POINTS = (
 )
 SUMMARY_POINTS_BY_NAME = MappingProxyType({point.name: point for point in SUMMARY_POINTS})
 SUMMARY_SCHEMA = BEFORE_GENERATE_USER2AGENT.definition.payload_schema
+
+
+def active_summary_point(name: str) -> SummaryPointContract:
+    """Resolve only a canonical active summary contract without registration."""
+    if type(name) is not str:
+        raise ValueError("invalid active summary point")
+    point = SUMMARY_POINTS_BY_NAME.get(name)
+    if point is None or not point.phase_one_eligible:
+        raise ValueError("invalid active summary point")
+    return point

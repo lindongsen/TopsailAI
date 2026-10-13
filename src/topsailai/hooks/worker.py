@@ -70,10 +70,19 @@ def _module_isawaitable(value: Any) -> bool:
     return False
 
 
-def _invoke_module(handler: Callable[..., Any], invocation: Any) -> Any:
+def _invoke_module(handler: Callable[..., Any], invocation: Any, context=None) -> Any:
     """Thaw owned safe arguments and await only within the isolated worker."""
-    result = handler(*_thaw_frozen_json(invocation.args),
-                     **_thaw_frozen_json(invocation.kwargs))
+    if invocation.inject_hook_context:
+        from topsailai.hooks.points.context.summary_payloads import build_summary_hook_context
+        projection = build_summary_hook_context(
+            event_name=context.event.name, event_version=context.event.major_version,
+            operation_id=context.event.operation_id, payload=context.event.payload,
+        )
+        result = handler(*_thaw_frozen_json(invocation.args), hook_context=projection,
+                         **_thaw_frozen_json(invocation.kwargs))
+    else:
+        result = handler(*_thaw_frozen_json(invocation.args),
+                         **_thaw_frozen_json(invocation.kwargs))
     if _module_isawaitable(result):
         return asyncio.run(_await_result(result))
     return result
@@ -165,7 +174,7 @@ def run_worker(result_fd: int, request_limit: int, response_limit: int) -> int:
             else:
                 from topsailai.hooks.captured_module_loader import resolve_captured_handler
                 handler = resolve_captured_handler(locator)
-            value = _invoke_module(handler, invocation) if module else _invoke(handler, context)
+            value = _invoke_module(handler, invocation, context) if module else _invoke(handler, context)
         except BaseException as exc:
             detached = None
             status = "error"

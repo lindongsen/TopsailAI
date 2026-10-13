@@ -23,7 +23,7 @@ class ProcessExecutionMixin:
 
     def _execute_delivery(self, handler_ref, context, timeout_ms, *, module=False,
                           args=(), kwargs=None, captured=None, record_receiver=None,
-                          deadline=None, cancellation=None) -> WorkerResult:
+                          deadline=None, cancellation=None, inject_hook_context: bool = False) -> WorkerResult:
         """Admit a local codec and publish only through the existing cleanup owner."""
         unsupported = self._preflight(timeout_ms)
         if unsupported is not None:
@@ -53,7 +53,8 @@ class ProcessExecutionMixin:
             )
         try:
             if module:
-                invocation = ModuleInvocation(args, {} if kwargs is None else kwargs)
+                invocation = ModuleInvocation(args, {} if kwargs is None else kwargs,
+                                              inject_hook_context=inject_hook_context)
                 builder = build_module_request if captured is None else build_captured_module_request
                 extra = {} if captured is None else {"locator": captured}
                 request = builder(
