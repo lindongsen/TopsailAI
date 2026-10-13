@@ -157,7 +157,7 @@ def test_disable_preserves_owned_work_and_registration_then_reenable_restores_us
     """Disable must stop new optional work but retain scope and registration ownership."""
     runtime, scope = runtime_scope(tmp_path)
     try:
-        registration = runtime.register(definition(), binding(), scope)
+        registration = runtime.register(definition(), binding(timeout_ms=2250), scope)
         assert registration.accepted
         disabled = reload_runtime(runtime, settings(enabled=False))
         assert_reload_result(disabled, accepted=True)
@@ -172,7 +172,7 @@ def test_disable_preserves_owned_work_and_registration_then_reenable_restores_us
         assert len(runtime._registry.snapshot(
             scope.scope_id, "test.reload", 1
         ).bindings) == 1
-        enabled = reload_runtime(runtime, settings(enabled=True))
+        enabled = reload_runtime(runtime, settings(enabled=True, handler_timeout_ms=2250, dispatch_timeout_ms=2500))
         assert_reload_result(enabled, accepted=True, generation=disabled.generation + 1)
         report = runtime.dispatch(event(runtime, scope, 2))
         assert report.generation == enabled.generation
@@ -232,10 +232,10 @@ def test_disabled_or_invalid_initial_runtime_can_recover_without_eager_workers(
     runtime, scope = runtime_scope(tmp_path, initial=initial)
     try:
         assert runtime._scheduler._executor is None
-        recovered = reload_runtime(runtime, settings(enabled=True))
+        recovered = reload_runtime(runtime, settings(enabled=True, handler_timeout_ms=2250, dispatch_timeout_ms=2500))
         assert_reload_result(recovered, accepted=True)
         assert runtime._scheduler._executor in (None, ())
-        registration = runtime.register(definition(), binding(), scope)
+        registration = runtime.register(definition(), binding(timeout_ms=2250), scope)
         assert registration.accepted
         assert runtime._scheduler._executor in (None, ())
         assert runtime.dispatch(event(runtime, scope)).outcomes[0].status.value == "success"
