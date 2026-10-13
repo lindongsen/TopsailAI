@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import struct
 import time
@@ -262,12 +263,25 @@ def test_all_invalid_terminal_envelopes_are_protocol_errors(
     tmp_path: Path, module: str
 ) -> None:
     """Malformed and mismatched terminal data must have one classification."""
-    result = _backend(
+    backend = _backend(
         tmp_path,
         worker_module=f"topsailai.tests.unit.test_topsailai_hooks.{module}",
-    ).execute(f"{HANDLERS}:sync_success", _context(), 1_000)
-    assert (result.status, result.error_category) == ("invalid_output", "protocol_error")
-    assert result.cleanup_confirmed
+    )
+    started = time.monotonic()
+    result = backend.execute(f"{HANDLERS}:sync_success", _context(), 1_000)
+    elapsed_ms = (time.monotonic() - started) * 1000
+    evidence = {
+        "worker": module, "status": result.status, "category": result.error_category,
+        "elapsed_ms": round(elapsed_ms, 3), "call_budget_remaining_ms": round(1000 - elapsed_ms, 3),
+        "cleanup_confirmed": result.cleanup_confirmed, "cleanup_debt": result.cleanup_debt,
+        "cleanup_debt_count": len(backend.cleanup_debts()), "main_entry": "unknown",
+    }
+    try:
+        assert (result.status, result.error_category) == ("invalid_output", "protocol_error"), evidence
+        assert result.cleanup_confirmed, evidence
+    except AssertionError:
+        print("PROTOCOL_ERROR_EVIDENCE " + json.dumps(evidence, sort_keys=True))
+        raise
 
 
 @pytest.mark.parametrize(

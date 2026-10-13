@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from dataclasses import replace
@@ -65,6 +66,19 @@ def _event(runtime, scope, value: int = 1):
     )
 
 
+def report_evidence(report, runtime):
+    """Summarize finite outcome metadata and exact remaining cleanup obligations."""
+    evidence = {
+        "elapsed_ms": report.elapsed_ms, "deadline_exhausted": report.deadline_exhausted,
+        "rejection_reason": report.rejection_reason, "remaining_budget_ms": "unknown",
+        "outcomes": [(item.binding_id[:128], item.status.value, item.error_category,
+            item.duration_ms, item.started) for item in report.outcomes[:16]],
+        "outcome_count": len(report.outcomes), "cleanup_debt_count": len(runtime.cleanup_debts()),
+    }
+    print("HOOK_REPORT_EVIDENCE " + json.dumps(evidence, sort_keys=True))
+    return evidence
+
+
 def test_dispatch_executes_sync_async_and_custom_awaitable_in_plan_order(tmp_path: Path) -> None:
     """One dispatcher must execute every supported handler shape in stable plan order."""
     runtime, scope = _runtime(tmp_path)
@@ -78,7 +92,7 @@ def test_dispatch_executes_sync_async_and_custom_awaitable_in_plan_order(tmp_pat
         ).accepted
         report = runtime.dispatch(_event(runtime, scope))
         assert [item.binding_id for item in report.outcomes] == ["awaitable", "async", "sync"]
-        assert [item.status.value for item in report.outcomes] == ["success"] * 3
+        assert [item.status.value for item in report.outcomes] == ["success"] * 3, report_evidence(report, runtime)
         assert report.rejection_reason is None
     finally:
         runtime.close()
@@ -103,7 +117,7 @@ def test_dependencies_skip_only_required_success_and_preserve_independent_work(t
             "failed": "error",
             "independent": "success",
             "required": "skipped_dependency",
-        }
+        }, report_evidence(report, runtime)
     finally:
         runtime.close()
 

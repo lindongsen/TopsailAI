@@ -7,7 +7,7 @@ import pytest
 from topsailai.hooks import ConfiguredTrustPolicy
 from topsailai.hooks.points.catalog import PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
 from topsailai.tests.unit.test_topsailai_hooks.test_configured_preparation import _assertion, _runtime
-from topsailai.tests.unit.test_topsailai_hooks.test_summary_events_observer_lifecycle import emit, ACTIVE
+from topsailai.tests.unit.test_topsailai_hooks.test_summary_events_observer_lifecycle import emit, ACTIVE, report_evidence
 from topsailai.workspace.summary_hooks_owner import build_summary_preparation_request, SummaryHooksOwner
 
 
@@ -66,14 +66,14 @@ def members(owner, point, identity):
     """Assert actual ordered execution and terminal custody through the application owner."""
     from topsailai.hooks.points.context import SummaryHookAdapter
     result = emit(SummaryHookAdapter(owner.executor), point, identity)
-    assert result.report.rejection_reason is None, result.report
+    assert result.report.rejection_reason is None, (identity, report_evidence(result.report))
     handlers = result.report.unified_result.handlers
-    assert handlers[-1].handler.name == "hook_script"
-    assert handlers[-1].status == "success", (identity, result.report)
-    assert all(item.status == "success" for item in handlers), (identity, result.report)
+    assert handlers[-1].handler.name == "hook_script", (identity, report_evidence(result.report))
+    assert handlers[-1].status == "success", (identity, report_evidence(result.report))
+    assert all(item.status == "success" for item in handlers), (identity, report_evidence(result.report))
     modules = handlers[:-1]
     for item in modules:
-        assert item.returned.value["point"] == point.name
+        assert item.returned.value["point"] == point.name, (identity, report_evidence(result.report))
     return tuple(item.returned.value["member"] for item in modules)
 
 

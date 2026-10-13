@@ -81,14 +81,35 @@ def events(lifecycle):
     return [event for event in result if event["event_type"] == "summary.hook.observed"]
 
 
+def report_evidence(report):
+    """Bound framework diagnostics without inspecting plugin return values."""
+    unified = report.unified_result
+    evidence = {
+        "elapsed_ms": report.elapsed_ms, "deadline_exhausted": report.deadline_exhausted,
+        "rejection_reason": report.rejection_reason, "remaining_budget_ms": "unknown",
+        "handlers": [] if unified is None else [{
+            "name": item.handler.name[:128], "status": item.status,
+            "not_run_reason": item.not_run_reason,
+            "category": None if item.error is None else item.error.category,
+            "elapsed_ms": item.timing.elapsed_ms, "cleanup": item.cleanup.state,
+            "cleanup_category": None if item.cleanup.diagnostic is None else item.cleanup.diagnostic.category,
+            "returned_present": item.returned.present,
+            "returned_representation": item.returned.representation,
+        } for item in unified.handlers[:16]],
+        "handler_count": 0 if unified is None else len(unified.handlers),
+    }
+    print("HOOK_REPORT_EVIDENCE " + json.dumps(evidence, sort_keys=True))
+    return evidence
+
+
 def assert_recorded(result, recorded=True):
     """Require the transported observer acknowledgement and successful isolation."""
-    assert result.report.rejection_reason is None, result.report
+    assert result.report.rejection_reason is None, report_evidence(result.report)
     handlers = [item for item in result.report.unified_result.handlers if item.handler.kind == "module"]
     observers = [item for item in handlers if item.handler.name == result.report.unified_result.hook_point_name + ":observer"]
-    assert len(observers) == 1
-    assert observers[0].status == "success", observers[0]
-    assert observers[0].returned.value == {"recorded": recorded}
+    assert len(observers) == 1, report_evidence(result.report)
+    assert observers[0].status == "success", report_evidence(result.report)
+    assert observers[0].returned.value == {"recorded": recorded}, report_evidence(result.report)
 
 
 def test_all_eight_points_emit_real_safe_events(lifecycle):
@@ -207,7 +228,7 @@ def test_legacy_module_still_usable_without_observer(lifecycle, tmp_path):
         module_folder=folder, module_args=("legacy",)),), HookSettings())
     _, _, adapter = prepare(lifecycle, config)
     result = emit(adapter, point)
-    assert result.report.unified_result.handlers[0].returned.value == "legacy"
+    assert result.report.unified_result.handlers[0].returned.value == "legacy", report_evidence(result.report)
     assert events(lifecycle) == []
 
 

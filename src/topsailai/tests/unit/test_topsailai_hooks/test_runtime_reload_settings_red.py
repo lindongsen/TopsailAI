@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
@@ -18,6 +19,19 @@ from topsailai.tests.unit.test_topsailai_hooks.reload_helpers import (
     runtime_scope,
     settings,
 )
+
+
+def report_evidence(report, runtime):
+    """Summarize finite outcome metadata and exact remaining cleanup obligations."""
+    evidence = {
+        "elapsed_ms": report.elapsed_ms, "deadline_exhausted": report.deadline_exhausted,
+        "rejection_reason": report.rejection_reason, "remaining_budget_ms": "unknown",
+        "outcomes": [(item.binding_id[:128], item.status.value, item.error_category,
+            item.duration_ms, item.started) for item in report.outcomes[:16]],
+        "outcome_count": len(report.outcomes), "cleanup_debt_count": len(runtime.cleanup_debts()),
+    }
+    print("HOOK_REPORT_EVIDENCE " + json.dumps(evidence, sort_keys=True))
+    return evidence
 
 
 @pytest.mark.parametrize(
@@ -40,7 +54,7 @@ def test_reload_rejects_invalid_candidate_and_preserves_active_state(
         assert runtime._settings == active_settings
         report = runtime.dispatch(event(runtime, scope))
         assert report.generation == generation
-        assert report.outcomes[0].status.value == "success"
+        assert report.outcomes[0].status.value == "success", report_evidence(report, runtime)
         diagnostics = runtime.drain_diagnostics(50)
         assert any(item.get("kind") == "configuration_rejected" for item in diagnostics)
         assert all(str(candidate) not in repr(item) for item in diagnostics)

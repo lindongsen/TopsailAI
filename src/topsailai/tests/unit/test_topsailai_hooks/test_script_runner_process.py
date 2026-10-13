@@ -183,7 +183,9 @@ def _execute(
 ) -> object:
     """Execute one child with immutable absolute deadlines."""
     now = time.monotonic()
-    return runner.execute_entry(
+    evidence = {"mode": mode, "budget_ms": timeout * 1000, "main_entry": "unknown",
+        "descendant_pid": "unknown", "descendant_writer_owner": "unknown"}
+    result = runner.execute_entry(
         entry_index=entry_index,
         entry=entry,
         context=context or _context(),
@@ -196,6 +198,45 @@ def _execute(
         output_remaining_bytes=output_remaining,
         cancellation=cancellation or threading.Event(),
     )
+    finished = time.monotonic()
+    evidence.update(status=result.status.value, category=result.error_category,
+        started=result.started, exit_code=result.exit_code, duration_ms=result.duration_ms,
+        elapsed_ms=(finished - now) * 1000, remaining_budget_ms=(now + timeout - finished) * 1000,
+        cleanup_confirmed=result.cleanup_confirmed, cleanup_debt=result.cleanup_debt,
+        cleanup_debts=[{"state": debt.state, "pid": getattr(debt, "pid", "unknown")}
+            for debt in runner.cleanup_debts()[:16]])
+    print("SCRIPT_EXECUTION_EVIDENCE " + json.dumps(evidence, sort_keys=True))
+    return result
+
+
+@pytest.fixture
+def serial_transport_evidence():
+    """Observe transport only for selected serial cases and restore on every exit."""
+    from topsailai.hooks import script_runner as runner_module
+
+    original_drain = runner_module.drain_script_process
+
+    def observed_drain(process, result_fd, stdin, policy, deadline, *args):
+        """Forward unchanged arguments and print bounded facts even on interruption."""
+        entered = time.monotonic()
+        evidence = {"pid": process.pid,
+            "transport_enter_remaining_ms": (deadline - entered) * 1000,
+            "main_entry": "unknown", "descendant_writer_owner": "unknown"}
+        try:
+            facts = original_drain(process, result_fd, stdin, policy, deadline, *args)
+            evidence.update(exit_code=facts.exit_code, eof=sorted(facts.eof),
+                result_observed_bytes=facts.result_observed_bytes, deadline=facts.deadline,
+                cancelled=facts.cancelled, overflow=facts.overflow, settled=facts.settled)
+            return facts
+        finally:
+            observed = time.monotonic()
+            evidence.update(transport_elapsed_ms=(observed - entered) * 1000,
+                transport_remaining_ms=(deadline - observed) * 1000)
+            print("SCRIPT_TRANSPORT_EVIDENCE " + json.dumps(evidence, sort_keys=True))
+
+    with pytest.MonkeyPatch.context() as observer_patch:
+        observer_patch.setattr(runner_module, "drain_script_process", observed_drain)
+        yield
 
 
 def test_real_transport_uses_literal_arguments_bounded_context_and_one_result_fd(
@@ -548,7 +589,7 @@ def test_inherited_open_result_descriptor_is_bounded_by_execution_deadline(
 
 
 def test_exited_leader_with_descendant_only_result_writer_retains_debt(
-    tmp_path: Path,
+    tmp_path: Path, serial_transport_evidence,
 ) -> None:
     """A historical group is not signalled after its leader exits before result EOF."""
     entry = _child(tmp_path)
@@ -564,11 +605,11 @@ def test_exited_leader_with_descendant_only_result_writer_retains_debt(
     )
 
     assert time.monotonic() - started < 0.5
-    assert result.status is HookStatus.WORKER_LOST
-    assert result.error_category == "hook_script_cleanup_pending"
-    assert result.exit_code == 0
-    assert not result.cleanup_confirmed
-    assert result.cleanup_debt is not None
+    assert result.status is HookStatus.WORKER_LOST, (result.status, result.error_category, result.duration_ms, result.exit_code, result.cleanup_confirmed, result.cleanup_debt)
+    assert result.error_category == "hook_script_cleanup_pending", (result.status, result.error_category, result.duration_ms, result.exit_code, result.cleanup_confirmed, result.cleanup_debt)
+    assert result.exit_code == 0, (result.status, result.error_category, result.duration_ms, result.exit_code, result.cleanup_confirmed, result.cleanup_debt)
+    assert not result.cleanup_confirmed, (result.status, result.error_category, result.duration_ms, result.exit_code, result.cleanup_confirmed, result.cleanup_debt)
+    assert result.cleanup_debt is not None, (result.status, result.error_category, result.duration_ms, result.exit_code, result.cleanup_confirmed, result.cleanup_debt)
     assert tuple(debt.debt_id for debt in runner.cleanup_debts()) == (
         result.cleanup_debt,
     )
@@ -641,6 +682,7 @@ def test_real_transport_arbitrates_exit_timeout_and_enforcement(
     mode: str,
     expected_status: HookStatus,
     expected_category: str,
+    serial_transport_evidence,
 ) -> None:
     """Observed script failures retain their frozen category after process cleanup."""
     entry = _child(tmp_path)
@@ -649,10 +691,10 @@ def test_real_transport_arbitrates_exit_timeout_and_enforcement(
 
     result = _execute(runner, entry, mode, policy=policy, timeout=0.15)
 
-    assert result.status is expected_status
-    assert result.error_category == expected_category
-    assert result.started
-    assert result.cleanup_confirmed
+    assert result.status is expected_status, (result.status, result.error_category, result.duration_ms, result.exit_code, result.cleanup_confirmed, result.cleanup_debt)
+    assert result.error_category == expected_category, (result.status, result.error_category, result.duration_ms, result.exit_code, result.cleanup_confirmed, result.cleanup_debt)
+    assert result.started, (result.status, result.error_category, result.duration_ms, result.exit_code, result.cleanup_confirmed, result.cleanup_debt)
+    assert result.cleanup_confirmed, (result.status, result.error_category, result.duration_ms, result.exit_code, result.cleanup_confirmed, result.cleanup_debt)
     assert runner.cleanup_debts() == ()
 
 
