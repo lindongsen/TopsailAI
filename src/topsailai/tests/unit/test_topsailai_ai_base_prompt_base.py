@@ -1,6 +1,9 @@
 import os
 import json
 import unittest
+import shutil
+import tempfile
+from pathlib import Path
 from unittest.mock import patch, MagicMock, mock_open
 
 from topsailai.utils import message_tool
@@ -24,6 +27,17 @@ class TestPromptBase(unittest.TestCase):
         """Set up test fixtures."""
         # Store original env vars
         self.original_env = {}
+        tmp_root = Path(__file__).resolve().parents[2] / ".tmp"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        self.home = Path(tempfile.mkdtemp(
+            dir=tmp_root,
+            prefix="prompt-base-user-context-",
+        ))
+        self.home_patch = patch(
+            "topsailai.workspace.folder_constants.TOPSAILAI_HOME",
+            str(self.home),
+        )
+        self.home_patch.start()
         for var in ["TOPSAILAI_FLAG_DUMP_MESSAGES", "TOPSAILAI_OBTAIN_SYSTEM_PROMPT_SCRIPT",
                     "TOPSAILAI_OBTAIN_TOOL_PROMPT_SCRIPT", "TOPSAILAI_CONTEXT_USER_MESSAGE",
                     "TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS"]:
@@ -44,6 +58,8 @@ class TestPromptBase(unittest.TestCase):
                 os.environ.pop(var, None)
             else:
                 os.environ[var] = original_value
+        self.home_patch.stop()
+        shutil.rmtree(self.home, ignore_errors=True)
 
     # =========================================================================
     # Group A: Initialization Tests
@@ -771,6 +787,46 @@ class TestPromptBase(unittest.TestCase):
         self.assertIn("tool context", first_result)
         self.assertIsNone(second_result)
         mock_get_observation.assert_called_once()
+
+    @patch("topsailai.prompt_hub.prompt_tool.get_observation_by_tools")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_user_context_is_injected_once_across_sessions(
+        self, mock_generate_prompt, mock_get_managers, mock_get_observation
+    ):
+        """Test startup context is injected once across two sessions."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+        mock_get_observation.return_value = (
+            '<observation source="cmd_tool">\ntool context\n</observation>'
+        )
+        self.home.joinpath("USER.md").write_text("user context", encoding="utf-8")
+        os.environ["TOPSAILAI_CONTEXT_USER_MESSAGE"] = "original context"
+        pb = PromptBase(system_prompt="test")
+        pb.available_tools = {"cmd_tool-exec_cmd": MagicMock()}
+
+        with patch("builtins.open", wraps=open) as mock_open:
+            pb.new_session("first task", need_print_message=False)
+            first_messages = list(pb.messages)
+            pb.new_session("second task", need_print_message=False)
+
+        first_user_messages = [message for message in first_messages if message["role"] == "user"]
+        observation = json.loads(first_user_messages[0]["content"])
+        self.assertEqual(observation["step_name"], "observation")
+        self.assertLess(observation["raw_text"].index("original context"), observation["raw_text"].index("user context"))
+        self.assertLess(observation["raw_text"].index("user context"), observation["raw_text"].index("tool context"))
+        self.assertEqual(first_user_messages[1]["content"], "first task")
+        second_user_messages = [message for message in pb.messages if message["role"] == "user"]
+        self.assertEqual(second_user_messages, [{"role": "user", "content": "second task"}])
+        self.assertEqual(observation["raw_text"].count("user context"), 1)
+        self.assertEqual(os.environ.get("TOPSAILAI_CONTEXT_USER_MESSAGE"), "")
+        self.assertEqual(sum(call.args[0] == str(self.home / "USER.md") for call in mock_open.call_args_list), 1)
+
+        other = PromptBase(system_prompt="test")
+        other_result = other._build_context_message()
+        self.assertIn("user context", other_result)
 
     @patch("topsailai.prompt_hub.prompt_tool.get_observation_by_tools")
     @patch("topsailai.ai_base.prompt_base.get_managers_by_env")

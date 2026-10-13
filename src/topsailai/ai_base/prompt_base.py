@@ -438,13 +438,13 @@ class PromptBase(object):
         Returns:
             str | None: Combined message with separator format, or None if empty.
         """
-        # agent-dimension context user messages
+        # Startup context sources are processed once per PromptBase instance.
         message_list: list[str] = []
-        context_user_message = EnvReaderInstance.context_user_message_content
-        if context_user_message:
-            message_list.append(context_user_message)
-
         if not self._tool_observation_injected:
+            context_user_message = EnvReaderInstance.context_user_message_content
+            if context_user_message:
+                message_list.append(context_user_message)
+
             from topsailai.prompt_hub.prompt_tool import get_observation_by_tools
 
             tool_observation = get_observation_by_tools(
@@ -454,8 +454,8 @@ class PromptBase(object):
                 message_list.append(tool_observation)
             self._tool_observation_injected = True
 
-        # ONLY ONCE: clean context xxx messages in env
-        EnvReaderInstance.clean_context_x_message()
+            # Clear environment-provided context after processing startup sources.
+            EnvReaderInstance.clean_context_x_message()
 
         if not message_list:
             return None

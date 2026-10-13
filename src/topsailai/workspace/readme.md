@@ -69,6 +69,7 @@ Factory for creating fully configured `AgentChat` instances.
 - `get_ai_agent()` — creates `AgentRun` (ReAct agent) with tools, prompts, and configuration
   - Tool-module `PROMPT` content is included in the system prompt. Shared startup context such as Skill and Memory catalogs belongs there so a Manager and the Subagent it starts do not propagate duplicate copies through User2Agent messages.
   - Tool-module `OBSERVATION` remains available for one-time or runtime context that intentionally belongs in a user-role message.
+  - Startup user observation combines `TOPSAILAI_CONTEXT_USER_MESSAGE` with non-empty `{TOPSAILAI_HOME}/USER.md` content and is injected once per agent instance.
 - `get_agent_chat()` — assembles complete chat session:
   - Initializes `ContextRuntimeData`, `ContextRuntimeAIAgent`, `ContextRuntimeInstructions`
   - Creates `HookInstruction` and loads plugin instructions
