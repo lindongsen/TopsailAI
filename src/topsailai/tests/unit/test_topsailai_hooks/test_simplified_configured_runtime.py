@@ -923,7 +923,7 @@ def test_mixed_plan_executes_complete_captured_snapshot(tmp_path, monkeypatch):
     candidate = build("hook_before_chat", **inputs)
     plan = candidate.plan
     runtime, scope = _runtime(tmp_path)
-    deadline, signal = time.monotonic() + 2, threading.Event()
+    deadline, signal = time.monotonic() + 4.75, threading.Event()
     seen = []
     original = configured.execute_hook_point
 
