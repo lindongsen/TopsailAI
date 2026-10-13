@@ -13,7 +13,6 @@ from pathlib import Path
 from unittest.mock import patch
 from typing import Any
 from tests.mock.llm_mock_server import MockServerConfig, create_server
-
 USER_MARKER = "BDD_PLAN_USER_MD_MARKER"
 EXPLICIT_MARKER = "BDD_PLAN_EXPLICIT_CONTEXT_MARKER"
 
@@ -23,12 +22,14 @@ _CHILD_SCRIPT = r'''
 import json
 import os
 import time
+import urllib.request
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
 from topsailai.context.agent_startup import AgentStartupState
 from topsailai.context import ctx_manager
+from topsailai.utils.env_tool import EnvReaderInstance
 from topsailai.workspace import agent_shell, folder_constants, llm_shell
 
 worker_threads = []
@@ -77,9 +78,12 @@ original_wait = AgentStartupState.wait
 original_mark_started = AgentStartupState.mark_started
 
 def wait(state, timeout=300.0):
-    if os.environ.get("BDD_INTEGRITY_SCENARIO") == "1":
-        return original_wait(state, timeout)
     barrier.write_text("entered", encoding="utf-8")
+    if os.environ.get("BDD_INTEGRITY_SCENARIO") == "1":
+        result = original_wait(state, timeout)
+        if result:
+            Path(os.environ["BDD_WAIT_RELEASED"]).write_text("released", encoding="utf-8")
+        return result
     result = original_wait(state, timeout)
     if result:
         Path(os.environ["BDD_WAIT_RELEASED"]).write_text("released", encoding="utf-8")
@@ -87,13 +91,16 @@ def wait(state, timeout=300.0):
 
 
 def mark_started(state):
-    if os.environ.get("BDD_INTEGRITY_SCENARIO") == "1":
-        return original_mark_started(state)
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and not barrier.exists():
-        time.sleep(0.01)
-    if not barrier.exists():
-        raise AssertionError("naming worker did not enter startup wait")
+    needs_barrier = (
+        os.environ.get("BDD_INTEGRITY_SCENARIO") != "1"
+        or os.environ.get("BDD_UNIT3_CASE") in {"naming_react", "naming_plan"}
+    )
+    if needs_barrier:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not barrier.exists():
+            time.sleep(0.01)
+        if not barrier.exists():
+            raise AssertionError("naming worker did not enter startup wait")
     started.write_text("started", encoding="utf-8")
     return original_mark_started(state)
 
@@ -108,6 +115,25 @@ def wait_for_barrier():
     if not barrier.exists():
         raise AssertionError("naming worker did not enter startup wait")
 
+
+def join_naming_workers():
+    """Wait for naming workers before exporting instruction observations."""
+    for worker in worker_threads:
+        target = getattr(worker, "_target", None)
+        if getattr(target, "__name__", "") == "write_second_message":
+            continue
+        worker.join(timeout=10)
+        if worker.is_alive():
+            raise AssertionError("naming worker did not finish before report capture")
+def persisted_snapshot():
+    """Read and deeply detach the authoritative persisted session messages."""
+    messages = ctx_manager.get_messages_by_session(os.environ["BDD_SESSION_ID"])
+    return json.loads(json.dumps(messages, ensure_ascii=False))
+
+def server_request_count():
+    """Read the real mock-server request count at the observation boundary."""
+    with urllib.request.urlopen(os.environ["BDD_SERVER_STATE_URL"], timeout=3) as response:
+        return int(json.load(response)["total_requests"])
 
 def capture_instruction(chat, command):
     """Dispatch one registered slash instruction and capture operator output."""
@@ -192,6 +218,7 @@ def run_multi_turn_integrity_scenario():
     snapshots = []
     chats = []
     pipe_writer = None
+    slice_state = {"before": None, "after": None, "request_before": None, "request_after": None}
 
     def make_chat(message):
         chat = agent_shell.get_agent_chat(
@@ -278,6 +305,127 @@ def run_multi_turn_integrity_scenario():
                 pass
 
 
+def run_unit3_scenario():
+    """Run Unit 3 instruction scenarios through the real AgentChat lifecycle."""
+    case = os.environ["BDD_UNIT3_CASE"]
+    agent_type = os.environ.get("BDD_AGENT_TYPE", "react")
+    snapshots = []
+    chats = []
+    pipe_writer = None
+    slice_state = {"before": None, "after": None, "request_before": None, "request_after": None}
+
+    def make_chat(message):
+        chat = agent_shell.get_agent_chat(
+            agent_type=agent_type, agent_role="manager",
+            session_id=os.environ["BDD_SESSION_ID"], message=message,
+            need_input_message=False, need_print_session=False,
+            need_set_agent_name_to_thread_local=False,
+            need_project_workspace_lock=False,
+        )
+        chats.append(chat)
+        return chat
+
+    def capture(checkpoint, chat, commands):
+        snapshots.append({
+            "checkpoint": checkpoint,
+            "items": [capture_instruction(chat, command) for command in commands],
+        })
+
+    def add_observer(chat):
+        turn = {"value": 0}
+
+        def before(_agent):
+            turn["value"] += 1
+            capture(f"A_pre{turn['value']}", chat, ("/agent.messages",))
+
+        def after(_agent):
+            current = turn["value"]
+            if case in {"naming_react", "naming_plan"} and current in {1, 2}:
+                join_naming_workers()
+            if case == "history_slice" and current == 2:
+                capture(f"A_post{current}", chat, ("/agent.messages",))
+                slice_state["before"] = persisted_snapshot()
+                slice_state["request_before"] = server_request_count()
+                capture("H_before_slice", chat, ("/ctx.history",))
+                capture("A_slice", chat, ("/ctx.history 1:3",))
+                capture("H_after_slice", chat, ("/ctx.history",))
+                slice_state["after"] = persisted_snapshot()
+                slice_state["request_after"] = server_request_count()
+                return
+            commands = ("/agent.messages", "/ctx.history") if case == "user_md_disabled" else ("/agent.messages",)
+            capture(f"A_post{current}", chat, commands)
+            if case != "user_md_disabled":
+                capture(f"H_post{current}", chat, ("/ctx.history",))
+
+        chat.ai_agent.hooks_after_new_session.append(before)
+        chat.hooks_post_succ_run.append(after)
+
+    def write_second_message(pipe_path):
+        deadline = time.monotonic() + 10
+        while not os.path.exists(pipe_path) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if not os.path.exists(pipe_path):
+            raise AssertionError(f"input pipe was not created: {pipe_path}")
+        with open(pipe_path, "w", encoding="utf-8") as pipe:
+            pipe.write("BDD_PLAN_TURN_TWO_TOKEN\\n")
+            pipe.flush()
+
+    try:
+        if case == "tool_prompt":
+            from topsailai.tools import cmd_tool
+            cmd_tool.PROMPT = cmd_tool.PROMPT + "\nTOOL_SYSTEM_TOKEN\n"
+        chat = make_chat("BDD_PLAN_TURN_ONE_TOKEN")
+        add_observer(chat)
+        from topsailai.workspace import input_tool
+        pipe_path = input_tool._build_pipe_path(os.environ["BDD_SESSION_ID"])
+        if case != "user_md_disabled":
+            pipe_writer = __import__("threading").Thread(
+                target=write_second_message, args=(pipe_path,), daemon=True
+            )
+            pipe_writer.start()
+        turn_count = 1 if case == "user_md_disabled" else 2
+        chat.run(message=chat.first_message, times=turn_count, need_interactive=False)
+        join_naming_workers()
+        session_data = ctx_manager.get_session_manager().get_session(os.environ["BDD_SESSION_ID"])
+        report = {
+            "case": case,
+            "agent_type": agent_type,
+            "session_name": getattr(session_data, "session_name", None),
+            "snapshots": snapshots,
+            "agent_identities": [id(item.ai_agent) for item in chats],
+            "keep_messages_across_turns": EnvReaderInstance.check_bool(
+                "TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS", default=False
+            ),
+            "user_open_count": int(opened_user_md.read_text(encoding="utf-8")),
+            "session_messages": list(chat.ctx_runtime_data.messages),
+            "startup_context_consumed": any(
+                "BDD_PLAN_EXPLICIT_CONTEXT_MARKER" in str(message.get("content", ""))
+                for message in chat.ai_agent.messages
+            ),
+            "context_user_message_after": os.environ.get("TOPSAILAI_CONTEXT_USER_MESSAGE", ""),
+            "session_before_slice": slice_state["before"],
+            "session_after_slice": slice_state["after"],
+            "request_count_before_slice": slice_state["request_before"],
+            "request_count_after_slice": slice_state["request_after"],
+            "handler_counts": {
+                command: len(chat.hook_instruction.hook_map.get(command, []))
+                for command in ("/agent.messages", "/ctx.history")
+            },
+        }
+        report_path = Path(os.environ["BDD_INTEGRITY_REPORT"])
+        temporary = report_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(report_path)
+    finally:
+        if pipe_writer is not None:
+            pipe_writer.join(timeout=5)
+        for item in chats:
+            try:
+                item.ai_agent.close()
+            except BaseException:
+                pass
+
+
 def run_turn(message, agent_type):
     chat = agent_shell.get_agent_chat(
         agent_type=agent_type,
@@ -296,7 +444,9 @@ def run_turn(message, agent_type):
 
 try:
     if os.environ.get("BDD_INTEGRITY_SCENARIO") == "1":
-        if os.environ.get("BDD_MULTI_TURN_SCENARIO") == "1":
+        if os.environ.get("BDD_UNIT3_CASE"):
+            run_unit3_scenario()
+        elif os.environ.get("BDD_MULTI_TURN_SCENARIO") == "1":
             run_multi_turn_integrity_scenario()
         else:
             run_integrity_scenario()
@@ -327,12 +477,13 @@ finally:
 class SessionNameStartupScenario:
     """Own the loopback server and execute the real factory in a child process."""
 
-    def __init__(self, monkeypatch: Any, tmp_path: Path, agent_type: str = "plan_and_execute", integrity: bool = False, multi_turn: bool = False, rebuild: bool = False) -> None:
+    def __init__(self, monkeypatch: Any, tmp_path: Path, agent_type: str = "plan_and_execute", integrity: bool = False, multi_turn: bool = False, rebuild: bool = False, unit3_case: str = "") -> None:
         """Create isolated startup files, database, and provider."""
         self.agent_type = agent_type
         self.integrity = integrity
         self.multi_turn = multi_turn
         self.rebuild = rebuild
+        self.unit3_case = unit3_case
         self.tmp_path = None
         self.server = None
         self.server_thread = None
@@ -348,15 +499,22 @@ class SessionNameStartupScenario:
             self.home = tmp_path / "home"
             self.home.mkdir(parents=True, exist_ok=True)
             (self.home / "USER.md").write_text(USER_MARKER, encoding="utf-8")
+            self.tool_prompt_file = tmp_path / "unit3-tool.md"
+            self.tool_prompt_file.write_text("TOOL_SYSTEM_TOKEN", encoding="utf-8")
             self.database = tmp_path / "sessions.sqlite"
             response_text = "BDD_PLAN_ANSWER_ONE_TOKEN" if integrity else "Plan complete"
             response = json.dumps([{"step_name": "final_answer", "raw_text": response_text}])
-            if integrity and getattr(self, "multi_turn", False):
+            if integrity and (getattr(self, "multi_turn", False) or unit3_case):
+                naming_response = json.dumps([{"step_name": "final_answer", "raw_text": "safe response"}])
                 first_response = json.dumps([{"step_name": "final_answer", "raw_text": "BDD_PLAN_ANSWER_ONE_TOKEN"}])
                 second_response = json.dumps([{"step_name": "final_answer", "raw_text": "BDD_PLAN_ANSWER_TWO_TOKEN"}])
+                if unit3_case in {"naming_react", "naming_plan"}:
+                    responses = (naming_response, naming_response, naming_response)
+                else:
+                    responses = (first_response, second_response)
                 config = MockServerConfig(
-                    port=0, reply=first_response,
-                    stream_response_chunks=((first_response,), (second_response,)),
+                    port=0, reply=responses[0],
+                    stream_response_chunks=tuple((item,) for item in responses),
                 )
             else:
                 config = MockServerConfig(port=0, reply=response, stream_chunks=(response,))
@@ -398,10 +556,12 @@ class SessionNameStartupScenario:
                 "OPENAI_MODEL": "topsailai-plan-startup",
                 "LLM_RESPONSE_STREAM": "1",
                 "TOPSAILAI_INTERACTIVE_MODE": "0",
-                "TOPSAILAI_AUTO_SESSION_NAME_ENABLED": "0" if integrity else "1",
+                "TOPSAILAI_AUTO_SESSION_NAME_ENABLED": "1" if (not integrity or unit3_case in {"naming_react", "naming_plan"}) else "0",
+                "TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED": "0" if unit3_case == "user_md_disabled" else "1",
                 "TOPSAILAI_USE_TOOL_CALLS": "0",
                 "TOPSAILAI_USE_TOOL_CALLS_MODEL_PREFIXES": "",
-                "TOPSAILAI_DISABLED_TOOLS": "*",
+                "TOPSAILAI_DISABLED_TOOLS": "" if unit3_case == "tool_prompt" else "*",
+                "TOPSAILAI_ENABLED_TOOLS": "cmd_tool" if unit3_case == "tool_prompt" else "",
                 "TOPSAILAI_DISABLED_SKILLS": "*",
                 "TOPSAILAI_ENABLE_SESSION_TEE_OUT": "0",
                 "TOPSAILAI_TERMINAL_TITLE_ENABLED": "0",
@@ -430,7 +590,9 @@ class SessionNameStartupScenario:
             "BDD_INTEGRITY_SCENARIO": "1" if self.integrity else "0",
             "BDD_MULTI_TURN_SCENARIO": "1" if self.multi_turn else "0",
             "BDD_REBUILD_AGENT": "1" if self.rebuild else "0",
+            "BDD_UNIT3_CASE": self.unit3_case,
             "BDD_INTEGRITY_REPORT": str(self.events_dir / "integrity-report.json"),
+            "BDD_SERVER_STATE_URL": f"http://127.0.0.1:{self.server.server_port}/debug/state",
         })
         self.process = subprocess.run(
             [sys.executable, "-c", _CHILD_SCRIPT],

@@ -244,6 +244,23 @@ def _assert_two_turn_report(scenario):
     assert "BDD_PLAN_ANSWER_TWO_TOKEN" not in json.dumps(wires[1], ensure_ascii=False)
 
 
+def _naming_manifest(turn, include_second=False):
+    """Build the exact two-turn manifest for automatic naming traffic."""
+    markers = [
+        "BDD_PLAN_EXPLICIT_CONTEXT_MARKER", "BDD_PLAN_USER_MD_MARKER",
+        "BDD_PLAN_TURN_ONE_TOKEN", "safe response",
+        "BDD_PLAN_TURN_TWO_TOKEN",
+    ]
+    entries = [
+        {"role": "user", "markers": markers[:2], "all_markers": markers},
+        {"role": "user", "markers": [markers[2]], "all_markers": markers},
+        {"role": "assistant", "markers": [markers[3]], "all_markers": markers},
+    ]
+    if include_second:
+        entries.append({"role": "user", "markers": [markers[4]], "all_markers": markers})
+    return entries
+
+
 def _multi_turn_manifest(turn, include_second=False):
     """Build the independent expected semantic conversation for a turn."""
     markers = [
@@ -262,3 +279,262 @@ def _multi_turn_manifest(turn, include_second=False):
             {"role": "assistant", "markers": [markers[5]], "all_markers": markers},
         ])
     return entries
+
+
+@pytest.fixture
+def naming_react_scenario(bdd_tmp_path: Path, monkeypatch):
+    """Create the React automatic-naming integrity scenario."""
+    scenario = SessionNameStartupScenario(monkeypatch, bdd_tmp_path, agent_type="react", integrity=True, multi_turn=True, unit3_case="naming_react")
+    try:
+        yield scenario
+    finally:
+        scenario.close()
+
+
+@pytest.fixture
+def naming_plan_scenario(bdd_tmp_path: Path, monkeypatch):
+    """Create the plan automatic-naming integrity scenario."""
+    scenario = SessionNameStartupScenario(monkeypatch, bdd_tmp_path, agent_type="plan_and_execute", integrity=True, multi_turn=True, unit3_case="naming_plan")
+    try:
+        yield scenario
+    finally:
+        scenario.close()
+
+
+@given("a fresh react Agent integrity naming scenario", target_fixture="unit3_active")
+def given_unit3_react_naming(naming_react_scenario):
+    """Provide the React naming-mode integrity scenario."""
+    return naming_react_scenario
+
+
+@given("a fresh plan Agent integrity naming scenario", target_fixture="unit3_active")
+def given_unit3_plan_naming(naming_plan_scenario):
+    """Provide the plan naming-mode integrity scenario."""
+    return naming_plan_scenario
+
+
+@when("the Agent completes the naming scenario turns")
+def when_unit3_naming(unit3_active):
+    """Run the naming scenario through the real child Agent."""
+    unit3_active.run()
+
+
+@then("naming traffic is isolated and business messages remain ordered")
+def then_unit3_naming(unit3_active):
+    """Check disjoint naming traffic and ordered business request manifests."""
+    state = unit3_active.state()
+    classified = []
+    for record in state["request_bodies"]:
+        text = json.dumps(record["body"], ensure_ascii=False)
+        is_naming = "naming assistant" in text.lower()
+        is_business = (
+            "BDD_PLAN_EXPLICIT_CONTEXT_MARKER" in text
+            and ("BDD_PLAN_TURN_ONE_TOKEN" in text or "BDD_PLAN_TURN_TWO_TOKEN" in text)
+        )
+        assert is_naming != is_business, f"mixed or unknown request: {text}"
+        classified.append((record, "naming" if is_naming else "business"))
+    naming = [record for record, kind in classified if kind == "naming"]
+    business = [record for record, kind in classified if kind == "business"]
+    assert len(naming) == 1
+    assert len(business) == 2
+    assert all(record["parsed"] for record in state["request_bodies"])
+    assert state["total_requests"] == 3
+    assert state["dropped_request_body_count"] == 0
+    naming_text = json.dumps(naming[0]["body"], ensure_ascii=False)
+    assert "BDD_PLAN_EXPLICIT_CONTEXT_MARKER" not in naming_text
+    assert "BDD_PLAN_USER_MD_MARKER" not in naming_text
+    assert "BDD_PLAN_SESSION_NAME" not in naming_text
+    ordered_business = sorted(
+        business, key=lambda item: "BDD_PLAN_TURN_TWO_TOKEN" in json.dumps(item["body"], ensure_ascii=False)
+    )
+    naming_markers = [
+        "BDD_PLAN_EXPLICIT_CONTEXT_MARKER", "BDD_PLAN_USER_MD_MARKER",
+        "BDD_PLAN_TURN_ONE_TOKEN", "BDD_PLAN_TURN_TWO_TOKEN",
+        "safe response",
+    ]
+    assert_message_manifest(
+        [m for m in ordered_business[0]["body"]["messages"] if m.get("role") != "system"],
+        [
+            {"role": "user", "markers": naming_markers[:2], "all_markers": naming_markers},
+            {"role": "user", "markers": [naming_markers[2]], "all_markers": naming_markers},
+        ],
+    )
+    assert_message_manifest(
+        [m for m in ordered_business[1]["body"]["messages"] if m.get("role") != "system"],
+        [
+            {"role": "user", "markers": naming_markers[:2], "all_markers": naming_markers},
+            {"role": "user", "markers": [naming_markers[2]], "all_markers": naming_markers},
+            {"role": "assistant", "markers": [naming_markers[4]], "all_markers": naming_markers},
+            {"role": "user", "markers": [naming_markers[3]], "all_markers": naming_markers},
+        ],
+    )
+    report = unit3_active.integrity_report()
+    expected = {
+        "A_pre1": _naming_manifest(1)[:-1],
+        "A_post1": _naming_manifest(1),
+        "H_post1": _naming_manifest(1),
+        "A_pre2": _naming_manifest(2, include_second=True),
+        "A_post2": _naming_manifest(2, include_second=True) + [{"role": "assistant", "markers": ["safe response"], "all_markers": ["BDD_PLAN_EXPLICIT_CONTEXT_MARKER", "BDD_PLAN_USER_MD_MARKER", "BDD_PLAN_TURN_ONE_TOKEN", "safe response", "BDD_PLAN_TURN_TWO_TOKEN"]}],
+        "H_post2": _naming_manifest(2, include_second=True) + [{"role": "assistant", "markers": ["safe response"], "all_markers": ["BDD_PLAN_EXPLICIT_CONTEXT_MARKER", "BDD_PLAN_USER_MD_MARKER", "BDD_PLAN_TURN_ONE_TOKEN", "safe response", "BDD_PLAN_TURN_TWO_TOKEN"]}],
+    }
+    for checkpoint, manifest in expected.items():
+        messages = _by_command(_items(report, checkpoint))
+        command = "/agent.messages" if checkpoint.startswith("A_") else "/ctx.history"
+        if command == "/agent.messages":
+            observed = [message for message in parse_agent_messages(messages[command]["stdout"]) if message.get("role") != "system"]
+        else:
+            observed = [{"role": role, "content": content} for role, content in parse_history_roles_and_content(messages[command]["stdout"])]
+        assert_message_manifest(observed, manifest)
+    persisted = json.dumps(report["session_messages"], ensure_ascii=False)
+    assert "Generate a concise session name" not in persisted
+    assert "BDD_PLAN_SESSION_NAME" not in persisted
+    assert report["session_name"]
+    assert "Generate a concise session name" not in report["session_name"]
+    assert report["user_open_count"] == 1
+    assert unit3_active.wait_entered.exists()
+    assert unit3_active.started.exists()
+    assert unit3_active.wait_released.exists()
+    assert not unit3_active.process.stderr
+
+
+@pytest.fixture
+def unit3_disabled_scenario(bdd_tmp_path: Path, monkeypatch):
+    """Create the disabled USER.md scenario."""
+    scenario = SessionNameStartupScenario(monkeypatch, bdd_tmp_path, agent_type="react", integrity=True, multi_turn=False, unit3_case="user_md_disabled")
+    try:
+        yield scenario
+    finally:
+        scenario.close()
+
+
+@given("a fresh disabled USER.md Agent integrity scenario", target_fixture="unit3_disabled")
+def given_unit3_disabled(unit3_disabled_scenario):
+    """Provide the disabled USER.md scenario."""
+    return unit3_disabled_scenario
+
+
+@when("the Agent completes the disabled USER.md turn")
+def when_unit3_disabled(unit3_disabled):
+    """Run the disabled USER.md turn."""
+    unit3_disabled.run()
+
+
+@then("explicit startup context remains and USER.md is absent")
+def then_unit3_disabled(unit3_disabled):
+    """Assert explicit context survives while USER.md is absent."""
+    report = unit3_disabled.integrity_report()
+    assert report["user_open_count"] == 0
+    assert report["startup_context_consumed"] is True
+    assert report["context_user_message_after"] == ""
+    assert report["handler_counts"] == {"/agent.messages": 1, "/ctx.history": 1}
+    state = unit3_disabled.state()
+    assert state["total_requests"] == 1
+    assert len(state["request_bodies"]) == 1
+    wire = state["request_bodies"][0]["body"]["messages"]
+    assert_message_manifest([message for message in wire if message.get("role") != "system"], [
+        {"role": "user", "markers": ["BDD_PLAN_EXPLICIT_CONTEXT_MARKER"], "all_markers": ["BDD_PLAN_EXPLICIT_CONTEXT_MARKER", "BDD_PLAN_USER_MD_MARKER", "BDD_PLAN_TURN_ONE_TOKEN"]},
+        {"role": "user", "markers": ["BDD_PLAN_TURN_ONE_TOKEN"], "all_markers": ["BDD_PLAN_EXPLICIT_CONTEXT_MARKER", "BDD_PLAN_USER_MD_MARKER", "BDD_PLAN_TURN_ONE_TOKEN"]},
+    ])
+    disabled_manifest = [
+        {"role": "user", "markers": ["BDD_PLAN_EXPLICIT_CONTEXT_MARKER"], "all_markers": ["BDD_PLAN_EXPLICIT_CONTEXT_MARKER", "BDD_PLAN_USER_MD_MARKER", "BDD_PLAN_TURN_ONE_TOKEN", "BDD_PLAN_ANSWER_ONE_TOKEN"]},
+        {"role": "user", "markers": ["BDD_PLAN_TURN_ONE_TOKEN"], "all_markers": ["BDD_PLAN_EXPLICIT_CONTEXT_MARKER", "BDD_PLAN_USER_MD_MARKER", "BDD_PLAN_TURN_ONE_TOKEN", "BDD_PLAN_ANSWER_ONE_TOKEN"]},
+    ]
+    for checkpoint in ("A_pre1", "A_post1"):
+        messages = _by_command(_items(report, checkpoint))
+        runtime = [m for m in parse_agent_messages(messages["/agent.messages"]["stdout"]) if m.get("role") != "system"]
+        assert_message_manifest(runtime, disabled_manifest if checkpoint == "A_pre1" else disabled_manifest + [{"role": "assistant", "markers": ["BDD_PLAN_ANSWER_ONE_TOKEN"], "all_markers": disabled_manifest[0]["all_markers"]}])
+        for item in messages.values():
+            assert "BDD_PLAN_USER_MD_MARKER" not in item["stdout"]
+    history = parse_history_roles_and_content(_by_command(_items(report, "A_post1"))["/ctx.history"]["stdout"])
+    assert_message_manifest([{"role": role, "content": content} for role, content in history], disabled_manifest + [{"role": "assistant", "markers": ["BDD_PLAN_ANSWER_ONE_TOKEN"], "all_markers": disabled_manifest[0]["all_markers"]}])
+    assert "BDD_PLAN_EXPLICIT_CONTEXT_MARKER" in unit3_disabled.request_texts()[0]
+    assert "BDD_PLAN_USER_MD_MARKER" not in unit3_disabled.request_texts()[0]
+
+
+@pytest.fixture
+def unit3_tool_scenario(bdd_tmp_path: Path, monkeypatch):
+    """Create the tool-prompt replay scenario."""
+    scenario = SessionNameStartupScenario(monkeypatch, bdd_tmp_path, agent_type="react", integrity=True, multi_turn=True, unit3_case="tool_prompt")
+    try:
+        yield scenario
+    finally:
+        scenario.close()
+
+
+@given("a fresh tool-prompt Agent integrity scenario", target_fixture="unit3_tool")
+def given_unit3_tool(unit3_tool_scenario):
+    """Provide the tool-prompt replay scenario."""
+    return unit3_tool_scenario
+
+
+@when("the Agent completes the tool-prompt turns")
+def when_unit3_tool(unit3_tool):
+    """Run two turns with the real tool prompt path."""
+    unit3_tool.run()
+
+
+@then("the tool marker remains system-only and is not persisted")
+def then_unit3_tool(unit3_tool):
+    """Assert tool prompt cardinality and role at runtime and wire boundaries."""
+    report = unit3_tool.integrity_report()
+    for snapshot in report["snapshots"]:
+        for item in snapshot["items"]:
+            if item["command"] != "/agent.messages":
+                continue
+            messages = parse_agent_messages(item["stdout"])
+            assert sum(str(message.get("content", "")).count("TOOL_SYSTEM_TOKEN") for message in messages) == 1
+            assert all("TOOL_SYSTEM_TOKEN" not in str(message.get("content", "")) for message in messages if message.get("role") != "system")
+    for record in unit3_tool.state()["request_bodies"]:
+        messages = record["body"]["messages"]
+        assert sum(str(message.get("content", "")).count("TOOL_SYSTEM_TOKEN") for message in messages) == 1
+        assert all("TOOL_SYSTEM_TOKEN" not in str(message.get("content", "")) for message in messages if message.get("role") != "system")
+    assert all("TOOL_SYSTEM_TOKEN" not in str(message.get("content", "")) for message in report["session_messages"])
+    tool_state = unit3_tool.state()
+    assert tool_state["total_requests"] == 2
+    assert tool_state["dropped_request_body_count"] == 0
+    assert len(tool_state["request_bodies"]) == 2
+    assert all(record["parsed"] for record in tool_state["request_bodies"])
+    for checkpoint in ("A_pre1", "A_post1", "A_pre2", "A_post2"):
+        assert len([item for item in report["snapshots"] if item["checkpoint"] == checkpoint]) == 1
+    _assert_two_turn_report(unit3_tool)
+
+
+@pytest.fixture
+def unit3_history_scenario(bdd_tmp_path: Path, monkeypatch):
+    """Create the history-slice scenario."""
+    scenario = SessionNameStartupScenario(monkeypatch, bdd_tmp_path, agent_type="react", integrity=True, multi_turn=True, unit3_case="history_slice")
+    try:
+        yield scenario
+    finally:
+        scenario.close()
+
+
+@given("a fresh history-slice Agent integrity scenario", target_fixture="unit3_history")
+def given_unit3_history(unit3_history_scenario):
+    """Provide the history slice scenario."""
+    return unit3_history_scenario
+
+
+@when("the Agent completes the history-slice turns")
+def when_unit3_history(unit3_history):
+    """Run the turns and real history instructions."""
+    unit3_history.run()
+
+
+@then("the history slice matches positions one through three without mutation")
+def then_unit3_history(unit3_history):
+    """Assert the slice is exact and inspection leaves state unchanged."""
+    report = unit3_history.integrity_report()
+    before = _by_command(_items(report, "H_before_slice"))["/ctx.history"]
+    after = _by_command(_items(report, "H_after_slice"))["/ctx.history"]
+    slice_item = _by_command(_items(report, "A_slice"))["/ctx.history 1:3"]
+    full = parse_history_roles_and_content(before["stdout"])
+    sliced = parse_history_roles_and_content(slice_item["stdout"])
+    assert [(role, content.rstrip("\n=" ).rstrip()) for role, content in sliced] == [
+        (role, content.rstrip("\n=" ).rstrip()) for role, content in full[1:3]
+    ]
+    assert after["stdout"] == before["stdout"]
+    assert _semantic_messages(report["session_before_slice"]) == _semantic_messages(report["session_after_slice"])
+    assert report["request_count_before_slice"] == report["request_count_after_slice"]
+    assert report["request_count_before_slice"] == 2
+    assert [index for index, _ in enumerate(sliced, 1)] == [1, 2]
