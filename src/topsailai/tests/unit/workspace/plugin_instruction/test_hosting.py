@@ -2,7 +2,9 @@
 
 from contextlib import contextmanager
 from types import SimpleNamespace
+import gc
 import threading
+import weakref
 from unittest.mock import Mock
 
 import pytest
@@ -194,6 +196,7 @@ def test_cleanup_failure_retains_debt(caplog):
         controller.close()
     assert caught.value is error
     assert controller._launch.cleanup_failed
+    assert controller._exit_registered
     assert "supervision failed" in caplog.text
     controller._close_at_exit()
     module.atexit.unregister(controller._close_at_exit)
@@ -425,3 +428,84 @@ def test_thread_construction_failure_is_settled(monkeypatch):
     controller.close()
     assert not controller._exit_registered
     launcher.assert_not_called()
+
+
+def test_completed_controllers_release_real_exit_callbacks():
+    """Repeated completed instances become collectible without explicit close."""
+    references = []
+
+    @contextmanager
+    def launcher(path, args):
+        """Return an already completed child with successful context cleanup."""
+        child = Child()
+        child.returncode = 0
+        yield child
+
+    for _ in range(3):
+        controller = HostingController(launcher=launcher)
+        controller.start("session")
+        launch = controller._launch
+        assert launch.done.wait(2)
+        launch.thread.join(2)
+        assert not launch.thread.is_alive()
+        assert not controller._exit_registered
+        references.append(weakref.ref(controller))
+        del controller, launch
+    gc.collect()
+    assert all(reference() is None for reference in references)
+
+
+def test_completion_publication_serializes_restart(launched, monkeypatch):
+    """Old completion cannot retire a concurrently started launch's fallback."""
+    controller, child, calls, exited = launched
+    controller.start("first")
+    old = controller._launch
+    published = threading.Event()
+    release = threading.Event()
+    attempting = threading.Event()
+    restarted = threading.Event()
+    errors = []
+    original_set = old.done.set
+
+    def publish():
+        """Pause after done publication while settlement still owns the lock."""
+        original_set()
+        published.set()
+        assert release.wait(2)
+
+    def restart():
+        """Attempt a second launch at the old completion publication boundary."""
+        attempting.set()
+        try:
+            controller.start("second")
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            restarted.set()
+
+    monkeypatch.setattr(old.done, "set", publish)
+    child.returncode = 0
+    worker = threading.Thread(target=restart)
+    try:
+        assert published.wait(2)
+        assert not controller._exit_registered
+        child.returncode = None
+        worker.start()
+        assert attempting.wait(2)
+        assert not restarted.is_set()
+        assert controller._launch is old
+        release.set()
+        assert restarted.wait(2)
+        worker.join(2)
+        old.thread.join(2)
+        assert not worker.is_alive() and not old.thread.is_alive()
+        assert not errors
+        assert controller._launch is not old
+        assert not controller._launch.done.is_set()
+        assert controller._exit_registered
+        assert len(calls) == 2
+    finally:
+        release.set()
+        if worker.ident is not None:
+            worker.join(2)
+        controller.close()

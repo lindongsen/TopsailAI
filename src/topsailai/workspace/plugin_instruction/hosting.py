@@ -63,6 +63,7 @@ class HostingController:
                     # Construction never called start, so no native worker exists.
                     launch.stop.set()
                     launch.ready.set()
+                    self._release_exit_callback(launch)
                     launch.done.set()
                     raise
                 try:
@@ -120,7 +121,15 @@ class HostingController:
                              launch.session_id, getattr(launch.process, "pid", None))
         finally:
             launch.ready.set()
-            launch.done.set()
+            with self._lock:
+                self._release_exit_callback(launch)
+                launch.done.set()
+
+    def _release_exit_callback(self, launch):
+        """Retire exact settled ownership while the controller lock is held."""
+        if self._launch is launch and not launch.cleanup_failed and self._exit_registered:
+            atexit.unregister(self._close_at_exit)
+            self._exit_registered = False
 
     def _join(self, launch):
         """Wait for completion even if the caller is interrupted during joining."""
@@ -152,9 +161,9 @@ class HostingController:
             self._join(launch)
             if launch.cleanup_failed:
                 raise launch.error
-        if self._exit_registered:
-            atexit.unregister(self._close_at_exit)
-            self._exit_registered = False
+        with self._lock:
+            if launch is not None:
+                self._release_exit_callback(launch)
 
     def _close_at_exit(self):
         """Provide best-effort hosting cleanup when the agent process exits."""
