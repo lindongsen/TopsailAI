@@ -284,7 +284,7 @@ def print_table(files: List[dict]) -> None:
         f"{Colors.GREEN}● Running{Colors.RESET}  "
         f"{Colors.GRAY}○ Idle{Colors.RESET}  "
         f"{Colors.YELLOW}● Inputting{Colors.RESET}  "
-        f"{Colors.DIM}(Total: {len(files)} files){Colors.RESET}"
+        f"{Colors.DIM}(Total: {len(files)}){Colors.RESET}"
     )
 
 

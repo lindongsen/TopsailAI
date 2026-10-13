@@ -54,6 +54,24 @@ class TestPrintHelpers(unittest.TestCase):
         output = format_file_table([])
         self.assertIn("No log files", output)
 
+    def test_workspace_total_footer_has_numeric_count_only(self):
+        """Preserve the footer legend while omitting the count unit."""
+        for count in (1, 2):
+            with self.subTest(count=count):
+                files = [
+                    {"session_id": f"session-{index}", "ctime": 1700000000.0}
+                    for index in range(count)
+                ]
+                footer = format_file_table(files).splitlines()[-1]
+                self.assertEqual(
+                    footer,
+                    f"{Colors.GREEN}● Running{Colors.RESET}  "
+                    f"{Colors.GRAY}○ Idle{Colors.RESET}  "
+                    f"{Colors.YELLOW}● Inputting{Colors.RESET}  "
+                    f"{Colors.DIM}(Total: {count}){Colors.RESET}",
+                )
+                self.assertNotIn("files", footer)
+
     def test_format_command_table(self):
         commands = [
             {"cmd": "/help", "desc": "Show help"},
