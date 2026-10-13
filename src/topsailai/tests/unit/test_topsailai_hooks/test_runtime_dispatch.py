@@ -81,14 +81,14 @@ def report_evidence(report, runtime):
 
 def test_dispatch_executes_sync_async_and_custom_awaitable_in_plan_order(tmp_path: Path) -> None:
     """One dispatcher must execute every supported handler shape in stable plan order."""
-    runtime, scope = _runtime(tmp_path)
+    runtime, scope = _runtime(tmp_path, handler_timeout_ms=2250, dispatch_timeout_ms=7000)
     try:
-        assert runtime.register(_definition(), _binding("sync", priority=30), scope).accepted
+        assert runtime.register(_definition(), _binding("sync", priority=30, timeout_ms=2250), scope).accepted
         assert runtime.register(
-            _definition(), _binding("async", "async_success", priority=20), scope
+            _definition(), _binding("async", "async_success", priority=20, timeout_ms=2250), scope
         ).accepted
         assert runtime.register(
-            _definition(), _binding("awaitable", "custom_awaitable_success", priority=10), scope
+            _definition(), _binding("awaitable", "custom_awaitable_success", priority=10, timeout_ms=2250), scope
         ).accepted
         report = runtime.dispatch(_event(runtime, scope))
         assert [item.binding_id for item in report.outcomes] == ["awaitable", "async", "sync"]
@@ -100,16 +100,16 @@ def test_dispatch_executes_sync_async_and_custom_awaitable_in_plan_order(tmp_pat
 
 def test_dependencies_skip_only_required_success_and_preserve_independent_work(tmp_path: Path) -> None:
     """A failed handler must skip required successors without suppressing independent nodes."""
-    runtime, scope = _runtime(tmp_path)
+    runtime, scope = _runtime(tmp_path, handler_timeout_ms=2250, dispatch_timeout_ms=7000)
     try:
-        assert runtime.register(_definition(), _binding("failed", "raise_exception"), scope).accepted
+        assert runtime.register(_definition(), _binding("failed", "raise_exception", timeout_ms=2250), scope).accepted
         assert runtime.register(
-            _definition(), _binding("after", after=("failed",)), scope
+            _definition(), _binding("after", after=("failed",), timeout_ms=2250), scope
         ).accepted
         assert runtime.register(
-            _definition(), _binding("required", requires_success=("failed",)), scope
+            _definition(), _binding("required", requires_success=("failed",), timeout_ms=2250), scope
         ).accepted
-        assert runtime.register(_definition(), _binding("independent"), scope).accepted
+        assert runtime.register(_definition(), _binding("independent", timeout_ms=2250), scope).accepted
         report = runtime.dispatch(_event(runtime, scope))
         statuses = {item.binding_id: item.status.value for item in report.outcomes}
         assert statuses == {

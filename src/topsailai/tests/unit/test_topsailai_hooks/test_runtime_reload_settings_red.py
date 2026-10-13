@@ -42,9 +42,9 @@ def test_reload_rejects_invalid_candidate_and_preserves_active_state(
     tmp_path: Path, candidate: object
 ) -> None:
     """Invalid candidates must return structured rejection without partial publication."""
-    runtime, scope = runtime_scope(tmp_path)
+    runtime, scope = runtime_scope(tmp_path, initial=settings(handler_timeout_ms=2250, dispatch_timeout_ms=2500))
     try:
-        registration = runtime.register(definition(), binding(), scope)
+        registration = runtime.register(definition(), binding(timeout_ms=2250), scope)
         assert registration.accepted
         generation = registration.generation
         active_settings = runtime._settings

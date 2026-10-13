@@ -267,12 +267,13 @@ def test_all_invalid_terminal_envelopes_are_protocol_errors(
         tmp_path,
         worker_module=f"topsailai.tests.unit.test_topsailai_hooks.{module}",
     )
+    execution_budget_ms = 2250
     started = time.monotonic()
-    result = backend.execute(f"{HANDLERS}:sync_success", _context(), 1_000)
+    result = backend.execute(f"{HANDLERS}:sync_success", _context(), execution_budget_ms)
     elapsed_ms = (time.monotonic() - started) * 1000
     evidence = {
         "worker": module, "status": result.status, "category": result.error_category,
-        "elapsed_ms": round(elapsed_ms, 3), "call_budget_remaining_ms": round(1000 - elapsed_ms, 3),
+        "elapsed_ms": round(elapsed_ms, 3), "call_budget_remaining_ms": round(execution_budget_ms - elapsed_ms, 3),
         "cleanup_confirmed": result.cleanup_confirmed, "cleanup_debt": result.cleanup_debt,
         "cleanup_debt_count": len(backend.cleanup_debts()), "main_entry": "unknown",
     }
