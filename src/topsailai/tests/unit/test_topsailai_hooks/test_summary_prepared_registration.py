@@ -105,6 +105,7 @@ def test_adoption_is_one_shot(secure_test_root):
 def test_real_module_then_script_dispatch(secure_test_root, monkeypatch):
     """Execute captured modules before the terminal script with unchanged identity."""
     import sys
+    from topsailai.hooks.configuration import HookLimits
     from topsailai.hooks.configured_contracts import ConfiguredScript
     from topsailai.hooks.configured_executor import ConfiguredHookExecutor, HookOperation
     from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
@@ -125,7 +126,8 @@ def test_real_module_then_script_dispatch(secure_test_root, monkeypatch):
         "body = json.dumps(result).encode()\n"
         "os.write(int(os.environ['TOPSAILAI_HOOK_RESULT_FD']), struct.pack('!I', len(body)) + body)\n")
     script.chmod(0o700)
-    runtime, scope = _runtime(sources, root)
+    runtime, scope = _runtime(sources, root,
+        settings=HookSettings(limits=HookLimits(dispatch_timeout_ms=4750)))
     trust = runtime._configured_trust
     runtime._configured_trust = ConfiguredTrustPolicy(trust.source_roots,
         allowed_interpreters=(executable,),
