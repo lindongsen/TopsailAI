@@ -146,8 +146,9 @@ def print_help(
             "cmd": "/driver <number>",
             "desc": (
                 "Start a session driver for an unambiguous RUN/INPUT session in the ordinary workspace task list only."
-                + (" Driver: - no record/ineligible; :) ON verified; :( STALE absent process; "
-                   "x( EXIT/FAIL residual terminal record; ? unverified"
+                + (" Driver: - no record/ineligible; numeric PID means ON with a verified driver; "
+                   "same-session rows share that display, but may remain ineligible for driver operations; "
+                   ":( STALE absent process; x( EXIT/FAIL residual terminal record; ? unverified"
                    if current_scope == "workspace" else "")
             ),
             "example": "Example: /driver 3",

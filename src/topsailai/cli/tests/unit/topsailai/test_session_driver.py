@@ -226,7 +226,7 @@ def test_workspace_snapshot_table_json_parity(tmp_path, monkeypatch, state, caps
     fmt.print_table([row])
     lines = capsys.readouterr().out.splitlines()
     assert [cell.strip() for cell in lines[0].split("|")][4:6] == ["Status", "Driver"]
-    display = {"ON": ":)", "STALE": ":(", "EXIT": "x(", "FAIL": "x("}.get(state, state)
+    display = {"ON": "123", "STALE": ":(", "EXIT": "x(", "FAIL": "x("}.get(state, state)
     assert [cell.strip() for cell in lines[2].split("|")][4:6] == ["INPUT", display]
     item = _workspace_json_item(row, 1)
     assert item["status"] == "input" and item["pid"] == 456
@@ -251,10 +251,36 @@ def test_workspace_ineligible_rows(tmp_path, monkeypatch, changes):
     row.update(changes)
     monkeypatch.setattr(fmt, "os", SimpleNamespace(kill=lambda *_: None))
     monkeypatch.setattr(fmt, "is_session_pipe_open", lambda _: False)
-    monkeypatch.setattr(sd, "observe_driver", lambda *_: pytest.fail("ineligible observed"))
+    calls = []
+    monkeypatch.setattr(sd, "observe_driver",
+                        lambda *args: calls.append(args)
+                        or sd.DriverObservation("-", "metadata_missing"))
     fmt.enrich_workspace_rows([row], str(tmp_path))
     assert row["driver_observation"] is None
+    if row.get("session_id") in ("topsailai", "(temp)", None, "a/b"):
+        assert row["driver_display_observation"] is None
+        assert calls == []
+    else:
+        assert row["driver_display_observation"].state == "-"
+        assert len(calls) == 1
     assert _workspace_json_item(row, 1)["driver"] is None
+
+
+@pytest.mark.parametrize("session_id", [["team"], {"name": "team"}],
+                         ids=["list", "dict"])
+def test_workspace_invalid_session_id_is_not_probed(tmp_path, monkeypatch, session_id):
+    """Unhashable session identifiers remain inert and never probe a driver."""
+    from cli_topsailai import formatting as fmt
+
+    row = dict(filename="invalid.123.session.stdout", session_id=session_id,
+               pid=123, session_pid=123, ctime=1)
+    monkeypatch.setattr(fmt, "os", SimpleNamespace(kill=lambda *_: None))
+    monkeypatch.setattr(fmt, "is_session_pipe_open", lambda _: False)
+    monkeypatch.setattr(sd, "observe_driver",
+                        lambda *_: pytest.fail("invalid session ID was probed"))
+    fmt.enrich_workspace_rows([row], str(tmp_path))
+    assert row["driver_observation"] is None
+    assert row["driver_display_observation"] is None
 
 
 @pytest.mark.parametrize("legacy", [False, True])
@@ -268,9 +294,10 @@ def test_workspace_ambiguous_live_identity(tmp_path, monkeypatch, legacy):
         rows[1]["filename"] = "team.2.stdout"
     monkeypatch.setattr(fmt, "os", SimpleNamespace(kill=lambda *_: None))
     monkeypatch.setattr(fmt, "is_session_pipe_open", lambda _: False)
-    monkeypatch.setattr(sd, "observe_driver", lambda *_: pytest.fail("ambiguous observed"))
+    monkeypatch.setattr(sd, "observe_driver", lambda *_: sd.DriverObservation("-", "metadata_missing"))
     fmt.enrich_workspace_rows(rows, str(tmp_path))
     assert all(row["driver_observation"] is None for row in rows)
+    assert all(row["driver_display_observation"].state == "-" for row in rows)
     assert [row["ctime"] for row in rows] == [1, 2]
 
 
@@ -296,20 +323,67 @@ def test_workspace_refresh_read_only(record, monkeypatch):
 
 
 def test_workspace_duplicate_rows_share_snapshot(tmp_path, monkeypatch):
-    """Repeated rows for one PID share a single observation, preserving order."""
+    """All rows for one session share one display snapshot, despite row identity."""
     from cli_topsailai import formatting as fmt
 
-    rows = [dict(filename="team.456.session.stdout", session_id="team",
-                 pid=456, session_pid=456, ctime=n) for n in (1, 2)]
+    rows = [
+        dict(filename="team.456.session.stdout", session_id="team",
+             pid=456, session_pid=456, ctime=1),
+        dict(filename="team.789.session.stdout", session_id="team",
+             pid=789, session_pid=789, ctime=2),
+        dict(filename="team.999.task.stdout", session_id="team",
+             pid=999, session_pid=999, is_task=True, ctime=3),
+        dict(filename="team.stderr", session_id="team",
+             pid=1000, session_pid=1000, ctime=4),
+        dict(filename="team.1001.session.stdout", session_id="team",
+             pid=1001, session_pid=1001, ctime=5),
+    ]
     calls = []
+    observation = sd.DriverObservation(
+        "ON", "verified", sd.DriverMetadata(1, "team", 987654321,
+                                               "a" * 32, "running"))
+
+    def kill(pid, signal):
+        if pid == 1001:
+            raise ProcessLookupError()
+
+    monkeypatch.setattr(fmt, "os", SimpleNamespace(kill=kill))
+    monkeypatch.setattr(fmt, "is_session_pipe_open", lambda _: False)
+    monkeypatch.setattr(sd, "observe_driver", lambda *args: calls.append(args) or observation)
+    fmt.enrich_workspace_rows(rows, str(tmp_path))
+
+    assert len(calls) == 1
+    assert all(row["driver_display_observation"] is observation for row in rows)
+    assert all(row["driver_display_observation"].driver_pid == 987654321 for row in rows)
+    assert all(row["driver_observation"] is None for row in rows)
+    assert [row["ctime"] for row in rows] == [1, 2, 3, 4, 5]
+
+
+def test_workspace_refresh_clears_previous_driver_pid(tmp_path, monkeypatch):
+    """A later stale or missing observation cannot retain the previous ON PID."""
+    from cli_topsailai import formatting as fmt
+
+    row = dict(filename="team.456.session.stdout", session_id="team",
+               pid=456, session_pid=456, ctime=1)
+    observations = iter([
+        sd.DriverObservation("ON", "verified",
+                             sd.DriverMetadata(1, "team", 321, "a" * 32, "running")),
+        sd.DriverObservation("STALE", "process_absent",
+                             sd.DriverMetadata(1, "team", 321, "a" * 32, "running")),
+        sd.DriverObservation("-", "metadata_missing"),
+    ])
     monkeypatch.setattr(fmt, "os", SimpleNamespace(kill=lambda *_: None))
     monkeypatch.setattr(fmt, "is_session_pipe_open", lambda _: False)
-    monkeypatch.setattr(sd, "observe_driver", lambda *args: calls.append(args)
-                        or sd.DriverObservation("-", "metadata_missing"))
-    fmt.enrich_workspace_rows(rows, str(tmp_path))
-    assert len(calls) == 1
-    assert rows[0]["driver_observation"] is rows[1]["driver_observation"]
-    assert [row["ctime"] for row in rows] == [1, 2]
+    monkeypatch.setattr(sd, "observe_driver", lambda *_: next(observations))
+
+    fmt.enrich_workspace_rows([row], str(tmp_path))
+    assert row["driver_display_observation"].driver_pid == 321
+    fmt.enrich_workspace_rows([row], str(tmp_path))
+    assert row["driver_display_observation"].state == "STALE"
+    assert row["driver_display_observation"].driver_pid == 321
+    fmt.enrich_workspace_rows([row], str(tmp_path))
+    assert row["driver_display_observation"].state == "-"
+    assert row["driver_display_observation"].driver_pid is None
 
 
 def test_workspace_dead_session_retains_driver_snapshot(tmp_path, monkeypatch):
@@ -347,12 +421,13 @@ def test_workspace_invalid_raw_pid_read_only(record, monkeypatch, capsys, pid):
     monkeypatch.setattr(fmt, "is_session_pipe_open",
                         lambda _: pytest.fail("invalid PID pipe probed"))
     monkeypatch.setattr(sd, "observe_driver",
-                        lambda *_: pytest.fail("invalid PID driver observed"))
+                        lambda *_: sd.DriverObservation("-", "metadata_missing"))
     fmt.enrich_workspace_rows([row], str(home))
     assert row["pid"] is pid
     assert row["workspace_pid"] is None
     assert row["workspace_status"] == "idle"
     assert row["driver_observation"] is None
+    assert row["driver_display_observation"].state == "-"
     item = _workspace_json_item(row, 1)
     assert item["pid"] is None and item["status"] == "idle"
     assert item["driver"] is None

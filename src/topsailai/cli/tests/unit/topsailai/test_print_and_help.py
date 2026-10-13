@@ -360,18 +360,39 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
         self.assertNotIn("/very/long", workspace_cell)
 
 
-def test_driver_display_preserves_json_states():
-    """Render every marker without mutating shared observations or JSON states."""
-    from cli_topsailai.core import _workspace_json_item
+def test_driver_display_invalid_pid_shows_question_mark_and_keeps_boundaries():
+    """An ON snapshot without a valid driver PID is uncertain, not a row PID."""
     from cli_topsailai.session_driver import DriverObservation
 
     ansi_escape = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
-    cases = (("ON", ":)"), ("STALE", ":("), ("EXIT", "x("),
+    row = {
+        "session_id": "s1",
+        "ctime": 1700000000.0,
+        "workspace_pid": 123456789,
+        "workspace_status": "running",
+        "driver_display_observation": DriverObservation("ON", "fixture"),
+    }
+    output = ansi_escape.sub("", format_file_table([row]))
+    header, _, rendered = output.splitlines()[:3]
+    assert rendered.split("|")[5].strip() == "?"
+    assert [offset for offset, char in enumerate(rendered) if char == "|"] == [
+        offset for offset, char in enumerate(header) if char == "|"
+    ]
+
+
+def test_driver_display_preserves_json_states():
+    """Render every marker without mutating shared observations or JSON states."""
+    from cli_topsailai.core import _workspace_json_item
+    from cli_topsailai.session_driver import DriverMetadata, DriverObservation
+
+    ansi_escape = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+    cases = (("ON", "987654321"), ("STALE", ":("), ("EXIT", "x("),
              ("FAIL", "x("), ("-", "-"), ("?", "?"), (None, "-"))
     rows = [
         {"session_id": f"s{index}", "ctime": 1700000000.0,
          "workspace_pid": 1234, "workspace_status": "running",
-         "driver_observation": DriverObservation(state, "fixture") if state else None}
+         "driver_observation": DriverObservation(state, "fixture", DriverMetadata(1, f"s{index}", 987654321, "a" * 32, "running")) if state else None,
+         "driver_display_observation": DriverObservation(state, "fixture", DriverMetadata(1, f"s{index}", 987654321, "a" * 32, "running")) if state else None}
         for index, (state, _) in enumerate(cases)
     ]
     before = [_workspace_json_item(row, index) for index, row in enumerate(rows, 1)]

@@ -365,18 +365,18 @@ The CLI validates these files once at its configuration boundary. An invalid exp
 
 ### Driver column and outcomes
 
-The Driver column follows Status and is independent of the target session status. Its legend is part of the `/driver <number>` command description in workspace `/help` and `/help driver`, not a separate help footer or a line beneath the task list:
+The Driver column follows Status and is independent of the target session status. It uses one read-only observation per valid session ID, so every associated row for that session shares the same display. This table-level sharing does not make every row eligible for driver commands; start/status/stop retain their existing target-selection rules. Its legend is part of the `/driver <number>` command description in workspace `/help` and `/help driver`, not a separate help footer or a line beneath the task list:
 
 | Driver display | Semantic state | Meaning |
 |---|---|---|
 | `-` | `-` | Metadata absent, normally also after clean exit. |
-| `:)` | `ON` | Running metadata with verified driver process identity. |
+| numeric driver PID | `ON` | Running metadata with verified driver process identity; the number is the driver PID, not the session-row PID. |
 | `:(` | `STALE` | Running metadata whose recorded driver PID is confirmed absent. |
 | `x(` | `EXIT` | Residual stopped metadata without a contradictory live process. |
 | `x(` | `FAIL` | Residual failed metadata without a contradictory live process. |
-| `?` | `?` | Invalid, inaccessible, conflicting or unverifiable evidence. |
+| `?` | `?` | Invalid, inaccessible, conflicting or unverifiable evidence, including an ON observation without a valid PID. |
 
-Workspace JSON adds nullable `driver` with `state`, `reason`, `driver_pid`, `run_id`, `metadata_status` and `verification`. Ineligible rows have `driver: null`. Table, JSON and status use shared read-only observations. Only the table maps states to display markers; JSON `driver.state` and `/driver status` retain semantic values (`ON`, `STALE`, `EXIT`, `FAIL`, `-`, `?`). Commands refresh the table afterward; there is no automatic refresh polling.
+Workspace JSON adds nullable `driver` with `state`, `reason`, `driver_pid`, `run_id`, `metadata_status` and `verification`. Ineligible rows have `driver: null`. Table display uses a session-level observation, while JSON and status retain their existing operational eligibility and shared read-only observation rules. JSON `driver.state` and `/driver status` retain semantic values (`ON`, `STALE`, `EXIT`, `FAIL`, `-`, `?`); the PID is not written into that state. Commands refresh the table afterward; there is no automatic refresh polling.
 
 The external driver alone owns duplicate-start exclusion, its lock, metadata and log cleanup. The CLI never writes, acquires or deletes these records. Lock-file presence does not prove a running owner. Clean finalization normally removes metadata and logs, so EXIT/FAIL are residual observations, not durable exit history. Stop also leaves record cleanup to the external driver.
 

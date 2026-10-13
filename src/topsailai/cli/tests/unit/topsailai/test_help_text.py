@@ -179,8 +179,9 @@ def test_driver_help_scope(capsys):
 
 def test_driver_legend_in_workspace_help_only(capsys):
     """Keep the legend inside the workspace driver description, never the footer."""
-    legend = ("Driver: - no record/ineligible; :) ON verified; :( STALE absent process; "
-              "x( EXIT/FAIL residual terminal record; ? unverified")
+    legend = ("Driver: - no record/ineligible; numeric PID means ON with a verified driver; "
+              "same-session rows share that display, but may remain ineligible for driver operations; "
+              ":( STALE absent process; x( EXIT/FAIL residual terminal record; ? unverified")
     for keyword in (None, "driver"):
         print_help([], "workspace", keyword=keyword)
         output = capsys.readouterr().out

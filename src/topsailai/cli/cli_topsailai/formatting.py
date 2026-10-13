@@ -12,9 +12,16 @@ from cli_topsailai.colors import Colors
 from cli_topsailai.log_files import _display_session_id, is_session_pipe_open
 
 
-def _driver_display(state: str) -> str:
-    """Map semantic driver states to human-readable table markers only."""
-    return {"ON": ":)", "STALE": ":(", "EXIT": "x(", "FAIL": "x("}.get(state, state)
+def _driver_display(observation) -> str:
+    """Map a driver observation to its session-level table display."""
+    if observation is None:
+        return "-"
+    if observation.state == "ON":
+        driver_pid = observation.driver_pid
+        return str(driver_pid) if type(driver_pid) is int and driver_pid > 0 else "?"
+    return {"STALE": ":(", "EXIT": "x(", "FAIL": "x("}.get(
+        observation.state, observation.state
+    )
 
 
 def format_size(size_bytes: int) -> str:
@@ -91,10 +98,11 @@ def print_header(title: str) -> None:
 
 
 def enrich_workspace_rows(files: List[dict], topsailai_home: str, *, driver_entry=None) -> None:
-    """Refresh session state and attach one read-only driver snapshot per identity."""
+    """Refresh session state and attach session-level driver snapshots."""
     from cli_topsailai.session_driver import metadata_path, observe_driver
 
     eligible = []
+    display_session_ids = set()
     live_pids = {}
     for file_info in files:
         pid = file_info.get("pid")
@@ -113,15 +121,17 @@ def enrich_workspace_rows(files: List[dict], topsailai_home: str, *, driver_entr
             else "running" if pid else "idle"
         )
         file_info["driver_observation"] = None
-        if not valid_pid:
-            continue
+        file_info["driver_display_observation"] = None
         session_id = file_info.get("session_id")
-        filename = file_info.get("filename", "")
-        if file_info.get("is_task") or type(source_pid) is not int or source_pid <= 0:
-            continue
         try:
             metadata_path(topsailai_home, session_id)
         except (ValueError, TypeError):
+            continue
+        display_session_ids.add(session_id)
+        if not valid_pid:
+            continue
+        filename = file_info.get("filename", "")
+        if file_info.get("is_task") or type(source_pid) is not int or source_pid <= 0:
             continue
         if pid:
             live_pids.setdefault(session_id, set()).add(pid)
@@ -132,20 +142,26 @@ def enrich_workspace_rows(files: List[dict], topsailai_home: str, *, driver_entr
         eligible.append(file_info)
 
     observations = {}
+    for session_id in display_session_ids:
+        if driver_entry is None:
+            observations[session_id] = observe_driver(topsailai_home, session_id)
+        else:
+            from functools import partial
+            from cli_topsailai.session_driver import probe_driver_process
+
+            observations[session_id] = observe_driver(
+                topsailai_home, session_id,
+                process_probe=partial(probe_driver_process, driver_entry=driver_entry))
+
+    for file_info in files:
+        session_id = file_info.get("session_id")
+        if isinstance(session_id, str) and session_id in observations:
+            file_info["driver_display_observation"] = observations[session_id]
+
     for file_info in eligible:
         session_id = file_info["session_id"]
         if len(live_pids.get(session_id, ())) > 1:
             continue
-        if session_id not in observations:
-            if driver_entry is None:
-                observations[session_id] = observe_driver(topsailai_home, session_id)
-            else:
-                from functools import partial
-                from cli_topsailai.session_driver import probe_driver_process
-
-                observations[session_id] = observe_driver(
-                    topsailai_home, session_id,
-                    process_probe=partial(probe_driver_process, driver_entry=driver_entry))
         file_info["driver_observation"] = observations[session_id]
 
 
@@ -170,7 +186,7 @@ def print_table(files: List[dict]) -> None:
         status_str = {"input": "INPUT", "running": "RUN"}.get(
             file_info.get("workspace_status"), "-"
         )
-        observation = file_info.get("driver_observation")
+        observation = file_info.get("driver_display_observation")
         rows.append(
             {
                 "no": str(idx),
@@ -178,7 +194,7 @@ def print_table(files: List[dict]) -> None:
                 "session": session,
                 "pid": pid_str,
                 "status": status_str,
-                "driver": _driver_display(observation.state) if observation else "-",
+                "driver": _driver_display(observation),
                 "created": format_timestamp(file_info["ctime"]),
                 "project_workspace": file_info.get("project_workspace") or "-",
                 "color": Colors.YELLOW
