@@ -561,7 +561,7 @@ def _build_executable_plan(point, captured):
     from topsailai.hooks.module_invocation_protocol import ModuleInvocation
     from topsailai.hooks.result_contracts import HandlerIdentity
 
-    if not captured or len(captured) > 128 or len({item.lease.identity for item in captured}) != 1:
+    if len(captured) > 128 or (captured and len({item.lease.identity for item in captured}) != 1):
         raise _PreparationRejected("binding_conflict")
     modules, scripts = [], []
     for index, item in enumerate(captured):
@@ -587,5 +587,5 @@ def _build_executable_plan(point, captured):
     return HookPointPlan(point.hook_name, tuple(modules), DefaultScriptHook(tuple(scripts), point.script is not None),
         point.script.options if point.script else HookScriptExecutionOptions(),
         point.script.policy if point.script else HookScriptExecutionPolicy(),
-        ArtifactCapturePolicy(max_entries=len(captured)),
+        ArtifactCapturePolicy(max_entries=max(1, len(captured))),
         platform_policy=point.script.platform_policy if point.script else ExecutablePlatformPolicy("posix"))
