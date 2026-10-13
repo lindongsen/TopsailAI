@@ -124,12 +124,12 @@ def test_dependencies_skip_only_required_success_and_preserve_independent_work(t
 
 def test_invalid_event_exception_timeout_and_worker_cancellation_are_isolated(tmp_path: Path) -> None:
     """All plugin and event failures must remain structured reports."""
-    runtime, scope = _runtime(tmp_path, dispatch_timeout_ms=3_000)
+    runtime, scope = _runtime(tmp_path, handler_timeout_ms=2250, dispatch_timeout_ms=7000)
     try:
         for binding in (
-            _binding("error", "raise_exception"),
-            _binding("invalid", "return_invalid_value"),
-            _binding("cancelled", "raise_cancelled"),
+            _binding("error", "raise_exception", timeout_ms=2250),
+            _binding("invalid", "return_invalid_value", timeout_ms=2250),
+            _binding("cancelled", "raise_cancelled", timeout_ms=2250),
             _binding("timeout", "block_forever", priority=1_000, timeout_ms=100),
         ):
             assert runtime.register(_definition(), binding, scope).accepted
@@ -149,13 +149,13 @@ def test_invalid_event_exception_timeout_and_worker_cancellation_are_isolated(tm
 
 def test_scope_lifecycle_is_owned_hierarchical_and_idempotent(tmp_path: Path) -> None:
     """Closing a parent must close descendants without closing unrelated scopes."""
-    runtime, parent = _runtime(tmp_path)
+    runtime, parent = _runtime(tmp_path, handler_timeout_ms=2250, dispatch_timeout_ms=2500)
     child = runtime.open_scope(parent=parent)
     sibling = runtime.open_scope()
     try:
-        assert runtime.register(_definition(), _binding("parent"), parent).accepted
+        assert runtime.register(_definition(), _binding("parent", timeout_ms=2250), parent).accepted
         assert runtime.register(_definition(), _binding("child"), child).accepted
-        assert runtime.register(_definition(), _binding("sibling"), sibling).accepted
+        assert runtime.register(_definition(), _binding("sibling", timeout_ms=2250), sibling).accepted
         child_event = _event(runtime, child)
         assert child.close().closed_scope_ids == (child.scope_id,)
         assert child.close().already_closed
