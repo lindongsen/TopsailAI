@@ -13,6 +13,7 @@ import time
 import uuid
 from typing import Any
 
+from topsailai.hooks.cleanup_backend_profile import CleanupBackendProfileMixin
 from topsailai.hooks.contracts import HookContext, JsonValue, ValidationError
 from topsailai.hooks.process_cleanup import ProcessCleanupMixin
 from topsailai.hooks.process_execution import ProcessExecutionMixin
@@ -82,7 +83,7 @@ class _LaunchLease:
             self._record, "worker_lost", empty, dropped, "host_interrupted"
         )
 
-class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExecutionMixin):
+class IsolatedProcessBackend(CleanupBackendProfileMixin, ProcessSetupMixin, ProcessCleanupMixin, ProcessExecutionMixin):
     """Execute each handler in a fresh, owned Linux process group."""
 
     def __init__(
@@ -94,8 +95,10 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
         cleanup_grace_ms: int = 100,
         interpreter: str | None = None,
         worker_module: str = "topsailai.hooks.worker",
+        cleanup_profile: str = "legacy",
     ) -> None:
         """Configure explicit finite process, protocol, output, and cleanup limits."""
+        self._initialize_cleanup_profile(cleanup_profile)
         if type(temp_root) is not str or not os.path.isabs(temp_root):
             raise ValueError("temp_root must be an absolute path")
         if type(output_limit_bytes) is not int or output_limit_bytes < 0:
@@ -116,15 +119,18 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
     @property
     def script_temp_root(self) -> str:
         """Expose the host-owned root to admission-scoped script storage owners."""
+        self._require_legacy_cleanup_profile()
         return self._temp_root
 
     def cleanup_debts(self) -> tuple[CleanupDebt, ...]:
         """Return a stable snapshot of cleanup obligations not yet confirmed settled."""
+        self._require_legacy_cleanup_profile()
         with self._debt_lock:
             return tuple(self._debts[key] for key in sorted(self._debts))
 
     def cleanup_debts_for_record(self, record: _LaunchRecord) -> tuple[CleanupDebt, ...]:
         """Query only the debt still owned by this exact launch record."""
+        self._require_legacy_cleanup_profile()
         with self._debt_lock:
             entry = self._debt_processes.get(record.debt_id)
             owner = self._launch_debt_records.get(record.debt_id) if entry is None else entry.record
@@ -135,6 +141,7 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
 
     def retry_cleanup(self, debt_id: str, *, record: _LaunchRecord | None = None) -> bool:
         """Independently retry process and channel cleanup under one exact lease."""
+        self._require_legacy_cleanup_profile()
         entry: _DebtEntry | None = None
         debt_restore_required = False
         try:
@@ -212,6 +219,9 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
 
     def _preflight(self, timeout_ms: int) -> WorkerResult | None:
         """Reject platforms outside the currently verified Linux capability scope."""
+        rejection = self._profile_rejection()
+        if rejection is not None:
+            return rejection
         if (
             os.name != "posix"
             or not sys.platform.startswith("linux")
@@ -261,6 +271,9 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
         self, interpreter: str, deadline: float, record: _LaunchRecord
     ) -> _LaunchLease | WorkerResult:
         """Publish resources under a lease that remains armed across return."""
+        rejection = self._profile_rejection()
+        if rejection is not None:
+            return rejection
 
         def launch() -> None:
             result_read: int | None = None
@@ -390,6 +403,9 @@ class IsolatedProcessBackend(ProcessSetupMixin, ProcessCleanupMixin, ProcessExec
         record: _LaunchRecord,
     ) -> _LaunchLease | WorkerResult:
         """Launch one literal script under the backend's armed ownership handoff."""
+        rejection = self._profile_rejection()
+        if rejection is not None:
+            return rejection
 
         def launch() -> None:
             process: subprocess.Popen[bytes] | None = None
