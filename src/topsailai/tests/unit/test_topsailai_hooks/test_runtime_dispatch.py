@@ -187,7 +187,7 @@ def test_dispatch_completion_is_observable(tmp_path: Path) -> None:
     from topsailai.hooks import HookRuntime
 
     settings = HookSettings(
-        limits=replace(HookLimits(), workers=1, queue_items=8, dispatch_timeout_ms=1_000)
+        limits=replace(HookLimits(), workers=1, queue_items=8, handler_timeout_ms=2250, dispatch_timeout_ms=2500)
     )
     runtime = HookRuntime(
         settings,
@@ -196,7 +196,7 @@ def test_dispatch_completion_is_observable(tmp_path: Path) -> None:
     )
     scope = runtime.open_scope()
     try:
-        assert runtime.register(_definition(), _binding("sync"), scope).accepted
+        assert runtime.register(_definition(), _binding("sync", timeout_ms=2250), scope).accepted
         report = runtime.dispatch(_event(runtime, scope))
         assert report.rejection_reason is None
         assert report.outcomes[0].status.value == "success"
@@ -212,8 +212,8 @@ def test_dispatch_completion_is_observable(tmp_path: Path) -> None:
 
 def test_dispatch_rejects_running_loop_and_adispatch_keeps_loop_responsive(tmp_path: Path) -> None:
     """Sync dispatch must reject an event loop while async dispatch remains cooperative."""
-    runtime, scope = _runtime(tmp_path)
-    assert runtime.register(_definition(), _binding("sync"), scope).accepted
+    runtime, scope = _runtime(tmp_path, handler_timeout_ms=2250, dispatch_timeout_ms=2500)
+    assert runtime.register(_definition(), _binding("sync", timeout_ms=2250), scope).accepted
 
     async def exercise() -> None:
         rejected = runtime.dispatch(_event(runtime, scope))
@@ -270,11 +270,12 @@ def test_reentrancy_and_diagnostic_callback_failures_never_escape(tmp_path: Path
 
     from topsailai.hooks import HookRuntime
 
-    runtime = HookRuntime(HookSettings(), temp_root=str(tmp_path), diagnostic_observer=observer)
+    runtime = HookRuntime(HookSettings(limits=replace(HookLimits(), handler_timeout_ms=2250, dispatch_timeout_ms=2500)),
+        temp_root=str(tmp_path), diagnostic_observer=observer)
     runtime_ref.append(runtime)
     scope = runtime.open_scope()
     try:
-        assert runtime.register(_definition(), _binding("sync"), scope).accepted
+        assert runtime.register(_definition(), _binding("sync", timeout_ms=2250), scope).accepted
         assert runtime.dispatch(_event(runtime, scope)).outcomes[0].status.value == "success"
         assert callback_failed.wait(1)
         assert calls > 0
@@ -672,9 +673,9 @@ def test_host_cancellation_prevents_later_bindings_from_starting(tmp_path: Path)
 
 def test_scope_close_releases_scheduler_scope_state(tmp_path: Path) -> None:
     """Closing a scope must release its per-binding scheduler bookkeeping."""
-    runtime, scope = _runtime(tmp_path)
+    runtime, scope = _runtime(tmp_path, handler_timeout_ms=2250, dispatch_timeout_ms=2500)
     try:
-        assert runtime.register(_definition(), _binding("sync"), scope).accepted
+        assert runtime.register(_definition(), _binding("sync", timeout_ms=2250), scope).accepted
         assert runtime.dispatch(_event(runtime, scope)).outcomes[0].status.value == "success"
         assert any(key[0] == scope.scope_id for key in runtime._scheduler._binding_slots)
         scope.close()
