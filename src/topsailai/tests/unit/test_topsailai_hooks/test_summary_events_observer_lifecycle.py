@@ -15,19 +15,18 @@ from topsailai.hooks.contracts import ValidationError
 from topsailai.hooks.points.catalog import SUMMARY_CATALOG, PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
 from topsailai.hooks.points.context import SummaryHookAdapter
 from topsailai.hooks.points.context.summary_contracts import SUMMARY_POINTS
+from topsailai.workspace.summary_hooks_owner import build_summary_preparation_request
 from topsailai.tests.unit.test_topsailai_hooks.test_configured_preparation import _runtime, _assertion
 from topsailai.tests.unit.test_topsailai_hooks.test_summary_hook_points import classification
 
 OBSERVER = Path(__file__).resolve().parents[3] / "hooks/points/context/summary_events_observer"
+POINTS_ROOT = OBSERVER.parent
 ACTIVE = tuple(point for point in SUMMARY_POINTS if point.phase_one_eligible)
 
 
 def configuration():
     """Opt in only the eight exact Catalog-owned definitions, without scripts."""
-    return ConfiguredHooks(hook_points=tuple(ConfiguredHookPoint(
-        hook_name=point.name, definition=SUMMARY_CATALOG.require(point.name).definition,
-        module_folder=OBSERVER, inject_hook_context=True,
-    ) for point in PHASE_ONE_DECLARATIONS), settings=HookSettings())
+    return build_summary_preparation_request().configuration
 
 
 @pytest.fixture
@@ -38,10 +37,12 @@ def lifecycle(tmp_path, monkeypatch):
             monkeypatch.delenv(name)
     root = tmp_path / "runtime"
     root.mkdir(mode=0o700)
-    runtime, scope = _runtime(OBSERVER, root)
+    runtime, scope = _runtime(POINTS_ROOT, root)
     trust = runtime._configured_trust
     runtime._configured_trust = ConfiguredTrustPolicy(trust.source_roots,
-        closure_assertions=(_assertion(OBSERVER / "observer.py", "observer"),),
+        closure_assertions=tuple(_assertion(source, source.stem)
+            for point in configuration().hook_points
+            for source in sorted(point.module_folder.glob("*.py"))),
         python_runtime=trust.python_runtime)
     try:
         yield runtime, scope, root
@@ -92,7 +93,8 @@ def test_all_eight_points_emit_real_safe_events(lifecycle):
     config = configuration()
     assert [item.hook_name for item in config.hook_points] == [p.name for p in PHASE_ONE_DECLARATIONS]
     for item in config.hook_points:
-        assert item.inject_hook_context and item.module_folder == OBSERVER
+        assert item.inject_hook_context
+        assert item.module_folder == POINTS_ROOT / item.hook_name.removeprefix("hook__context__").replace("__", "_") / "modules"
         assert item.script is None and not item.module_args and not item.module_kwargs
     for point in ACTIVE:
         before = len(events(lifecycle))

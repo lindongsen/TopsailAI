@@ -7,16 +7,37 @@ import os
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from topsailai.hooks.configured_contracts import (
-    ConfiguredTrustPolicy, SummaryPointDisposition, SummaryPreparationRequest,
+    ConfiguredHookPoint, ConfiguredHooks, ConfiguredTrustPolicy,
+    SummaryPointDisposition, SummaryPreparationRequest,
 )
 from topsailai.hooks.configured_executor import ConfiguredHookExecutor
 from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
-from topsailai.hooks.points.catalog import SUMMARY_CATALOG
+from topsailai.hooks.configuration import HookSettings
+from topsailai.hooks.points.catalog import SUMMARY_CATALOG, PHASE_ONE_DECLARATIONS
 from topsailai.hooks.runtime import CloseReport, HookRuntime
 
 logger = logging.getLogger(__name__)
+
+
+def build_summary_preparation_request(
+    *, points_root: Path | None = None, settings: HookSettings | None = None,
+    disabled_hook_names: frozenset[str] = frozenset(),
+) -> SummaryPreparationRequest:
+    """Bind each phase-one point directory without discovering or authorizing files."""
+    if points_root is None:
+        points_root = Path(__file__).resolve().parents[1] / "hooks/points/context"
+    if not isinstance(points_root, Path) or not points_root.is_absolute():
+        raise ValueError("summary point root must be an absolute Path")
+    configuration = ConfiguredHooks(hook_points=tuple(ConfiguredHookPoint(
+        hook_name=point.name, definition=point.definition,
+        module_folder=points_root / point.name.removeprefix("hook__context__").replace("__", "_") / "modules",
+        inject_hook_context=True,
+    ) for point in PHASE_ONE_DECLARATIONS),
+        settings=HookSettings() if settings is None else settings)
+    return SummaryPreparationRequest(configuration, SUMMARY_CATALOG, disabled_hook_names)
 
 
 @dataclass(frozen=True, slots=True)
