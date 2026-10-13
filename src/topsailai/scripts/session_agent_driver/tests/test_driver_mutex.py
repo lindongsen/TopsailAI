@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
-from driver_mutex import DriverAlreadyRunning
+from driver_mutex import DriverAlreadyRunning, SessionMutex
 from driver_runtime import DriverRuntime
 
 
@@ -32,6 +32,7 @@ def test_live_metadata_is_preserved(tmp_path):
             pytest.fail("duplicate admitted")
     assert metadata.read_bytes() == before
     assert log.read_text() == "owner log"
+    assert (tmp_path / "target.lock").exists()
 
 
 @pytest.mark.parametrize("text", ["invalid", "[]", '{"pid": true}', '{"pid": -1}', "x" * 65537])
@@ -43,6 +44,7 @@ def test_bad_metadata_fails_closed(tmp_path, text):
         with _runtime(tmp_path):
             pass
     assert path.read_text() == text
+    assert (tmp_path / "target.lock").exists()
 
 
 def test_dead_metadata_allows_restart(tmp_path):
@@ -102,6 +104,7 @@ except DriverAlreadyRunning:
         assert "duplicate rejected" in result.stdout
         assert (tmp_path / "target.meta").read_bytes() == before
         assert (tmp_path / "target.log").exists()
+        assert (tmp_path / "target.lock").exists()
 
 
 def test_initialization_failure_releases_lock(tmp_path):
@@ -111,6 +114,7 @@ def test_initialization_failure_releases_lock(tmp_path):
         with pytest.raises(OSError):
             with failed:
                 pass
+    assert not (tmp_path / "target.lock").exists()
     with _runtime(tmp_path):
         assert (tmp_path / "target.meta").exists()
 
@@ -124,19 +128,19 @@ def test_metadata_replacement_preserves_exclusion(tmp_path):
             with _runtime(tmp_path):
                 pytest.fail("duplicate admitted after snapshot replacement")
         assert (tmp_path / "target.meta").read_bytes() == before
-    assert (tmp_path / "target.lock").exists()
+    assert not (tmp_path / "target.lock").exists()
     assert not (tmp_path / "target.meta").exists()
     assert not (tmp_path / "target.log").exists()
 
 
 @pytest.mark.parametrize("failure", [RuntimeError("failed"), KeyboardInterrupt(), SystemExit(1)])
 def test_exceptional_exit_releases_exclusion(tmp_path, failure):
-    """Exceptions clean records and release the retained lock for restart."""
+    """Exceptions clean records and delete the released lock for restart."""
     with pytest.raises(type(failure)) as caught:
         with _runtime(tmp_path):
             raise failure
     assert caught.value is failure
-    assert (tmp_path / "target.lock").exists()
+    assert not (tmp_path / "target.lock").exists()
     with _runtime(tmp_path):
         assert (tmp_path / "target.meta").exists()
 
@@ -177,3 +181,88 @@ def test_windows_lock_branch_with_isolated_platform(tmp_path):
             mutex.acquire()
         assert mutex.file is None
     assert mutex.path.exists()
+
+
+
+def test_owned_release_closes_before_deletion(tmp_path, caplog):
+    """Close the descriptor before checking existence and deleting the lock."""
+    mutex = SessionMutex(tmp_path / "target.meta")
+    mutex.acquire()
+    descriptor = mutex.file
+    exists = Path.exists
+    unlink = Path.unlink
+    events = []
+
+    def checked_exists(path):
+        """Record the existence check after descriptor closure."""
+        assert descriptor.closed
+        events.append("exists")
+        return exists(path)
+
+    def checked_unlink(path):
+        """Record deletion after descriptor closure."""
+        assert descriptor.closed
+        events.append("unlink")
+        return unlink(path)
+
+    with mock.patch.object(Path, "exists", checked_exists), mock.patch.object(Path, "unlink", checked_unlink):
+        mutex.release()
+    assert events == ["exists", "unlink"]
+    assert not mutex.path.exists()
+    assert not mutex.owned
+    assert "deleted driver lock file" in caplog.text
+    mutex.path.write_text("later file")
+    mutex.release()
+    assert mutex.path.read_text() == "later file"
+
+
+@pytest.mark.parametrize("disappears_after_check", [False, True])
+def test_release_missing_file_is_harmless(tmp_path, disappears_after_check):
+    """Tolerate absence both before the check and during deletion."""
+    mutex = SessionMutex(tmp_path / "target.meta")
+    mutex.acquire()
+    if not disappears_after_check:
+        mutex.path.unlink()
+        print("deleted test lock to simulate missing file")
+        mutex.release()
+    else:
+        unlink = Path.unlink
+
+        def disappearing_unlink(path):
+            """Remove the file before simulating a lost deletion race."""
+            unlink(path)
+            print("deleted test lock to simulate deletion race")
+            raise FileNotFoundError("already gone")
+
+        with mock.patch.object(Path, "unlink", disappearing_unlink):
+            mutex.release()
+    assert mutex.file is None
+    assert not mutex.owned
+    assert not mutex.path.exists()
+
+
+@pytest.mark.parametrize("operation", ["exists", "unlink"])
+def test_release_filesystem_failure_is_logged(tmp_path, caplog, operation):
+    """Keep the primary exception when post-release cleanup is denied."""
+    original = RuntimeError("primary")
+    runtime = _runtime(tmp_path)
+    method = getattr(Path, operation)
+
+    def denied_lock_operation(path, *args, **kwargs):
+        """Deny only lock cleanup after its descriptor has closed."""
+        if path == runtime.mutex.path:
+            assert runtime.mutex.file is None
+            raise PermissionError("lock cleanup denied")
+        return method(path, *args, **kwargs)
+
+    with pytest.raises(RuntimeError) as caught:
+        with mock.patch.object(Path, operation, denied_lock_operation):
+            with runtime:
+                raise original
+    assert caught.value is original
+    assert runtime.mutex.path.exists()
+    assert "cannot delete driver lock file" in caplog.text
+    assert "lock cleanup denied" in caplog.text
+    with _runtime(tmp_path):
+        assert (tmp_path / "target.meta").exists()
+    assert not runtime.mutex.path.exists()

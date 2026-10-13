@@ -67,7 +67,7 @@ tools:
 After argument validation, the driver creates its records under
 `{TOPSAILAI_HOME}/workspace/task/session_agent_driver/`:
 
-- `{session_id}.lock` — stable cross-process lock file retained after exit.
+- `{session_id}.lock` — cross-process lock file; deletion is attempted after release on exit.
 - `{session_id}.meta` — an atomically replaced JSON snapshot of the latest driver run.
 - `{session_id}.log` — driver logs retained only while the script runs.
 - `{session_id}.log.1` through `.log.5` — rotated backups with default settings.
@@ -107,15 +107,23 @@ or deleting the owner's records. Existing metadata with a live PID also rejects
 startup; malformed or unverifiable owner evidence fails closed. Only a confirmed
 dead PID permits recovery of stale metadata. Different sessions use separate locks.
 
-The lock remains held through runtime-record cleanup. Its stable `.lock` file is
-intentionally retained: deleting it could let competitors lock different file
-objects. File existence does not mean the lock is held; closing the descriptor
-releases the OS lock, including when the process is forcibly terminated. Do not
-remove lock files while drivers may be running. A sequential restart publishes
-a new `run_id`. After a clean exit only the lock file remains. SIGKILL,
-power loss, or filesystem permission/I/O failures can prevent cleanup; failures
-are reported when the process can still execute. No other session files are
-removed, and no automatic cross-target purge is provided.
+The lock remains held through runtime-record cleanup. An admitted driver closes
+its lock descriptor, checks whether the `.lock` file exists, and attempts to
+delete it. Successful deletions are logged; missing files are harmless, and
+filesystem failures warn without replacing the original termination error.
+Rejected startup attempts close their descriptor without deleting the lock file.
+A sequential restart recreates the lock and publishes a new `run_id`.
+
+Release-then-delete is a best-effort cleanup tradeoff, not a race-free exclusion
+protocol: a concurrent starter may open or acquire the old file before deletion,
+while another starter subsequently creates and locks a new file. Avoid concurrent
+restart of drivers for the same session when strict exclusion is required.
+File existence alone does not prove that a driver holds the lock.
+
+After a clean exit with successful cleanup, no session records remain. SIGKILL,
+power loss, or filesystem permission/I/O failures can leave records behind;
+failures are reported when the process can still execute. No other session files
+are removed, and no automatic cross-target purge is provided.
 
 ## Plugin Tools
 

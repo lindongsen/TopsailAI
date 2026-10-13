@@ -3,8 +3,12 @@
 Author: DawsonLin
 """
 import json
+import logging
 import os
 from pathlib import Path
+
+
+logger = logging.getLogger(__name__)
 
 
 class DriverAlreadyRunning(RuntimeError):
@@ -12,13 +16,14 @@ class DriverAlreadyRunning(RuntimeError):
 
 
 class SessionMutex:
-    """Hold a stable OS file lock through runtime cleanup."""
+    """Hold an OS file lock through runtime cleanup and attempt exit deletion."""
 
     def __init__(self, meta_path):
         """Bind the lock to one session metadata path."""
         self.meta_path = Path(meta_path)
         self.path = self.meta_path.with_suffix(".lock")
         self.file = None
+        self.owned = False
 
     def acquire(self):
         """Acquire without waiting and then verify any previous owner."""
@@ -26,6 +31,7 @@ class SessionMutex:
         try:
             self._lock()
             self._check_owner()
+            self.owned = True
         except BaseException:
             self.release()
             raise
@@ -74,7 +80,19 @@ class SessionMutex:
         raise DriverAlreadyRunning("driver already running for session, PID=" + str(pid))
 
     def release(self):
-        """Close the owned descriptor; retain the stable lock file."""
-        if self.file is not None:
-            owner, self.file = self.file, None
-            owner.close()
+        """Release the descriptor before attempting to delete an admitted lock."""
+        if self.file is None:
+            return
+        owner, self.file = self.file, None
+        owner.close()
+        owned, self.owned = self.owned, False
+        if not owned:
+            return
+        try:
+            if self.path.exists():
+                self.path.unlink()
+                logger.warning("deleted driver lock file %s", self.path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            logger.warning("cannot delete driver lock file %s", self.path, exc_info=True)
