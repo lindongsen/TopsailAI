@@ -40,6 +40,7 @@ references:
 - `runtime send|btw [-s SESSION] [-p PID] -m MESSAGE|--stdin`
 - `runtime control ACTION [-s SESSION] [-p PID] [-a JSON]`
 - `runtime logs [-s SESSION] [-p PID] [-n N] [--json]` — finite recent session log query
+- `workspace driver start|status -s SESSION [-p PID] [--json]`
 - `project add|del|list|launch|resume`
 - `models list|add|get|update|delete`
 

@@ -1103,6 +1103,11 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         sys.exit(run_runtime_cli(argv[1:]))
 
+    if argv[:2] == ["workspace", "driver"]:
+        from cli_topsailai.workspace_driver_cli import run_workspace_driver_cli
+
+        sys.exit(run_workspace_driver_cli(argv[2:]))
+
     _TOP_LEVEL_COMMANDS = {"workspace", "docs", "project", "models", "runtime"}
     _TOP_LEVEL_OPTIONS = {
         "-h", "--help", "--version", "-w", "--workspace",

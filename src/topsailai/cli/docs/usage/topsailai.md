@@ -229,6 +229,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 |---------|-------------|
 | `runtime` | Execute one exact send, btw, control or logs operation; see the contract above. |
 | `workspace [-f json]` | Display the workspace task list and exit. The default is the human-readable table; `-f json` or `--format json` emits one JSON document. |
+| `workspace driver <start/status> -s SESSION [-p PID] [--json]` | Start or inspect one exact session driver; see below. |
 | `docs list` | List all usage documentation files and exit. |
 | `docs read <name>` | Read a specific usage documentation file and exit. |
 | `project add <path> [name]` | Add a project to the managed project list. |
@@ -310,6 +311,30 @@ The original high-level scope outline is preserved in `../../topsailai.md`:
 ## Workspace session drivers
 
 Use `/driver <number>` to start the driver for a currently running (`RUN`) or waiting-for-input (`INPUT`) session row. Use `/driver status <number>` to read state, reason, driver PID, run ID and verification. Both commands are restricted to the ordinary workspace task list; project, session, runtime, doc and managed-project views reject them. Task rows, temporary sessions, malformed or legacy identities, changed targets and multiple live PIDs for one session are not eligible. Status can inspect an exited authoritative session row.
+
+### Non-interactive driver operations
+
+```bash
+topsailai workspace driver start -s SESSION -p PID --json
+topsailai workspace driver status -s SESSION -p PID --json
+```
+
+Replace SESSION/PID with the intended session. Both commands exit without entering the interactive watcher. `-s/--session` is required and exact (no wildcards); optional `-p/--pid` is a positive integer and intersects the session selector. Conflicting repeated selectors are rejected. Help performs no discovery or launch. Existing `topsailai workspace [-f json]` list behavior is unchanged.
+
+Start requires a live RUN/INPUT authoritative session stdout row. Task, temporary, legacy, changed and ambiguous identities are rejected. Multiple live PIDs for the session remain rejected even with `-p`. Status can inspect exited rows; multiple historical rows require PID rather than choosing newest. Both commands reuse default authority resolution and driver identity observations. Invalid configuration fails closed. Start reuses the interactive launcher's fresh target checks and driver-owned duplicate exclusion; a verified existing owner returns `already_running` without spawning another driver. Status is read-only and never retries or repairs evidence.
+
+Plain successes go to stdout and failures to stderr. `--json` emits exactly one JSON document, including recognized syntax failures; help is ordinary text. The envelope uses the runtime fields `ok`, `exit_code`, `action`, `session_id`, `pid`, `delivery_state`, `error_code`, `message`, `bytes_written`, `request_id`, `response`, `delivery_unknown`. Action is `start` or `status`; PID is the session PID, not the driver PID. `bytes_written` and `request_id` are null. Response is nullable driver evidence containing `state`, `reason`, `driver_pid`, `run_id`, `metadata_status`, `verification`, with semantic states rather than emoticons. Start delivery state is the launch outcome; status uses `status_read`. Unknown status evidence (`?`) returns exit 4 while retaining its observation.
+
+| Exit | Meaning |
+|---|---|
+| 0 | Verified fresh publication (`launched`), verified existing owner (`already_running`), or a readable known status. |
+| 2 | Invalid syntax or selector (`usage_error`). |
+| 3 | Missing, ineligible, changed or ambiguous target. |
+| 4 | Invalid configuration, unavailable inspection, rejected launch/preflight, or unknown status evidence. |
+| 5 | Spawn failure or child exit before confirmation. |
+| 6 | Startup unconfirmed before the existing bounded deadline; `delivery_unknown=true`. |
+
+Publication proves driver liveness, not model readiness or analysis completion. An unconfirmed child may still run: do not blindly retry. Non-interactive commands do not terminate detached drivers when the CLI exits and do not offer a stop command.
 
 ### Default deployment paths and optional overrides
 
