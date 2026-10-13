@@ -263,3 +263,8 @@ During agent execution:
 - If you add a new pre-run hook module, export its hook(s) through a `HOOKS` dict so `workspace/agent/hooks/base/init.py` can discover it.
 - The wrapper signature must remain compatible with `input_one_line(tips: str = "", hook: HookInstruction = None) -> str`.
 - When testing `ai_base/` paths that call `get_agent_runtime_input()`, remember to clean up the thread-local value afterward to avoid leaking state between tests.
+
+
+## MEMO: Context-Message Environment Variable Ownership
+
+`utils/env_tool.py` is the single owner of reading, parsing, consuming, and controlling the context-message environment variables. `context_user_message_content` is the read/parse boundary for `TOPSAILAI_CONTEXT_USER_MESSAGE` and the gated `USER.md` startup context, without environment mutation side effects. `clean_context_x_message()` is the consumption/control point invoked by `PromptBase` after startup-context processing: it clears `TOPSAILAI_CONTEXT_USER_MESSAGE` and latches `TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED` to `0` for the remainder of the process.
