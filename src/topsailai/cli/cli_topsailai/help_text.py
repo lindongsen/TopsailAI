@@ -77,7 +77,7 @@ def print_scopes() -> None:
         (
             "workspace",
             "The default task-watcher scope. It lists discovered session and task log files so you can monitor and manage work across the current TopsailAI home.",
-            "Select a numbered log, retrieve session context, refresh or clean the task list, send messages, launch agents, use /driver <number>, /driver status <number>, or /driver stop <number> for session drivers, enter project or doc scope, and show help.",
+            "Select a numbered log, read exact session metadata with /meta <number>, retrieve session context, refresh or clean the task list, send messages, launch agents, use /driver <number>, /driver status <number>, or /driver stop <number> for session drivers, enter project or doc scope, and show help.",
         ),
         (
             "runtime",
@@ -303,6 +303,12 @@ def print_help(
             "desc": "Inject a by-the-way message into the agent2llm runtime context of the watched session. In session scope, omit the session id. If no message is provided, enter multi-line input mode (finish with EOF). While streaming a log, /ctx.btw defaults to the watched session.",
             "example": "Example: /ctx.btw remember to check the logs  or  while streaming: /ctx.btw hello",
             "scopes": ["session", "runtime"],
+        },
+        {
+            "cmd": "/meta <number>",
+            "desc": "Read exact session metadata from the current ordinary workspace row without refreshing. Task and temporary rows are unsupported; --json is not supported.",
+            "example": "Example: /meta 3",
+            "scopes": ["workspace"],
         },
         {
             "cmd": "/meta",

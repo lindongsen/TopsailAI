@@ -1549,9 +1549,10 @@ class TestGetPidFromStdoutPath(unittest.TestCase):
         path = "/tmp/task/20260704T053911.abc.session.stdout"
         self.assertIsNone(_get_pid_from_stdout_path(path))
 
-    def test_returns_none_for_unexpected_extension(self):
+    def test_returns_pid_for_standard_stderr(self):
+        """Standard session stderr shares the exact session PID parser."""
         path = "/tmp/task/20260704T053911.4004128.session.stderr"
-        self.assertIsNone(_get_pid_from_stdout_path(path))
+        self.assertEqual(_get_pid_from_stdout_path(path), 4004128)
 
 class TestHandleSendCancel(unittest.TestCase):
     """Tests for handle_send_command cancellation."""

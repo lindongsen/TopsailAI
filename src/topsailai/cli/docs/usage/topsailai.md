@@ -77,6 +77,7 @@ The command uses the same parsing and execution mechanism as `/git`: `shlex.spli
 |---------|-------------|
 | `<number>` | Watch the selected log file (workspace) or enter the selected session (project). |
 | `/driver <number>` | Start a driver for an eligible RUN/INPUT session (ordinary workspace only). |
+| `/meta <number>` | Read exact session metadata in the ordinary workspace task list. |
 | `/driver status <number>` | Read current driver evidence (ordinary workspace only). |
 | `/driver stop <number>` | Gracefully stop one verified driver, not its session (ordinary workspace only). |
 | `/refresh` | Re-scan the task directory and refresh the list. |
@@ -383,3 +384,16 @@ The external driver alone owns duplicate-start exclusion, its lock, metadata and
 Launch reports `launched` only for fresh verified publication matching the new child. `already_running` identifies verified existing ownership; `failed` means spawn failure or exit before confirmation; `rejected` means validation/preflight did not authorize startup. `unconfirmed` means a live child did not publish matching evidence before the bounded confirmation deadline: do not blindly retry. Publication proves liveness, not model readiness or analysis completion. The CLI retains live child handles in memory and reaps exits on later interactions without terminating resident drivers when leaving the CLI.
 
 Process identity checks are conservative and cannot prove complete PID-reuse protection without an authoritative stored birth baseline. Target checks occur before launch; the external driver selects by session ID, not a strictly bound target PID. A preflight/spawn race is possible and driver-owned exclusion is the final authority. This does not promise exactly one spawned process or full descendant supervision.
+
+
+## Workspace Session Metadata
+
+Use `/meta 3` in the ordinary workspace task list to read row 3 of the currently displayed list. Exactly one positive row number is required; bare `/meta`, extra arguments and `--json` produce usage errors. The command remains in workspace scope without refreshing or sorting the list.
+
+Only standard session stdout/stderr rows are supported, including exited sessions. The raw session ID and integer PID must agree with the filename and any recorded session PID. Task rows must be replaced with the corresponding session row; temporary, legacy and incomplete identities are rejected. No parent PID is guessed and no newest-file fallback is used.
+
+The fixed target is `{TOPSAILAI_HOME}/workspace/task/{session_id}.{pid}.session.meta`, not driver metadata. Success prints an identity line followed by the original UTF-8 JSON text, preserving all fields and adding a final newline if needed. The JSON must be an object with exactly matching session ID and integer PID. Unknown status values are displayed unchanged.
+
+Reads are limited to 65,536 bytes and 64 nesting levels. Missing, unreadable, oversized, malformed, excessively nested or identity-mismatched metadata produces an `[ERROR]` category without its body or a traceback. Path traversal, nonregular files and symlinks beneath the trusted home are rejected. Platforms without safe no-follow directory reads fail closed. On those platforms, the workspace list also cannot apply the metadata-based completed-to-idle override and retains its original derived process status. Reads are bounded snapshots, not transactions; incomplete concurrent writes report an error without automatic retries.
+
+Runtime `/meta` remains unchanged: it reads the watched parent session metadata without a row argument. This increment adds no non-interactive workspace meta subcommand.

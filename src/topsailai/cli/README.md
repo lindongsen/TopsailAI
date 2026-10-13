@@ -439,6 +439,7 @@ When the CLI is showing the workspace task list (`[workspace]>`), the following 
 | `<number>` | Watch the selected log file. |
 | `/session <number>` | Retrieve the full session context for the selected entry. |
 | `/driver <number>` | Start the selected session driver. |
+| `/meta <number>` | Read the selected session row metadata; see [workspace metadata](docs/usage/topsailai.md#workspace-session-metadata). |
 | `/driver status <number>` | Inspect the selected session driver. |
 | `/driver stop <number>` | Gracefully stop its verified driver, not the session; see [driver usage](docs/usage/topsailai.md#workspace-session-drivers). |
 | `/refresh` | Reload the workspace task list. |

@@ -130,7 +130,7 @@ def _parse_stdout_filename(filename: str) -> Tuple[Optional[str], Optional[int]]
             session_id = None if parts[0] == "topsailai" else parts[0]
             return session_id, pid
 
-    if filename.endswith(".session.stdout"):
+    if filename.endswith((".session.stdout", ".session.stderr")):
         base = filename[: -len(".session.stdout")]
         if not base:
             return None, None
@@ -255,7 +255,7 @@ def discover_log_files(
         session_id = None
         pid = None
         is_task = False
-        if entry.endswith(".session.stdout") or entry.endswith(".task.stdout"):
+        if entry.endswith((".session.stdout", ".session.stderr", ".task.stdout")):
             session_id, pid = _parse_stdout_filename(entry)
             is_task = entry.endswith(".task.stdout")
             # Skip files that do not match the expected naming convention.

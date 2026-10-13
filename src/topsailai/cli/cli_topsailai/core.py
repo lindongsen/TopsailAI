@@ -656,6 +656,21 @@ def prompt_selection(
                 execute_shell_command(user_input)
                 continue
 
+            if lower_input.split() and lower_input.split()[0] == "/meta" and state.current_scope != "runtime":
+                if state.current_scope != "workspace" or state.workspace_showing_managed_projects:
+                    print("[ERROR] /meta is only available in the ordinary workspace task list.")
+                    continue
+                parts = user_input.split()
+                if (len(parts) != 2 or len(parts[1]) > 9
+                        or re.fullmatch(r"[0-9]+", parts[1]) is None or int(parts[1]) < 1):
+                    print("[ERROR] Usage: /meta <number> (--json is not supported)")
+                    continue
+                number = int(parts[1])
+                if not 1 <= number <= len(files):
+                    print(f"[ERROR] Invalid number. Please enter 1-{len(files)}.")
+                    continue
+                return ("meta", number - 1)
+
             if lower_input.split() and lower_input.split()[0] == "/driver":
                 if state.current_scope != "workspace" or state.workspace_showing_managed_projects:
                     print("[ERROR] /driver is only available in the ordinary workspace task list.")
@@ -990,7 +1005,7 @@ def prompt_selection(
                         f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
                         f"Please enter a number, /refresh, /session {{number}}, "
                         f"/agent {{number|folder}}, /resume {{number}}, "
-                        f"{'/driver <number>, /driver status <number>, /driver stop <number>, ' if state.current_scope == 'workspace' else ''}"
+                        f"{'/meta <number>, /driver <number>, /driver status <number>, /driver stop <number>, ' if state.current_scope == 'workspace' else ''}"
                         f"/clean, /send, /help, or 'q'.{Colors.RESET}"
                     )
                 _consecutive_unrecognized += 1
@@ -1679,6 +1694,12 @@ def main(argv: Optional[List[str]] = None) -> None:
                     _refresh_doc()
                 else:
                     _refresh_workspace()
+                continue
+
+            if action == "meta":
+                from cli_topsailai.session_meta import print_workspace_meta
+
+                print_workspace_meta(topsailai_home, log_files[value])
                 continue
 
             if action in ("driver_start", "driver_status", "driver_stop"):

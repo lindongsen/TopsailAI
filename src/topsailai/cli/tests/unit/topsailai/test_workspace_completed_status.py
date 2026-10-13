@@ -9,7 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from cli_topsailai import formatting, session_driver
+from cli_topsailai import formatting, session_driver, session_meta
 from cli_topsailai.colors import Colors
 from cli_topsailai.core import _workspace_json_item
 
@@ -86,7 +86,7 @@ def test_missing_or_other_pid_file_falls_back(session_row, tmp_path, other_pid):
 
 def test_unreadable_meta_falls_back_with_diagnostic(session_row, tmp_path, monkeypatch, caplog):
     """Permission errors do not abort rendering and have a modest diagnostic."""
-    monkeypatch.setattr(formatting, "open", Mock(side_effect=PermissionError("denied")), raising=False)
+    monkeypatch.setattr(session_meta, "_read_metadata", Mock(side_effect=PermissionError("denied")))
     formatting.enrich_workspace_rows([session_row], str(tmp_path))
     assert session_row["workspace_status"] == "running"
     assert "PermissionError" in caplog.text

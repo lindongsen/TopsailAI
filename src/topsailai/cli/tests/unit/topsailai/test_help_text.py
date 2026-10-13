@@ -210,3 +210,13 @@ def test_driver_stop_help_discovery(capsys):
         assert "/driver stop" not in capsys.readouterr().out
     print_scopes()
     assert "/driver stop" in capsys.readouterr().out
+
+
+def test_meta_scope_contract(capsys):
+    """Workspace row syntax must not replace runtime bare metadata help."""
+    print_help([], "workspace", keyword="meta")
+    assert "/meta <number>" in capsys.readouterr().out
+    print_help([], "runtime")
+    output = capsys.readouterr().out
+    assert "watched parent session" in output
+    assert "/meta <number>" not in output

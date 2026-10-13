@@ -1,14 +1,11 @@
 """Output formatting helpers for the TopsailAI CLI."""
 
 import io
-import json
-import logging
 import os
 import sys
 import unicodedata
 from contextlib import redirect_stdout as contextlib_redirect_stdout
 from datetime import datetime
-from pathlib import Path
 from typing import List
 
 from cli_topsailai.colors import Colors
@@ -102,28 +99,11 @@ def print_header(title: str) -> None:
 
 def _session_meta_completed(topsailai_home: str, session_id: str, pid: int) -> bool:
     """Read bounded completion evidence for an exactly identified session."""
-    path = Path(topsailai_home) / "workspace" / "task" / f"{session_id}.{pid}.session.meta"
+    from cli_topsailai.session_meta import read_session_meta, SessionMetaError
+
     try:
-        with open(path, "rb") as stream:
-            content = stream.read(65537)
-        if len(content) > 65536:
-            raise ValueError("session metadata exceeds size limit")
-        metadata = json.loads(content)
-        if not isinstance(metadata, dict):
-            raise ValueError("session metadata must be an object")
-        return (
-            metadata.get("session_id") == session_id
-            and type(metadata.get("pid")) is int
-            and metadata["pid"] == pid
-            and metadata.get("status") == "completed"
-        )
-    except FileNotFoundError:
-        return False
-    except (OSError, ValueError) as error:
-        logging.getLogger(__name__).warning(
-            "Session metadata unreadable: path=%s type=%s error=%s",
-            path, type(error).__name__, error,
-        )
+        return read_session_meta(topsailai_home, session_id, pid).data.get("status") == "completed"
+    except SessionMetaError:
         return False
 
 

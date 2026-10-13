@@ -186,3 +186,32 @@ def test_driver_completion_scope(monkeypatch):
     monkeypatch.setattr(cli_state, "current_scope", "workspace")
     monkeypatch.setattr(cli_state, "workspace_showing_managed_projects", True)
     assert "/driver" not in get_available_completions()
+
+
+def test_meta_completion_scopes(monkeypatch):
+    """Offer meta only for runtime and ordinary workspace lists."""
+    from cli_topsailai.completer import get_available_completions
+    monkeypatch.setattr(cli_state, "yaml_commands", [])
+    for scope, managed, expected in [("runtime", False, True), ("workspace", False, True),
+            ("workspace", True, False), ("project", False, False),
+            ("session", False, False), ("doc", False, False)]:
+        monkeypatch.setattr(cli_state, "current_scope", scope)
+        monkeypatch.setattr(cli_state, "workspace_showing_managed_projects", managed)
+        assert ("/meta" in get_available_completions()) is expected
+
+
+def test_available_completion_yaml_boundaries(monkeypatch):
+    """Filter scopes and normalize optional aliases without duplicates."""
+    from cli_topsailai.completer import get_available_completions
+    monkeypatch.setattr(cli_state, "current_scope", "workspace")
+    monkeypatch.setattr(cli_state, "workspace_showing_managed_projects", False)
+    monkeypatch.setattr(cli_state, "yaml_commands", [
+        {"scopes": ["doc"], "cmd": "/excluded"},
+        {"scopes": ["workspace"], "alias": ["", "plain", "/slash"]},
+        {"scopes": ["workspace"], "cmd": "/refresh", "alias": "plain"},
+    ])
+    result = get_available_completions()
+    assert "/excluded" not in result
+    assert "/plain" in result and "/slash" in result
+    assert result.count("/refresh") == result.count("/plain") == 1
+    assert result == sorted(set(result))
