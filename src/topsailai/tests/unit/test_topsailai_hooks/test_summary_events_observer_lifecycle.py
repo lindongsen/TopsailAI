@@ -3,6 +3,7 @@
 import importlib
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -24,9 +25,9 @@ POINTS_ROOT = OBSERVER.parent
 ACTIVE = tuple(point for point in SUMMARY_POINTS if point.phase_one_eligible)
 
 
-def configuration():
+def configuration(points_root=None):
     """Opt in only the eight exact Catalog-owned definitions, without scripts."""
-    return build_summary_preparation_request().configuration
+    return build_summary_preparation_request(points_root=points_root).configuration
 
 
 @pytest.fixture
@@ -37,11 +38,15 @@ def lifecycle(tmp_path, monkeypatch):
             monkeypatch.delenv(name)
     root = tmp_path / "runtime"
     root.mkdir(mode=0o700)
-    runtime, scope = _runtime(POINTS_ROOT, root)
+    points = tmp_path / "points"
+    for point in configuration().hook_points:
+        shutil.copytree(point.module_folder, points / point.module_folder.parent.name / "modules",
+            ignore=shutil.ignore_patterns("__pycache__"))
+    runtime, scope = _runtime(points, root)
     trust = runtime._configured_trust
     runtime._configured_trust = ConfiguredTrustPolicy(trust.source_roots,
         closure_assertions=tuple(_assertion(source, source.stem)
-            for point in configuration().hook_points
+            for point in configuration(points).hook_points
             for source in sorted(point.module_folder.glob("*.py"))),
         python_runtime=trust.python_runtime)
     try:
@@ -54,7 +59,7 @@ def lifecycle(tmp_path, monkeypatch):
 def prepare(lifecycle, config=None, disabled=frozenset()):
     """Use the actual request, prepared registrar, executor, and summary adapter."""
     runtime, scope, _ = lifecycle
-    request = SummaryPreparationRequest(configuration=config if config is not None else configuration(),
+    request = SummaryPreparationRequest(configuration=config if config is not None else configuration(lifecycle[2].parent / "points"),
         catalog=SUMMARY_CATALOG, disabled_hook_names=disabled)
     registrar = ConfiguredHookRegistrar.from_prepared(runtime, scope, request)
     executor = ConfiguredHookExecutor(runtime, scope, registrar, SUMMARY_CATALOG)
@@ -80,9 +85,10 @@ def assert_recorded(result, recorded=True):
     """Require the transported observer acknowledgement and successful isolation."""
     assert result.report.rejection_reason is None, result.report
     handlers = [item for item in result.report.unified_result.handlers if item.handler.kind == "module"]
-    assert len(handlers) == 1
-    assert handlers[0].status == "success", handlers[0]
-    assert handlers[0].returned.value == {"recorded": recorded}
+    observers = [item for item in handlers if item.handler.name == result.report.unified_result.hook_point_name + ":observer"]
+    assert len(observers) == 1
+    assert observers[0].status == "success", observers[0]
+    assert observers[0].returned.value == {"recorded": recorded}
 
 
 def test_all_eight_points_emit_real_safe_events(lifecycle):
@@ -262,9 +268,32 @@ def test_recorder_exception_isolated_in_real_worker(lifecycle, tmp_path, monkeyp
     monkeypatch.setattr(runtime._backend, "_worker_environment", environment)
     monkeypatch.setattr(runtime._backend, "execute_captured_module", capture)
     assert_recorded(emit(adapter, ACTIVE[0]), recorded=False)
-    assert len(received) == 1 and received[0].cleanup_confirmed
-    assert b"summary_hook_event_record_failed" in received[0].stderr
-    assert b"token=secret" not in received[0].stderr
-    assert b"/private/path" not in received[0].stderr
-    assert b"Traceback" not in received[0].stderr
+    assert received and all(item.cleanup_confirmed for item in received)
+    stderr = b"".join(item.stderr for item in received)
+    assert b"summary_hook_event_record_failed" in stderr
+    assert b"token=secret" not in stderr
+    assert b"/private/path" not in stderr
+    assert b"Traceback" not in stderr
     assert events(lifecycle) == []
+
+
+def test_observer_assertions_allow_additional_point_member(lifecycle):
+    """Adding a member needs no change to shared observer acknowledgement assertions."""
+    runtime, _, root = lifecycle
+    folder = configuration(root.parent / "points").hook_points[0].module_folder
+    source = folder / "additional.py"
+    source.write_text("def main(*, hook_context):\n    return False\n")
+    trust = runtime._configured_trust
+    runtime._configured_trust = ConfiguredTrustPolicy(trust.source_roots,
+        closure_assertions=trust.closure_assertions + (_assertion(source, source.stem),),
+        python_runtime=trust.python_runtime)
+    _, _, adapter = prepare(lifecycle)
+    result = emit(adapter, ACTIVE[0], "additional-member")
+    assert_recorded(result)
+    names = [item.handler.name for item in result.report.unified_result.handlers]
+    assert ACTIVE[0].name + ":additional" in names and names[-1] == "hook_script"
+    additional = next(item for item in result.report.unified_result.handlers
+        if item.handler.name == ACTIVE[0].name + ":additional")
+    assert additional.status == "success", additional
+    assert additional.returned.present and additional.returned.value is False
+    assert len(events(lifecycle)) == 1

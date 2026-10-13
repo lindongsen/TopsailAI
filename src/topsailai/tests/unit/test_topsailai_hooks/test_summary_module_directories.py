@@ -69,8 +69,8 @@ def members(owner, point, identity):
     assert result.report.rejection_reason is None, result.report
     handlers = result.report.unified_result.handlers
     assert handlers[-1].handler.name == "hook_script"
-    assert handlers[-1].status == "success"
-    assert all(item.status == "success" for item in handlers)
+    assert handlers[-1].status == "success", (identity, result.report)
+    assert all(item.status == "success" for item in handlers), (identity, result.report)
     modules = handlers[:-1]
     for item in modules:
         assert item.returned.value["point"] == point.name
@@ -120,12 +120,18 @@ def test_unauthorized_addition_rejects_whole_point_not_sibling(tree):
     point, sibling = ACTIVE[:2]
     folder = next(p.module_folder for p in tree[1].configuration.hook_points if p.hook_name == point.name)
     source = folder / "unauthorized.py"
-    source.write_text("def main(*, hook_context):\n    return None\n")
+    marker = tree[2] / "unauthorized-execution"
+    source.write_text(f"from pathlib import Path\ndef main(*, hook_context):\n    Path({str(marker)!r}).write_text('executed')\n")
     owner = start(tree, unauthorized=source)
     try:
         dispositions = {item.hook_name: item for item in owner.startup_report.dispositions}
         assert dispositions[point.name].kind == "unavailable_preparation_failure"
         assert dispositions[sibling.name].kind == "registered"
+        from topsailai.hooks.points.context import SummaryHookAdapter
+        result = emit(SummaryHookAdapter(owner.executor), point, "unavailable")
+        assert result.report.rejection_reason is not None
+        assert not result.report.outcomes
+        assert not marker.exists()
         assert members(owner, sibling, "authorized") == ("zeta",)
     finally:
         assert owner.close().fully_closed

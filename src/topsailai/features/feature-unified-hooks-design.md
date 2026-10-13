@@ -14,7 +14,7 @@ scope: standalone framework, configured bootstrap/registration wrappers, Catalog
 
 ## Status and scope
 
-This document defines the authoritative target architecture clarified by the Human on 2026-10-10 and the subsequently approved [Summarize Hooks Application](#summarize-hooks-application) design. That application design is recorded here; implementation remains unstarted and separately gated. Implementation evidence is recorded separately and does not override the target. U06–U10 unified waiting execution, desired/active reload diagnostics, async cancellation custody, Catalog authority and breaking nonwaiting removal are committed. U11A–E add real target business/process evidence. [The open architecture issue](../issues/issue-hook-point-default-script-handler-architecture.md) still requires U11H final acceptance and a Human decision on accepted provenance REDs; application-domain integrations remain deferred.
+This document defines the authoritative target architecture clarified by the Human on 2026-10-10 and the subsequently approved [Summarize Hooks Application](#summarize-hooks-application) design. The summarize application now has explicitly opted-in preparation, ownership and point-local Module wiring; broader rollout and final acceptance remain separately gated. See the implemented file-membership baseline below. Implementation evidence is recorded separately and does not override the target. U06–U10 unified waiting execution, desired/active reload diagnostics, async cancellation custody, Catalog authority and breaking nonwaiting removal are committed. U11A–E add real target business/process evidence. [The open architecture issue](../issues/issue-hook-point-default-script-handler-architecture.md) still requires U11H final acceptance and a Human decision on accepted provenance REDs; application-domain integrations remain deferred.
 
 | Dimension | Current status |
 |---|---|
@@ -377,11 +377,21 @@ User2Agent messages are persistent user/session data. Agent2LLM messages are eph
 
 This chapter integrates the approved summarize design into the framework specification. Its naming rules govern new unified points; its business checkpoints, metadata contract, activation choices, and application owner specialize the generic framework without claiming implementation readiness.
 
+### Implemented file-membership baseline
+
+Human goal: “我要达到的效果是 增减modules 只需要 增减对应的 代码文件 就行。” Human confirmed baseline A: “A:只增减文件 + 部署授权更新 + 应用重启生效；” This is restart-based membership activation, not hot reload or implicit trust.
+
+Units 1–6 implement valid zero-resource plans, generic detached worker context, caller-owned Catalog selection, point-name-derived envelope layer, point-local Module directories and offline deployment authorization. `workspace/summary_hooks_owner.py::build_summary_preparation_request()` binds the eight phase-one points to their own `modules/` directories without listing members. Each point's `observer.py` delegates to the shared observer through `main(*, hook_context)`. The two phase-two points remain inactive. Applications must explicitly adopt this builder; ordinary AgentChat construction does not silently enable Hooks.
+
+`hooks/deployment_authorization.py` enumerates configured directories offline, requires an explicitly reviewed deployment closure digest and Python Runtime authority, and emits the existing v1 manifest plus its pin. It never imports candidates or certifies dependency review. Regenerate on the frozen target deployment tree, publish authority/pin and restart before new membership is prepared. Missing/stale authority rejects the complete affected point; valid empty directories retain the unique terminal `hook_script`. Scripts are not generated or merged by this Module-only entry. [The API deployment guide](../docs/Hooks_API.md#point-local-summary-module-deployment) records options, target-runtime restrictions and explicit composition requirements.
+
+Unit 7 focused acceptance covers real worker execution after owner-lifetime restart, unchanged directory requests, sibling isolation, add/remove/last-member behavior, immutable prior snapshots and unavailable-point zero side effects. It does not establish full CLI process restart, BDD, full-project or cross-platform acceptance, or supersede pending framework gates.
+
 ### Goals and Decision Background
 
 Human requested: “Execution boundaries should use before/after or pre/post; Hook point code should be managed centrally in a dedicated folder under hooks, grouped by module.” “Clarify the rules as much as possible and save them in a features/design document.” Human later requested: “Put layer inside business_action.” Human then confirmed: “Hook point names should align with event names to avoid two standards and use a single naming convention. Modules should have their own subdirectories under each Hook point for clear, intuitive management.” Approval: “I agree, update doc.” For “Where do scripts go?”, see the directory section for placement and loading rules.
 
-This application chapter governs new unified Hook points, using summarize as the concrete integration. Recording or merging the design does not authorize implementation, migration of existing interfaces, or commits. The preceding framework sections remain authoritative for generic execution, registration, trust, and resource guarantees; this chapter specifies the application decisions and pending extensions.
+This application chapter governs new unified Hook points, using summarize as the concrete integration. The implemented file-membership baseline records the separately approved work; the remaining design text does not authorize additional implementation, migration of existing interfaces, or commits. The preceding framework sections remain authoritative for generic execution, registration, trust, and resource guarantees; this chapter specifies the application decisions and pending extensions.
 
 Existing `pre_run_input.py`, `pre_run_agent2llm_source.py`, and `post_final_answer.py` under `workspace/agent/hooks/`, `hook_before_chat/` and `hook_after_chat/` under `ai_base/llm_hooks/`, and `hooks_pre_chat`, `hook_after_init_prompt`, `hook_after_new_session`, etc. retain their names. Public methods, environment variables, plugin imports, and discovery rules are not renamed incidentally in this task.
 
@@ -407,7 +417,7 @@ The current Executor uses `point.name` for Catalog, registration, and configurat
 
 ### Directories, Responsibilities, and Execution Protocols
 
-Use Option B: an independent subdirectory per point. The following proposed layout is relative to ProjectFolder and is not yet implemented:
+Use Option B: an independent subdirectory per point. The following layout is relative to ProjectFolder. Point declarations and phase-one Module directories are implemented; scripts directories are optional and are not created without resources:
 
 ```text
 hooks/points/

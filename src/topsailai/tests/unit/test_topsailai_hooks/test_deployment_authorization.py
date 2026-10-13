@@ -82,13 +82,17 @@ def test_generated_authority_add_remove_restart(tree, authority):
 @pytest.mark.parametrize("change", ["new", "stale", "missing"])
 def test_stale_or_missing_authority_has_no_partial_execution(tree, authority, change):
     """Pinned but incomplete/stale authority disables the whole point, not its sibling."""
-    manifest, digest = generate(tree, authority)
     point, sibling = ACTIVE[:2]
     folder = tree[1].configuration.hook_points[0].module_folder
+    marker = tree[2] / "forbidden-handler-execution"
+    original = (folder / "zeta.py").read_text()
+    (folder / "zeta.py").write_text("from pathlib import Path\n" + original.replace(
+        "    return", f"    Path({str(marker)!r}).write_text('executed')\n    return"))
+    manifest, digest = generate(tree, authority)
     if change == "new":
-        (folder / "extra.py").write_text("def main(*, hook_context):\n    return None\n")
+        (folder / "extra.py").write_text(f"from pathlib import Path\ndef main(*, hook_context):\n    Path({str(marker)!r}).write_text('unauthorized')\n")
     elif change == "stale":
-        (folder / "zeta.py").write_text("def main(*, hook_context):\n    return False\n")
+        (folder / "zeta.py").write_text((folder / "zeta.py").read_text() + "# stale deployment bytes\n")
     else:
         document = json.loads(manifest)
         document["closure_assertions"] = [a for a in document["closure_assertions"]
@@ -102,6 +106,7 @@ def test_stale_or_missing_authority_has_no_partial_execution(tree, authority, ch
         result = emit(SummaryHookAdapter(owner.executor), point, "unavailable")
         assert result.report.rejection_reason is not None
         assert not result.report.outcomes
+        assert not marker.exists()
         assert members(owner, sibling, "sibling") == ("zeta",)
     finally:
         assert owner.close().fully_closed

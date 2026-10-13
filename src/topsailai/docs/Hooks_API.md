@@ -138,7 +138,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
 A non-empty `scripts` or `folder` registration additionally requires deployment-provisioned `ConfiguredTrustPolicy` data for every admitted executable: authorized source roots, exact interpreters or native-script policy, and matching immutable `ArtifactClosureAssertion` records. Supplying only a source root is insufficient and fails closed during artifact capture.
 
-The package currently exposes the trust records but does not provide a public manifest builder or loader for ordinary callers. Therefore this document does not fabricate a helper that hashes and authorizes files at runtime. Production code should receive the complete policy from a trusted deployment/configuration boundary; tests may construct exact assertions for their own fixtures. Once that policy has been supplied to `HookRuntime(configured_trust=...)`, use one of the registration forms below.
+The public `load_configured_trust_manifest()` in `hooks/configured_bootstrap.py` verifies a deployment-pinned manifest digest. The offline Module-only generator below does not generate Script authority; non-empty Script deployments must still provision complete assertions at their trusted deployment boundary. No application runtime hashes discovered files to authorize them; tests may construct exact assertions for their own fixtures. Once that policy has been supplied to `HookRuntime(configured_trust=...)`, use one of the registration forms below.
 
 ## Existing real-worker demos
 
@@ -374,3 +374,31 @@ async def run_task(task, executor):
 Both styles use the same catalog declarations, event builder, Executor, Registrar, Runtime, Scope, trust authority, diagnostics, and cleanup. A decorator maps `before`, `success`, and `error` to separate stable declarations and emits exactly one of `success` or `error` after an entered callable. Each declaration defaults to exposing no business data to `payload_builder`: `argument_fields` explicitly allows named bound arguments, `result_fields` explicitly allows named keys from an exact built-in `dict` result on `success`, and `error_fields` may allow only the detached `type` and/or `message` tokens on `error`. Other result types expose no result fields, which avoids invoking custom mapping code while constructing the view. The error `type` token is the exception class name; the `message` token is present only when the base exception has exactly one exact-string argument, so extraction never invokes exception formatting or user code. Every allowed value is copied through bounded JSON validation before the builder runs; the builder never receives raw business objects, exception instances, or tracebacks. The legacy `sensitive_fields` tuple remains an additional argument denylist and cannot overlap `argument_fields`; configuration cannot expand any declaration allowlist. After an original callable exception, Hook processing always ends with a bare `raise` of that exact exception instance and traceback; even a security-critical error Hook cannot replace an active business exception. A blocking before Hook may prevent entry, while a blocking success Hook may fail after business work has completed and therefore requires explicit catalog approval. Decorators do not support generators or async generators initially. Core code will never load environment configuration or trust manifests.
 
 The authoritative target, implementation gaps, lifecycle and repair roadmap are maintained in [`features/feature-unified-hooks-design.md`](../features/feature-unified-hooks-design.md#framework-readiness-extension-before-application-hook-point-rollout).
+
+
+## Point-local summary Module deployment
+
+`workspace/summary_hooks_owner.py::build_summary_preparation_request()` explicitly binds the eight phase-one declarations to their own `hooks/points/context/<phase>_<business_action>/modules/` directories. Catalog entries identify points, not Module members. The two `after_summary_generate_*` points remain inactive. Composition must explicitly adopt the builder and inject the application-owned Executor; ordinary AgentChat construction does not implicitly enable these resources.
+
+For an already configured point, add or remove a compliant direct-child Module file, update deployment authorization, and restart the application. No Module import table, membership list, Catalog entry, or shared invocation configuration needs editing. Summary Modules use `main(*, hook_context)` with detached metadata (`event_name`, `event_version`, `operation_id`, `payload`); the generic worker does not apply summary-specific payload validation. Discovery excludes `__init__.py` and does not recurse into nested Module directories. Name-ordered Modules run before the single default `hook_script`; removing the last member from a valid directory leaves a successful empty terminal. Missing directories and failed authorization are unavailable points, not empty successful plans.
+
+### Offline authorization interface
+
+`hooks/deployment_authorization.py::generate_module_trust_manifest(*, module_folders, source_roots, reviewed_deployment_sha256, python_runtime)` returns `(manifest_bytes, digest)` using the existing trust manifest v1 schema. Directory and source-root inputs are tuples of absolute canonical `Path` values. `python_runtime` is an explicitly supplied `ArtifactPythonRuntimeAuthority`; the reviewed deployment digest is a deployer-provided lowercase SHA-256 assertion, not an automatically reviewed dependency closure.
+
+The explicit offline CLI is `python -m topsailai.hooks.deployment_authorization`. Its required options are:
+
+| Option | Purpose |
+|---|---|
+| `--module-folder` | Repeat for each already configured point's Module directory, not each member file. |
+| `--source-root` | Repeat for authorized canonical source roots. |
+| `--reviewed-deployment-sha256` | Digest supplied by the trusted deployment review process. |
+| `--python-executable` | Absolute canonical executable of the target runtime running the generator. |
+| `--python-sha256` | Explicit reviewed content digest of that executable; mismatch is rejected, not corrected. |
+| `--output` | Absolute new manifest path; existing files are never overwritten. |
+
+The CLI prints the generated manifest SHA-256 on success. Publish the new manifest and its pin through the deployment boundary, load with `load_configured_trust_manifest(path, digest)`, and supply the resulting policy to the application owner before eager preparation. The generator does not import candidates, prove dependency review, invoke application startup, or run from Runtime. Run it on a frozen reviewed deployment tree under the final target Python runtime; runtime fingerprints include device/inode/platform facts and are not portable authority across machines.
+
+This is a **Module-only** generator: it does not authorize or merge Script entries. Do not replace a mixed Module/Script manifest without separately preserving its reviewed Script authority. Missing, malformed, mismatched or stale authority remains fail-closed; one invalid point is wholly unavailable rather than partially admitted. Already captured plans remain immutable until the old application lifetime closes; file changes alone do not hot-reload or authorize new code.
+
+Focused acceptance uses generated pinned manifests, new application-owner lifetimes and real isolated workers for add/remove/empty-point behavior and sibling isolation. Direct dispatch of unavailable points has no outcomes or handler file side effects. This evidence is not a full application CLI restart, full-project, BDD, cross-platform or production-performance acceptance claim.
