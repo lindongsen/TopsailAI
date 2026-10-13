@@ -1,11 +1,14 @@
 """Output formatting helpers for the TopsailAI CLI."""
 
 import io
+import json
+import logging
 import os
 import sys
 import unicodedata
 from contextlib import redirect_stdout as contextlib_redirect_stdout
 from datetime import datetime
+from pathlib import Path
 from typing import List
 
 from cli_topsailai.colors import Colors
@@ -97,6 +100,33 @@ def print_header(title: str) -> None:
     print(f"{Colors.BOLD}{Colors.CYAN}{'=' * width}{Colors.RESET}")
 
 
+def _session_meta_completed(topsailai_home: str, session_id: str, pid: int) -> bool:
+    """Read bounded completion evidence for an exactly identified session."""
+    path = Path(topsailai_home) / "workspace" / "task" / f"{session_id}.{pid}.session.meta"
+    try:
+        with open(path, "rb") as stream:
+            content = stream.read(65537)
+        if len(content) > 65536:
+            raise ValueError("session metadata exceeds size limit")
+        metadata = json.loads(content)
+        if not isinstance(metadata, dict):
+            raise ValueError("session metadata must be an object")
+        return (
+            metadata.get("session_id") == session_id
+            and type(metadata.get("pid")) is int
+            and metadata["pid"] == pid
+            and metadata.get("status") == "completed"
+        )
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError) as error:
+        logging.getLogger(__name__).warning(
+            "Session metadata unreadable: path=%s type=%s error=%s",
+            path, type(error).__name__, error,
+        )
+        return False
+
+
 def enrich_workspace_rows(files: List[dict], topsailai_home: str, *, driver_entry=None) -> None:
     """Refresh session state and attach session-level driver snapshots."""
     from cli_topsailai.session_driver import metadata_path, observe_driver
@@ -127,6 +157,17 @@ def enrich_workspace_rows(files: List[dict], topsailai_home: str, *, driver_entr
             metadata_path(topsailai_home, session_id)
         except (ValueError, TypeError):
             continue
+        if (
+            file_info["workspace_status"] == "running"
+            and not file_info.get("is_task")
+            and source_pid == pid
+            and file_info.get("filename") in (
+                f"{session_id}.{pid}.session.stdout",
+                f"{session_id}.{pid}.session.stderr",
+            )
+            and _session_meta_completed(topsailai_home, session_id, pid)
+        ):
+            file_info["workspace_status"] = "idle"
         display_session_ids.add(session_id)
         if not valid_pid:
             continue
@@ -199,7 +240,7 @@ def print_table(files: List[dict]) -> None:
                 "project_workspace": file_info.get("project_workspace") or "-",
                 "color": Colors.YELLOW
                 if status_str == "INPUT"
-                else (Colors.GREEN if pid else Colors.GRAY),
+                else (Colors.GREEN if status_str == "RUN" else Colors.GRAY),
             }
         )
 
