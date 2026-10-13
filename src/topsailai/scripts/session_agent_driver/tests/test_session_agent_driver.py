@@ -173,6 +173,21 @@ class TestRenderAnalysisPrompt:
         # Unknown placeholders are kept as-is instead of raising.
         assert "$task_goal" in prompt or "task_goal" in prompt
 
+    def test_prompt_states_core_goal(self):
+        info = {
+            "session_id": "s1", "pid": 123, "status": "input",
+            "project_workspace": "/w", "created_at": "2026",
+            "task_goal": "goal", "messages_summary": "msgs", "log_tail": "log",
+        }
+        prompt = sad.render_analysis_prompt(info)
+        assert "Core Goal" in prompt
+        assert "replace the human operator" in prompt
+        assert '"correct" decision' in prompt
+
+    def test_default_prompt_states_core_goal(self):
+        assert "Core Goal" in sad.DEFAULT_PROMPT
+        assert "replace the human operator" in sad.DEFAULT_PROMPT
+
 
 # ---------------------------------------------------------------------------
 # _read_int_env

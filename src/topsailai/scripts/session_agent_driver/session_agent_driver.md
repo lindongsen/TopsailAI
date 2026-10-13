@@ -15,6 +15,11 @@ suggested input. It starts an analysis agent (times=1) whenever the target
 session is waiting for input, and exits when the session process exits or the
 analysis agent requests exit.
 
+The driver's core goal is to replace the human operator: the analysis agent
+must make the "correct" decision or reply on the human's behalf, injecting the
+best possible input for the target session's current state and task goal rather
+than merely a plausible one. This goal is stated in the analysis prompt.
+
 ## Usage
 
 ```bash
