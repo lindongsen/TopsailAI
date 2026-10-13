@@ -11,6 +11,7 @@ from tests.bdd.instruction_message_integrity_assertions import (
     ordered_markers,
     parse_agent_messages,
     parse_history_roles_and_content,
+    assert_system_context,
 )
 from tests.bdd.session_name_startup_context_harness import SessionNameStartupScenario
 
@@ -51,8 +52,11 @@ def _by_command(items):
 
 
 def _semantic_messages(messages):
-    """Compare persisted messages without volatile storage metadata."""
-    return [{key: message[key] for key in ("role", "content") if key in message} for message in messages]
+    """Compare persisted messages without documented volatile timestamps."""
+    return [
+        {key: value for key, value in message.items() if key != "create_time"}
+        for message in messages
+    ]
 
 
 def _assert_instruction_group(items, commands=("/agent.messages", "/ctx.history")):
@@ -538,3 +542,90 @@ def then_unit3_history(unit3_history):
     assert report["request_count_before_slice"] == report["request_count_after_slice"]
     assert report["request_count_before_slice"] == 2
     assert [index for index, _ in enumerate(sliced, 1)] == [1, 2]
+
+
+@pytest.fixture
+def native_tool_scenario(bdd_tmp_path: Path, monkeypatch):
+    """Create the real native tool-call integrity scenario."""
+    scenario = SessionNameStartupScenario(monkeypatch, bdd_tmp_path, agent_type="react", integrity=False, native_tool=True)
+    try:
+        yield scenario
+    finally:
+        scenario.close()
+
+
+@given("a fresh native-tool Agent integrity scenario", target_fixture="native_tool")
+def given_native_tool(native_tool_scenario):
+    """Provide the native tool scenario."""
+    return native_tool_scenario
+
+
+@when("the Agent performs one real native tool turn")
+def when_native_tool(native_tool):
+    """Run one real native tool turn through the child process."""
+    native_tool.run()
+
+
+@then("native declaration result and final answer remain ordered and final-only history is preserved")
+def then_native_tool(native_tool):
+    """Assert native wire/runtime pairing and final-only persisted history."""
+    from tests.bdd.instruction_message_integrity_assertions import assert_native_tool_group, assert_native_wire_group
+    report = native_tool.integrity_report()
+    state = native_tool.state()
+    assert state["total_requests"] == 2
+    assert state["dropped_request_body_count"] == 0
+    assert len(state["request_bodies"]) == 2
+    assert all(record["parsed"] for record in state["request_bodies"])
+    assert report["request_count"] == report["after_request_count"] == 2
+    assert report["before_request_count"] == 2
+    assert report["tool_state"] == {"count": 1, "arguments": [{"value": "BDD_NATIVE_ARGUMENT_TOKEN"}]}
+    assert report["handler_counts"] == {"/agent.messages": 1, "/ctx.history": 1}
+    assert report["user_open_count"] == 1
+    assert report["before_runtime"] == report["after_runtime"]
+    assert _semantic_messages(report["before_session"]) == _semantic_messages(report["after_session"])
+
+    pre = _assert_instruction_group(_items(report, "A_pre"), ("/agent.messages",))["/agent.messages"]
+    post = _assert_instruction_group(_items(report, "A_post"), ("/agent.messages",))["/agent.messages"]
+    history = _assert_instruction_group(_items(report, "H_post"), ("/ctx.history",))["/ctx.history"]
+    purity_before = _assert_instruction_group(_items(report, "purity_before"))
+    purity_after = _assert_instruction_group(_items(report, "purity_after"))
+    assert all(purity_before[key]["stdout"] == purity_after[key]["stdout"] for key in purity_before)
+
+    all_markers = ["BDD_PLAN_EXPLICIT_CONTEXT_MARKER", "BDD_PLAN_USER_MD_MARKER", "BDD_NATIVE_TASK_TOKEN", "BDD_NATIVE_RESULT_TOKEN", "BDD_NATIVE_ANSWER_TOKEN"]
+    startup = {"role": "user", "markers": all_markers[:2], "all_markers": all_markers}
+    task = {"role": "user", "markers": [all_markers[2]], "all_markers": all_markers}
+    raw_pre = parse_agent_messages(pre["stdout"])
+    raw_post = parse_agent_messages(post["stdout"])
+    assert_system_context(raw_pre, all_markers, expected_markers=["BDD_SYSTEM_CONTEXT_MARKER"], expected_count=2)
+    assert_system_context(raw_post, all_markers, expected_markers=["BDD_SYSTEM_CONTEXT_MARKER"], expected_count=2)
+    runtime_pre = [m for m in raw_pre if m.get("role") != "system"]
+    runtime_post = [m for m in raw_post if m.get("role") != "system"]
+    assert_message_manifest(runtime_pre, [startup, task])
+    assert_message_manifest(runtime_post[:2], [startup, task])
+    assert_native_tool_group(runtime_post[1:], task_marker="BDD_NATIVE_TASK_TOKEN", tool_name="safe_native_tool", call_id="call_bdd_integrity_native", argument={"value": "BDD_NATIVE_ARGUMENT_TOKEN"}, result_marker="BDD_NATIVE_RESULT_TOKEN", final_marker="BDD_NATIVE_ANSWER_TOKEN", result_content='{\n  "raw_text": "BDD_NATIVE_RESULT_TOKEN",\n  "step_name": "observation"\n}')
+
+    history_messages = [{"role": role, "content": content} for role, content in parse_history_roles_and_content(history["stdout"])]
+    assert_message_manifest(history_messages, [startup, task, {"role": "assistant", "markers": ["BDD_NATIVE_ANSWER_TOKEN"], "all_markers": all_markers}])
+    raw_persisted = report["session_messages"]
+    for message in raw_persisted:
+        assert "tool_calls" not in message and "tool_call_id" not in message
+    persisted = _semantic_messages(raw_persisted)
+    assert_message_manifest(persisted, [startup, task, {"role": "assistant", "markers": ["BDD_NATIVE_ANSWER_TOKEN"], "all_markers": all_markers}])
+    persisted_text = json.dumps(raw_persisted, ensure_ascii=False)
+    for marker in ("call_bdd_integrity_native", "BDD_NATIVE_ARGUMENT_TOKEN", "BDD_NATIVE_RESULT_TOKEN", "/agent.messages", "/ctx.history"):
+        assert marker not in persisted_text
+
+    bodies = [record["body"] for record in state["request_bodies"]]
+    assert_system_context(bodies[0]["messages"], all_markers, expected_markers=["BDD_SYSTEM_CONTEXT_MARKER"], expected_count=1)
+    assert_system_context(bodies[1]["messages"], all_markers, expected_markers=["BDD_SYSTEM_CONTEXT_MARKER"], expected_count=1)
+    w1 = [m for m in bodies[0]["messages"] if m.get("role") != "system"]
+    w2 = [m for m in bodies[1]["messages"] if m.get("role") != "system"]
+    assert_message_manifest(w1, [startup, task])
+    assert bodies[0]["tools"][0]["function"]["name"] == "safe_native_tool"
+    assert bodies[0]["tools"][0]["function"]["parameters"]["type"] == "object"
+    assert bodies[0]["tools"][0]["function"]["parameters"]["properties"]["value"]["type"] == "string"
+    assert bodies[0]["tools"][0]["function"]["parameters"]["required"] == ["value"]
+    assert_message_manifest(w2[:2], [startup, task])
+    assert_native_wire_group(w2[1:], task_marker="BDD_NATIVE_TASK_TOKEN", tool_name="safe_native_tool", call_id="call_bdd_integrity_native", argument={"value": "BDD_NATIVE_ARGUMENT_TOKEN"}, result_marker="BDD_NATIVE_RESULT_TOKEN", result_content="topsailai.observation\nBDD_NATIVE_RESULT_TOKEN")
+    assert "BDD_NATIVE_ANSWER_TOKEN" not in json.dumps(bodies[1], ensure_ascii=False)
+    assert pre["command"] == "/agent.messages" and post["command"] == "/agent.messages" and history["command"] == "/ctx.history"

@@ -48,7 +48,8 @@ class TrackedThread(original_thread):
             raise
         else:
             worker_results.append((self, None))
-ctx_manager.threading.Thread = TrackedThread
+if os.environ.get("BDD_NATIVE_TOOL_SCENARIO") != "1":
+    ctx_manager.threading.Thread = TrackedThread
 naming_chats = []
 _original_get_llm_chat = llm_shell.get_llm_chat
 def tracked_get_llm_chat(*args, **kwargs):
@@ -93,6 +94,7 @@ def wait(state, timeout=300.0):
 def mark_started(state):
     needs_barrier = (
         os.environ.get("BDD_INTEGRITY_SCENARIO") != "1"
+        and os.environ.get("BDD_NATIVE_TOOL_SCENARIO") != "1"
         or os.environ.get("BDD_UNIT3_CASE") in {"naming_react", "naming_plan"}
     )
     if needs_barrier:
@@ -443,7 +445,10 @@ def run_turn(message, agent_type):
         chat.ai_agent.close()
 
 try:
-    if os.environ.get("BDD_INTEGRITY_SCENARIO") == "1":
+    if os.environ.get("BDD_NATIVE_TOOL_SCENARIO") == "1":
+        from tests.bdd.instruction_message_integrity_native_tool_child import main
+        main()
+    elif os.environ.get("BDD_INTEGRITY_SCENARIO") == "1":
         if os.environ.get("BDD_UNIT3_CASE"):
             run_unit3_scenario()
         elif os.environ.get("BDD_MULTI_TURN_SCENARIO") == "1":
@@ -452,7 +457,7 @@ try:
             run_integrity_scenario()
     else:
         run_turn("Create a plan for the startup-context regression.", os.environ.get("BDD_AGENT_TYPE", "plan_and_execute"))
-    if os.environ.get("BDD_INTEGRITY_SCENARIO") != "1":
+    if os.environ.get("BDD_INTEGRITY_SCENARIO") != "1" and os.environ.get("BDD_NATIVE_TOOL_SCENARIO") != "1":
         wait_for_barrier()
         run_turn("Continue the existing plan in a later turn.", os.environ.get("BDD_AGENT_TYPE", "plan_and_execute"))
 finally:
@@ -477,13 +482,14 @@ finally:
 class SessionNameStartupScenario:
     """Own the loopback server and execute the real factory in a child process."""
 
-    def __init__(self, monkeypatch: Any, tmp_path: Path, agent_type: str = "plan_and_execute", integrity: bool = False, multi_turn: bool = False, rebuild: bool = False, unit3_case: str = "") -> None:
+    def __init__(self, monkeypatch: Any, tmp_path: Path, agent_type: str = "plan_and_execute", integrity: bool = False, multi_turn: bool = False, rebuild: bool = False, unit3_case: str = "", native_tool: bool = False) -> None:
         """Create isolated startup files, database, and provider."""
         self.agent_type = agent_type
         self.integrity = integrity
         self.multi_turn = multi_turn
         self.rebuild = rebuild
         self.unit3_case = unit3_case
+        self.native_tool = native_tool
         self.tmp_path = None
         self.server = None
         self.server_thread = None
@@ -504,7 +510,11 @@ class SessionNameStartupScenario:
             self.database = tmp_path / "sessions.sqlite"
             response_text = "BDD_PLAN_ANSWER_ONE_TOKEN" if integrity else "Plan complete"
             response = json.dumps([{"step_name": "final_answer", "raw_text": response_text}])
-            if integrity and (getattr(self, "multi_turn", False) or unit3_case):
+            if native_tool:
+                call = {"id": "call_bdd_integrity_native", "type": "function", "function": {"name": "safe_native_tool", "arguments": json.dumps({"value": "BDD_NATIVE_ARGUMENT_TOKEN"})}}
+                final = json.dumps([{"step_name": "final_answer", "raw_text": "BDD_NATIVE_ANSWER_TOKEN"}])
+                config = MockServerConfig(port=0, reply=final, request_body_capacity=16, tool_call_responses=((call,),), tool_call_response_content=json.dumps([{"step_name": "action"}]))
+            elif integrity and (getattr(self, "multi_turn", False) or unit3_case):
                 naming_response = json.dumps([{"step_name": "final_answer", "raw_text": "safe response"}])
                 first_response = json.dumps([{"step_name": "final_answer", "raw_text": "BDD_PLAN_ANSWER_ONE_TOKEN"}])
                 second_response = json.dumps([{"step_name": "final_answer", "raw_text": "BDD_PLAN_ANSWER_TWO_TOKEN"}])
@@ -548,19 +558,20 @@ class SessionNameStartupScenario:
                 "TOPSAILAI_HOME": str(self.home),
                 "TOPSAILAI_CONTEXT_USER_MESSAGE": EXPLICIT_MARKER,
                 "TOPSAILAI_PROJECT_WORKSPACE": str(tmp_path),
+                "SYSTEM_PROMPT": "BDD_SYSTEM_CONTEXT_MARKER",
                 "TOPSAILAI_PWD": str(tmp_path),
                 "CONTEXT_HISTORY_MANAGERS": f"sql.ChatHistorySQLAlchemy conn=sqlite:///{self.database}",
                 "OPENAI_API_BASE": self.base_url,
                 "OPENAI_BASE_URL": self.base_url,
                 "OPENAI_API_KEY": "bdd-plan-startup",
                 "OPENAI_MODEL": "topsailai-plan-startup",
-                "LLM_RESPONSE_STREAM": "1",
+                "LLM_RESPONSE_STREAM": "0" if native_tool else "1",
                 "TOPSAILAI_INTERACTIVE_MODE": "0",
-                "TOPSAILAI_AUTO_SESSION_NAME_ENABLED": "1" if (not integrity or unit3_case in {"naming_react", "naming_plan"}) else "0",
+                "TOPSAILAI_AUTO_SESSION_NAME_ENABLED": "1" if (not native_tool and not integrity or unit3_case in {"naming_react", "naming_plan"}) else "0",
                 "TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED": "0" if unit3_case == "user_md_disabled" else "1",
-                "TOPSAILAI_USE_TOOL_CALLS": "0",
+                "TOPSAILAI_USE_TOOL_CALLS": "1" if native_tool else "0",
                 "TOPSAILAI_USE_TOOL_CALLS_MODEL_PREFIXES": "",
-                "TOPSAILAI_DISABLED_TOOLS": "" if unit3_case == "tool_prompt" else "*",
+                "TOPSAILAI_DISABLED_TOOLS": "" if (unit3_case == "tool_prompt" or native_tool) else "*",
                 "TOPSAILAI_ENABLED_TOOLS": "cmd_tool" if unit3_case == "tool_prompt" else "",
                 "TOPSAILAI_DISABLED_SKILLS": "*",
                 "TOPSAILAI_ENABLE_SESSION_TEE_OUT": "0",
@@ -591,6 +602,8 @@ class SessionNameStartupScenario:
             "BDD_MULTI_TURN_SCENARIO": "1" if self.multi_turn else "0",
             "BDD_REBUILD_AGENT": "1" if self.rebuild else "0",
             "BDD_UNIT3_CASE": self.unit3_case,
+            "BDD_NATIVE_TOOL_SCENARIO": "1" if self.native_tool else "0",
+            "BDD_NATIVE_TOOL_STATE": str(self.events_dir / "native-tool-state.json"),
             "BDD_INTEGRITY_REPORT": str(self.events_dir / "integrity-report.json"),
             "BDD_SERVER_STATE_URL": f"http://127.0.0.1:{self.server.server_port}/debug/state",
         })
@@ -606,7 +619,7 @@ class SessionNameStartupScenario:
             raise AssertionError(self.process.stderr or self.process.stdout)
         (self.events_dir / "child-stdout").write_text(self.process.stdout, encoding="utf-8")
         (self.events_dir / "child-stderr").write_text(self.process.stderr, encoding="utf-8")
-        if not self.integrity:
+        if not self.integrity and not self.native_tool:
             assert self.wait_entered.exists()
             assert self.started.exists()
             assert self.wait_released.exists()

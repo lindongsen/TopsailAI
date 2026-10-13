@@ -48,3 +48,9 @@ Feature: Instruction views preserve ordered Agent messages
     Given a fresh history-slice Agent integrity scenario
     When the Agent completes the history-slice turns
     Then the history slice matches positions one through three without mutation
+
+
+  Scenario: Native tool execution preserves declaration result and final answer order
+    Given a fresh native-tool Agent integrity scenario
+    When the Agent performs one real native tool turn
+    Then native declaration result and final answer remain ordered and final-only history is preserved
