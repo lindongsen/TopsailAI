@@ -186,6 +186,98 @@ def run_integrity_scenario():
         chat.ai_agent.close()
 
 
+def run_multi_turn_integrity_scenario():
+    """Run two turns through one public AgentChat lifecycle and export observations."""
+    rebuild = os.environ.get("BDD_REBUILD_AGENT") == "1"
+    snapshots = []
+    chats = []
+    pipe_writer = None
+
+    def make_chat(message):
+        chat = agent_shell.get_agent_chat(
+            agent_type="react", agent_role="manager",
+            session_id=os.environ["BDD_SESSION_ID"], message=message,
+            need_input_message=False, need_print_session=False,
+            need_set_agent_name_to_thread_local=False,
+            need_project_workspace_lock=False,
+        )
+        chats.append(chat)
+        return chat
+    def add_observer(chat, starting_turn=0):
+        turn = {"value": starting_turn}
+
+        def observe_after_new_session(_agent):
+            turn["value"] += 1
+            snapshots.append({"checkpoint": f"A_pre{turn['value']}", "items": [
+                capture_instruction(chat, "/agent.messages")
+            ]})
+
+        def observe_after_success(_agent):
+            current = turn["value"]
+            snapshots.append({"checkpoint": f"A_post{current}", "items": capture_group(chat)})
+            snapshots.append({"checkpoint": f"H_post{current}", "items": [
+                capture_instruction(chat, "/ctx.history")
+            ]})
+
+        chat.ai_agent.hooks_after_new_session.append(observe_after_new_session)
+        chat.hooks_post_succ_run.append(observe_after_success)
+
+    def write_second_message(pipe_path):
+        """Write the second turn after the session-scoped FIFO is created."""
+        deadline = time.monotonic() + 10
+        while not os.path.exists(pipe_path) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if not os.path.exists(pipe_path):
+            raise AssertionError(f"input pipe was not created: {pipe_path}")
+        with open(pipe_path, "w", encoding="utf-8") as pipe:
+            pipe.write("BDD_PLAN_TURN_TWO_TOKEN\n")
+            pipe.flush()
+
+    try:
+        first = make_chat("BDD_PLAN_TURN_ONE_TOKEN")
+        add_observer(first)
+        if rebuild:
+            first.run(message=first.first_message, times=1, need_interactive=False)
+            second = make_chat("BDD_PLAN_TURN_TWO_TOKEN")
+            add_observer(second, starting_turn=1)
+            second.run(message=second.first_message, times=1, need_interactive=False)
+        else:
+            from topsailai.workspace import input_tool
+            pipe_path = input_tool._build_pipe_path(os.environ["BDD_SESSION_ID"])
+            pipe_writer = __import__("threading").Thread(
+                target=write_second_message, args=(pipe_path,), daemon=True
+            )
+            pipe_writer.start()
+            first.run(message=first.first_message, times=2, need_interactive=False)
+
+        from topsailai.utils.env_tool import EnvReaderInstance
+        report = {
+            "snapshots": snapshots,
+            "agent_identities": [id(chat.ai_agent) for chat in chats],
+            "keep_messages_across_turns": EnvReaderInstance.check_bool(
+                "TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS", default=False
+            ),
+            "user_open_count": int(opened_user_md.read_text(encoding="utf-8")),
+            "session_messages": list(chats[-1].ctx_runtime_data.messages),
+            "handler_counts": {
+                command: len(chats[-1].hook_instruction.hook_map.get(command, []))
+                for command in ("/agent.messages", "/ctx.history")
+            },
+        }
+        report_path = Path(os.environ["BDD_INTEGRITY_REPORT"])
+        temporary = report_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(report_path)
+    finally:
+        if pipe_writer is not None:
+            pipe_writer.join(timeout=5)
+        for chat in chats:
+            try:
+                chat.ai_agent.close()
+            except BaseException:
+                pass
+
+
 def run_turn(message, agent_type):
     chat = agent_shell.get_agent_chat(
         agent_type=agent_type,
@@ -204,7 +296,10 @@ def run_turn(message, agent_type):
 
 try:
     if os.environ.get("BDD_INTEGRITY_SCENARIO") == "1":
-        run_integrity_scenario()
+        if os.environ.get("BDD_MULTI_TURN_SCENARIO") == "1":
+            run_multi_turn_integrity_scenario()
+        else:
+            run_integrity_scenario()
     else:
         run_turn("Create a plan for the startup-context regression.", os.environ.get("BDD_AGENT_TYPE", "plan_and_execute"))
     if os.environ.get("BDD_INTEGRITY_SCENARIO") != "1":
@@ -232,10 +327,12 @@ finally:
 class SessionNameStartupScenario:
     """Own the loopback server and execute the real factory in a child process."""
 
-    def __init__(self, monkeypatch: Any, tmp_path: Path, agent_type: str = "plan_and_execute", integrity: bool = False) -> None:
+    def __init__(self, monkeypatch: Any, tmp_path: Path, agent_type: str = "plan_and_execute", integrity: bool = False, multi_turn: bool = False, rebuild: bool = False) -> None:
         """Create isolated startup files, database, and provider."""
         self.agent_type = agent_type
         self.integrity = integrity
+        self.multi_turn = multi_turn
+        self.rebuild = rebuild
         self.tmp_path = None
         self.server = None
         self.server_thread = None
@@ -254,7 +351,16 @@ class SessionNameStartupScenario:
             self.database = tmp_path / "sessions.sqlite"
             response_text = "BDD_PLAN_ANSWER_ONE_TOKEN" if integrity else "Plan complete"
             response = json.dumps([{"step_name": "final_answer", "raw_text": response_text}])
-            self.server = create_server(MockServerConfig(port=0, reply=response, stream_chunks=(response,)))
+            if integrity and getattr(self, "multi_turn", False):
+                first_response = json.dumps([{"step_name": "final_answer", "raw_text": "BDD_PLAN_ANSWER_ONE_TOKEN"}])
+                second_response = json.dumps([{"step_name": "final_answer", "raw_text": "BDD_PLAN_ANSWER_TWO_TOKEN"}])
+                config = MockServerConfig(
+                    port=0, reply=first_response,
+                    stream_response_chunks=((first_response,), (second_response,)),
+                )
+            else:
+                config = MockServerConfig(port=0, reply=response, stream_chunks=(response,))
+            self.server = create_server(config)
             self.base_url = f"http://127.0.0.1:{self.server.server_port}/v1"
             def serve_forever() -> None:
                 with self.server_start_lock:
@@ -299,10 +405,11 @@ class SessionNameStartupScenario:
                 "TOPSAILAI_DISABLED_SKILLS": "*",
                 "TOPSAILAI_ENABLE_SESSION_TEE_OUT": "0",
                 "TOPSAILAI_TERMINAL_TITLE_ENABLED": "0",
+                "TOPSAILAI_INPUT_PIPE_ENABLED": "1",
+                "TOPSAILAI_INPUT_PIPE_TIMEOUT": "10",
                 "TOPSAILAI_EVENTS_ENABLED": "0",
                 "TOPSAILAI_LLM_RESPONSE_EVENTS_ENABLED": "0",
                 "TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_ENABLED": "0",
-                "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "0",
             }.items():
                 monkeypatch.setenv(key, value)
         except BaseException:
@@ -321,6 +428,8 @@ class SessionNameStartupScenario:
             "BDD_SESSION_ID": self.session_id,
             "BDD_AGENT_TYPE": self.agent_type,
             "BDD_INTEGRITY_SCENARIO": "1" if self.integrity else "0",
+            "BDD_MULTI_TURN_SCENARIO": "1" if self.multi_turn else "0",
+            "BDD_REBUILD_AGENT": "1" if self.rebuild else "0",
             "BDD_INTEGRITY_REPORT": str(self.events_dir / "integrity-report.json"),
         })
         self.process = subprocess.run(

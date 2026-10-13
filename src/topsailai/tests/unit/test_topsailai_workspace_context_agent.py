@@ -226,6 +226,45 @@ class TestContextRuntimeAIAgent(unittest.TestCase):
         )
 
     @patch("topsailai.workspace.context.agent.EnvReaderInstance")
+    def test_add_runtime_messages_keep_enabled_ignores_storage_metadata(self, mock_env_reader):
+        """Test persistence deduplication ignores create_time metadata only."""
+        mock_env_reader.check_bool.return_value = True
+        existing = {"role": "user", "content": "same"}
+        persisted = {"role": "user", "content": "same", "create_time": "2026-10-13T20:00:00"}
+        self.mock_ai_agent.messages = [existing]
+        self.mock_ctx_runtime_data.messages = [persisted]
+
+        self.agent.add_runtime_messages()
+
+        self.assertEqual(self.mock_ai_agent.messages, [existing])
+        self.assertEqual(persisted["create_time"], "2026-10-13T20:00:00")
+
+    @patch("topsailai.workspace.context.agent.EnvReaderInstance")
+    def test_add_runtime_messages_keep_enabled_keeps_business_difference(self, mock_env_reader):
+        """Test persistence deduplication retains a business-semantic difference."""
+        mock_env_reader.check_bool.return_value = True
+        existing = {"role": "user", "content": "same"}
+        different = {"role": "user", "content": "different", "create_time": "2026-10-13T20:00:00"}
+        self.mock_ai_agent.messages = [existing]
+        self.mock_ctx_runtime_data.messages = [different]
+
+        self.agent.add_runtime_messages()
+        self.assertEqual(self.mock_ai_agent.messages, [existing, different])
+
+
+    def test_semantic_message_projection_strips_storage_metadata_only(self):
+        """Test semantic projection removes metadata but preserves business fields."""
+        from topsailai.workspace.context.agent import ContextRuntimeAIAgent
+
+        message = {"role": "user", "content": "same", "create_time": "timestamp"}
+        projected = ContextRuntimeAIAgent._semantic_message(message)
+
+        self.assertEqual(projected, {"role": "user", "content": "same"})
+        self.assertIsNot(projected, message)
+        self.assertEqual(message["create_time"], "timestamp")
+
+
+    @patch("topsailai.workspace.context.agent.EnvReaderInstance")
     @patch("topsailai.workspace.context.agent.message_tool")
     def test_add_runtime_messages_keep_enabled_no_new_messages(
         self, mock_message_tool, mock_env_reader
