@@ -33,6 +33,31 @@ The agent runtime stores its generated data under `TOPSAILAI_HOME` (default
 memory under `memory/`, skills under `skill/`, and global configuration in
 `settings.yaml` plus `.env.local` / `.env`.
 
+## Human factual context (`USER.md`)
+
+`{TOPSAILAI_HOME}/USER.md` (default `~/.topsailai/USER.md`) is the
+**human-owned factual context file**. It records durable facts, identities,
+preferences, and authorizations that the human wants every agent to know, so it
+is managed as human factual information rather than as agent-generated state.
+
+- **Human-owned, read-only for the agent.** The human authors and edits this
+  file; the agent must not create, rewrite, or delete it. Treat it as a fact
+  file, like other `maintainer: human` documents.
+- **Injected at startup.** Its non-empty content is appended to the startup
+  user observation, combined with `TOPSAILAI_CONTEXT_USER_MESSAGE`. When both
+  are present they are joined with a `\n---\n` separator; when only one is
+  present that one is used.
+- **Injected once per agent instance.** Startup context sources are processed
+  only on the first turn of an agent instance, so `USER.md` is not re-appended
+  on later turns.
+- **Blank content is ignored.** The file is read as UTF-8 and stripped; a
+  missing file or whitespace-only content contributes nothing. Read failures
+  are logged as a warning without leaking the file body.
+
+Because it is injected into every agent's startup context, keep it concise and
+free of secrets; store credentials and other sensitive values in
+`topsailai-data` notes instead.
+
 ## The `topsailai` CLI is the unified entry point
 
 The `topsailai` CLI is the **unified entry point** for the whole TopsailAI
