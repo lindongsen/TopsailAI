@@ -69,7 +69,10 @@ def metadata_path(topsailai_home: str | Path, session_id: str) -> Path:
     home = Path(topsailai_home)
     if not home.is_absolute() or ".." in home.parts:
         raise ValueError("invalid_home")
-    return home / "workspace" / "task" / "session_agent_driver" / (session_id + ".meta")
+    # The caller-configured HOME is trusted deployment authority and may be an
+    # alias. Resolve only that root, never metadata-controlled descendants;
+    # _read_metadata still rejects symlinks in the canonical path and subtree.
+    return home.resolve() / "workspace" / "task" / "session_agent_driver" / (session_id + ".meta")
 
 
 def _read_metadata(path: Path) -> bytes | None:
