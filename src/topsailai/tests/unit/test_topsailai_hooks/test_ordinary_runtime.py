@@ -79,7 +79,7 @@ def test_real_modules_then_default_scripts(tmp_path, monkeypatch):
         evidence = dict(timings, deadline=deadlines[0],
             preparation_seconds=timings['prepared_at'] - timings['started_at'],
             execution_seconds=timings['finished_at'] - timings['prepared_at'])
-        Path('/TopsailAI/src/topsailai/.tmp/u06d/final/timing.json').write_text(json.dumps(evidence))
+        (tmp_path / 'timing.json').write_text(json.dumps(evidence))
         assert report.rejection_reason is None, report.rejection_reason
         result = report.unified_result
         assert result.status == 'success' and result.cleanup.state == 'safe', result
