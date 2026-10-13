@@ -64,7 +64,7 @@ def secure_test_root():
         test_root.rmdir()
 
 
-def _runtime(source_root: Path, runtime_root: Path) -> tuple[HookRuntime, object]:
+def _runtime(source_root: Path, runtime_root: Path, *, settings: HookSettings | None = None) -> tuple[HookRuntime, object]:
     """Create one trusted runtime with explicit secure source and temp roots."""
     source_root = source_root.resolve(strict=True)
     runtime_root = runtime_root.resolve(strict=True)
@@ -83,7 +83,7 @@ def _runtime(source_root: Path, runtime_root: Path) -> tuple[HookRuntime, object
         python_runtime=ArtifactPythonRuntimeAuthority(executable, executable_digest),
     )
     runtime = HookRuntime(
-        HookSettings(),
+        HookSettings() if settings is None else settings,
         temp_root=str(runtime_root),
         configured_trust=trust,
     )

@@ -7,7 +7,7 @@ import pytest
 from topsailai.hooks import ConfiguredTrustPolicy
 from topsailai.hooks.points.catalog import PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
 from topsailai.tests.unit.test_topsailai_hooks.test_configured_preparation import _assertion, _runtime
-from topsailai.tests.unit.test_topsailai_hooks.test_summary_events_observer_lifecycle import emit, ACTIVE, report_evidence
+from topsailai.tests.unit.test_topsailai_hooks.test_summary_events_observer_lifecycle import emit, ACTIVE, report_evidence, FUNCTIONAL_SETTINGS
 from topsailai.workspace.summary_hooks_owner import build_summary_preparation_request, SummaryHooksOwner
 
 
@@ -38,7 +38,7 @@ def tree(tmp_path):
     """Create isolated point directories with stable generic entry functions."""
     points = tmp_path / "points"
     points.mkdir(mode=0o700)
-    request = build_summary_preparation_request(points_root=points)
+    request = build_summary_preparation_request(points_root=points, settings=FUNCTIONAL_SETTINGS)
     for point in request.configuration.hook_points:
         point.module_folder.mkdir(parents=True, mode=0o700)
         (point.module_folder / "zeta.py").write_text(
@@ -51,7 +51,7 @@ def start(tree, *, unauthorized=None):
     points, request, temporary = tree
     root = temporary / "runtime"
     root.mkdir(mode=0o700, exist_ok=True)
-    probe, _ = _runtime(points, root)
+    probe, _ = _runtime(points, root, settings=request.configuration.settings)
     authority = probe._configured_trust.python_runtime
     probe.close()
     assert not probe.cleanup_debts()

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from topsailai.hooks import ConfiguredHookPoint, ConfiguredHooks, ConfiguredTrustPolicy, HookSettings
+from topsailai.hooks.configuration import HookLimits
 from topsailai.hooks.configured_contracts import SummaryPreparationRequest
 from topsailai.hooks.configured_executor import ConfiguredHookExecutor, HookOperation
 from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
@@ -23,11 +24,14 @@ from topsailai.tests.unit.test_topsailai_hooks.test_summary_hook_points import c
 OBSERVER = Path(__file__).resolve().parents[3] / "hooks/points/context/summary_events_observer"
 POINTS_ROOT = OBSERVER.parent
 ACTIVE = tuple(point for point in SUMMARY_POINTS if point.phase_one_eligible)
+# Observed 1091ms censored plan; 2x rounded headroom, two Modules plus terminal.
+FUNCTIONAL_SETTINGS = HookSettings(limits=HookLimits(
+    handler_timeout_ms=2250, dispatch_timeout_ms=4750))
 
 
 def configuration(points_root=None):
     """Opt in only the eight exact Catalog-owned definitions, without scripts."""
-    return build_summary_preparation_request(points_root=points_root).configuration
+    return build_summary_preparation_request(points_root=points_root, settings=FUNCTIONAL_SETTINGS).configuration
 
 
 @pytest.fixture
@@ -42,7 +46,7 @@ def lifecycle(tmp_path, monkeypatch):
     for point in configuration().hook_points:
         shutil.copytree(point.module_folder, points / point.module_folder.parent.name / "modules",
             ignore=shutil.ignore_patterns("__pycache__"))
-    runtime, scope = _runtime(points, root)
+    runtime, scope = _runtime(points, root, settings=FUNCTIONAL_SETTINGS)
     trust = runtime._configured_trust
     runtime._configured_trust = ConfiguredTrustPolicy(trust.source_roots,
         closure_assertions=tuple(_assertion(source, source.stem)
@@ -143,7 +147,7 @@ def test_phase_two_not_configured_or_emitted(lifecycle, point):
     """Inactive configuration is rejected before observer discovery or dispatch."""
     assert point.name not in {p.hook_name for p in configuration().hook_points}
     config = ConfiguredHooks((ConfiguredHookPoint(point.name, point.definition,
-        module_folder=OBSERVER, inject_hook_context=True),), HookSettings())
+        module_folder=OBSERVER, inject_hook_context=True),), FUNCTIONAL_SETTINGS)
     registrar, executor, adapter = prepare(lifecycle, config)
     assert registrar.dispositions[0].reason == "catalog_rejected"
     with pytest.raises(KeyError):
@@ -161,7 +165,7 @@ def test_unconfigured_and_disabled_do_not_emit(lifecycle, disabled):
     importlib.import_module("topsailai.hooks.points.context.summary_events_observer")
     importlib.import_module("topsailai.workspace.agent_shell")
     assert runtime._registry.generation == generation
-    config = configuration() if disabled else ConfiguredHooks((), HookSettings())
+    config = configuration() if disabled else ConfiguredHooks((), FUNCTIONAL_SETTINGS)
     names = frozenset(point.name for point in PHASE_ONE_DECLARATIONS) if disabled else frozenset()
     _, _, adapter = prepare(lifecycle, config, names)
     result = emit(adapter, ACTIVE[0])
@@ -225,7 +229,7 @@ def test_legacy_module_still_usable_without_observer(lifecycle, tmp_path):
         closure_assertions=(_assertion(source, "legacy"),), python_runtime=trust.python_runtime)
     point = ACTIVE[0]
     config = ConfiguredHooks((ConfiguredHookPoint(point.name, point.definition,
-        module_folder=folder, module_args=("legacy",)),), HookSettings())
+        module_folder=folder, module_args=("legacy",)),), FUNCTIONAL_SETTINGS)
     _, _, adapter = prepare(lifecycle, config)
     result = emit(adapter, point)
     assert result.report.unified_result.handlers[0].returned.value == "legacy", report_evidence(result.report)
