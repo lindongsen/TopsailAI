@@ -165,7 +165,9 @@ class ConfiguredHookExecutor:
             detached,
             operation_id=resolved.operation_id,
             parent_operation_id=resolved.parent_operation_id,
-            layer="hooks",
+            layer=(point.name.split("__")[3].rpartition("_")[2]
+                   if point.name.startswith("hook__") and "_" in point.name.split("__")[3]
+                   else "hooks"),
             purpose=point.phase,
         )
 
