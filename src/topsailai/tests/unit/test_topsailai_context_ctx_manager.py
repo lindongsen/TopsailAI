@@ -17,6 +17,7 @@ Author: mm-m25
 import logging
 import os
 import threading
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -1211,69 +1212,49 @@ class TestCreateSessionAutoRename(unittest.TestCase):
 
 
 class TestWaitAgentReady(unittest.TestCase):
-    """Test cases for wait_agent_ready() function."""
+    """Test cases for the dedicated AgentStartupState readiness marker."""
 
-    def setUp(self):
-        """Store original environment."""
-        self.original_env = os.environ.copy()
-
-    def tearDown(self):
-        """Restore original environment."""
-        os.environ.clear()
-        os.environ.update(self.original_env)
-
-    def test_wait_agent_ready_returns_when_context_user_message_empty(self):
-        """Test wait_agent_ready returns immediately when env var is empty."""
+    def test_wait_agent_ready_returns_for_standalone_naming(self):
+        """Standalone naming has no owning agent and does not wait."""
         from topsailai.context.ctx_manager import wait_agent_ready
 
-        mock_getenv = MagicMock(return_value="")
-        mock_sleep = MagicMock()
-        with patch('topsailai.context.ctx_manager.os', SimpleNamespace(getenv=mock_getenv)), \
-                patch('topsailai.context.ctx_manager.time', SimpleNamespace(sleep=mock_sleep)):
-            wait_agent_ready()
+        self.assertTrue(wait_agent_ready())
 
-        mock_getenv.assert_called_with("TOPSAILAI_CONTEXT_USER_MESSAGE")
-        mock_sleep.assert_called_once_with(1)
-
-    def test_wait_agent_ready_waits_until_context_user_message_cleared(self):
-        """Test wait_agent_ready polls until TOPSAILAI_CONTEXT_USER_MESSAGE is cleared."""
+    def test_wait_agent_ready_waits_for_started_marker(self):
+        """Naming waits until the owning agent publishes startup completion."""
+        from topsailai.context.agent_startup import AgentStartupState
         from topsailai.context.ctx_manager import wait_agent_ready
 
-        mock_getenv = MagicMock(side_effect=["some context", "some context", ""])
-        mock_sleep = MagicMock()
-        with patch('topsailai.context.ctx_manager.os', SimpleNamespace(getenv=mock_getenv)), \
-                patch('topsailai.context.ctx_manager.time', SimpleNamespace(sleep=mock_sleep)):
-            wait_agent_ready()
+        state = AgentStartupState()
+        result = []
+        worker = threading.Thread(target=lambda: result.append(wait_agent_ready(state, timeout=1)))
+        worker.start()
+        self.assertTrue(worker.is_alive())
+        state.mark_started()
+        worker.join(timeout=1)
 
-        self.assertEqual(mock_getenv.call_count, 3)
-        self.assertEqual(mock_sleep.call_count, 3)
+        self.assertEqual(result, [True])
 
-    def test_wait_agent_ready_with_need_agent_object(self):
-        """Test wait_agent_ready waits for agent object when requested."""
+    def test_wait_agent_ready_returns_false_when_cancelled(self):
+        """Cancelled startup prevents the naming worker from running."""
+        from topsailai.context.agent_startup import AgentStartupState
         from topsailai.context.ctx_manager import wait_agent_ready
 
-        mock_getenv = MagicMock(return_value="")
-        mock_sleep = MagicMock()
-        with patch('topsailai.context.ctx_manager.os', SimpleNamespace(getenv=mock_getenv)), \
-                patch('topsailai.context.ctx_manager.time', SimpleNamespace(sleep=mock_sleep)), \
-                patch('topsailai.context.ctx_manager.thread_local_tool.get_agent_object') as mock_get_agent:
-            mock_get_agent.side_effect = [None, "agent_obj"]
-            wait_agent_ready(need_agent_object=True)
-            self.assertEqual(mock_get_agent.call_count, 2)
-
-        self.assertEqual(mock_sleep.call_count, 2)
-
+        state = AgentStartupState()
+        state.cancel()
+        self.assertFalse(wait_agent_ready(state, timeout=0))
 
     @patch('topsailai.context.ctx_manager.wait_agent_ready')
     @patch('topsailai.workspace.llm_shell.get_llm_chat')
     def test_generate_session_name_calls_wait_agent_ready_before_llm(self, mock_get_llm_chat, mock_wait_ready):
-        """Test generate_session_name waits for agent ready before calling LLM."""
+        """Test generate_session_name waits for agent readiness before naming."""
         from topsailai.context.ctx_manager import generate_session_name
 
         call_order = []
 
         def wait_side_effect(*args, **kwargs):
             call_order.append('wait')
+            return True
 
         def llm_side_effect(*args, **kwargs):
             call_order.append('llm')
@@ -1284,9 +1265,60 @@ class TestWaitAgentReady(unittest.TestCase):
         mock_wait_ready.side_effect = wait_side_effect
         mock_get_llm_chat.side_effect = llm_side_effect
 
-        result = generate_session_name('session-123', 'Some task')
+        result = generate_session_name('session-123', 'Some task', object())
 
         self.assertEqual(result, 'Generated Name')
         self.assertEqual(call_order, ['wait', 'llm'])
         mock_wait_ready.assert_called_once()
         mock_get_llm_chat.assert_called_once()
+        self.assertEqual(mock_get_llm_chat.call_args.kwargs['load_startup_context'], False)
+
+class TestSessionNamingStartupIsolation(unittest.TestCase):
+    """Verify session naming cannot consume startup context."""
+
+    @patch("topsailai.context.ctx_manager.wait_agent_ready", return_value=True)
+    @patch("topsailai.workspace.llm_shell.get_llm_chat")
+    def test_naming_disables_startup_context(self, mock_get_llm_chat, _mock_wait):
+        """Naming passes the explicit startup-context opt-out."""
+        from topsailai.context.ctx_manager import generate_session_name
+
+        llm_chat = MagicMock()
+        llm_chat.chat.return_value = "Name"
+        mock_get_llm_chat.return_value = llm_chat
+
+        self.assertEqual(generate_session_name("session", "task", object()), "Name")
+        self.assertFalse(mock_get_llm_chat.call_args.kwargs["load_startup_context"])
+
+
+class TestSessionNamingCancellation(unittest.TestCase):
+    """Verify cancelled or timed-out startup cannot perform naming I/O."""
+
+    @patch("topsailai.workspace.llm_shell.get_llm_chat")
+    def test_pending_timeout_skips_llm_and_rename(self, mock_get_llm_chat):
+        """A real pending wait timeout produces no naming request or update."""
+        from topsailai.context.agent_startup import AgentStartupState
+        from topsailai.context.ctx_manager import _async_update_session_name
+
+        state = AgentStartupState()
+        session_manager = MagicMock()
+        started = time.monotonic()
+        with patch("topsailai.context.ctx_manager.wait_agent_ready", side_effect=lambda startup_state: startup_state.wait(0.03)):
+            _async_update_session_name("session", "task", session_manager, "Agent", state)
+        self.assertGreaterEqual(time.monotonic() - started, 0.03)
+        mock_get_llm_chat.assert_not_called()
+        session_manager.update_session_name.assert_not_called()
+
+    @patch("topsailai.workspace.llm_shell.get_llm_chat")
+    def test_cancelled_state_skips_llm_and_rename(self, mock_get_llm_chat):
+        """Cancellation prevents both naming generation and its storage update."""
+        from topsailai.context.agent_startup import AgentStartupState
+        from topsailai.context.ctx_manager import _async_update_session_name
+
+        state = AgentStartupState()
+        state.cancel()
+        session_manager = MagicMock()
+
+        _async_update_session_name("session", "task", session_manager, "Agent", state)
+
+        mock_get_llm_chat.assert_not_called()
+        session_manager.update_session_name.assert_not_called()

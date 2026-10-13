@@ -218,3 +218,8 @@ agent_shell.get_agent_chat()
                     ├── ctx_runtime_data.add_session_message() ──→ persist to User2Agent
                     └── hook_for_final_answer()
 ```
+
+
+### Startup Context and Session Naming
+
+The main Agent publishes a per-Agent startup-completion state after its first `new_session()` succeeds. Background session-name generation waits on that state and explicitly disables startup-context loading, so it cannot consume `USER.md` or the process-wide startup-context latch before the real Agent.

@@ -243,7 +243,7 @@ class PromptBase(object):
     # define flags
     flag_dump_messages = False
 
-    def __init__(self, system_prompt:str, tool_prompt:str=""):
+    def __init__(self, system_prompt:str, tool_prompt:str="", *, load_startup_context: bool = True):
         """
         Initialize the prompt base manager
 
@@ -253,6 +253,7 @@ class PromptBase(object):
         """
         assert system_prompt, "missing system_prompt"
 
+        self.load_startup_context = load_startup_context
         self.system_prompt = system_prompt
         if system_prompt and system_prompt[-1] != '\n':
             system_prompt += "\n"
@@ -441,7 +442,10 @@ class PromptBase(object):
         # Startup context sources are processed once per PromptBase instance.
         message_list: list[str] = []
         if not self._tool_observation_injected:
-            context_user_message = EnvReaderInstance.context_user_message_content
+            context_user_message = (
+                EnvReaderInstance.context_user_message_content
+                if self.load_startup_context else ""
+            )
             if context_user_message:
                 message_list.append(context_user_message)
 
@@ -455,7 +459,8 @@ class PromptBase(object):
             self._tool_observation_injected = True
 
             # Clear environment-provided context after processing startup sources.
-            EnvReaderInstance.clean_context_x_message()
+            if self.load_startup_context:
+                EnvReaderInstance.clean_context_x_message()
 
         if not message_list:
             return None

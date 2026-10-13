@@ -236,19 +236,19 @@ def _get_auto_session_name_max_length() -> int:
         max_length = 30
     return max_length
 
-def wait_agent_ready(need_agent_object=False):
+def wait_agent_ready(agent_startup_state=None, *, timeout=300.0):
+    """Wait for the owning agent to finish startup when one is supplied."""
+    if agent_startup_state is None:
+        return True
     logger.info("waiting agent ready ...")
-    while True:
-        time.sleep(1)
-        if os.getenv("TOPSAILAI_CONTEXT_USER_MESSAGE"):
-            continue
-        if need_agent_object and thread_local_tool.get_agent_object() is None:
-            continue
-        break
-    logger.info("agent is ready")
-    return
+    ready = agent_startup_state.wait(timeout)
+    if ready:
+        logger.info("agent is ready")
+    else:
+        logger.info("agent startup did not complete; skipping session naming")
+    return ready
 
-def generate_session_name(session_id: str, message: str) -> str:
+def generate_session_name(session_id: str, message: str, agent_startup_state=None) -> str:
     """
     Generate a concise session name from the given message using the LLM.
 
@@ -269,7 +269,13 @@ def generate_session_name(session_id: str, message: str) -> str:
     if not session_id or not message:
         return ""
 
-    wait_agent_ready()
+    ready = (
+        wait_agent_ready(agent_startup_state)
+        if agent_startup_state is not None
+        else wait_agent_ready()
+    )
+    if not ready:
+        return ""
 
     max_length = _get_auto_session_name_max_length()
 
@@ -292,6 +298,7 @@ def generate_session_name(session_id: str, message: str) -> str:
             need_input_message=False,
             need_print_session=False,
             need_print_message=False,
+            load_startup_context=False,
         )
         summary = llm_chat.chat(need_print=False, need_env_message=False)
         if not summary:
@@ -311,6 +318,7 @@ def _async_update_session_name(
         message: str,
         session_mgr: SessionStorageBase,
         agent_name: str,
+        agent_startup_state=None,
     ):
     """
     Background worker: generate a session name and update storage.
@@ -328,7 +336,11 @@ def _async_update_session_name(
     worker_agent_name = f"{agent_name}/GenerateSessionName"
     with thread_local_tool.ctxm_give_agent_name(worker_agent_name):
         try:
-            session_name = generate_session_name(session_id, message)
+            session_name = (
+                generate_session_name(session_id, message, agent_startup_state)
+                if agent_startup_state is not None
+                else generate_session_name(session_id, message)
+            )
             if not session_name:
                 return
 
@@ -369,6 +381,7 @@ def create_session(
         session_name: str = None,
         session_mgr: SessionStorageBase = None,
         agent_name: str = None,
+        agent_startup_state=None,
     ) -> bool:
     """
     Create a new session for a specific task.
@@ -416,7 +429,9 @@ def create_session(
                 worker_agent_name = agent_name or os.getenv("TOPSAILAI_AGENT_NAME") or "TopsailAI"
                 threading.Thread(
                     target=_async_update_session_name,
-                    args=(session_id, task, session_mgr, worker_agent_name),
+                    args=(session_id, task, session_mgr, worker_agent_name, agent_startup_state)
+                    if agent_startup_state is not None
+                    else (session_id, task, session_mgr, worker_agent_name),
                     daemon=True,
                 ).start()
             except Exception as e:

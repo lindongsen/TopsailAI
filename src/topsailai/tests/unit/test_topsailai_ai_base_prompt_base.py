@@ -4,7 +4,7 @@ import unittest
 import shutil
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock, mock_open, PropertyMock
 
 from topsailai.utils import message_tool
 
@@ -1389,6 +1389,26 @@ class TestPromptBase(unittest.TestCase):
 
         with ctxm_set_env({"TOPSAILAI_USE_TOOL_CALLS": "0"}):
             self.assertTrue(threshold.is_exceeded(messages))
+
+
+class TestPromptStartupContextOptOut(unittest.TestCase):
+    """Verify internal prompts do not read or consume startup context when disabled."""
+
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env", return_value=[])
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env", return_value="env_prompt")
+    def test_disabled_startup_context_skips_read_and_cleanup(self, _prompt, _managers):
+        """The explicit opt-out preserves environment startup state."""
+        from topsailai.ai_base.prompt_base import PromptBase
+        from topsailai.ai_base import prompt_base
+
+        with patch.object(type(prompt_base.EnvReaderInstance), "context_user_message_content", new_callable=PropertyMock) as context_property, \
+                patch.object(prompt_base.EnvReaderInstance, "clean_context_x_message") as clean_context:
+            prompt = PromptBase("test", load_startup_context=False)
+            self.assertIsNone(prompt._build_context_message())
+
+        context_property.assert_not_called()
+        clean_context.assert_not_called()
+        self.assertFalse(prompt.load_startup_context)
 
 
 if __name__ == "__main__":
