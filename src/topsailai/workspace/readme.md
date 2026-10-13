@@ -69,6 +69,8 @@ Factory for creating fully configured `AgentChat` instances.
 - `get_ai_agent()` — creates `AgentRun` (ReAct agent) with tools, prompts, and configuration
   - Tool-module `PROMPT` content is included in the system prompt. Shared startup context such as Skill and Memory catalogs belongs there so a Manager and the Subagent it starts do not propagate duplicate copies through User2Agent messages.
   - Tool-module `OBSERVATION` remains available for one-time or runtime context that intentionally belongs in a user-role message.
+  - Startup user observation combines `TOPSAILAI_CONTEXT_USER_MESSAGE` with non-empty `{TOPSAILAI_HOME}/USER.md` content. PromptBase automatically loads USER.md at most once per process, then sets `TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED=0`; explicit context remains per-instance.
+  - Automatic USER.md loading is enabled by default; false, empty, or invalid values disable it, and the process-wide latch does not affect `TOPSAILAI_CONTEXT_USER_MESSAGE`.
 - `get_agent_chat()` — assembles complete chat session:
   - Initializes `ContextRuntimeData`, `ContextRuntimeAIAgent`, `ContextRuntimeInstructions`
   - Creates `HookInstruction` and loads plugin instructions
@@ -216,3 +218,8 @@ agent_shell.get_agent_chat()
                     ├── ctx_runtime_data.add_session_message() ──→ persist to User2Agent
                     └── hook_for_final_answer()
 ```
+
+
+### Startup Context and Session Naming
+
+The main Agent publishes a per-Agent startup-completion state after its first `new_session()` succeeds. Background session-name generation waits on that state and explicitly disables startup-context loading, so it cannot consume `USER.md` or the process-wide startup-context latch before the real Agent.

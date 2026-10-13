@@ -29,6 +29,7 @@ from topsailai.workspace.session_meta import (
     cleanup_session_meta_files,
 )
 from topsailai.context import ctx_manager
+from topsailai.context.agent_startup import AgentStartupState
 from topsailai.workspace.input_tool import (
     get_message,
 )
@@ -162,6 +163,7 @@ def _get_agent_chat_impl(
         summary_preparation_request: "SummaryPreparationRequest | None" = None,
         summary_trust_policy: "ConfiguredTrustPolicy | None" = None,
         summary_hooks_temp_root: str | None = None,
+        agent_startup_state: AgentStartupState | None = None,
     ) -> AgentChat:
     """Internal implementation of get_agent_chat()."""
     supplied = (summary_preparation_request is not None,
@@ -258,6 +260,7 @@ def _get_agent_chat_impl(
                 session_id,
                 task=message[:100],
                 agent_name=resolved_agent_name,
+                agent_startup_state=agent_startup_state,
             )
 
     # ai agent
@@ -271,6 +274,7 @@ def _get_agent_chat_impl(
         agent_role=agent_role,
         agent_name=resolved_agent_name,
     )
+    ai_agent.startup_state = agent_startup_state
 
     if agent_name:
         ai_agent.agent_name = agent_name
@@ -369,25 +373,31 @@ def get_agent_chat(
         summary_trust_policy is not None, summary_hooks_temp_root is not None)
     if any(supplied) and not all(supplied):
         raise ValueError("summary Hooks inputs must be supplied together")
+    startup_state = AgentStartupState()
     lock_ctx = ctxm_project_workspace_lock if need_project_workspace_lock else ctxm_void
-    with lock_ctx() as has_lock:
-        return _get_agent_chat_impl(
-            system_prompt=system_prompt,
-            to_dump_messages=to_dump_messages,
-            disabled_tools=disabled_tools,
-            enabled_tools=enabled_tools,
-            tool_map=tool_map,
-            agent_type=agent_type,
-            agent_role=agent_role,
-            agent_name=agent_name,
-            session_id=session_id,
-            message=message,
-            session_head_tail_offset=session_head_tail_offset,
-            need_print_session=need_print_session,
-            need_input_message=need_input_message,
-            need_set_agent_name_to_thread_local=need_set_agent_name_to_thread_local,
-            need_project_workspace_lock=need_project_workspace_lock,
-            summary_preparation_request=summary_preparation_request,
-            summary_trust_policy=summary_trust_policy,
-            summary_hooks_temp_root=summary_hooks_temp_root,
-        )
+    try:
+        with lock_ctx() as has_lock:
+            return _get_agent_chat_impl(
+                system_prompt=system_prompt,
+                to_dump_messages=to_dump_messages,
+                disabled_tools=disabled_tools,
+                enabled_tools=enabled_tools,
+                tool_map=tool_map,
+                agent_type=agent_type,
+                agent_role=agent_role,
+                agent_name=agent_name,
+                session_id=session_id,
+                message=message,
+                session_head_tail_offset=session_head_tail_offset,
+                need_print_session=need_print_session,
+                need_input_message=need_input_message,
+                need_set_agent_name_to_thread_local=need_set_agent_name_to_thread_local,
+                need_project_workspace_lock=need_project_workspace_lock,
+                summary_preparation_request=summary_preparation_request,
+                summary_trust_policy=summary_trust_policy,
+                summary_hooks_temp_root=summary_hooks_temp_root,
+                agent_startup_state=startup_state,
+            )
+    except BaseException:
+        startup_state.cancel()
+        raise

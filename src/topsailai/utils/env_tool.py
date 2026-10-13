@@ -340,28 +340,46 @@ class EnvironmentReader(object):
 
     @property
     def context_user_message_content(self):
-        """Retrieve context user message content from environment variable.
+        """Retrieve startup context content from the environment and USER.md.
 
         The environment variable TOPSAILAI_CONTEXT_USER_MESSAGE may contain either
         a file path or the actual content. If it's a file path, the file is read;
-        otherwise the variable's value is returned directly.
+        otherwise the value is returned directly. Valid content from USER.md under
+        TOPSAILAI_HOME is appended when TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED is enabled.
 
         Returns:
             str: Context user message content, or empty string if not set.
         """
         env_var = os.getenv("TOPSAILAI_CONTEXT_USER_MESSAGE")
-        if not env_var:
-            return ""
-        content = self.try_read_file(env_var)
-        return content or env_var
+        existing_context = ""
+        if env_var:
+            content = self.try_read_file(env_var)
+            existing_context = content or env_var
+
+        if not self.check_bool("TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED", default=True):
+            return existing_context
+
+        from topsailai.workspace import folder_constants
+
+        user_path = os.path.abspath(os.path.join(folder_constants.TOPSAILAI_HOME, "USER.md"))
+        user_context = ""
+        try:
+            with open(user_path, "r", encoding="utf-8") as user_file:
+                user_context = user_file.read().strip()
+        except FileNotFoundError:
+            pass
+        except (OSError, UnicodeDecodeError):
+            logger.warning("failed to read startup user context file %s", user_path, exc_info=True)
+
+        if existing_context and user_context:
+            return existing_context + "\n---\n" + user_context
+        return existing_context or user_context
 
     def clean_context_x_message(self):
-        """Only use once in a session."""
-        for env_key in [
-            "TOPSAILAI_CONTEXT_USER_MESSAGE",
-        ]:
-            if env_key in os.environ:
-                os.environ[env_key] = ""
+        """Clear startup context and disable USER.md for this process."""
+        if "TOPSAILAI_CONTEXT_USER_MESSAGE" in os.environ:
+            os.environ["TOPSAILAI_CONTEXT_USER_MESSAGE"] = ""
+        os.environ["TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED"] = "0"
         return
 
     def check_bool(self, name, default=None) -> bool:

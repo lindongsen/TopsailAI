@@ -133,6 +133,7 @@ def get_llm_chat(
         need_print_session: bool = True,
         need_print_message: bool = True,
         func_formatter_messages=None,
+        load_startup_context: bool = True,
     ) -> LLMChat:
     """
     Create and return an LLMChat instance for interacting with a Large Language Model.
@@ -167,6 +168,8 @@ def get_llm_chat(
             sending to LLM. Defaults to True.
         func_formatter_messages (callable, optional): A function to format messages
             from session history. Defaults to None.
+        load_startup_context (bool, optional): Whether to load environment startup context.
+            Defaults to True.
 
     Returns:
         LLMChat: An initialized LLMChat instance ready for conversation.
@@ -221,7 +224,9 @@ def get_llm_chat(
     if temperature is not None:
         llm_model.temperature = temperature
 
-    prompt_ctl = PromptBase(sys_prompt_content or "You are a helpful assistant.")
+    prompt_args = (sys_prompt_content or "You are a helpful assistant.",)
+    prompt_kwargs = {} if load_startup_context else {"load_startup_context": False}
+    prompt_ctl = PromptBase(*prompt_args, **prompt_kwargs)
     if messages_from_session:
         prompt_ctl.messages = func_formatter_messages(messages_from_session) if func_formatter_messages else messages_from_session
         if message:

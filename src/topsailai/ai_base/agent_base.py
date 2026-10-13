@@ -105,6 +105,9 @@ class AgentBase(AgentTool):
 
     def close(self) -> None:
         """Close runtime components owned by this agent."""
+        startup_state = getattr(self, "startup_state", None)
+        if startup_state is not None:
+            startup_state.cancel()
         self.llm_model.close()
 
     def __str__(self) -> str:
@@ -272,6 +275,9 @@ class AgentRun(AgentBase):
         # new session
         user_message = {"step_name":STEP_NAME_TASK,"raw_text":user_input} if user_input else None
         self.new_session(user_message)
+        startup_state = getattr(self, "startup_state", None)
+        if startup_state is not None:
+            startup_state.mark_started()
 
         while True:
             # Check for hard interrupt at the start of each iteration.

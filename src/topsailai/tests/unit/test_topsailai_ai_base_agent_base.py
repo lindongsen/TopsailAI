@@ -101,6 +101,18 @@ class TestAgentBaseInitialization(unittest.TestCase):
 
         self.mock_llm_model.close.assert_called_once_with()
 
+    def test_close_cancels_pending_startup_state(self):
+        """Closing an unstarted agent cancels its naming wait."""
+        from topsailai.ai_base.agent_base import AgentBase
+        from topsailai.context.agent_startup import AgentStartupState
+
+        agent = AgentBase("prompt", {}, "agent")
+        agent.startup_state = AgentStartupState()
+        agent.close()
+
+        self.assertFalse(agent.startup_state.started)
+        self.assertFalse(agent.startup_state.wait(0))
+
     def test_init_with_tool_prompt(self):
         """Test initialization with tool prompt."""
         from topsailai.ai_base.agent_base import AgentBase
@@ -383,6 +395,51 @@ class TestAgentRunRunEdgeCases(unittest.TestCase):
         """Tear down test fixtures."""
         for p in reversed(self.patches):
             p.stop()
+
+    def test_startup_marker_is_published_after_new_session(self):
+        """Successful startup publishes the marker only after context setup returns."""
+        from topsailai.ai_base.agent_base import AgentRun
+        from topsailai.context.agent_startup import AgentStartupState
+
+        agent = AgentRun(
+            system_prompt="You are a helpful assistant",
+            tools={},
+            agent_name="TestAgent",
+        )
+        agent.available_tools = {}
+        agent.messages = []
+        agent.startup_state = AgentStartupState()
+        observed = []
+
+        def new_session(_message):
+            observed.append(agent.startup_state.started)
+
+        agent.new_session = MagicMock(side_effect=new_session)
+        agent.llm_model.chat = MagicMock(return_value=(None, None))
+
+        self.assertIsNone(agent._run(self.step_call_mock, "task"))
+        self.assertEqual(observed, [False])
+        self.assertTrue(agent.startup_state.started)
+
+    def test_failed_new_session_does_not_publish_startup_marker(self):
+        """Startup failure leaves the marker pending until close cancels it."""
+        from topsailai.ai_base.agent_base import AgentRun
+        from topsailai.context.agent_startup import AgentStartupState
+
+        agent = AgentRun(
+            system_prompt="You are a helpful assistant",
+            tools={},
+            agent_name="TestAgent",
+        )
+        agent.available_tools = {}
+        agent.messages = []
+        agent.startup_state = AgentStartupState()
+        agent.new_session = MagicMock(side_effect=RuntimeError("startup failed"))
+
+        with self.assertRaisesRegex(RuntimeError, "startup failed"):
+            agent._run(self.step_call_mock, "task")
+        self.assertFalse(agent.startup_state.started)
+        self.assertFalse(agent.startup_state.wait(0))
 
     def test_run_with_empty_user_input(self):
         """Test _run handles empty user input."""

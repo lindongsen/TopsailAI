@@ -132,6 +132,15 @@ class ContextRuntimeAIAgent(ContextRuntimeUtils):
 
         return
 
+    @staticmethod
+    def _semantic_message(message):
+        """Return a detached message projection without storage metadata."""
+        if not isinstance(message, dict):
+            return message
+        projection = dict(message)
+        projection.pop("create_time", None)
+        return projection
+
     def add_runtime_messages(self):
         """
         Add runtime context messages to the AI agent's message list.
@@ -142,6 +151,9 @@ class ContextRuntimeAIAgent(ContextRuntimeUtils):
         When ``TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS`` is enabled,
         only messages that are not already present in the AI agent's message
         history are appended, so the Agent2LLM context persists across turns.
+        Persisted messages may carry storage-only ``create_time`` metadata;
+        comparison uses detached semantic projections without mutating either
+        source message.
         """
         if not self.messages:
             return
@@ -152,9 +164,16 @@ class ContextRuntimeAIAgent(ContextRuntimeUtils):
             "TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS", default=False
         )
         if keep_messages:
+            existing_messages = [
+                self._semantic_message(message)
+                for message in self.ai_agent.messages
+            ]
             for msg in messages:
-                if not message_tool.message_in_list(msg, self.ai_agent.messages):
+                if not message_tool.message_in_list(
+                    self._semantic_message(msg), existing_messages
+                ):
                     self.ai_agent.messages.append(msg)
+                    existing_messages.append(self._semantic_message(msg))
         else:
             self.ai_agent.messages += messages
         return

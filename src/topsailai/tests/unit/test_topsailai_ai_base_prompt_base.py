@@ -1,7 +1,10 @@
 import os
 import json
 import unittest
-from unittest.mock import patch, MagicMock, mock_open
+import shutil
+import tempfile
+from pathlib import Path
+from unittest.mock import patch, MagicMock, mock_open, PropertyMock
 
 from topsailai.utils import message_tool
 
@@ -24,8 +27,20 @@ class TestPromptBase(unittest.TestCase):
         """Set up test fixtures."""
         # Store original env vars
         self.original_env = {}
+        tmp_root = Path(__file__).resolve().parents[2] / ".tmp"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        self.home = Path(tempfile.mkdtemp(
+            dir=tmp_root,
+            prefix="prompt-base-user-context-",
+        ))
+        self.home_patch = patch(
+            "topsailai.workspace.folder_constants.TOPSAILAI_HOME",
+            str(self.home),
+        )
+        self.home_patch.start()
         for var in ["TOPSAILAI_FLAG_DUMP_MESSAGES", "TOPSAILAI_OBTAIN_SYSTEM_PROMPT_SCRIPT",
                     "TOPSAILAI_OBTAIN_TOOL_PROMPT_SCRIPT", "TOPSAILAI_CONTEXT_USER_MESSAGE",
+                    "TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED",
                     "TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS"]:
             self.original_env[var] = os.environ.get(var)
             # Clear to avoid interference
@@ -44,6 +59,8 @@ class TestPromptBase(unittest.TestCase):
                 os.environ.pop(var, None)
             else:
                 os.environ[var] = original_value
+        self.home_patch.stop()
+        shutil.rmtree(self.home, ignore_errors=True)
 
     # =========================================================================
     # Group A: Initialization Tests
@@ -775,6 +792,112 @@ class TestPromptBase(unittest.TestCase):
     @patch("topsailai.prompt_hub.prompt_tool.get_observation_by_tools")
     @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
     @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_user_context_is_injected_once_across_sessions(
+        self, mock_generate_prompt, mock_get_managers, mock_get_observation
+    ):
+        """Test startup context is injected once across two sessions."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+        mock_get_observation.return_value = (
+            '<observation source="cmd_tool">\ntool context\n</observation>'
+        )
+        self.home.joinpath("USER.md").write_text("user context", encoding="utf-8")
+        os.environ["TOPSAILAI_CONTEXT_USER_MESSAGE"] = "original context"
+        pb = PromptBase(system_prompt="test")
+        pb.available_tools = {"cmd_tool-exec_cmd": MagicMock()}
+
+        with patch("builtins.open", wraps=open) as mock_open:
+            pb.new_session("first task", need_print_message=False)
+            first_messages = list(pb.messages)
+            self.assertEqual(os.environ.get("TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED"), "0")
+            pb.new_session("second task", need_print_message=False)
+            other = PromptBase(system_prompt="test")
+            other.available_tools = {"cmd_tool-exec_cmd": MagicMock()}
+            other_result = other._build_context_message()
+            self.assertNotIn("user context", other_result)
+
+        first_user_messages = [message for message in first_messages if message["role"] == "user"]
+        observation = json.loads(first_user_messages[0]["content"])
+        self.assertEqual(observation["step_name"], "observation")
+        self.assertLess(observation["raw_text"].index("original context"), observation["raw_text"].index("user context"))
+        self.assertLess(observation["raw_text"].index("user context"), observation["raw_text"].index("tool context"))
+        self.assertEqual(first_user_messages[1]["content"], "first task")
+        second_user_messages = [message for message in pb.messages if message["role"] == "user"]
+        self.assertEqual(second_user_messages, [{"role": "user", "content": "second task"}])
+        self.assertEqual(observation["raw_text"].count("user context"), 1)
+        self.assertEqual(os.environ.get("TOPSAILAI_CONTEXT_USER_MESSAGE"), "")
+        self.assertEqual(sum(call.args[0] == str(self.home / "USER.md") for call in mock_open.call_args_list), 1)
+
+        self.assertIn("tool context", other_result)
+        self.assertEqual(os.environ.get("TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED"), "0")
+
+    @patch("topsailai.prompt_hub.prompt_tool.get_observation_by_tools")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_first_unsuccessful_user_md_attempt_latches_process_switch(
+        self, mock_generate_prompt, mock_get_managers, mock_get_observation
+    ):
+        """Test missing, blank, and unreadable USER.md attempts latch the switch."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+        mock_get_observation.return_value = ""
+        for content in (None, " \n", b"\xff"):
+            with self.subTest(content=content):
+                os.environ.pop("TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED", None)
+                user_path = self.home / "USER.md"
+                if content is None:
+                    user_path.unlink(missing_ok=True)
+                elif isinstance(content, bytes):
+                    user_path.write_bytes(content)
+                else:
+                    user_path.write_text(content, encoding="utf-8")
+                first = PromptBase(system_prompt="test")
+                first._build_context_message()
+                self.assertEqual(os.environ.get("TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED"), "0")
+                user_path.write_text("created later", encoding="utf-8")
+                with patch("builtins.open", wraps=open) as mock_open:
+                    second = PromptBase(system_prompt="test")
+                    self.assertNotIn("created later", second._build_context_message() or "")
+                self.assertFalse(any(
+                    call.args and os.fspath(call.args[0]) == os.fspath(user_path)
+                    for call in mock_open.call_args_list
+                ))
+
+    @patch("topsailai.prompt_hub.prompt_tool.get_observation_by_tools")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_disabled_user_md_preserves_explicit_and_tool_observation(
+        self, mock_generate_prompt, mock_get_managers, mock_get_observation
+    ):
+        """Test disabled USER.md loading leaves other startup sources unchanged."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+        mock_get_observation.return_value = '<observation source="cmd_tool">\ntool context\n</observation>'
+        self.home.joinpath("USER.md").write_text("user context", encoding="utf-8")
+        os.environ["TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED"] = "0"
+        os.environ["TOPSAILAI_CONTEXT_USER_MESSAGE"] = "explicit context"
+        pb = PromptBase(system_prompt="test")
+        pb.available_tools = {"cmd_tool-exec_cmd": MagicMock()}
+        with patch("builtins.open", wraps=open) as mock_open:
+            result = pb._build_context_message()
+        self.assertNotIn("user context", result or "")
+        self.assertIn("explicit context", result)
+        self.assertIn("tool context", result)
+        self.assertEqual(os.environ.get("TOPSAILAI_CONTEXT_USER_MESSAGE"), "")
+        self.assertFalse(any(
+            call.args and os.fspath(call.args[0]) == os.fspath(self.home / "USER.md")
+            for call in mock_open.call_args_list
+        ))
+
+    @patch("topsailai.prompt_hub.prompt_tool.get_observation_by_tools")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
     def test_persisted_tool_observation_is_not_duplicated(
         self, mock_generate_prompt, mock_get_managers, mock_get_observation
     ):
@@ -1266,6 +1389,26 @@ class TestPromptBase(unittest.TestCase):
 
         with ctxm_set_env({"TOPSAILAI_USE_TOOL_CALLS": "0"}):
             self.assertTrue(threshold.is_exceeded(messages))
+
+
+class TestPromptStartupContextOptOut(unittest.TestCase):
+    """Verify internal prompts do not read or consume startup context when disabled."""
+
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env", return_value=[])
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env", return_value="env_prompt")
+    def test_disabled_startup_context_skips_read_and_cleanup(self, _prompt, _managers):
+        """The explicit opt-out preserves environment startup state."""
+        from topsailai.ai_base.prompt_base import PromptBase
+        from topsailai.ai_base import prompt_base
+
+        with patch.object(type(prompt_base.EnvReaderInstance), "context_user_message_content", new_callable=PropertyMock) as context_property, \
+                patch.object(prompt_base.EnvReaderInstance, "clean_context_x_message") as clean_context:
+            prompt = PromptBase("test", load_startup_context=False)
+            self.assertIsNone(prompt._build_context_message())
+
+        context_property.assert_not_called()
+        clean_context.assert_not_called()
+        self.assertFalse(prompt.load_startup_context)
 
 
 if __name__ == "__main__":

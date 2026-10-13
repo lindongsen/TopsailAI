@@ -568,8 +568,13 @@ TOPSAILAI_HEAVY_TASK_PROMPT=""
 # after each execution for debugging and analysis purposes
 TOPSAILAI_FLAG_DUMP_MESSAGES=0
 # Context User Message
-# File path or raw text. If provided, it is prepended as the first context_user_message
-# and combined into a single user message at the start of the session.
+# File path or raw text combined into the startup user observation. Valid non-whitespace
+# content from {TOPSAILAI_HOME}/USER.md is appended. Automatic USER.md loading is
+# latched off after the first startup-context processing attempt by PromptBase.
+# Set to 0 (or false/no/off/disabled) to skip automatic loading of USER.md.
+# Unset defaults to 1. Invalid or empty values disable USER.md loading only;
+# TOPSAILAI_CONTEXT_USER_MESSAGE remains independent.
+TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED=1
 # TOPSAILAI_CONTEXT_USER_MESSAGE=""
 
 # =============================================================================

@@ -241,6 +241,40 @@ class TestGetLLMChat(unittest.TestCase):
 
     @patch('topsailai.workspace.input_tool.get_message')
     @patch('topsailai.workspace.llm_shell.LLMModel')
+    @patch('topsailai.workspace.llm_shell.file_tool')
+    @patch('topsailai.ai_base.prompt_base.get_managers_by_env', return_value=[])
+    @patch('topsailai.ai_base.prompt_base.get_prompt_by_script', return_value='')
+    def test_get_llm_chat_forwards_startup_context_opt_out(
+        self, _mock_script_prompt, _mock_managers, mock_file_tool,
+        mock_llm_model_class, mock_get_message
+    ):
+        """The opt-out reaches and is honored by a real PromptBase instance."""
+        from topsailai.workspace.llm_shell import get_llm_chat
+
+        mock_get_message.return_value = "User input"
+        mock_file_tool.get_file_content_fuzzy.return_value = (True, self.test_system_prompt)
+        mock_llm_instance = MagicMock(max_tokens=4096, temperature=0.8, content_senders=[])
+        mock_llm_model_class.return_value = mock_llm_instance
+
+        from topsailai.ai_base.prompt_base import EnvReaderInstance
+
+        marker = "ACTUAL_STARTUP_CONTEXT_MARKER"
+        cleanup = MagicMock()
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": marker}, clear=False), \
+                patch.object(EnvReaderInstance, "clean_context_x_message", cleanup):
+            chat = get_llm_chat(
+                message=self.test_message,
+                session_id="",
+                need_input_message=False,
+                load_startup_context=False,
+            )
+            self.assertFalse(chat.prompt_ctl.load_startup_context)
+            self.assertNotIn(marker, str(chat.prompt_ctl.messages))
+            cleanup.assert_not_called()
+            chat.close()
+
+    @patch('topsailai.workspace.input_tool.get_message')
+    @patch('topsailai.workspace.llm_shell.LLMModel')
     @patch('topsailai.workspace.llm_shell.PromptBase')
     @patch('topsailai.workspace.llm_shell.file_tool')
     @patch('topsailai.workspace.llm_shell.env_tool')

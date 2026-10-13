@@ -2,6 +2,7 @@ import sys
 import os
 import pytest
 import tempfile
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -184,6 +185,22 @@ class TestEnvironmentReader:
     def setup_method(self):
         """Setup method to create a fresh instance for each test"""
         self.reader = EnvironmentReader()
+        tmp_root = Path(__file__).resolve().parents[2] / ".tmp"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        self.home = Path(tempfile.mkdtemp(
+            dir=tmp_root,
+            prefix="env-tool-user-context-",
+        ))
+        self.home_patch = patch(
+            "topsailai.workspace.folder_constants.TOPSAILAI_HOME",
+            str(self.home),
+        )
+        self.home_patch.start()
+
+    def teardown_method(self):
+        """Clean up the isolated HOME directory owned by this test."""
+        self.home_patch.stop()
+        shutil.rmtree(self.home, ignore_errors=True)
     
     def test_try_read_file_none_path(self):
         """Test try_read_file with None path"""
@@ -316,6 +333,16 @@ class TestEnvironmentReader:
         with patch.dict(os.environ, {}, clear=True):
             assert self.reader.context_user_message_content == ""
 
+    def test_context_user_message_content_does_not_mutate_load_switch(self):
+        """Test direct USER.md context reads do not latch the process switch."""
+        (self.home / "USER.md").write_text("user context", encoding="utf-8")
+        with patch.dict(os.environ, {}, clear=True):
+            assert self.reader.context_user_message_content == "user context"
+            assert "TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED" not in os.environ
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED": "1"}, clear=True):
+            assert self.reader.context_user_message_content == "user context"
+            assert os.environ["TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED"] == "1"
+
     def test_context_user_message_content_direct_content(self):
         """Test context_user_message_content with direct content"""
         with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": "direct context content"}):
@@ -332,6 +359,151 @@ class TestEnvironmentReader:
                 assert self.reader.context_user_message_content == "file context content"
         finally:
             os.unlink(tmp_path)
+
+
+    def test_context_user_message_load_user_md_defaults_enabled(self):
+        """Test USER.md loading remains enabled when the switch is unset."""
+        (self.home / "USER.md").write_text("user context", encoding="utf-8")
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": "env context"}, clear=True):
+            assert self.reader.context_user_message_content == "env context\n---\nuser context"
+
+    @pytest.mark.parametrize(
+        "value",
+        ["0", "false", "no", "off", "disabled", "", "  ", "invalid"],
+    )
+    def test_context_user_message_disabled_load_preserves_existing_context(self, value):
+        """Test false or invalid switch values skip only automatic USER.md loading."""
+        (self.home / "USER.md").write_text("user context", encoding="utf-8")
+        with patch.dict(
+            os.environ,
+            {
+                "TOPSAILAI_CONTEXT_USER_MESSAGE": "env context",
+                "TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED": value,
+            },
+            clear=True,
+        ):
+            with patch("builtins.open", wraps=open) as mock_open:
+                assert self.reader.context_user_message_content == "env context"
+            assert not any(
+                call.args and os.fspath(call.args[0]) == os.fspath(self.home / "USER.md")
+                for call in mock_open.call_args_list
+            )
+
+    @pytest.mark.parametrize("value", ["1", "true", "YES", " on ", "Enabled"])
+    def test_context_user_message_enabled_loads_user_md(self, value):
+        """Test affirmative switch values load USER.md."""
+        (self.home / "USER.md").write_text("user context", encoding="utf-8")
+        with patch.dict(
+            os.environ,
+            {"TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED": value},
+            clear=True,
+        ):
+            assert self.reader.context_user_message_content == "user context"
+
+    def test_context_user_message_disabled_still_reads_explicit_context_file(self):
+        """Test disabling automatic USER.md does not disable explicit context files."""
+        context_path = self.home / "context.txt"
+        context_path.write_text("explicit context", encoding="utf-8")
+        (self.home / "USER.md").write_text("user context", encoding="utf-8")
+        with patch.dict(
+            os.environ,
+            {
+                "TOPSAILAI_CONTEXT_USER_MESSAGE": str(context_path),
+                "TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED": "0",
+            },
+            clear=True,
+        ):
+            assert self.reader.context_user_message_content == "explicit context"
+    def test_context_user_message_appends_user_file(self):
+        """Test USER.md is appended after existing startup context."""
+        (self.home / "USER.md").write_text("user context\n", encoding="utf-8")
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": "env context"}):
+            assert self.reader.context_user_message_content == "env context\n---\nuser context"
+
+    def test_context_user_message_uses_user_file_without_env(self):
+        """Test USER.md supplies context when the environment is empty."""
+        (self.home / "USER.md").write_text("用户上下文", encoding="utf-8")
+        with patch.dict(os.environ, {}, clear=True):
+            assert self.reader.context_user_message_content == "用户上下文"
+
+    def test_context_user_message_explicit_empty_env_uses_user_file(self):
+        """Test an explicitly empty environment value does not suppress USER.md."""
+        (self.home / "USER.md").write_text("user context", encoding="utf-8")
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": ""}):
+            assert self.reader.context_user_message_content == "user context"
+
+    def test_context_user_message_combines_file_context_with_user_file(self):
+        """Test file-based startup context is combined with USER.md."""
+        context_path = self.home / "context.txt"
+        context_path.write_text("file context", encoding="utf-8")
+        (self.home / "USER.md").write_text("user context", encoding="utf-8")
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": str(context_path)}):
+            assert self.reader.context_user_message_content == "file context\n---\nuser context"
+
+    def test_context_user_message_missing_user_file_preserves_context(self):
+        """Test a missing USER.md leaves existing context unchanged."""
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": "env context"}):
+            assert self.reader.context_user_message_content == "env context"
+
+    def test_context_user_message_ignores_zero_byte_user_file(self):
+        """Test a zero-byte USER.md does not alter existing context."""
+        (self.home / "USER.md").touch()
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": "env context"}):
+            assert self.reader.context_user_message_content == "env context"
+
+    def test_context_user_message_ignores_whitespace_user_file(self):
+        """Test whitespace-only USER.md does not alter existing context."""
+        (self.home / "USER.md").write_text(" \n", encoding="utf-8")
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": "env context"}):
+            assert self.reader.context_user_message_content == "env context"
+
+    def test_context_user_message_logs_unreadable_user_file(self):
+        """Test USER.md decode errors preserve context and log a warning."""
+        marker = "private-user-body-marker"
+        (self.home / "USER.md").write_bytes(b"\xff" + marker.encode())
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": "env context"}):
+            with patch("topsailai.utils.env_tool.logger") as mock_logger:
+                assert self.reader.context_user_message_content == "env context"
+                mock_logger.warning.assert_called_once()
+                warning_args = mock_logger.warning.call_args
+                assert "failed to read startup user context file" in warning_args.args[0]
+                assert warning_args.kwargs["exc_info"] is True
+                assert marker not in str(warning_args)
+
+    def test_context_user_message_logs_permission_error_for_user_file(self):
+        """Test a USER.md permission error preserves context and logs a warning."""
+        marker = "permission-user-body-marker"
+        user_path = self.home / "USER.md"
+        user_path.write_text(marker, encoding="utf-8")
+        original_open = open
+
+        def open_user_file(path, *args, **kwargs):
+            if os.fspath(path) == os.fspath(user_path):
+                raise PermissionError("denied")
+            return original_open(path, *args, **kwargs)
+
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": "env context"}):
+            with patch("topsailai.utils.env_tool.logger") as mock_logger:
+                with patch("builtins.open", side_effect=open_user_file):
+                    assert self.reader.context_user_message_content == "env context"
+                mock_logger.warning.assert_called_once()
+                warning_args = mock_logger.warning.call_args
+                assert warning_args.kwargs["exc_info"] is True
+                assert marker not in str(warning_args)
+
+    def test_context_user_message_logs_os_error_for_user_directory(self):
+        """Test a USER.md directory is handled as a readable-file error."""
+        marker = "directory-user-body-marker"
+        user_path = self.home / "USER.md"
+        user_path.mkdir()
+        (user_path / "body.txt").write_text(marker, encoding="utf-8")
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": "env context"}):
+            with patch("topsailai.utils.env_tool.logger") as mock_logger:
+                assert self.reader.context_user_message_content == "env context"
+                mock_logger.warning.assert_called_once()
+                warning_args = mock_logger.warning.call_args
+                assert warning_args.kwargs["exc_info"] is True
+                assert marker not in str(warning_args)
 
 
 class TestEnvReaderInstance:
