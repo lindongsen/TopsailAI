@@ -333,6 +333,16 @@ class TestEnvironmentReader:
         with patch.dict(os.environ, {}, clear=True):
             assert self.reader.context_user_message_content == ""
 
+    def test_context_user_message_content_does_not_mutate_load_switch(self):
+        """Test direct USER.md context reads do not latch the process switch."""
+        (self.home / "USER.md").write_text("user context", encoding="utf-8")
+        with patch.dict(os.environ, {}, clear=True):
+            assert self.reader.context_user_message_content == "user context"
+            assert "TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED" not in os.environ
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED": "1"}, clear=True):
+            assert self.reader.context_user_message_content == "user context"
+            assert os.environ["TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED"] == "1"
+
     def test_context_user_message_content_direct_content(self):
         """Test context_user_message_content with direct content"""
         with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": "direct context content"}):
@@ -350,6 +360,60 @@ class TestEnvironmentReader:
         finally:
             os.unlink(tmp_path)
 
+
+    def test_context_user_message_load_user_md_defaults_enabled(self):
+        """Test USER.md loading remains enabled when the switch is unset."""
+        (self.home / "USER.md").write_text("user context", encoding="utf-8")
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": "env context"}, clear=True):
+            assert self.reader.context_user_message_content == "env context\n---\nuser context"
+
+    @pytest.mark.parametrize(
+        "value",
+        ["0", "false", "no", "off", "disabled", "", "  ", "invalid"],
+    )
+    def test_context_user_message_disabled_load_preserves_existing_context(self, value):
+        """Test false or invalid switch values skip only automatic USER.md loading."""
+        (self.home / "USER.md").write_text("user context", encoding="utf-8")
+        with patch.dict(
+            os.environ,
+            {
+                "TOPSAILAI_CONTEXT_USER_MESSAGE": "env context",
+                "TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED": value,
+            },
+            clear=True,
+        ):
+            with patch("builtins.open", wraps=open) as mock_open:
+                assert self.reader.context_user_message_content == "env context"
+            assert not any(
+                call.args and os.fspath(call.args[0]) == os.fspath(self.home / "USER.md")
+                for call in mock_open.call_args_list
+            )
+
+    @pytest.mark.parametrize("value", ["1", "true", "YES", " on ", "Enabled"])
+    def test_context_user_message_enabled_loads_user_md(self, value):
+        """Test affirmative switch values load USER.md."""
+        (self.home / "USER.md").write_text("user context", encoding="utf-8")
+        with patch.dict(
+            os.environ,
+            {"TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED": value},
+            clear=True,
+        ):
+            assert self.reader.context_user_message_content == "user context"
+
+    def test_context_user_message_disabled_still_reads_explicit_context_file(self):
+        """Test disabling automatic USER.md does not disable explicit context files."""
+        context_path = self.home / "context.txt"
+        context_path.write_text("explicit context", encoding="utf-8")
+        (self.home / "USER.md").write_text("user context", encoding="utf-8")
+        with patch.dict(
+            os.environ,
+            {
+                "TOPSAILAI_CONTEXT_USER_MESSAGE": str(context_path),
+                "TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED": "0",
+            },
+            clear=True,
+        ):
+            assert self.reader.context_user_message_content == "explicit context"
     def test_context_user_message_appends_user_file(self):
         """Test USER.md is appended after existing startup context."""
         (self.home / "USER.md").write_text("user context\n", encoding="utf-8")

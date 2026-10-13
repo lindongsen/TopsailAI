@@ -260,7 +260,8 @@ For team agents, the effective offset is resolved in this order:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOPSAILAI_FLAG_DUMP_MESSAGES` | `0` | When `1`, chat history messages are automatically dumped to a file after each execution for debugging and analysis. |
-| `TOPSAILAI_CONTEXT_USER_MESSAGE` | `""` | File path or raw text combined into the startup user observation; valid non-whitespace content from `{TOPSAILAI_HOME}/USER.md` is appended, and startup context sources are injected once per agent instance. |
+| `TOPSAILAI_CONTEXT_USER_MESSAGE` | `""` | File path or raw text combined into the startup user observation; valid non-whitespace content from `{TOPSAILAI_HOME}/USER.md` is appended. Explicit context remains independent of the USER.md switch. |
+| `TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED` | `1` | Controls automatic loading of `{TOPSAILAI_HOME}/USER.md`. Unset enables the first process attempt; PromptBase then sets this variable to `0`, so later agents in the same process do not reload it. Truthy values (`1`, `true`, `yes`, `on`, `enabled`) enable the attempt; false, empty, or invalid values disable only USER.md loading. |
 | `TOPSAILAI_LOG_SUMMARIZE_MESSAGE_IDENTITY_CHANGES` | `1` | When `1`, context summarization logs a warning for any message in the rebuilt message list that is not the same object instance as a message from the original list. This helps detect unexpected replacements or insertions during summarization. Set to `0` to disable the check. |
 
 ## Duplicate Tool Call Detection

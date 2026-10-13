@@ -47,14 +47,17 @@ is managed as human factual information rather than as agent-generated state.
   user observation, combined with `TOPSAILAI_CONTEXT_USER_MESSAGE`. When both
   are present they are joined with a `\n---\n` separator; when only one is
   present that one is used.
-- **Injected once per agent instance.** Startup context sources are processed
-  only on the first turn of an agent instance, so `USER.md` is not re-appended
-  on later turns.
+- **Automatic USER.md loading is latched once per process.** Automatic USER.md
+  loading is latched off after the first completed startup-context processing
+  attempt. Startup context remains processed once per PromptBase instance;
+  refreshed explicit context and tool OBSERVATION remain available to new
+  instances.
 - **Blank content is ignored.** The file is read as UTF-8 and stripped; a
   missing file or whitespace-only content contributes nothing. Read failures
   are logged as a warning without leaking the file body.
+- **Optional loading.** Automatic loading is enabled by default. Set `TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED` to `0`, `false`, `no`, `off`, or `disabled` to skip USER.md; truthy values (`1`, `true`, `yes`, `on`, `enabled`) enable the first attempt. Empty or invalid values disable only USER.md loading and do not affect `TOPSAILAI_CONTEXT_USER_MESSAGE`.
 
-Because it is injected into every agent's startup context, keep it concise and
+Because it is automatically loaded at most once per process, keep it concise and
 free of secrets; store credentials and other sensitive values in
 `topsailai-data` notes instead.
 
