@@ -494,15 +494,13 @@ def register_summary_prepared(runtime, request, scope, *, cancellation=None):
         SummaryPreparationRequest, SummaryPreparationResult, SummaryPointDisposition,
         _SUMMARY_REASONS,
     )
-    from topsailai.hooks.points.catalog import PHASE_ONE_DECLARATIONS
 
     if type(request) is not SummaryPreparationRequest:
         raise ValueError("invalid summary preparation request")
-    eligible = {point.name: point for point in PHASE_ONE_DECLARATIONS}
     dispositions = []
     for point in request.configuration.hook_points:
         declaration = request.catalog.get(point.hook_name)
-        if (declaration is None or eligible.get(point.hook_name) != declaration
+        if (declaration is None
                 or point.definition.name != declaration.definition.name
                 or point.definition.major_version != declaration.definition.major_version):
             reason = "catalog_rejected"

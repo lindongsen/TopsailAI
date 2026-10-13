@@ -116,7 +116,7 @@ class ConfiguredHookRegistrar:
 
     @classmethod
     def from_prepared(cls, runtime, scope, request, *, cancellation=None):
-        """Publish an explicit summary request without a legacy bootstrap path."""
+        """Publish an explicit catalog-owned request without a legacy bootstrap path."""
         from topsailai.hooks.configured_contracts import SummaryPreparationRequest
         from topsailai.hooks.configured_runtime import register_summary_prepared
 

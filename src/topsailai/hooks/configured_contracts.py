@@ -658,20 +658,18 @@ class DisposeConfiguredResult:
 
 @dataclass(frozen=True, slots=True)
 class SummaryPreparationRequest:
-    """Select explicit catalog-owned summary preparation without global policy."""
+    """Select explicit catalog-owned preparation with a compatibility request name."""
     configuration: ConfiguredHooks
     catalog: object
     disabled_hook_names: frozenset[str] = frozenset()
     def __post_init__(self) -> None:
-        """Validate exact request structure and phase-one disablement membership."""
-        from topsailai.hooks.points.catalog import PHASE_ONE_DECLARATIONS
+        """Validate exact request structure and caller-catalog disablement membership."""
         from topsailai.hooks.hook_point_catalog import HookPointCatalog
         if (type(self.configuration) is not ConfiguredHooks or type(self.catalog) is not HookPointCatalog
                 or type(self.disabled_hook_names) is not frozenset):
             raise ValueError("invalid summary preparation request")
-        eligible = {point.name: point for point in PHASE_ONE_DECLARATIONS}
         for name in self.disabled_hook_names:
-            if type(name) is not str or name not in eligible or self.catalog.get(name) != eligible[name]:
+            if type(name) is not str or self.catalog.get(name) is None:
                 raise ValueError("invalid summary disabled point")
 _SUMMARY_REASONS = frozenset(
     "registered disabled_by_configuration catalog_rejected invalid_configuration invalid_scope runtime_closed "
