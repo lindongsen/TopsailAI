@@ -59,6 +59,39 @@ class CleanupAdmissionObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class CleanupCommandProducerIntent:
+    """Prehold one lifetime; identity is not repeat execution permission."""
+
+    receipt: CleanupAdmissionReceipt
+
+    def __post_init__(self) -> None:
+        """Reject receipt lookalikes before synchronization."""
+        if type(self.receipt) is not CleanupAdmissionReceipt:
+            raise ValueError("producer requires an exact admission receipt")
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupCommandSealIntent:
+    """Prehold exact irreversible command closure before its commit."""
+
+    receipt: CleanupAdmissionReceipt
+
+    def __post_init__(self) -> None:
+        """Reject receipt lookalikes before synchronization."""
+        if type(self.receipt) is not CleanupAdmissionReceipt:
+            raise ValueError("seal requires an exact admission receipt")
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupCommandObservation:
+    """Describe metadata custody, not settlement or freed capacity."""
+
+    state: str
+    intent: CleanupCommandProducerIntent | CleanupCommandSealIntent
+    debts: tuple[CleanupDebt, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CleanupCommand:
     """Request one observation tick using exact receipt and bounded sequence."""
 
@@ -111,6 +144,9 @@ class _Slot:
     delivery: CleanupDeliveryReceipt | None = None
     completed_delivery: CleanupDeliveryReceipt | None = None
     intent: CleanupAdmissionIntent | None = None
+    producer: CleanupCommandProducerIntent | None = None
+    producer_returned: bool = False
+    seal: CleanupCommandSealIntent | None = None
 
 
 class CleanupMailbox:
@@ -227,6 +263,97 @@ class CleanupMailbox:
         self._slots = self._slots + (candidate,)
         return observations["admitted"]
 
+    def admit_command_producer(self, intent: CleanupCommandProducerIntent, *,
+                               deadline: float) -> CleanupCommandObservation:
+        """Admit one preheld lifetime before asynchronous command-producing work."""
+        return self._command_query(intent, deadline, "admit")
+
+    def command_producer_status(self, intent: CleanupCommandProducerIntent, *,
+                                deadline: float) -> CleanupCommandObservation:
+        """Reconcile exact lifetime without another execution grant."""
+        return self._command_query(intent, deadline, "status")
+
+    def handback_command_producer(self, intent: CleanupCommandProducerIntent, *,
+                                 deadline: float) -> CleanupCommandObservation:
+        """Record trusted cessation, never force handback of uncertain work."""
+        return self._command_query(intent, deadline, "handback")
+
+    def seal_commands(self, intent: CleanupCommandSealIntent, *,
+                      deadline: float) -> CleanupCommandObservation:
+        """Close admission permanently without discarding existing custody."""
+        return self._command_query(intent, deadline, "seal")
+
+    def command_quiescence(self, intent: CleanupCommandSealIntent, *,
+                           deadline: float) -> CleanupCommandObservation:
+        """Observe irreversible quiescence for the exact committed seal only."""
+        return self._command_query(intent, deadline, "quiescence")
+
+    def _command_query(self, intent, deadline, operation):
+        """Prearm custody and recheck the same horizon after finalization."""
+        expected = (CleanupCommandSealIntent if operation in ("seal", "quiescence")
+                    else CleanupCommandProducerIntent)
+        if type(intent) is not expected or type(intent.receipt) is not CleanupAdmissionReceipt:
+            raise ValueError("expected an exact command intent and receipt")
+        end = finite_deadline(deadline)
+        unavailable = CleanupCommandObservation("unavailable", intent, self._unavailable.debts)
+        ticket = _AcquisitionTicket(self._handle)
+        result = unavailable
+        try:
+            try:
+                if self._acquire(end, ticket):
+                    result = self._command_locked(intent, operation, end, unavailable)
+            finally:
+                self._finish(ticket)
+        except BaseException as error:
+            error.cleanup_mailbox_ticket = ticket
+            raise
+        return unavailable if time.monotonic() >= end else result
+
+    def _command_locked(self, intent, operation, end, unavailable):
+        """Arbitrate exact identities and closure under one mailbox acquisition."""
+        if time.monotonic() >= end:
+            return unavailable
+        index = self._index(intent.receipt)
+        if index is None:
+            return CleanupCommandObservation("foreign", intent, ())
+        slot = self._slots[index]
+        if operation in ("seal", "quiescence"):
+            state, candidate = self._seal_candidate(slot, intent, operation)
+        else:
+            state, candidate = self._producer_candidate(slot, intent, operation)
+        result = CleanupCommandObservation(state, intent, (slot.receipt.pending_debt,))
+        if time.monotonic() >= end:
+            return unavailable
+        if candidate is not slot:
+            self._publish(index, candidate)
+        return result
+
+    def _seal_candidate(self, slot, intent, operation):
+        """Retain one winning seal and account for current command custody."""
+        if slot.seal is not None and slot.seal is not intent:
+            return "conflict", slot
+        if slot.seal is None:
+            if operation == "quiescence":
+                return "open", slot
+            slot = replace(slot, seal=intent)
+        active = slot.producer is not None and not slot.producer_returned
+        pending = active or slot.command is not None or slot.delivery is not None
+        return ("sealed_pending" if pending else "quiescent"), slot
+
+    def _producer_candidate(self, slot, intent, operation):
+        """Retain the single lifetime tombstone without clearing command custody."""
+        if slot.producer is not None:
+            if slot.producer is not intent:
+                return "conflict", slot
+            if operation == "handback" and not slot.producer_returned:
+                slot = replace(slot, producer_returned=True)
+            return ("returned" if slot.producer_returned else "active"), slot
+        if operation != "admit":
+            return "absent", slot
+        if slot.seal is not None:
+            return "sealed", slot
+        return "active", replace(slot, producer=intent)
+
     def _acquire(self, deadline: float, ticket: _AcquisitionTicket) -> bool:
         """Acquire inside the caller's armed finalizer and journal uncertainty."""
         end = finite_deadline(deadline)
@@ -318,33 +445,46 @@ class CleanupMailbox:
             raise
 
     def submit(self, command: CleanupCommand, *, deadline: float) -> str:
-        """Publish at most one command per slot without invoking resource code."""
+        """Publish one command; explicit sealing takes precedence over history."""
         if type(command) is not CleanupCommand:
             raise ValueError("expected an exact CleanupCommand")
+        end = finite_deadline(deadline)
         ticket = _AcquisitionTicket(self._handle)
+        result = "unavailable"
         try:
             try:
-                if not self._acquire(deadline, ticket):
-                    return "unavailable"
-                index = self._index(command.receipt)
-                if index is None:
-                    return "foreign"
-                slot = self._slots[index]
-                if command.sequence < slot.acknowledged:
-                    return "stale"
-                if command.sequence == slot.acknowledged:
-                    return "duplicate"
-                if slot.command is not None:
-                    return "duplicate" if command.sequence == slot.command.sequence else "busy"
-                if command.sequence != slot.acknowledged + 1:
-                    return "stale"
-                self._publish(index, replace(slot, command=command, delivery=None))
-                return "accepted"
+                if self._acquire(end, ticket):
+                    result = self._submit_locked(command, end)
             finally:
                 self._finish(ticket)
         except BaseException as error:
             error.cleanup_mailbox_ticket = ticket
             raise
+        return "unavailable" if time.monotonic() >= end else result
+
+    def _submit_locked(self, command, end):
+        """Linearize admission and seal with a final absolute-horizon check."""
+        if time.monotonic() >= end:
+            return "unavailable"
+        index = self._index(command.receipt)
+        if index is None:
+            return "foreign"
+        slot = self._slots[index]
+        if slot.seal is not None:
+            return "sealed"
+        if command.sequence < slot.acknowledged:
+            return "stale"
+        if command.sequence == slot.acknowledged:
+            return "duplicate"
+        if slot.command is not None:
+            return "duplicate" if command.sequence == slot.command.sequence else "busy"
+        if command.sequence != slot.acknowledged + 1:
+            return "stale"
+        candidate = replace(slot, command=command, delivery=None)
+        if time.monotonic() >= end:
+            return "unavailable"
+        self._publish(index, candidate)
+        return "accepted"
 
     def take(self, receipt: CleanupAdmissionReceipt, *,
              delivery: CleanupDeliveryReceipt, deadline: float) -> CleanupCommand | None:
@@ -402,9 +542,9 @@ class CleanupMailbox:
                     return "not_started"
                 if slot.delivery is not delivery or delivery.command is not command:
                     return "foreign"
-                self._publish(index, _Slot(
-                    receipt=slot.receipt, acknowledged=command.sequence,
-                    completed_delivery=delivery, intent=slot.intent,
+                self._publish(index, replace(
+                    slot, acknowledged=command.sequence, command=None, delivery=None,
+                    completed_delivery=delivery,
                 ))
                 return "acknowledged"
             finally:
