@@ -547,6 +547,15 @@ def _handle_driver_action(action, index, rows, home, authority, environment, dis
                   f"exit_code={result.exit_code}")
         observation = result.observation
         child = result.child
+    elif action == "driver_stop":
+        from cli_topsailai.session_driver_stopper import stop_driver
+
+        result = stop_driver(rows, index, topsailai_home=Path(home),
+                             authority=authority, discover=discover)
+        level = "INFO" if result.outcome in ("stopped", "already_stopped") else "ERROR"
+        print(f"[{level}] Driver stop: {result.outcome}; reason={result.reason}")
+        observation = result.observation
+        child = None
     else:
         child = None
         try:
@@ -652,13 +661,13 @@ def prompt_selection(
                     print("[ERROR] /driver is only available in the ordinary workspace task list.")
                     continue
                 parts = lower_input.split()
-                status = len(parts) > 1 and parts[1] == "status"
+                method = parts[1] if len(parts) > 1 and parts[1] in ("status", "stop") else None
                 number = parts[-1]
-                expected = 3 if status else 2
+                expected = 3 if method else 2
                 if len(parts) != expected or len(number) > 9 or not re.fullmatch(r"[0-9]+", number) or int(number) < 1:
-                    print("[ERROR] Usage: /driver <number> or /driver status <number>")
+                    print("[ERROR] Usage: /driver <number> or /driver status <number> or /driver stop <number>")
                     continue
-                return ("driver_status" if status else "driver_start", int(number))
+                return ("driver_" + method if method else "driver_start", int(number))
 
             # Restricted command set when workspace is showing the managed
             # project list. Only r/recent, p/projects, q/quit/cd, and
@@ -981,7 +990,7 @@ def prompt_selection(
                         f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
                         f"Please enter a number, /refresh, /session {{number}}, "
                         f"/agent {{number|folder}}, /resume {{number}}, "
-                        f"{'/driver <number>, /driver status <number>, ' if state.current_scope == 'workspace' else ''}"
+                        f"{'/driver <number>, /driver status <number>, /driver stop <number>, ' if state.current_scope == 'workspace' else ''}"
                         f"/clean, /send, /help, or 'q'.{Colors.RESET}"
                     )
                 _consecutive_unrecognized += 1
@@ -1672,7 +1681,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     _refresh_workspace()
                 continue
 
-            if action in ("driver_start", "driver_status"):
+            if action in ("driver_start", "driver_status", "driver_stop"):
                 if state.current_scope != "workspace" or state.workspace_showing_managed_projects:
                     print("[ERROR] /driver is only available in the ordinary workspace task list.")
                     continue

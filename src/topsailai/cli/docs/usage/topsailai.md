@@ -78,6 +78,7 @@ The command uses the same parsing and execution mechanism as `/git`: `shlex.spli
 | `<number>` | Watch the selected log file (workspace) or enter the selected session (project). |
 | `/driver <number>` | Start a driver for an eligible RUN/INPUT session (ordinary workspace only). |
 | `/driver status <number>` | Read current driver evidence (ordinary workspace only). |
+| `/driver stop <number>` | Gracefully stop one verified driver, not its session (ordinary workspace only). |
 | `/refresh` | Re-scan the task directory and refresh the list. |
 | `/session <number\|session_id>` | Retrieve full context messages for a session. |
 | `/agent [<number\|folder>]` | Launch an agent. With no argument, run the YAML-configured agent command. With an argument, change to the selected folder and run `topsailai_launch_agent`. The effective model selection is applied to the child process. |
@@ -229,7 +230,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 |---------|-------------|
 | `runtime` | Execute one exact send, btw, control or logs operation; see the contract above. |
 | `workspace [-f json]` | Display the workspace task list and exit. The default is the human-readable table; `-f json` or `--format json` emits one JSON document. |
-| `workspace driver <start/status> -s SESSION [-p PID] [--json]` | Start or inspect one exact session driver; see below. |
+| `workspace driver <start/status/stop> -s SESSION [-p PID] [--json]` | Start, inspect or stop one exact session driver; see below. |
 | `docs list` | List all usage documentation files and exit. |
 | `docs read <name>` | Read a specific usage documentation file and exit. |
 | `project add <path> [name]` | Add a project to the managed project list. |
@@ -310,20 +311,23 @@ The original high-level scope outline is preserved in `../../topsailai.md`:
 
 ## Workspace session drivers
 
-Use `/driver <number>` to start the driver for a currently running (`RUN`) or waiting-for-input (`INPUT`) session row. Use `/driver status <number>` to read state, reason, driver PID, run ID and verification. Both commands are restricted to the ordinary workspace task list; project, session, runtime, doc and managed-project views reject them. Task rows, temporary sessions, malformed or legacy identities, changed targets and multiple live PIDs for one session are not eligible. Status can inspect an exited authoritative session row.
+Use `/driver <number>` to start the driver for a currently running (`RUN`) or waiting-for-input (`INPUT`) session row. Use `/driver status <number>` to read state, reason, driver PID, run ID and verification. All three commands are restricted to the ordinary workspace task list; project, session, runtime, doc and managed-project views reject them. Task rows, temporary sessions, malformed or legacy identities, changed targets and multiple live PIDs for one session are not eligible. Status and stop can select an exited authoritative session row. Use `/driver stop <number>` to stop only its verified driver.
 
 ### Non-interactive driver operations
 
 ```bash
 topsailai workspace driver start -s SESSION -p PID --json
 topsailai workspace driver status -s SESSION -p PID --json
+topsailai workspace driver stop -s SESSION -p PID --json
 ```
 
-Replace SESSION/PID with the intended session. Both commands exit without entering the interactive watcher. `-s/--session` is required and exact (no wildcards); optional `-p/--pid` is a positive integer and intersects the session selector. Conflicting repeated selectors are rejected. Help performs no discovery or launch. Existing `topsailai workspace [-f json]` list behavior is unchanged.
+Replace SESSION/PID with the intended session. All three commands exit without entering the interactive watcher. `-s/--session` is required and exact (no wildcards); optional `-p/--pid` is a positive integer and intersects the session selector. Conflicting repeated selectors are rejected. Help performs no discovery or launch. Existing `topsailai workspace [-f json]` list behavior is unchanged.
 
-Start requires a live RUN/INPUT authoritative session stdout row. Task, temporary, legacy, changed and ambiguous identities are rejected. Multiple live PIDs for the session remain rejected even with `-p`. Status can inspect exited rows; multiple historical rows require PID rather than choosing newest. Both commands reuse default authority resolution and driver identity observations. Invalid configuration fails closed. Start reuses the interactive launcher's fresh target checks and driver-owned duplicate exclusion; a verified existing owner returns `already_running` without spawning another driver. Status is read-only and never retries or repairs evidence.
+Start requires a live RUN/INPUT authoritative session stdout row. Task, temporary, legacy, changed and ambiguous identities are rejected. Multiple live PIDs for the session remain rejected even with `-p`. Status can inspect exited rows; multiple historical rows require PID rather than choosing newest. All three commands reuse default authority resolution and driver identity observations. Invalid configuration fails closed. Start reuses the interactive launcher's fresh target checks and driver-owned duplicate exclusion; a verified existing owner returns `already_running` without spawning another driver. Status is read-only and never retries or repairs evidence.
 
-Plain successes go to stdout and failures to stderr. `--json` emits exactly one JSON document, including recognized syntax failures; help is ordinary text. The envelope uses the runtime fields `ok`, `exit_code`, `action`, `session_id`, `pid`, `delivery_state`, `error_code`, `message`, `bytes_written`, `request_id`, `response`, `delivery_unknown`. Action is `start` or `status`; PID is the session PID, not the driver PID. `bytes_written` and `request_id` are null. Response is nullable driver evidence containing `state`, `reason`, `driver_pid`, `run_id`, `metadata_status`, `verification`, with semantic states rather than emoticons. Start delivery state is the launch outcome; status uses `status_read`. Unknown status evidence (`?`) returns exit 4 while retaining its observation.
+Plain successes go to stdout and failures to stderr. `--json` emits exactly one JSON document, including recognized syntax failures; help is ordinary text. The envelope uses the runtime fields `ok`, `exit_code`, `action`, `session_id`, `pid`, `delivery_state`, `error_code`, `message`, `bytes_written`, `request_id`, `response`, `delivery_unknown`. Action is `start`, `status` or `stop`; PID is the session PID, not the driver PID. `bytes_written` and `request_id` are null. Response is nullable driver evidence containing `state`, `reason`, `driver_pid`, `run_id`, `metadata_status`, `verification`, with semantic states rather than emoticons. Start delivery state is the launch outcome; status uses `status_read`. Unknown status evidence (`?`) returns exit 4 while retaining its observation.
+
+The following table covers start/status; stop outcomes are specified in the graceful stop contract below.
 
 | Exit | Meaning |
 |---|---|
@@ -334,7 +338,17 @@ Plain successes go to stdout and failures to stderr. `--json` emits exactly one 
 | 5 | Spawn failure or child exit before confirmation. |
 | 6 | Startup unconfirmed before the existing bounded deadline; `delivery_unknown=true`. |
 
-Publication proves driver liveness, not model readiness or analysis completion. An unconfirmed child may still run: do not blindly retry. Non-interactive commands do not terminate detached drivers when the CLI exits and do not offer a stop command.
+Publication proves driver liveness, not model readiness or analysis completion. An unconfirmed child may still run: do not blindly retry. Non-interactive commands do not terminate detached drivers when the CLI exits unless an explicit stop is requested.
+
+### Graceful stop contract
+
+Stop re-discovers the selected session row and verifies metadata session, driver PID, run ID, exact entry/command and process creation time before control. `-p` selects the session PID, never the driver PID. Ambiguous or changed targets and unclear owner identity are rejected without signaling. Stop can select exited session rows; multiple historical rows require `-p`, and multiple live session PIDs remain rejected even with it.
+
+On supported POSIX systems, stop sends exactly one SIGTERM to the verified driver and waits up to 3 seconds for the original process to exit. It does not stop the session, broadcast, signal descendants, retry or escalate to SIGKILL. Unsupported graceful-stop platforms explicitly reject. The CLI never deletes metadata, logs or locks.
+
+Stop delivery state is `stopped`, `already_stopped`, `rejected`, `failed` or `unconfirmed`. `stopped` proves original-process absence, not business completion or descendant cleanup. `already_stopped / no_recorded_driver` proves only missing recorded ownership, not absence of all untracked drivers. Stop exit codes are 0 for stopped/already_stopped, 2 for invalid arguments, 3 for target selection failure, 4 for validation rejection, 5 for definite signal submission failure and 6 for unconfirmed exit. Exit 6 sets `delivery_unknown=true`; never blindly retry uncertain delivery. Owner replacement is not reported as stopping the replacement.
+
+Metadata v1 has no authoritative birth baseline or binding to a specific historical session PID. Command/birth rechecks provide best-effort PID-reuse protection only; a verification/signaling race remains. This is not a guarantee of full cleanup or cross-platform graceful shutdown.
 
 ### Default deployment paths and optional overrides
 
@@ -364,7 +378,7 @@ The Driver column follows Status and is independent of the target session status
 
 Workspace JSON adds nullable `driver` with `state`, `reason`, `driver_pid`, `run_id`, `metadata_status` and `verification`. Ineligible rows have `driver: null`. Table, JSON and status use shared read-only observations. Only the table maps states to display markers; JSON `driver.state` and `/driver status` retain semantic values (`ON`, `STALE`, `EXIT`, `FAIL`, `-`, `?`). Commands refresh the table afterward; there is no automatic refresh polling.
 
-The external driver alone owns duplicate-start exclusion, its lock, metadata and log cleanup. The CLI never writes, acquires or deletes these records. Lock-file presence does not prove a running owner. Clean finalization normally removes metadata and logs, so EXIT/FAIL are residual observations, not durable exit history. There is no `/driver stop` command.
+The external driver alone owns duplicate-start exclusion, its lock, metadata and log cleanup. The CLI never writes, acquires or deletes these records. Lock-file presence does not prove a running owner. Clean finalization normally removes metadata and logs, so EXIT/FAIL are residual observations, not durable exit history. Stop also leaves record cleanup to the external driver.
 
 Launch reports `launched` only for fresh verified publication matching the new child. `already_running` identifies verified existing ownership; `failed` means spawn failure or exit before confirmation; `rejected` means validation/preflight did not authorize startup. `unconfirmed` means a live child did not publish matching evidence before the bounded confirmation deadline: do not blindly retry. Publication proves liveness, not model readiness or analysis completion. The CLI retains live child handles in memory and reaps exits on later interactions without terminating resident drivers when leaving the CLI.
 

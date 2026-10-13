@@ -170,10 +170,16 @@ def test_driver_completion_scope(monkeypatch):
     monkeypatch.setattr(cli_state, "current_scope", "workspace")
     assert "/driver" in get_available_completions()
     assert "/driver status" in get_available_completions()
+    assert "/driver stop" in get_available_completions()
     import readline
     monkeypatch.setattr(readline, "get_line_buffer", lambda: "/driver st")
     monkeypatch.setattr(readline, "get_begidx", lambda: 8)
     assert tab_completer("st", 0) == "status"
+    assert tab_completer("st", 1) == "stop"
+    assert tab_completer("st", 2) is None
+    assert tab_completer("sto", 0) == "stop"
+    assert tab_completer("stop", 0) == "stop"
+    assert tab_completer("sto", 1) is None
     for scope in ("runtime", "project", "session", "doc"):
         monkeypatch.setattr(cli_state, "current_scope", scope)
         assert "/driver" not in get_available_completions()

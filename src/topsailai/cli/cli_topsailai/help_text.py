@@ -77,7 +77,7 @@ def print_scopes() -> None:
         (
             "workspace",
             "The default task-watcher scope. It lists discovered session and task log files so you can monitor and manage work across the current TopsailAI home.",
-            "Select a numbered log, retrieve session context, refresh or clean the task list, send messages, launch agents, use /driver <number> or /driver status <number> for session drivers, enter project or doc scope, and show help.",
+            "Select a numbered log, retrieve session context, refresh or clean the task list, send messages, launch agents, use /driver <number>, /driver status <number>, or /driver stop <number> for session drivers, enter project or doc scope, and show help.",
         ),
         (
             "runtime",
@@ -157,6 +157,12 @@ def print_help(
             "cmd": "/driver status <number>",
             "desc": "Read driver state, reason, PID, run ID and verification; unavailable in managed-project mode.",
             "example": "Example: /driver status 3",
+            "scopes": ["workspace"],
+        },
+        {
+            "cmd": "/driver stop <number>",
+            "desc": "Gracefully stop one verified driver, not its session; wait up to 3 seconds without force-kill. Ordinary workspace only; unsupported platforms reject.",
+            "example": "Example: /driver stop 3",
             "scopes": ["workspace"],
         },
         {

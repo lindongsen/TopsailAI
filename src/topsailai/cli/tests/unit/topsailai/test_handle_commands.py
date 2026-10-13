@@ -2219,15 +2219,15 @@ class TestWorkspaceDriverCommands(unittest.TestCase):
         self.setUp()
 
     def test_parse_driver(self):
-        """Dispatch both valid syntaxes before YAML matching."""
-        for text, action in (("/driver 2", "driver_start"), ("/driver status 2", "driver_status")):
+        """Dispatch all valid syntaxes before YAML matching."""
+        for text, action in (("/driver 2", "driver_start"), ("/driver status 2", "driver_status"), ("/driver stop 2", "driver_stop")):
             with patch("cli_topsailai.core.input", return_value=text), patch("cli_topsailai.yaml_commands.match_yaml_command") as match:
                 self.assertEqual(prompt_selection([], "/task"), (action, 2))
                 match.assert_not_called()
 
     def test_invalid_syntax(self):
         """Reject malformed arguments without YAML fallback."""
-        for text in ("/driver", "/driver status", "/driver 0", "/driver -1", "/driver x", "/driver 1 2", "/driver status 1 2", "/driver +1", "/driver 1.0", "/driver stop 1", "/driver " + "1" * 5000):
+        for text in ("/driver", "/driver status", "/driver 0", "/driver -1", "/driver x", "/driver 1 2", "/driver status 1 2", "/driver +1", "/driver 1.0", "/driver stop", "/driver stop 0", "/driver stop 1 2", "/driver " + "1" * 5000):
             with self.subTest(text=text), patch("cli_topsailai.core.input", side_effect=[text, "q"]), patch("cli_topsailai.yaml_commands.match_yaml_command") as match, patch("sys.stdout", new_callable=io.StringIO) as output:
                 self.assertEqual(prompt_selection([], "/task"), ("quit", None))
                 self.assertIn("Usage: /driver <number> or /driver status <number>", output.getvalue())
@@ -2238,7 +2238,7 @@ class TestWorkspaceDriverCommands(unittest.TestCase):
         for scope, managed in (("project", False), ("session", False), ("doc", False), ("runtime", False), ("workspace", True)):
             cli_state.current_scope = scope
             cli_state.workspace_showing_managed_projects = managed
-            with patch("cli_topsailai.core.input", side_effect=["/driver 1", "q"]), patch("sys.stdout", new_callable=io.StringIO) as output:
+            with patch("cli_topsailai.core.input", side_effect=["/driver stop 1", "q"]), patch("sys.stdout", new_callable=io.StringIO) as output:
                 prompt_selection([], "/task")
                 self.assertIn("only available in the ordinary workspace", output.getvalue())
 
@@ -2300,7 +2300,7 @@ class TestWorkspaceDriverCommands(unittest.TestCase):
 
 
 def test_driver_main_dispatch_refresh(tmp_path):
-    """Both commands dispatch with authority, refresh once, and retain live handles."""
+    """All driver commands dispatch with authority and refresh the workspace."""
     from contextlib import ExitStack
     from cli_topsailai import core
     from cli_topsailai.session_driver_launcher import DriverAuthority
@@ -2312,7 +2312,7 @@ def test_driver_main_dispatch_refresh(tmp_path):
     old = (cli_state.running, cli_state.current_scope, cli_state.history_manager,
            cli_state.yaml_commands, cli_state.workspace_showing_managed_projects)
     try:
-        for action in ("driver_start", "driver_status"):
+        for action in ("driver_start", "driver_status", "driver_stop"):
             cli_state.running, cli_state.current_scope = True, "workspace"
             cli_state.workspace_showing_managed_projects = False
             with ExitStack() as stack:
@@ -2355,3 +2355,19 @@ def test_driver_authority_observation_injection(monkeypatch):
     with patch("cli_topsailai.formatting.os.kill"), patch("cli_topsailai.formatting.is_session_pipe_open", return_value=False), patch("cli_topsailai.session_driver.observe_driver", return_value=DriverObservation("-", "missing")) as observe:
         _enrich_driver_rows([row], "/home", authority)
         assert observe.call_args.kwargs["process_probe"].keywords["driver_entry"] == authority.entry
+
+
+def test_stop_handler_dispatch(capsys):
+    """Stop reports its outcome and never retains a new child handle."""
+    from cli_topsailai.core import _handle_driver_action
+    from cli_topsailai.session_driver_stopper import StopResult
+    from pathlib import Path
+    rows = [{"pid": 123}]
+    discover = MagicMock()
+    for outcome in ("stopped", "already_stopped", "rejected", "failed", "unconfirmed"):
+        with patch("cli_topsailai.session_driver_stopper.stop_driver",
+                   return_value=StopResult(outcome, "reason")) as stop:
+            assert _handle_driver_action("driver_stop", 1, rows, "/home", None, {}, discover) is None
+            assert stop.call_args.args == (rows, 1)
+            assert stop.call_args.kwargs == dict(topsailai_home=Path("/home"), authority=None, discover=discover)
+            assert outcome in capsys.readouterr().out

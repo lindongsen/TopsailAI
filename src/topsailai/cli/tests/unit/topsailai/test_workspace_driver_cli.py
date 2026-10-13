@@ -33,6 +33,8 @@ def dependencies(monkeypatch, tmp_path):
             item["driver_observation"] = observation
 
     monkeypatch.setattr(cli, "enrich_workspace_rows", Mock(side_effect=enrich))
+    from cli_topsailai.session_driver_stopper import StopResult
+    monkeypatch.setattr(cli, "stop_driver", Mock(return_value=StopResult("stopped", "original_process_absent", observation)))
     return tmp_path, observation
 
 
@@ -143,7 +145,8 @@ def test_plain_output(dependencies, capsys):
     assert "usage_error" in capsys.readouterr().err
 
 
-def test_early_dispatch_and_help(dependencies, monkeypatch):
+@pytest.mark.parametrize("action", ["start", "status", "stop"])
+def test_early_dispatch_and_help(dependencies, monkeypatch, action):
     """New subcommands bypass interactive setup and help probes nothing."""
     detect = Mock()
     monkeypatch.setattr(core, "_detect_agent_mode", detect)
@@ -155,9 +158,9 @@ def test_early_dispatch_and_help(dependencies, monkeypatch):
     runner = Mock(return_value=0)
     monkeypatch.setattr(cli, "run_workspace_driver_cli", runner)
     with pytest.raises(SystemExit) as result:
-        core.main(["workspace", "driver", "status", "-s", "fixture"])
+        core.main(["workspace", "driver", action, "-s", "fixture"])
     assert result.value.code == 0
-    runner.assert_called_once_with(["status", "-s", "fixture"])
+    runner.assert_called_once_with([action, "-s", "fixture"])
 
 
 def test_real_launcher_idle_revalidation(dependencies, monkeypatch):
@@ -167,3 +170,63 @@ def test_real_launcher_idle_revalidation(dependencies, monkeypatch):
     monkeypatch.setattr(cli, "launch_driver", partial(launcher.launch_driver, target_probe=lambda pid: False))
     monkeypatch.setattr(launcher.DriverAuthority, "validate", lambda self: None)
     assert invoke(dependencies, ["start", "-s", "fixture", "--json"]) == 4
+
+
+@pytest.mark.parametrize("outcome,code", [("stopped", 0), ("already_stopped", 0),
+                                         ("rejected", 4), ("failed", 5), ("unconfirmed", 6)])
+def test_stop_outcomes(dependencies, capsys, outcome, code):
+    """Keep session selector separate from the metadata driver PID and uncertainty."""
+    from cli_topsailai.session_driver_stopper import StopResult
+    cli.stop_driver.return_value = StopResult(outcome, "reason", dependencies[1])
+    assert invoke(dependencies, ["stop", "-s", "fixture", "-p", "123", "--json"]) == code
+    data = json.loads(capsys.readouterr().out)
+    assert data["action"] == "stop" and data["pid"] == 123
+    assert data["response"]["driver_pid"] == 456
+    assert data["delivery_state"] == outcome
+    assert data["ok"] == (code == 0)
+    assert data["error_code"] == (None if code == 0 else "reason")
+    assert data["delivery_unknown"] == (code == 6)
+    assert data["bytes_written"] is None and data["request_id"] is None
+    assert cli.stop_driver.call_args.args == ([row()], 1)
+    assert cli.stop_driver.call_args.kwargs["discover"]() == [row()]
+    cli.launch_driver.assert_not_called()
+
+
+@pytest.mark.parametrize("argv,code", [(["stop"], 2),
+    (["stop", "-s", "fixture", "-p", "0"], 2),
+    (["stop", "-s", "fixture", "-p", "456"], 3),
+    (["stop", "-s", "fixture", "-s", "other"], 2)])
+def test_stop_invalid_selection(dependencies, capsys, argv, code):
+    """Never authorize a stop from invalid arguments or a driver-PID selector."""
+    assert invoke(dependencies, argv + ["--json"]) == code
+    assert json.loads(capsys.readouterr().out)["exit_code"] == code
+    cli.stop_driver.assert_not_called()
+
+
+def test_stop_idle_and_ambiguous(dependencies):
+    """Permit explicit historical selection but never choose newest or broadcast."""
+    cli._target_alive.return_value = False
+    cli.discover_log_files.return_value = [row(), row(124)]
+    assert invoke(dependencies, ["stop", "-s", "fixture"]) == 3
+    cli.stop_driver.assert_not_called()
+    assert invoke(dependencies, ["stop", "-s", "fixture", "-p", "123"]) == 0
+    cli.stop_driver.reset_mock()
+    cli._target_alive.return_value = True
+    assert invoke(dependencies, ["stop", "-s", "fixture", "-p", "123"]) == 3
+    cli.stop_driver.assert_not_called()
+
+
+def test_stop_plain_and_offline_help(dependencies, capsys):
+    """Offline help never signals, and plain streams reflect definite failure."""
+    from cli_topsailai.session_driver_stopper import StopResult
+    with pytest.raises(SystemExit) as result:
+        invoke(dependencies, ["stop", "--help"])
+    assert result.value.code == 0
+    assert "stop" in capsys.readouterr().out
+    cli.discover_log_files.assert_not_called()
+    cli.stop_driver.assert_not_called()
+    assert invoke(dependencies, ["stop", "-s", "fixture"]) == 0
+    assert "Driver stop: stopped" in capsys.readouterr().out
+    cli.stop_driver.return_value = StopResult("failed", "AccessDenied")
+    assert invoke(dependencies, ["stop", "-s", "fixture"]) == 5
+    assert "AccessDenied" in capsys.readouterr().err

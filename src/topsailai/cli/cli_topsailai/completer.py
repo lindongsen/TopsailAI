@@ -74,7 +74,7 @@ def get_available_completions() -> List[str]:
     builtins = ["/refresh", "/clean", "/help", "/session", "/send", "/ctx.btw", "/meta", "q", "quit"]
     completions.extend(builtins)
     if cli_state.current_scope == "workspace" and not cli_state.workspace_showing_managed_projects:
-        completions.extend(["/driver", "/driver status"])
+        completions.extend(["/driver", "/driver status", "/driver stop"])
 
     # YAML commands filtered by current scope
     for instruction in cli_state.yaml_commands:
@@ -165,7 +165,8 @@ def tab_completer(text: str, state: int) -> Optional[str]:
         if (cli_state.current_scope == "workspace"
                 and not cli_state.workspace_showing_managed_projects
                 and line[:readline.get_begidx()].strip() == "/driver"):
-            return "status" if state == 0 and "status".startswith(text) else None
+            matches = [method for method in ("status", "stop") if method.startswith(text)]
+            return matches[state] if state < len(matches) else None
         if line.strip() and not line.startswith(text):
             parts = line[: readline.get_begidx()].strip().split()
             if parts:

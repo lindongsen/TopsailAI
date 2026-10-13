@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import signal
 import time
 import uuid
 
@@ -24,6 +25,11 @@ def owner(home, session):
         return 7
     meta = root / f"{session}.meta"
     log = root / f"{session}.log"
+    def terminate(signum, frame):
+        """Exit gracefully through fixture-owned cleanup."""
+        raise SystemExit(0)
+
+    previous = signal.signal(signal.SIGTERM, terminate)
     try:
         log.write_text("fixture only\n")
         meta.write_text(json.dumps(dict(version=1, session_id=session,
@@ -32,6 +38,7 @@ def owner(home, session):
         while not (home / "release").exists() and time.monotonic() < deadline:
             time.sleep(0.02)
     finally:
+        signal.signal(signal.SIGTERM, previous)
         for path in (meta, log):
             path.unlink(missing_ok=True)
             print(f"Fixture removed {path}", flush=True)

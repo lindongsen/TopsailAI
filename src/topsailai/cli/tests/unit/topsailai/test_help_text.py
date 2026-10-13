@@ -196,3 +196,16 @@ def test_driver_legend_in_workspace_help_only(capsys):
             assert "Driver:" not in capsys.readouterr().out
     print_help([], "workspace", keyword="refresh")
     assert "Driver:" not in capsys.readouterr().out
+
+
+def test_driver_stop_help_discovery(capsys):
+    """Expose stop and its limits while keeping normal help workspace-only."""
+    print_help([], "workspace", keyword="driver")
+    output = capsys.readouterr().out
+    assert "/driver stop <number>" in output
+    assert "not its session" in output and "3 seconds" in output
+    for scope in ("project", "runtime", "session", "doc"):
+        print_help([], scope)
+        assert "/driver stop" not in capsys.readouterr().out
+    print_scopes()
+    assert "/driver stop" in capsys.readouterr().out

@@ -17,6 +17,7 @@ from cli_topsailai.runtime_cli import RuntimeParser, RuntimeUsageError, UniqueVa
 from cli_topsailai.session_driver import metadata_path
 from cli_topsailai.session_driver_config import resolve_driver_authority
 from cli_topsailai.session_driver_launcher import launch_driver, _row_identity, _target_alive
+from cli_topsailai.session_driver_stopper import stop_driver
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ class DriverTargetError(ValueError):
 def build_parser():
     """Build offline help without probing processes or installation authority."""
     parser = RuntimeParser(prog="topsailai workspace driver", allow_abbrev=False)
-    parser.add_argument("action", choices=("start", "status"))
+    parser.add_argument("action", choices=("start", "status", "stop"))
     parser.add_argument("-s", "--session", dest="session_id", required=True,
                         action=UniqueValue, default=argparse.SUPPRESS)
     parser.add_argument("-p", "--pid", type=int, action=UniqueValue,
@@ -109,6 +110,16 @@ def run_workspace_driver_cli(argv, *, environment=None, home_resolver=None):
                           error_code=None if code == 0 else launched.reason,
                           message=launched.reason, response=_snapshot(launched.observation),
                           delivery_unknown=launched.outcome == "unconfirmed")
+        elif args.action == "stop":
+            stopped = stop_driver(rows, index, topsailai_home=home,
+                                  authority=authority, discover=discover)
+            code = {"stopped": 0, "already_stopped": 0, "rejected": 4,
+                    "failed": 5, "unconfirmed": 6}[stopped.outcome]
+            result.update(exit_code=code, ok=code == 0,
+                          delivery_state=stopped.outcome,
+                          error_code=None if code == 0 else stopped.reason,
+                          message=stopped.reason, response=_snapshot(stopped.observation),
+                          delivery_unknown=stopped.outcome == "unconfirmed")
         else:
             fresh = discover()
             index = _select(fresh, args.session_id, result["pid"], home, "status")

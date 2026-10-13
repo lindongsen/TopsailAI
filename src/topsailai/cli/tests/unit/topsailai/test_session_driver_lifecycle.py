@@ -155,3 +155,52 @@ def test_live_owner_survives_cli_process_exit(fixture_owner):
                 owner.terminate()
                 owner.wait(timeout=5)
     assert observation(home, authority).state == "-"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Verified graceful stop requires POSIX")
+@pytest.mark.parametrize("interface", ["interactive", "noninteractive"])
+def test_public_stop_lifecycle(fixture_owner, capsys, interface):
+    """Both public routes stop only their fixture owner and leave cleanup to it."""
+    from cli_topsailai import workspace_driver_cli
+    home, authority = fixture_owner
+    selected = rows()
+    task = home / "workspace" / "task"
+    task.mkdir(parents=True)
+    (task / selected[0]["filename"]).touch()
+    unrelated = subprocess.Popen([str(authority.interpreter), "-c", "import time; time.sleep(15)"],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+    children = [unrelated]
+    try:
+        launched = launch_driver(selected, 1, topsailai_home=home, authority=authority,
+                                 environment=dict(os.environ), discover=rows)
+        assert launched.outcome == "launched"
+        children.append(launched.child)
+        owner_pid = launched.child.pid
+        assert owner_pid != os.getpid() and owner_pid != unrelated.pid
+        if interface == "interactive":
+            assert core._handle_driver_action("driver_stop", 1, selected, home, authority,
+                                              dict(os.environ), rows) is None
+            assert "Driver stop: stopped" in capsys.readouterr().out
+        else:
+            environment = dict(os.environ, TOPSAILAI_SESSION_DRIVER_ENTRY=str(authority.entry),
+                               TOPSAILAI_SESSION_DRIVER_PYTHON=str(authority.interpreter))
+            assert workspace_driver_cli.run_workspace_driver_cli(
+                ["stop", "-s", "fixture", "-p", str(os.getpid()), "--json"],
+                environment=environment, home_resolver=lambda: str(home)) == 0
+            data = json.loads(capsys.readouterr().out)
+            assert data["delivery_state"] == "stopped" and data["pid"] == os.getpid()
+        assert launched.child.wait(timeout=5) == 0
+        assert unrelated.poll() is None and psutil.Process(os.getpid()).is_running()
+        assert observation(home, authority).state == "-"
+        root = task / "session_agent_driver"
+        assert not metadata_path(home, "fixture").exists()
+        assert not (root / "fixture.log").exists() and not (root / "fixture-owner").exists()
+        assert core._handle_driver_action("driver_stop", 1, selected, home, authority,
+                                          dict(os.environ), rows) is None
+        assert "already_stopped" in capsys.readouterr().out
+    finally:
+        print(f"Cleanup exact unrelated fixture PID {unrelated.pid}")
+        if unrelated.poll() is None:
+            unrelated.terminate()
+        release(home, children)
