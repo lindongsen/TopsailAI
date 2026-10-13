@@ -11,7 +11,7 @@ import signal
 from types import BuiltinFunctionType, CoroutineType, FunctionType, GeneratorType, ModuleType
 from typing import Any, Callable
 
-from topsailai.hooks.contracts import ValidationError, _thaw_frozen_json
+from topsailai.hooks.contracts import ValidationError, _snapshot_json, _thaw_frozen_json
 from topsailai.hooks.module_invocation_protocol import (
     MODULE_PROTOCOL_VERSION, parse_module_request, build_module_response,
 )
@@ -73,10 +73,10 @@ def _module_isawaitable(value: Any) -> bool:
 def _invoke_module(handler: Callable[..., Any], invocation: Any, context=None) -> Any:
     """Thaw owned safe arguments and await only within the isolated worker."""
     if invocation.inject_hook_context:
-        from topsailai.hooks.points.context.summary_payloads import build_summary_hook_context
-        projection = build_summary_hook_context(
-            event_name=context.event.name, event_version=context.event.major_version,
-            operation_id=context.event.operation_id, payload=context.event.payload,
+        projection = _snapshot_json(
+            {"event_name": context.event.name, "event_version": context.event.major_version,
+             "operation_id": context.event.operation_id, "payload": context.event.payload},
+            immutable=True, allow_frozen=True, max_bytes=131072,
         )
         result = handler(*_thaw_frozen_json(invocation.args), hook_context=projection,
                          **_thaw_frozen_json(invocation.kwargs))

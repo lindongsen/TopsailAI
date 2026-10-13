@@ -14,7 +14,9 @@ from topsailai.hooks.captured_module_protocol import (
 )
 from topsailai.hooks.hook_point_plan_contracts import ModuleSource
 from topsailai.hooks.points.context.summary_contracts import SUMMARY_POINTS
-from topsailai.hooks.points.context.summary_payloads import build_summary_payload
+from topsailai.hooks.points.context.summary_payloads import (
+    build_summary_hook_context, build_summary_payload,
+)
 from topsailai.hooks.worker import _invoke_module
 from topsailai.tests.unit.test_topsailai_hooks.test_process_backend import _context
 
@@ -106,23 +108,28 @@ def test_worker_injects_exact_immutable_safe_context(point):
         projection['payload']['outcome'] = 'changed'
 
 
+def validate_projection(*, hook_context):
+    """Apply the domain contract within the point layer after generic injection."""
+    return build_summary_hook_context(**_thaw_frozen_json(hook_context))
+
+
 @pytest.mark.parametrize('point', tuple(point for point in SUMMARY_POINTS if not point.phase_one_eligible))
-def test_worker_rejects_inactive_summary_points(point):
-    """Phase-two points never receive the active summary projection."""
+def test_point_layer_rejects_inactive_summary_points(point):
+    """Phase-two metadata is rejected by point-layer validation, not the worker."""
     with pytest.raises(ValidationError):
-        _invoke_module(lambda **kwargs: kwargs, ModuleInvocation([], {}, inject_hook_context=True), context(point))
+        _invoke_module(validate_projection, ModuleInvocation([], {}, inject_hook_context=True), context(point))
 
 
-def test_worker_rejects_non_summary_or_extra_fields():
-    """No generic context or unknown payload field reaches opted-in modules."""
+def test_point_layer_rejects_non_summary_or_extra_fields():
+    """Summary validation rejects generic or unknown data before observation."""
     invocation = ModuleInvocation([], {}, inject_hook_context=True)
     with pytest.raises(ValidationError):
-        _invoke_module(lambda **kwargs: kwargs, invocation, _context())
+        _invoke_module(validate_projection, invocation, _context())
     base = context(ACTIVE[0])
     payload = _thaw_frozen_json(base.event.payload)
     payload['secret'] = '/sensitive/path'
     with pytest.raises(ValidationError):
-        _invoke_module(lambda **kwargs: kwargs, invocation,
+        _invoke_module(validate_projection, invocation,
                        replace(base, event=replace(base.event, payload=payload)))
 
 
