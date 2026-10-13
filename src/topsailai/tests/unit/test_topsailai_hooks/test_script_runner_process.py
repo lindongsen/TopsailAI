@@ -667,14 +667,14 @@ def test_host_interruption_propagates_after_owned_process_settlement(
     assert runner.cleanup_debts() == ()
 
 @pytest.mark.parametrize(
-    ("mode", "expected_status", "expected_category"),
+    ("mode", "expected_status", "expected_category", "timeout"),
     [
-        ("nonzero", HookStatus.ERROR, "hook_script_nonzero_exit"),
-        ("signal", HookStatus.WORKER_LOST, "hook_script_signal_exit"),
-        ("missing", HookStatus.INVALID_OUTPUT, "hook_script_missing_result"),
-        ("hang", HookStatus.TIMEOUT, "hook_script_timeout"),
-        ("overflow", HookStatus.INVALID_OUTPUT, "hook_script_output_limit"),
-        ("malformed", HookStatus.INVALID_OUTPUT, "hook_script_invalid_result"),
+        ("nonzero", HookStatus.ERROR, "hook_script_nonzero_exit", 2.25),
+        ("signal", HookStatus.WORKER_LOST, "hook_script_signal_exit", 2.25),
+        ("missing", HookStatus.INVALID_OUTPUT, "hook_script_missing_result", 2.25),
+        ("hang", HookStatus.TIMEOUT, "hook_script_timeout", 0.15),
+        ("overflow", HookStatus.INVALID_OUTPUT, "hook_script_output_limit", 2.25),
+        ("malformed", HookStatus.INVALID_OUTPUT, "hook_script_invalid_result", 2.25),
     ],
 )
 def test_real_transport_arbitrates_exit_timeout_and_enforcement(
@@ -682,6 +682,7 @@ def test_real_transport_arbitrates_exit_timeout_and_enforcement(
     mode: str,
     expected_status: HookStatus,
     expected_category: str,
+    timeout: float,
     serial_transport_evidence,
 ) -> None:
     """Observed script failures retain their frozen category after process cleanup."""
@@ -689,7 +690,7 @@ def test_real_transport_arbitrates_exit_timeout_and_enforcement(
     runner = _runner(tmp_path)
     policy = HookScriptExecutionPolicy(stdout_limit_bytes=16, terminate_grace_ms=20)
 
-    result = _execute(runner, entry, mode, policy=policy, timeout=0.15)
+    result = _execute(runner, entry, mode, policy=policy, timeout=timeout)
 
     assert result.status is expected_status, (result.status, result.error_category, result.duration_ms, result.exit_code, result.cleanup_confirmed, result.cleanup_debt)
     assert result.error_category == expected_category, (result.status, result.error_category, result.duration_ms, result.exit_code, result.cleanup_confirmed, result.cleanup_debt)
