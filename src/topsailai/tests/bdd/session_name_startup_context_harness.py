@@ -20,8 +20,11 @@ EXPLICIT_MARKER = "BDD_PLAN_EXPLICIT_CONTEXT_MARKER"
 
 
 _CHILD_SCRIPT = r'''
+import json
 import os
 import time
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 from topsailai.context.agent_startup import AgentStartupState
@@ -74,6 +77,8 @@ original_wait = AgentStartupState.wait
 original_mark_started = AgentStartupState.mark_started
 
 def wait(state, timeout=300.0):
+    if os.environ.get("BDD_INTEGRITY_SCENARIO") == "1":
+        return original_wait(state, timeout)
     barrier.write_text("entered", encoding="utf-8")
     result = original_wait(state, timeout)
     if result:
@@ -82,6 +87,8 @@ def wait(state, timeout=300.0):
 
 
 def mark_started(state):
+    if os.environ.get("BDD_INTEGRITY_SCENARIO") == "1":
+        return original_mark_started(state)
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline and not barrier.exists():
         time.sleep(0.01)
@@ -102,6 +109,83 @@ def wait_for_barrier():
         raise AssertionError("naming worker did not enter startup wait")
 
 
+def capture_instruction(chat, command):
+    """Dispatch one registered slash instruction and capture operator output."""
+    from topsailai.workspace import input_tool
+    from topsailai.workspace.plugin_instruction.base import cache
+
+    if cache.get_ai_agent() is not chat.ai_agent:
+        raise AssertionError("instruction cache does not reference the active agent")
+    output = StringIO()
+    with redirect_stdout(output):
+        consumed = input_tool.hook_message(command, chat.hook_instruction)
+    return {
+        "command": command,
+        "consumed": consumed,
+        "stdout": output.getvalue(),
+        "cache_identity": cache.get_ai_agent() is chat.ai_agent,
+    }
+
+
+def capture_group(chat):
+    """Capture the two real instruction views without changing agent state."""
+    return [capture_instruction(chat, command) for command in ("/agent.messages", "/ctx.history")]
+
+
+def run_integrity_scenario():
+    """Run one completed turn and export instruction and transport observations."""
+    chat = agent_shell.get_agent_chat(
+        agent_type="react",
+        agent_role="manager",
+        session_id=os.environ["BDD_SESSION_ID"],
+        message="BDD_PLAN_TURN_ONE_TOKEN",
+        need_input_message=False,
+        need_print_session=False,
+        need_set_agent_name_to_thread_local=False,
+        need_project_workspace_lock=False,
+    )
+    snapshots = []
+    pre_inspection_runtime = None
+    pre_inspection_session = None
+
+    def observe_after_new_session(_agent):
+        """Capture the initialized runtime immediately before the first request."""
+        snapshots.append({"checkpoint": "A_pre", "items": [capture_instruction(chat, "/agent.messages")]})
+
+    try:
+        chat.ai_agent.hooks_after_new_session.append(observe_after_new_session)
+        chat.run(message=chat.first_message, times=1, need_interactive=False)
+        pre_inspection_runtime = json.loads(json.dumps(chat.ai_agent.messages))
+        pre_inspection_session = json.loads(json.dumps(chat.ctx_runtime_data.messages))
+        before_runtime = json.loads(json.dumps(chat.ai_agent.messages))
+        before_session = json.loads(json.dumps(chat.ctx_runtime_data.messages))
+        snapshots.append({"checkpoint": "A_post", "items": capture_group(chat)})
+        snapshots.append({"checkpoint": "H_post", "items": [capture_instruction(chat, "/ctx.history")]})
+        snapshots.append({"checkpoint": "purity_before", "items": capture_group(chat)})
+        snapshots.append({"checkpoint": "purity_after", "items": capture_group(chat)})
+        report = {
+            "snapshots": snapshots,
+            "pre_inspection_runtime": pre_inspection_runtime,
+            "pre_inspection_session": pre_inspection_session,
+            "before_runtime": before_runtime,
+            "before_session": before_session,
+            "after_runtime": json.loads(json.dumps(chat.ai_agent.messages)),
+            "after_session": json.loads(json.dumps(chat.ctx_runtime_data.messages)),
+            "agent_message_count": len(chat.ai_agent.messages),
+            "session_messages": list(chat.ctx_runtime_data.messages),
+            "handler_counts": {
+                command: len(chat.hook_instruction.hook_map.get(command, []))
+                for command in ("/agent.messages", "/ctx.history")
+            },
+        }
+        report_path = Path(os.environ["BDD_INTEGRITY_REPORT"])
+        temporary = report_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(report_path)
+    finally:
+        chat.ai_agent.close()
+
+
 def run_turn(message, agent_type):
     chat = agent_shell.get_agent_chat(
         agent_type=agent_type,
@@ -119,9 +203,13 @@ def run_turn(message, agent_type):
         chat.ai_agent.close()
 
 try:
-    run_turn("Create a plan for the startup-context regression.", os.environ.get("BDD_AGENT_TYPE", "plan_and_execute"))
-    wait_for_barrier()
-    run_turn("Continue the existing plan in a later turn.", os.environ.get("BDD_AGENT_TYPE", "plan_and_execute"))
+    if os.environ.get("BDD_INTEGRITY_SCENARIO") == "1":
+        run_integrity_scenario()
+    else:
+        run_turn("Create a plan for the startup-context regression.", os.environ.get("BDD_AGENT_TYPE", "plan_and_execute"))
+    if os.environ.get("BDD_INTEGRITY_SCENARIO") != "1":
+        wait_for_barrier()
+        run_turn("Continue the existing plan in a later turn.", os.environ.get("BDD_AGENT_TYPE", "plan_and_execute"))
 finally:
     cleanup_errors = []
     for worker in worker_threads:
@@ -144,9 +232,10 @@ finally:
 class SessionNameStartupScenario:
     """Own the loopback server and execute the real factory in a child process."""
 
-    def __init__(self, monkeypatch: Any, tmp_path: Path, agent_type: str = "plan_and_execute") -> None:
+    def __init__(self, monkeypatch: Any, tmp_path: Path, agent_type: str = "plan_and_execute", integrity: bool = False) -> None:
         """Create isolated startup files, database, and provider."""
         self.agent_type = agent_type
+        self.integrity = integrity
         self.tmp_path = None
         self.server = None
         self.server_thread = None
@@ -163,7 +252,8 @@ class SessionNameStartupScenario:
             self.home.mkdir(parents=True, exist_ok=True)
             (self.home / "USER.md").write_text(USER_MARKER, encoding="utf-8")
             self.database = tmp_path / "sessions.sqlite"
-            response = json.dumps([{"step_name": "final_answer", "raw_text": "Plan complete"}])
+            response_text = "BDD_PLAN_ANSWER_ONE_TOKEN" if integrity else "Plan complete"
+            response = json.dumps([{"step_name": "final_answer", "raw_text": response_text}])
             self.server = create_server(MockServerConfig(port=0, reply=response, stream_chunks=(response,)))
             self.base_url = f"http://127.0.0.1:{self.server.server_port}/v1"
             def serve_forever() -> None:
@@ -202,7 +292,7 @@ class SessionNameStartupScenario:
                 "OPENAI_MODEL": "topsailai-plan-startup",
                 "LLM_RESPONSE_STREAM": "1",
                 "TOPSAILAI_INTERACTIVE_MODE": "0",
-                "TOPSAILAI_AUTO_SESSION_NAME_ENABLED": "1",
+                "TOPSAILAI_AUTO_SESSION_NAME_ENABLED": "0" if integrity else "1",
                 "TOPSAILAI_USE_TOOL_CALLS": "0",
                 "TOPSAILAI_USE_TOOL_CALLS_MODEL_PREFIXES": "",
                 "TOPSAILAI_DISABLED_TOOLS": "*",
@@ -230,6 +320,8 @@ class SessionNameStartupScenario:
             "BDD_USER_OPEN_COUNT": str(self.user_open_count),
             "BDD_SESSION_ID": self.session_id,
             "BDD_AGENT_TYPE": self.agent_type,
+            "BDD_INTEGRITY_SCENARIO": "1" if self.integrity else "0",
+            "BDD_INTEGRITY_REPORT": str(self.events_dir / "integrity-report.json"),
         })
         self.process = subprocess.run(
             [sys.executable, "-c", _CHILD_SCRIPT],
@@ -243,9 +335,10 @@ class SessionNameStartupScenario:
             raise AssertionError(self.process.stderr or self.process.stdout)
         (self.events_dir / "child-stdout").write_text(self.process.stdout, encoding="utf-8")
         (self.events_dir / "child-stderr").write_text(self.process.stderr, encoding="utf-8")
-        assert self.wait_entered.exists()
-        assert self.started.exists()
-        assert self.wait_released.exists()
+        if not self.integrity:
+            assert self.wait_entered.exists()
+            assert self.started.exists()
+            assert self.wait_released.exists()
 
     def state(self) -> dict[str, Any]:
         """Return captured provider requests."""
@@ -259,6 +352,10 @@ class SessionNameStartupScenario:
     def request_texts(self) -> list[str]:
         """Return captured request bodies as serialized text."""
         return [json.dumps(item["body"], ensure_ascii=False) for item in self.state()["request_bodies"]]
+
+    def integrity_report(self) -> dict[str, Any]:
+        """Load the bounded child instruction observation report."""
+        return json.loads((self.events_dir / "integrity-report.json").read_text(encoding="utf-8"))
 
     def close(self) -> None:
         """Terminate the owned provider and exact child process if needed."""
