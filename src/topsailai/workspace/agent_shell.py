@@ -208,7 +208,7 @@ def _get_agent_chat_impl(
     # ctx_rt_aiagent_tools = ContextRuntimeAgentTools(ctx_runtime_data)
 
     # instructions
-    hook_instruction = HookInstruction()
+    hook_instruction = HookInstruction(session_getter=lambda: ctx_runtime_data.session_id)
 
     # message
     if not message:
