@@ -580,8 +580,8 @@ class TestAsyncSessionNameAgentIdentity(unittest.TestCase):
             identities.append(thread_local_tool.get_agent_name()) or 'Auto Name'
         )
         session_mgr = MagicMock()
-        session_mgr.update_session_name.side_effect = lambda *_: identities.append(
-            thread_local_tool.get_agent_name()
+        session_mgr.update_session_name.side_effect = lambda *_: (
+            identities.append(thread_local_tool.get_agent_name()) or True
         )
 
         with patch('topsailai.context.ctx_manager.logger.info') as mock_info:
@@ -604,6 +604,34 @@ class TestAsyncSessionNameAgentIdentity(unittest.TestCase):
             'Auto Name',
         )
         self.assertIsNone(thread_local_tool.get_agent_name())
+
+    @patch('topsailai.context.ctx_manager.generate_session_name', return_value='Auto Name')
+    def test_worker_restores_identity_after_storage_failure(self, mock_generate):
+        """Reject unsuccessful storage returns without syncing or logging success."""
+        from topsailai.context.ctx_manager import _async_update_session_name
+        from topsailai.utils import thread_local_tool
+
+        thread_local_tool.set_thread_var(thread_local_tool.KEY_AGENT_NAME, 'ParentAgent')
+        for storage_result in (False, None):
+            with self.subTest(storage_result=storage_result):
+                session_mgr = MagicMock()
+                session_mgr.update_session_name.return_value = storage_result
+                with patch('topsailai.workspace.session_meta.update_session_meta_field') as mock_sync, \
+                        patch('topsailai.context.ctx_manager.logger.info') as mock_info, \
+                        patch('topsailai.context.ctx_manager.logger.warning') as mock_warning:
+                    _async_update_session_name('session-123', 'Task', session_mgr, 'AgentA')
+
+                session_mgr.update_session_name.assert_called_once_with('session-123', 'Auto Name')
+                mock_sync.assert_not_called()
+                self.assertFalse(any(
+                    str(call.args[0]).startswith('auto_rename:')
+                    for call in mock_info.call_args_list
+                ))
+                mock_warning.assert_called_once_with(
+                    'auto_rename storage update failed: session_id=%s', 'session-123',
+                )
+                self.assertEqual(thread_local_tool.get_agent_name(), 'ParentAgent')
+        self.assertEqual(mock_generate.call_count, 2)
 
     @patch('topsailai.context.ctx_manager.generate_session_name', return_value='')
     def test_worker_cleans_identity_after_early_return(self, mock_generate):

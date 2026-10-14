@@ -291,7 +291,9 @@ def _get_agent_chat_impl(
     # record project workspace used for this startup
     record_project_history(session_id)
     # Session metadata (best-effort, failures are logged inside the helpers)
-    create_session_meta(session_id=session_id, ai_agent=ai_agent)
+    session_data = ctx_runtime_data.session_data
+    session_name = getattr(session_data, "session_name", "") or ""
+    create_session_meta(session_id=session_id, ai_agent=ai_agent, session_name=session_name)
     cleanup_session_meta_files()
     # Hook Instruction
     ##########################################################################################

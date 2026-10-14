@@ -211,7 +211,18 @@ def update_session_name(session_id:str, session_name:str, session_mgr:SessionSto
     if session_mgr is None:
         session_mgr = get_session_manager()
 
-    return session_mgr.update_session_name(session_id, session_name)
+    updated = session_mgr.update_session_name(session_id, session_name)
+    if updated:
+        try:
+            from topsailai.workspace.session_meta import update_session_meta_field
+
+            update_session_meta_field("session_name", session_name, session_id=session_id)
+        except Exception:
+            logger.warning(
+                "session_name metadata sync failed: session_id=%s", session_id,
+                exc_info=True,
+            )
+    return updated
 
 
 def exists_session(session_id:str, session_mgr:SessionStorageBase=None) -> bool:
@@ -344,8 +355,10 @@ def _async_update_session_name(
             if not session_name:
                 return
 
-            session_mgr.update_session_name(session_id, session_name)
-            logger.info(f"auto_rename: session_id={session_id}, session_name={session_name}")
+            if update_session_name(session_id, session_name, session_mgr=session_mgr):
+                logger.info(f"auto_rename: session_id={session_id}, session_name={session_name}")
+            else:
+                logger.warning("auto_rename storage update failed: session_id=%s", session_id)
         except Exception as e:
             logger.debug(f"auto_rename failed for session_id={session_id}: {e}")
 
