@@ -10,11 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from topsailai.hooks.configured_contracts import (
-    ConfiguredHookPoint, ConfiguredHooks, ConfiguredTrustPolicy,
+    ConfiguredHookPoint, ConfiguredHooks, ConfiguredScript, ConfiguredTrustPolicy,
     SummaryPointDisposition, SummaryPreparationRequest,
 )
 from topsailai.hooks.configured_executor import ConfiguredHookExecutor
 from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
+from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
 from topsailai.hooks.configuration import HookSettings
 from topsailai.hooks.points.catalog import SUMMARY_CATALOG, PHASE_ONE_DECLARATIONS
 from topsailai.hooks.runtime import CloseReport, HookRuntime
@@ -25,8 +26,15 @@ logger = logging.getLogger(__name__)
 def build_summary_preparation_request(
     *, points_root: Path | None = None, settings: HookSettings | None = None,
     disabled_hook_names: frozenset[str] = frozenset(),
+    script_platform_policy: ExecutablePlatformPolicy | None = None,
 ) -> SummaryPreparationRequest:
     """Bind each phase-one point directory without discovering or authorizing files."""
+    if script_platform_policy is not None and (
+        type(script_platform_policy) is not ExecutablePlatformPolicy
+        or script_platform_policy.platform != "posix"
+        or script_platform_policy.native_suffixes
+    ):
+        raise ValueError("summary Scripts require an explicit POSIX shebang-only policy")
     if points_root is None:
         points_root = Path(__file__).resolve().parents[1] / "hooks/points/context"
     if not isinstance(points_root, Path) or not points_root.is_absolute():
@@ -35,9 +43,22 @@ def build_summary_preparation_request(
         hook_name=point.name, definition=point.definition,
         module_folder=points_root / point.name.removeprefix("hook__context__").replace("__", "_") / "modules",
         inject_hook_context=True,
+        script=_summary_script_source(points_root, point.name, script_platform_policy, disabled_hook_names),
     ) for point in PHASE_ONE_DECLARATIONS),
         settings=HookSettings() if settings is None else settings)
     return SummaryPreparationRequest(configuration, SUMMARY_CATALOG, disabled_hook_names)
+
+
+def _summary_script_source(points_root, point_name, policy, disabled_names):
+    """Select optional named sources without following links or granting authority."""
+    if policy is None or point_name in disabled_names:
+        return None
+    target = points_root / point_name.removeprefix("hook__context__").replace("__", "_") / "scripts"
+    try:
+        target.lstat()
+    except FileNotFoundError:
+        return None
+    return ConfiguredScript(target=target, platform_policy=policy)
 
 
 @dataclass(frozen=True, slots=True)
