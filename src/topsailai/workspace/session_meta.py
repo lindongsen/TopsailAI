@@ -11,6 +11,7 @@ import glob
 import json
 import logging
 import os
+import threading
 import time
 from datetime import datetime
 
@@ -26,6 +27,8 @@ STATUS_COMPLETED = "completed"
 STATUS_ERROR = "error"
 STATUS_INTERRUPTED = "interrupted"
 
+_META_LOCK = threading.RLock()
+
 
 def safe_session_meta(func):
     """Decorator that makes session metadata operations safe.
@@ -40,6 +43,16 @@ def safe_session_meta(func):
         except Exception as e:
             logger.exception("Failed to execute %s: %s", func.__qualname__, e)
             return None
+    return wrapper
+
+
+def _serialized_session_meta(func):
+    """Serialize complete metadata transactions, including nested writes."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        """Hold the shared reentrant lock for the entire operation."""
+        with _META_LOCK:
+            return func(*args, **kwargs)
     return wrapper
 
 
@@ -70,6 +83,7 @@ def get_session_meta_path(session_id: str | None = None) -> str:
     )
 
 
+@_serialized_session_meta
 def _atomic_write(path: str, data: dict) -> None:
     """Write JSON data atomically using a temporary file and os.replace.
 
@@ -157,7 +171,10 @@ def _get_feature_flags() -> dict:
 
 
 @safe_session_meta
-def create_session_meta(session_id: str | None = None, ai_agent=None) -> str | None:
+@_serialized_session_meta
+def create_session_meta(
+    session_id: str | None = None, ai_agent=None, session_name: str = ""
+) -> str | None:
     """Create the initial session metadata file.
 
     This function is best-effort: failures are logged and None is returned.
@@ -165,6 +182,7 @@ def create_session_meta(session_id: str | None = None, ai_agent=None) -> str | N
     Args:
         session_id: Optional session identifier.
         ai_agent: Optional AI agent instance to extract agent metadata.
+        session_name: Current session name, or empty when unavailable.
 
     Returns:
         Path to the created metadata file, or None on failure.
@@ -192,6 +210,7 @@ def create_session_meta(session_id: str | None = None, ai_agent=None) -> str | N
     meta = {
         "version": META_VERSION,
         "session_id": resolved_session_id,
+        "session_name": session_name,
         "pid": os.getpid(),
         "start_ts": _now_iso8601(),
         "end_ts": None,
@@ -217,6 +236,7 @@ def create_session_meta(session_id: str | None = None, ai_agent=None) -> str | N
     return path
 
 
+@_serialized_session_meta
 def _finalize_on_exit(path: str) -> None:
     """Mark the session metadata as interrupted if it is still running.
 
@@ -236,6 +256,7 @@ def _finalize_on_exit(path: str) -> None:
 
 
 @safe_session_meta
+@_serialized_session_meta
 def update_session_meta_status(status: str, session_id: str | None = None) -> None:
     """Update the status and end_ts of the session metadata file.
 
@@ -255,6 +276,7 @@ def update_session_meta_status(status: str, session_id: str | None = None) -> No
 
 
 @safe_session_meta
+@_serialized_session_meta
 def update_session_meta_field(field: str, value, session_id: str | None = None) -> None:
     """Update an arbitrary field in the session metadata file.
 
@@ -273,6 +295,7 @@ def update_session_meta_field(field: str, value, session_id: str | None = None) 
 
 
 @safe_session_meta
+@_serialized_session_meta
 def cleanup_session_meta_files() -> None:
     """Remove old session metadata files based on retention days and max count.
 
