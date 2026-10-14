@@ -16,9 +16,10 @@ from topsailai.hooks.artifact_leases import ArtifactLeaseManager
 from topsailai.hooks.configured_contracts import ConfiguredHooks, ConfiguredModuleFailure, ConfiguredPlanSummary, PrepareConfiguredResult
 from topsailai.hooks.configured_preparation_ownership import CaptureShard, ConfiguredRootOwner, PreparationOwnership
 from topsailai.hooks.configured_trust import artifact_capture_trust
+from topsailai.hooks.configured_script_sources import discover_prepared_script_entries
 from topsailai.hooks.contracts import Binding
 from topsailai.hooks.hook_script import build_hook_point_binding_plan_from_discovery
-from topsailai.hooks.hook_script_discovery import HookScriptDiscoveryResult, HookScriptEntry, discover_hook_script_entries
+from topsailai.hooks.hook_script_discovery import HookScriptDiscoveryResult, HookScriptEntry
 from topsailai.hooks.module_discovery import ModuleCandidate, ModuleCleanupOwner, _DiscoveryRejected, _make_cleanup_owner, _run_with_module_probe_session, enumerate_module_candidates_owned
 from topsailai.hooks.module_discovery_policy import ModuleDiscoveryPolicy, make_discovery_budget_for_deadline
 from topsailai.hooks.temporary_storage import TemporaryStorageOwner, validate_temporary_root
@@ -99,14 +100,14 @@ def _recover_constructor_owner(error: BaseException):
 class _PreparationBudget:
     """Aggregate bounded preparation counters across all configured Hooks."""
 
-    __slots__ = ("max_scanned_entries", "max_candidates", "max_artifact_bytes", "scanned_entries", "candidates", "artifact_bytes")
+    __slots__ = ("max_scanned_entries", "max_candidates", "max_artifact_bytes", "scanned_entries", "candidates", "artifact_bytes", "source_bytes")
 
     def __init__(self, *, max_scanned_entries: int, max_candidates: int, max_artifact_bytes: int) -> None:
         """Create one aggregate budget."""
         self.max_scanned_entries = max_scanned_entries
         self.max_candidates = max_candidates
         self.max_artifact_bytes = max_artifact_bytes
-        self.scanned_entries = self.candidates = self.artifact_bytes = 0
+        self.scanned_entries = self.candidates = self.artifact_bytes = self.source_bytes = 0
 
     def add_scan(self, count: int = 1) -> None:
         """Account scanned entries."""
@@ -118,6 +119,12 @@ class _PreparationBudget:
         """Account discovered candidates."""
         self.candidates += count
         if self.candidates > self.max_candidates:
+            raise _PreparationRejected("capacity_exceeded")
+
+    def add_source_bytes(self, count: int) -> None:
+        """Bound discovered Script bytes separately from sealed capture accounting."""
+        self.source_bytes += count
+        if self.source_bytes > self.max_artifact_bytes:
             raise _PreparationRejected("capacity_exceeded")
 
     def add_bytes(self, count: int) -> None:
@@ -174,6 +181,7 @@ class _CapturedWork:
     work: _ModuleWork | _ScriptWork
     lease: object
     captured_path: Path
+    entry_index: int = 0
 
 
 class PrivatePreparationImage:
@@ -237,6 +245,8 @@ def prepare_private(runtime, configuration: ConfiguredHooks, scope, *, cancellat
         generation = runtime._registry.generation
         if type(configuration) is not ConfiguredHooks:
             return PrepareConfiguredResult(False, generation, errors=("invalid_configuration",))
+        if _executable and len(configuration.hook_points) > 1:
+            return PrepareConfiguredResult(False, generation, errors=("invalid_configuration",))
         if type(scope) is not HookScope or scope._runtime is not runtime:
             return PrepareConfiguredResult(False, generation, errors=("invalid_scope",))
         if runtime._state != "running" or not runtime._owns_open_scope(scope):
@@ -278,6 +288,10 @@ def prepare_private(runtime, configuration: ConfiguredHooks, scope, *, cancellat
         works = _build_work_sequence(configuration, operation, budget)
         if len(works) > _MAX_CAPTURE_ENTRIES * _MAX_CAPTURE_SHARDS:
             raise _PreparationRejected("capacity_exceeded")
+        if _executable:
+            for hook_index in range(len(configuration.hook_points)):
+                if sum(work.hook_index == hook_index for work in works) > _MAX_CAPTURE_ENTRIES:
+                    raise _PreparationRejected("capacity_exceeded")
         captured = _capture_work_sequence(works, ownership, artifact_root, operation, budget, trust, cancellation)
         plans = _probe_and_plan(configuration, captured, ownership, discovery_root, operation, budget, cancellation, **({"executable": True} if _executable else {}))
         operation.checkpoint()
@@ -328,12 +342,12 @@ def _build_work_sequence(configuration, operation, budget):
             budget.add_candidate(len(inventory.candidates))
             works.extend(_ModuleWork(hook_index, point, inventory.root, candidate) for candidate in inventory.candidates)
         if point.script is not None:
-            result = discover_hook_script_entries(point.script.target, point.script.platform_policy)
+            result = discover_prepared_script_entries(point.script.target,
+                point.script.platform_policy, operation=operation, budget=budget)
             operation.checkpoint()
-            if not result.accepted or len(result.entries) != 1:
-                raise _PreparationRejected("binding_conflict" if result.accepted else "trust_rejected")
-            works.append(_ScriptWork(hook_index, point, result.entries[0]))
-            budget.add_candidate()
+            if not result.accepted:
+                raise _PreparationRejected("trust_rejected")
+            works.extend(_ScriptWork(hook_index, point, entry) for entry in result.entries)
     return tuple(works)
 
 
@@ -414,11 +428,12 @@ def _probe_and_plan(configuration, captured, ownership, discovery_root, operatio
             entries.extend(result)
         failures = tuple(ConfiguredModuleFailure(f"{point.hook_name}:{entry.logical_name}", "invalid_entry" if entry.load_status == "invalid_entry" else "load_error") for entry, _ in entries if not entry.entry_valid)
         module_bindings = tuple(Binding(binding_id=f"module:{entry.logical_name}", event_name=point.definition.name, event_version=point.definition.major_version, handler_ref=f"{entry.logical_name}:main", max_concurrency=point.max_concurrency) for entry, _ in entries)
-        script_result = None
+        script_result = HookScriptDiscoveryResult(True, ()) if point.script is not None else None
         script_ids = tuple(item.lease.identity for item in scripts)
         if scripts:
-            item = scripts[0]
-            script_result = HookScriptDiscoveryResult(True, (HookScriptEntry(item.captured_path, item.work.entry.basename),))
+            script_result = HookScriptDiscoveryResult(True, tuple(
+                HookScriptEntry(item.captured_path, item.work.entry.basename,
+                                item.work.entry.final_registered_name) for item in scripts))
         plan = build_hook_point_binding_plan_from_discovery(hook_point=point.hook_name, module_bindings=module_bindings, bindings_per_event=configuration.settings.limits.bindings_per_event, hook_script_configured=point.script is not None, discovery_result=script_result)
         if not plan.accepted:
             raise _PreparationRejected("binding_conflict")
@@ -435,7 +450,7 @@ def _request_for_work(work):
     """Convert a work record to one exact U07 request."""
     if isinstance(work, _ModuleWork):
         return ArtifactCaptureRequest(work.candidate.source_path, work.candidate.kind, work.candidate.logical_name)
-    return ArtifactCaptureRequest(work.entry.source_path, "script", work.entry.basename, work.point.script.platform_policy)
+    return ArtifactCaptureRequest(work.entry.source_path, "script", work.entry.final_registered_name, work.point.script.platform_policy)
 
 
 def _map_capture_batch(batch, lease):
@@ -457,7 +472,7 @@ def _map_capture_batch(batch, lease):
             raise _PreparationRejected("artifact_rejected") from exc
         if not resolved.is_relative_to(root):
             raise _PreparationRejected("artifact_rejected")
-        result.append(_CapturedWork(work, lease, resolved))
+        result.append(_CapturedWork(work, lease, resolved, index))
     return tuple(result)
 
 
@@ -564,7 +579,8 @@ def _build_executable_plan(point, captured):
     if len(captured) > 128 or (captured and len({item.lease.identity for item in captured}) != 1):
         raise _PreparationRejected("binding_conflict")
     modules, scripts = [], []
-    for index, item in enumerate(captured):
+    for item in captured:
+        index = item.entry_index
         entry = item.lease.entries[index]
         work = item.work
         request = _request_for_work(work)
@@ -581,7 +597,7 @@ def _build_executable_plan(point, captured):
                 source, item.lease.identity, index, entry.relative_path, item.captured_path,
                 entry.content_sha256, entry.validation.deployment_sha256))
         else:
-            scripts.append(CapturedScript(HandlerIdentity(f"script-{index}", "hook_script", "script"),
+            scripts.append(CapturedScript(HandlerIdentity(f"script-{index}", work.entry.final_registered_name, "script"),
                 item.lease.identity, index, work.entry.source_path, work.entry.basename,
                 entry.relative_path, item.captured_path, entry.content_sha256, entry.validation.deployment_sha256))
     return HookPointPlan(point.hook_name, tuple(modules), DefaultScriptHook(tuple(scripts), point.script is not None),

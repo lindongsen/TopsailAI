@@ -105,7 +105,7 @@ def test_build_work_sequence_script_absent_and_present(monkeypatch, tmp_path):
     assert preparation._build_work_sequence(_config(no_script), operation, budget) == ()
     script = SimpleNamespace(target=tmp_path / "hook.py", platform_policy=SimpleNamespace())
     entry = SimpleNamespace(basename="hook.py", source_path=tmp_path / "hook.py")
-    monkeypatch.setattr(preparation, "discover_hook_script_entries", lambda *args: SimpleNamespace(accepted=True, entries=(entry,)))
+    monkeypatch.setattr(preparation, "discover_prepared_script_entries", lambda *args, **kwargs: SimpleNamespace(accepted=True, entries=(entry,)))
     works = preparation._build_work_sequence(_config(_point(script=script)), operation, budget)
     assert len(works) == 1 and works[0].entry is entry
 
@@ -116,9 +116,13 @@ def test_build_work_sequence_script_absent_and_present(monkeypatch, tmp_path):
 ])
 def test_build_work_sequence_rejects_script_discovery_shapes(monkeypatch, tmp_path, result):
     script = SimpleNamespace(target=tmp_path / "hook.py", platform_policy=SimpleNamespace())
-    monkeypatch.setattr(preparation, "discover_hook_script_entries", lambda *args: result)
-    with pytest.raises(_PreparationRejected):
-        preparation._build_work_sequence(_config(_point(script=script)), _operation(), SimpleNamespace(add_candidate=lambda count=1: None, add_scan=lambda count=1: None))
+    monkeypatch.setattr(preparation, "discover_prepared_script_entries", lambda *args, **kwargs: result)
+    if not result.accepted:
+        with pytest.raises(_PreparationRejected):
+            preparation._build_work_sequence(_config(_point(script=script)), _operation(), SimpleNamespace())
+    else:
+        works = preparation._build_work_sequence(_config(_point(script=script)), _operation(), SimpleNamespace())
+        assert tuple(work.entry for work in works) == result.entries
 
 
 def test_probe_close_failure_is_cleanup_pending(monkeypatch, tmp_path):

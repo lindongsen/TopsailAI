@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import stat
+from os import scandir as _scandir
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,6 +14,62 @@ _TARGET_INVALID = "hook_script target is invalid"
 _TARGET_NOT_EXECUTABLE = "configured hook_script file is not executable"
 _PATH_ESCAPE = "hook_script path escapes configured root"
 _MAX_HEADER_BYTES = 1_048_576
+
+
+class _ObservationError(Exception):
+    """Keep filesystem conversion separate from checkpoint exceptions."""
+
+
+def _check(checkpoint):
+    """Observe the caller's unchanged operation budget when supplied."""
+    if checkpoint is not None:
+        checkpoint()
+
+
+def _observe(checkpoint, call, *args, errors=(OSError, RuntimeError, ValueError), **kwargs):
+    """Bracket one I/O boundary without catching caller stop exceptions."""
+    _check(checkpoint)
+    try:
+        value = call(*args, **kwargs)
+    except errors as error:
+        _check(checkpoint)
+        raise _ObservationError from error
+    _check(checkpoint)
+    return value
+
+
+@contextmanager
+def _owned(resource, checkpoint=None):
+    """Close once even after a stop, retaining the original primary exception."""
+    close = getattr(resource, "close", lambda: None)
+    try:
+        yield resource
+    except BaseException as primary:
+        try:
+            close()
+        except Exception:
+            primary.add_note("discovery resource close failed")
+        if type(primary) is _ObservationError:
+            _check(checkpoint)
+        raise
+    else:
+        try:
+            close()
+        except OSError as error:
+            _check(checkpoint)
+            raise _ObservationError from error
+        _check(checkpoint)
+
+
+def _open_owned(checkpoint, opener, *args, errors=(OSError, RuntimeError, ValueError)):
+    """Acquire ownership before observing the outcome of opening a resource."""
+    _check(checkpoint)
+    try:
+        resource = opener(*args)
+    except errors as error:
+        _check(checkpoint)
+        raise _ObservationError from error
+    return resource
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +122,7 @@ def discover_hook_script_entries(
     platform_policy: ExecutablePlatformPolicy,
     *,
     resolve_path: Callable[[Path], Path] | None = None,
+    checkpoint: Callable[[], None] | None = None,
 ) -> HookScriptDiscoveryResult:
     """Discover a file or direct directory children without executing candidates."""
     if type(platform_policy) is not ExecutablePlatformPolicy:
@@ -72,18 +131,19 @@ def discover_hook_script_entries(
     if target_path is None:
         return _rejected(_TARGET_INVALID)
     try:
-        target_status = target_path.lstat()
-    except (OSError, ValueError):
+        target_status = _observe(checkpoint, target_path.lstat, errors=(OSError, ValueError))
+    except _ObservationError:
         return _rejected(_TARGET_INVALID)
     if stat.S_ISLNK(target_status.st_mode):
         return _rejected(_TARGET_INVALID)
     if stat.S_ISREG(target_status.st_mode):
-        return _discover_file(target_path, platform_policy)
+        return _discover_file(target_path, platform_policy, checkpoint)
     if stat.S_ISDIR(target_status.st_mode):
         return _discover_directory(
             target_path,
             platform_policy,
             resolve_path or _resolve_strict,
+            checkpoint,
         )
     return _rejected(_TARGET_INVALID)
 
@@ -107,52 +167,55 @@ def _target_path(target: object) -> Path | None:
 def _discover_file(
     candidate: Path,
     policy: ExecutablePlatformPolicy,
+    checkpoint=None,
 ) -> HookScriptDiscoveryResult:
     """Validate one directly configured regular file."""
-    if not _has_execute_permission(candidate):
+    if not _has_execute_permission(candidate, checkpoint):
         return _rejected(_TARGET_NOT_EXECUTABLE)
     try:
-        canonical = candidate.resolve(strict=True)
-    except (OSError, RuntimeError, ValueError):
+        canonical = _observe(checkpoint, candidate.resolve, strict=True)
+    except _ObservationError:
         return _rejected(_TARGET_INVALID)
-    if not _is_admitted(canonical, policy):
+    if not (_is_admitted(canonical, policy) if checkpoint is None else
+            _is_admitted(canonical, policy, checkpoint)):
         return _rejected(_TARGET_NOT_EXECUTABLE)
     return HookScriptDiscoveryResult(True, (HookScriptEntry(canonical, candidate.name),))
 
 
-def _discover_directory(
-    root_path: Path,
-    policy: ExecutablePlatformPolicy,
-    resolver: Callable[[Path], Path],
-) -> HookScriptDiscoveryResult:
-    """Validate direct regular-file children and publish one atomic snapshot."""
+def _discover_directory(root_path, policy, resolver, checkpoint=None):
+    """Validate direct children with checks between every iterator advance."""
     try:
-        root = root_path.resolve(strict=True)
-        children = tuple(root_path.iterdir())
-    except (OSError, RuntimeError, ValueError):
+        root = _observe(checkpoint, root_path.resolve, strict=True)
+        children = _open_owned(checkpoint, _scandir, root_path)
+        with _owned(children, checkpoint):
+            _check(checkpoint)
+            entries = []
+            while True:
+                entry = _observe(checkpoint, next, children, None)
+                if entry is None:
+                    break
+                child = Path(entry.path)
+                try:
+                    child_status = _observe(checkpoint, child.lstat, errors=(OSError, ValueError))
+                except _ObservationError:
+                    continue
+                if stat.S_ISLNK(child_status.st_mode) or not stat.S_ISREG(child_status.st_mode):
+                    continue
+                try:
+                    canonical = _observe(checkpoint, lambda: Path(resolver(child)), errors=(OSError, RuntimeError, TypeError, ValueError))
+                    if not canonical.is_absolute():
+                        canonical = _observe(checkpoint, canonical.resolve, strict=True)
+                except _ObservationError:
+                    continue
+                if not canonical.is_relative_to(root):
+                    return _rejected(_PATH_ESCAPE)
+                if not _has_execute_permission(child, checkpoint) or not (
+                        _is_admitted(canonical, policy) if checkpoint is None else
+                        _is_admitted(canonical, policy, checkpoint)):
+                    continue
+                entries.append(HookScriptEntry(canonical, child.name))
+    except _ObservationError:
         return _rejected(_TARGET_INVALID)
-    entries: list[HookScriptEntry] = []
-    for child in children:
-        try:
-            child_status = child.lstat()
-        except (OSError, ValueError):
-            continue
-        if stat.S_ISLNK(child_status.st_mode) or not stat.S_ISREG(child_status.st_mode):
-            continue
-        try:
-            canonical = Path(resolver(child))
-        except (OSError, RuntimeError, TypeError, ValueError):
-            continue
-        if not canonical.is_absolute():
-            try:
-                canonical = canonical.resolve(strict=True)
-            except (OSError, RuntimeError, ValueError):
-                continue
-        if not canonical.is_relative_to(root):
-            return _rejected(_PATH_ESCAPE)
-        if not _has_execute_permission(child) or not _is_admitted(canonical, policy):
-            continue
-        entries.append(HookScriptEntry(canonical, child.name))
     entries.sort(key=lambda entry: (entry.basename, entry.source_path.name))
     return HookScriptDiscoveryResult(True, tuple(entries))
 
@@ -251,19 +314,19 @@ def _unique_entries(entries: list[HookScriptEntry]) -> HookScriptDiscoveryResult
     return HookScriptDiscoveryResult(True, tuple(entries))
 
 
-def _has_execute_permission(path: Path) -> bool:
+def _has_execute_permission(path: Path, checkpoint=None) -> bool:
     """Return whether any POSIX-style execute bit is present on the entry."""
     try:
-        return bool(path.stat().st_mode & 0o111)
-    except OSError:
+        return bool(_observe(checkpoint, path.stat, errors=(OSError,)).st_mode & 0o111)
+    except _ObservationError:
         return False
 
 
-def _is_admitted(path: Path, policy: ExecutablePlatformPolicy) -> bool:
+def _is_admitted(path: Path, policy: ExecutablePlatformPolicy, checkpoint=None) -> bool:
     """Apply the selected static executable format policy without launching it."""
     if policy.platform == "windows":
-        return _has_allowed_suffix(path, policy.native_suffixes) and _is_pe32_plus(path)
-    return _is_elf(path) or _has_allowed_shebang(path, policy.allowed_interpreters)
+        return _has_allowed_suffix(path, policy.native_suffixes) and _is_pe32_plus(path, checkpoint)
+    return _is_elf(path, checkpoint) or _has_allowed_shebang(path, policy.allowed_interpreters, checkpoint)
 
 
 def _has_allowed_suffix(path: Path, suffixes: tuple[str, ...]) -> bool:
@@ -272,24 +335,26 @@ def _has_allowed_suffix(path: Path, suffixes: tuple[str, ...]) -> bool:
     return any(lowered_name.endswith(suffix.lower()) for suffix in suffixes)
 
 
-def _read_prefix(path: Path, limit: int = _MAX_HEADER_BYTES) -> bytes | None:
-    """Read only the bounded prefix needed for static format validation."""
+def _read_prefix(path: Path, limit: int = _MAX_HEADER_BYTES, checkpoint=None) -> bytes | None:
+    """Read a bounded prefix, arming closure before the post-open checkpoint."""
     try:
-        with path.open("rb") as stream:
-            return stream.read(limit)
-    except OSError:
+        stream = _open_owned(checkpoint, path.open, "rb", errors=(OSError,))
+        with _owned(stream, checkpoint):
+            _check(checkpoint)
+            return _observe(checkpoint, stream.read, limit, errors=(OSError,))
+    except _ObservationError:
         return None
 
 
-def _is_elf(path: Path) -> bool:
+def _is_elf(path: Path, checkpoint=None) -> bool:
     """Recognize the explicit ELF magic used by the POSIX native policy."""
-    prefix = _read_prefix(path, 4)
+    prefix = _read_prefix(path, 4, checkpoint)
     return prefix == b"\x7fELF"
 
 
-def _has_allowed_shebang(path: Path, allowed: tuple[str, ...]) -> bool:
+def _has_allowed_shebang(path: Path, allowed: tuple[str, ...], checkpoint=None) -> bool:
     """Validate an exact shebang executable against the injected allowlist."""
-    prefix = _read_prefix(path, 4096)
+    prefix = _read_prefix(path, 4096, checkpoint)
     if prefix is None or not prefix.startswith(b"#!"):
         return False
     first_line = prefix.splitlines()[0]
@@ -303,9 +368,9 @@ def _has_allowed_shebang(path: Path, allowed: tuple[str, ...]) -> bool:
     return interpreter in allowed
 
 
-def _is_pe32_plus(path: Path) -> bool:
+def _is_pe32_plus(path: Path, checkpoint=None) -> bool:
     """Validate bounded PE32+ headers without claiming loader compatibility."""
-    data = _read_prefix(path)
+    data = _read_prefix(path, checkpoint=checkpoint)
     if data is None or len(data) < 0x40 or data[:2] != b"MZ":
         return False
     pe_offset = int.from_bytes(data[0x3C:0x40], "little")
