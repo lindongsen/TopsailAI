@@ -10,6 +10,7 @@ Created: 2026-04-19
 
 import unittest
 from unittest.mock import MagicMock, patch
+import copy
 
 
 class TestContextRuntimeUtils(unittest.TestCase):
@@ -434,3 +435,115 @@ class TestContextRuntimeAIAgentEdgeCases(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHistoryReplaySemanticAllowlist(unittest.TestCase):
+    """Test replay deduplication across storage metadata and business fields."""
+
+    def _agent(self, existing, messages):
+        data = MagicMock()
+        data.session_id = "session"
+        data.ai_agent = MagicMock()
+        data.ai_agent.messages = existing
+        data.messages = messages
+        return data
+
+    def _run(self, existing, messages, enabled=True):
+        with patch("topsailai.workspace.context.agent.EnvReaderInstance") as env:
+            env.check_bool.return_value = enabled
+            data = self._agent(existing, messages)
+            self.agent_class(data).add_runtime_messages()
+            return data
+
+    def test_add_runtime_messages_keep_enabled_ignores_unknown_metadata(self):
+        """Unknown top-level metadata must not duplicate a replayed message."""
+        existing = {"role": "user", "content": "same"}
+        persisted = {"role": "user", "content": "same", "storage_revision": 2}
+        data = self._run([existing], [persisted])
+        self.assertEqual(data.ai_agent.messages, [existing])
+        self.assertIs(data.ai_agent.messages[0], existing)
+        self.assertEqual(persisted["storage_revision"], 2)
+
+    def test_add_runtime_messages_keep_enabled_ignores_differing_nested_metadata(self):
+        """Nested storage metadata changes must not affect replay equality."""
+        existing = {"role": "user", "content": "same", "storage_metadata": {"n": [1]}}
+        persisted = {"role": "user", "content": "same", "storage_metadata": {"n": [2]}}
+        existing_before = copy.deepcopy(existing)
+        persisted_before = copy.deepcopy(persisted)
+        data = self._run([existing], [persisted])
+        self.assertEqual(data.ai_agent.messages, [existing])
+        self.assertIs(data.ai_agent.messages[0], existing)
+        self.assertEqual(existing, existing_before)
+        self.assertEqual(persisted, persisted_before)
+
+    def test_add_runtime_messages_keep_enabled_deduplicates_metadata_in_same_batch(self):
+        """Duplicate history entries with metadata append only the first object."""
+        first = {"role": "user", "content": "same", "revision": 1}
+        second = {"role": "user", "content": "same", "revision": 2}
+        first_before = copy.deepcopy(first)
+        second_before = copy.deepcopy(second)
+        data = self._run([], [first, second])
+        self.assertEqual(data.ai_agent.messages, [first])
+        self.assertIs(data.ai_agent.messages[0], first)
+        self.assertEqual(first, first_before)
+        self.assertEqual(second, second_before)
+
+    def test_add_runtime_messages_keep_enabled_preserves_each_business_field_difference(self):
+        """Each semantic envelope field remains independently significant."""
+        cases = [
+            ("role", "assistant", "tool"),
+            ("name", "first", "second"),
+            ("tool_call_id", "call-a", "call-b"),
+            ("tool_calls", [{"id": "a"}], [{"id": "b"}]),
+            ("tool_calls", [{"type": "function"}], [{"type": "custom"}]),
+            ("tool_calls", [{"function": {"name": "a"}}], [{"function": {"name": "b"}}]),
+            ("tool_calls", [{"function": {"arguments": "a"}}], [{"function": {"arguments": "b"}}]),
+            ("function_call", {"name": "a"}, {"name": "b"}),
+        ]
+        for field, old, new in cases:
+            with self.subTest(field=field, old=old, new=new):
+                existing = {"role": "assistant", "content": "same", field: old}
+                different = {"role": "assistant", "content": "same", field: new}
+                data = self._run([existing], [different])
+                self.assertEqual(data.ai_agent.messages, [existing, different])
+
+    def test_add_runtime_messages_keep_enabled_preserves_absent_and_null_differences(self):
+        """Presence and explicit null values remain distinct semantic states."""
+        for field in ("role", "content", "name", "tool_calls", "tool_call_id", "function_call"):
+            with self.subTest(field=field):
+                existing = {"role": "user", "content": "same"}
+                different = {"role": "user", "content": "same", field: None}
+                data = self._run([existing], [different])
+                self.assertEqual(data.ai_agent.messages, [existing, different])
+
+    def test_add_runtime_messages_keep_enabled_preserves_nested_content_changes(self):
+        """Each nested business field and media variation remains significant."""
+        cases = [
+            ("step_name", {"step_name": "thought", "raw_text": "one"}, {"step_name": "answer", "raw_text": "one"}),
+            ("raw_text", {"step_name": "thought", "raw_text": "one"}, {"step_name": "thought", "raw_text": "two"}),
+            ("tool_args", {"step_name": "thought", "tool_args": {"x": 1}}, {"step_name": "thought", "tool_args": {"x": 2}}),
+            ("media_attribute", [{"type": "image", "image_url": "a"}], [{"type": "image", "image_url": "b"}]),
+            ("media_order", [{"type": "text", "text": "one"}, {"type": "image", "image_url": "a"}], [{"type": "image", "image_url": "a"}, {"type": "text", "text": "one"}]),
+            ("create_time", {"create_time": "one", "storage_revision": 1}, {"create_time": "two", "storage_revision": 1}),
+            ("storage_revision", {"create_time": "one", "storage_revision": 1}, {"create_time": "one", "storage_revision": 2}),
+        ]
+        for name, existing_content, different_content in cases:
+            with self.subTest(name=name):
+                existing = {"role": "assistant", "content": existing_content}
+                different = {"role": "assistant", "content": different_content}
+                data = self._run([existing], [different])
+                self.assertEqual(data.ai_agent.messages, [existing, different])
+
+    def test_add_runtime_messages_reset_keeps_metadata_and_duplicates(self):
+        """Reset mode keeps its original append-all behavior."""
+        existing = {"role": "user", "content": "same"}
+        persisted = {"role": "user", "content": "same", "revision": 2}
+        data = self._run([existing], [persisted], enabled=False)
+        self.assertEqual(data.ai_agent.messages, [existing, persisted])
+        self.assertIs(data.ai_agent.messages[1], persisted)
+
+    @property
+    def agent_class(self):
+        return __import__(
+            "topsailai.workspace.context.agent", fromlist=["ContextRuntimeAIAgent"]
+        ).ContextRuntimeAIAgent

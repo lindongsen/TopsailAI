@@ -16,6 +16,7 @@ from topsailai.context import ctx_manager
 from topsailai.ai_base.agent_base import AgentBase
 from topsailai.utils.env_tool import EnvReaderInstance, is_use_tool_calls
 from topsailai.utils import message_tool
+from topsailai.utils.history_replay_message import history_replay_semantic_projection
 from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
 
 logger = logging.getLogger(__name__)
@@ -134,12 +135,8 @@ class ContextRuntimeAIAgent(ContextRuntimeUtils):
 
     @staticmethod
     def _semantic_message(message):
-        """Return a detached message projection without storage metadata."""
-        if not isinstance(message, dict):
-            return message
-        projection = dict(message)
-        projection.pop("create_time", None)
-        return projection
+        """Return the history-replay semantic business-field projection."""
+        return history_replay_semantic_projection(message)
 
     def add_runtime_messages(self):
         """
@@ -151,9 +148,9 @@ class ContextRuntimeAIAgent(ContextRuntimeUtils):
         When ``TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS`` is enabled,
         only messages that are not already present in the AI agent's message
         history are appended, so the Agent2LLM context persists across turns.
-        Persisted messages may carry storage-only ``create_time`` metadata;
-        comparison uses detached semantic projections without mutating either
-        source message.
+        Persisted messages may carry storage-only top-level metadata;
+        comparison uses the dedicated history-replay semantic projection
+        without mutating either source message.
         """
         if not self.messages:
             return
