@@ -223,3 +223,12 @@ agent_shell.get_agent_chat()
 ### Startup Context and Session Naming
 
 The main Agent publishes a per-Agent startup-completion state after its first `new_session()` succeeds. Background session-name generation waits on that state and explicitly disables startup-context loading, so it cannot consume `USER.md` or the process-wide startup-context latch before the real Agent.
+
+
+### Session Metadata Names
+
+Session metadata lives at `{TOPSAILAI_HOME}/workspace/task/{session_id}.{pid}.session.meta`; the default `TOPSAILAI_HOME` already includes `.topsailai`. New records contain `session_name`, using the stored session name at startup or `""` when unavailable.
+
+The database remains authoritative. Successful name updates through `context.ctx_manager.update_session_name()` (including asynchronous auto-naming) best-effort update only the matching current-PID metadata file. Failed metadata writes are logged without failing the database update or Agent flow. Missing files are not created by rename; legacy records without the field remain valid and gain it on update. No historical migration or cross-process rename broadcast is performed.
+
+A shared process-local lock serializes complete metadata transactions so late naming retains completion status and `end_ts`, and completion retains the name. Atomic replacement prevents partial JSON publication; it does not provide cross-process cleanup coordination. Background naming remains asynchronous and is not guaranteed to finish before process exit. No new configuration is required.
