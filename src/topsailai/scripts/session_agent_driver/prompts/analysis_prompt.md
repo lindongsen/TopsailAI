@@ -30,6 +30,16 @@ $task_goal
 
 $messages_summary
 
+## Session Process and Task Records
+
+$processes_summary
+
+Inspect every record. Several tasks may share one session ID or PID.
+Only an own-pipe INPUT owner may receive input: pass its exact PID to
+`inject_input`. Do not select a running process or inherit its parent pipe.
+A finished child does not mean the whole session is complete. Never request
+`exit_process` while any child task remains alive.
+
 ## Session Log Tail
 
 $log_tail

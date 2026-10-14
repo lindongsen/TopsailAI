@@ -11,6 +11,8 @@ driver script continues its polling loop.
 
 from pathlib import Path
 
+from driver_targets import send_task_input
+
 from ai_base.agent_types.exception import AgentEndProcess
 from cli_topsailai.paths import get_topsailai_home
 from cli_topsailai.runtime_operations import RuntimeRequest, execute_runtime_request
@@ -49,6 +51,10 @@ def inject_input(session_id: str, content: str, pid: int | None = None) -> str:
     if not isinstance(content, str) or not content.strip():
         raise AgentEndProcess("inject_input failed: content must be nonempty text")
     try:
+        if pid is not None and send_task_input(
+            _task_dir(), session_id.strip(), pid, content, timeout=_INJECT_TIMEOUT
+        ):
+            return f"input injected to session {session_id} pid {pid}"
         result = execute_runtime_request(
             RuntimeRequest(action="send", message=content, timeout=_INJECT_TIMEOUT),
             _task_dir(),

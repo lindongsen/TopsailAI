@@ -8,8 +8,17 @@ script checks ``is_exit_requested()`` after each analysis run and exits.
 
 import threading
 
+from ai_base.agent_types.exception import AgentEndProcess
+
 # Shared exit flag between the plugin module and the main script.
 _EXIT_EVENT = threading.Event()
+_EXIT_GUARD = None
+
+
+def set_exit_guard(guard):
+    """Bind a fresh whole-session completion check during analysis."""
+    global _EXIT_GUARD
+    _EXIT_GUARD = guard
 
 
 def exit_process(session_id: str | None = None) -> str:
@@ -24,6 +33,8 @@ def exit_process(session_id: str | None = None) -> str:
     Returns:
         A short confirmation string.
     """
+    if _EXIT_GUARD is not None and not _EXIT_GUARD():
+        raise AgentEndProcess("exit refused: child tasks remain alive")
     _EXIT_EVENT.set()
     return "exit requested"
 

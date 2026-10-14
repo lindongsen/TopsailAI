@@ -81,11 +81,13 @@ class TestCheckSessionStatus:
                 mock.patch.object(sad, "is_session_pipe_open", return_value=True):
             assert sad.check_session_status("s1") == "input"
 
-    def test_ignores_task_records(self):
+    def test_observes_living_task_records(self):
         records = [_record(pid=100)]
         records[0]["is_task"] = True
-        with mock.patch.object(sad, "discover_log_files", return_value=records):
-            assert sad.check_session_status("s1") == "idle"
+        with mock.patch.object(sad, "discover_log_files", return_value=records), \
+                mock.patch.object(sad, "_is_pid_alive", return_value=True), \
+                mock.patch.object(sad, "is_session_pipe_open", return_value=False):
+            assert sad.check_session_status("s1") == "running"
 
 
 # ---------------------------------------------------------------------------
@@ -213,12 +215,12 @@ class TestReadIntEnv:
 
 class TestGetSessionInfo:
     def test_none_when_no_living_process(self):
-        with mock.patch.object(sad, "_current_record", return_value=None):
+        with mock.patch.object(sad, "_session_snapshot", return_value=([], "idle")):
             assert sad.get_session_info("s1") is None
 
     def test_returns_info(self):
-        record = _record(pid=100, ctime=1000.0)
-        with mock.patch.object(sad, "_current_record", return_value=record), \
+        record = dict(_record(pid=100, ctime=1000.0), status="input")
+        with mock.patch.object(sad, "_session_snapshot", return_value=([record], "input")), \
                 mock.patch.object(sad, "check_session_status", return_value="input"), \
                 mock.patch.object(sad, "resolve_log_target", return_value=mock.Mock()), \
                 mock.patch.object(sad, "read_log_tail", return_value=mock.Mock(lines=("line1", "line2"))), \
@@ -233,8 +235,8 @@ class TestGetSessionInfo:
             assert "[user] hi" in info["messages_summary"]
 
     def test_log_failure_does_not_break(self):
-        record = _record(pid=100)
-        with mock.patch.object(sad, "_current_record", return_value=record), \
+        record = dict(_record(pid=100), status="input")
+        with mock.patch.object(sad, "_session_snapshot", return_value=([record], "input")), \
                 mock.patch.object(sad, "check_session_status", return_value="input"), \
                 mock.patch.object(sad, "resolve_log_target", side_effect=RuntimeError("boom")), \
                 mock.patch.object(sad.ctx_manager, "get_session_manager", side_effect=RuntimeError("db down")):

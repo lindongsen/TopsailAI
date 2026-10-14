@@ -77,12 +77,16 @@ $task_goal
 ## Session Messages Summary
 $messages_summary
 
+## Session Process and Task Records
+$processes_summary
+
 ## Session Log Tail
 $log_tail
 
 ## Instructions
 1. If the session is waiting for input and needs more input to make progress,
-   call inject_input with the suggested input content.
+   call inject_input with the suggested input content and the exact input-owner PID.
+   Review all task records; a child finishing does not mean the session is complete.
 2. If the session has achieved its final goal and no further input is needed,
    call exit_process.
 3. If the session is still running (not waiting for input), do nothing and
@@ -172,6 +176,7 @@ from cli_topsailai.paths import get_topsailai_home  # noqa: E402
 from cli_topsailai.runtime_logs import resolve_log_target, read_log_tail  # noqa: E402
 from plugins.tools import exit_process  # noqa: E402
 from driver_runtime import DriverRuntime  # noqa: E402
+from driver_targets import observe_records, task_log_target  # noqa: E402
 from topsailai.workspace.folder_constants import TOPSAILAI_HOME  # noqa: E402
 
 
@@ -213,36 +218,33 @@ def _is_pid_alive(pid) -> bool:
 
 
 def _session_records(session_id: str) -> list:
-    """Return non-task log records for the target session (ctime ascending)."""
+    """Return all log records for the target session (ctime ascending)."""
     try:
         log_files = discover_log_files(str(_task_dir()))
     except Exception as error:  # noqa: BLE001
-        logger.error("failed to discover log files: %s", error)
-        return []
+        logger.error("failed to discover log files: %s", error, exc_info=True)
+        raise
     return [
         item for item in log_files
-        if item.get("session_id") == session_id and not item.get("is_task")
+        if item.get("session_id") == session_id
     ]
 
 
+def _session_snapshot(session_id: str):
+    """Observe every matching process without inheriting parent pipe status."""
+    return observe_records(_session_records(session_id), _is_pid_alive, is_session_pipe_open)
+
+
 def _current_record(session_id: str):
-    """Select the current active record: living pid, newest ctime wins (P6)."""
-    records = _session_records(session_id)
-    alive = [item for item in records if _is_pid_alive(item.get("pid"))]
-    if not alive:
-        return None
-    alive.sort(key=lambda item: item.get("ctime", 0), reverse=True)
-    return alive[0]
+    """Prefer an input owner, retaining living children when the parent exits."""
+    rows, status = _session_snapshot(session_id)
+    candidates = [row for row in rows if row["status"] == status and status != "idle"]
+    return max(candidates, key=lambda row: row.get("ctime", 0), default=None)
 
 
 def check_session_status(session_id: str) -> str:
-    """Return the workspace-scope status: input / running / idle."""
-    record = _current_record(session_id)
-    if record is None:
-        return "idle"
-    if is_session_pipe_open(record):
-        return "input"
-    return "running"
+    """Aggregate own-pipe input, then any living process, then idle."""
+    return _session_snapshot(session_id)[1]
 
 
 def format_messages_summary(messages) -> str:
@@ -264,18 +266,19 @@ def format_messages_summary(messages) -> str:
 
 def get_session_info(session_id: str) -> dict | None:
     """Collect session information through topsailai; None on failure (P13)."""
-    record = _current_record(session_id)
+    rows, status = _session_snapshot(session_id)
+    candidates = [row for row in rows if row["status"] == status and status != "idle"]
+    record = max(candidates, key=lambda row: row.get("ctime", 0), default=None)
     if record is None:
         logger.info("session %s has no living process", session_id)
         return None
     pid = record.get("pid")
-    status = check_session_status(session_id)
-
     log_tail = "(log unavailable)"
     try:
-        target = resolve_log_target(_task_dir(), session_id=session_id, pid=pid)
+        target = (task_log_target(_task_dir(), record) if record.get("is_task")
+                  else resolve_log_target(_task_dir(), session_id=session_id, pid=pid))
         tail = read_log_tail(target, count=LOG_TAIL_LINES)
-        log_tail = "\n".join(tail.lines)
+        log_tail = "\n".join(tail.lines)[:MESSAGES_SUMMARY_MAX_CHARS]
     except Exception as error:  # noqa: BLE001
         log_tail = f"(log unavailable: {error})"
 
@@ -287,7 +290,33 @@ def get_session_info(session_id: str) -> dict | None:
     except Exception as error:  # noqa: BLE001
         logger.warning("failed to retrieve messages for %s: %s", session_id, error)
 
+    summaries = [
+        f"pid={row.get('pid')} is_task={bool(row.get('is_task'))} "
+        f"status={row['status']} log={row.get('filename', '')}"
+        for row in rows
+    ]
+    logs = []
+    remaining = MESSAGES_SUMMARY_MAX_CHARS
+    for row in rows:
+        if row["status"] == "idle" or remaining <= 0:
+            continue
+        try:
+            target = (task_log_target(_task_dir(), row) if row.get("is_task")
+                      else resolve_log_target(_task_dir(), session_id=session_id, pid=row["pid"]))
+            text = "\n".join(read_log_tail(target, count=20, budget=65536).lines)
+        except Exception as error:
+            logger.warning("failed to read process log session=%s pid=%s: %s",
+                           session_id, row.get("pid"), error, exc_info=True)
+            text = "(process log unavailable)"
+        text = (f"--- pid={row['pid']} log={row.get('filename', '')} ---\n" + text)[:remaining]
+        logs.append(text)
+        remaining -= len(text) + 1
+    summaries.extend(logs)
+    if remaining <= 0:
+        summaries.append("...(process logs truncated; all record statuses listed above)")
+
     return {
+        "processes_summary": "\n".join(summaries),
         "session_id": session_id,
         "pid": pid,
         "status": status,
@@ -336,6 +365,8 @@ def run_analysis_agent(session_id: str) -> None:
     session_info = get_session_info(session_id)
     if session_info is None:
         return
+    if session_info["status"] != "input":
+        return
     prompt = render_analysis_prompt(session_info)
     analysis_session_id = ANALYSIS_SESSION_PREFIX + uuid.uuid4().hex
     timeout = _read_int_env(TIMEOUT_ENV, DEFAULT_TIMEOUT)
@@ -343,6 +374,10 @@ def run_analysis_agent(session_id: str) -> None:
         "starting analysis agent %s for session %s (status=%s)",
         analysis_session_id, session_id, session_info["status"],
     )
+    exit_process.set_exit_guard(lambda: not any(
+        row.get("is_task") and row["status"] != "idle"
+        for row in _session_snapshot(session_id)[0]
+    ))
     try:
         # P15: isolate the driver argv from the analysis agent. get_message()
         # reads sys.argv[1:] and would otherwise prepend the driver CLI args
@@ -374,6 +409,7 @@ def run_analysis_agent(session_id: str) -> None:
     except Exception as error:  # noqa: BLE001 - P7: never crash the loop
         logger.error("analysis agent failed: %s", error)
     finally:
+        exit_process.set_exit_guard(None)
         cleanup_analysis_session(analysis_session_id)
 
 
