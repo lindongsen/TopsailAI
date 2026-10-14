@@ -607,7 +607,7 @@ class TestAsyncSessionNameAgentIdentity(unittest.TestCase):
 
     @patch('topsailai.context.ctx_manager.generate_session_name', return_value='Auto Name')
     def test_worker_restores_identity_after_storage_failure(self, mock_generate):
-        """Reject unsuccessful storage returns without syncing or logging success."""
+        """Sync metadata independently without logging DB success on storage failure."""
         from topsailai.context.ctx_manager import _async_update_session_name
         from topsailai.utils import thread_local_tool
 
@@ -622,7 +622,9 @@ class TestAsyncSessionNameAgentIdentity(unittest.TestCase):
                     _async_update_session_name('session-123', 'Task', session_mgr, 'AgentA')
 
                 session_mgr.update_session_name.assert_called_once_with('session-123', 'Auto Name')
-                mock_sync.assert_not_called()
+                mock_sync.assert_called_once_with(
+                    'session_name', 'Auto Name', session_id='session-123',
+                )
                 self.assertFalse(any(
                     str(call.args[0]).startswith('auto_rename:')
                     for call in mock_info.call_args_list

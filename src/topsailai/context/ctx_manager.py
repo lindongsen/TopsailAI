@@ -212,16 +212,15 @@ def update_session_name(session_id:str, session_name:str, session_mgr:SessionSto
         session_mgr = get_session_manager()
 
     updated = session_mgr.update_session_name(session_id, session_name)
-    if updated:
-        try:
-            from topsailai.workspace.session_meta import update_session_meta_field
+    try:
+        from topsailai.workspace.session_meta import update_session_meta_field
 
-            update_session_meta_field("session_name", session_name, session_id=session_id)
-        except Exception:
-            logger.warning(
-                "session_name metadata sync failed: session_id=%s", session_id,
-                exc_info=True,
-            )
+        update_session_meta_field("session_name", session_name, session_id=session_id)
+    except Exception:
+        logger.warning(
+            "session_name metadata sync failed: session_id=%s", session_id,
+            exc_info=True,
+        )
     return updated
 
 

@@ -1,4 +1,4 @@
-"""Author: DawsonLin. Database-authoritative metadata name projection."""
+"""Author: DawsonLin. Independent best-effort session name saves."""
 
 import json
 from pathlib import Path
@@ -33,21 +33,22 @@ def test_success_uses_explicit_id(monkeypatch):
 
 
 @pytest.mark.parametrize("result", [False, None])
-def test_db_failure_does_not_project(monkeypatch, result):
-    """Uncommitted names must not be advertised by metadata."""
+def test_db_failure_still_saves_metadata(monkeypatch, result):
+    """False and None DB results do not prevent independent metadata saving."""
     sync = Mock()
     monkeypatch.setattr(session_meta, "update_session_meta_field", sync)
     storage = Mock(update_session_name=Mock(return_value=result))
     assert ctx_manager.update_session_name("target", "new", storage) is result
-    sync.assert_not_called()
+    sync.assert_called_once_with("session_name", "new", session_id="target")
 
 
-def test_sync_exception_keeps_db_success(monkeypatch, caplog):
-    """Filesystem failure cannot turn a committed DB rename into failure."""
+@pytest.mark.parametrize("result", [True, False, None])
+def test_sync_exception_keeps_db_result(monkeypatch, caplog, result):
+    """Filesystem exceptions cannot change any DB return value."""
     monkeypatch.setattr(session_meta, "update_session_meta_field",
                         Mock(side_effect=OSError("metadata unavailable")))
     assert ctx_manager.update_session_name("target", "new", Mock(
-        update_session_name=Mock(return_value=True))) is True
+        update_session_name=Mock(return_value=result))) is result
     assert "metadata unavailable" in caplog.text
     assert any(record.exc_info for record in caplog.records)
 
@@ -62,8 +63,9 @@ def test_db_exception_does_not_project(monkeypatch):
     sync.assert_not_called()
 
 
-def test_real_write_failure_keeps_db_success(monkeypatch, caplog):
-    """A real metadata transaction tolerates failure after DB success."""
+@pytest.mark.parametrize("result", [True, False, None])
+def test_real_write_failure_keeps_db_result(monkeypatch, caplog, result):
+    """A real metadata transaction tolerates failure for any DB return."""
     path = Path(session_meta.create_session_meta("target", session_name="before"))
     before = path.read_bytes()
     real_os = session_meta.os
@@ -72,8 +74,8 @@ def test_real_write_failure_keeps_db_success(monkeypatch, caplog):
         fsync=real_os.fsync, remove=real_os.remove,
         replace=Mock(side_effect=OSError("publication denied")),
     ))
-    storage = Mock(update_session_name=Mock(return_value=True))
-    assert ctx_manager.update_session_name("target", "after", storage) is True
+    storage = Mock(update_session_name=Mock(return_value=result))
+    assert ctx_manager.update_session_name("target", "after", storage) is result
     storage.update_session_name.assert_called_once_with("target", "after")
     assert path.read_bytes() == before
     assert not Path(str(path) + ".tmp").exists()
