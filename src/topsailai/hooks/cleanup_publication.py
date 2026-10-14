@@ -104,6 +104,44 @@ class PublicationAction:
 
 
 @dataclass(frozen=True, slots=True)
+class RetirementIntent:
+    """Prehold original synthetic authority before acquisition can start."""
+
+    publication: PublicationIntent
+    producer: object
+    cleanup_owner: object
+    command_seal: CleanupCommandSealIntent
+
+    def __post_init__(self):
+        """Reject malformed certificates before any synchronization."""
+        if (type(self.publication) is not PublicationIntent
+                or type(self.producer) is not object
+                or type(self.cleanup_owner) is not object
+                or type(self.command_seal) is not CleanupCommandSealIntent):
+            raise ValueError("retirement requires exact typed identities")
+
+
+@dataclass(frozen=True, slots=True)
+class RetirementEvidence:
+    """Certify synthetic cessation/zero obligations, never native settlement."""
+
+    intent: RetirementIntent
+    kind: str
+    delivery: CleanupDeliveryReceipt | None = None
+
+    def __post_init__(self):
+        """Validate shape; identity and lifecycle are checked against the journal."""
+        if type(self.intent) is not RetirementIntent:
+            raise ValueError("retirement requires an exact intent")
+        if type(self.kind) is not str or self.kind not in ("empty_failure", "settled_no_reader"):
+            raise ValueError("unknown retirement kind")
+        if self.delivery is not None and type(self.delivery) is not CleanupDeliveryReceipt:
+            raise ValueError("retirement requires exact delivery evidence")
+        if self.kind == "empty_failure" and self.delivery is not None:
+            raise ValueError("empty failure must not fabricate a delivery")
+
+
+@dataclass(frozen=True, slots=True)
 class PublicationState:
     """Detach lifecycle facts; never expose mutable record fields as authority."""
 
@@ -115,6 +153,7 @@ class PublicationState:
     owner_admitted: bool = False
     mutation_owner: object | None = None
     actions: tuple[PublicationAction, ...] = ()
+    retirement: RetirementEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +287,57 @@ class CleanupPublication:
                 )
         return self._query("transition", action.intent, action, end)
 
+    def retire_without_reader(self, evidence: RetirementEvidence, *, deadline: float):
+        """Retire synthetic no-reader obligations under exact durable quiescence."""
+        if type(evidence) is not RetirementEvidence:
+            raise ValueError("retirement requires exact evidence")
+        end = finite_deadline(deadline)
+        intent = evidence.intent.publication
+        result = self._query("retirement_check", intent, evidence, end)
+        if result.state != "eligible":
+            return result
+        status = self._mailbox.command_quiescence(evidence.intent.command_seal, deadline=end)
+        if status.state != "quiescent":
+            return self._unavailable if status.state == "unavailable" else self._query(
+                "observe", intent, None, end
+            )
+        if evidence.kind == "settled_no_reader":
+            status = self._mailbox.delivery_status(evidence.delivery, deadline=end)
+            if status != "acknowledged":
+                return self._unavailable if status == "unavailable" else self._query(
+                    "observe", intent, None, end
+                )
+        result = self._query("retire", intent, evidence, end)
+        return result if time.monotonic() < end else self._unavailable
+
+    def _retirement_candidate(self, slot, evidence):
+        """Revalidate exact identities and all lifecycle predicates under custody."""
+        intent, certificate = slot.intent, evidence.intent
+        if (certificate.producer is not intent.producer
+                or certificate.cleanup_owner is not self._handle.cleanup_owner
+                or certificate.command_seal.receipt is not intent.receipt.admission):
+            return None, "foreign"
+        if slot.retirement is not None:
+            return None, "duplicate" if slot.retirement is evidence else "conflict"
+        names = tuple(action.name for action in slot.actions)
+        ready = slot.owner_admitted and slot.admission_producers == 0 and slot.readers == 0
+        if evidence.kind == "empty_failure":
+            legal = (ready and slot.stage == "start_pending" and slot.producers == 1
+                     and slot.mutation_owner is intent.producer
+                     and set(names) == {"owner_admit", "admission_handback", "start"})
+        else:
+            if (evidence.delivery is None
+                    or evidence.delivery.command.receipt is not intent.receipt.admission):
+                return None, "foreign" if evidence.delivery is not None else "blocked"
+            legal = (ready and slot.stage == "settled" and slot.producers == 0
+                     and slot.mutation_owner is self._handle.cleanup_owner
+                     and set(names) == {"owner_admit", "admission_handback", "start",
+                                        "resources", "transfer", "producer_handback", "settle"})
+        if not legal:
+            return None, "blocked"
+        return replace(slot, stage="terminal", producers=0, readers=0,
+                       mutation_owner=None, retirement=evidence), "eligible"
+
     def _acquire(self, end, ticket):
         """Journal native acquisition uncertainty and never wait for a lock."""
         if time.monotonic() >= end:
@@ -322,7 +412,11 @@ class CleanupPublication:
             return self._observation("conflict", (slot,))
         if operation in ("observe", "publish"):
             return self._observation(slot.stage, (slot,))
-        if operation == "join":
+        if operation in ("retirement_check", "retire"):
+            updated, state = self._retirement_candidate(slot, argument)
+            if updated is None or operation == "retirement_check":
+                return self._observation(state, (slot,))
+        elif operation == "join":
             if slot.stage != "pending":
                 return self._observation(slot.stage, (slot,))
             updated = replace(slot, stage="joined", mutation_owner=intent.producer)
