@@ -41,3 +41,7 @@ The CLI now provides `/control` in session and runtime scopes to send validated 
 ## Stdin Input for `topsailai_count_tokens`
 
 `topsailai_count_tokens` now counts tokens from standard input, so it can be used directly in a pipeline: `--text -` and `--file -` both read the text from stdin, and when neither `--text`, `--file`, nor any positional file is given the command falls back to reading stdin. The implicit fallback is guarded by a `sys.stdin.isatty()` check that prints a usage error and exits with code 2 instead of blocking when stdin is an interactive terminal, and the explicit `-` forms still reject combination with positional file arguments before consuming stdin. Output stays a single integer for these single-source modes, while the existing positional `-` path keeps printing `<count> -`.
+
+## Runtime Agent Instruction Shortcut
+
+The CLI now provides `/agent.<instruction> [args...]` in runtime scope as a shortcut for `/control.call_instruction`. Typing `/agent.models` or `/agent.models 1` forwards the registered agent instruction `agent.models` (with optional whitespace-split positional args) through the existing control channel, so operators can invoke agent instructions without writing the full JSON payload. The shortcut requires a resolvable watched session PID, matching `/control`, and fails closed when no PID can be resolved.

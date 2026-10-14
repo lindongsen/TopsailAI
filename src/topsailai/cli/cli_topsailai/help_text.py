@@ -82,7 +82,7 @@ def print_scopes() -> None:
         (
             "runtime",
             "The live log-streaming scope entered after selecting a workspace log file. It follows output for the watched session or task while keeping session messaging available.",
-            "Send process messages with /send, inject agent2llm context with /ctx.btw, print session metadata with /meta, send control requests with /control, recall previous and next runtime messages with the Up/Down arrow keys, show help, or leave the stream with q or quit.",
+            "Send process messages with /send, inject agent2llm context with /ctx.btw, print session metadata with /meta, send control requests with /control, forward agent instructions with /agent.<instruction>, recall previous and next runtime messages with the Up/Down arrow keys, show help, or leave the stream with q or quit.",
         ),
         (
             "project",
@@ -321,6 +321,12 @@ def print_help(
             "desc": "Send a control request to the current session through its UDS control socket. Supported commands: call_instruction, hard_interrupt, soft_interrupt, clear_interrupt, get_runtime_messages. args_json is an optional JSON object; defaults to {}. Fixed actions can be invoked without JSON via /control.hard_interrupt, /control.soft_interrupt [reason], /control.clear_interrupt, /control.get_runtime_messages. /control.call_instruction without a JSON payload starts an interactive wizard that prompts for instruction, args, and kwargs.",
             "example": "Example: /control.hard_interrupt  or  /control.soft_interrupt timeout  or  /control.call_instruction  or  /control call_instruction {\"instruction\":\"ctx.history\",\"args\":[\"arg1\"],\"kwargs\":{\"key\":\"value\"}}",
             "scopes": ["session", "runtime"],
+        },
+        {
+            "cmd": "/agent.<instruction> [args...]",
+            "desc": "Runtime shortcut that forwards a registered agent instruction through the control channel as call_instruction with instruction 'agent.<name>'. Positional args are split on whitespace; kwargs are not supported. Requires a resolvable watched session PID.",
+            "example": "Example: /agent.models  or  /agent.models 1",
+            "scopes": ["runtime"],
         },
         {
             "cmd": "<free-form text>",

@@ -1,5 +1,6 @@
 """Streaming session helpers for the TopsailAI CLI."""
 
+import json
 import os
 import re
 import select
@@ -504,12 +505,12 @@ def _prompt_send_as_message(
     if output_callback is not None:
         output_callback(
             f"[ERROR] Unknown streaming command: {raw_input}. "
-            f"Use '/send [message]', '/ctx.btw [message]', '/control <command>', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'."
+            f"Use '/send [message]', '/ctx.btw [message]', '/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'."
         )
     else:
         print(
             f"{Colors.RED}[ERROR] Unknown streaming command: {raw_input}. "
-            f"Use '/send [message]', '/ctx.btw [message]', '/control <command>', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
+            f"Use '/send [message]', '/ctx.btw [message]', '/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
         )
     return True
 
@@ -1456,6 +1457,15 @@ def _handle_stream_command(
             default_pid,
         )
         return
+    if cmd.startswith("/agent."):
+        _handle_stream_agent_instruction(
+            cmd_line,
+            task_dir,
+            default_session_id,
+            default_stdout_path,
+            default_pid,
+        )
+        return
     if cmd == "/meta":
         _handle_stream_meta(task_dir, default_session_id, default_session_pid)
         return
@@ -1473,7 +1483,7 @@ def _handle_stream_command(
 
     print(
         f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
-        f"Use '/send [message]', '/ctx.btw [message]', '/control <command>', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
+        f"Use '/send [message]', '/ctx.btw [message]', '/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
     )
 
 
@@ -1502,6 +1512,61 @@ def _handle_stream_control(
     instruction = dict(instruction)
     instruction["shell"] = f"{instruction.get('shell', '')} -p '{{pid}}'"
     variables = dict(variables)
+    variables["pid"] = str(pid)
+    yaml_commands.handle_yaml_command(instruction, variables)
+
+def _handle_stream_agent_instruction(
+    cmd_line: str,
+    task_dir: str,
+    default_session_id: Optional[str],
+    default_stdout_path: Optional[str],
+    default_pid: Optional[int],
+) -> None:
+    """Forward ``/agent.<instruction> [args...]`` through the control channel.
+
+    This is a runtime-scope shortcut for
+    ``/control.call_instruction {"instruction":"agent.<name>","args":[...]}``.
+    Positional arguments are split on whitespace; keyword arguments are not
+    supported. The watched session PID is required, matching ``/control``.
+    """
+    body = cmd_line[len("/agent."):].strip()
+    parts = body.split()
+    if not parts:
+        print(
+            f"{Colors.RED}[ERROR] Usage: /agent.<instruction> [args...]{Colors.RESET}"
+        )
+        return
+
+    instruction_name = parts[0]
+    args = parts[1:]
+
+    pid = default_pid
+    if pid is None and default_stdout_path:
+        pid = get_file_pid(default_stdout_path)
+    if pid is None:
+        print(
+            f"{Colors.RED}[ERROR] Could not resolve the watched session PID from the log file.{Colors.RESET}"
+        )
+        return
+
+    matched = yaml_commands.match_yaml_command("/control.call_instruction", task_dir)
+    if matched is None:
+        print(
+            f"{Colors.RED}[ERROR] Could not match runtime control command.{Colors.RESET}"
+        )
+        return
+
+    payload = {"instruction": f"agent.{instruction_name}"}
+    if args:
+        payload["args"] = args
+
+    instruction, variables = matched
+    instruction = dict(instruction)
+    instruction["shell"] = f"{instruction.get('shell', '')} -p '{{pid}}'"
+    variables = dict(variables)
+    if default_session_id:
+        variables["session_id"] = default_session_id
+    variables["args"] = json.dumps(payload, ensure_ascii=False)
     variables["pid"] = str(pid)
     yaml_commands.handle_yaml_command(instruction, variables)
 

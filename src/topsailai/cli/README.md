@@ -364,6 +364,7 @@ The top pane shows the streaming log. The bottom pane is a fixed input bar where
 | `/send [message]` | Send a message to the running session through its named pipe. If no message is given, the input pane expands for multi-line input. |
 | `/ctx.btw [message]` | Inject a by-the-way message into the `agent2llm` context of the watched session. If no message is given, the input pane expands for multi-line input. |
 | `/control <command> [args_json]` or `/control.<subcommand>` | Send a control request through `topsailai_send_control` with `--pid` set to the PID identified from the watched log file. |
+| `/agent.<instruction> [args...]` | Runtime shortcut that forwards a registered agent instruction through the control channel as `call_instruction` with instruction `agent.<name>`. Positional args are split on whitespace; kwargs are not supported. Requires a resolvable watched session PID. |
 | `/help` | Show the list of available streaming commands. |
 | `q` or `quit` | Leave runtime scope and return to the file list. |
 
