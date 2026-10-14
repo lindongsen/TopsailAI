@@ -80,6 +80,7 @@ The command uses the same parsing and execution mechanism as `/git`: `shlex.spli
 | `/meta <number>` | Read exact session metadata in the ordinary workspace task list. |
 | `/driver status <number>` | Read current driver evidence (ordinary workspace only). |
 | `/driver stop <number>` | Gracefully stop one verified driver, not its session (ordinary workspace only). |
+| `/kill <number>` | Send SIGTERM to exactly the displayed row PID after y/N confirmation (ordinary workspace only). |
 | `/refresh` | Re-scan the task directory and refresh the list. |
 | `/session <number\|session_id>` | Retrieve full context messages for a session. |
 | `/agent [<number\|folder>]` | Launch an agent. With no argument, run the YAML-configured agent command. With an argument, change to the selected folder and run `topsailai_launch_agent`. The effective model selection is applied to the child process. |
@@ -398,3 +399,11 @@ The fixed target is `{TOPSAILAI_HOME}/workspace/task/{session_id}.{pid}.session.
 Reads are limited to 65,536 bytes and 64 nesting levels. Missing, unreadable, oversized, malformed, excessively nested or identity-mismatched metadata produces an `[ERROR]` category without its body or a traceback. Path traversal, nonregular files and symlinks beneath the trusted home are rejected. Platforms without safe no-follow directory reads fail closed. On those platforms, the workspace list also cannot apply the metadata-based completed-to-idle override and retains its original derived process status. Reads are bounded snapshots, not transactions; incomplete concurrent writes report an error without automatic retries.
 
 Runtime `/meta` remains unchanged: it reads the watched parent session metadata without a row argument. This increment adds no non-interactive workspace meta subcommand.
+
+## Workspace process termination
+
+Use `/kill 3` to target row 3 of the currently displayed ordinary workspace task list. Exactly one positive row number is required. Project, runtime, session, doc and managed-project views reject this command. Rows whose PID column is `-` are not eligible; PID 1 and the CLI's own PID are also rejected.
+
+The confirmation identifies the row, session and exact PID and warns that unsaved work may be lost. Enter `y` or `yes` to send SIGTERM; Enter, other answers, EOF or Ctrl+C cancel without signaling. The target is only the PID column, including a task child PID when selecting a task row, never the Driver column or an inferred parent session PID. No process group or descendant traversal is performed.
+
+Successful output means the OS accepted the signal, not that the process has exited. There is no automatic SIGKILL escalation. A successful submission refreshes the list; cancellation and errors leave it unchanged. An already-exited process or permission failure is reported with PID/session context. Logs are not deleted. Numeric PIDs can be reused between list discovery, confirmation and signaling; this command does not verify process-instance identity, so inspect the selected row carefully and refresh stale lists before use. On Windows, Python's SIGTERM behavior terminates the target rather than providing POSIX graceful-handler semantics.

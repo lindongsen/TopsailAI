@@ -671,6 +671,21 @@ def prompt_selection(
                     continue
                 return ("meta", number - 1)
 
+            if lower_input.split() and lower_input.split()[0] == "/kill":
+                if state.current_scope != "workspace" or state.workspace_showing_managed_projects:
+                    print("[ERROR] /kill is only available in the ordinary workspace task list.")
+                    continue
+                parts = lower_input.split()
+                if (len(parts) != 2 or len(parts[1]) > 9
+                        or re.fullmatch(r"[0-9]+", parts[1]) is None or int(parts[1]) < 1):
+                    print("[ERROR] Usage: /kill <number>")
+                    continue
+                number = int(parts[1])
+                if not 1 <= number <= len(files):
+                    print(f"[ERROR] Invalid number. Please enter 1-{len(files)}.")
+                    continue
+                return ("kill", number - 1)
+
             if lower_input.split() and lower_input.split()[0] == "/driver":
                 if state.current_scope != "workspace" or state.workspace_showing_managed_projects:
                     print("[ERROR] /driver is only available in the ordinary workspace task list.")
@@ -1005,7 +1020,7 @@ def prompt_selection(
                         f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
                         f"Please enter a number, /refresh, /session {{number}}, "
                         f"/agent {{number|folder}}, /resume {{number}}, "
-                        f"{'/meta <number>, /driver <number>, /driver status <number>, /driver stop <number>, ' if state.current_scope == 'workspace' else ''}"
+                        f"{'/kill <number>, /meta <number>, /driver <number>, /driver status <number>, /driver stop <number>, ' if state.current_scope == 'workspace' else ''}"
                         f"/clean, /send, /help, or 'q'.{Colors.RESET}"
                     )
                 _consecutive_unrecognized += 1
@@ -1693,6 +1708,16 @@ def main(argv: Optional[List[str]] = None) -> None:
                 elif state.current_scope == "doc":
                     _refresh_doc()
                 else:
+                    _refresh_workspace()
+                continue
+
+            if action == "kill":
+                from cli_topsailai.workspace_kill import kill_workspace_row
+
+                if state.current_scope != "workspace" or state.workspace_showing_managed_projects:
+                    print("[ERROR] /kill is only available in the ordinary workspace task list.")
+                    continue
+                if kill_workspace_row(log_files, value, read_input=_read_input_with_prompt):
                     _refresh_workspace()
                 continue
 

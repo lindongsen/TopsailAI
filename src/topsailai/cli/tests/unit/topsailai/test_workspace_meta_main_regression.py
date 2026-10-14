@@ -211,3 +211,34 @@ def test_main_argument_routes(monkeypatch, capsys, argv, code):
     assert exc.value.code == code
     if "unknown" in argv:
         assert "invalid subcommand" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("answer,expected_calls", [("y", 1), ("", 0)])
+def test_kill_main_dispatch(harness, monkeypatch, answer, expected_calls):
+    """Wire row selection through confirmation and refresh only after submission."""
+    from types import SimpleNamespace
+    import signal
+    from cli_topsailai import workspace_kill
+
+    run, mocks, row = harness
+    row["workspace_pid"] = 1234
+    kill = Mock()
+    monkeypatch.setattr(workspace_kill, "os", SimpleNamespace(kill=kill, getpid=lambda: 555))
+    monkeypatch.setattr(core, "_read_input_with_prompt", Mock(return_value=answer))
+    run([("kill", 0)])
+    assert kill.call_count == expected_calls
+    if expected_calls:
+        kill.assert_called_once_with(1234, signal.SIGTERM)
+    assert mocks["discover_log_files"].call_count == 1 + expected_calls
+
+
+@pytest.mark.parametrize("scope,managed", [("project", False), ("workspace", True)])
+def test_kill_main_scope_guard(harness, monkeypatch, scope, managed):
+    """Defense in depth rejects injected actions outside the ordinary task list."""
+    from cli_topsailai import workspace_kill
+
+    run, mocks, row = harness
+    terminate = Mock()
+    monkeypatch.setattr(workspace_kill, "kill_workspace_row", terminate)
+    run([("kill", 0)], scope, managed)
+    terminate.assert_not_called()

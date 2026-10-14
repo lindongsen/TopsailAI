@@ -77,7 +77,7 @@ def print_scopes() -> None:
         (
             "workspace",
             "The default task-watcher scope. It lists discovered session and task log files so you can monitor and manage work across the current TopsailAI home.",
-            "Select a numbered log, read exact session metadata with /meta <number>, retrieve session context, refresh or clean the task list, send messages, launch agents, use /driver <number>, /driver status <number>, or /driver stop <number> for session drivers, enter project or doc scope, and show help.",
+            "Select a numbered log, read exact session metadata with /meta <number>, retrieve session context, refresh or clean the task list, terminate a displayed PID with /kill <number> after confirmation, send messages, launch agents, use /driver <number>, /driver status <number>, or /driver stop <number> for session drivers, enter project or doc scope, and show help.",
         ),
         (
             "runtime",
@@ -142,6 +142,12 @@ def print_help(
     cprint("=" * width, color=Colors.CYAN, bold=True)
 
     commands = [
+        {
+            "cmd": "/kill <number>",
+            "desc": "Send SIGTERM to exactly the selected row's displayed PID after y/N confirmation; ordinary workspace task list only. No force escalation or confirmed-exit guarantee.",
+            "example": "Example: /kill 3",
+            "scopes": ["workspace"],
+        },
         {
             "cmd": "/driver <number>",
             "desc": (

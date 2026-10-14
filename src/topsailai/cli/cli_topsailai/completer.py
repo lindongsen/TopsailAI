@@ -74,7 +74,7 @@ def get_available_completions() -> List[str]:
     builtins = ["/refresh", "/clean", "/help", "/session", "/send", "/ctx.btw", "q", "quit"]
     completions.extend(builtins)
     if cli_state.current_scope == "workspace" and not cli_state.workspace_showing_managed_projects:
-        completions.extend(["/driver", "/driver status", "/driver stop"])
+        completions.extend(["/kill", "/driver", "/driver status", "/driver stop"])
 
     if (cli_state.current_scope == "runtime" or
             (cli_state.current_scope == "workspace" and not cli_state.workspace_showing_managed_projects)):

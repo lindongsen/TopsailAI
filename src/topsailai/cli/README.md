@@ -388,6 +388,7 @@ From this list you can:
 - Type a number and press `Enter` to watch that file.
 - Use `/session <number>` to retrieve the full session context.
 - Use `/refresh` to reload the list.
+- Use `/kill <number>` to terminate the displayed row PID after confirmation.
 - Use `/clean` to remove expired files.
 - Use `/send <number> [message]` to send a message to a running session.
 - Use `cd doc` to enter the documentation scope and list usage docs.
@@ -443,6 +444,7 @@ When the CLI is showing the workspace task list (`[workspace]>`), the following 
 | `/meta <number>` | Read the selected session row metadata; see [workspace metadata](docs/usage/topsailai.md#workspace-session-metadata). |
 | `/driver status <number>` | Inspect the selected session driver. |
 | `/driver stop <number>` | Gracefully stop its verified driver, not the session; see [driver usage](docs/usage/topsailai.md#workspace-session-drivers). |
+| `/kill <number>` | Send SIGTERM to the PID displayed on the selected row after explicit y/N confirmation; see [termination contract](docs/usage/topsailai.md#workspace-process-termination). |
 | `/refresh` | Reload the workspace task list. |
 | `/clean` | Remove expired files from the task directory. |
 | `/send <number> [message]` | Send a message to the running session associated with the selected entry. |
