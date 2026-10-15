@@ -249,7 +249,7 @@ def input_multi_line(tips: str = "", hook: HookInstruction = None) -> str:
     return input_multi_line(tips, hook)
 
 
-def input_message(tips: str = "", hook: HookInstruction = None) -> str:
+def input_message(tips: str = "", hook: HookInstruction = None, *, hook_executor=None) -> str:
     """
     Get user input based on environment configuration.
 
@@ -259,6 +259,7 @@ def input_message(tips: str = "", hook: HookInstruction = None) -> str:
     Args:
         tips (str, optional): Prompt message to display. Defaults to empty string.
         hook (HookInstruction, optional): Hook instruction manager. Defaults to None.
+        hook_executor: Optional application-owned Executor; observes once before reading.
 
     Returns:
         str: User input message
@@ -269,8 +270,13 @@ def input_message(tips: str = "", hook: HookInstruction = None) -> str:
         What would you like to do?
     """
     print(SPLIT_LINE)
+    multiline = env_tool.is_chat_multi_line()
+    if hook_executor is not None:
+        from topsailai.hooks.points.workspace.input_adapter import observe_before_input
+
+        observe_before_input(hook_executor, multiline=multiline)
     try:
-        if env_tool.is_chat_multi_line():
+        if multiline:
             return input_multi_line(tips, hook)
         return input_one_line(tips, hook)
     except KeyboardInterrupt:
