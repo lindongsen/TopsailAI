@@ -313,7 +313,6 @@ class _CollectorProcess:
             raise subprocess.TimeoutExpired("child", timeout)
         self.reaped = True
         return self.returncode
-
 class _CollectorSelector:
     """Selector fake with independent setup, read, and close failures."""
     def __init__(self, failure=None, close_error: BaseException | bool = False) -> None:
@@ -348,7 +347,7 @@ class _CollectorSelector:
                 raise self.close_error
             raise OSError("selector close failed")
 
-def _exercise_collector_failure(monkeypatch, failure: str):
+def _exercise_collector_failure(monkeypatch, failure: str, primary_error=None):
     """Run the real collector helper with concise controlled seams."""
     import selectors
     process = _CollectorProcess(
@@ -362,7 +361,8 @@ def _exercise_collector_failure(monkeypatch, failure: str):
     monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: process)
     monkeypatch.setattr(selectors, "DefaultSelector", lambda: (_ for _ in ()).throw(OSError("setup failed")) if failure == "setup" else selector)
     if failure in {"read", "primary-poll", "primary-wait"}:
-        monkeypatch.setattr(os, "read", lambda *_args: (_ for _ in ()).throw(OSError("primary read failed")))
+        error = primary_error or OSError("primary read failed")
+        monkeypatch.setattr(os, "read", lambda *_args: (_ for _ in ()).throw(error))
     elif failure in {"stdout-overflow", "stderr-overflow"}:
         target = 1 if failure == "stdout-overflow" else 2
         monkeypatch.setattr(os, "read", lambda fd, _size: b"x" * 65537 if fd == target else b"")
@@ -391,17 +391,18 @@ def test_bounded_collector_failure_matrix(monkeypatch, failure: str) -> None:
     assert all(timeout == 2 for timeout in process.wait_calls)
     assert process.terminate_targets == [process] if process.terminate_calls else True
     assert process.kill_targets == [process] if process.kill_calls else True
-
 def test_bounded_collector_primary_exception_survives_poll_and_wait_cleanup_failures(monkeypatch) -> None:
     for failure in ("primary-poll", "primary-wait"):
-        process, selector = _exercise_collector_failure(monkeypatch, failure)
+        injected_primary = OSError(f"primary read failed: {failure}")
+        process, selector = _exercise_collector_failure(monkeypatch, failure, injected_primary)
         if failure == "primary-poll":
             process.poll_error = True
         else:
             process.wait_error = True
         with pytest.raises(OSError, match="primary read failed") as caught:
             _run_bounded_child("", ".")
-        assert caught.value.__notes__ and process.stderr.closed and selector.closed
+        assert caught.value is injected_primary
+        assert caught.value.__notes__ and selector.closed and process.stdout.closed and process.stderr.closed
 
 def test_bounded_collector_non_timeout_wait_failure_continues_settlement(monkeypatch) -> None:
     process, _selector = _exercise_collector_failure(monkeypatch, "wait")
@@ -417,7 +418,6 @@ def test_bounded_collector_termination_escalates_after_timeout(monkeypatch) -> N
     assert process.call_order[-4:] == ["terminate", ("wait", 2), "kill", ("wait", 2)]
     assert process.terminate_targets == process.kill_targets == [process]
     assert process.wait_calls == [2, 2] and process.reaped
-
 def test_bounded_collector_forwards_child_arguments(monkeypatch) -> None:
     """Optional child arguments are appended without changing ownership."""
     import selectors
