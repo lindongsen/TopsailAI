@@ -424,4 +424,4 @@ TOOLS = dict(
     ask_decision=ask_decision,
 )
 
-FLAG_TOOL_ENABLED = True
+FLAG_TOOL_ENABLED = env_tool.is_interactive_mode()
