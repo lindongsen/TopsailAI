@@ -534,6 +534,15 @@ def _handle_driver_action(action, index, rows, home, authority, environment, dis
     from pathlib import Path
     from cli_topsailai.session_driver_launcher import launch_driver, _row_identity
 
+    if action == "driver_log":
+        from cli_topsailai.session_driver_logs import print_driver_log
+        print_driver_log(home, rows, index, discover)
+        return None
+    if action == "driver_meta":
+        from cli_topsailai.session_driver_meta import print_driver_meta
+        print_driver_meta(home, rows, index, discover)
+        return None
+
     if action == "driver_start":
         result = launch_driver(rows, index, topsailai_home=Path(home),
                                authority=authority, environment=environment,
@@ -691,11 +700,11 @@ def prompt_selection(
                     print("[ERROR] /driver is only available in the ordinary workspace task list.")
                     continue
                 parts = lower_input.split()
-                method = parts[1] if len(parts) > 1 and parts[1] in ("status", "stop") else None
+                method = parts[1] if len(parts) > 1 and parts[1] in ("status", "stop", "log", "meta") else None
                 number = parts[-1]
                 expected = 3 if method else 2
                 if len(parts) != expected or len(number) > 9 or not re.fullmatch(r"[0-9]+", number) or int(number) < 1:
-                    print("[ERROR] Usage: /driver <number> or /driver status <number> or /driver stop <number>")
+                    print("[ERROR] Usage: /driver <number>, /driver status <number>, /driver stop <number>, /driver log <number>, or /driver meta <number>")
                     continue
                 return ("driver_" + method if method else "driver_start", int(number))
 
@@ -1020,7 +1029,7 @@ def prompt_selection(
                         f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
                         f"Please enter a number, /refresh, /session {{number}}, "
                         f"/agent {{number|folder}}, /resume {{number}}, "
-                        f"{'/kill <number>, /meta <number>, /driver <number>, /driver status <number>, /driver stop <number>, ' if state.current_scope == 'workspace' else ''}"
+                        f"{'/kill <number>, /meta <number>, /driver <number>, /driver status <number>, /driver stop <number>, /driver log <number>, /driver meta <number>, ' if state.current_scope == 'workspace' else ''}"
                         f"/clean, /send, /help, or 'q'.{Colors.RESET}"
                     )
                 _consecutive_unrecognized += 1
@@ -1727,7 +1736,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                 print_workspace_meta(topsailai_home, log_files[value])
                 continue
 
-            if action in ("driver_start", "driver_status", "driver_stop"):
+            if action in ("driver_start", "driver_status", "driver_stop", "driver_log", "driver_meta"):
                 if state.current_scope != "workspace" or state.workspace_showing_managed_projects:
                     print("[ERROR] /driver is only available in the ordinary workspace task list.")
                     continue
@@ -1737,7 +1746,8 @@ def main(argv: Optional[List[str]] = None) -> None:
                 if child is not None:
                     driver_children.append(child)
                 _reap_driver_children(driver_children)
-                _refresh_workspace()
+                if action not in ("driver_log", "driver_meta"):
+                    _refresh_workspace()
                 continue
 
             if action == "help":

@@ -2220,17 +2220,17 @@ class TestWorkspaceDriverCommands(unittest.TestCase):
 
     def test_parse_driver(self):
         """Dispatch all valid syntaxes before YAML matching."""
-        for text, action in (("/driver 2", "driver_start"), ("/driver status 2", "driver_status"), ("/driver stop 2", "driver_stop")):
+        for text, action in (("/driver 2", "driver_start"), ("/driver status 2", "driver_status"), ("/driver stop 2", "driver_stop"), ("/driver log 2", "driver_log"), ("/driver meta 2", "driver_meta")):
             with patch("cli_topsailai.core.input", return_value=text), patch("cli_topsailai.yaml_commands.match_yaml_command") as match:
                 self.assertEqual(prompt_selection([], "/task"), (action, 2))
                 match.assert_not_called()
 
     def test_invalid_syntax(self):
         """Reject malformed arguments without YAML fallback."""
-        for text in ("/driver", "/driver status", "/driver 0", "/driver -1", "/driver x", "/driver 1 2", "/driver status 1 2", "/driver +1", "/driver 1.0", "/driver stop", "/driver stop 0", "/driver stop 1 2", "/driver " + "1" * 5000):
+        for text in ("/driver", "/driver status", "/driver log", "/driver meta", "/driver 0", "/driver -1", "/driver x", "/driver 1 2", "/driver status 1 2", "/driver log 1 2", "/driver meta 1 2", "/driver +1", "/driver 1.0", "/driver stop", "/driver stop 0", "/driver stop 1 2", "/driver " + "1" * 5000):
             with self.subTest(text=text), patch("cli_topsailai.core.input", side_effect=[text, "q"]), patch("cli_topsailai.yaml_commands.match_yaml_command") as match, patch("sys.stdout", new_callable=io.StringIO) as output:
                 self.assertEqual(prompt_selection([], "/task"), ("quit", None))
-                self.assertIn("Usage: /driver <number> or /driver status <number>", output.getvalue())
+                self.assertIn("Usage: /driver <number>", output.getvalue())
                 match.assert_not_called()
 
     def test_other_scopes(self):

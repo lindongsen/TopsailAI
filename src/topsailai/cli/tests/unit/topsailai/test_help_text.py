@@ -170,6 +170,8 @@ def test_driver_help_scope(capsys):
     output = capsys.readouterr().out
     assert "/driver <number>" in output
     assert "/driver status <number>" in output
+    assert "/driver log <number>" in output
+    assert "/driver meta <number>" in output
     for scope in ("runtime", "project", "session", "doc"):
         print_help([], scope)
         assert "/driver" not in capsys.readouterr().out

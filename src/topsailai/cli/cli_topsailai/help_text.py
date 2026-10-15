@@ -77,7 +77,7 @@ def print_scopes() -> None:
         (
             "workspace",
             "The default task-watcher scope. It lists discovered session and task log files so you can monitor and manage work across the current TopsailAI home.",
-            "Select a numbered log, read exact session metadata with /meta <number>, retrieve session context, refresh or clean the task list, terminate a displayed PID with /kill <number> after confirmation, send messages, launch agents, use /driver <number>, /driver status <number>, or /driver stop <number> for session drivers, enter project or doc scope, and show help.",
+            "Select a numbered log, read exact session metadata with /meta <number>, retrieve session context, refresh or clean the task list, terminate a displayed PID with /kill <number> after confirmation, send messages, launch agents, use /driver <number>, /driver status <number>, /driver stop <number>, /driver log <number>, or /driver meta <number> for session drivers, enter project or doc scope, and show help.",
         ),
         (
             "runtime",
@@ -164,6 +164,18 @@ def print_help(
             "cmd": "/driver status <number>",
             "desc": "Read driver state, reason, PID, run ID and verification; unavailable in managed-project mode.",
             "example": "Example: /driver status 3",
+            "scopes": ["workspace"],
+        },
+        {
+            "cmd": "/driver log <number>",
+            "desc": "Read the last 20 lines of the selected session-level driver log once; ordinary workspace only and no follow mode.",
+            "example": "Example: /driver log 3",
+            "scopes": ["workspace"],
+        },
+        {
+            "cmd": "/driver meta <number>",
+            "desc": "Read the validated driver metadata snapshot for the selected session; this is distinct from /meta session metadata.",
+            "example": "Example: /driver meta 3",
             "scopes": ["workspace"],
         },
         {

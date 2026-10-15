@@ -34,6 +34,11 @@ references:
 
 - `!<command>` executes a command line in the CLI process working directory using the `/git` parsing and execution mechanism, then remains in the current scope; for example, `!git status`.
 
+## Workspace commands
+
+- `/driver log <number>` reads the bounded active driver log in workspace scope.
+- `/driver meta <number>` reads validated active driver metadata in workspace scope and differs from `/meta`.
+
 ## Non-interactive subcommands
 
 - `runtime [-s SESSION] [-p PID] -i INSTRUCTION`

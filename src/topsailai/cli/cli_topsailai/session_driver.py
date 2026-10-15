@@ -75,6 +75,24 @@ def metadata_path(topsailai_home: str | Path, session_id: str) -> Path:
     return home.resolve() / "workspace" / "task" / "session_agent_driver" / (session_id + ".meta")
 
 
+def _handoff_directory(directory: int, child: int) -> int:
+    """Transfer directory ownership while preserving the first failure."""
+    try:
+        os.close(directory)
+    except BaseException as error:
+        try:
+            os.close(child)
+        except BaseException as cleanup_error:
+            error.add_note(f"child directory cleanup failed: {cleanup_error!r}")
+        raise
+    return child
+
+
+def _close_owned_descriptor(descriptor: int) -> None:
+    """Close one owned descriptor while preserving the active exception."""
+    os.close(descriptor)
+
+
 def _read_metadata(path: Path) -> bytes | None:
     """Use no-follow directory custody and bounded regular-file reads."""
     if (not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY")
@@ -85,8 +103,9 @@ def _read_metadata(path: Path) -> bytes | None:
         for component in path.parts[1:-1]:
             child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                             dir_fd=directory)
-            os.close(directory)
-            directory = child
+            parent = directory
+            directory = None
+            directory = _handoff_directory(parent, child)
         try:
             before = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
         except FileNotFoundError:
@@ -95,7 +114,14 @@ def _read_metadata(path: Path) -> bytes | None:
             raise ValueError("metadata_not_regular")
         descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
                              dir_fd=directory)
-        with os.fdopen(descriptor, "rb") as stream:
+        owned = True
+        try:
+            stream = os.fdopen(descriptor, "rb")
+            owned = False
+        finally:
+            if owned:
+                _close_owned_descriptor(descriptor)
+        with stream:
             opened = os.fstat(stream.fileno())
             if (not stat.S_ISREG(opened.st_mode)
                     or (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)):
@@ -105,7 +131,8 @@ def _read_metadata(path: Path) -> bytes | None:
             raise ValueError("metadata_too_large")
         return data
     finally:
-        os.close(directory)
+        if directory is not None:
+            os.close(directory)
 
 
 def _parse_metadata(data: bytes, session_id: str) -> DriverMetadata:

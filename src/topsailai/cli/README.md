@@ -391,6 +391,8 @@ From this list you can:
 - Use `/kill <number>` to terminate the displayed row PID after confirmation.
 - Use `/clean` to remove expired files.
 - Use `/send <number> [message]` to send a message to a running session.
+- Use `/driver log <number>` to read the selected session-level driver log once.
+- Use `/driver meta <number>` to read the selected session-level driver metadata; this differs from `/meta`.
 - Use `cd doc` to enter the documentation scope and list usage docs.
 - Use `q` to quit.
 
@@ -444,6 +446,8 @@ When the CLI is showing the workspace task list (`[workspace]>`), the following 
 | `/meta <number>` | Read the selected session row metadata; see [workspace metadata](docs/usage/topsailai.md#workspace-session-metadata). |
 | `/driver status <number>` | Inspect the selected session driver. |
 | `/driver stop <number>` | Gracefully stop its verified driver, not the session; see [driver usage](docs/usage/topsailai.md#workspace-session-drivers). |
+| `/driver log <number>` | Read the bounded driver log snapshot. |
+| `/driver meta <number>` | Read the driver metadata snapshot; distinct from `/meta`. |
 | `/kill <number>` | Send SIGTERM to the PID displayed on the selected row after explicit y/N confirmation; see [termination contract](docs/usage/topsailai.md#workspace-process-termination). |
 | `/refresh` | Reload the workspace task list. |
 | `/clean` | Remove expired files from the task directory. |

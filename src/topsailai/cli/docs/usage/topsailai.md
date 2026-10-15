@@ -80,6 +80,8 @@ The command uses the same parsing and execution mechanism as `/git`: `shlex.spli
 | `/meta <number>` | Read exact session metadata in the ordinary workspace task list. |
 | `/driver status <number>` | Read current driver evidence (ordinary workspace only). |
 | `/driver stop <number>` | Gracefully stop one verified driver, not its session (ordinary workspace only). |
+| `/driver log <number>` | Read the bounded driver log snapshot. |
+| `/driver meta <number>` | Read the driver metadata snapshot; distinct from `/meta`. |
 | `/kill <number>` | Send SIGTERM to exactly the displayed row PID after y/N confirmation (ordinary workspace only). |
 | `/refresh` | Re-scan the task directory and refresh the list. |
 | `/session <number\|session_id>` | Retrieve full context messages for a session. |
@@ -314,7 +316,9 @@ The original high-level scope outline is preserved in `../../topsailai.md`:
 
 ## Workspace session drivers
 
-Use `/driver <number>` to start the driver for a currently running (`RUN`) or waiting-for-input (`INPUT`) session row. Use `/driver status <number>` to read state, reason, driver PID, run ID and verification. All three commands are restricted to the ordinary workspace task list; project, session, runtime, doc and managed-project views reject them. Task rows, temporary sessions, malformed or legacy identities, changed targets and multiple live PIDs for one session are not eligible. Status and stop can select an exited authoritative session row. Use `/driver stop <number>` to stop only its verified driver.
+Use `/driver <number>` to start the driver for a currently running (`RUN`) or waiting-for-input (`INPUT`) session row. Use `/driver status <number>` to read state, reason, driver PID, run ID and verification. The driver commands are restricted to the ordinary workspace task list; project, session, runtime, doc and managed-project views reject them. Task rows, temporary sessions, malformed or legacy identities, changed targets and multiple live PIDs for one session are not eligible; select the session stdout row, not a task or temporary row. Status and stop can select an exited authoritative session row. Use `/driver stop <number>` to stop only its verified driver.
+
+`/driver log <number>` reads the active session-level record at `{TOPSAILAI_HOME}/workspace/task/session_agent_driver/{session_id}.log` once and prints at most the last 20 physical lines in chronological order. The reader scans at most 8 MiB, does not follow or select rotated backups, and does not start, follow, or mutate a driver. `/driver meta <number>` reads the active session-level record at the same directory with the `.meta` suffix, at most 65,536 bytes and 64 JSON nesting levels, and prints the complete validated JSON; its embedded `pid` is the driver PID, not the selected session PID. Both records may be absent because normal driver cleanup removes them; historical rows for the same session share the same active record, which represents only the latest run and may already be cleaned up. No fallback record is selected. These two read-only commands return to the current workspace list without reloading, resorting or redrawing it, including handled read failures; use `/refresh` when a new list is needed.
 
 ### Non-interactive driver operations
 
@@ -379,7 +383,7 @@ The Driver column follows Status and is independent of the target session status
 | `x(` | `FAIL` | Residual failed metadata without a contradictory live process. |
 | `?` | `?` | Invalid, inaccessible, conflicting or unverifiable evidence, including an ON observation without a valid PID. |
 
-Workspace JSON adds nullable `driver` with `state`, `reason`, `driver_pid`, `run_id`, `metadata_status` and `verification`. Ineligible rows have `driver: null`. Table display uses a session-level observation, while JSON and status retain their existing operational eligibility and shared read-only observation rules. JSON `driver.state` and `/driver status` retain semantic values (`ON`, `STALE`, `EXIT`, `FAIL`, `-`, `?`); the PID is not written into that state. Commands refresh the table afterward; there is no automatic refresh polling.
+Workspace JSON adds nullable `driver` with `state`, `reason`, `driver_pid`, `run_id`, `metadata_status` and `verification`. Ineligible rows have `driver: null`. Table display uses a session-level observation, while JSON and status retain their existing operational eligibility and shared read-only observation rules. JSON `driver.state` and `/driver status` retain semantic values (`ON`, `STALE`, `EXIT`, `FAIL`, `-`, `?`); the PID is not written into that state. Driver start/status/stop commands refresh the table afterward; the log/meta readers do not; there is no automatic refresh polling.
 
 The external driver alone owns duplicate-start exclusion, its lock, metadata and log cleanup. The CLI never writes, acquires or deletes these records. Lock-file presence does not prove a running owner. Clean finalization normally removes metadata and logs, so EXIT/FAIL are residual observations, not durable exit history. Stop also leaves record cleanup to the external driver.
 

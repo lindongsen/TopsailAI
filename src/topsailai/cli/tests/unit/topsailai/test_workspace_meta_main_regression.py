@@ -7,6 +7,8 @@ from unittest.mock import Mock
 import pytest
 from cli_topsailai import core, state
 
+_REAL_HANDLE_DRIVER_ACTION = core._handle_driver_action
+
 
 @pytest.fixture
 def harness(monkeypatch, tmp_path):
@@ -242,3 +244,59 @@ def test_kill_main_scope_guard(harness, monkeypatch, scope, managed):
     monkeypatch.setattr(workspace_kill, "kill_workspace_row", terminate)
     run([("kill", 0)], scope, managed)
     terminate.assert_not_called()
+
+
+@pytest.mark.parametrize("action", ["driver_log", "driver_meta"])
+def test_driver_readers_do_not_refresh_workspace(harness, action):
+    """Driver record readers preserve the displayed list after execution."""
+    run, mocks, _ = harness
+    run([(action, 0)])
+    assert mocks["discover_log_files"].call_count == 1
+    mocks["_handle_driver_action"].assert_called_once()
+
+
+@pytest.mark.parametrize("action,reader_name", [("driver_log", "print_driver_log"),
+                                                ("driver_meta", "print_driver_meta")])
+@pytest.mark.parametrize("reader_result", [True, False])
+def test_driver_readers_use_real_dispatch_without_refresh(harness, monkeypatch, action, reader_name, reader_result):
+    """Reader success and handled failure preserve the real workspace registry."""
+    from unittest.mock import patch
+    from cli_topsailai import session_driver_logs, session_driver_meta
+
+    run, mocks, row = harness
+    monkeypatch.setattr(core, "_handle_driver_action", _REAL_HANDLE_DRIVER_ACTION)
+    reap_calls = []
+    monkeypatch.setattr(core, "_reap_driver_children", lambda children: reap_calls.append(children))
+    module = session_driver_logs if action == "driver_log" else session_driver_meta
+    with patch.object(module, reader_name, return_value=reader_result) as reader:
+        run([(action, 1)])
+    reader.assert_called_once()
+    assert mocks["discover_log_files"].call_count == 1
+    assert mocks["print_table"].call_count == 1
+    assert mocks["print_table"].call_args.args[0][0] is row
+    assert mocks["_enrich_driver_rows"].call_count == 1
+    assert reap_calls
+    assert all(children == [] for children in reap_calls)
+    mocks["stream_file"].assert_not_called()
+
+
+@pytest.mark.parametrize("action", ["driver_start", "driver_status", "driver_stop"])
+def test_driver_lifecycle_actions_still_refresh_workspace(harness, action):
+    """Driver lifecycle actions retain their post-action refresh."""
+    run, mocks, _ = harness
+    run([(action, 0)])
+    assert mocks["discover_log_files"].call_count == 2
+
+
+def test_explicit_refresh_still_reloads_workspace(harness):
+    """The explicit refresh command remains a list reload boundary."""
+    run, mocks, _ = harness
+    run([("refresh", None)])
+    assert mocks["discover_log_files"].call_count == 2
+
+
+def test_clean_still_refreshes_workspace(harness):
+    """Workspace cleanup retains its existing refresh behavior."""
+    run, mocks, _ = harness
+    run([("clean", None)])
+    assert mocks["discover_log_files"].call_count == 2

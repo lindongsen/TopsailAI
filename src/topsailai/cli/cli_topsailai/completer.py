@@ -74,7 +74,7 @@ def get_available_completions() -> List[str]:
     builtins = ["/refresh", "/clean", "/help", "/session", "/send", "/ctx.btw", "q", "quit"]
     completions.extend(builtins)
     if cli_state.current_scope == "workspace" and not cli_state.workspace_showing_managed_projects:
-        completions.extend(["/kill", "/driver", "/driver status", "/driver stop"])
+        completions.extend(["/kill", "/driver", "/driver status", "/driver stop", "/driver log", "/driver meta"])
 
     if (cli_state.current_scope == "runtime" or
             (cli_state.current_scope == "workspace" and not cli_state.workspace_showing_managed_projects)):
@@ -169,7 +169,7 @@ def tab_completer(text: str, state: int) -> Optional[str]:
         if (cli_state.current_scope == "workspace"
                 and not cli_state.workspace_showing_managed_projects
                 and line[:readline.get_begidx()].strip() == "/driver"):
-            matches = [method for method in ("status", "stop") if method.startswith(text)]
+            matches = [method for method in ("status", "stop", "log", "meta") if method.startswith(text)]
             return matches[state] if state < len(matches) else None
         if line.strip() and not line.startswith(text):
             parts = line[: readline.get_begidx()].strip().split()

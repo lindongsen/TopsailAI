@@ -163,14 +163,14 @@ if __name__ == "__main__":
 
 
 def test_driver_completion_scope(monkeypatch):
-    """Offer workspace driver and status without other-scope leakage."""
+    """Offer all driver commands only in the ordinary workspace list."""
     from cli_topsailai.completer import get_available_completions
     monkeypatch.setattr(cli_state, "yaml_commands", [])
     monkeypatch.setattr(cli_state, "workspace_showing_managed_projects", False)
     monkeypatch.setattr(cli_state, "current_scope", "workspace")
-    assert "/driver" in get_available_completions()
-    assert "/driver status" in get_available_completions()
-    assert "/driver stop" in get_available_completions()
+    completions = get_available_completions()
+    for command in ("/driver", "/driver status", "/driver stop", "/driver log", "/driver meta"):
+        assert command in completions
     import readline
     monkeypatch.setattr(readline, "get_line_buffer", lambda: "/driver st")
     monkeypatch.setattr(readline, "get_begidx", lambda: 8)
@@ -180,6 +180,11 @@ def test_driver_completion_scope(monkeypatch):
     assert tab_completer("sto", 0) == "stop"
     assert tab_completer("stop", 0) == "stop"
     assert tab_completer("sto", 1) is None
+    monkeypatch.setattr(readline, "get_line_buffer", lambda: "/driver lo")
+    assert tab_completer("lo", 0) == "log"
+    assert tab_completer("lo", 1) is None
+    monkeypatch.setattr(readline, "get_line_buffer", lambda: "/driver me")
+    assert tab_completer("me", 0) == "meta"
     for scope in ("runtime", "project", "session", "doc"):
         monkeypatch.setattr(cli_state, "current_scope", scope)
         assert "/driver" not in get_available_completions()
