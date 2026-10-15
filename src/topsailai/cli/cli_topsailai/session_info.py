@@ -41,6 +41,17 @@ class _SessionInfoCache:
         with self._lock:
             self._data[session_id] = value
 
+    def set_if_absent(
+        self, session_id: str, value: Tuple[Optional[str], Optional[str]]
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Store value only when *session_id* is absent and return the winner."""
+        with self._lock:
+            existing = self._data.get(session_id, _MISSING)
+            if existing is _MISSING:
+                self._data[session_id] = value
+                return value
+            return existing
+
 
 # Module-level cache shared across refreshes and threads.
 _SESSION_INFO_CACHE = _SessionInfoCache()
@@ -190,20 +201,26 @@ def enrich_files_with_session_names(files: List[dict]) -> None:
         snapshot = _completed_meta_snapshot(file_info)
         if snapshot is not None:
             snapshots[id(file_info)] = snapshot
-            cached = _SESSION_INFO_CACHE.get(session_id)
-            cached_path = (
-                cached[1]
-                if cached is not _MISSING and isinstance(cached[1], str)
-                and cached[1].strip()
-                else None
+            _SESSION_INFO_CACHE.set_if_absent(
+                session_id, (snapshot[2], snapshot[3])
             )
-            if cached is _MISSING and snapshot[3] is None:
-                query_required.add(session_id)
-            elif cached is not _MISSING and cached_path is None and snapshot[3] is None:
-                query_required.add(session_id)
-            continue
 
-        if _SESSION_INFO_CACHE.get(session_id) is _MISSING:
+    for file_info in files:
+        session_id = file_info.get("session_id")
+        if session_id is None or session_id == "(temp)" or session_id == "":
+            continue
+        snapshot = snapshots.get(id(file_info))
+        cached = _SESSION_INFO_CACHE.get(session_id)
+        cached_path = (
+            cached[1]
+            if cached is not _MISSING and isinstance(cached[1], str)
+            and cached[1].strip()
+            else None
+        )
+        if snapshot is not None:
+            if cached_path is None and snapshot[3] is None:
+                query_required.add(session_id)
+        elif cached is _MISSING:
             query_required.add(session_id)
 
     if query_required:

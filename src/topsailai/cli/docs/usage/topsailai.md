@@ -73,7 +73,7 @@ The command uses the same parsing and execution mechanism as `/git`: `shlex.spli
 
 ## Workspace / Project Commands
 
-For workspace rows with an exact session metadata match whose status is `completed` and whose `session_name` is nonblank, the CLI reuses that completed-run name snapshot before querying session info. A usable session-info workspace path remains preferred; a valid completed metadata path can avoid the query, while a missing or invalid path still triggers lookup. Missing, invalid, mismatched, or non-completed metadata follows the existing fallback behavior, and completed unnamed rows remain filtered.
+For workspace rows with an exact session metadata match whose status is `completed` and whose `session_name` is nonblank, the CLI reuses that completed-run name snapshot before querying session info. The process-local session-ID cache may admit the completed name and metadata path only when that session ID is absent; an existing full or partial entry is never replaced or merged by metadata. This permits reuse across rows with the same session ID, including different PIDs, so the first admitted value can be stale or shared across runs. A usable session-info workspace path remains preferred; a valid completed metadata path can avoid the query, while a missing or invalid path still triggers lookup. Missing, invalid, mismatched, or non-completed metadata follows the existing fallback behavior, and completed unnamed rows remain filtered.
 
 | Command | Description |
 |---------|-------------|

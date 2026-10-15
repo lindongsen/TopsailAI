@@ -171,19 +171,31 @@ def test_refreshes_completed_snapshot_order_and_public_json(tmp_path, monkeypatc
 
     write("first", 101, "Old First")
     write("second", 202, "Second")
+    cache = session_info._SessionInfoCache()
+    monkeypatch.setattr(session_info, "_SESSION_INFO_CACHE", cache)
+    monkeypatch.setattr(session_info, "load_project_workspace_lookup", Mock(return_value={}))
     rows = log_files.discover_workspace_log_files(str(directory))
+    session_info.enrich_files_with_session_names(rows)
     assert [row["filename"] for row in rows] == [first.name, second.name]
     assert [row["_completed_session_meta"][2] for row in rows] == ["Old First", "Second"]
+    assert cache.get("first") == ("Old First", "/first")
 
     write("first", 101, "New First")
     refreshed = log_files.discover_workspace_log_files(str(directory))
+    session_info.enrich_files_with_session_names(refreshed)
     assert [row["filename"] for row in refreshed] == [first.name, second.name]
+    assert [row["session_name"] for row in refreshed] == ["New First", "Second"]
     assert [row["_completed_session_meta"][2] for row in refreshed] == ["New First", "Second"]
+    assert cache.get("first") == ("Old First", "/first")
+
+    ordinary = [{"session_id": "first", "pid": 303, "is_task": False}]
+    session_info.enrich_files_with_session_names(ordinary)
+    assert ordinary[0]["session_name"] == "Old First"
+    assert ordinary[0]["project_workspace"] == "/first"
 
     monkeypatch.setattr(paths, "get_topsailai_home", lambda: str(tmp_path))
     monkeypatch.setattr(core, "_driver_authority", Mock(return_value=None))
     monkeypatch.setattr(core, "_enrich_driver_rows", Mock())
-    monkeypatch.setattr(session_info, "_SESSION_INFO_CACHE", session_info._SessionInfoCache())
     monkeypatch.setattr(
         session_info, "_get_session_info",
         Mock(side_effect=AssertionError("unexpected query")),
@@ -192,6 +204,7 @@ def test_refreshes_completed_snapshot_order_and_public_json(tmp_path, monkeypatc
     payload = json.loads(capsys.readouterr().out)
     assert [item["no"] for item in payload["items"]] == [1, 2]
     assert [item["filename"] for item in payload["items"]] == [first.name, second.name]
+    assert [item["session_name"] for item in payload["items"]] == ["New First", "Second"]
     assert "_completed_session_meta" not in json.dumps(payload)
 
 
