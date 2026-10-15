@@ -45,23 +45,51 @@ def test_pause_error_is_not_masked_by_uninitialized_cleanup_state():
     assert caught.value is error
 
 
-def test_tail_failure_remains_primary_when_pause_also_fails():
-    """Cleanup diagnostics cannot replace a failure raised after the first item."""
-    error = LookupError("tail failed")
+def test_first_pause_failure_is_primary_before_tail_delivery():
+    """A first pause failure prevents delivery and tail reads, then closes once."""
+    pause_error = OSError("pause failed")
+    reads = []
 
-    def stream():
-        """Yield once before raising the exact provider failure."""
-        yield "first"
-        raise error
+    class CloseAwareStream:
+        """Track first-item delivery, tail access, and local cleanup."""
 
-    with pytest.raises(LookupError) as caught:
-        list(iter_with_first_byte_timeout(
-            stream(), 1, budget=FirstByteBudget.create(1),
-            timing_ticket="ticket", pause=Mock(side_effect=OSError("pause failed")),
-            on_timeout=Mock(), make_timeout_error=TimeoutError,
-        ))
-    assert caught.value is error
-    assert any("pause failed" in note for note in error.__notes__)
+        def __init__(self):
+            self.closed_count = 0
+
+        def __iter__(self):
+            """Return this iterator."""
+            return self
+
+        def __next__(self):
+            """Yield one value and reject any tail read."""
+            if not reads:
+                reads.append("first")
+                return "first"
+            reads.append("tail")
+            raise LookupError("tail failed")
+
+        def close(self):
+            """Record the single local-owner close."""
+            self.closed_count += 1
+
+    stream = CloseAwareStream()
+    pause = Mock(side_effect=pause_error)
+    output = []
+    generator = iter_with_first_byte_timeout(
+        stream, 1, budget=FirstByteBudget.create(1),
+        timing_ticket="ticket", pause=pause,
+        on_timeout=Mock(), make_timeout_error=TimeoutError,
+    )
+    try:
+        with pytest.raises(OSError) as caught:
+            output.append(next(generator))
+    finally:
+        generator.close()
+    assert caught.value is pause_error
+    assert output == []
+    assert reads == ["first"]
+    pause.assert_called_once_with("ticket")
+    assert stream.closed_count == 1
 
 
 

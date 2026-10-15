@@ -466,7 +466,26 @@ def iter_with_first_byte_timeout(
             active_owner.dispose(primary=primary, background=False)
 
     primary = None
+    pause_attempted = False
     decision = {"kind": "VALUE", "staged": False, "error": None}
+
+    def pause_first_result(primary_error=None):
+        """Pause an explicit first-result ticket at most once before delivery."""
+        nonlocal pause_attempted
+        if pause_attempted or pause is None or timing_ticket is None:
+            return
+        pause_attempted = True
+        try:
+            pause(timing_ticket)
+        except BaseException as pause_error:
+            if primary_error is not None:
+                try:
+                    primary_error.add_note(f"first-byte pause failed: {pause_error!r}")
+                except BaseException:
+                    pass
+                return
+            raise
+
     try:
         if local_owner:
             active_owner.publish_response(stream)
@@ -524,11 +543,6 @@ def iter_with_first_byte_timeout(
                         decision["kind"] = "REJECTED"
                         phase.expire()
                         return
-                    if (not raise_on_timeout and not create_timed_out
-                            and budget.warning_required_for(phase)):
-                        _safe_warn_once(
-                            budget, on_timeout, budget.clock() - (budget.deadline - budget.timeout)
-                        )
                 except BaseException as error:
                     # StopIteration is handled only around next(stream). Any error
                     # from timing, staging, phase publication, or diagnostics is
@@ -591,7 +605,14 @@ def iter_with_first_byte_timeout(
                 raise make_timeout_error(first_byte_timeout)
 
         outcome = active_owner.take_outcome(phase="first_item")
+        if (outcome.kind in {"VALUE", "ERROR", "EOF"}
+                and not raise_on_timeout and not create_timed_out
+                and phase.committed() and budget.warning_required_for(phase)):
+            _safe_warn_once(
+                budget, on_timeout, budget.clock() - (budget.deadline - budget.timeout)
+            )
         if outcome.kind == "ERROR":
+            pause_first_result(outcome.value)
             raise outcome.value
         if outcome.kind == "NOT_READY":
             if decision["kind"] == "REJECTED":
@@ -599,8 +620,12 @@ def iter_with_first_byte_timeout(
             if decision["error"] is not None:
                 raise decision["error"]
             raise RuntimeError("first-byte stream ended without a published outcome")
-        if outcome.kind in {"EOF", "ABANDONED"}:
+        if outcome.kind == "EOF":
+            pause_first_result()
             return
+        if outcome.kind == "ABANDONED":
+            return
+        pause_first_result()
         yield outcome.value
         yield from stream
     except BaseException as error:
@@ -608,17 +633,7 @@ def iter_with_first_byte_timeout(
         raise
     finally:
         try:
-            if (pause is not None and timing_ticket is not None
-                    and decision["kind"] in {"ERROR", "EOF", "VALUE"}):
-                try:
-                    pause(timing_ticket)
-                except BaseException as cleanup_error:
-                    if primary is not None:
-                        try:
-                            primary.add_note(f"first-byte pause failed: {cleanup_error!r}")
-                        except BaseException:
-                            pass
-                    else:
-                        raise
+            if decision["kind"] in {"ERROR", "EOF", "VALUE"}:
+                pause_first_result(primary)
         finally:
             dispose_local(primary)
