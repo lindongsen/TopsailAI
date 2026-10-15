@@ -26,6 +26,17 @@ def _task_dir() -> Path:
     return Path(get_topsailai_home()) / "workspace" / "task"
 
 
+_INPUT_GUARD = None
+_INPUT_DELIVERED = None
+
+
+def set_input_guard(guard, delivered=None):
+    """Bind a single admitted analysis to its original input owner."""
+    global _INPUT_GUARD, _INPUT_DELIVERED
+    _INPUT_GUARD = guard
+    _INPUT_DELIVERED = delivered
+
+
 def inject_input(session_id: str, content: str, pid: int | None = None) -> str:
     """Inject input content into the target session.
 
@@ -51,9 +62,13 @@ def inject_input(session_id: str, content: str, pid: int | None = None) -> str:
     if not isinstance(content, str) or not content.strip():
         raise AgentEndProcess("inject_input failed: content must be nonempty text")
     try:
+        if _INPUT_GUARD is not None and not _INPUT_GUARD(session_id.strip(), pid):
+            raise AgentEndProcess("inject_input rejected: analysis input owner changed")
         if pid is not None and send_task_input(
             _task_dir(), session_id.strip(), pid, content, timeout=_INJECT_TIMEOUT
         ):
+            if _INPUT_DELIVERED is not None:
+                _INPUT_DELIVERED()
             return f"input injected to session {session_id} pid {pid}"
         result = execute_runtime_request(
             RuntimeRequest(action="send", message=content, timeout=_INJECT_TIMEOUT),
@@ -72,6 +87,8 @@ def inject_input(session_id: str, content: str, pid: int | None = None) -> str:
             f"inject_input failed for session {session_id}: "
             f"error_code={result.error_code}, message={result.message}"
         )
+    if _INPUT_DELIVERED is not None:
+        _INPUT_DELIVERED()
     return f"input injected to session {session_id}"
 
 

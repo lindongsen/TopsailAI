@@ -86,6 +86,9 @@ def run_driver(status_sequence: list[str], agent_action: str) -> tuple[int, Anal
     }
     with mock.patch.object(sad, "check_session_status", side_effect=status_sequence), \
             mock.patch.object(sad, "get_session_info", return_value=session_info), \
+            mock.patch.object(sad, "_session_snapshot", return_value=([
+                {"pid": session_info["pid"], "ctime": session_info["created_at"],
+                 "status": "input", "is_task": False}], "input")), \
             mock.patch.object(sad, "get_agent_chat", return_value=agent_stub), \
             mock.patch.object(sad, "cleanup_analysis_session", return_value=None), \
             mock.patch.object(sad.time, "sleep", return_value=None), \

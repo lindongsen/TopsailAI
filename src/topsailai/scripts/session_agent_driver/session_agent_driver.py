@@ -25,6 +25,7 @@ import signal
 import string
 import sys
 import time
+import threading
 import uuid
 from pathlib import Path
 
@@ -174,7 +175,7 @@ from ai_base.agent_types.exception import AgentEndProcess  # noqa: E402
 from cli_topsailai.log_files import discover_log_files, is_session_pipe_open  # noqa: E402
 from cli_topsailai.paths import get_topsailai_home  # noqa: E402
 from cli_topsailai.runtime_logs import resolve_log_target, read_log_tail  # noqa: E402
-from plugins.tools import exit_process  # noqa: E402
+from plugins.tools import exit_process, inject_input  # noqa: E402
 from driver_runtime import DriverRuntime  # noqa: E402
 from driver_targets import observe_records, task_log_target  # noqa: E402
 from topsailai.workspace.folder_constants import TOPSAILAI_HOME  # noqa: E402
@@ -356,7 +357,50 @@ def cleanup_analysis_session(session_id: str) -> None:
         logger.warning("failed to clean analysis session %s: %s", session_id, error)
 
 
+_ANALYSIS_LOCK = threading.Lock()
+
+
 def run_analysis_agent(session_id: str) -> None:
+    """Admit only one analysis lifecycle, including construction and cleanup."""
+    if not _ANALYSIS_LOCK.acquire(blocking=False):
+        logger.info("analysis already active; skip session %s", session_id)
+        return
+    try:
+        _run_analysis_agent(session_id)
+    finally:
+        _ANALYSIS_LOCK.release()
+
+
+def _request_analysis_interrupt(analysis_session_id):
+    """Use the framework handler with an explicit analysis session identity."""
+    from topsailai.workspace.control_channel.protocol import ControlContext, ControlRequest
+    from topsailai.workspace.control_handlers.interrupt import HardInterruptHandler
+
+    result = HardInterruptHandler().handle(
+        ControlRequest(uuid.uuid4().hex, "hard_interrupt"),
+        ControlContext(session_id=analysis_session_id, pid=os.getpid(),
+                       task_folder=str(_task_dir())),
+    )
+    if result.status != "ok":
+        raise RuntimeError(f"analysis interrupt failed: {result.error}")
+    logger.info("analysis interrupted because input owner changed: %s", analysis_session_id)
+
+
+def _clear_analysis_interrupt(analysis_session_id):
+    """Remove only this lifecycle's unconsumed interrupt marker."""
+    from topsailai.workspace.folder_utils import get_interrupt_flag_path
+
+    path = Path(get_interrupt_flag_path(str(_task_dir()), analysis_session_id, os.getpid()))
+    try:
+        path.unlink()
+        logger.info("deleted analysis interrupt marker %s", path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logger.warning("failed to delete analysis interrupt marker %s", path, exc_info=True)
+
+
+def _run_analysis_agent(session_id: str) -> None:
     """Start the analysis agent (times=1) to drive the target session."""
     # P9: re-check the status right before starting the analysis agent.
     if check_session_status(session_id) != "input":
@@ -374,6 +418,7 @@ def run_analysis_agent(session_id: str) -> None:
         "starting analysis agent %s for session %s (status=%s)",
         analysis_session_id, session_id, session_info["status"],
     )
+    monitor = None
     exit_process.set_exit_guard(lambda: not any(
         row.get("is_task") and row["status"] != "idle"
         for row in _session_snapshot(session_id)[0]
@@ -395,6 +440,18 @@ def run_analysis_agent(session_id: str) -> None:
             old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
             signal.alarm(timeout)
             try:
+                from driver_monitor import InputMonitor
+
+                if session_info.get("pid") is not None and "created_at" in session_info:
+                    monitor = InputMonitor(
+                        lambda: _session_snapshot(session_id), session_info,
+                        lambda: _request_analysis_interrupt(analysis_session_id),
+                    )
+                    inject_input.set_input_guard(
+                        lambda target, pid: target == session_id and monitor.allows_send(pid),
+                        monitor.mark_delivered,
+                    )
+                    monitor.start()
                 agent_chat.run(times=1, need_interactive=False)
             finally:
                 signal.alarm(0)
@@ -409,6 +466,10 @@ def run_analysis_agent(session_id: str) -> None:
     except Exception as error:  # noqa: BLE001 - P7: never crash the loop
         logger.error("analysis agent failed: %s", error)
     finally:
+        if monitor is not None:
+            monitor.close()
+        inject_input.set_input_guard(None)
+        _clear_analysis_interrupt(analysis_session_id)
         exit_process.set_exit_guard(None)
         cleanup_analysis_session(analysis_session_id)
 
