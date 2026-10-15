@@ -10,7 +10,6 @@ finishing individual provider requests through its request-stat methods.
 
 import contextvars
 import functools
-
 _llm_request_started = contextvars.ContextVar(
     "topsailai_llm_request_started", default=False
 )
@@ -45,31 +44,28 @@ def record_llm_request_outcome(method):
 
 
 def log_first_byte_timeout(
-    elapsed,
-    first_byte_timeout,
-    *,
-    warning_func,
-    service_keyword,
+    elapsed, first_byte_timeout, *, warning_func, service_keyword,
 ):
-    """Emit a first-byte timeout warning through an injected callback."""
+    """Emit one first-byte timeout warning through an injected callback."""
     warning_func(
         f"{service_keyword}: first byte timeout threshold reached/exceeded: "
         f"elapsed {elapsed:.1f}s >= threshold {first_byte_timeout}s"
     )
+def iter_stream_for_request_timing(
+    stream, ticket, *, resume, pause, first_operation=False,
+):
+    """Time blocking provider iterator operations without timing processing.
 
-
-def iter_stream_for_request_timing(stream, ticket, *, resume, pause):
-    """Time only blocking provider iterator operations, not chunk processing.
-
-    The ``resume`` and ``pause`` callbacks are invoked around each blocking
-    ``next(iterator)`` so that local chunk processing performed by the caller
-    between yields is excluded from the provider request/response duration.
-    This helper is provider-neutral: it does not import OpenAI, HTTPX, or
-    HTTPCore, and it never touches the timing ticket itself.
+    When ``first_operation`` is true, the first ticket resume is assumed to
+    have been performed by the decoded-entry observer; the first yielded item
+    is therefore paused by that observer's consumer handoff and later reads
+    retain the normal resume/pause cycle.
     """
     iterator = iter(stream)
+    first = first_operation
     while True:
-        resume(ticket)
+        if not first:
+            resume(ticket)
         try:
             chunk = next(iterator)
         except StopIteration:
@@ -78,5 +74,7 @@ def iter_stream_for_request_timing(stream, ticket, *, resume, pause):
         except BaseException:
             pause(ticket)
             raise
+        if first:
+            first = False
         pause(ticket)
         yield chunk

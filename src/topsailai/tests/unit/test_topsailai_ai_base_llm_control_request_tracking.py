@@ -77,3 +77,38 @@ def test_iter_stream_pauses_and_reraises_identical_base_exception():
 
     assert exc_info.value is error
     assert calls == [("resume", ticket), ("pause", ticket)]
+
+
+def test_record_outcome_records_started_success_and_failure_with_ticket():
+    """The decorator records both started outcomes and finishes failed tickets."""
+    from topsailai.ai_base.llm_control import request_tracking
+
+    class Service:
+        def __init__(self, fail=False):
+            self.fail = fail
+            self.calls = []
+
+        def call(self):
+            request_tracking._llm_request_started.set(True)
+            request_tracking._llm_request_timing_ticket.set("ticket")
+            if self.fail:
+                raise ValueError("failure")
+            return "ok"
+
+        def _record_llm_request_success(self):
+            self.calls.append("success")
+
+        def _record_llm_request_failure(self):
+            self.calls.append("failure")
+
+        def _finish_llm_request(self, ticket):
+            self.calls.append(("finish", ticket))
+
+    decorated = request_tracking.record_llm_request_outcome(Service.call)
+    success = Service()
+    assert decorated(success) == "ok"
+    assert success.calls == ["success"]
+    failure = Service(True)
+    with pytest.raises(ValueError):
+        decorated(failure)
+    assert failure.calls == ["failure", ("finish", "ticket")]

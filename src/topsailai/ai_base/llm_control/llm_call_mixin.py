@@ -4,15 +4,40 @@ from __future__ import annotations
 
 import time
 
+from .first_byte_deadline import (
+    FirstByteBudget, current_first_byte_budget, first_byte_budget_scope,
+)
+from .response_ownership import response_ownership_scope
+from .request_tracking import iter_stream_for_request_timing
+
 
 class LLMCallMixin:
     """Coordinate LLM calls through provider-owned adaptation hooks."""
 
     def call_llm_model(self, messages, tools=None, tool_choice="auto"):
-        """Call a provider and return its response with normalized content."""
-        token_stat_ticket = self.tokenStat.add_msgs(messages)
-        first_byte_timeout, raise_on_timeout = self._get_first_byte_timeout_config()
+        """Call a provider inside an attempt response ownership scope."""
+        with response_ownership_scope():
+            return self._call_llm_model_owned(messages, tools, tool_choice)
 
+    def call_llm_model_by_stream(self, messages, tools=None, tool_choice="auto"):
+        """Call a provider stream inside an attempt response ownership scope."""
+        with response_ownership_scope():
+            return self._call_llm_model_by_stream_owned(messages, tools, tool_choice)
+
+    def _call_llm_model_owned(self, messages, tools=None, tool_choice="auto"):
+        """Establish the attempt budget after token/config setup."""
+        token_stat_ticket = self.tokenStat.add_msgs(messages)
+        timeout, raise_on_timeout = self._get_first_byte_timeout_config()
+        budget = FirstByteBudget.create(timeout) if timeout and timeout > 0 else None
+        with first_byte_budget_scope(budget):
+            return self._call_llm_model_owned_body(
+                messages, tools, tool_choice,
+                first_byte_timeout=timeout, raise_on_timeout=raise_on_timeout,
+                token_stat_ticket=token_stat_ticket,
+            )
+
+    def _call_llm_model_owned_body(self, messages, tools=None, tool_choice="auto", *, first_byte_timeout=None, raise_on_timeout=False, token_stat_ticket=None):
+        """Run complete-call processing while the attempt owner is active."""
         response = self._create_with_first_byte_timeout(
             messages,
             tools=tools,
@@ -39,12 +64,22 @@ class LLMCallMixin:
         self._record_llm_response_event(response, is_stream=False)
         return response, full_content
 
-    def call_llm_model_by_stream(self, messages, tools=None, tool_choice="auto"):
-        """Call a provider stream and return its reconstructed response and content."""
+    def _call_llm_model_by_stream_owned(self, messages, tools=None, tool_choice="auto"):
+        """Establish the stream budget after token/config setup."""
         token_stat_ticket = self.tokenStat.add_msgs(messages)
-        first_byte_timeout, raise_on_timeout = self._get_first_byte_timeout_config()
-        stream_start_time = time.monotonic()
+        timeout, raise_on_timeout = self._get_first_byte_timeout_config()
+        budget = FirstByteBudget.create(timeout) if timeout and timeout > 0 else None
+        with first_byte_budget_scope(budget):
+            return self._call_llm_model_by_stream_owned_body(
+                messages, tools, tool_choice,
+                first_byte_timeout=timeout, raise_on_timeout=raise_on_timeout,
+                token_stat_ticket=token_stat_ticket,
+            )
 
+    def _call_llm_model_by_stream_owned_body(self, messages, tools=None, tool_choice="auto", *, first_byte_timeout=None, raise_on_timeout=False, token_stat_ticket=None):
+        """Run stream processing while the attempt owner is active."""
+        budget = current_first_byte_budget()
+        stream_start_time = time.monotonic()
         response, create_timed_out = self._create_with_first_byte_timeout(
             messages,
             tools=tools,
@@ -63,13 +98,24 @@ class LLMCallMixin:
         sampled_chunks = [] if sample_limit > 0 else None
 
         timing_ticket = self._get_llm_request_timing_ticket()
-        timed_response = self._iter_stream_for_request_timing(response, timing_ticket)
-        for chunk in self.iter_stream_with_first_byte_timeout(
-            timed_response,
+        current_first_operation = current_first_byte_budget() is not None
+        guarded_response = self.iter_stream_with_first_byte_timeout(
+            response,
             first_byte_timeout,
             raise_on_timeout=raise_on_timeout,
             create_timed_out=create_timed_out,
-        ):
+        )
+        if timing_ticket is not None:
+            timed_response = iter_stream_for_request_timing(
+                guarded_response,
+                timing_ticket,
+                resume=self._resume_llm_request,
+                pause=self._pause_llm_request,
+                first_operation=current_first_operation,
+            )
+        else:
+            timed_response = guarded_response
+        for chunk in timed_response:
             stream_part = self._extract_stream_part(chunk)
             try:
                 current_usage = self.get_response_usage(chunk)

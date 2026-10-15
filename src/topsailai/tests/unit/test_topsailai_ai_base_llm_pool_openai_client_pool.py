@@ -573,3 +573,50 @@ def test_response_adapter_translates_deferred_litellm_connection_error():
     assert captured.value.__cause__ is source_error
     assert captured.value.response is getattr(source_error, "response", None)
     assert captured.value.body is getattr(source_error, "body", None)
+
+
+
+def test_response_adapter_stream_iteration_is_lazy():
+    """Stream construction does not observe the provider iterator."""
+    raw_response = MagicMock()
+    raw_response.__iter__.side_effect = AssertionError("iterator was created eagerly")
+
+    stream = OpenAIResponseAdapter.iter_response(raw_response)
+
+    assert stream._iterator is stream._UNSET
+    raw_response.__iter__.assert_not_called()
+
+
+def test_response_adapter_lazy_iter_failure_closes_raw_and_preserves_identity():
+    """Iterator construction failure closes the raw response without replacement."""
+    raw_response = MagicMock()
+    source_error = KeyboardInterrupt("iterator construction failed")
+    raw_response.__iter__.side_effect = source_error
+
+    stream = OpenAIResponseAdapter.iter_response(raw_response)
+
+    with pytest.raises(KeyboardInterrupt) as captured:
+        next(stream)
+
+    assert captured.value is source_error
+    raw_response.close.assert_called_once_with()
+
+
+def test_response_adapter_wrapper_construction_failure_closes_raw():
+    """Wrapper construction failures close the provider response."""
+    raw_response = MagicMock()
+    source_error = RuntimeError("wrapper construction failed")
+
+    with patch.object(
+        OpenAIResponseAdapter,
+        "iter_response",
+        side_effect=source_error,
+    ):
+        with pytest.raises(RuntimeError) as captured:
+            OpenAIResponseAdapter.create_response(
+                MagicMock(create=MagicMock(return_value=raw_response)),
+                {"stream": True},
+            )
+
+    assert captured.value is source_error
+    raw_response.close.assert_called_once_with()

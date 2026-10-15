@@ -163,3 +163,42 @@ def test_mixin_source_has_no_provider_sdk_traces():
     )
     for forbidden in forbidden_terms:
         assert forbidden not in source
+
+
+def test_mixin_abstract_provider_hooks_fail_explicitly():
+    """Provider-neutral abstract hooks reject accidental direct use."""
+    model = LLMCallMixin()
+    for method, args in (
+        (model._extract_response_content, (None,)),
+        (model._extract_stream_part, (None,)),
+        (model._extract_stream_content, (None,)),
+        (model._merge_stream_calls, ({}, None)),
+        (model._build_stream_calls, ({},)),
+        (model._build_stream_response, ("", [])),
+    ):
+        try:
+            method(*args)
+        except NotImplementedError:
+            continue
+        raise AssertionError("abstract hook unexpectedly returned")
+
+
+def test_stream_mixin_timing_ticket_and_processing_error_branches():
+    """Timing tickets, empty parts, sampling, and usage failures remain handled."""
+    model = ExampleCallModel()
+    model.stream_response = iter([
+        {"text": "", "calls": [], "bad": True},
+        {"text": "x", "calls": []},
+    ])
+    model._get_llm_request_timing_ticket = lambda: "ticket"
+    model._resume_llm_request = lambda ticket: model.events.append(("resume", ticket))
+    model._pause_llm_request = lambda ticket: model.events.append(("pause", ticket))
+    model._finish_llm_request = lambda ticket: model.events.append(("finish", ticket))
+    model._get_stream_chunk_sample_limit = lambda: 1
+    model._serialize_stream_chunk = lambda chunk: chunk
+    model.get_response_usage = lambda chunk: (_ for _ in ()).throw(ValueError("usage"))
+    model._warn_stream_usage_error = lambda error: model.events.append(("usage-error", type(error)))
+    model._extract_stream_part = lambda chunk: None if chunk.get("bad") else chunk
+    response, content = model.call_llm_model_by_stream([])
+    assert content == "x"
+    assert ("usage-error", ValueError) in model.events

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import atexit
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
-
 import httpcore
 import httpx
 import openai
@@ -205,16 +205,76 @@ class OpenAIResponseAdapter:
             )
         return error
 
+    class _ClosableOpenAIStream:
+        """Keep the raw SDK stream available for direct transport cleanup."""
+
+        _UNSET = object()
+        _NOT_STARTED = object()
+        _RUNNING = object()
+        _SUCCEEDED = object()
+        _FAILED = object()
+
+        def __init__(self, response, translate_error):
+            """Store the raw response without creating its iterator."""
+            self._response = response
+            self._translate_error = translate_error
+            self._iterator = self._UNSET
+            self._close_lock = threading.Lock()
+            self._close_state = self._NOT_STARTED
+            self._close_error = None
+
+        def __iter__(self):
+            """Return this translating stream wrapper."""
+            return self
+
+        def __next__(self):
+            """Read one item and translate deferred provider errors."""
+            try:
+                if self._iterator is self._UNSET:
+                    self._iterator = iter(self._response)
+                return next(self._iterator)
+            except StopIteration:
+                raise
+            except BaseException as error:
+                if self._iterator is not self._UNSET:
+                    translated = self._translate_error(error)
+                    if translated is not error:
+                        raise translated from error
+                    raise
+                try:
+                    self.close()
+                except BaseException as cleanup_error:
+                    try:
+                        error.add_note(f"raw response cleanup failed: {cleanup_error!r}")
+                    except BaseException:
+                        pass
+                raise
+
+        def close(self):
+            """Close the raw SDK response at most once and retain failures."""
+            with self._close_lock:
+                if self._close_state is not self._NOT_STARTED:
+                    if self._close_state is self._FAILED:
+                        raise self._close_error
+                    return
+                self._close_state = self._RUNNING
+            try:
+                close = getattr(self._response, "close", None)
+                if close is not None:
+                    close()
+            except BaseException as error:
+                with self._close_lock:
+                    self._close_error = error
+                    self._close_state = self._FAILED
+                raise
+            else:
+                with self._close_lock:
+                    self._close_state = self._SUCCEEDED
+
     @classmethod
     def iter_response(cls, response):
-        """Yield stream items while translating deferred transport errors."""
-        try:
-            yield from response
-        except Exception as error:
-            translated = cls.translate_error(error)
-            if translated is error:
-                raise
-            raise translated from error
+        """Return a lazy wrapper retaining the underlying SDK response."""
+        return cls._ClosableOpenAIStream(response, cls.translate_error)
 
     @classmethod
     def create_response(cls, chat_model, params):
@@ -227,7 +287,19 @@ class OpenAIResponseAdapter:
                 raise
             raise translated from error
         if params.get("stream"):
-            return cls.iter_response(response)
+            try:
+                return cls.iter_response(response)
+            except BaseException as error:
+                try:
+                    close = getattr(response, "close", None)
+                    if close is not None:
+                        close()
+                except BaseException as cleanup_error:
+                    try:
+                        error.add_note(f"raw response cleanup failed: {cleanup_error!r}")
+                    except Exception:
+                        pass
+                raise
         return response
 
 
