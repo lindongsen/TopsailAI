@@ -1,10 +1,11 @@
-"""Read-only input observation through explicitly injected application authority.
+"""Read-only input observation through application-scoped Hook authority.
 
 Author: DawsonLin
 """
 
 import logging
 
+from topsailai.hooks.application_access import get_hook_executor
 from topsailai.hooks.configured_executor import HookOperation
 from topsailai.hooks.contracts import DispatchReport, HookStatus
 from topsailai.hooks.points.workspace.before_input_message import POINT
@@ -12,10 +13,11 @@ from topsailai.hooks.points.workspace.before_input_message import POINT
 logger = logging.getLogger(__name__)
 
 
-def observe_before_input(executor, *, multiline: bool) -> None:
-    """Dispatch once; isolate ordinary failures, never host interruption or input."""
+def observe_before_input(*, multiline: bool) -> None:
+    """Dispatch once and isolate ordinary failures without handling host interrupts."""
     operation = HookOperation()
     try:
+        executor = get_hook_executor()
         report = executor.dispatch(
             POINT, payload={"multiline": multiline}, operation=operation,
         )

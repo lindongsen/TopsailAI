@@ -52,6 +52,7 @@ Interactive input utilities with hook integration.
 - **Hook Interception**: `hook_message()` routes `/` commands through `HookInstruction`; handles `exit`/`quit`
 - **Message Source**: `get_message()` reads from CLI args, stdin, files, or interactive prompt
 - **History**: readline history persisted to `TOPSAILAI_HOME/.input_history`
+- **Application Hook checkpoint**: `input_message()` observes the before-input Hook through the bound application access context; callers do not pass a Hook Executor. The observation receives only the selected multiline-mode flag and runs once before input acquisition.
 
 #### `hook_instruction.py`
 `/` command hook registry and execution.

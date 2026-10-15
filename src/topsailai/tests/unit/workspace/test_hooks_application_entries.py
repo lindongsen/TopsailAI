@@ -232,7 +232,7 @@ def test_input_message_signature_is_unchanged():
     from inspect import signature
     from topsailai.workspace.input_tool import input_message
 
-    assert tuple(signature(input_message).parameters) == ("tips", "hook", "hook_executor")
+    assert tuple(signature(input_message).parameters) == ("tips", "hook")
 
 
 @pytest.mark.parametrize("module_name", (
