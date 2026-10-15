@@ -3,6 +3,8 @@
 import pytest
 from pytest_bdd import given, then, when
 
+from tests.bdd.llm_first_byte_warning_observation import WarningObservation
+
 from tests.bdd.llm_first_byte_deadline_harness import (
     production_deadline_scenario,
     request_bodies,
@@ -12,18 +14,33 @@ from tests.bdd.llm_first_byte_deadline_harness import (
 _CONTEXTS = {}
 
 
+def _cleanup_context(nodeid, context):
+    """Close one scenario and always release its retained context reference."""
+    try:
+        context.__exit__(None, None, None)
+    finally:
+        _CONTEXTS.pop(nodeid, None)
+
+
 def _run(request, *, stream, timeout, raising, **config):
     """Execute one scenario through the production model and retain evidence."""
+    observation = WarningObservation() if stream and not raising else None
     context = production_deadline_scenario(
         request.getfixturevalue("monkeypatch"),
         stream=stream,
         timeout=timeout,
         raise_on_timeout=raising,
         server_config=server_config(stream=stream, **config),
+        observation=observation,
     )
     data = context.__enter__()
     _CONTEXTS[request.node.nodeid] = {"context": context, **data}
-    request.addfinalizer(lambda: context.__exit__(None, None, None))
+
+    def cleanup():
+        """Always close the scenario and remove its retained state."""
+        _cleanup_context(request.node.nodeid, context)
+
+    request.addfinalizer(cleanup)
 
 
 def _data(request):
@@ -81,22 +98,23 @@ def delayed_headers(request):
 @given("a production U3 server with cumulative delayed streaming content")
 def cumulative_stream(request):
     """Configure warning-mode streaming whose creation and first-entry delays cross the deadline."""
-    _run(request, stream=True, timeout=0.1, raising=False,
-         header_delay=0.06, first_delay=0.06, replies=("full answer",))
+    _run(request, stream=True, timeout=1.0, raising=False,
+         header_delay=0.6, first_delay=0.6, replies=("full ", "answer"),
+         after_first_delay=0.01)
 
 
 @given("a production U3 server with raising cumulative delayed streaming content")
 def raising_cumulative_delayed_stream(request):
     """Configure two individually-on-time delays whose sum exceeds the deadline."""
-    _run(request, stream=True, timeout=0.1, raising=True,
-         header_delay=0.06, first_delay=0.06, replies=("stale", "fresh"))
+    _run(request, stream=True, timeout=1.0, raising=True,
+         header_delay=0.6, first_delay=0.6, replies=("stale", "fresh"))
 
 
 @given("a production U3 server with raising cumulative on-time streaming content")
 def raising_cumulative_ontime_stream(request):
     """Configure cumulative creation and first-entry delays below the deadline."""
-    _run(request, stream=True, timeout=0.1, raising=True,
-         header_delay=0.03, first_delay=0.03, replies=("cumulative control",))
+    _run(request, stream=True, timeout=1.0, raising=True,
+         header_delay=0.3, first_delay=0.3, replies=("cumulative control",))
 
 
 @given("a production U3 server with disabled streaming monitoring")
@@ -125,6 +143,7 @@ def empty_result(request):
     assert data["server"].config.stream_response_chunks == (("", "full answer"),)
     assert len(request_bodies(data["server"])) == 1
     assert data["warnings"] == []
+
 
 
 @then("the second attempt result is returned and exactly two bodies are captured")
@@ -328,8 +347,18 @@ def warning_result(request):
     """Assert warning mode continues the original request without retry."""
     data = _data(request)
     assert data["result"] == "original"
-    assert len(request_bodies(data["server"])) == 1
+    bodies = request_bodies(data["server"])
+    assert bodies == [data["expected_body"]]
     assert len(data["warnings"]) == 1
+    assert len(data["owners"]) == 1
+    if data["observation"] is not None:
+        phases = data["observation"].phase_events()
+        assert [phase["label"] for phase in phases] == ["create", "first_item"]
+        origin = phases[0]["deadline"] - phases[0]["timeout"]
+        assert origin <= phases[0]["completed_at"] < phases[0]["deadline"]
+        assert phases[0]["completed_at"] - origin < phases[0]["timeout"]
+        assert phases[1]["published_at"] - phases[0]["published_at"] < phases[0]["timeout"]
+        data["observation"].assert_settled(data["owners"])
 
 
 @then("the delayed stream continues with one warning and one body")
@@ -337,8 +366,30 @@ def warning_stream_result(request):
     """Assert streaming warning mode preserves all original content."""
     data = _data(request)
     assert data["result"] == "full answer"
-    assert len(request_bodies(data["server"])) == 1
+    bodies = request_bodies(data["server"])
+    assert bodies == [data["expected_body"]]
     assert len(data["warnings"]) == 1
+    assert len(data["owners"]) == 1
+    phases = data["observation"].phase_events()
+    assert [phase["label"] for phase in phases] == ["create", "first_item"]
+    assert all(phase["owner"] is data["owners"][0] for phase in phases)
+    assert phases[0]["published_at"] < phases[0]["deadline"] <= phases[1]["published_at"]
+    assert phases[0]["budget"] is phases[1]["budget"]
+    assert phases[0]["deadline"] == phases[1]["deadline"]
+    origin = phases[0]["deadline"] - phases[0]["timeout"]
+    assert origin <= phases[0]["completed_at"] < phases[0]["deadline"]
+    assert phases[0]["completed_at"] - origin < phases[0]["timeout"]
+    assert phases[1]["published_at"] - phases[0]["published_at"] < phases[0]["timeout"]
+    responses = data["observation"].events_for("response")
+    closes = data["observation"].events_for("stream_close_after")
+    close_before = data["observation"].events_for("stream_close_before")
+    extracts = data["observation"].events_for("extract")
+    assert len(responses) == len(closes) == len(close_before) == 1
+    assert responses[0]["owner"] is data["owners"][0]
+    assert responses[0]["raw"] is closes[0]["raw"] is close_before[0]["raw"]
+    assert max(event["at"] for event in extracts) <= close_before[0]["at"]
+    assert data["observation"].events_for("warning_checkpoint")[0]["close_count"] == 0
+    data["observation"].assert_settled(data["owners"])
 
 
 @then("the delayed stream is returned without warnings and one body")
@@ -392,11 +443,11 @@ def cumulative_raising_result(request):
     _assert_owner_ticket_isolation(data)
     assert len(data["warnings"]) == 1
 
-
 @then("the cumulative on-time stream completes without retry and without warnings")
 def cumulative_raising_ontime_result(request):
     """Assert cumulative below-deadline control behavior."""
     data = _data(request)
     assert data["result"] == "cumulative control"
-    assert len(request_bodies(data["server"])) == 1
+    assert request_bodies(data["server"]) == [data["expected_body"]]
+    assert len(data["owners"]) == 1
     assert data["warnings"] == []

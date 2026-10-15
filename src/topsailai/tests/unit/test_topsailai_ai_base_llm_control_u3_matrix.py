@@ -77,31 +77,48 @@ class _Blocking:
 def test_owned_warning_continues_original_operation_after_deadline():
     """Production ownership does not close or truncate a warning-mode stream."""
     warning, make_error, _ = _callbacks()
+    warned = threading.Event()
+    warning.side_effect = lambda *args: warned.set()
     stream = _Blocking()
     owner = Mock()
     owner.publish_response.return_value = True
     owner.publish_eof.return_value = True
     owner.take_outcome.return_value = type("Outcome", (), {"kind": "EOF"})()
     result = []
+    child_errors = []
 
     def consume():
-        result.extend(iter_with_first_byte_timeout(
-            stream, .01, on_timeout=warning, make_timeout_error=make_error,
-            owner=owner,
-        ))
+        """Capture consumer failures without hiding them behind an empty result."""
+        try:
+            result.extend(iter_with_first_byte_timeout(
+                stream, .01, on_timeout=warning, make_timeout_error=make_error,
+                owner=owner,
+            ))
+        except BaseException as error:
+            child_errors.append(error)
 
     worker = threading.Thread(target=consume)
     worker.start()
-    assert stream.started.wait(1)
-    assert worker.is_alive()
-    time.sleep(.03)
-    stream.release.set()
-    worker.join(1)
+    try:
+        assert stream.started.wait(1)
+        assert worker.is_alive()
+        assert warned.wait(1)
+        assert worker.is_alive()
+        assert stream.closed is False
+        assert owner.fetch_thread is not None
+        assert owner.fetch_thread.is_alive()
+    finally:
+        stream.release.set()
+        worker.join(1)
+        if owner.fetch_thread is not None:
+            owner.fetch_thread.join(1)
     assert not worker.is_alive()
+    assert owner.fetch_thread is not None
+    assert not owner.fetch_thread.is_alive()
+    assert child_errors == []
     assert stream.closed is False
     warning.assert_called_once()
     make_error.assert_not_called()
-
 
 def test_raising_late_ticket_has_no_provider_operation():
     """An expired phase is rejected before a late provider admission."""
@@ -130,23 +147,30 @@ def test_first_entry_is_committed_before_consumer_pause():
     owner.publish_response.return_value = True
     owner.publish_outcome.return_value = True
     owner.take_outcome.return_value = type("Outcome", (), {"kind": "VALUE", "value": ""})()
-    values = iter(("", "tail"))
-    stream = iter(values)
     result = []
+    child_errors = []
 
     def consume():
-        result.extend(iter_with_first_byte_timeout(
-            stream, 1, on_timeout=warning, make_timeout_error=make_error,
-            owner=owner, timing_ticket="ticket", pause=pause,
-        ))
+        """Capture child failures without hiding them behind an empty result."""
+        try:
+            result.extend(iter_with_first_byte_timeout(
+                iter(("", "tail")), 1, on_timeout=warning,
+                make_timeout_error=make_error, owner=owner,
+                timing_ticket="ticket", pause=pause,
+            ))
+        except BaseException as error:
+            child_errors.append(error)
 
     worker = threading.Thread(target=consume)
+    owner.fetch_thread = worker
     worker.start()
-    assert pause_started.wait(1)
-    time.sleep(.02)
-    release_pause.set()
-    worker.join(1)
+    try:
+        assert pause_started.wait(1)
+    finally:
+        release_pause.set()
+        worker.join(1)
     assert not worker.is_alive()
+    assert child_errors == []
     assert result == ["", "tail"]
     warning.assert_not_called()
 
@@ -381,19 +405,31 @@ def test_standalone_timeout_error_and_close_failure_paths():
 
     stream = _Blocking()
     result = []
+    warned = threading.Event()
+    child_errors = []
+    warning.reset_mock()
+    warning.side_effect = lambda *args: warned.set()
 
     def consume():
-        result.extend(iter_with_first_byte_timeout(
-            stream, .01,
-            on_timeout=warning, make_timeout_error=make_error,
-        ))
+        """Capture the standalone worker exception for deterministic cleanup."""
+        try:
+            result.extend(iter_with_first_byte_timeout(
+                stream, .01,
+                on_timeout=warning, make_timeout_error=make_error,
+            ))
+        except BaseException as error:
+            child_errors.append(error)
 
     worker = threading.Thread(target=consume)
     worker.start()
-    assert stream.started.wait(1)
-    time.sleep(.03)
-    worker.join(1)
+    try:
+        assert stream.started.wait(1)
+        assert warned.wait(1)
+    finally:
+        stream.release.set()
+        worker.join(1)
     assert not worker.is_alive()
+    assert child_errors == []
     assert stream.closed is True
     assert result == []
 
