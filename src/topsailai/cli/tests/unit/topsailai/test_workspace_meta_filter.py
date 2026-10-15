@@ -4,6 +4,7 @@ Author: DawsonLin
 """
 
 import json
+import os
 from unittest.mock import Mock
 
 import pytest
@@ -54,12 +55,20 @@ def test_visible_meta_preserves_session_info_queries(task_dir, monkeypatch, stat
     monkeypatch.setattr(session_info, "load_project_workspace_lookup", Mock(return_value={}))
     callback = Mock()
     rows = log_files.discover_workspace_log_files(str(task_dir), callback)
-    assert all("session_name" not in row and "project_workspace" not in row for row in rows)
     session_info.enrich_files_with_session_names(rows)
     assert len(rows) == callback.call_count == 3
-    assert all(row["session_name"] == "queried" for row in rows)
-    assert all(row["project_workspace"] == "/queried" for row in rows)
-    query.assert_called_once_with("sample")
+    if status == "completed" and name:
+        assert all(row["session_name"] == "useful" for row in rows)
+        if workspace:
+            assert query.call_count == 0
+            assert all(row["project_workspace"] == "/meta-project" for row in rows)
+        else:
+            assert query.call_count == 1
+            assert all(row["project_workspace"] == "/queried" for row in rows)
+    else:
+        assert query.call_count == 1
+        assert all(row["session_name"] == "queried" for row in rows)
+        assert all(row["project_workspace"] == "/queried" for row in rows)
 
 
 def test_running_unnamed_meta_preserves_refresh_query(task_dir, monkeypatch):
@@ -135,6 +144,57 @@ def test_workspace_output_uses_filtered_rows(task_dir, monkeypatch, capsys, outp
     query.assert_not_called()
 
 
+def test_refreshes_completed_snapshot_order_and_public_json(tmp_path, monkeypatch, capsys):
+    """A fresh scan adopts changed metadata without changing order or JSON schema."""
+    from cli_topsailai import core, paths
+
+    directory = tmp_path / "workspace" / "task"
+    directory.mkdir(parents=True)
+    first = directory / "first.101.session.stdout"
+    second = directory / "second.202.session.stdout"
+    first.write_text("log")
+    second.write_text("log")
+    times = {first.name: 10.0, second.name: 20.0}
+    monkeypatch.setattr(
+        log_files, "_get_birth_time",
+        lambda path: times[os.path.basename(path)],
+    )
+
+    def write(session_id, pid, name):
+        (directory / f"{session_id}.{pid}.session.meta").write_text(json.dumps({
+            "session_id": session_id,
+            "pid": pid,
+            "status": "completed",
+            "session_name": name,
+            "project_workspace": f"/{session_id}",
+        }))
+
+    write("first", 101, "Old First")
+    write("second", 202, "Second")
+    rows = log_files.discover_workspace_log_files(str(directory))
+    assert [row["filename"] for row in rows] == [first.name, second.name]
+    assert [row["_completed_session_meta"][2] for row in rows] == ["Old First", "Second"]
+
+    write("first", 101, "New First")
+    refreshed = log_files.discover_workspace_log_files(str(directory))
+    assert [row["filename"] for row in refreshed] == [first.name, second.name]
+    assert [row["_completed_session_meta"][2] for row in refreshed] == ["New First", "Second"]
+
+    monkeypatch.setattr(paths, "get_topsailai_home", lambda: str(tmp_path))
+    monkeypatch.setattr(core, "_driver_authority", Mock(return_value=None))
+    monkeypatch.setattr(core, "_enrich_driver_rows", Mock())
+    monkeypatch.setattr(session_info, "_SESSION_INFO_CACHE", session_info._SessionInfoCache())
+    monkeypatch.setattr(
+        session_info, "_get_session_info",
+        Mock(side_effect=AssertionError("unexpected query")),
+    )
+    core._print_workspace_json()
+    payload = json.loads(capsys.readouterr().out)
+    assert [item["no"] for item in payload["items"]] == [1, 2]
+    assert [item["filename"] for item in payload["items"]] == [first.name, second.name]
+    assert "_completed_session_meta" not in json.dumps(payload)
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 def test_ambiguous_task_parent_kept_in_both_directory_orders(task_dir, monkeypatch, reverse):
     """Keep ambiguous tasks regardless of conflicting parent metadata or scan order."""
@@ -158,4 +218,5 @@ def test_ambiguous_task_parent_kept_in_both_directory_orders(task_dir, monkeypat
     task = next(row for row in rows if row["is_task"])
     assert "session_meta_loaded" not in task
     assert "session_name" not in task
+    assert "_completed_session_meta" not in task
     assert [call.args[0] for call in callback.call_args_list] == rows

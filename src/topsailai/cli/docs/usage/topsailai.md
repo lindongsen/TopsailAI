@@ -73,6 +73,8 @@ The command uses the same parsing and execution mechanism as `/git`: `shlex.spli
 
 ## Workspace / Project Commands
 
+For workspace rows with an exact session metadata match whose status is `completed` and whose `session_name` is nonblank, the CLI reuses that completed-run name snapshot before querying session info. A usable session-info workspace path remains preferred; a valid completed metadata path can avoid the query, while a missing or invalid path still triggers lookup. Missing, invalid, mismatched, or non-completed metadata follows the existing fallback behavior, and completed unnamed rows remain filtered.
+
 | Command | Description |
 |---------|-------------|
 | `<number>` | Watch the selected log file (workspace) or enter the selected session (project). |

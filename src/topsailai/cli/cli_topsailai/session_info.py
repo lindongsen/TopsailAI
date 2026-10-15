@@ -136,25 +136,47 @@ def _fetch_missing_session_info(session_ids: List[str]) -> None:
                 )
 
 
+def _completed_meta_snapshot(file_info: dict) -> Optional[Tuple[str, int, str, Optional[str]]]:
+    """Return a valid scan-local completed metadata snapshot for a row."""
+    snapshot = file_info.get("_completed_session_meta")
+    if not isinstance(snapshot, tuple) or len(snapshot) != 4:
+        return None
+    session_id, parent_pid, name, project_workspace = snapshot
+    row_session_id = file_info.get("session_id")
+    if (
+        not isinstance(session_id, str)
+        or not session_id
+        or session_id != row_session_id
+        or type(parent_pid) is not int
+        or parent_pid <= 0
+        or not isinstance(name, str)
+        or not name.strip()
+    ):
+        return None
+    row_pid = file_info.get("pid")
+    if file_info.get("is_task"):
+        if file_info.get("session_pid") != parent_pid:
+            return None
+    elif row_pid != parent_pid:
+        return None
+    if project_workspace is not None and (
+        not isinstance(project_workspace, str)
+        or not project_workspace.strip()
+        or not os.path.isabs(project_workspace)
+    ):
+        project_workspace = None
+    return session_id, parent_pid, name.strip(), project_workspace
+
+
 def enrich_files_with_session_names(files: List[dict]) -> None:
-    """Add ``session_name`` and ``project_workspace`` keys to each file dict.
-
-    Lookups are deduplicated and cached so the same session ID is only queried
-    once across the process lifetime.  Missing IDs are fetched concurrently via
-    a thread pool.  Transient failures are not cached, so the next refresh will
-    retry them.  Temporary sessions (``(temp)``) and files without a session ID
-    are assigned ``None`` and skipped entirely.
-
-    The ``project_workspace`` value is resolved from ``topsailai_session_info``
-    when possible because that reflects the workspace stored in the session
-    record (the authoritative value).  If the session cannot be queried, the
-    value falls back to the most recent entry in ``.project_history.jsonl``.
-    """
+    """Add session names and workspaces while reusing completed scan metadata."""
     if not files:
         return
 
     distinct_ids: list[str] = []
     seen: set[str] = set()
+    snapshots: dict[int, Tuple[str, int, str, Optional[str]]] = {}
+    query_required: set[str] = set()
     for file_info in files:
         session_id = file_info.get("session_id")
         if session_id is None or session_id == "(temp)" or session_id == "":
@@ -165,33 +187,53 @@ def enrich_files_with_session_names(files: List[dict]) -> None:
             seen.add(session_id)
             distinct_ids.append(session_id)
 
-    missing_ids = [
-        sid for sid in distinct_ids if _SESSION_INFO_CACHE.get(sid) is _MISSING
-    ]
-    if missing_ids:
-        _fetch_missing_session_info(missing_ids)
+        snapshot = _completed_meta_snapshot(file_info)
+        if snapshot is not None:
+            snapshots[id(file_info)] = snapshot
+            cached = _SESSION_INFO_CACHE.get(session_id)
+            cached_path = (
+                cached[1]
+                if cached is not _MISSING and isinstance(cached[1], str)
+                and cached[1].strip()
+                else None
+            )
+            if cached is _MISSING and snapshot[3] is None:
+                query_required.add(session_id)
+            elif cached is not _MISSING and cached_path is None and snapshot[3] is None:
+                query_required.add(session_id)
+            continue
 
-    # Only load history fallback when there are real sessions to enrich.
+        if _SESSION_INFO_CACHE.get(session_id) is _MISSING:
+            query_required.add(session_id)
+
+    if query_required:
+        _fetch_missing_session_info(
+            [session_id for session_id in distinct_ids if session_id in query_required]
+        )
+
     workspace_lookup = load_project_workspace_lookup() if distinct_ids else {}
     for file_info in files:
         session_id = file_info.get("session_id")
         if session_id is None or session_id == "(temp)" or session_id == "":
-            file_info["session_name"] = None
-            file_info["project_workspace"] = None
             continue
+        snapshot = snapshots.get(id(file_info))
         cached = _SESSION_INFO_CACHE.get(session_id)
         if cached is _MISSING:
-            name = None
-            project_workspace = None
+            cached_name = None
+            cached_path = None
         else:
-            name, project_workspace = cached
+            cached_name, cached_path = cached
 
-        file_info["session_name"] = name
-        # Prefer the authoritative session record; fall back to history.
-        if project_workspace:
-            file_info["project_workspace"] = project_workspace
+        if snapshot is not None:
+            _session_id, _pid, name, meta_path = snapshot
+            file_info["session_name"] = name
+            project_workspace = cached_path or meta_path
         else:
-            file_info["project_workspace"] = workspace_lookup.get(session_id)
+            file_info["session_name"] = cached_name
+            project_workspace = cached_path
+        file_info["project_workspace"] = (
+            project_workspace or workspace_lookup.get(session_id)
+        )
 
 
 def _is_pid_alive(pid: Optional[int]) -> bool:

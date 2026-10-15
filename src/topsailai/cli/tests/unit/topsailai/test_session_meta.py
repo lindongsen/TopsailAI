@@ -271,3 +271,26 @@ def test_discovery_skips_invalid_entries_and_preserves_time(tmp_path, monkeypatc
     assert len(rows) == 1 and rows[0]["pid"] == 123
     assert rows[0]["ctime"] == (tmp_path / rows[0]["filename"]).stat().st_ctime
     assert log_files._parse_stdout_filename(".stderr") == (None, None)
+
+
+def test_workspace_discovery_attaches_completed_name_snapshot(tmp_path):
+    """Workspace discovery carries only an exact completed metadata snapshot."""
+    from cli_topsailai.log_files import discover_workspace_log_files
+
+    directory = tmp_path / "workspace" / "task"
+    directory.mkdir(parents=True)
+    (directory / "sample.123.session.stdout").write_text("log")
+    (directory / "sample.123.session.meta").write_text(json.dumps({
+        "session_id": "sample",
+        "pid": 123,
+        "status": "completed",
+        "session_name": "  Completed  ",
+        "project_workspace": "/meta-project",
+    }))
+
+    rows = discover_workspace_log_files(str(directory))
+
+    assert len(rows) == 1
+    assert rows[0]["_completed_session_meta"] == (
+        "sample", 123, "Completed", "/meta-project"
+    )

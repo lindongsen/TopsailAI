@@ -644,5 +644,184 @@ class TestEnrichRunningUnnamedSessions(unittest.TestCase):
         ]
         session_info.enrich_running_unnamed_sessions(files)
         self.assertIsNone(files[0]["session_name"])
+class TestCompletedMetadataSnapshot(unittest.TestCase):
+    """Tests for scan-local completed metadata snapshots."""
+
+    def tearDown(self):
+        """Clear module-level cache after each test."""
+        session_info._SESSION_INFO_CACHE._data.clear()
+
+    @patch("cli_topsailai.session_info.load_project_workspace_lookup")
+    @patch("cli_topsailai.session_info._get_session_info")
+    def test_snapshot_name_and_path_avoid_query(self, mock_query, mock_lookup):
+        """A complete snapshot supplies both fields without a subprocess lookup."""
+        mock_lookup.return_value = {"s1": "/history"}
+        files = [{
+            "session_id": "s1", "pid": 123, "is_task": False,
+            "_completed_session_meta": ("s1", 123, "  Completed Name  ", "/meta"),
+        }]
+        session_info.enrich_files_with_session_names(files)
+        mock_query.assert_not_called()
+        self.assertEqual(files[0]["session_name"], "Completed Name")
+        self.assertEqual(files[0]["project_workspace"], "/meta")
+
+    @patch("cli_topsailai.session_info.load_project_workspace_lookup")
+    @patch("cli_topsailai.session_info._get_session_info")
+    def test_missing_snapshot_path_queries_and_preserves_name(self, mock_query, mock_lookup):
+        """A snapshot without a path still queries and protects its name."""
+        mock_query.return_value = session_info._LookupResult("Queried", "/queried", True)
+        mock_lookup.return_value = {"s1": "/history"}
+        files = [{
+            "session_id": "s1", "pid": 123, "is_task": False,
+            "_completed_session_meta": ("s1", 123, "Completed", None),
+        }]
+        session_info.enrich_files_with_session_names(files)
+        mock_query.assert_called_once_with("s1")
+        self.assertEqual(files[0]["session_name"], "Completed")
+        self.assertEqual(files[0]["project_workspace"], "/queried")
+
+    @patch("cli_topsailai.session_info.load_project_workspace_lookup")
+    @patch("cli_topsailai.session_info._get_session_info")
+    def test_mixed_instances_query_once_and_keep_names_isolated(self, mock_query, mock_lookup):
+        """An ordinary row may query without replacing another row's snapshot name."""
+        mock_query.return_value = session_info._LookupResult("Queried", "/queried", True)
+        mock_lookup.return_value = {}
+        files = [
+            {"session_id": "s1", "pid": 123, "is_task": False,
+             "_completed_session_meta": ("s1", 123, "First", "/first")},
+            {"session_id": "s1", "pid": 456, "is_task": False},
+        ]
+        session_info.enrich_files_with_session_names(files)
+        mock_query.assert_called_once_with("s1")
+        self.assertEqual(files[0]["session_name"], "First")
+        self.assertEqual(files[1]["session_name"], "Queried")
+
+    @patch("cli_topsailai.session_info.load_project_workspace_lookup")
+    @patch("cli_topsailai.session_info._get_session_info")
+    def test_query_failure_keeps_snapshot_and_retries(self, mock_query, mock_lookup):
+        """A failed path lookup does not poison retries or erase the name."""
+        mock_query.return_value = session_info._LookupResult(None, None, False)
+        mock_lookup.return_value = {"s1": "/history"}
+        files = [{
+            "session_id": "s1", "pid": 123, "is_task": False,
+            "_completed_session_meta": ("s1", 123, "Completed", None),
+        }]
+        session_info.enrich_files_with_session_names(files)
+        self.assertEqual(files[0]["session_name"], "Completed")
+        self.assertEqual(files[0]["project_workspace"], "/history")
+        session_info.enrich_files_with_session_names(files)
+        self.assertEqual(mock_query.call_count, 2)
+
+    def test_mismatched_snapshot_falls_back_to_query(self):
+        """A snapshot for another PID is rejected rather than reused."""
+        with patch("cli_topsailai.session_info._get_session_info") as mock_query, \
+                patch("cli_topsailai.session_info.load_project_workspace_lookup") as mock_lookup:
+            mock_query.return_value = session_info._LookupResult("Queried", "/queried", True)
+            mock_lookup.return_value = {}
+            files = [{
+                "session_id": "s1", "pid": 456, "is_task": False,
+                "_completed_session_meta": ("s1", 123, "Wrong", "/wrong"),
+            }]
+            session_info.enrich_files_with_session_names(files)
+            mock_query.assert_called_once_with("s1")
+            self.assertEqual(files[0]["session_name"], "Queried")
+
+
+    def test_snapshot_session_id_mismatch_falls_back_to_query(self):
+        """A snapshot for another session ID is rejected even with the same PID."""
+        with patch("cli_topsailai.session_info._get_session_info") as mock_query, \
+                patch("cli_topsailai.session_info.load_project_workspace_lookup") as mock_lookup:
+            mock_query.return_value = session_info._LookupResult("Queried", "/queried", True)
+            mock_lookup.return_value = {}
+            files = [{
+                "session_id": "row-session", "pid": 123, "is_task": False,
+                "_completed_session_meta": ("wrong-session", 123, "Wrong", "/wrong"),
+            }]
+            session_info.enrich_files_with_session_names(files)
+            mock_query.assert_called_once_with("row-session")
+            self.assertEqual(files[0]["session_name"], "Queried")
+            self.assertEqual(files[0]["project_workspace"], "/queried")
+
+    @patch("cli_topsailai.session_info.load_project_workspace_lookup")
+    @patch("cli_topsailai.session_info._get_session_info")
+    def test_snapshot_name_wins_but_cached_path_is_preserved(self, mock_query, mock_lookup):
+        """A cached path wins while the completed snapshot name wins over its name."""
+        mock_lookup.return_value = {"s1": "/history"}
+        session_info._SESSION_INFO_CACHE.set("s1", ("Cached Name", "/cached"))
+        files = [{
+            "session_id": "s1", "pid": 123, "is_task": False,
+            "_completed_session_meta": ("s1", 123, "Completed", "/meta"),
+        }]
+        session_info.enrich_files_with_session_names(files)
+        mock_query.assert_not_called()
+        self.assertEqual(files[0]["session_name"], "Completed")
+        self.assertEqual(files[0]["project_workspace"], "/cached")
+
+    @patch("cli_topsailai.session_info.load_project_workspace_lookup")
+    @patch("cli_topsailai.session_info._get_session_info")
+    def test_name_only_cache_still_queries_for_missing_snapshot_path(self, mock_query, mock_lookup):
+        """A name-only cache does not suppress a required workspace lookup."""
+        mock_lookup.return_value = {"s1": "/history"}
+        session_info._SESSION_INFO_CACHE.set("s1", ("Cached Name", None))
+        mock_query.return_value = session_info._LookupResult("Queried Name", "/queried", True)
+        files = [{
+            "session_id": "s1", "pid": 123, "is_task": False,
+            "_completed_session_meta": ("s1", 123, "Completed", None),
+        }]
+        session_info.enrich_files_with_session_names(files)
+        mock_query.assert_called_once_with("s1")
+        self.assertEqual(files[0]["session_name"], "Completed")
+        self.assertEqual(files[0]["project_workspace"], "/queried")
+
+    @patch("cli_topsailai.session_info._is_pid_alive", return_value=True)
+    @patch("cli_topsailai.session_info._get_session_info")
+    def test_repeated_and_running_enrichment_do_not_query_snapshot(self, mock_query, mock_alive):
+        """A complete snapshot remains named through repeated enrichment passes."""
+        files = [{
+            "session_id": "s1", "pid": 123, "is_task": False,
+            "_completed_session_meta": ("s1", 123, "Completed", "/meta"),
+        }]
+        session_info.enrich_files_with_session_names(files)
+        session_info.enrich_files_with_session_names(files)
+        session_info.enrich_running_unnamed_sessions(files)
+        mock_query.assert_not_called()
+        self.assertEqual(files[0]["session_name"], "Completed")
+
+    @patch("cli_topsailai.session_info.load_project_workspace_lookup")
+    @patch("cli_topsailai.session_info._get_session_info")
+    def test_same_session_id_different_snapshot_pids_do_not_pollute_cache(
+        self, mock_query, mock_lookup
+    ):
+        """Separate completed snapshots avoid queries and never populate ID cache."""
+        mock_lookup.return_value = {}
+        files = [
+            {
+                "session_id": "shared",
+                "pid": 101,
+                "is_task": False,
+                "_completed_session_meta": ("shared", 101, "First", "/first"),
+            },
+            {
+                "session_id": "shared",
+                "pid": 202,
+                "is_task": False,
+                "_completed_session_meta": ("shared", 202, "Second", "/second"),
+            },
+        ]
+        session_info.enrich_files_with_session_names(files)
+        mock_query.assert_not_called()
+        self.assertEqual(
+            [(item["session_name"], item["project_workspace"]) for item in files],
+            [("First", "/first"), ("Second", "/second")],
+        )
+
+        ordinary = [{"session_id": "shared", "pid": 303, "is_task": False}]
+        mock_query.return_value = session_info._LookupResult(
+            "Queried", "/queried", True
+        )
+        session_info.enrich_files_with_session_names(ordinary)
+        mock_query.assert_called_once_with("shared")
+        self.assertEqual(ordinary[0]["session_name"], "Queried")
+        self.assertEqual(ordinary[0]["project_workspace"], "/queried")
 if __name__ == "__main__":
     unittest.main()

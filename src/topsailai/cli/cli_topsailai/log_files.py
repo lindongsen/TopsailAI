@@ -336,6 +336,17 @@ def discover_workspace_log_files(
                 name = name.strip() if isinstance(name, str) else None
                 if data.get("status") == "completed" and not name:
                     continue
+                if data.get("status") == "completed" and name:
+                    project_workspace = data.get("project_workspace")
+                    if (
+                        not isinstance(project_workspace, str)
+                        or not project_workspace.strip()
+                        or not os.path.isabs(project_workspace)
+                    ):
+                        project_workspace = None
+                    item["_completed_session_meta"] = (
+                        session_id, pid, name, project_workspace
+                    )
         visible.append(item)
         if on_item is not None:
             on_item(item)
