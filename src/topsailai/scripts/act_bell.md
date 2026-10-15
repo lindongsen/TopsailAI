@@ -39,6 +39,11 @@ harmless.
 ## Behavior
 
 - Plays the configured sound command once when it is available.
-- Falls back to the terminal bell character (`\a`) when the sound command is
-  missing or fails, so exactly one ring is always attempted.
+- When no sound command is set, synthesizes a short 880 Hz tone with `ffplay`,
+  trying the default audio route first and then direct ALSA playback devices
+  discovered from `/dev/snd`. A route is accepted only when `ffplay` does not
+  report an audio-initialization failure; `ffplay` can exit `0` even when audio
+  initialization fails, so the exit code alone is not trusted.
+- Falls back to the terminal bell character (`\a`) when no usable audio route is
+  found, so exactly one ring is always attempted.
 - Exit code `0` means the bell was rung; exit code `1` means invalid usage.

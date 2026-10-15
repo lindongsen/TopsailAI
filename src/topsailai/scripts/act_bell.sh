@@ -20,8 +20,8 @@ ENV_FILE="${EXE_FOLDER}/act_bell.env"
 # Script-owned environment variables.
 SOUND_CMD_ENV="TOPSAILAI_ACT_BELL_SOUND"
 
-# ffplay generates a short sine tone without needing a display or audio files.
-DEFAULT_SOUND_CMD="ffplay -nodisp -autoexit -loglevel error -f lavfi -i sine=frequency=880:duration=0.3"
+# Built-in ffplay tone: a short 880 Hz sine needs no display or audio files.
+FFPLAY_TONE_ARGS=(-nodisp -autoexit -loglevel error -f lavfi -i sine=frequency=880:duration=0.3)
 
 # log_warn prints a diagnostic message to stderr.
 log_warn() {
@@ -73,9 +73,49 @@ load_env() {
   done < "${env_file}"
 }
 
+# alsa_playback_devices lists unique direct ALSA playback devices.
+alsa_playback_devices() {
+  local snd_dir="/dev/snd"
+  local entry name rest card device
+  [[ -d "${snd_dir}" ]] || return 0
+  for entry in "${snd_dir}"/pcmC*D*p; do
+    [[ -e "${entry}" ]] || continue
+    name=$(basename "${entry}")
+    rest="${name#pcmC}"
+    card="${rest%%D*}"
+    device="${rest#*D}"
+    device="${device%p}"
+    [[ "${card}" =~ ^[0-9]+$ && "${device}" =~ ^[0-9]+$ ]] || continue
+    printf 'plughw:%s,%s\n' "${card}" "${device}"
+  done
+}
+
+# play_ffplay plays one ffplay tone and rejects reported audio failures.
+# ffplay can exit 0 even when audio initialization fails, so the exit code
+# alone is not trustworthy; stderr error markers are inspected instead.
+play_ffplay() {
+  local device="$1"
+  local stderr_output
+  if [[ -n "${device}" ]]; then
+    stderr_output=$(env SDL_AUDIODRIVER=alsa AUDIODEV="${device}" \
+      ffplay "${FFPLAY_TONE_ARGS[@]}" 2>&1 >/dev/null) || true
+  else
+    stderr_output=$(ffplay "${FFPLAY_TONE_ARGS[@]}" 2>&1 >/dev/null) || true
+  fi
+  local lowered="${stderr_output,,}"
+  local marker
+  for marker in "couldn't open audio device" "audio open failed" \
+    "failed to open file" "unable to open slave" "device or resource busy"; do
+    if [[ "${lowered}" == *"${marker}"* ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
 # ring_bell plays the configured sound command or falls back to the terminal bell.
 ring_bell() {
-  local sound_cmd="${!SOUND_CMD_ENV:-${DEFAULT_SOUND_CMD}}"
+  local sound_cmd="${!SOUND_CMD_ENV:-}"
   if [[ -n "${sound_cmd}" ]]; then
     local -a cmd_parts
     read -r -a cmd_parts <<< "${sound_cmd}"
@@ -87,7 +127,21 @@ ring_bell() {
     else
       log_warn "sound command '${cmd_parts[0]}' not found, falling back to terminal bell"
     fi
+    printf '\a'
+    return 0
   fi
+
+  # No explicit command: try the default route, then direct ALSA devices.
+  if play_ffplay ""; then
+    return 0
+  fi
+  local device
+  while IFS= read -r device; do
+    if play_ffplay "${device}"; then
+      return 0
+    fi
+  done < <(alsa_playback_devices)
+  log_warn "no usable audio output found, falling back to terminal bell"
   printf '\a'
   return 0
 }
