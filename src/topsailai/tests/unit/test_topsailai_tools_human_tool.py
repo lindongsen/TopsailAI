@@ -4,9 +4,14 @@ Unit tests for tools/human_tool.py
 Author: DawsonLin
 """
 
+import json
 import os
+import subprocess
 import sys
 import unittest
+from pathlib import Path
+
+import pytest
 from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, '/TopsailAI/src/topsailai')
@@ -26,10 +31,13 @@ class TestModuleConstants(unittest.TestCase):
         """ask_decision must not declare a hand-written TOOLS_INFO schema."""
         self.assertFalse(hasattr(human_tool, 'TOOLS_INFO'))
 
-    def test_flag_tool_enabled_is_true(self):
-        """FLAG_TOOL_ENABLED must be boolean True."""
-        self.assertIsInstance(human_tool.FLAG_TOOL_ENABLED, bool)
-        self.assertTrue(human_tool.FLAG_TOOL_ENABLED)
+    def test_runtime_callbacks_keep_priority_when_interactive_mode_is_disabled(self):
+        """Either runtime callback remains usable independently of registration."""
+        reader = MagicMock()
+        with patch.dict(os.environ, {'TOPSAILAI_INTERACTIVE_MODE': '0'}):
+            self.assertTrue(human_tool._has_usable_input_source(reader, None))
+            self.assertTrue(human_tool._has_usable_input_source(None, reader))
+            self.assertFalse(human_tool._has_usable_input_source(None, None))
 
     def test_prompt_describes_blocked_task_usage(self):
         """PROMPT must describe blocked-task decision usage."""
@@ -43,6 +51,66 @@ class TestModuleConstants(unittest.TestCase):
         self.assertIn('always accepted', human_tool.PROMPT)
         self.assertNotIn('invalid_answer', human_tool.ask_decision.__doc__)
         self.assertNotIn('invalid_answer', human_tool.PROMPT)
+
+
+@pytest.mark.parametrize(
+    "mode,explicit_enable,expected_flag,expected_registered",
+    [
+        (None, None, True, True),
+        ("1", None, True, True),
+        ("0", None, False, False),
+        ("0", "human_tool", False, True),
+        ("0", "human", False, True),
+        ("0", "*", False, True),
+    ],
+)
+def test_flag_and_loader_registration(
+    tmp_path, mode, explicit_enable, expected_flag, expected_registered
+):
+    """Fresh imports apply the mode gate and preserve explicit loader overrides."""
+    project = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    for key in (
+        "TOPSAILAI_INTERACTIVE_MODE", "TOPSAILAI_ENABLED_TOOLS", "ENABLED_TOOLS",
+        "TOPSAILAI_DISABLED_TOOLS", "DISABLED_TOOLS",
+    ):
+        env.pop(key, None)
+    env.update(
+        TOPSAILAI_HOME=str(tmp_path),
+        TMPDIR=str(tmp_path),
+        PYTHONDONTWRITEBYTECODE="1",
+        PYTHONPATH=os.pathsep.join((str(project.parent), str(project))),
+    )
+    if mode is not None:
+        env["TOPSAILAI_INTERACTIVE_MODE"] = mode
+    if explicit_enable is not None:
+        env["TOPSAILAI_ENABLED_TOOLS"] = explicit_enable
+    script = """
+import json
+from topsailai.tools import human_tool
+from topsailai.tools.base import init as loader
+key = "human_tool" + loader.CONN_CHAR + "ask_decision"
+print("REGISTRATION=" + json.dumps({
+    "flag": human_tool.FLAG_TOOL_ENABLED,
+    "enabled": loader.is_tool_enabled(human_tool),
+    "registered": loader.TOOLS.get(key) is human_tool.ask_decision,
+    "present": key in loader.TOOLS,
+}))
+"""
+    result = subprocess.run(
+        [human_tool.env_tool.resolve_python_interpreter(), "-c", script],
+        cwd=tmp_path, env=env, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    records = [line for line in result.stdout.splitlines()
+               if line.startswith("REGISTRATION=")]
+    assert len(records) == 1, result.stdout + result.stderr
+    assert json.loads(records[0].split("=", 1)[1]) == {
+        "flag": expected_flag,
+        "enabled": expected_registered,
+        "registered": expected_registered,
+        "present": expected_registered,
+    }
 
 
 class TestConfigHelpers(unittest.TestCase):
