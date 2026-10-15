@@ -325,3 +325,178 @@ def test_failed_startup_cleanup_preserves_recovery_custody(inputs, monkeypatch, 
     assert raised.value is expected and module._owner is None
     assert expected.summary_hooks_owner is primary.summary_hooks_owner
     assert expected.summary_hooks_owner.close().fully_closed
+
+
+
+def test_complete_legacy_triple_is_forwarded_without_replacement(inputs, monkeypatch):
+    """The legacy triple still acquires exactly one owner and injects its executor."""
+    from topsailai.workspace import agent_shell
+
+    captured = []
+
+    class Boundary(Exception):
+        """Stop after the context runtime receives the legacy executor."""
+
+    def context(**kwargs):
+        captured.append(kwargs)
+        raise Boundary()
+
+    acquisition = Mock()
+    legacy_executor = object()
+    acquisition.return_value.executor = legacy_executor
+    monkeypatch.setattr(agent_shell, "ContextRuntimeData", context)
+    monkeypatch.setattr(
+        "topsailai.workspace.summary_hooks_owner.acquire_summary_hooks_owner",
+        acquisition,
+    )
+
+    with pytest.raises(Boundary):
+        agent_shell._get_agent_chat_impl(
+            summary_preparation_request=inputs["request"],
+            summary_trust_policy=inputs["trust_policy"],
+            summary_hooks_temp_root=inputs["temp_root"],
+        )
+
+    acquisition.assert_called_once_with(
+        request=inputs["request"],
+        trust_policy=inputs["trust_policy"],
+        temp_root=inputs["temp_root"],
+    )
+    assert captured[0]["summary_hooks_executor"] is legacy_executor
+    assert captured[0]["summary_hooks_executor"] is not acquisition.return_value
+
+
+def test_agent_chat_finalization_preserves_real_application_ownership(inputs, monkeypatch):
+    """Real AgentChat finalization leaves the application graph usable and owned."""
+    from topsailai.workspace import agent_shell
+    from topsailai.workspace.agent import agent_shell_base
+    from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
+    from topsailai.workspace.hooks_application import HooksApplication
+    from topsailai.hooks.application_access import get_hook_executor
+    from topsailai.hooks.configured_executor import HookOperation
+
+    from tests.integration.test_hooks_application_lifecycle import _prepared_inputs
+    request, trust_policy, valid_point = _prepared_inputs(Path(inputs["temp_root"]) / "prepared")
+    application = HooksApplication(
+        request=request,
+        trust_policy=trust_policy,
+        temp_root=str(Path(inputs["temp_root"]) / "prepared" / "runtime"),
+    )
+    stages = {
+        "access": Mock(wraps=application.access.stop_admission),
+        "registrar": Mock(wraps=application.registrar.stop_admission),
+        "scope": Mock(wraps=application.scope.close),
+        "runtime": Mock(wraps=application.runtime.close),
+    }
+    application.access.stop_admission = stages["access"]
+    application.registrar.stop_admission = stages["registrar"]
+    application.scope.close = stages["scope"]
+    application.runtime.close = stages["runtime"]
+    captured = []
+    real_context = ContextRuntimeData
+
+    def context_runtime(**kwargs):
+        """Record the exact executor while constructing the real context object."""
+        assert kwargs["summary_hooks_executor"] is application.executor
+        context = real_context(**kwargs)
+        captured.append(context)
+        return context
+
+    fake_model = SimpleNamespace(max_tokens=3000, temperature=0.3)
+    fake_agent = SimpleNamespace(
+        runtime=SimpleNamespace(llm_model=fake_model),
+        agent_name="test",
+        close=Mock(),
+        hooks_after_init_prompt=[],
+        hooks_after_new_session=[],
+        hooks_pre_chat=[],
+        append_message=Mock(),
+    )
+    monkeypatch.setattr(agent_shell, "ContextRuntimeData", context_runtime)
+    monkeypatch.setattr(agent_shell, "get_ai_agent", Mock(return_value=fake_agent))
+    monkeypatch.setattr(agent_shell, "record_project_history", Mock())
+    monkeypatch.setattr(agent_shell, "create_session_meta", Mock())
+    monkeypatch.setattr(agent_shell, "cleanup_session_meta_files", Mock())
+    monkeypatch.setattr(agent_shell_base, "update_session_meta_status", Mock())
+    try:
+        with application:
+            chat = agent_shell.get_agent_chat(
+                summary_hooks_executor=application.executor,
+                need_project_workspace_lock=False,
+                need_input_message=False,
+                session_id="",
+            )
+            assert captured and captured[0].summary_hooks_executor is application.executor
+            chat._run = Mock(return_value="done")
+            assert chat.run() == "done"
+            fake_agent.close.assert_called_once()
+
+            access = get_hook_executor()
+            point = valid_point
+            payload = {"count": 7}
+            before = application.close_result
+            report = access.dispatch(
+                point,
+                payload=payload,
+                operation=HookOperation("post-finalization"),
+            )
+            assert report.rejection_reason is None
+            assert len(report.outcomes) == 1
+            assert report.outcomes[0].status == "success"
+            assert application.close_result is before
+            assert not application.closing
+            assert not application.scope.closed
+            assert stages["access"].call_count == 0
+            assert stages["registrar"].call_count == 0
+            assert stages["scope"].call_count == 0
+            assert stages["runtime"].call_count == 0
+
+        assert stages["access"].call_count == 1
+        assert stages["registrar"].call_count == 1
+        assert stages["scope"].call_count == 1
+        assert stages["runtime"].call_count == 1
+        assert application.close_result.fully_closed
+        cached = application.close()
+        assert cached is application.close_result
+        assert stages["access"].call_count == 1
+        assert stages["registrar"].call_count == 1
+        assert stages["scope"].call_count == 1
+        assert stages["runtime"].call_count == 1
+    finally:
+        if not application.close_result.fully_closed:
+            application.close()
+
+def test_real_factory_constructs_context_runtime_with_exact_executor(inputs, monkeypatch):
+    """The real factory path constructs ContextRuntimeData with the application executor."""
+    from topsailai.workspace import agent_shell
+    from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
+    from topsailai.workspace.hooks_application import HooksApplication
+
+    application = HooksApplication(**inputs)
+    captured = []
+
+    class FactoryBoundary(Exception):
+        """Stop immediately after the real ContextRuntimeData boundary."""
+
+    def context_runtime(**kwargs):
+        captured.append(kwargs)
+        assert kwargs["summary_hooks_executor"] is application.executor
+        ContextRuntimeData(**kwargs)
+        raise FactoryBoundary()
+
+    monkeypatch.setattr(agent_shell, "ContextRuntimeData", context_runtime)
+    try:
+        with application:
+            with pytest.raises(FactoryBoundary):
+                agent_shell.get_agent_chat(
+                    summary_hooks_executor=application.executor,
+                    need_project_workspace_lock=False,
+                    need_input_message=False,
+                    session_id="",
+                )
+            assert len(captured) == 1
+            assert captured[0]["summary_hooks_executor"] is application.executor
+            assert application.close_result.fully_closed is False
+    finally:
+        if not application.close_result.fully_closed:
+            application.close()

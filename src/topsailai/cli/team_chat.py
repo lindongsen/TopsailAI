@@ -15,12 +15,18 @@ Environment Variables:
     SYSTEM_PROMPT: Optional file path or content for system prompt
 """
 
+from __future__ import annotations
+
 import sys
+from typing import TYPE_CHECKING
 import os
 
 import _import_topsailai
 
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
+
+if TYPE_CHECKING:
+    from topsailai.hooks.configured_contracts import ConfiguredTrustPolicy, SummaryPreparationRequest
 
 from topsailai.ai_base.prompt_base import ROLE_USER
 from topsailai.ai_team.member_agent import (
@@ -33,6 +39,7 @@ from topsailai.utils import (
     json_tool,
 )
 from topsailai.workspace.llm_shell import get_llm_chat
+from topsailai.workspace.hooks_application import HooksApplication
 
 
 def format_messages(messages):
@@ -68,59 +75,61 @@ def format_messages(messages):
     return messages
 
 
-def main():
+def main(*, request: SummaryPreparationRequest | None = None, trust_policy: ConfiguredTrustPolicy | None = None, temp_root: str | None = None):
     """
-    Main entry point for team chat functionality.
+        Main entry point for team chat functionality.
     
-    Initializes an LLM-based chat session with a team member, processes
-    the conversation, and optionally saves the result to a file.
+        Initializes an LLM-based chat session with a team member, processes
+        the conversation, and optionally saves the result to a file.
     
-    The function:
-    1. Gets the current team member name
-    2. Creates a member prompt with output requirements
-    3. Initializes the LLM chat with appropriate settings
-    4. Processes the chat response and optionally saves it
+        The function:
+        1. Gets the current team member name
+        2. Creates a member prompt with output requirements
+        3. Initializes the LLM chat with appropriate settings
+        4. Processes the chat response and optionally saves it
     
-    Environment Variables Used:
-        TOPSAILAI_SYMBOL_STARTSWITH_ANSWER: Optional prefix for answer output
-        TOPSAILAI_SAVE_RESULT_TO_FILE: Optional file path to save the result
-    Returns:
-        None
+        Environment Variables Used:
+            TOPSAILAI_SYMBOL_STARTSWITH_ANSWER: Optional prefix for answer output
+            TOPSAILAI_SAVE_RESULT_TO_FILE: Optional file path to save the result
+        Returns:
+            None
 
-    Raises:
-        Exception: Any exceptions from chat processing are handled internally
-    """
-    # team
-    team_member_name = get_member_name()
+        Raises:
+            Exception: Any exceptions from chat processing are handled internally
+        """
+    with HooksApplication(request=request, trust_policy=trust_policy, temp_root=temp_root) as application:
 
-    # resolve whether to prepend the symbol start prefix (default off)
-    enable_symbol_start = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER")
+        # team
+        team_member_name = get_member_name()
 
-    # canonical Member prompt plus chat-specific output requirement
-    system_prompt = get_system_prompt(
-        team_member_name,
-        team_prompt_precomposed=is_team_prompt_precomposed_launch(),
-    )
-    output_prompt = "\n# Output Required\nDirectly output the content without any formatting.\n"
-    llm_chat = get_llm_chat(
-        system_prompt=system_prompt,
-        more_prompt=output_prompt,
-        need_input_message=False,
-        need_print_session=env_tool.is_debug_mode(),
-        func_formatter_messages=format_messages,
-    )
-    answer = llm_chat.chat()
-    if answer:
-        if enable_symbol_start:
-            symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER") or (f"From '{team_member_name}':\n" if team_member_name else "")
-            if symbol_start and not answer.startswith(symbol_start.strip()):
-                answer = symbol_start + answer
-        file_path_result = os.getenv("TOPSAILAI_SAVE_RESULT_TO_FILE")
-        if file_path_result:
-            with open(file_path_result, encoding='utf-8', mode='w') as fd:
-                fd.write(answer)
+        # resolve whether to prepend the symbol start prefix (default off)
+        enable_symbol_start = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER")
 
-    return
+        # canonical Member prompt plus chat-specific output requirement
+        system_prompt = get_system_prompt(
+            team_member_name,
+            team_prompt_precomposed=is_team_prompt_precomposed_launch(),
+        )
+        output_prompt = "\n# Output Required\nDirectly output the content without any formatting.\n"
+        llm_chat = get_llm_chat(
+            system_prompt=system_prompt,
+            more_prompt=output_prompt,
+            need_input_message=False,
+            need_print_session=env_tool.is_debug_mode(),
+            func_formatter_messages=format_messages,
+        )
+        answer = llm_chat.chat()
+        if answer:
+            if enable_symbol_start:
+                symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER") or (f"From '{team_member_name}':\n" if team_member_name else "")
+                if symbol_start and not answer.startswith(symbol_start.strip()):
+                    answer = symbol_start + answer
+            file_path_result = os.getenv("TOPSAILAI_SAVE_RESULT_TO_FILE")
+            if file_path_result:
+                with open(file_path_result, encoding='utf-8', mode='w') as fd:
+                    fd.write(answer)
+
+        return
 
 
 if __name__ == "__main__":

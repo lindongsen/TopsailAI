@@ -23,47 +23,56 @@ Email: lin_dongsen@126.com
 Created: 2025-10-19
 """
 
+from __future__ import annotations
+
 import os
 import sys
+from typing import TYPE_CHECKING
 
 import _import_topsailai
 
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
 
+if TYPE_CHECKING:
+    from topsailai.hooks.configured_contracts import ConfiguredTrustPolicy, SummaryPreparationRequest
+
 from topsailai.utils import env_tool
 from topsailai.workspace.llm_shell import get_llm_chat
+from topsailai.workspace.hooks_application import HooksApplication
 
 
-def main():
+def main(*, request: SummaryPreparationRequest | None = None, trust_policy: ConfiguredTrustPolicy | None = None, temp_root: str | None = None):
     """
-    Main entry point for single-turn LLM chat.
+        Main entry point for single-turn LLM chat.
 
-    This function creates and runs a single-turn chat session directly with
-    an LLM (Language Model). It provides a simpler interface compared to
-    the agent chat, without tool usage capabilities.
+        This function creates and runs a single-turn chat session directly with
+        an LLM (Language Model). It provides a simpler interface compared to
+        the agent chat, without tool usage capabilities.
 
-    The function:
-    1. Gets an LLM chat instance
-    2. If not in debug mode, prints the first message and ">>> answer:" prompt
-    3. Runs the chat for one interaction
-    4. Prints a blank line after completion
+        The function:
+        1. Gets an LLM chat instance
+        2. If not in debug mode, prints the first message and ">>> answer:" prompt
+        3. Runs the chat for one interaction
+        4. Prints a blank line after completion
 
-    Returns:
-        None: The LLM's response is printed to stdout during execution
+        Returns:
+            None: The LLM's response is printed to stdout during execution
 
-    Note:
-        - This is a single-turn chat
-        - No tools are available in this mode
-        - Session history can be maintained via SESSION_ID environment variable
-        - In debug mode, the first message is not printed
-    """
-    llm_chat = get_llm_chat(need_input_message=False, need_print_session=False)
-    if not env_tool.is_debug_mode() \
-        and env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CLI_NEED_TIPS", default=True):
-        print(f">>> message:\n{llm_chat.first_message}")
-        print(">>> answer:")
-    llm_chat.chat()
-    print()
+        Note:
+            - This is a single-turn chat
+            - No tools are available in this mode
+            - Session history can be maintained via SESSION_ID environment variable
+            - In debug mode, the first message is not printed
+        """
+    with HooksApplication(request=request, trust_policy=trust_policy, temp_root=temp_root) as application:
+
+        llm_chat = get_llm_chat(need_input_message=False, need_print_session=False)
+        if not env_tool.is_debug_mode() \
+            and env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CLI_NEED_TIPS", default=True):
+            print(f">>> message:\n{llm_chat.first_message}")
+            print(">>> answer:")
+        llm_chat.chat()
+        print()
 
 if __name__ == "__main__":
     main()

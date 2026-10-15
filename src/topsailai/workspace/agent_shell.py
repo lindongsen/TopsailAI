@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from topsailai.hooks.configured_contracts import SummaryPreparationRequest, ConfiguredTrustPolicy
+    from topsailai.hooks.configured_executor import ConfiguredHookExecutor
 
 from topsailai.utils import (
     env_tool,
@@ -163,6 +164,7 @@ def _get_agent_chat_impl(
         summary_preparation_request: "SummaryPreparationRequest | None" = None,
         summary_trust_policy: "ConfiguredTrustPolicy | None" = None,
         summary_hooks_temp_root: str | None = None,
+        summary_hooks_executor: "ConfiguredHookExecutor | None" = None,
         agent_startup_state: AgentStartupState | None = None,
     ) -> AgentChat:
     """Internal implementation of get_agent_chat()."""
@@ -170,7 +172,9 @@ def _get_agent_chat_impl(
         summary_trust_policy is not None, summary_hooks_temp_root is not None)
     if any(supplied) and not all(supplied):
         raise ValueError("summary Hooks inputs must be supplied together")
-    summary_executor = None
+    if summary_hooks_executor is not None and any(supplied):
+        raise ValueError("summary Hook executor cannot be combined with preparation inputs")
+    summary_executor = summary_hooks_executor
     if all(supplied):
         from topsailai.workspace.summary_hooks_owner import acquire_summary_hooks_owner
         summary_executor = acquire_summary_hooks_owner(
@@ -346,6 +350,7 @@ def get_agent_chat(
         summary_preparation_request: "SummaryPreparationRequest | None" = None,
         summary_trust_policy: "ConfiguredTrustPolicy | None" = None,
         summary_hooks_temp_root: str | None = None,
+        summary_hooks_executor: "ConfiguredHookExecutor | None" = None,
     ) -> AgentChat:
     """Create and return an AgentChat instance with all required components.
 
@@ -375,6 +380,8 @@ def get_agent_chat(
         summary_trust_policy is not None, summary_hooks_temp_root is not None)
     if any(supplied) and not all(supplied):
         raise ValueError("summary Hooks inputs must be supplied together")
+    if summary_hooks_executor is not None and any(supplied):
+        raise ValueError("summary Hook executor cannot be combined with preparation inputs")
     startup_state = AgentStartupState()
     lock_ctx = ctxm_project_workspace_lock if need_project_workspace_lock else ctxm_void
     try:
@@ -398,6 +405,7 @@ def get_agent_chat(
                 summary_preparation_request=summary_preparation_request,
                 summary_trust_policy=summary_trust_policy,
                 summary_hooks_temp_root=summary_hooks_temp_root,
+                summary_hooks_executor=summary_hooks_executor,
                 agent_startup_state=startup_state,
             )
     except BaseException:
