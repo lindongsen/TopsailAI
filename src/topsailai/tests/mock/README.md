@@ -59,6 +59,18 @@ LLM_RESPONSE_STREAM=0
 
 Requests with `stream=true` return an explicit `400` error by default. In-process tests may opt in by constructing `MockServerConfig(stream_chunks=(...))`; each configured string is emitted as one OpenAI-compatible SSE content chunk, followed by a terminal usage chunk and `[DONE]`. The command-line interface remains non-streaming by default.
 
+## Deterministic Transport Timing
+
+In-process tests may delay transport phases per request without changing default behavior:
+
+- `response_header_delays` — per-request seconds to wait before sending the SSE response headers.
+- `first_chunk_delays` — per-request seconds to wait after headers before the first SSE item.
+- `lifecycle_capacity` — bounded number of per-request lifecycle records retained for `/debug/state`.
+
+Each accepted request has a bounded `RequestHandle` available through `server.lifecycle_capture.request_handle(number)`. An already-owned handle remains observable even after bounded history eviction; number-based lookup is bounded, and acceptance waits are scoped to the current reset epoch. Tests can use `wait_for_request(number)`, `handle.wait_for_phase("headers" | "first_item")`, and `handle.release_delay()` or `server.release_delay(number)` to synchronize and release configured waits. `DELETE /debug/state` returns 409 while a completion handler is active and does not reset its ordinal. `handle.response_finished` marks response work return, `handle.connection_closed` marks server-local socket shutdown, and `handle.wait_for_thread_exit(timeout)` confirms exit only after an external join; none prove the peer observed closure. `stop_handlers(timeout)` releases delays, shuts down owned sockets, joins workers, and raises if any worker remains alive. Direct-script and package-module invocation are both supported.
+
+`/debug/state` also exposes `lifecycle_records` (accepted, headers sent, first item sent, handler exit, disconnect) and `dropped_lifecycle_count`. Unset delay configuration keeps every existing test immediate.
+
 ## Verify Cache Reuse
 
 Send one request, then send another request with the same leading messages and an appended suffix. The second response reports non-zero `cached_tokens`. Change or insert a message before the previously matching prefix to observe a reduced or zero hit. Query `/debug/state` to inspect `cached_messages`, `cached_tokens`, and `prompt_tokens` for every retained request.
