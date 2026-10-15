@@ -1054,7 +1054,7 @@ def _print_workspace_table() -> None:
     entering interactive mode.
     """
     from cli_topsailai.formatting import print_header, print_table
-    from cli_topsailai.log_files import discover_log_files
+    from cli_topsailai.log_files import discover_workspace_log_files as discover_log_files
     from cli_topsailai.paths import get_topsailai_home
     from cli_topsailai.session_info import enrich_files_with_session_names
 
@@ -1115,7 +1115,7 @@ def _workspace_json_item(file_info: dict, index: int) -> dict:
 
 def _print_workspace_json() -> None:
     """Print the workspace task list as one JSON document."""
-    from cli_topsailai.log_files import discover_log_files
+    from cli_topsailai.log_files import discover_workspace_log_files as discover_log_files
     from cli_topsailai.paths import get_topsailai_home
     from cli_topsailai.session_info import enrich_files_with_session_names
 
@@ -1520,7 +1520,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     from cli_topsailai.formatting import print_header, print_table
     from cli_topsailai.help_text import print_help, print_instruction_help, print_scopes
     from cli_topsailai.history import HistoryManager, load_readline_history
-    from cli_topsailai.log_files import discover_log_files
+    from cli_topsailai.log_files import discover_workspace_log_files as discover_log_files
     from cli_topsailai.paths import get_topsailai_home
     from cli_topsailai.process import cleanup_children
     from cli_topsailai.project_scope import (

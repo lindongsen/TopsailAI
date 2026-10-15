@@ -302,6 +302,46 @@ def discover_log_files(
     return log_files
 
 
+def discover_workspace_log_files(
+    task_dir: str,
+    on_item: Optional[Callable[[dict], None]] = None,
+) -> List[dict]:
+    """Filter completed unnamed sessions using exact metadata before display."""
+    from cli_topsailai.session_meta import SessionMetaError, read_session_meta
+
+    files = discover_log_files(task_dir)
+    session_candidates = {}
+    for item in files:
+        if not item.get("is_task"):
+            session_candidates.setdefault(item.get("session_id"), set()).add(item.get("pid"))
+    home = os.path.dirname(os.path.dirname(task_dir))
+    metadata = {}
+    visible = []
+    for item in files:
+        session_id = item.get("session_id")
+        pid = item.get("session_pid")
+        # Generic discovery may guess a parent when multiple session PIDs exist.
+        if item.get("is_task") and len(session_candidates.get(session_id, ())) != 1:
+            pid = None
+        key = (session_id, pid)
+        if session_id not in (None, "", "(temp)") and type(pid) is int:
+            if key not in metadata:
+                try:
+                    metadata[key] = read_session_meta(home, session_id, pid).data
+                except SessionMetaError:
+                    metadata[key] = None
+            data = metadata[key]
+            if data is not None:
+                name = data.get("session_name")
+                name = name.strip() if isinstance(name, str) else None
+                if data.get("status") == "completed" and not name:
+                    continue
+        visible.append(item)
+        if on_item is not None:
+            on_item(item)
+    return visible
+
+
 def get_file_pid(filepath: str) -> Optional[int]:
     """
     Extract the PID associated with a stdout/stderr log file.
