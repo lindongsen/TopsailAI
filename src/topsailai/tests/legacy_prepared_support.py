@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from topsailai.hooks.configured_contracts import (
-    ConfiguredHookPoint, ConfiguredHooks, ConfiguredScript, SummaryPreparationRequest,
+    ConfiguredHookPoint, ConfiguredHooks, ConfiguredScript, ConfiguredPreparationRequest,
 )
 from topsailai.hooks.configuration import HookSettings
 from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
@@ -19,7 +19,7 @@ def build_summary_preparation_request(
     *, points_root: Path | None = None, settings: HookSettings | None = None,
     disabled_hook_names: frozenset[str] = frozenset(),
     script_platform_policy: ExecutablePlatformPolicy | None = None,
-) -> SummaryPreparationRequest:
+) -> ConfiguredPreparationRequest:
     """Bind each phase-one point directory without discovering or authorizing files."""
     if script_platform_policy is not None and (
         type(script_platform_policy) is not ExecutablePlatformPolicy
@@ -38,7 +38,7 @@ def build_summary_preparation_request(
         script=_summary_script_source(points_root, point.name, script_platform_policy, disabled_hook_names),
     ) for point in PHASE_ONE_DECLARATIONS),
         settings=HookSettings() if settings is None else settings)
-    return SummaryPreparationRequest(configuration, SUMMARY_CATALOG, disabled_hook_names)
+    return ConfiguredPreparationRequest(configuration, SUMMARY_CATALOG, disabled_hook_names)
 
 
 def _summary_script_source(points_root, point_name, policy, disabled_names):

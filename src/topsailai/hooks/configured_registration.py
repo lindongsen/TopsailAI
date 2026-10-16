@@ -117,11 +117,11 @@ class ConfiguredHookRegistrar:
     @classmethod
     def from_prepared(cls, runtime, scope, request, *, cancellation=None):
         """Publish an explicit catalog-owned request without a legacy bootstrap path."""
-        from topsailai.hooks.configured_contracts import SummaryPreparationRequest
-        from topsailai.hooks.configured_runtime import register_summary_prepared
+        from topsailai.hooks.configured_contracts import ConfiguredPreparationRequest
+        from topsailai.hooks.configured_runtime import register_prepared_points
 
-        if type(request) is not SummaryPreparationRequest:
-            raise ValueError("invalid summary preparation request")
+        if type(request) is not ConfiguredPreparationRequest:
+            raise ValueError("invalid configured preparation request")
         registrar = cls.__new__(cls)
         registrar._runtime = runtime
         registrar._scope = scope
@@ -131,7 +131,7 @@ class ConfiguredHookRegistrar:
         registrar._reloading = False
         registrar._bindings = {}
         registrar._cells = {}
-        registrar._prepared_result = register_summary_prepared(runtime, request, scope,
+        registrar._prepared_result = register_prepared_points(runtime, request, scope,
             cancellation=cancellation)
         for item in registrar._prepared_result.dispositions:
             ready = item.kind == "registered"

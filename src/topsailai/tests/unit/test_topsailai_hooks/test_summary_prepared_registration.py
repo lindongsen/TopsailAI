@@ -4,10 +4,10 @@ import pytest
 from pathlib import Path
 
 from topsailai.hooks import ConfiguredHookPoint, ConfiguredHooks, ConfiguredTrustPolicy, HookSettings
-from topsailai.hooks.configured_contracts import SummaryPreparationRequest
+from topsailai.hooks.configured_contracts import ConfiguredPreparationRequest
 from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
 from topsailai.hooks.configured_preparation import prepare_private
-from topsailai.hooks.configured_runtime import register_summary_prepared
+from topsailai.hooks.configured_runtime import register_prepared_points
 from tests.summary_catalog_support import SUMMARY_CATALOG, PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
 from topsailai.tests.unit.test_topsailai_hooks.test_configured_preparation import secure_test_root, _runtime, _assertion
 
@@ -35,7 +35,7 @@ def test_real_original_capture_registration_and_retirement(secure_test_root, mon
     try:
         monkeypatch.setattr(runtime, "register_configured", lambda *a, **k: pytest.fail("legacy registration"))
         registrar = ConfiguredHookRegistrar.from_prepared(runtime, scope,
-            SummaryPreparationRequest(_configuration(point, sources), SUMMARY_CATALOG))
+            ConfiguredPreparationRequest(_configuration(point, sources), SUMMARY_CATALOG))
         assert registrar.dispositions[0].kind == "registered", registrar.dispositions
         assert registrar.ensure_registered(point.name).ready
         _, owner = runtime._registry.configured_plan(scope.scope_id, point.name)
@@ -55,8 +55,8 @@ def test_phase_two_rejected_before_discovery(secure_test_root, monkeypatch, poin
     monkeypatch.setattr("topsailai.hooks.configured_preparation._build_work_sequence",
         lambda *a: pytest.fail("discovery"))
     try:
-        result = register_summary_prepared(runtime,
-            SummaryPreparationRequest(_configuration(point, sources), SUMMARY_CATALOG), scope)
+        result = register_prepared_points(runtime,
+            ConfiguredPreparationRequest(_configuration(point, sources), SUMMARY_CATALOG), scope)
         assert result.dispositions[0].reason == "catalog_rejected"
     finally:
         runtime.close()
@@ -73,8 +73,8 @@ def test_disabled_and_invalid_entry_are_distinct(secure_test_root):
     config = ConfiguredHooks(tuple(ConfiguredHookPoint(p.name, p.definition, module_folder=sources)
         for p in (first, second)), HookSettings())
     try:
-        result = register_summary_prepared(runtime,
-            SummaryPreparationRequest(config, SUMMARY_CATALOG, frozenset({first.name})), scope)
+        result = register_prepared_points(runtime,
+            ConfiguredPreparationRequest(config, SUMMARY_CATALOG, frozenset({first.name})), scope)
         assert [item.kind for item in result.dispositions] == [
             "disabled_by_configuration", "unavailable_preparation_failure"]
         assert result.dispositions[1].reason == "binding_conflict"
@@ -137,7 +137,7 @@ def test_real_module_then_script_dispatch(secure_test_root, monkeypatch):
         module_folder=modules, module_args=("u4_real",), script=ConfiguredScript(script, ExecutablePlatformPolicy("posix", allowed_interpreters=(str(executable),)))),), HookSettings())
     try:
         registrar = ConfiguredHookRegistrar.from_prepared(runtime, scope,
-            SummaryPreparationRequest(config, SUMMARY_CATALOG))
+            ConfiguredPreparationRequest(config, SUMMARY_CATALOG))
         assert registrar.dispositions[0].kind == "registered", registrar.dispositions
         executor = ConfiguredHookExecutor(runtime, scope, registrar, SUMMARY_CATALOG)
         events = []
@@ -178,7 +178,7 @@ def test_valid_sibling_survives_failed_point(secure_test_root):
     config = ConfiguredHooks((ConfiguredHookPoint(first.name, first.definition, module_folder=broken),
         ConfiguredHookPoint(second.name, second.definition, module_folder=valid)), HookSettings())
     try:
-        result = register_summary_prepared(runtime, SummaryPreparationRequest(config, SUMMARY_CATALOG), scope)
+        result = register_prepared_points(runtime, ConfiguredPreparationRequest(config, SUMMARY_CATALOG), scope)
         assert [item.kind for item in result.dispositions] == ["unavailable_preparation_failure", "registered"]
         assert runtime._registry.configured_plan(scope.scope_id, first.name)[1] is None
         assert runtime._registry.configured_plan(scope.scope_id, second.name)[1] is not None
@@ -194,17 +194,17 @@ def test_duplicate_and_replacement_settle_exact_aggregates(secure_test_root):
     runtime, scope = _runtime(sources, root)
     _trust(runtime, source)
     point = PHASE_ONE_DECLARATIONS[0]
-    request = SummaryPreparationRequest(_configuration(point, sources), SUMMARY_CATALOG)
+    request = ConfiguredPreparationRequest(_configuration(point, sources), SUMMARY_CATALOG)
     try:
-        assert register_summary_prepared(runtime, request, scope).dispositions[0].kind == "registered"
+        assert register_prepared_points(runtime, request, scope).dispositions[0].kind == "registered"
         _, first = runtime._registry.configured_plan(scope.scope_id, point.name)
         aggregate = first._candidate._capture_owner._ownership
-        assert register_summary_prepared(runtime, request, scope).dispositions[0].kind == "registered"
+        assert register_prepared_points(runtime, request, scope).dispositions[0].kind == "registered"
         assert runtime._registry.configured_plan(scope.scope_id, point.name)[1] is first
         assert aggregate.state == "transferred"
         source.write_text("def main(context):\n    return 2\n")
         _trust(runtime, source)
-        assert register_summary_prepared(runtime, request, scope).dispositions[0].kind == "registered"
+        assert register_prepared_points(runtime, request, scope).dispositions[0].kind == "registered"
         assert runtime._registry.configured_plan(scope.scope_id, point.name)[1] is not first
         assert aggregate.state == "closed"
     finally:
@@ -226,8 +226,8 @@ def test_publication_interrupt_retains_candidate(secure_test_root, monkeypatch, 
     monkeypatch.setattr(runtime._registry, "publish_hook_point", interrupt)
     try:
         with pytest.raises(interrupt_type) as caught:
-            register_summary_prepared(runtime,
-                SummaryPreparationRequest(_configuration(PHASE_ONE_DECLARATIONS[0], sources), SUMMARY_CATALOG), scope)
+            register_prepared_points(runtime,
+                ConfiguredPreparationRequest(_configuration(PHASE_ONE_DECLARATIONS[0], sources), SUMMARY_CATALOG), scope)
         assert caught.value is interruption
         candidate = caught.value.recovery_owner
         assert candidate._capture_owner._ownership.state == "transferred"
@@ -257,8 +257,8 @@ def test_rejected_publication_pending_cleanup_is_recoverable(secure_test_root, m
         return ArtifactDisposeResult(False, False, True, ("cleanup_pending",))
     monkeypatch.setattr(_PreparedCaptureOwner, "close", pending)
     try:
-        result = register_summary_prepared(runtime,
-            SummaryPreparationRequest(_configuration(PHASE_ONE_DECLARATIONS[0], sources), SUMMARY_CATALOG), scope)
+        result = register_prepared_points(runtime,
+            ConfiguredPreparationRequest(_configuration(PHASE_ONE_DECLARATIONS[0], sources), SUMMARY_CATALOG), scope)
         assert result.dispositions[0].reason == "cleanup_pending"
         debts = runtime._publication_recovery.cleanup_debts()
         assert debts
@@ -284,7 +284,7 @@ def test_identity_rejection_performs_no_discovery(secure_test_root, monkeypatch,
     monkeypatch.setattr("topsailai.hooks.configured_preparation._build_work_sequence",
         lambda *args: pytest.fail("discovery"))
     try:
-        result = register_summary_prepared(runtime, SummaryPreparationRequest(config, SUMMARY_CATALOG), scope)
+        result = register_prepared_points(runtime, ConfiguredPreparationRequest(config, SUMMARY_CATALOG), scope)
         assert result.dispositions[0].reason == "catalog_rejected"
     finally:
         runtime.close()
@@ -298,7 +298,7 @@ def test_disabled_point_performs_zero_work(secure_test_root, monkeypatch):
     monkeypatch.setattr("topsailai.hooks.configured_preparation._build_work_sequence",
         lambda *args: pytest.fail("discovery"))
     try:
-        result = register_summary_prepared(runtime, SummaryPreparationRequest(
+        result = register_prepared_points(runtime, ConfiguredPreparationRequest(
             _configuration(point, sources / "absent"), SUMMARY_CATALOG, frozenset({point.name})), scope)
         assert result.dispositions[0].kind == "disabled_by_configuration"
     finally:
@@ -316,8 +316,8 @@ def test_retired_owner_retries_expired_cleanup_epoch(secure_test_root, monkeypat
     _trust(runtime, source)
     point = PHASE_ONE_DECLARATIONS[0]
     try:
-        result = register_summary_prepared(runtime,
-            SummaryPreparationRequest(_configuration(point, sources), SUMMARY_CATALOG), scope)
+        result = register_prepared_points(runtime,
+            ConfiguredPreparationRequest(_configuration(point, sources), SUMMARY_CATALOG), scope)
         assert result.dispositions[0].kind == "registered"
         _, owner = runtime._registry.configured_plan(scope.scope_id, point.name)
         aggregate = owner._candidate._capture_owner._ownership
@@ -344,7 +344,7 @@ def test_retired_owner_retries_expired_cleanup_epoch(secure_test_root, monkeypat
 def test_disabled_membership_validation(disabled):
     """Disablement rejects mutable, inactive, or malformed memberships."""
     with pytest.raises(ValueError):
-        SummaryPreparationRequest(ConfiguredHooks((), HookSettings()), SUMMARY_CATALOG, disabled)
+        ConfiguredPreparationRequest(ConfiguredHooks((), HookSettings()), SUMMARY_CATALOG, disabled)
 
 
 
@@ -359,7 +359,7 @@ def test_two_valid_points_share_runtime_without_shared_capture(secure_test_root)
     config = ConfiguredHooks(tuple(ConfiguredHookPoint(p.name, p.definition, module_folder=sources)
         for p in points), HookSettings())
     try:
-        result = runtime.prepare_configured(SummaryPreparationRequest(config, SUMMARY_CATALOG), scope)
+        result = runtime.prepare_configured(ConfiguredPreparationRequest(config, SUMMARY_CATALOG), scope)
         assert all(item.kind == "registered" for item in result.dispositions)
         owners = [runtime._registry.configured_plan(scope.scope_id, p.name)[1] for p in points]
         assert owners[0] is not owners[1]
@@ -389,7 +389,7 @@ def test_failed_resource_never_publishes_partial_point(secure_test_root, monkeyp
     config = ConfiguredHooks((ConfiguredHookPoint(point.name, point.definition,
         module_folder=sources, script=script),), HookSettings())
     try:
-        result = register_summary_prepared(runtime, SummaryPreparationRequest(config, SUMMARY_CATALOG), scope)
+        result = register_prepared_points(runtime, ConfiguredPreparationRequest(config, SUMMARY_CATALOG), scope)
         disposition = result.dispositions[0]
         assert disposition.kind == "unavailable_preparation_failure"
         assert disposition.reason in {"artifact_rejected", "trust_rejected"}
@@ -423,7 +423,7 @@ def test_bad_module_disallows_script_only_fallback(secure_test_root):
     config = ConfiguredHooks((ConfiguredHookPoint(point.name, point.definition, module_folder=modules,
         script=ConfiguredScript(script, ExecutablePlatformPolicy("posix", (str(executable),)))),), HookSettings())
     try:
-        result = register_summary_prepared(runtime, SummaryPreparationRequest(config, SUMMARY_CATALOG), scope)
+        result = register_prepared_points(runtime, ConfiguredPreparationRequest(config, SUMMARY_CATALOG), scope)
         assert result.dispositions[0].reason == "binding_conflict"
         assert runtime._registry.configured_plan(scope.scope_id, point.name)[1] is None
     finally:
@@ -438,7 +438,7 @@ def test_prepared_registrar_close_and_reload_are_not_legacy(secure_test_root):
     point = PHASE_ONE_DECLARATIONS[0]
     try:
         registrar = ConfiguredHookRegistrar.from_prepared(runtime, scope,
-            SummaryPreparationRequest(_configuration(point, sources), SUMMARY_CATALOG,
+            ConfiguredPreparationRequest(_configuration(point, sources), SUMMARY_CATALOG,
                 frozenset({point.name})))
         assert not registrar.ensure_registered(point.name).ready
         with pytest.raises(ValueError, match="explicit replacement"):
@@ -463,8 +463,8 @@ def test_public_boundary_failures_are_safe(secure_test_root, condition, reason):
     else:
         runtime.close()
     try:
-        result = register_summary_prepared(runtime,
-            SummaryPreparationRequest(_configuration(PHASE_ONE_DECLARATIONS[0], sources), SUMMARY_CATALOG),
+        result = register_prepared_points(runtime,
+            ConfiguredPreparationRequest(_configuration(PHASE_ONE_DECLARATIONS[0], sources), SUMMARY_CATALOG),
             scope, cancellation=cancellation)
         assert result.dispositions[0].reason == reason
         assert result.dispositions[0].kind == "unavailable_preparation_failure"
@@ -475,17 +475,17 @@ def test_public_boundary_failures_are_safe(secure_test_root, condition, reason):
 
 def test_summary_contract_rejects_unsafe_results():
     """Detached reports reject raw reasons, wrong shapes, and duplicate points."""
-    from topsailai.hooks.configured_contracts import SummaryPointDisposition, SummaryPreparationResult
+    from topsailai.hooks.configured_contracts import ConfiguredPointDisposition, ConfiguredPreparationResult
     point = PHASE_ONE_DECLARATIONS[0]
     with pytest.raises(ValueError):
-        SummaryPreparationRequest(None, SUMMARY_CATALOG)
+        ConfiguredPreparationRequest(None, SUMMARY_CATALOG)
     with pytest.raises(ValueError):
-        SummaryPointDisposition(point.name, "registered", "raw-secret-path")
-    valid = SummaryPointDisposition(point.name, "registered", "registered")
+        ConfiguredPointDisposition(point.name, "registered", "raw-secret-path")
+    valid = ConfiguredPointDisposition(point.name, "registered", "registered")
     with pytest.raises(ValueError):
-        SummaryPreparationResult((valid, valid))
+        ConfiguredPreparationResult((valid, valid))
     with pytest.raises(ValueError):
-        SummaryPreparationResult([valid])
+        ConfiguredPreparationResult([valid])
 
 
 def test_summary_recovery_capacity_is_checked_before_preparation(secure_test_root, monkeypatch):
@@ -496,8 +496,8 @@ def test_summary_recovery_capacity_is_checked_before_preparation(secure_test_roo
     monkeypatch.setattr("topsailai.hooks.configured_preparation.prepare_private",
         lambda *args, **kwargs: pytest.fail("preparation"))
     try:
-        result = register_summary_prepared(runtime,
-            SummaryPreparationRequest(_configuration(PHASE_ONE_DECLARATIONS[0], sources), SUMMARY_CATALOG), scope)
+        result = register_prepared_points(runtime,
+            ConfiguredPreparationRequest(_configuration(PHASE_ONE_DECLARATIONS[0], sources), SUMMARY_CATALOG), scope)
         assert result.dispositions[0].reason == "publication_capacity_exceeded"
     finally:
         runtime.close()

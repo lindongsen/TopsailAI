@@ -119,7 +119,7 @@ def protocol_script(path, value, trace=None):
 
 def test_public_points_register_independently_and_execute_all_members(secure_test_root, monkeypatch):
     """Real public registration isolates failure and ordered returns per point."""
-    from topsailai.hooks.configured_contracts import SummaryPreparationRequest
+    from topsailai.hooks.configured_contracts import ConfiguredPreparationRequest
     from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
     from topsailai.hooks.configured_executor import ConfiguredHookExecutor
     from topsailai.hooks.hook_point_catalog import HookPointCatalog, HookPointDeclaration
@@ -166,7 +166,7 @@ def test_public_points_register_independently_and_execute_all_members(secure_tes
     monkeypatch.setattr(preparation, "_build_executable_plan", record)
     try:
         registrar = ConfiguredHookRegistrar.from_prepared(runtime, scope,
-            SummaryPreparationRequest(configuration, catalog))
+            ConfiguredPreparationRequest(configuration, catalog))
         assert [item.kind for item in registrar.dispositions] == ["registered", "registered", "unavailable_preparation_failure"]
         assert indexes == [[0, 1, 2], [0]]
         executor = ConfiguredHookExecutor(runtime, scope, registrar, catalog)
@@ -290,7 +290,7 @@ def test_real_prepared_process_stop_barriers(secure_test_root, monkeypatch, stag
     import threading
     import time
     from topsailai.hooks.configuration import HookLimits
-    from topsailai.hooks.configured_contracts import SummaryPreparationRequest
+    from topsailai.hooks.configured_contracts import ConfiguredPreparationRequest
     from topsailai.hooks.configured_executor import ConfiguredHookExecutor
     from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
     from topsailai.hooks.hook_point_catalog import HookPointCatalog, HookPointDeclaration
@@ -339,7 +339,7 @@ def test_real_prepared_process_stop_barriers(secure_test_root, monkeypatch, stag
     registrar = None
     try:
         registrar = ConfiguredHookRegistrar.from_prepared(runtime, scope,
-            SummaryPreparationRequest(configuration, catalog))
+            ConfiguredPreparationRequest(configuration, catalog))
         assert registrar.dispositions[0].kind == "registered"
         executor = ConfiguredHookExecutor(runtime, scope, registrar, catalog)
         # Preparation probes are excluded: observe actual dispatch processes only.

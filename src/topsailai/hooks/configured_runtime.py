@@ -117,10 +117,10 @@ def prepare_configured(
     cancellation: threading.Event | None = None,
 ) -> PrepareConfiguredResult:
     """Retain the superseded fail-closed U09-A compatibility boundary."""
-    from topsailai.hooks.configured_contracts import SummaryPreparationRequest
+    from topsailai.hooks.configured_contracts import ConfiguredPreparationRequest
 
-    if type(configuration) is SummaryPreparationRequest:
-        return register_summary_prepared(runtime, configuration, scope, cancellation=cancellation)
+    if type(configuration) is ConfiguredPreparationRequest:
+        return register_prepared_points(runtime, configuration, scope, cancellation=cancellation)
     from topsailai.hooks.runtime import HookScope
 
     with runtime._lock:
@@ -489,15 +489,15 @@ def _terminal_configured(admission, category):
     )
 
 
-def register_summary_prepared(runtime, request, scope, *, cancellation=None):
+def register_prepared_points(runtime, request, scope, *, cancellation=None):
     """Prepare and publish isolated complete points with safe disposition inputs."""
     from topsailai.hooks.configured_contracts import (
-        SummaryPreparationRequest, SummaryPreparationResult, SummaryPointDisposition,
-        _SUMMARY_REASONS,
+        ConfiguredPreparationRequest, ConfiguredPreparationResult, ConfiguredPointDisposition,
+        _PREPARATION_REASONS,
     )
 
-    if type(request) is not SummaryPreparationRequest:
-        raise ValueError("invalid summary preparation request")
+    if type(request) is not ConfiguredPreparationRequest:
+        raise ValueError("invalid configured preparation request")
     dispositions = []
     for point in request.configuration.hook_points:
         declaration = request.catalog.get(point.hook_name)
@@ -506,17 +506,17 @@ def register_summary_prepared(runtime, request, scope, *, cancellation=None):
                 or point.definition.major_version != declaration.definition.major_version):
             reason = "catalog_rejected"
         elif point.hook_name in request.disabled_hook_names:
-            dispositions.append(SummaryPointDisposition(point.hook_name,
+            dispositions.append(ConfiguredPointDisposition(point.hook_name,
                 "disabled_by_configuration", "disabled_by_configuration"))
             continue
         else:
             single = ConfiguredHooks((point,), request.configuration.settings, request.configuration.policy)
-            reason = _prepare_summary_point(runtime, single, scope, point.hook_name, cancellation)
-        if reason not in _SUMMARY_REASONS:
+            reason = _prepare_configured_point(runtime, single, scope, point.hook_name, cancellation)
+        if reason not in _PREPARATION_REASONS:
             reason = "internal_error"
-        dispositions.append(SummaryPointDisposition(point.hook_name,
+        dispositions.append(ConfiguredPointDisposition(point.hook_name,
             "registered" if reason == "registered" else "unavailable_preparation_failure", reason))
-    return SummaryPreparationResult(tuple(dispositions))
+    return ConfiguredPreparationResult(tuple(dispositions))
 
 
 def _publish_prepared_image(runtime, scope, hook_name, image):
@@ -587,7 +587,7 @@ def _publish_prepared_image(runtime, scope, hook_name, image):
             recovery.release(reservation)
 
 
-def _prepare_summary_point(runtime, configuration, scope, hook_name, cancellation):
+def _prepare_configured_point(runtime, configuration, scope, hook_name, cancellation):
     """Prearm exact failed-preparation recovery before starting isolated work."""
     from topsailai.hooks.configured_preparation import (
         prepare_private, _PreparationCleanupPending, _PreparedCaptureOwner,

@@ -15,7 +15,7 @@ from topsailai.hooks import (
     HookSettings,
 )
 from topsailai.hooks.application_access import get_hook_executor
-from topsailai.hooks.configured_contracts import ArtifactClosureAssertion, SummaryPreparationRequest
+from topsailai.hooks.configured_contracts import ArtifactClosureAssertion, ConfiguredPreparationRequest
 from topsailai.hooks.hook_point_catalog import HookPointCatalog, HookPointDeclaration
 from topsailai.hooks.configured_executor import HookOperation
 from topsailai.hooks.artifact_identity import python_runtime_fingerprint
@@ -68,7 +68,7 @@ def _source_assertion(source: Path, logical_name: str, authority: ArtifactPython
     )
 
 
-def _prepared_inputs(root: Path) -> tuple[SummaryPreparationRequest, ConfiguredTrustPolicy, HookPointDeclaration]:
+def _prepared_inputs(root: Path) -> tuple[ConfiguredPreparationRequest, ConfiguredTrustPolicy, HookPointDeclaration]:
     """Create a complete typed prepared request and explicit deployment authority."""
     sources = root / "sources"
     runtime_root = root / "runtime"
@@ -104,7 +104,7 @@ def _prepared_inputs(root: Path) -> tuple[SummaryPreparationRequest, ConfiguredT
         ),
         HookSettings(),
     )
-    request = SummaryPreparationRequest(
+    request = ConfiguredPreparationRequest(
         configuration,
         catalog,
         frozenset({_POINT_NAMES[2]}),

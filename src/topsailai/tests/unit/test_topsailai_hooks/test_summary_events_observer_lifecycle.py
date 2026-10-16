@@ -10,7 +10,7 @@ import pytest
 
 from topsailai.hooks import ConfiguredHookPoint, ConfiguredHooks, ConfiguredTrustPolicy, HookSettings
 from topsailai.hooks.configuration import HookLimits
-from topsailai.hooks.configured_contracts import SummaryPreparationRequest
+from topsailai.hooks.configured_contracts import ConfiguredPreparationRequest
 from topsailai.hooks.configured_executor import ConfiguredHookExecutor, HookOperation
 from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
 from topsailai.hooks.contracts import ValidationError
@@ -63,7 +63,7 @@ def lifecycle(tmp_path, monkeypatch):
 def prepare(lifecycle, config=None, disabled=frozenset()):
     """Use the real prepared pipeline with a test-only legacy bridge."""
     runtime, scope, _ = lifecycle
-    request = SummaryPreparationRequest(configuration=config if config is not None else configuration(lifecycle[2].parent / "points"),
+    request = ConfiguredPreparationRequest(configuration=config if config is not None else configuration(lifecycle[2].parent / "points"),
         catalog=SUMMARY_CATALOG, disabled_hook_names=disabled)
     registrar = ConfiguredHookRegistrar.from_prepared(runtime, scope, request)
     executor = ConfiguredHookExecutor(runtime, scope, registrar, SUMMARY_CATALOG)

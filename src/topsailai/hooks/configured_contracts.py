@@ -617,8 +617,8 @@ class DisposeConfiguredResult:
         object.__setattr__(self, "errors", errors)
 
 @dataclass(frozen=True, slots=True)
-class SummaryPreparationRequest:
-    """Select explicit catalog-owned preparation with a compatibility request name."""
+class ConfiguredPreparationRequest:
+    """Select explicit Catalog-owned preparation independent of the business domain."""
     configuration: ConfiguredHooks
     catalog: object
     disabled_hook_names: frozenset[str] = frozenset()
@@ -627,31 +627,31 @@ class SummaryPreparationRequest:
         from topsailai.hooks.hook_point_catalog import HookPointCatalog
         if (type(self.configuration) is not ConfiguredHooks or type(self.catalog) is not HookPointCatalog
                 or type(self.disabled_hook_names) is not frozenset):
-            raise ValueError("invalid summary preparation request")
+            raise ValueError("invalid configured preparation request")
         for name in self.disabled_hook_names:
             if type(name) is not str or self.catalog.get(name) is None:
-                raise ValueError("invalid summary disabled point")
-_SUMMARY_REASONS = frozenset(
+                raise ValueError("invalid configured disabled point")
+_PREPARATION_REASONS = frozenset(
     "registered disabled_by_configuration catalog_rejected invalid_configuration invalid_scope runtime_closed "
     "scope_closed trust_policy_missing trust_rejected discovery_rejected artifact_rejected binding_conflict cleanup_pending capacity_exceeded publication_capacity_exceeded cancelled prepare_timeout unsupported_platform internal_error".split())
 @dataclass(frozen=True, slots=True)
-class SummaryPointDisposition:
+class ConfiguredPointDisposition:
     """Expose only a point identity and bounded non-sensitive status token."""
     hook_name: str
     kind: Literal["registered", "disabled_by_configuration", "unavailable_preparation_failure"]
     reason: str
     def __post_init__(self) -> None:
         """Reject arbitrary status text or mismatched successful/disabled reasons."""
-        if (not is_valid_hook_name(self.hook_name) or self.reason not in _SUMMARY_REASONS
+        if (not is_valid_hook_name(self.hook_name) or self.reason not in _PREPARATION_REASONS
                 or self.kind not in ("registered", "disabled_by_configuration", "unavailable_preparation_failure")
                 or (self.kind != "unavailable_preparation_failure" and self.reason != self.kind)):
-            raise ValueError("invalid summary point disposition")
+            raise ValueError("invalid configured point disposition")
 @dataclass(frozen=True, slots=True)
-class SummaryPreparationResult:
+class ConfiguredPreparationResult:
     """Carry detached per-point inputs for later application-owned reporting."""
-    dispositions: tuple[SummaryPointDisposition, ...]
+    dispositions: tuple[ConfiguredPointDisposition, ...]
     def __post_init__(self) -> None:
         """Require an immutable duplicate-free disposition inventory."""
-        if (type(self.dispositions) is not tuple or any(type(item) is not SummaryPointDisposition for item in self.dispositions)
+        if (type(self.dispositions) is not tuple or any(type(item) is not ConfiguredPointDisposition for item in self.dispositions)
                 or len({item.hook_name for item in self.dispositions}) != len(self.dispositions)):
-            raise ValueError("invalid summary preparation result")
+            raise ValueError("invalid configured preparation result")

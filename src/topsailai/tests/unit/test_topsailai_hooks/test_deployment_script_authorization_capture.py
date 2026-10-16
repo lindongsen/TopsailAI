@@ -9,7 +9,7 @@ import pytest
 from topsailai.hooks import ConfiguredHookPoint, ConfiguredHooks, ConfiguredScript, EventDefinition, HookRuntime, HookSettings
 from topsailai.hooks.artifact_contracts import ArtifactPythonRuntimeAuthority
 from topsailai.hooks.configured_bootstrap import load_configured_trust_manifest
-from topsailai.hooks.configured_contracts import SummaryPreparationRequest
+from topsailai.hooks.configured_contracts import ConfiguredPreparationRequest
 from topsailai.hooks.configured_executor import ConfiguredHookExecutor
 from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
 from topsailai.hooks.deployment_script_authorization import write_mixed_trust_manifest
@@ -61,7 +61,7 @@ def register(tree, tmp_path, trust):
     configuration = ConfiguredHooks((ConfiguredHookPoint(points[0].name, points[0].definition,
         module_folder=modules, script=inputs["scripts"][0]),
         ConfiguredHookPoint(points[1].name, points[1].definition)), HookSettings())
-    registrar = ConfiguredHookRegistrar.from_prepared(runtime, scope, SummaryPreparationRequest(configuration, catalog))
+    registrar = ConfiguredHookRegistrar.from_prepared(runtime, scope, ConfiguredPreparationRequest(configuration, catalog))
     return runtime, registrar, ConfiguredHookExecutor(runtime, scope, registrar, catalog), points
 
 

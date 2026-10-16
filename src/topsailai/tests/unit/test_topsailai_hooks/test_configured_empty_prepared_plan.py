@@ -5,10 +5,10 @@ from types import SimpleNamespace
 import pytest
 
 from topsailai.hooks.artifact_leases import ArtifactLeaseManager
-from topsailai.hooks.configured_contracts import SummaryPreparationRequest
+from topsailai.hooks.configured_contracts import ConfiguredPreparationRequest
 from topsailai.hooks.configured_executor import ConfiguredHookExecutor, HookOperation
 from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
-from topsailai.hooks.configured_runtime import register_summary_prepared
+from topsailai.hooks.configured_runtime import register_prepared_points
 from tests.summary_catalog_support import SUMMARY_CATALOG, PHASE_ONE_DECLARATIONS
 from topsailai.tests.unit.test_topsailai_hooks.test_configured_preparation import (
     secure_test_root, _runtime,
@@ -35,7 +35,7 @@ def test_empty_point_registers_dispatches_and_retires(secure_test_root, monkeypa
     )
     try:
         registrar = ConfiguredHookRegistrar.from_prepared(runtime, scope,
-            SummaryPreparationRequest(_configuration(point, sources), SUMMARY_CATALOG))
+            ConfiguredPreparationRequest(_configuration(point, sources), SUMMARY_CATALOG))
         assert registrar.dispositions[0].kind == "registered", registrar.dispositions
         _, owner = runtime._registry.configured_plan(scope.scope_id, point.name)
         plan = owner.snapshot.plan
@@ -96,8 +96,8 @@ def test_failed_resource_is_not_an_empty_success(secure_test_root, monkeypatch, 
             raise PermissionError("test directory access denied")
         monkeypatch.setattr("topsailai.hooks.module_discovery.os.scandir", deny_scan)
     try:
-        result = register_summary_prepared(runtime,
-            SummaryPreparationRequest(_configuration(point, folder), SUMMARY_CATALOG), scope)
+        result = register_prepared_points(runtime,
+            ConfiguredPreparationRequest(_configuration(point, folder), SUMMARY_CATALOG), scope)
         disposition = result.dispositions[0]
         assert disposition.kind == "unavailable_preparation_failure"
         assert disposition.reason in {"internal_error", "discovery_rejected",

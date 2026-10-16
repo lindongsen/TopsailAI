@@ -17,7 +17,7 @@ from topsailai.hooks import (
     ConfiguredHooks, ConfiguredTrustPolicy, HookSettings,
 )
 from topsailai.hooks.artifact_identity import python_runtime_fingerprint
-from topsailai.hooks.configured_contracts import SummaryPreparationRequest
+from topsailai.hooks.configured_contracts import ConfiguredPreparationRequest
 from tests.summary_catalog_support import (
     PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS, SUMMARY_CATALOG,
 )
@@ -120,7 +120,7 @@ class SummarizeHooksScenario:
                 point.name, point.definition, module_folder=folder,
                 module_args=(str(self.ledger), point.name, self.case == 'observer_failure')))
         disabled = frozenset({PHASE_ONE_DECLARATIONS[0].name}) if self.case == 'disabled' else frozenset()
-        self.preparation = SummaryPreparationRequest(
+        self.preparation = ConfiguredPreparationRequest(
             ConfiguredHooks(tuple(points), HookSettings()), SUMMARY_CATALOG, disabled)
         self.trust = ConfiguredTrustPolicy(
             (self.sources,), closure_assertions=tuple(assertions),
