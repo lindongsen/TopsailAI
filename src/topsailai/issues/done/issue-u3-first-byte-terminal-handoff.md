@@ -5,7 +5,7 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
-status: open
+status: resolved
 ---
 
 # Issue: U3 first-byte terminal handoff defects
@@ -33,4 +33,8 @@ Human authorization approved the precise migration of the existing pause/tail te
 
 ## Verification
 
-Focused P2 regressions passed 22 tests after the deterministic boundary coverage was completed. The approved U2 six-file gate passed 89 tests. The focused U3 matrix passed 77 tests, and the U3 first-byte BDD retry plus cleanup set passed 15 tests. Syntax, AST, and real-import checks passed for changed production and test modules. No commit or staging was performed in the implementation turn.
+Focused P2 regressions passed 26 tests after the deterministic boundary coverage was completed (approval evidence: `.task/check_20261015T123224_u3-core-code-logic-review.md`). The approved U2 six-file gate passed 89 tests. The focused U3 matrix passed 77 tests, and the U3 first-byte BDD retry plus cleanup set passed 15 tests. Syntax, AST, and real-import checks passed for changed production and test modules. No commit or staging was performed in the implementation turn.
+
+## Resolution
+
+Resolved through the U3 core and U3-P2 approvals and subsequent U4, U5, and U6 completion: U3 core `7d5e67a0`, U3-P2 `251ad9a6`, U4 `401a4d80`, U5 `9ee9e4f9`, and U6 `2e6eb56a`.
