@@ -10,3 +10,14 @@ Note:
     You should call `tests/run_tests.py` instead of call `pytest tests/unit`,
     If you call `pytest tests/unit` to run ALL will inevitably fail!
     Call single `pytest tests/unit/xxx.py` is OK.
+  - |
+    > Makefile supported targets (run `make <target>` in the workspace):
+    help            Show this help message
+    test            Run all tests (core + CLI, unit + BDD)
+    test-unit       Run core and CLI unit tests
+    test-bdd        Run core and CLI BDD tests
+    core-unit-test  Run core unit tests
+    core-bdd-test   Run core BDD tests
+    cli-unit-test   Run CLI unit tests
+    cli-bdd-test    Run CLI BDD tests
+
