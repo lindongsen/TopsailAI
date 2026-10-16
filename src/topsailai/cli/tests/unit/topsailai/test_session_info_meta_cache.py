@@ -3,6 +3,8 @@
 import threading
 from unittest.mock import Mock
 
+import pytest
+
 from cli_topsailai import session_info
 
 
@@ -95,3 +97,51 @@ def test_set_if_absent_is_atomic_for_concurrent_writers():
     assert len(results) == 2
     assert cache.get("s1") in (("a", "/a"), ("b", "/b"))
     assert all(result == cache.get("s1") for result in results)
+
+
+@pytest.mark.parametrize(
+    "session_id,value,expected",
+    [
+        ("missing", None, False),
+        ("both-empty", ("", ""), False),
+        ("name-only", ("Name", None), False),
+        ("path-only", (None, "/workspace"), False),
+        ("whitespace", ("  ", " /workspace "), False),
+        ("empty-path-with-valid-name", ("Name", ""), False),
+        ("whitespace-path-with-valid-name", ("Name", "   "), False),
+        ("non-string-name", (123, "/workspace"), False),
+        ("non-string-path", ("Name", 123), False),
+        ("relative", ("Name", "workspace"), False),
+        ("valid", (" Name ", "/workspace"), True),
+    ],
+)
+def test_complete_cache_requires_valid_name_and_absolute_workspace(
+    monkeypatch, session_id, value, expected
+):
+    """Only a nonblank name and absolute workspace make display metadata complete."""
+    cache = session_info._SessionInfoCache()
+    monkeypatch.setattr(session_info, "_SESSION_INFO_CACHE", cache)
+    if value is not None:
+        cache.set(session_id, value)
+    assert session_info.has_complete_cached_session_info(session_id) is expected
+
+
+def test_complete_cache_ignores_invalid_or_temporary_session_ids(monkeypatch):
+    """Invalid and temporary identifiers never use cached display metadata."""
+    cache = session_info._SessionInfoCache()
+    monkeypatch.setattr(session_info, "_SESSION_INFO_CACHE", cache)
+    cache.set("(temp)", ("Temporary", "/workspace"))
+    cache.set("", ("Empty", "/workspace"))
+    assert not session_info.has_complete_cached_session_info("(temp)")
+    assert not session_info.has_complete_cached_session_info("")
+    assert not session_info.has_complete_cached_session_info(None)
+
+
+def test_complete_cache_check_does_not_mutate_entries(monkeypatch):
+    """Checking completeness leaves the cached tuple unchanged."""
+    cache = session_info._SessionInfoCache()
+    monkeypatch.setattr(session_info, "_SESSION_INFO_CACHE", cache)
+    value = ("Name", "/workspace")
+    cache.set("s1", value)
+    assert session_info.has_complete_cached_session_info("s1")
+    assert cache.get("s1") == value

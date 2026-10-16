@@ -57,6 +57,28 @@ class _SessionInfoCache:
 _SESSION_INFO_CACHE = _SessionInfoCache()
 
 
+def has_complete_cached_session_info(session_id: str) -> bool:
+    """Return whether cached display metadata is complete for *session_id*."""
+    if (
+        not isinstance(session_id, str)
+        or not session_id.strip()
+        or session_id == "(temp)"
+    ):
+        return False
+
+    cached = _SESSION_INFO_CACHE.get(session_id)
+    if cached is _MISSING or not isinstance(cached, tuple) or len(cached) != 2:
+        return False
+    name, project_workspace = cached
+    return (
+        isinstance(name, str)
+        and bool(name.strip())
+        and isinstance(project_workspace, str)
+        and bool(project_workspace.strip())
+        and os.path.isabs(project_workspace)
+    )
+
+
 class _LookupResult:
     """Internal result wrapper to distinguish success from transient failure."""
 

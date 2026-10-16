@@ -307,6 +307,7 @@ def discover_workspace_log_files(
     on_item: Optional[Callable[[dict], None]] = None,
 ) -> List[dict]:
     """Filter completed unnamed sessions using exact metadata before display."""
+    from cli_topsailai.session_info import has_complete_cached_session_info
     from cli_topsailai.session_meta import SessionMetaError, read_session_meta
 
     files = discover_log_files(task_dir)
@@ -324,7 +325,11 @@ def discover_workspace_log_files(
         if item.get("is_task") and len(session_candidates.get(session_id, ())) != 1:
             pid = None
         key = (session_id, pid)
-        if session_id not in (None, "", "(temp)") and type(pid) is int:
+        if (
+            session_id not in (None, "", "(temp)")
+            and type(pid) is int
+            and not has_complete_cached_session_info(session_id)
+        ):
             if key not in metadata:
                 try:
                     metadata[key] = read_session_meta(home, session_id, pid).data
