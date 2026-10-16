@@ -116,13 +116,13 @@ OPENAI_API_BASE="https://openapi.coreshub.cn/v1"
 # Runtime note: selecting a registry model with /agent.models synchronizes
 # OPENAI_MODEL, OPENAI_BASE_URL, OPENAI_API_BASE, and referenced OPENAI_* credentials.
 
-# First byte timeout for streaming LLM responses in seconds.
-# If the first chunk takes longer than this threshold, a warning is logged.
-# Set to 0 to disable the warning.
+# Numeric seconds for one absolute streaming deadline per attempt (default 180).
+# Covers request creation through the first decoded entry; <=0 disables monitoring.
+# False policy warns once and continues the original production owned call.
 TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT=180
-# When set to a truthy value (1/true/yes/on/enabled), raise openai.APITimeoutError
-# if the first chunk exceeds the timeout above. The outer chat retry loop will then
-# automatically retry the request. Otherwise (default), only a warning is logged.
+# True (case-insensitive 1/true/yes/on/enabled) raises LLMProviderTimeoutError
+# from ai_base.llm_control.exception for outer chat retry; other values are false.
+# Default 0; standalone/class-wrapper compatibility instead stops and returns [].
 TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE=0
 
 # =============================================================================
