@@ -13,7 +13,7 @@ from topsailai.hooks.deployment_authorization import generate_module_trust_manif
 from topsailai.tests.unit.test_topsailai_hooks.test_summary_module_directories import tree, members
 from topsailai.tests.unit.test_topsailai_hooks.test_summary_events_observer_lifecycle import ACTIVE, emit
 from topsailai.hooks.points.context import SummaryHookAdapter
-from topsailai.workspace.summary_hooks_owner import SummaryHooksOwner
+from tests.legacy_prepared_support import prepared_graph
 
 
 @pytest.fixture
@@ -42,7 +42,7 @@ def start(tree, trust):
     """Create a new application lifetime from externally generated pinned trust."""
     root = tree[2] / "runtime"
     root.mkdir(mode=0o700, exist_ok=True)
-    return SummaryHooksOwner(request=tree[1], trust_policy=trust, temp_root=str(root))
+    return prepared_graph(request=tree[1], trust_policy=trust, temp_root=str(root))
 
 
 def test_generated_authority_add_remove_restart(tree, authority):

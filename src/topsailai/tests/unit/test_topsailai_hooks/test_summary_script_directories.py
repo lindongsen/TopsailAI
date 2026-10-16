@@ -6,7 +6,7 @@ import pytest
 
 from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
 from topsailai.hooks.points.catalog import PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
-from topsailai.workspace.summary_hooks_owner import build_summary_preparation_request
+from tests.legacy_prepared_support import build_summary_preparation_request
 
 POLICY = ExecutablePlatformPolicy("posix")
 

@@ -15,7 +15,7 @@ from topsailai.hooks.points.context import SummaryHookAdapter
 from topsailai.tests.unit.test_topsailai_hooks.test_summary_events_observer_lifecycle import (
     ACTIVE, FUNCTIONAL_SETTINGS, emit, report_evidence,
 )
-from topsailai.workspace.summary_hooks_owner import SummaryHooksOwner, build_summary_preparation_request
+from tests.legacy_prepared_support import prepared_graph, build_summary_preparation_request
 
 
 @pytest.fixture
@@ -84,7 +84,7 @@ def start(tree, trust=None, request=None):
     """Compose a real owner without resetting shared production globals."""
     root = tree[5] / ("runtime-" + str(len(tuple(tree[5].glob("runtime-*")))))
     root.mkdir(mode=0o700)
-    return SummaryHooksOwner(request=request_for(tree) if request is None else request,
+    return prepared_graph(request=request_for(tree) if request is None else request,
         trust_policy=authorize(tree) if trust is None else trust, temp_root=str(root))
 
 

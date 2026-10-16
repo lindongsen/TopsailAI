@@ -19,7 +19,8 @@ from topsailai.hooks.configured_contracts import ArtifactClosureAssertion, Summa
 from topsailai.hooks.hook_point_catalog import HookPointCatalog, HookPointDeclaration
 from topsailai.hooks.configured_executor import HookOperation
 from topsailai.hooks.artifact_identity import python_runtime_fingerprint
-from topsailai.workspace.hooks_application import HooksApplication
+from tests.legacy_prepared_support import prepared_graph
+from topsailai.hooks.application_access import HookApplicationAccess, bind_hook_application
 
 
 _POINT_NAMES = (
@@ -119,17 +120,16 @@ def _prepared_inputs(root: Path) -> tuple[SummaryPreparationRequest, ConfiguredT
 def test_real_prepared_application_executes_and_reports_sibling_dispositions(tmp_path):
     """Eagerly prepare a real Module, retain valid siblings, and report failures safely."""
     request, trust, valid_point = _prepared_inputs(tmp_path / "owned")
-    app = HooksApplication(request=request, trust_policy=trust, temp_root=str(tmp_path / "owned" / "runtime"))
+    app = prepared_graph(request=request, trust_policy=trust, temp_root=str(tmp_path / "owned" / "runtime"))
     report = app.startup_report
-    assert report.enabled
-    assert report.counts == report.counts.__class__(registered=1, disabled=1, unavailable=1)
+    assert report.ready
     dispositions = {item.hook_name: item for item in report.dispositions}
     assert dispositions[_POINT_NAMES[0]].kind == "registered"
     assert dispositions[_POINT_NAMES[1]].kind == "unavailable_preparation_failure"
     assert dispositions[_POINT_NAMES[1]].reason in {"artifact_rejected", "discovery_rejected"}
     assert dispositions[_POINT_NAMES[2]].kind == "disabled_by_configuration"
 
-    with app:
+    with bind_hook_application(HookApplicationAccess(app.executor)):
         access = get_hook_executor()
         result = access.dispatch(valid_point, payload={"count": 3}, operation=HookOperation("prepared-1"))
         assert result.rejection_reason is None
@@ -140,10 +140,8 @@ def test_real_prepared_application_executes_and_reports_sibling_dispositions(tmp
             "operation_id": "prepared-1",
             "payload": {"count": 3},
         }
-        assert access._binding.application is app.access
         assert app.registrar.state(_POINT_NAMES[0]).value == "ready"
-    assert app.close_result.fully_closed
-    assert not app.close_result.unresolved_debts
+    assert app.close().fully_closed
     assert get_hook_executor()._binding is None
 
 
@@ -151,13 +149,13 @@ def test_separate_prepared_applications_do_not_share_resources(tmp_path):
     """Independent typed applications own distinct Runtime and Scope graphs."""
     first_request, first_trust, _ = _prepared_inputs(tmp_path / "first")
     second_request, second_trust, _ = _prepared_inputs(tmp_path / "second")
-    first = HooksApplication(request=first_request, trust_policy=first_trust, temp_root=str(tmp_path / "first" / "runtime"))
-    second = HooksApplication(request=second_request, trust_policy=second_trust, temp_root=str(tmp_path / "second" / "runtime"))
+    first = prepared_graph(request=first_request, trust_policy=first_trust, temp_root=str(tmp_path / "first" / "runtime"))
+    second = prepared_graph(request=second_request, trust_policy=second_trust, temp_root=str(tmp_path / "second" / "runtime"))
     try:
         assert first.runtime is not second.runtime
         assert first.scope is not second.scope
         assert first.executor is not second.executor
-        assert first.startup_report.counts.registered == second.startup_report.counts.registered == 1
+        assert sum(d.kind == "registered" for d in first.startup_report.dispositions) == sum(d.kind == "registered" for d in second.startup_report.dispositions) == 1
     finally:
         assert first.close().fully_closed
         assert second.close().fully_closed
@@ -167,14 +165,15 @@ def test_separate_prepared_applications_do_not_share_resources(tmp_path):
 def test_prepared_application_shares_graph_and_cached_access_stops_without_forwarding(tmp_path, monkeypatch):
     """Two operations share one graph; cached access rejects after admission stops."""
     request, trust, valid_point = _prepared_inputs(tmp_path / "shared")
-    app = HooksApplication(request=request, trust_policy=trust, temp_root=str(tmp_path / "shared" / "runtime"))
+    app = prepared_graph(request=request, trust_policy=trust, temp_root=str(tmp_path / "shared" / "runtime"))
     forwarded = []
     original_dispatch = app.executor.dispatch
     monkeypatch.setattr(app.executor, "dispatch", lambda *args, **kwargs: (
         forwarded.append(kwargs["operation"].operation_id), original_dispatch(*args, **kwargs)
     )[1])
+    access_binding = HookApplicationAccess(app.executor)
     try:
-        with app:
+        with bind_hook_application(access_binding):
             cached_access = get_hook_executor()
             first = cached_access.dispatch(valid_point, payload={"count": 1}, operation=HookOperation("session-1"))
             second = cached_access.dispatch(valid_point, payload={"count": 2}, operation=HookOperation("session-2"))
@@ -183,10 +182,9 @@ def test_prepared_application_shares_graph_and_cached_access_stops_without_forwa
             assert app.executor._runtime is app.runtime
             assert app.executor._scope is app.scope
             assert app.executor._registrar is app.registrar
-            app.access.stop_admission()
+            access_binding.stop_admission()
             stopped = cached_access.dispatch(valid_point, payload={"count": 3}, operation=HookOperation("session-3"))
             assert stopped.rejection_reason == "application_closed"
             assert forwarded == ["session-1", "session-2"]
     finally:
-        if not app.close_result.fully_closed:
-            app.close()
+        app.close()

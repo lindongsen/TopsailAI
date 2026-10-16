@@ -131,20 +131,3 @@ def test_generic_unauthorized_module_rejects_whole_plan(secure_test_root, no_bus
         assert runtime._registry.configured_plan(scope.scope_id, POINT.name)[1] is None
     finally:
         runtime.close()
-
-
-@pytest.mark.parametrize("kind", ["foreign", "phase_two"])
-def test_summary_owner_still_requires_phase_one_catalog(tmp_path, monkeypatch, kind):
-    """Generic registration cannot widen summary application activation authority."""
-    from topsailai.hooks.points.catalog import SUMMARY_CATALOG, PHASE_TWO_DECLARATIONS
-    from topsailai.workspace import summary_hooks_owner
-
-    catalog = CATALOG if kind == "foreign" else HookPointCatalog(
-        SUMMARY_CATALOG.declarations + PHASE_TWO_DECLARATIONS)
-    request = SummaryPreparationRequest(ConfiguredHooks((), HookSettings()), catalog)
-    allocate = Mock(side_effect=AssertionError("unexpected Runtime allocation"))
-    monkeypatch.setattr(summary_hooks_owner, "HookRuntime", allocate)
-    with pytest.raises(ValueError, match="phase-one catalog"):
-        summary_hooks_owner.SummaryHooksOwner(request=request,
-            trust_policy=ConfiguredTrustPolicy((tmp_path,)), temp_root=str(tmp_path))
-    allocate.assert_not_called()

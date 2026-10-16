@@ -23,7 +23,8 @@ from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
 from topsailai.hooks.points.catalog import PHASE_ONE_DECLARATIONS
 import topsailai.hooks as hooks
 from topsailai.hooks.point_entry import pending_cleanup
-from topsailai.workspace import agent_shell, summary_hooks_owner
+from topsailai.workspace import agent_shell
+from tests import legacy_prepared_support
 
 
 class MixedDeployment:
@@ -62,7 +63,7 @@ def main(*, hook_context):
 
     def request(self):
         """Select fixed point-local paths without scanning or generating authority."""
-        return summary_hooks_owner.build_summary_preparation_request(
+        return legacy_prepared_support.build_summary_preparation_request(
             points_root=self.points, settings=self.settings, script_platform_policy=self.policy)
 
     def add_script(self, point, name):
@@ -108,7 +109,7 @@ os.write(int(os.environ['TOPSAILAI_HOOK_RESULT_FD']), struct.pack('!I', len(body
         trust = self.authorize() if trust is None else trust
         root = self.root / f"runtime-{len(self.owners)}"
         root.mkdir(mode=0o700)
-        owner = summary_hooks_owner.SummaryHooksOwner(request=self.request(),
+        owner = legacy_prepared_support.prepared_graph(request=self.request(),
             trust_policy=trust, temp_root=str(root))
         self.owners.append(owner)
         return owner
@@ -192,7 +193,6 @@ class SummaryScriptScenario(SummarizeHooksScenario):
         self.result = self.error = self.primary = None
         self.application_checked = False
         request.addfinalizer(self.close)
-        monkeypatch.setattr(summary_hooks_owner, '_owner', None)
         base = root
         base.mkdir(parents=True, exist_ok=True)
         self.root = Path(tempfile.mkdtemp(prefix='scenario-', dir=base))

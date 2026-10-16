@@ -8,7 +8,7 @@ from topsailai.hooks import ConfiguredTrustPolicy
 from topsailai.hooks.points.catalog import PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
 from topsailai.tests.unit.test_topsailai_hooks.test_configured_preparation import _assertion, _runtime
 from topsailai.tests.unit.test_topsailai_hooks.test_summary_events_observer_lifecycle import emit, ACTIVE, report_evidence, FUNCTIONAL_SETTINGS
-from topsailai.workspace.summary_hooks_owner import build_summary_preparation_request, SummaryHooksOwner
+from tests.legacy_prepared_support import build_summary_preparation_request, prepared_graph
 
 
 def test_default_directories_are_point_local_and_phase_one_only():
@@ -59,7 +59,7 @@ def start(tree, *, unauthorized=None):
         for point in request.configuration.hook_points
         for source in sorted(point.module_folder.glob("*.py")) if source != unauthorized)
     trust = ConfiguredTrustPolicy((points,), closure_assertions=assertions, python_runtime=authority)
-    return SummaryHooksOwner(request=request, trust_policy=trust, temp_root=str(root))
+    return prepared_graph(request=request, trust_policy=trust, temp_root=str(root))
 
 
 def members(owner, point, identity):

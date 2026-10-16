@@ -23,7 +23,8 @@ from topsailai.hooks.points.catalog import (
 )
 import topsailai.hooks as hooks
 from topsailai.hooks.point_entry import pending_cleanup
-from topsailai.workspace import agent_shell, summary_hooks_owner
+from topsailai.workspace import agent_shell
+from tests import legacy_prepared_support
 
 
 class SummarizeHooksScenario:
@@ -38,7 +39,6 @@ class SummarizeHooksScenario:
         self.result = self.error = self.primary = None
         self.application_checked = False
         request.addfinalizer(self.close)
-        monkeypatch.setattr(summary_hooks_owner, '_owner', None)
         base = Path(__file__).resolve().parents[2] / '.tmp/u7-summarize-hooks-bdd'
         base.mkdir(parents=True, exist_ok=True)
         self.root = Path(tempfile.mkdtemp(prefix='scenario-', dir=base))
@@ -214,9 +214,7 @@ class SummarizeHooksScenario:
         if self.case == 'unconfigured':
             first = self.chat(False)
             assert not hasattr(first.ctx_runtime_data, 'summary_hooks_executor')
-            assert summary_hooks_owner._owner is None
             self.exit_session(first)
-            assert summary_hooks_owner._owner is None
         if self.case == 'disabled':
             from topsailai.hooks import configured_preparation
             original = configured_preparation.prepare_private
@@ -230,17 +228,15 @@ class SummarizeHooksScenario:
             self.patch.setattr(configured_preparation, 'prepare_private', prepare)
         chat = self.chat()
         assert not hasattr(chat.ctx_runtime_data, 'summary_hooks_executor')
-        assert summary_hooks_owner._owner is None
         if self.case in ('startup', 'disabled'):
-            # These assertions belong exclusively to the retained legacy owner API.
-            self.owner = summary_hooks_owner.SummaryHooksOwner(
+            # These assertions cover the retained legacy prepared APIs, not business activation.
+            self.owner = legacy_prepared_support.prepared_graph(
                 request=self.preparation, trust_policy=self.trust,
                 temp_root=str(self.root / 'legacy-runtime'))
             return
         if self.case == 'session':
             second = self.chat()
             self.exit_session(chat)
-            assert summary_hooks_owner._owner is None
             assert pending_cleanup() == ()
             chat = second
         runtime = chat.ctx_runtime_data
@@ -377,7 +373,7 @@ class SummarizeHooksScenario:
         try:
             for chat in self.chats:
                 chat.ai_agent.close()
-            owner = self.owner or summary_hooks_owner._owner
+            owner = self.owner
             if owner is not None:
                 assert owner.close().fully_closed
         finally:

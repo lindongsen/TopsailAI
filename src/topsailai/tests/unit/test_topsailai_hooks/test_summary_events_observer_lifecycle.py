@@ -17,7 +17,7 @@ from topsailai.hooks.contracts import ValidationError
 from topsailai.hooks.points.catalog import SUMMARY_CATALOG, PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
 from topsailai.hooks.points.context import SummaryHookAdapter
 from topsailai.hooks.points.context.summary_contracts import SUMMARY_POINTS
-from topsailai.workspace.summary_hooks_owner import build_summary_preparation_request
+from tests.legacy_prepared_support import build_summary_preparation_request
 from topsailai.tests.unit.test_topsailai_hooks.test_configured_preparation import _runtime, _assertion
 from topsailai.tests.unit.test_topsailai_hooks.test_summary_hook_points import classification
 
@@ -179,13 +179,12 @@ def test_standard_agent_chat_construction_does_not_enable_observer(tmp_path, mon
     from unittest.mock import Mock
     from topsailai.events import EventCollector, EventConfig
     from topsailai.events import collector as event_module
-    from topsailai.workspace import agent_shell, hook_instruction, summary_hooks_owner
+    from topsailai.workspace import agent_shell, hook_instruction
     from topsailai.workspace.plugin_instruction.base import cache
 
     path = tmp_path / "standard-chat.events"
     collector = EventCollector(EventConfig(file_path=str(path), retention_days=0))
     monkeypatch.setattr(event_module, "_collector_instance", collector)
-    monkeypatch.setattr(summary_hooks_owner, "_owner", None)
     monkeypatch.setattr(cache, "g_ai_agent", None)
     monkeypatch.setattr(hook_instruction, "FILE_INPUT_COMPLETIONS", str(tmp_path / "completions"))
     monkeypatch.setattr(hook_instruction.HookInstruction, "setup_readline_completion", Mock())
@@ -205,8 +204,7 @@ def test_standard_agent_chat_construction_does_not_enable_observer(tmp_path, mon
             need_set_agent_name_to_thread_local=False)
         assert isinstance(chat, agent_shell.AgentChat)
         factory.assert_called_once()
-        assert chat.ctx_runtime_data.summary_hooks_executor is None
-        assert summary_hooks_owner._owner is None
+        assert not hasattr(chat.ctx_runtime_data, "summary_hooks_executor")
         assert chat.control_server is None
         agent.run.assert_not_called()
         collector.record("test.collector.ready", payload={}, flush=True)
