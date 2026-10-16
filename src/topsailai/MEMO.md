@@ -87,4 +87,4 @@ Summary: Plugin extends what a component can do, Hook defines when and where add
 
 ## Unified Hook Point implementation and remaining acceptance
 
-[MEMO.AgentCore.md](MEMO.AgentCore.md#unified-hook-point-architecture) — Each Hook Point runs name-ordered Modules through `main(*args, **kwargs)` before its single default terminal Script Hook; U06 unified synchronous configured/ordinary execution is committed, while U07–U11 lifecycle and migration acceptance remains pending.
+[MEMO.AgentCore.md](MEMO.AgentCore.md#unified-hook-point-architecture) — Input and eight Summary checkpoints now use direct named entries without workspace owners; prepared/trust and application-access libraries remain legacy APIs with separate acceptance gates.

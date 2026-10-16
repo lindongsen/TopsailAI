@@ -52,7 +52,7 @@ Interactive input utilities with hook integration.
 - **Hook Interception**: `hook_message()` routes `/` commands through `HookInstruction`; handles `exit`/`quit`
 - **Message Source**: `get_message()` reads from CLI args, stdin, files, or interactive prompt
 - **History**: readline history persisted to `TOPSAILAI_HOME/.input_history`
-- **Application Hook checkpoint**: `input_message()` observes the before-input Hook through the bound application access context; callers do not pass a Hook Executor. The observation receives only the selected multiline-mode flag and runs once before input acquisition.
+- **Hook checkpoint**: `input_message()` calls `hook__workspace__before__input_message()` directly after selecting input mode and before input acquisition, without an application binding or Hook Executor; input retries do not redispatch the checkpoint.
 
 #### `hook_instruction.py`
 `/` command hook registry and execution.
@@ -233,3 +233,9 @@ Session metadata lives at `{TOPSAILAI_HOME}/workspace/task/{session_id}.{pid}.se
 Database and current-PID metadata name saves are independent best-effort operations. After the database call returns, `context.ctx_manager.update_session_name()` attempts to save the name to the matching current-PID metadata file regardless of whether the database result is `True`, `False`, or `None`. The method preserves the database return value, and asynchronous success/failure logging continues to reflect that result. Metadata write failures are logged without interrupting the Agent flow. Existing input validation and propagation of directly raised database exceptions are unchanged. Missing files are not created by rename; legacy records without the field remain valid and gain it on update. No historical migration or cross-process rename broadcast is performed.
 
 A shared process-local lock serializes complete metadata transactions so late naming retains completion status and `end_ts`, and completion retains the name. Atomic replacement prevents partial JSON publication; it does not provide cross-process cleanup coordination. Background naming remains asynchronous and is not guaranteed to finish before process exit. No new configuration is required.
+
+## Direct Summary Hook Points
+
+Summary generation/application in `context/base.py`, `context/ctx_runtime.py` and `context/agent2llm.py` uses the eight named phase-one entries through `hooks.invoke_hook_point()`. Package initialization caches `TOPSAILAI_HOOK_POINTS`; `{}` still discovers bundled observers. Two after-generation candidates remain inactive. A scoped Summary operation validates detached metadata and consumes each checkpoint at most once without adding Hook parameters to business factories.
+
+`HooksApplication` and `SummaryHooksOwner` have been removed. No CLI/session owns a replacement Hook wrapper. Scripts execute directly without Summary payload (empty stdin); Modules receive validated metadata. The shared prepared/trust and application-access libraries remain available for explicit legacy composition, not automatic AgentChat activation. See [Hooks API](../docs/Hooks_API.md#current-direct-entry-architecture) for result, cleanup and platform limitations.

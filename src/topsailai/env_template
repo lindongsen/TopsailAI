@@ -1073,6 +1073,7 @@ TOPSAILAI_THOUGHT_LINE_PATTERN_ENABLED=0
 # TOPSAILAI_THOUGHT_LINE_PATTERN_RULES='[{"pattern":"topsailai.","line_ratio":0.9,"min_lines":5}]'
 TOPSAILAI_THOUGHT_LINE_PATTERN_RULES=""
 
-# Generic input Hook Point prototype: JSON point-name -> modules/scripts paths
+# Generic input and Summary Hook Points: JSON point-name -> modules/scripts paths
 # Absolute file/folder strings or lists; direct children; no trust manifest required
+# Empty config still discovers internal resources; Scripts receive no Summary payload
 TOPSAILAI_HOOK_POINTS="{}"

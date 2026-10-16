@@ -6,15 +6,15 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
-status: generic input Hook Point prototype Human accepted; legacy framework final acceptance and broader rollout pending
-scope: generic input Hook Point prototype plus retained framework and opt-in summary integration; broader rollout deferred
+status: input and Summary direct-entry migration accepted through U4; U5 overall acceptance pending
+scope: direct input and eight Summary Hook Points plus retained legacy libraries; broader rollout deferred
 ---
 
 # Standalone Unified Hook Framework
 
 ## Human revision and accepted generic-entry prototype
 
-**Decision precedence — 2026-10-16:** the following Human decisions supersede conflicting execution-authorization, public-entry and initialization/lifecycle requirements for the generic Hook Point target. The older sections remain historical architecture and describe retained legacy implementations; they must not be used to require trust admission, an observer adapter or HookApplication on the new input path. This is a scoped prototype acceptance, not a migration of the complete framework or broader production rollout.
+**Decision precedence — 2026-10-16:** the following Human decisions supersede conflicting execution-authorization, public-entry and initialization/lifecycle requirements for the generic Hook Point target. The older sections remain historical architecture and describe retained legacy implementations; they must not be used to require trust admission, an observer adapter or workspace application owners on the current input/Summary path. This is a scoped prototype acceptance, not a migration of the complete framework or broader production rollout.
 
 Human corrections, verbatim:
 
@@ -32,7 +32,7 @@ The target is a native business function calling `hook_point_xxx()` directly (`d
 |---|---|
 | Execution authorization | Scripts with executable permission are attempted directly; no deployment manifest, interpreter allowlist or dependency-closure admission. Ordinary OS execution failure is reported. This does not make subprocesses a sandbox or roll back side effects. |
 | Hook Point public entry | A named point delegates to the generic `invoke_hook_point()` entry. It automatically merges local and external resources, runs Modules before Scripts, and sorts each kind by filename. The prototype uses a small separate executor, not the legacy Runtime/default `hook_script` result plan. |
-| Initialization and lifecycle ownership | Bootstrap is in `hooks/__init__.py`; first invocation reads `TOPSAILAI_HOOK_POINTS` into a cached detached snapshot. No HookApplication is required. Legacy application-bound APIs remain available and are not deleted or automatically migrated. |
+| Initialization and lifecycle ownership | Bootstrap is in `hooks/__init__.py`; first invocation reads `TOPSAILAI_HOOK_POINTS` into a cached detached snapshot. No HookApplication is required. The two workspace owners are deleted; shared application-access and prepared/trust APIs remain explicitly composed legacy libraries. |
 
 `TOPSAILAI_HOOK_POINTS` maps exact point names to `modules` and/or `scripts`, each an absolute file/folder string or list. Membership is rediscovered per invocation, directories use direct children only, and duplicate same-kind filenames reject the whole point. Modules are `.py` files excluding `__init__.py`, run as child-process `main(**kwargs)` entries; return values/output are discarded. Scripts are launched directly without a shell wrapper. See the configuration reference for the environment contract; no additional variable is introduced.
 
@@ -42,9 +42,17 @@ Original KeyboardInterrupt/SystemExit/CancelledError identity propagates through
 
 Limits: POSIX only, no new decorator integration, no full regression/cross-platform/production-lifecycle acceptance. The five-second execution budget is not a strict total-duration bound: discovery and global-lock waiting are not bounded by that timer, and cleanup may add a one-second wait per child. Process-creation handoff interruptions, escaped descendants and machine failure remain outside prototype guarantees. Plugin stderr is discarded; path/exit diagnostics are limited. No real bell execution or audibility is claimed. The residual stale task-document statuses are synchronized by this documentation update.
 
-## Status and scope
+## Current direct-entry architecture
 
-This document defines the authoritative target architecture clarified by the Human on 2026-10-10 and the subsequently approved [Summarize Hooks Application](#summarize-hooks-application) design. The summarize application now has explicitly opted-in preparation, ownership and point-local Module/Script wiring; broader rollout and final acceptance remain separately gated. See the implemented file-membership baseline below. Implementation evidence is recorded separately and does not override the target. U06–U10 unified waiting execution, desired/active reload diagnostics, async cancellation custody, Catalog authority and breaking nonwaiting removal are committed. U11A–E add real target business/process evidence. [The open architecture issue](../issues/issue-hook-point-default-script-handler-architecture.md) still requires U11H final acceptance and a Human decision on accepted provenance REDs; application-domain integrations beyond the opt-in summary path remain deferred.
+Since the 2026-10-16 migration, input and the eight phase-one Summary checkpoints call named point functions which delegate to `hooks.invoke_hook_point()`. Initialization and the cached `TOPSAILAI_HOOK_POINTS` snapshot belong to `hooks/__init__.py`, not a workspace application owner. `HooksApplication` and `SummaryHooksOwner` and their production builders have been removed; business factories no longer accept Hook Executor, preparation, trust or temp-root keywords.
+
+The current contract is documented in [Hooks API](../docs/Hooks_API.md#current-direct-entry-architecture): `{}` still activates internal discovery; Modules receive validated metadata, while directly executed Scripts receive no Summary payload. Per-operation checkpoint and exception semantics remain intact. Dynamic discovery, `EntryResult` results, POSIX cleanup and budget limits are not the legacy prepared snapshot, last-known-good or owner lifecycle contract.
+
+Shared prepared/trust and application-access libraries remain unchanged and explicitly composable; the historical sections below do not impose those APIs on current business activation.
+
+## Historical prepared framework status and scope
+
+The following historical specification records the architecture clarified by the Human on 2026-10-10 and the subsequently approved [Summarize Hooks Application](#summarize-hooks-application) design. The former summarize application used explicitly opted-in preparation, ownership and point-local Module/Script wiring; broader rollout and final acceptance remain separately gated. See the implemented file-membership baseline below. Implementation evidence is recorded separately and does not override the target. U06–U10 unified waiting execution, desired/active reload diagnostics, async cancellation custody, Catalog authority and breaking nonwaiting removal are committed. U11A–E add real target business/process evidence. [The open architecture issue](../issues/issue-hook-point-default-script-handler-architecture.md) still requires U11H final acceptance and a Human decision on accepted provenance REDs; application-domain integrations beyond the opt-in summary path remain deferred.
 
 | Dimension | Current status |
 |---|---|
@@ -425,7 +433,9 @@ User2Agent messages are persistent user/session data. Agent2LLM messages are eph
 
 This chapter integrates the approved summarize design into the framework specification. Its naming rules govern new unified points; its business checkpoints, metadata contract, activation choices, and application owner specialize the generic framework without claiming implementation readiness.
 
-### Implemented file-membership baseline
+### Historical prepared file-membership baseline
+
+**Superseded business wiring:** U1–U3 migrated Summary to direct named entries and removed both workspace owners. This section records the earlier deployment-authorized/restart baseline and its evidence, not the current activation procedure. The old production builder mentioned here no longer exists; retained library tests use a test-only helper. Current `{}` activation and per-invocation discovery are specified above.
 
 Human goal: “我要达到的效果是 增减modules 只需要 增减对应的 代码文件 就行。” Human confirmed baseline A: “A:只增减文件 + 部署授权更新 + 应用重启生效；” This is restart-based membership activation, not hot reload or implicit trust.
 
@@ -668,7 +678,7 @@ Length limits do not equal sanitization. The host retains full internal diagnost
 
 **Revision note:** mandatory application composition/Executor injection below is retained summary implementation history, superseded as a generic-entry requirement by [Human revision](#human-revision-and-accepted-generic-entry-prototype).
 
-Use the generic [Layering and ownership](#layering-and-ownership) and [Shared execution facade](#shared-execution-facade) contracts, with the following summarize-specific composition decisions. Application composition structure: EventDefinition + HookPointDeclaration → explicit HookPointCatalog + trusted preparation request → HookRuntime + application HookScope → Registrar → Executor → explicit injection into ContextRuntime. The implemented summary path uses an explicit `SummaryPreparationRequest` and deployment-owned `ConfiguredTrustPolicy`, not the simplified Script-only bootstrap: `SummaryHooksOwner` creates Runtime/Scope, `ConfiguredHookRegistrar.from_prepared()` invokes `register_summary_prepared()`, and the Executor is injected into ContextRuntime. Complete Module/Script point plans, including optional direct-child Script membership, are prepared and published with per-point dispositions; no partial-point admission or hot reload is added. The generic scripts/folder bootstrap retains its separate whole-layer policy; it does not supply Module configuration.
+Use the generic [Layering and ownership](#layering-and-ownership) and [Shared execution facade](#shared-execution-facade) contracts, with the following summarize-specific composition decisions. Application composition structure: EventDefinition + HookPointDeclaration → explicit HookPointCatalog + trusted preparation request → HookRuntime + application HookScope → Registrar → Executor → explicit injection into ContextRuntime. The former summary path used an explicit `SummaryPreparationRequest` and deployment-owned `ConfiguredTrustPolicy`, not the simplified Script-only bootstrap: the now-deleted `SummaryHooksOwner` created Runtime/Scope, `ConfiguredHookRegistrar.from_prepared()` invokes `register_summary_prepared()`, and the Executor was injected into ContextRuntime. Complete Module/Script point plans, including optional direct-child Script membership, are prepared and published with per-point dispositions; no partial-point admission or hot reload is added. The generic scripts/folder bootstrap retains its separate whole-layer policy; it does not supply Module configuration.
 
 - Compose Runtime/Scope/Registrar/Executor once at application startup, shared by all AgentChats and sessions in that application process. Eagerly prepare ConfiguredHookPoint resources, validate Modules/Scripts, and register into Runtime before normal operation; no lazy first-dispatch registration. The Executor coordinates registration readiness.
 - A single configured Hook registration failure disables that Hook, not the application. In phase one, "single Hook" means ONE `HookPointDeclaration` and its complete point plan, NOT the entire application layer and NOT an arbitrary individual Script; partial plan admission requires a later explicit policy. A Module or Script preparation failure invalidates and disables that point plan; other valid points remain active. Valid Modules/Scripts within a valid point plan remain active, but none execute while their containing plan is invalid or disabled; do not silently discard a failed entry and publish a partial plan. Emit high-visibility logs, metrics, and a startup report identifying the unavailable point; because the Runtime is shared, the disabled point affects ALL sessions.
@@ -708,7 +718,7 @@ The first step integrates only the eight first-phase points in the table above, 
 | workspace/context/ctx_runtime.py | User2Agent application completion and exceptions |
 | workspace/context/agent2llm.py | Agent2LLM application completion and exceptions |
 | hooks/points/context/ | Declarations, payloads, and adaptation; avoid expanding shared base.py |
-| workspace/summary_hooks_owner.py and workspace/agent_shell.py | Eagerly compose/register once per application, inject the shared Executor into all AgentChats/sessions, and own application shutdown and bounded cleanup-debt retries |
+| hooks/__init__.py and hooks/point_entry.py | Current package initialization and direct resource execution/cleanup; no workspace owner or business Executor injection |
 
 Prepare a test plan before implementation, covering at least:
 
@@ -788,7 +798,7 @@ Extend, rather than duplicate, the acceptance checklist above:
 | Application wiring/cross-worker reentry | Application owner is decided; confirm composition files, shared Executor injection/isolation boundaries, and identification mechanisms. Cross-worker runtime persistence is outside phase one; per-session scoping is a P2 revisit |
 | timeout | Determine each point's timeout and the total business budget to prevent prolonged plugin blocking |
 | Symmetrical external resource configuration | Freeze Module/Script file/list/folder schema, local/external combination rules, eligible-folder policy and nested registered-name generation; reuse existing prepared handoff without claiming generic Module bootstrap completion |
-| Controlled application access | Implemented in `hooks/application_access.py` and `workspace/hooks_application.py`; remaining work is broader rollout/acceptance of propagation and signature-preserving insertion beyond the committed application/input path |
+| Controlled application access | Retained legacy library in `hooks/application_access.py`; `workspace/hooks_application.py` was deleted in U3, and current input/Summary dispatch does not bind or use the library |
 
 Open items are not allowed by default: security, behavior, and permissions require prior confirmation; subsequent plans resolve other implementation details within the agreed rules.
 
@@ -997,7 +1007,7 @@ U10 removed nonwaiting Runtime/facade methods and receipts; Catalog background m
 
 **Revision note:** the application-provider facade below is retained, but not required on the accepted input path; the generic named point delegates to invoke_hook_point instead. See [Human revision](#human-revision-and-accepted-generic-entry-prototype).
 
-The implemented controlled access/provider resolves the already prepared application-owned Executor and delegates to this same facade. It supplies no alternate execution engine, registration cache, implicit Runtime construction or application lifetime. `hooks/application_access.py` exports `HookApplicationAccess`, `HookExecutorAccess`, `bind_hook_application()` and `get_hook_executor()`; `workspace/hooks_application.py` owns application binding and shutdown. Broader external-resource bootstrap and wider application rollout remain target work.
+The implemented controlled access/provider resolves the already prepared application-owned Executor and delegates to this same facade. It supplies no alternate execution engine, registration cache, implicit Runtime construction or application lifetime. `hooks/application_access.py` exports `HookApplicationAccess`, `HookExecutorAccess`, `bind_hook_application()` and `get_hook_executor()`; the former `workspace/hooks_application.py` owner was deleted in U3, so legacy callers must explicitly own any binding and shutdown. Broader external-resource bootstrap and wider application rollout remain target work.
 
 The implemented waiting-only facade returns the compatibility `DispatchReport` with `unified_result`; it does not return a bare HookPointResult or derive/rewrite the unified decision:
 

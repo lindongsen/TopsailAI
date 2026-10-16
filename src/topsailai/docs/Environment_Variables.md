@@ -368,11 +368,12 @@ These variables configure the optional tool-call approval gate. When enabled, ea
 |----------|---------|-------------|
 | `TOPSAILAI_HOOK_POINTS` | `{}` | Prototype JSON object mapping exact point names to `modules` and/or `scripts`; each value is an absolute file/folder path or list of paths. Read on first point invocation; restart or explicitly call `initialize_hook_points(config)` to replace the snapshot. |
 
-The input prototype calls `hook__workspace__before__input_message()` without application
-binding. Internal point-local resources merge with configured external resources. Direct-child
+Input and the eight phase-one Summary points use direct named entries without application
+binding or business Hook keywords. `{}` is not disablement: internal point-local resources
+are still discovered and merge with configured external resources. Direct-child
 membership is rediscovered per invocation; same-kind duplicate filenames reject the point.
 Modules (`.py`, excluding `__init__.py`) run before executable Scripts, each in filename order.
-Scripts run directly without a manifest, interpreter allowlist or dependency admission.
+Scripts run directly without arguments or Summary payload (empty stdin), manifest, interpreter allowlist or dependency admission.
 This POSIX-only prototype is independent of the legacy configured-Hook variables below;
 it does not remove their trust rules. Its five-second aggregate execution budget is not a strict
 total-call bound: discovery and global-lock waiting are not bounded by that timer, and cleanup
