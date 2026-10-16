@@ -3,7 +3,8 @@ Feature: Summarize Hooks preserve business outcomes across provider and session 
   I want optional managed observers to report truthful layer-specific checkpoints
   So that summaries retain provider behavior and application-scoped availability
 
-  # Acceptance: typed eager startup is safe and disables points before preparation I/O.
+  # Legacy API acceptance only: retained typed owner startup dispositions.
+  # Business scenarios below use direct entries without owner injection.
   Scenario Outline: Application startup exposes safe phase-one dispositions
     Given a private sse summarize Hooks user2agent application for <case>
     When the summarize Hooks acceptance path runs

@@ -21,6 +21,8 @@ from topsailai.hooks.configured_bootstrap import load_configured_trust_manifest
 from topsailai.hooks.deployment_script_authorization import write_mixed_trust_manifest
 from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
 from topsailai.hooks.points.catalog import PHASE_ONE_DECLARATIONS
+import topsailai.hooks as hooks
+from topsailai.hooks.point_entry import pending_cleanup
 from topsailai.workspace import agent_shell, summary_hooks_owner
 
 
@@ -130,6 +132,52 @@ os.write(int(os.environ['TOPSAILAI_HOOK_RESULT_FD']), struct.pack('!I', len(body
             raise AssertionError(f"observed fixture worker still exists: {row['pid']}")
 
 
+class DirectDeployment(MixedDeployment):
+    """Reuse fixture membership while selecting direct resources without authority."""
+
+    def __init__(self, root, fault="success"):
+        """Build actual Modules and directly executable Scripts for each point."""
+        super().__init__(root, fault)
+        self.config = {p.hook_name: {
+            "modules": str(p.module_folder),
+            "scripts": str(p.module_folder.parent / "scripts"),
+        } for p in self.request().configuration.hook_points}
+
+    def request(self):
+        """Describe fixture directories without using the legacy owner builder."""
+        points = []
+        for declaration in PHASE_ONE_DECLARATIONS:
+            _, domain, phase, action = declaration.name.split("__")
+            points.append(SimpleNamespace(hook_name=declaration.name,
+                module_folder=self.points / domain / f"{phase}_{action}" / "modules"))
+        return SimpleNamespace(configuration=SimpleNamespace(hook_points=tuple(points)))
+
+    def add_script(self, point, name):
+        """Write a direct executable; no stdin protocol or metadata is supplied."""
+        folder = point.module_folder.parent / "scripts"
+        folder.mkdir(mode=0o700, exist_ok=True)
+        path = folder / name
+        failure = (name == "A" and self.fault in (
+            "script_failure", "generation_failure", "application_failure",
+            "empty_provider_exhaustion"))
+        path.write_text(f'''#!{self.executable}
+import json, os, sys, time
+assert sys.stdin.buffer.read() == b""
+row = {{"name": {name!r}, "pid": os.getpid(), "point": {point.hook_name!r}}}
+with open({str(self.ledger)!r}, "a") as stream:
+    stream.write(json.dumps(row) + "\\n")
+{ "raise RuntimeError('fixture Script failure')" if failure else "" }
+{ "time.sleep(60)" if self.fault == "blocked" and name == "A" else "" }
+''')
+        path.chmod(0o700)
+        return path
+
+    def close(self):
+        """Require exact direct-runner custody to be settled before artifact cleanup."""
+        assert pending_cleanup() == ()
+        super().close()
+
+
 class SummaryScriptScenario(SummarizeHooksScenario):
     """Reuse real business interactions, not the legacy fixed-root trust constructor."""
     def __init__(self, monkeypatch, request, layer, case, transport, root, mode="runtime"):
@@ -201,19 +249,20 @@ class SummaryScriptScenario(SummarizeHooksScenario):
             clock = SimpleNamespace(**{name: getattr(time, name) for name in dir(time)})
             clock.sleep = self.retry_delays.append
             monkeypatch.setattr(llm_base, "time", clock)
+        monkeypatch.setattr(hooks, '_point_configuration', ())
+        self.control = False
         self._prepare()
 
     def _prepare(self):
-        """Prepare mixed offline authority before injecting the shared executor."""
-        self.deployment = MixedDeployment(self.root, self.case)
+        """Configure direct external Modules and Scripts without owner or trust plumbing."""
+        self.deployment = DirectDeployment(self.root, self.case)
         self.ledger = self.deployment.ledger
-        self.preparation = self.deployment.request()
-        self.trust = self.deployment.authorize()
+        self.inputs = {}
         if self.case == "stale":
-            point = self.preparation.configuration.hook_points[0]
+            # Direct discovery deliberately observes membership added after configuration.
+            point = self.deployment.request().configuration.hook_points[0]
             self.deployment.add_script(point, "new")
-        self.inputs = dict(summary_preparation_request=self.preparation,
-            summary_trust_policy=self.trust, summary_hooks_temp_root=str(self.root / "runtime"))
+        hooks.initialize_hook_points(self.deployment.config)
 
     def _observe(self, runtime):
         """Seed a private persistent session before the real summary checkpoint."""
@@ -267,7 +316,7 @@ class SummaryScriptScenario(SummarizeHooksScenario):
             assert len(self.persisted_history) < len(self.original_messages)
             assert not any("runtime context details" in str(m) for m in self.persisted_history)
         runtime = self.runtime
-        runtime.summary_hooks_executor = None
+        self.control = True
         stat = runtime.ai_agent.runtime.token_stat
         with stat.rlock:
             for name, value in self.initial_tokens.items():
@@ -442,51 +491,41 @@ class SummaryScriptScenario(SummarizeHooksScenario):
         rows = [json.loads(row) for row in self.ledger.read_text().splitlines()]
         assert list(dict.fromkeys(row['point'] for row in rows)) == names
         if self.case == 'observer_failure':
-            assert any(report.outcomes for report in self.reports)
+            assert any(r.status == "error" for report in self.reports for r in report)
             assert 'observer fixture failure' not in str(self.events)
 
 
     def assert_outcome(self):
         """Assert business checkpoints, real Script order and metadata-only isolation."""
-        if self.case == "stale":
-            assert self.error is None
-            assert self.observed_state["total_requests"] == 1
-            assert self.result == "U7 concise summary"
-            assert any(d.kind == "unavailable_preparation_failure"
-                for d in self.owner.startup_report.dispositions)
-        else:
-            self._assert_business()
+        self._assert_business()
         rows = self.deployment.rows()
         for name in {row["point"] for row in rows}:
             selected = [r for r in rows if r["point"] == name]
-            assert [r["name"] for r in selected] == ["Alpha", "zeta", "A", "z"]
+            expected = ["Alpha", "zeta", "A", "z"]
+            if self.case == "stale" and name == PHASE_ONE_DECLARATIONS[0].name:
+                expected = ["Alpha", "zeta", "A", "new", "z"]
+            assert [r["name"] for r in selected] == expected
             assert all(r["pid"] != os.getpid() for r in selected)
             assert all("U7 runtime context" not in json.dumps(r) for r in selected)
+            assert all("payload" not in r for r in selected if r["name"] in ("A", "z", "new"))
         for report in self.reports:
-            if report.rejection_reason is not None:
-                continue
-            handlers = report.unified_result.handlers
-            assert [h.handler.kind for h in handlers] == ["module", "module", "default_script_hook"]
-            assert handlers[-1].handler.name == "hook_script"
-            assert [h.handler.name for h in handlers[-1].children] == ["A", "z"]
+            modules = [r.name for r in report if r.kind == "module"]
+            assert modules == ["Alpha.py", "observer.py", "zeta.py"]
+            assert [r.kind for r in report] == sorted(
+                (r.kind for r in report), key=lambda kind: kind != "module")
         if self.case in ("generation_failure", "application_failure", "empty_provider_exhaustion"):
             assert len(self.events) == len(self.reports) == 2
             point_name, _, operation_id, *_ = self.events[-1]
             assert "__error__" in point_name
-            report = self.reports[-1]
-            unified = report.unified_result
-            assert unified.hook_point_name == point_name
-            failed = next(h for h in unified.handlers[-1].children if h.handler.name == "A")
+            failed = next(r for r in self.reports[-1] if r.name == "A")
             assert failed.status == "error"
-            raw = report.unified_result.handlers[-1].returned.value
-            assert raw[0].started and raw[0].status.value == "error"
-            observed = [row for row in rows if row["point"] == point_name
-                and row["payload"]["operation_id"] == operation_id]
+            observed = [row for row in rows if row["point"] == point_name]
             assert [row["name"] for row in observed] == ["Alpha", "zeta", "A", "z"]
-            assert sum(row["name"] == "A" for row in observed) == 1
+            assert all(row["payload"]["operation_id"] == operation_id
+                for row in observed if "payload" in row)
         elif self.case == "script_failure":
-            assert any(h.status != "success" for r in self.reports
-                for h in r.unified_result.handlers[-1].children)
+            assert any(r.status == "error" for report in self.reports for r in report)
+        assert pending_cleanup() == ()
 
     @staticmethod
     def assert_exhaustion(error):

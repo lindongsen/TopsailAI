@@ -14,7 +14,7 @@ Purpose:
 """
 
 from topsailai.logger import logger
-from topsailai.hooks.points.context.summary_adapter import SummaryHookAdapter
+from topsailai.hooks.points.context.summary_adapter import summary_operation
 from topsailai.workspace.context.base import SUMMARY_CONTROL_EXCEPTIONS
 from topsailai.ai_base.constants import (
     ROLE_USER,
@@ -334,6 +334,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         return False, current_tokens
 
 
+    @summary_operation("user2agent")
     def summarize_messages_for_processed(
             self,
             messages: list = None,
@@ -429,14 +430,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         # The summarizer is called with the current runtime messages. In
         # runtime mode the LLM actually consumes self.messages, but the
         # wrapper-level contract is to pass the runtime messages.
-        summary_hook_operation = None
-        summary_hooks_executor = getattr(self, "summary_hooks_executor", None)
-        if summary_hooks_executor is not None:
-            summary_hook_operation = SummaryHookAdapter(summary_hooks_executor).begin("user2agent")
-        summary_hook_kwargs = {}
-        if summary_hook_operation is not None:
-            summary_hook_kwargs["summary_hook_operation"] = summary_hook_operation
-        llm_chat, answer = self._summarize_messages(messages, extra_prompt=story_tool.PROMPT_SUMMARY_MEMORY, **summary_hook_kwargs)
+        llm_chat, answer = self._summarize_messages(messages, extra_prompt=story_tool.PROMPT_SUMMARY_MEMORY)
         if not answer:
             print_critical("!!! [User2Agent] [Summarization] NO ANSWER")
             return None
@@ -581,12 +575,12 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             raise
         except Exception:
             self._emit_summary_checkpoint(
-                summary_hook_operation, "error_summary_apply",
+                "error_summary_apply",
                 error_category=error_category, failed_stage=failed_stage,
                 partial_apply_possible=partial_apply_possible,
             )
             raise
-        self._emit_summary_checkpoint(summary_hook_operation, "after_summary_apply")
+        self._emit_summary_checkpoint("after_summary_apply")
         return answer
 
 

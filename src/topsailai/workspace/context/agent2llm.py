@@ -14,7 +14,7 @@ import math
 import random
 
 from topsailai.logger import logger
-from topsailai.hooks.points.context.summary_adapter import SummaryHookAdapter
+from topsailai.hooks.points.context.summary_adapter import summary_operation
 from topsailai.workspace.context.base import SUMMARY_CONTROL_EXCEPTIONS
 from topsailai.ai_base.constants import (
     ROLE_SYSTEM,
@@ -237,6 +237,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         return False, current_tokens
 
 
+    @summary_operation("agent2llm")
     def summarize_messages_for_processing(
             self,
             messages: list | str = None,
@@ -371,14 +372,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         )
         logger.info("[summarize_processing] before: messages=%s, tokens=%s", len(messages), _token_count_before)
 
-        summary_hook_operation = None
-        summary_hooks_executor = getattr(self, "summary_hooks_executor", None)
-        if summary_hooks_executor is not None:
-            summary_hook_operation = SummaryHookAdapter(summary_hooks_executor).begin("agent2llm")
-        summary_hook_kwargs = {}
-        if summary_hook_operation is not None:
-            summary_hook_kwargs["summary_hook_operation"] = summary_hook_operation
-        llm_chat, answer = self._summarize_messages(messages, **summary_hook_kwargs)
+        llm_chat, answer = self._summarize_messages(messages)
         if not answer:
             print_critical("!!! [Agent2LLM] [Summarization] NO ANSWER")
             return None
@@ -480,12 +474,12 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             raise
         except Exception:
             self._emit_summary_checkpoint(
-                summary_hook_operation, "error_summary_apply",
+                "error_summary_apply",
                 error_category=error_category, failed_stage=failed_stage,
                 partial_apply_possible=partial_apply_possible,
             )
             raise
-        self._emit_summary_checkpoint(summary_hook_operation, "after_summary_apply")
+        self._emit_summary_checkpoint("after_summary_apply")
         return answer
 
     def is_need_summarize_for_processing(self) -> bool:

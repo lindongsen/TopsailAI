@@ -15,9 +15,14 @@ from topsailai.ai_base.llm_control.exception import (
     LLMProviderError, LLMProviderTimeoutError, LLMProviderConnectionError,
 )
 from topsailai.hooks.contracts import DispatchReport
-from topsailai.hooks.points.context.summary_adapter import SummaryHookAdapter
+from topsailai.hooks.points.context.summary_adapter import (
+    SummaryHookAdapter, _CHECKPOINTS, current_summary_operation, summary_operation,
+)
 from topsailai.workspace.context import base, ctx_runtime, agent2llm
 from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
+
+_DIRECT_ENTRIES = {point.NAME: getattr(point, point.NAME)
+                   for points in _CHECKPOINTS.values() for point in points.values()}
 
 
 class Executor:
@@ -43,7 +48,15 @@ def setup_runtime(monkeypatch):
     """Build real layer methods with deterministic generation and feasibility seams."""
     timeline = []
     executor = Executor(timeline)
-    runtime = ContextRuntimeData(summary_hooks_executor=executor)
+    runtime = ContextRuntimeData()
+    for points in _CHECKPOINTS.values():
+        for selected in points.values():
+            def direct(*, operation_id, _selected=selected, **classification):
+                """Observe the actual direct point lookup, retaining real payload checks."""
+                payload = _selected.build_payload(operation_id=operation_id, **classification)
+                return executor.dispatch(_selected.POINT, payload=payload,
+                    operation=SimpleNamespace(operation_id=operation_id))
+            monkeypatch.setattr(selected, selected.NAME, direct)
     runtime.messages = [
         {'role': 'user', 'content': 'task'},
         {'role': 'assistant', 'content': 'middle'},
@@ -115,16 +128,13 @@ def test_success_order_routing_and_one_operation(setup_runtime, layer, mode):
 
 
 @pytest.mark.parametrize('layer', ['user2agent', 'agent2llm'])
-def test_unconfigured_does_not_construct_operation(setup_runtime, monkeypatch, layer):
-    """The legacy path uses no adapter or operation when no executor was injected."""
+def test_default_activation_without_executor(setup_runtime, layer):
+    """Summary reaches direct entries without an injected owner or executor."""
     runtime, executor, _, _, _ = setup_runtime
-    runtime.summary_hooks_executor = None
-    forbidden = Mock(side_effect=AssertionError('must not construct'))
-    monkeypatch.setattr(ctx_runtime, 'SummaryHookAdapter', forbidden)
-    monkeypatch.setattr(agent2llm, 'SummaryHookAdapter', forbidden)
+    assert not hasattr(runtime, 'summary_hooks_executor')
     assert summarize(runtime, layer) == 'summary'
-    forbidden.assert_not_called()
-    assert executor.calls == []
+    assert len(executor.calls) == 2
+    assert current_summary_operation() is None
 
 
 @pytest.mark.parametrize('layer', ['user2agent', 'agent2llm'])
@@ -419,9 +429,73 @@ def test_each_new_summary_owns_a_new_operation(setup_runtime):
 
 
 @pytest.mark.parametrize('layer', ['user2agent', 'agent2llm'])
-def test_legacy_missing_optional_executor_is_unconfigured(setup_runtime, layer):
-    """Legacy subclasses without the new base field retain unconfigured behavior."""
+def test_same_operation_checkpoint_retry_is_not_redispatched(setup_runtime, monkeypatch, layer):
+    """A duplicate generation checkpoint in one operation dispatches only once."""
     runtime, executor, _, _, _ = setup_runtime
-    del runtime.summary_hooks_executor
+    original = runtime._chat_for_summary
+
+    def generate(*args, **kwargs):
+        """Revisit an already consumed checkpoint during the real generation call."""
+        assert current_summary_operation().emit('before_summary_generate').already_handled
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(runtime, '_chat_for_summary', generate)
     assert summarize(runtime, layer) == 'summary'
+    assert len(executor.calls) == 2
+
+
+@pytest.mark.parametrize('layer', ['user2agent', 'agent2llm'])
+@pytest.mark.parametrize('mode', ['message', 'runtime'])
+@pytest.mark.parametrize('outcome', ['success', 'generation_error', 'application_error'])
+def test_business_wiring_reaches_real_workers(setup_runtime, monkeypatch, layer, mode, outcome):
+    """Run actual bundled observer children from real business checkpoints."""
+    import os
+    import topsailai.hooks as hooks
+    from topsailai.hooks.point_entry import pending_cleanup
+
+    if os.name != 'posix':
+        pytest.skip('Generic direct entry requires POSIX process containment')
+    runtime, executor, _, _, reader = setup_runtime
+    reader.get = lambda name, *args, **kwargs: mode if name == 'TOPSAILAI_CONTEXT_SUMMARY_MODE' else None
+    for points in _CHECKPOINTS.values():
+        for point in points.values():
+            monkeypatch.setattr(point, point.NAME, _DIRECT_ENTRIES[point.NAME])
+    monkeypatch.setattr(hooks, '_point_configuration', ())
+    invoke = hooks.invoke_hook_point
+    reports = []
+
+    def record(name, **payload):
+        """Observe real worker outcomes without replacing subprocess execution."""
+        result = invoke(name, **payload)
+        reports.append((name, payload, result))
+        return result
+
+    def fail(*args, **kwargs):
+        """Raise an exact business exception at the requested stage."""
+        raise primary
+
+    primary = ValueError('business failure')
+    monkeypatch.setattr(hooks, 'invoke_hook_point', record)
+    if outcome == 'generation_error':
+        monkeypatch.setattr(runtime, '_chat_for_summary', fail)
+    elif outcome == 'application_error':
+        if layer == 'user2agent':
+            monkeypatch.setattr(runtime, 'set_messages', fail)
+        else:
+            runtime.ai_agent.runtime.token_stat.add_msgs = fail
+    if outcome == 'success':
+        assert summarize(runtime, layer) == 'summary'
+    else:
+        with pytest.raises(ValueError) as caught:
+            summarize(runtime, layer)
+        assert caught.value is primary
+    terminal = {'success': 'after__summary_apply', 'generation_error': 'error__summary_generate',
+                'application_error': 'error__summary_apply'}[outcome]
+    assert [item[0] for item in reports] == [
+        f'hook__context__before__summary_generate_{layer}', f'hook__context__{terminal}_{layer}']
+    assert len({item[1]['hook_context']['operation_id'] for item in reports}) == 1
+    assert all([(result.kind, result.name, result.status) for result in item[2]] ==
+               [('module', 'observer.py', 'success')] for item in reports)
     assert executor.calls == []
+    assert current_summary_operation() is None
+    assert pending_cleanup() == ()

@@ -41,6 +41,7 @@ from topsailai.utils import (
 )
 from topsailai.ai_base.prompt_base import PromptBase
 from topsailai.workspace.llm_shell import LLMChat, get_llm_chat
+from topsailai.hooks.points.context.summary_adapter import current_summary_operation
 from topsailai.workspace.context import summary_tool
 
 
@@ -91,13 +92,12 @@ class ContextRuntimeBase(object):
         self.ai_agent.messages: Agent chats to LLM.
     """
 
-    def __init__(self, *, summary_hooks_executor=None):
+    def __init__(self):
         """
         Initialize the ContextRuntimeBase instance.
 
         Sets up default values for session ID, messages list, and AI agent reference.
         """
-        self.summary_hooks_executor = summary_hooks_executor
         self.session_id = ""
         self.messages = []
         self.ai_agent: AgentBase = None
@@ -1116,21 +1116,24 @@ class ContextRuntimeBase(object):
         return answer
 
     @staticmethod
-    def _emit_summary_checkpoint(operation, checkpoint, **classification):
+    def _emit_summary_checkpoint(checkpoint, **classification):
         """Isolate ordinary observer failures without hiding host control signals."""
+        operation = current_summary_operation()
         if operation is None:
             return None
         try:
             return operation.emit(checkpoint, **classification)
-        except SUMMARY_CONTROL_EXCEPTIONS:
-            raise
-        except Exception:
+        except BaseException as error:
+            # An active business exception always outranks its error observer.
+            if not checkpoint.startswith("error_") and (
+                    not isinstance(error, Exception) or isinstance(error, SUMMARY_CONTROL_EXCEPTIONS)):
+                raise
             logger.warning("summary observer dispatch failed: checkpoint=%s reason=observer_failure", checkpoint)
             return None
 
-    def _generate_summary_with_hooks(self, operation, llm_chat, *args, **kwargs):
+    def _generate_summary_with_hooks(self, llm_chat, *args, **kwargs):
         """Bracket only the concrete generation request with caller-owned checkpoints."""
-        self._emit_summary_checkpoint(operation, "before_summary_generate")
+        self._emit_summary_checkpoint("before_summary_generate")
         try:
             return self._chat_for_summary(llm_chat, *args, **kwargs)
         except SUMMARY_CONTROL_EXCEPTIONS:
@@ -1144,7 +1147,7 @@ class ContextRuntimeBase(object):
             elif isinstance(error, LLMProviderError):
                 category = "provider"
             self._emit_summary_checkpoint(
-                operation, "error_summary_generate",
+                "error_summary_generate",
                 error_category=category, failed_stage="generation_request",
             )
             raise
@@ -1154,7 +1157,6 @@ class ContextRuntimeBase(object):
             messages,
             prompt: str = None,
             extra_prompt: str=None,
-            summary_hook_operation=None,
         ):
         """
         Summarize messages into a single text using LLM.
@@ -1184,7 +1186,6 @@ class ContextRuntimeBase(object):
         if env_tool.EnvReaderInstance.get("TOPSAILAI_CONTEXT_SUMMARY_MODE") == "runtime":
             return self._summarize_runtime_messages(
                 messages, prompt=prompt, extra_prompt=extra_prompt,
-                summary_hook_operation=summary_hook_operation,
             )
 
         # message
@@ -1200,7 +1201,7 @@ Summarize Messages
             message=message_title + one_msg,
             system_prompt=self._get_summary_prompt(prompt=prompt, extra_prompt=extra_prompt),
         )
-        answer = self._generate_summary_with_hooks(summary_hook_operation, llm_chat,
+        answer = self._generate_summary_with_hooks(llm_chat,
             need_print=env_tool.is_interactive_mode(),
             need_env_message=False,
         )
@@ -1212,7 +1213,6 @@ Summarize Messages
             messages,
             prompt: str = None,
             extra_prompt: str=None,
-            summary_hook_operation=None,
         ):
         """
         Runtime-mode summarization.
@@ -1287,7 +1287,7 @@ Summarize Messages
             tools = list(tools_for_chat.values()) or None
 
         TIPS = "\n> DONOT INVOKE ANY TOOLS, DIRECTLY OUTPUT FINAL_ANSWER!"
-        answer = self._generate_summary_with_hooks(summary_hook_operation, llm_chat,
+        answer = self._generate_summary_with_hooks(llm_chat,
             self._get_summary_prompt(prompt=prompt, extra_prompt=extra_prompt) + TIPS,
             need_print=env_tool.is_interactive_mode(),
             need_env_message=False,

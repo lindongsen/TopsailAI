@@ -21,6 +21,8 @@ from topsailai.hooks.configured_contracts import SummaryPreparationRequest
 from topsailai.hooks.points.catalog import (
     PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS, SUMMARY_CATALOG,
 )
+import topsailai.hooks as hooks
+from topsailai.hooks.point_entry import pending_cleanup
 from topsailai.workspace import agent_shell, summary_hooks_owner
 
 
@@ -87,10 +89,12 @@ class SummarizeHooksScenario:
         for module_name, module in tuple(sys.modules.items()):
             if module_name.startswith('topsailai.') and hasattr(module, 'FOLDER_WORKSPACE_TASK'):
                 monkeypatch.setattr(module, 'FOLDER_WORKSPACE_TASK', str(task_root))
+        monkeypatch.setattr(hooks, '_point_configuration', ())
+        self.control = False
         self._prepare()
 
-    def _prepare(self):
-        """Pin scenario-created observer closures before configured acquisition."""
+    def _prepare_legacy(self):
+        """Verify retained legacy startup dispositions separately from business wiring."""
         executable = Path(sys.executable).resolve(strict=True)
         digest = hashlib.sha256(executable.read_bytes()).hexdigest()
         status = executable.stat()
@@ -121,16 +125,33 @@ class SummarizeHooksScenario:
         self.trust = ConfiguredTrustPolicy(
             (self.sources,), closure_assertions=tuple(assertions),
             python_runtime=ArtifactPythonRuntimeAuthority(executable, digest))
-        self.inputs = dict(summary_preparation_request=self.preparation,
-            summary_trust_policy=self.trust, summary_hooks_temp_root=str(self.root / 'runtime'))
+    def _prepare(self):
+        """Select external direct Modules without constructing an application owner."""
+        if self.case in ('startup', 'disabled'):
+            self._prepare_legacy()
+            return
+        selections = {}
+        for point in PHASE_ONE_DECLARATIONS:
+            (self.sources / point.name).mkdir(mode=0o700)
+            source = self.sources / point.name / 'direct_observer.py'
+            source.write_text(
+                'import json, os\n'
+                'def main(*, hook_context):\n'
+                '    """Record detached metadata from the actual direct worker."""\n'
+                f'    with open({str(self.ledger)!r}, "a") as stream:\n'
+                '        stream.write(json.dumps({"point": hook_context["event_name"], "pid": os.getpid()}) + "\\n")\n'
+                + ('    raise RuntimeError("observer fixture failure")\n'
+                   if self.case == 'observer_failure' else ''), encoding='utf-8')
+            selections[point.name] = {'modules': str(source)}
+        hooks.initialize_hook_points(selections)
 
     def chat(self, configured=True):
-        """Use the production AgentChat factory and its passive executor injection."""
+        """Use the production AgentChat factory without Hook-specific keywords."""
         chat = agent_shell.get_agent_chat(
             system_prompt='U7 private summary application', agent_name='U7BDD',
             session_id='', message='', tool_map={}, need_input_message=False,
             need_print_session=False, need_set_agent_name_to_thread_local=False,
-            need_project_workspace_lock=False, **(self.inputs if configured else {}))
+            need_project_workspace_lock=False)
         self.chats.append(chat)
         return chat
 
@@ -159,21 +180,25 @@ class SummarizeHooksScenario:
 
     def _observe(self, runtime):
         """Delegate every dispatch to the real executor and record checkpoint state."""
-        original = self.owner.executor.dispatch
+        original = hooks.invoke_hook_point
 
-        def dispatch(point, *, payload, operation):
+        def dispatch(name, **kwargs):
             """Observe primary state without replacing configured execution."""
-            if 'error__summary_generate' in point.name:
+            if self.control:
+                return ()
+            context = kwargs['hook_context']
+            payload = context['payload']
+            if 'error__summary_generate' in name:
                 self.primary = sys.exception()
                 self.generation_traceback = self.primary.__traceback__
             current = runtime.messages if self.layer == 'user2agent' else runtime.ai_agent.messages
-            self.events.append((point.name, dict(payload), operation.operation_id,
+            self.events.append((name, dict(payload), context['operation_id'],
                 self.state()['total_requests'], list(current), self.application_checked))
-            report = original(point, payload=payload, operation=operation)
+            report = original(name, **kwargs)
             self.reports.append(report)
             return report
 
-        self.patch.setattr(self.owner.executor, 'dispatch', dispatch)
+        self.patch.setattr(hooks, 'invoke_hook_point', dispatch)
         check = runtime._check_summarize_token_reduction
 
         def accounting(*args, **kwargs):
@@ -188,7 +213,7 @@ class SummarizeHooksScenario:
         """Run startup or a production summary without internal LLM substitution."""
         if self.case == 'unconfigured':
             first = self.chat(False)
-            assert first.ctx_runtime_data.summary_hooks_executor is None
+            assert not hasattr(first.ctx_runtime_data, 'summary_hooks_executor')
             assert summary_hooks_owner._owner is None
             self.exit_session(first)
             assert summary_hooks_owner._owner is None
@@ -204,16 +229,19 @@ class SummarizeHooksScenario:
 
             self.patch.setattr(configured_preparation, 'prepare_private', prepare)
         chat = self.chat()
-        self.owner = summary_hooks_owner._owner
-        assert chat.ctx_runtime_data.summary_hooks_executor is self.owner.executor
+        assert not hasattr(chat.ctx_runtime_data, 'summary_hooks_executor')
+        assert summary_hooks_owner._owner is None
         if self.case in ('startup', 'disabled'):
+            # These assertions belong exclusively to the retained legacy owner API.
+            self.owner = summary_hooks_owner.SummaryHooksOwner(
+                request=self.preparation, trust_policy=self.trust,
+                temp_root=str(self.root / 'legacy-runtime'))
             return
         if self.case == 'session':
             second = self.chat()
-            owner = self.owner
             self.exit_session(chat)
-            assert summary_hooks_owner._owner is owner and not owner.closing
-            assert not owner.scope.closed
+            assert summary_hooks_owner._owner is None
+            assert pending_cleanup() == ()
             chat = second
         runtime = chat.ctx_runtime_data
         self.runtime = runtime
@@ -337,9 +365,11 @@ class SummarizeHooksScenario:
         assert self.events[-1][3] == 1 and self.events[-1][5]
         assert any('U7 concise summary' in str(m) for m in self.events[-1][4])
         rows = [json.loads(row) for row in self.ledger.read_text().splitlines()]
+        assert all(row['pid'] != __import__('os').getpid() for row in rows)
+        assert pending_cleanup() == ()
         assert [row['point'] for row in rows] == names
         if self.case == 'observer_failure':
-            assert any(report.outcomes for report in self.reports)
+            assert any(entry.status == 'error' for report in self.reports for entry in report)
             assert 'observer fixture failure' not in str(self.events)
 
     def close(self):

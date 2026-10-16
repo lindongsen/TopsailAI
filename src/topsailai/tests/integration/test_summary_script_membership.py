@@ -121,4 +121,51 @@ def test_local_owner_empty_result_branch(tmp_path, request, monkeypatch, layer):
     assert [event[0] for event in scenario.events] == [
         "hook__context__before__summary_generate_" + layer]
     assert [row["name"] for row in scenario.deployment.rows()] == ["Alpha", "zeta", "A", "z"]
-    assert scenario.reports[0].unified_result.cleanup.state == "safe"
+    from topsailai.hooks.point_entry import pending_cleanup
+    assert all(r.status == "success" for r in scenario.reports[0])
+    assert pending_cleanup() == ()
+
+
+@pytest.mark.parametrize("layer", ["user2agent", "agent2llm"])
+def test_direct_order_and_checkpoint_custody(tmp_path, request, monkeypatch, layer):
+    """Actual direct workers preserve order and consume each operation checkpoint once."""
+    import topsailai.hooks as hooks
+    from tests.bdd.summary_script_membership_harness import DirectDeployment
+    from topsailai.hooks.points.context.summary_adapter import DirectSummaryOperation
+    tree = DirectDeployment(tmp_path)
+    request.addfinalizer(tree.close)
+    monkeypatch.setattr(hooks, "_point_configuration", ())
+    hooks.initialize_hook_points(tree.config)
+    operation = DirectSummaryOperation(layer)
+    result = operation.emit("before_summary_generate")
+    assert [(r.kind, r.name, r.status) for r in result] == [
+        ("module", "Alpha.py", "success"), ("module", "observer.py", "success"),
+        ("module", "zeta.py", "success"), ("script", "A", "success"),
+        ("script", "z", "success")]
+    assert operation.emit("before_summary_generate").already_handled
+    assert [r["name"] for r in tree.rows()] == ["Alpha", "zeta", "A", "z"]
+    second = DirectSummaryOperation(layer)
+    second.emit("before_summary_generate")
+    rows = tree.rows()
+    assert len(rows) == 8
+    assert {r["payload"]["operation_id"] for r in rows if "payload" in r} == {
+        operation.operation.operation_id, second.operation.operation_id}
+    assert all("payload" not in r for r in rows if r["name"] in ("A", "z"))
+
+
+@pytest.mark.parametrize("fault", ["script_failure", "blocked"])
+def test_direct_error_and_deadline_settlement(tmp_path, request, monkeypatch, fault):
+    """Direct Script errors allow siblings while real deadline expiration stops them."""
+    import topsailai.hooks as hooks
+    from tests.bdd.summary_script_membership_harness import DirectDeployment
+    from topsailai.hooks.points.context.summary_adapter import DirectSummaryOperation
+    tree = DirectDeployment(tmp_path, fault)
+    request.addfinalizer(tree.close)
+    monkeypatch.setattr(hooks, "_point_configuration", ())
+    hooks.initialize_hook_points(tree.config)
+    result = DirectSummaryOperation("user2agent").emit("before_summary_generate")
+    assert next(r for r in result if r.name == "A").status == (
+        "timeout" if fault == "blocked" else "error")
+    assert [r["name"] for r in tree.rows()] == (
+        ["Alpha", "zeta", "A"] if fault == "blocked" else ["Alpha", "zeta", "A", "z"])
+    tree.close()

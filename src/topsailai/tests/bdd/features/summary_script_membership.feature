@@ -1,10 +1,11 @@
 Feature: Optional summary Scripts preserve user history and provider behavior
-  As a user of an application with deployment-authorized observers
+  As a user of an application with direct Hook Point observers
   I want Scripts to observe truthful summary checkpoints without changing my summary
   So that both conversation layers retain their normal results and failures
 
-  # Acceptance: mixed offline authority reaches real managed processes and real HTTP/SSE.
-  Scenario Outline: Authorized observers preserve summary application
+  # Acceptance: direct Modules and executable Scripts run with real HTTP/SSE.
+  # stale now verifies discovery of membership added after configuration, not trust rejection.
+  Scenario Outline: Direct observers preserve summary application
     Given a private <transport> mixed summary <layer> application using <mode> for <case>
     When the mixed summary acceptance path runs
     Then mixed observers and the real provider prove the unchanged business outcome
