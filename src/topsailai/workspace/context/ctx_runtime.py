@@ -14,8 +14,11 @@ Purpose:
 """
 
 from topsailai.logger import logger
-from topsailai.hooks.points.context.summary_adapter import summary_operation
-from topsailai.workspace.context.base import SUMMARY_CONTROL_EXCEPTIONS
+from topsailai.hooks.points.context.summary_adapter import (
+    SUMMARY_CONTROL_EXCEPTIONS as HOOK__SUMMARY_CONTROL_EXCEPTIONS,
+    emit_summary_checkpoint as hook__emit_summary_checkpoint,
+    summary_operation as hook__summary_operation,
+)
 from topsailai.ai_base.constants import (
     ROLE_USER,
     ROLE_ASSISTANT,
@@ -334,7 +337,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         return False, current_tokens
 
 
-    @summary_operation("user2agent")
+    @hook__summary_operation("user2agent")
     def summarize_messages_for_processed(
             self,
             messages: list = None,
@@ -440,7 +443,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                 print(SPLIT_LINE)
                 if not input_yes(">>> Is this answer acceptable? [yes/no] "):
                     return answer
-            except SUMMARY_CONTROL_EXCEPTIONS:
+            except HOOK__SUMMARY_CONTROL_EXCEPTIONS:
                 raise
             except Exception:
                 return answer
@@ -571,16 +574,16 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                 _token_count_before,
                 _token_count_after,
             )
-        except SUMMARY_CONTROL_EXCEPTIONS:
+        except HOOK__SUMMARY_CONTROL_EXCEPTIONS:
             raise
         except Exception:
-            self._emit_summary_checkpoint(
+            hook__emit_summary_checkpoint(
                 "error_summary_apply",
                 error_category=error_category, failed_stage=failed_stage,
                 partial_apply_possible=partial_apply_possible,
             )
             raise
-        self._emit_summary_checkpoint("after_summary_apply")
+        hook__emit_summary_checkpoint("after_summary_apply")
         return answer
 
 

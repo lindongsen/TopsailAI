@@ -5,6 +5,16 @@ Author: DawsonLin
 
 from __future__ import annotations
 
+from concurrent.futures import CancelledError
+
+from topsailai.ai_base.exception import HeavyTaskError, HardInterruptError, LLMBackToChatError
+from topsailai.ai_base.llm_control.exception import (
+    LLMProviderError, LLMProviderTimeoutError, LLMProviderConnectionError,
+    LLMProviderReadError,
+)
+
+from topsailai.logger import logger
+
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
@@ -119,3 +129,33 @@ def summary_operation(layer):
                 _CURRENT_SUMMARY.reset(token)
         return wrapped
     return decorate
+
+
+SUMMARY_CONTROL_EXCEPTIONS = (CancelledError, HeavyTaskError, HardInterruptError, LLMBackToChatError)
+
+
+def emit_summary_checkpoint(checkpoint, **classification):
+    """Isolate ordinary observer failures without hiding host control signals."""
+    operation = current_summary_operation()
+    if operation is None:
+        return None
+    try:
+        return operation.emit(checkpoint, **classification)
+    except BaseException as error:
+        # An active business exception always outranks its error observer.
+        if not checkpoint.startswith("error_") and (
+                not isinstance(error, Exception) or isinstance(error, SUMMARY_CONTROL_EXCEPTIONS)):
+            raise
+        logger.warning("summary observer dispatch failed: checkpoint=%s reason=observer_failure", checkpoint)
+        return None
+
+
+def classify_summary_generation_error(error):
+    """Classify request failures without exposing exception text to observers."""
+    if isinstance(error, (TimeoutError, LLMProviderTimeoutError)):
+        return "timeout"
+    if isinstance(error, (ConnectionError, LLMProviderConnectionError, LLMProviderReadError)):
+        return "transport"
+    if isinstance(error, LLMProviderError):
+        return "provider"
+    return "unknown"

@@ -9,8 +9,8 @@ import pytest
 from topsailai.hooks.contracts import ValidationError
 from topsailai.hooks.points.context.summary_adapter import (
     DirectSummaryOperation, _CHECKPOINTS, current_summary_operation, summary_operation,
+    emit_summary_checkpoint,
 )
-from topsailai.workspace.context.base import ContextRuntimeBase
 
 
 @pytest.fixture
@@ -112,7 +112,7 @@ def test_error_observer_never_replaces_business_exception(calls, monkeypatch, er
         try:
             raise primary
         except ValueError:
-            ContextRuntimeBase._emit_summary_checkpoint('error_summary_generate',
+            emit_summary_checkpoint('error_summary_generate',
                 error_category='unknown', failed_stage='generation_request')
             raise
 
@@ -124,7 +124,7 @@ def test_error_observer_never_replaces_business_exception(calls, monkeypatch, er
 
 def test_unbound_and_invalid_layer():
     """No operation lookup constructs runtime resources; invalid scopes reject."""
-    assert ContextRuntimeBase._emit_summary_checkpoint('before_summary_generate') is None
+    assert emit_summary_checkpoint('before_summary_generate') is None
     with pytest.raises(ValidationError):
         summary_operation('other')
 
@@ -182,3 +182,56 @@ def test_parallel_operations_have_independent_custody(calls):
     assert len(set(identities)) == 2
     assert len(calls) == 2
     assert current_summary_operation() is None
+
+
+@pytest.mark.parametrize('layer', ['user2agent', 'agent2llm'])
+@pytest.mark.parametrize('checkpoint', ['before_summary_generate', 'after_summary_apply',
+                                      'error_summary_generate', 'error_summary_apply'])
+@pytest.mark.parametrize('failure_kind', ['ordinary', 'base', 'control'])
+def test_emitter_guard_preserves_checkpoint_precedence(monkeypatch, layer, checkpoint, failure_kind):
+    """Only non-error checkpoints propagate observer control signals unchanged."""
+    from concurrent.futures import CancelledError
+
+    error = {'ordinary': RuntimeError('private'), 'base': KeyboardInterrupt(),
+             'control': CancelledError()}[failure_kind]
+    selected = _CHECKPOINTS[layer][checkpoint]
+
+    def fail(**kwargs):
+        """Raise an exact observer error after admission and payload validation."""
+        raise error
+
+    monkeypatch.setattr(selected, selected.NAME, fail)
+    classification = {}
+    if checkpoint.startswith('error_'):
+        classification = {'error_category': 'unknown', 'failed_stage':
+                          'generation_request' if checkpoint.endswith('generate') else 'application_unknown'}
+        if checkpoint.endswith('apply'):
+            classification['partial_apply_possible'] = True
+
+    @summary_operation(layer)
+    def business():
+        """Verify guard disposition and once-only consumption in the real scope."""
+        if not checkpoint.startswith('error_') and failure_kind != 'ordinary':
+            with pytest.raises(type(error)) as caught:
+                emit_summary_checkpoint(checkpoint, **classification)
+            assert caught.value is error
+        else:
+            assert emit_summary_checkpoint(checkpoint, **classification) is None
+        assert emit_summary_checkpoint(checkpoint, **classification).already_handled
+
+    business()
+    assert current_summary_operation() is None
+
+
+def test_emitter_returns_exact_direct_result(calls, monkeypatch):
+    """The extracted emitter never wraps or replaces a normal dispatch result."""
+    selected = _CHECKPOINTS['user2agent']['before_summary_generate']
+    result = object()
+    monkeypatch.setattr(selected, selected.NAME, lambda **kwargs: result)
+
+    @summary_operation('user2agent')
+    def business():
+        """Retain the exact value from the selected direct entry."""
+        assert emit_summary_checkpoint('before_summary_generate') is result
+
+    business()

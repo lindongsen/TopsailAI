@@ -12,7 +12,7 @@ import pytest
 
 from topsailai.ai_base.exception import HardInterruptError, HeavyTaskError, LLMBackToChatError
 from topsailai.ai_base.llm_control.exception import (
-    LLMProviderError, LLMProviderTimeoutError, LLMProviderConnectionError,
+    LLMProviderError, LLMProviderTimeoutError, LLMProviderConnectionError, LLMProviderReadError,
 )
 from topsailai.hooks.contracts import DispatchReport
 from topsailai.hooks.points.context.summary_adapter import (
@@ -169,11 +169,14 @@ def test_human_rejection_generated_is_not_applied(setup_runtime, monkeypatch):
 @pytest.mark.parametrize('error,category', [
     (RuntimeError('secret'), 'unknown'), (TimeoutError(), 'timeout'),
     (LLMProviderTimeoutError(), 'timeout'), (LLMProviderConnectionError(), 'transport'),
-    (ConnectionError(), 'transport'), (LLMProviderError(), 'provider'),
+    (ConnectionError(), 'transport'), (LLMProviderReadError(), 'transport'),
+    (LLMProviderError(), 'provider'),
 ])
-def test_generation_primary_exception_preserved(setup_runtime, monkeypatch, layer, error, category):
+@pytest.mark.parametrize('mode', ['message', 'runtime'])
+def test_generation_primary_exception_preserved(setup_runtime, monkeypatch, layer, error, category, mode):
     """Only request business errors yield EG; exact exception and source frame survive."""
-    runtime, executor, _, _, _ = setup_runtime
+    runtime, executor, _, _, reader = setup_runtime
+    reader.get = lambda name, *args, **kwargs: mode if name == 'TOPSAILAI_CONTEXT_SUMMARY_MODE' else None
 
     def fail(*args, **kwargs):
         """Raise the exact business exception inside the generation request."""

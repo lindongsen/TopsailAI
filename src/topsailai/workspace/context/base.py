@@ -8,13 +8,6 @@ Purpose: Context runtime base module for managing chat sessions and message hand
 import math
 import copy
 import random
-from concurrent.futures import CancelledError
-
-from topsailai.ai_base.exception import HeavyTaskError, HardInterruptError, LLMBackToChatError
-from topsailai.ai_base.llm_control.exception import (
-    LLMProviderError, LLMProviderTimeoutError, LLMProviderConnectionError,
-    LLMProviderReadError,
-)
 
 from topsailai.logger import logger
 from topsailai.ai_base.constants import (
@@ -41,11 +34,12 @@ from topsailai.utils import (
 )
 from topsailai.ai_base.prompt_base import PromptBase
 from topsailai.workspace.llm_shell import LLMChat, get_llm_chat
-from topsailai.hooks.points.context.summary_adapter import current_summary_operation
+from topsailai.hooks.points.context.summary_adapter import (
+    SUMMARY_CONTROL_EXCEPTIONS as HOOK__SUMMARY_CONTROL_EXCEPTIONS,
+    emit_summary_checkpoint as hook__emit_summary_checkpoint,
+    classify_summary_generation_error as hook__classify_summary_generation_error,
+)
 from topsailai.workspace.context import summary_tool
-
-
-SUMMARY_CONTROL_EXCEPTIONS = (CancelledError, HeavyTaskError, HardInterruptError, LLMBackToChatError)
 
 
 CONTEXT_WATERMARK_NORMAL = "NORMAL"
@@ -1115,38 +1109,16 @@ class ContextRuntimeBase(object):
             )
         return answer
 
-    @staticmethod
-    def _emit_summary_checkpoint(checkpoint, **classification):
-        """Isolate ordinary observer failures without hiding host control signals."""
-        operation = current_summary_operation()
-        if operation is None:
-            return None
-        try:
-            return operation.emit(checkpoint, **classification)
-        except BaseException as error:
-            # An active business exception always outranks its error observer.
-            if not checkpoint.startswith("error_") and (
-                    not isinstance(error, Exception) or isinstance(error, SUMMARY_CONTROL_EXCEPTIONS)):
-                raise
-            logger.warning("summary observer dispatch failed: checkpoint=%s reason=observer_failure", checkpoint)
-            return None
-
     def _generate_summary_with_hooks(self, llm_chat, *args, **kwargs):
         """Bracket only the concrete generation request with caller-owned checkpoints."""
-        self._emit_summary_checkpoint("before_summary_generate")
+        hook__emit_summary_checkpoint("before_summary_generate")
         try:
             return self._chat_for_summary(llm_chat, *args, **kwargs)
-        except SUMMARY_CONTROL_EXCEPTIONS:
+        except HOOK__SUMMARY_CONTROL_EXCEPTIONS:
             raise
         except Exception as error:
-            category = "unknown"
-            if isinstance(error, (TimeoutError, LLMProviderTimeoutError)):
-                category = "timeout"
-            elif isinstance(error, (ConnectionError, LLMProviderConnectionError, LLMProviderReadError)):
-                category = "transport"
-            elif isinstance(error, LLMProviderError):
-                category = "provider"
-            self._emit_summary_checkpoint(
+            category = hook__classify_summary_generation_error(error)
+            hook__emit_summary_checkpoint(
                 "error_summary_generate",
                 error_category=category, failed_stage="generation_request",
             )

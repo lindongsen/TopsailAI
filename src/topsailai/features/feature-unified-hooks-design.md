@@ -360,10 +360,10 @@ Reducers and validators executing in the host are trusted bounded application co
 
 ## Illustrative API usage
 
-Lifecycle publication and optional result consumption use identical registrations and handlers. These are interface sketches, not an implementation prescription.
+Lifecycle publication and optional result consumption use identical registrations and handlers. These are interface sketches, not an implementation prescription. The business-side constructor name assumes `HookRuntime` is imported as `Hook__HookRuntime`, following the mandatory aliases in [Layering and ownership](#layering-and-ownership).
 
 ```text
-runtime = HookRuntime(
+runtime = Hook__HookRuntime(
     settings=settings,
     process_backend=process_backend,
     temp_root=temp_root,
@@ -927,6 +927,19 @@ await runtime.adispatch_configured(...)
 
 ### Layering and ownership
 
+**Mandatory business-side Hook aliases:** To make Hook dependencies immediately recognizable in business logic, every function, class, or variable imported from `topsailai.hooks` or its submodules MUST use an explicit consumer-side import alias, and business references MUST use that alias:
+
+| Imported symbol kind | Required import form |
+|---|---|
+| Function | `from topsailai.hooks.<module> import original_name as hook__original_name` |
+| Class | `from topsailai.hooks.<module> import OriginalClass as Hook__OriginalClass` |
+| Variable, including constants | `from topsailai.hooks.<module> import ORIGINAL_NAME as HOOK__ORIGINAL_NAME` |
+| Module | `from topsailai.hooks.<package> import module_name as hook__module_name` |
+
+The prefix MUST be prepended to the original symbol name without renaming the public symbol in `hooks`. This is an identification convention at the business consumption boundary only; it MUST NOT change runtime behavior, execution ownership, or public APIs. It does not rename Hook-internal implementation symbols, unrelated legacy mechanisms, local business helpers, or receiver attributes. This requirement does not authorize a repository-wide rename. Business integration sketches below use these aliases for imported Hook symbols; Hook-internal declaration and implementation examples retain their original names.
+
+For example, importing the point-local adapter module MUST be written as `from topsailai.hooks.points.context import summary_adapter as hook__summary_adapter`, and business code MUST reference it through `hook__summary_adapter`.
+
 **Revision note:** requiring application startup binding or HookApplication below is superseded for the generic-entry target. Package bootstrap and direct point invocation are accepted; existing application-bound APIs remain legacy behavior. See [Human revision](#human-revision-and-accepted-generic-entry-prototype).
 
 The target dependency flow is:
@@ -1029,13 +1042,13 @@ No Hook return value implicitly replaces a business result. Any future transform
 
 Decorators are intended only for callable boundaries whose timing aligns with function entry, successful return, or exceptional exit. They are not appropriate when the point belongs between statements, after a partial commit, around a branch, before mandatory cleanup, or for a fire-and-observe requirement, which the framework does not support.
 
-Existing attribute-injection shape (retained API, not the no-signature-refactor target requirement):
+Existing attribute-injection shape (retained API, not the no-signature-refactor target requirement). Both decorator examples assume `hook_point` is imported as `hook__hook_point` and Hook declarations use `HOOK__` import aliases; payload builders remain local business helpers:
 
 ```python
-@hook_point(
-    before=OPERATION_BEFORE,
-    success=OPERATION_SUCCESS,
-    error=OPERATION_ERROR,
+@hook__hook_point(
+    before=HOOK__OPERATION_BEFORE,
+    success=HOOK__OPERATION_SUCCESS,
+    error=HOOK__OPERATION_ERROR,
     executor_attribute="hook_executor",
     payload_builder=build_safe_payload,
 )
@@ -1065,10 +1078,10 @@ Decorator semantics are:
 Async example for an eligible method:
 
 ```python
-@hook_point(
-    before=USER_LOOKUP_BEFORE,
-    success=USER_LOOKUP_SUCCESS,
-    error=USER_LOOKUP_ERROR,
+@hook__hook_point(
+    before=HOOK__USER_LOOKUP_BEFORE,
+    success=HOOK__USER_LOOKUP_SUCCESS,
+    error=HOOK__USER_LOOKUP_ERROR,
     executor_attribute="hook_executor",
     payload_builder=build_user_lookup_payload,
 )
@@ -1086,13 +1099,13 @@ Synchronous before/success/error example:
 
 ```python
 def save_record(record, hook_executor):
-    hook_executor.dispatch(RECORD_SAVE_BEFORE, payload=safe_record_input(record))
+    hook_executor.dispatch(HOOK__RECORD_SAVE_BEFORE, payload=safe_record_input(record))
     try:
         result = persist(record)
     except Exception as error:
-        hook_executor.dispatch(RECORD_SAVE_ERROR, payload=safe_error(error))
+        hook_executor.dispatch(HOOK__RECORD_SAVE_ERROR, payload=safe_error(error))
         raise
-    hook_executor.dispatch(RECORD_SAVE_SUCCESS, payload=safe_record_result(result))
+    hook_executor.dispatch(HOOK__RECORD_SAVE_SUCCESS, payload=safe_record_result(result))
     return result
 ```
 
@@ -1100,13 +1113,13 @@ Asynchronous example:
 
 ```python
 async def run_task(task, hook_executor):
-    await hook_executor.adispatch(TASK_BEFORE, payload=safe_task_input(task))
+    await hook_executor.adispatch(HOOK__TASK_BEFORE, payload=safe_task_input(task))
     try:
         result = await execute_task(task)
     except Exception as error:
-        await hook_executor.adispatch(TASK_ERROR, payload=safe_error(error))
+        await hook_executor.adispatch(HOOK__TASK_ERROR, payload=safe_error(error))
         raise
-    await hook_executor.adispatch(TASK_SUCCESS, payload=safe_task_result(result))
+    await hook_executor.adispatch(HOOK__TASK_SUCCESS, payload=safe_task_result(result))
     return result
 ```
 
@@ -1114,7 +1127,7 @@ Waiting completion example:
 
 ```python
 report = await hook_executor.adispatch(
-    TASK_FINISHED,
+    HOOK__TASK_FINISHED,
     payload=safe_task_result(result),
 )
 ```

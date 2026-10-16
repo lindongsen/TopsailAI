@@ -14,8 +14,11 @@ import math
 import random
 
 from topsailai.logger import logger
-from topsailai.hooks.points.context.summary_adapter import summary_operation
-from topsailai.workspace.context.base import SUMMARY_CONTROL_EXCEPTIONS
+from topsailai.hooks.points.context.summary_adapter import (
+    SUMMARY_CONTROL_EXCEPTIONS as HOOK__SUMMARY_CONTROL_EXCEPTIONS,
+    emit_summary_checkpoint as hook__emit_summary_checkpoint,
+    summary_operation as hook__summary_operation,
+)
 from topsailai.ai_base.constants import (
     ROLE_SYSTEM,
 )
@@ -237,7 +240,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         return False, current_tokens
 
 
-    @summary_operation("agent2llm")
+    @hook__summary_operation("agent2llm")
     def summarize_messages_for_processing(
             self,
             messages: list | str = None,
@@ -470,16 +473,16 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
             print_info(f"!!! [Agent2LLM] [Summarization] New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]")
             logger.info("new context messages: %s", self.ai_agent.messages)
-        except SUMMARY_CONTROL_EXCEPTIONS:
+        except HOOK__SUMMARY_CONTROL_EXCEPTIONS:
             raise
         except Exception:
-            self._emit_summary_checkpoint(
+            hook__emit_summary_checkpoint(
                 "error_summary_apply",
                 error_category=error_category, failed_stage=failed_stage,
                 partial_apply_possible=partial_apply_possible,
             )
             raise
-        self._emit_summary_checkpoint("after_summary_apply")
+        hook__emit_summary_checkpoint("after_summary_apply")
         return answer
 
     def is_need_summarize_for_processing(self) -> bool:
