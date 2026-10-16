@@ -938,6 +938,8 @@ await runtime.adispatch_configured(...)
 
 The prefix MUST be prepended to the original symbol name without renaming the public symbol in `hooks`. This is an identification convention at the business consumption boundary only; it MUST NOT change runtime behavior, execution ownership, or public APIs. It does not rename Hook-internal implementation symbols, unrelated legacy mechanisms, local business helpers, or receiver attributes. This requirement does not authorize a repository-wide rename. Business integration sketches below use these aliases for imported Hook symbols; Hook-internal declaration and implementation examples retain their original names.
 
+**Exemption for already-prefixed symbols:** A symbol whose public name already carries the corresponding prefix (`hook__` for functions and modules, `Hook__` for classes, `HOOK__` for variables and constants) MUST NOT receive a duplicated prefix and requires no additional consumer-side alias. For example, `hook__workspace__before__input_message` is referenced by its existing name without becoming `hook__hook__workspace__before__input_message`.
+
 For example, importing the point-local adapter module MUST be written as `from topsailai.hooks.points.context import summary_adapter as hook__summary_adapter`, and business code MUST reference it through `hook__summary_adapter`.
 
 **Revision note:** requiring application startup binding or HookApplication below is superseded for the generic-entry target. Package bootstrap and direct point invocation are accepted; existing application-bound APIs remain legacy behavior. See [Human revision](#human-revision-and-accepted-generic-entry-prototype).
