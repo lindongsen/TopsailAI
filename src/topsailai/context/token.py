@@ -9,6 +9,7 @@
   counting tokens in text and a thread-based statistics tracker for
   monitoring token usage over time.
 '''
+from uuid import uuid4
 
 import time
 import threading
@@ -219,6 +220,7 @@ class TokenStat(threading.Thread):
             The thread is started automatically upon initialization as a daemon thread.
         """
         # Initialize timing controls
+        self._id = uuid4().hex
         self._start_time = int(time.time())
         self._end_time = 0
         if lifetime > 0:

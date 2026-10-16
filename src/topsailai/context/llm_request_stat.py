@@ -1,6 +1,7 @@
 """Thread-safe request statistics for LLM provider calls."""
 
 from __future__ import annotations
+from uuid import uuid4
 
 import threading
 import time
@@ -59,6 +60,7 @@ class LLMRequestStat:
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         """Initialize counters using a monotonic clock by default."""
+        self._id = uuid4().hex
         self._clock = clock
         self._lock = threading.RLock()
         self._request_times = deque()

@@ -13,6 +13,7 @@
   - Export capabilities
   - Thread-safe operations
 '''
+from uuid import uuid4
 
 import functools
 import logging
@@ -56,6 +57,7 @@ class ToolStat:
             max_records: Maximum number of tool call records to keep (default: 10000)
                         Older records are pruned when limit is exceeded.
         """
+        self._id = uuid4().hex
         self._tool_calls: List[Dict[str, Any]] = []
         self._max_records = max_records
         self._lock = threading.RLock()
