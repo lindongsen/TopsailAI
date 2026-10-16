@@ -24,10 +24,7 @@ Environment Variables:
     TOPSAILAI_SESSION_HEAD_TAIL_OFFSET: Fallback offset for session context (default: 7)
 """
 
-from __future__ import annotations
-
 import sys
-from typing import TYPE_CHECKING
 import os
 
 import _import_topsailai
@@ -38,9 +35,6 @@ os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
 os.environ["TOPSAILAI_COLLABORATION_MODE"] = "1"
 os.environ["TOPSAILAI_PROJECT_WORKSPACE_LOCK_ENABLED"] = "0"
 os.environ["TOPSAILAI_ENABLE_SESSION_LOCK"] = "0"
-
-if TYPE_CHECKING:
-    from topsailai.hooks.configured_contracts import ConfiguredTrustPolicy, SummaryPreparationRequest
 
 from topsailai.ai_team.role import (
     get_member_name,
@@ -53,7 +47,6 @@ from topsailai.utils import (
     env_tool,
 )
 from topsailai.workspace.agent_shell import get_agent_chat
-from topsailai.workspace.hooks_application import HooksApplication
 from topsailai.ai_team.common import (
     get_session_head_tail_offset,
 )
@@ -86,69 +79,66 @@ def hook_build_message(message:str, **kwargs) -> str:
     return message
 
 
-def main(*, request: SummaryPreparationRequest | None = None, trust_policy: ConfiguredTrustPolicy | None = None, temp_root: str | None = None):
+def main():
     """
-        Main entry point for the Team Agent.
+    Main entry point for the Team Agent.
 
-        This function:
-        1. Gets the team member name from the role configuration
-        2. Generates the system prompt with team member context
-        3. Creates an agent chat instance with appropriate configuration
-        4. Runs the agent to process the task and return an answer
+    This function:
+    1. Gets the team member name from the role configuration
+    2. Generates the system prompt with team member context
+    3. Creates an agent chat instance with appropriate configuration
+    4. Runs the agent to process the task and return an answer
 
-        The agent operates in a team context, where:
-        - It uses history messages from the session
-        - It can optionally save messages based on environment variable
-        - It uses a ReAct-style agent for task execution
-        - It formats messages with agent mention prefix
+    The agent operates in a team context, where:
+    - It uses history messages from the session
+    - It can optionally save messages based on environment variable
+    - It uses a ReAct-style agent for task execution
+    - It formats messages with agent mention prefix
 
-        Environment Variables Used:
-            TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: Whether to save messages (default: false)
-            TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET: Session message offset (default: 7)
-            TOPSAILAI_SESSION_HEAD_TAIL_OFFSET: Fallback session message offset (default: 7)
+    Environment Variables Used:
+        TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: Whether to save messages (default: false)
+        TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET: Session message offset (default: 7)
+        TOPSAILAI_SESSION_HEAD_TAIL_OFFSET: Fallback session message offset (default: 7)
 
-        Returns:
-            str or None: The final answer from the agent, or None if no answer generated.
+    Returns:
+        str or None: The final answer from the agent, or None if no answer generated.
 
-        Example:
-            $ python team_agent.py
-            Processing task...
-            Answer: Task completed successfully.
-        """
-    with HooksApplication(request=request, trust_policy=trust_policy, temp_root=temp_root) as application:
+    Example:
+        $ python team_agent.py
+        Processing task...
+        Answer: Task completed successfully.
+    """
+    # agent name
+    agent_name = get_member_name()
 
-        # agent name
-        agent_name = get_member_name()
+    # system prompt
+    system_prompt = get_system_prompt(
+        agent_name,
+        team_prompt_precomposed=is_team_prompt_precomposed_launch(),
+    )
 
-        # system prompt
-        system_prompt = get_system_prompt(
-            agent_name,
-            team_prompt_precomposed=is_team_prompt_precomposed_launch(),
-        )
+    # agent chat
+    agent_chat = get_agent_chat(
+        system_prompt=system_prompt,
+        disabled_tools=["agent_tool"],
+        agent_type="react",
 
-        # agent chat
-        agent_chat = get_agent_chat(
-            summary_hooks_executor=application.executor,
-            system_prompt=system_prompt,
-            disabled_tools=["agent_tool"],
-            agent_type="react",
+        agent_name=agent_name,
+        session_head_tail_offset=get_session_head_tail_offset(),
+        need_print_session=False,
+        need_input_message=False,
+    )
 
-            agent_name=agent_name,
-            session_head_tail_offset=get_session_head_tail_offset(),
-            need_print_session=False,
-            need_input_message=False,
-        )
+    answer = agent_chat.run(
+        times=1,
+        func_build_message=hook_build_message,
+        need_save_answer=env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE"),
+        need_confirm_abort=False,
+        need_symbol_for_answer=env_tool.EnvReaderInstance.check_bool("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER"),
+        only_save_final=True,
+    )
 
-        answer = agent_chat.run(
-            times=1,
-            func_build_message=hook_build_message,
-            need_save_answer=env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE"),
-            need_confirm_abort=False,
-            need_symbol_for_answer=env_tool.EnvReaderInstance.check_bool("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER"),
-            only_save_final=True,
-        )
-
-        return answer
+    return answer
 
 
 if __name__ == "__main__":

@@ -23,73 +23,64 @@ Email: lin_dongsen@126.com
 Created: 2025-10-19
 """
 
-from __future__ import annotations
-
 import os
 import sys
-from typing import TYPE_CHECKING
 
 import _import_topsailai
 
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
 
-if TYPE_CHECKING:
-    from topsailai.hooks.configured_contracts import ConfiguredTrustPolicy, SummaryPreparationRequest
-
 from topsailai.workspace.llm_shell import get_llm_chat
-from topsailai.workspace.hooks_application import HooksApplication
 from topsailai.workspace.input_tool import input_message
 from topsailai.utils import env_tool
 
 
-def main(*, request: SummaryPreparationRequest | None = None, trust_policy: ConfiguredTrustPolicy | None = None, temp_root: str | None = None):
+def main():
     """
-        Main entry point for multi-turn LLM chat.
+    Main entry point for multi-turn LLM chat.
 
-        This function creates and runs a continuous chat session directly with
-        an LLM (Language Model). It allows for multiple back-and-forth exchanges
-        with a maximum of 100 turns.
+    This function creates and runs a continuous chat session directly with
+    an LLM (Language Model). It allows for multiple back-and-forth exchanges
+    with a maximum of 100 turns.
 
-        The function:
-        1. Gets an LLM chat instance
-        2. Runs a loop for up to 100 iterations
-        3. In each iteration:
-           - Prints ">>> LLM Answer:" prompt
-           - Gets the LLM's response with the current message
-           - Prints a blank line
-           - If max iterations reached, breaks the loop
-           - Otherwise, gets user input for the next message
-        4. Returns None after the conversation ends
+    The function:
+    1. Gets an LLM chat instance
+    2. Runs a loop for up to 100 iterations
+    3. In each iteration:
+       - Prints ">>> LLM Answer:" prompt
+       - Gets the LLM's response with the current message
+       - Prints a blank line
+       - If max iterations reached, breaks the loop
+       - Otherwise, gets user input for the next message
+    4. Returns None after the conversation ends
 
-        Returns:
-            None: The LLM's responses are printed to stdout during execution
+    Returns:
+        None: The LLM's responses are printed to stdout during execution
 
-        Note:
-            - This is a multi-turn chat with a maximum of 100 iterations
-            - No tools are available in this mode
-            - Session history can be maintained via SESSION_ID environment variable
-            - User can exit by pressing Ctrl+C
-        """
-    with HooksApplication(request=request, trust_policy=trust_policy, temp_root=temp_root) as application:
+    Note:
+        - This is a multi-turn chat with a maximum of 100 iterations
+        - No tools are available in this mode
+        - Session history can be maintained via SESSION_ID environment variable
+        - User can exit by pressing Ctrl+C
+    """
+    need_tips = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CLI_NEED_TIPS", default=True)
+    if not env_tool.is_debug_mode():
+        need_tips = False
+    llm_chat = get_llm_chat(
+        need_print_session=need_tips,
+    )
+    message = ""
+    max_count = 100
+    while True:
+        max_count -= 1
+        print(">>> LLM Answer:")
+        llm_chat.chat(message)
+        print()
+        if max_count == 0:
+            break
+        message = input_message()
 
-        need_tips = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CLI_NEED_TIPS", default=True)
-        if not env_tool.is_debug_mode():
-            need_tips = False
-        llm_chat = get_llm_chat(
-            need_print_session=need_tips,
-        )
-        message = ""
-        max_count = 100
-        while True:
-            max_count -= 1
-            print(">>> LLM Answer:")
-            llm_chat.chat(message)
-            print()
-            if max_count == 0:
-                break
-            message = input_message()
-
-        return
+    return
 
 
 if __name__ == "__main__":

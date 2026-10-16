@@ -23,51 +23,42 @@ Email: lin_dongsen@126.com
 Created: 2025-10-19
 """
 
-from __future__ import annotations
-
 import os
 import sys
-from typing import TYPE_CHECKING
 
 import _import_topsailai
 
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
-if TYPE_CHECKING:
-    from topsailai.hooks.configured_contracts import ConfiguredTrustPolicy, SummaryPreparationRequest
-
 from topsailai.ai_base.constants import (
     AGENT_ROLE_MANAGER,
 )
 from topsailai.workspace.agent_shell import get_agent_chat
-from topsailai.workspace.hooks_application import HooksApplication
 
 
-def main(*, request: SummaryPreparationRequest | None = None, trust_policy: ConfiguredTrustPolicy | None = None, temp_root: str | None = None):
+def main():
     """
-        Main entry point for multi-turn agent chat.
+    Main entry point for multi-turn agent chat.
     
-        This function creates and runs a continuous chat session with an AI agent.
-        The agent has access to various tools but the "agent_tool" is disabled
-        to prevent recursive agent calls.
+    This function creates and runs a continuous chat session with an AI agent.
+    The agent has access to various tools but the "agent_tool" is disabled
+    to prevent recursive agent calls.
     
-        The function:
-        1. Gets an agent chat instance with agent_tool disabled
-        2. Runs the chat in continuous mode (no turn limit)
-        3. Allows the user to have an interactive conversation
+    The function:
+    1. Gets an agent chat instance with agent_tool disabled
+    2. Runs the chat in continuous mode (no turn limit)
+    3. Allows the user to have an interactive conversation
     
-        Returns:
-            None: The agent's responses are printed to stdout during execution
+    Returns:
+        None: The agent's responses are printed to stdout during execution
         
-        Note:
-            - This is a multi-turn chat (no turn limit, runs until exit)
-            - The agent_tool is disabled to prevent nested agent calls
-            - Session history can be maintained via SESSION_ID environment variable
-            - User can exit by typing 'exit', 'quit', or Ctrl+C
-        """
-    with HooksApplication(request=request, trust_policy=trust_policy, temp_root=temp_root) as application:
-
-        """ main entry """
-        get_agent_chat(summary_hooks_executor=application.executor, disabled_tools=["agent_tool"], agent_role=AGENT_ROLE_MANAGER).run()
+    Note:
+        - This is a multi-turn chat (no turn limit, runs until exit)
+        - The agent_tool is disabled to prevent nested agent calls
+        - Session history can be maintained via SESSION_ID environment variable
+        - User can exit by typing 'exit', 'quit', or Ctrl+C
+    """
+    """ main entry """
+    get_agent_chat(disabled_tools=["agent_tool"], agent_role=AGENT_ROLE_MANAGER).run()
 
 if __name__ == "__main__":
     main()
