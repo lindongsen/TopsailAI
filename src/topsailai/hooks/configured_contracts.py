@@ -23,6 +23,10 @@ from topsailai.hooks.hook_script_contracts import (
     HookScriptExecutionPolicy,
 )
 from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
+from topsailai.hooks.configured_resource_contracts import (
+    ConfiguredSelectedResources,
+    validate_script_settings,
+)
 from topsailai.hooks.validation import freeze_json, validate_event_definition
 
 if TYPE_CHECKING:
@@ -152,81 +156,26 @@ class ConfiguredScript:
 
     def __post_init__(self) -> None:
         """Validate and detach exact script input without filesystem access."""
+        error = "invalid configured script"
         if not isinstance(self.target, Path) or not self.target.is_absolute():
-            raise ValueError("invalid configured script")
-        if type(self.platform_policy) is not ExecutablePlatformPolicy:
-            raise ValueError("invalid configured script")
-        if type(self.platform_policy.platform) is not str:
-            raise ValueError("invalid configured script")
-        if type(self.options) is not HookScriptExecutionOptions:
-            raise ValueError("invalid configured script")
-        if type(self.policy) is not HookScriptExecutionPolicy:
-            raise ValueError("invalid configured script")
-        if type(self.options.argv) not in (list, tuple):
-            raise ValueError("invalid configured script")
-        if type(self.options.environment) not in (list, tuple) or any(
-            type(item) not in (list, tuple) or len(item) != 2
-            for item in self.options.environment
-        ):
-            raise ValueError("invalid configured script")
-        try:
-            platform_policy = ExecutablePlatformPolicy(
-                platform=self.platform_policy.platform,
-                allowed_interpreters=tuple(self.platform_policy.allowed_interpreters),
-                native_suffixes=tuple(self.platform_policy.native_suffixes),
-            )
-            options = HookScriptExecutionOptions(
-                argv=tuple(self.options.argv),
-                cwd=self.options.cwd,
-                environment=tuple(tuple(item) for item in self.options.environment),
-            )
-            policy = HookScriptExecutionPolicy(
-                entry_timeout_ms=self.policy.entry_timeout_ms,
-                hook_timeout_ms=self.policy.hook_timeout_ms,
-                cleanup_timeout_ms=self.policy.cleanup_timeout_ms,
-                terminate_grace_ms=self.policy.terminate_grace_ms,
-                stdin_limit_bytes=self.policy.stdin_limit_bytes,
-                stdout_limit_bytes=self.policy.stdout_limit_bytes,
-                stderr_limit_bytes=self.policy.stderr_limit_bytes,
-                output_total_limit_bytes=self.policy.output_total_limit_bytes,
-                max_entries=self.policy.max_entries,
-                argument_environment_limit_bytes=self.policy.argument_environment_limit_bytes,
-                result_limit_bytes=self.policy.result_limit_bytes,
-            )
-        except (TypeError, ValueError):
-            raise ValueError("invalid configured script") from None
-        if any(not Path(value).is_absolute() for value in platform_policy.allowed_interpreters):
-            raise ValueError("invalid configured script")
-        if not _valid_policy(policy) or not _valid_options(options, policy):
-            raise ValueError("invalid configured script")
-        if any(not _safe_environment_pair(name, value) for name, value in options.environment):
-            raise ValueError("invalid configured script")
-        if type(self.environment_allowlist) is not tuple or any(
-            type(name) is not str or not _safe_environment_pair(name, "")
-            for name in self.environment_allowlist
-        ):
-            raise ValueError("invalid configured script")
-        if len(set(self.environment_allowlist)) != len(self.environment_allowlist):
-            raise ValueError("invalid configured script")
-        if type(self.environment_snapshot) is not tuple or any(
-            type(item) is not tuple
-            or len(item) != 2
-            or type(item[0]) is not str
-            or type(item[1]) is not str
-            or not _safe_environment_pair(item[0], item[1])
-            for item in self.environment_snapshot
-        ):
-            raise ValueError("invalid configured script")
-        names = tuple(name for name, _ in self.environment_snapshot)
-        if len(set(names)) != len(names) or not set(names).issubset(self.environment_allowlist):
-            raise ValueError("invalid configured script")
-        object.__setattr__(self, "platform_policy", platform_policy)
-        object.__setattr__(self, "options", options)
-        object.__setattr__(self, "policy", policy)
+            raise ValueError(error)
+        values = validate_script_settings(
+            self.platform_policy,
+            self.options,
+            self.policy,
+            self.environment_allowlist,
+            self.environment_snapshot,
+            error=error,
+        )
+        object.__setattr__(self, "platform_policy", values[0])
+        object.__setattr__(self, "options", values[1])
+        object.__setattr__(self, "policy", values[2])
+
 
 @dataclass(frozen=True, slots=True)
 class ConfiguredHookPoint:
     """Describe one complete configured hook-point replacement."""
+
     hook_name: str
     definition: EventDefinition
     module_folder: Path | None = None
@@ -235,10 +184,13 @@ class ConfiguredHookPoint:
     script: ConfiguredScript | None = None
     max_concurrency: int = 1
     inject_hook_context: bool = False
+    resources: ConfiguredSelectedResources | None = field(default=None, kw_only=True)
+
     @property
     def hook_point(self) -> str:
         """Return the deprecated configured-name alias."""
         return self.hook_name
+
     def __post_init__(self) -> None:
         """Validate and deeply detach caller-owned configured values."""
         if not is_valid_hook_name(self.hook_name):
@@ -266,9 +218,17 @@ class ConfiguredHookPoint:
             raise ValueError("invalid configured hook point")
         if type(self.module_args) is not tuple or not isinstance(self.module_kwargs, MappingABC):
             raise ValueError("invalid configured hook point")
-        if type(self.inject_hook_context) is not bool or (self.inject_hook_context and "hook_context" in self.module_kwargs):
+        if type(self.inject_hook_context) is not bool or (
+            self.inject_hook_context and "hook_context" in self.module_kwargs
+        ):
             raise ValueError("invalid configured context injection")
         if self.script is not None and type(self.script) is not ConfiguredScript:
+            raise ValueError("invalid configured hook point")
+        if self.resources is not None and type(self.resources) is not ConfiguredSelectedResources:
+            raise ValueError("invalid configured hook point")
+        if self.resources is not None and (
+            self.module_folder is not None or self.script is not None
+        ):
             raise ValueError("invalid configured hook point")
         if type(self.max_concurrency) is not int or self.max_concurrency <= 0:
             raise ValueError("invalid configured hook point")

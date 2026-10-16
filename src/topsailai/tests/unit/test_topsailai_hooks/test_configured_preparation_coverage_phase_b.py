@@ -4,6 +4,8 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from topsailai.hooks.configured_resource_sources import SelectedResourceRejected
+from topsailai.hooks.hook_script_discovery import HookScriptEntry, ExecutablePlatformPolicy
 
 import pytest
 
@@ -395,3 +397,84 @@ def test_capture_remaining_and_discovery_exception_branches(monkeypatch, tmp_pat
     monkeypatch.setattr(preparation, "enumerate_module_candidates_owned", lambda *a, **k: (_ for _ in ()).throw(preparation._DiscoveryRejected("timeout")))
     with pytest.raises(_PreparationRejected, match="prepare_timeout"):
         preparation._discover(point, op, config, SimpleNamespace(add_scan=lambda: None))
+
+
+def test_selected_rejection_is_settled_by_prepare_private(secure_test_root, monkeypatch):
+    """Selected-resource rejection follows the public preparation settlement boundary."""
+    sources, runtime_root, _ = secure_test_root
+    helper = __import__("tests.unit.test_topsailai_hooks.test_configured_preparation", fromlist=["_runtime"])
+    runtime, scope = helper._runtime(sources, runtime_root)
+    try:
+        monkeypatch.setattr(preparation, "_build_work_sequence", lambda *args: (_ for _ in ()).throw(SelectedResourceRejected("trust_rejected")))
+        result = preparation.prepare_private(runtime, _nonempty_config(sources), scope)
+        assert result.errors == ("trust_rejected",)
+    finally:
+        runtime.close()
+
+
+def test_selected_work_branch_is_appended_and_skips_legacy(monkeypatch):
+    """Selected point work is appended and the legacy branches are skipped."""
+    selected = object()
+    point = SimpleNamespace(resources=selected)
+    operation = SimpleNamespace(checkpoint=lambda: None)
+    budget = SimpleNamespace()
+    expected = (object(),)
+    monkeypatch.setattr(preparation, "selected_point_work", lambda *args: expected)
+    configuration = SimpleNamespace(hook_points=(point,))
+    assert preparation._build_work_sequence(configuration, operation, budget) == expected
+
+
+def test_capture_work_sequence_rejects_too_many_selected_shards(monkeypatch):
+    """Capture rejects a selected inventory whose batches exceed shard capacity."""
+    monkeypatch.setattr(preparation, "_capture_batches", lambda works: tuple(() for _ in range(preparation._MAX_CAPTURE_SHARDS + 1)))
+    with pytest.raises(preparation._PreparationRejected, match="capacity_exceeded"):
+        preparation._capture_work_sequence(
+            (object(),), SimpleNamespace(), Path("/tmp"),
+            SimpleNamespace(checkpoint=lambda: None), SimpleNamespace(), object(), None,
+        )
+
+
+def test_selected_probe_conflict_maps_to_selected_rejection(monkeypatch, tmp_path):
+    """Selected module probe mismatches produce the selected public token."""
+    point = SimpleNamespace(
+        hook_name="hook_alpha",
+        resources=SimpleNamespace(selection=SimpleNamespace(modules=None, scripts=None), script_settings=None),
+        module_args=(), module_kwargs={}, definition=SimpleNamespace(name="event", major_version=1),
+        max_concurrency=1,
+    )
+    candidate = SimpleNamespace(logical_name="module", source_path=tmp_path / "module.py", kind="python_source")
+    work = preparation._ModuleWork(0, point, tmp_path, candidate)
+    item = preparation._CapturedWork(work, SimpleNamespace(identity="lease"), tmp_path / "captured.py")
+    bad_entry = SimpleNamespace(entry_valid=False, load_status="invalid", source_path=tmp_path / "other.py", logical_name="other")
+    session = SimpleNamespace(
+        state="ready",
+        probe=lambda *args, **kwargs: (bad_entry, SimpleNamespace(cleanup_confirmed=True, status="success")),
+        close=lambda: True,
+    )
+    def run_probe(**kwargs):
+        return kwargs["operation"](session)
+    monkeypatch.setattr(preparation, "_run_with_module_probe_session", run_probe)
+    monkeypatch.setattr(preparation, "_make_cleanup_owner", lambda *args: object())
+    ownership = SimpleNamespace(register_module_owner=lambda *args: None, root_owner=None)
+    with pytest.raises(SelectedResourceRejected, match="binding_conflict"):
+        preparation._probe_and_plan(
+            SimpleNamespace(hook_points=(point,), settings=SimpleNamespace(limits=SimpleNamespace(bindings_per_event=1))),
+            (item,), ownership, tmp_path,
+            SimpleNamespace(checkpoint=lambda: None, deadline=preparation.time.monotonic() + 10),
+            SimpleNamespace(), None, executable=False,
+        )
+
+
+def test_map_capture_batch_translates_selected_capture_rejection(tmp_path):
+    """Selected capture validation failures become stable preparation rejection tokens."""
+    source = tmp_path / "source.py"
+    source.write_text("x")
+    selected = SimpleNamespace(source_path=source, identity=SimpleNamespace(device=1, inode=2))
+    work = preparation._ScriptWork(0, SimpleNamespace(resources=SimpleNamespace(script_settings=SimpleNamespace(platform_policy=ExecutablePlatformPolicy("posix")))), HookScriptEntry(source, "run", "run"), selected)
+    entry = SimpleNamespace(
+        index=0, kind="script", logical_name="run", relative_path="captured/run",
+        validation=SimpleNamespace(source_path=source, identity=SimpleNamespace(device=9, inode=9)),
+    )
+    lease = SimpleNamespace(entries=(entry,), directory=tmp_path)
+    with pytest.raises(preparation._PreparationRejected, match="artifact_rejected"):
+        preparation._map_capture_batch((work,), lease)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.machinery
 import os
 import stat
 import sys
@@ -20,10 +19,23 @@ from topsailai.hooks.configured_script_sources import discover_prepared_script_e
 from topsailai.hooks.contracts import Binding
 from topsailai.hooks.hook_script import build_hook_point_binding_plan_from_discovery
 from topsailai.hooks.hook_script_discovery import HookScriptDiscoveryResult, HookScriptEntry
-from topsailai.hooks.module_discovery import ModuleCandidate, ModuleCleanupOwner, _DiscoveryRejected, _make_cleanup_owner, _run_with_module_probe_session, enumerate_module_candidates_owned
+from topsailai.hooks.module_discovery import ModuleCleanupOwner
+from topsailai.hooks.module_discovery import ModuleCandidate, _DiscoveryRejected, _make_cleanup_owner, _run_with_module_probe_session, enumerate_module_candidates_owned
 from topsailai.hooks.module_discovery_policy import ModuleDiscoveryPolicy, make_discovery_budget_for_deadline
+from topsailai.hooks.configured_resource_preparation import (
+    _ModuleWork,
+    _capture_batches,
+    _ScriptWork,
+    _ExecutablePlanRejected,
+    build_executable_plan,
+    revalidate_selected_batch,
+    script_selection_configured,
+    script_settings,
+    selected_point_work,
+    validate_selected_capture,
+)
+from topsailai.hooks.configured_resource_sources import SelectedResourceRejected
 from topsailai.hooks.temporary_storage import TemporaryStorageOwner, validate_temporary_root
-
 _MAX_CAPTURE_ENTRIES = 128
 _MAX_CAPTURE_SHARDS = 8
 _PREPARATION_RECOVERY_OWNER_ATTRIBUTE = "__topsailai_preparation_recovery_owner__"
@@ -156,25 +168,6 @@ class _PrivatePlan:
 
 
 @dataclass(frozen=True, slots=True)
-class _ModuleWork:
-    """Bind one Hook module to its original candidate."""
-
-    hook_index: int
-    point: object
-    inventory_root: Path
-    candidate: ModuleCandidate
-
-
-@dataclass(frozen=True, slots=True)
-class _ScriptWork:
-    """Bind one terminal Hook script to its capture request."""
-
-    hook_index: int
-    point: object
-    entry: HookScriptEntry
-
-
-@dataclass(frozen=True, slots=True)
 class _CapturedWork:
     """Bind one work item to its exact sealed path."""
 
@@ -298,6 +291,10 @@ def prepare_private(runtime, configuration: ConfiguredHooks, scope, *, cancellat
         root_owner.revalidate()
         ownership.transfer_to_image()
         return PrivatePreparationImage(generation, ownership, plans, executable=_executable)
+    except SelectedResourceRejected as exc:
+        return _settle_failed_preparation(
+            generation, exc.token, ownership
+        )
     except _PreparationRejected as exc:
         return _settle_failed_preparation(
             generation, exc.token, ownership
@@ -331,35 +328,47 @@ def prepare_private(runtime, configuration: ConfiguredHooks, scope, *, cancellat
             generation, "internal_error", ownership
         )
 
-
 def _build_work_sequence(configuration, operation, budget):
     """Enumerate every Hook before capture in deterministic module/script order."""
     works: list[_ModuleWork | _ScriptWork] = []
     for hook_index, point in enumerate(configuration.hook_points):
         operation.checkpoint()
+        if getattr(point, "resources", None) is not None:
+            selected = selected_point_work(
+                point, hook_index, operation, budget
+            )
+            works.extend(selected)
+            continue
         if point.module_folder is not None:
             inventory = _discover(point, operation, configuration, budget)
             budget.add_candidate(len(inventory.candidates))
-            works.extend(_ModuleWork(hook_index, point, inventory.root, candidate) for candidate in inventory.candidates)
+            works.extend(
+                _ModuleWork(hook_index, point, inventory.root, candidate)
+                for candidate in inventory.candidates
+            )
         if point.script is not None:
-            result = discover_prepared_script_entries(point.script.target,
-                point.script.platform_policy, operation=operation, budget=budget)
+            result = discover_prepared_script_entries(
+                point.script.target,
+                script_settings(point).platform_policy,
+                operation=operation,
+                budget=budget,
+            )
             operation.checkpoint()
             if not result.accepted:
                 raise _PreparationRejected("trust_rejected")
             works.extend(_ScriptWork(hook_index, point, entry) for entry in result.entries)
     return tuple(works)
-
-
 def _capture_work_sequence(works, ownership, artifact_root, operation, budget, trust, cancellation):
-    """Capture consecutive global batches using independent U07 shards."""
+    """Capture bounded batches without splitting selected Hook Points."""
     if len(works) > _MAX_CAPTURE_ENTRIES * _MAX_CAPTURE_SHARDS:
         raise _PreparationRejected("capacity_exceeded")
+    batches = _capture_batches(works)
+    if len(batches) > _MAX_CAPTURE_SHARDS:
+        raise _PreparationRejected("capacity_exceeded")
     captured: list[_CapturedWork] = []
-    for shard_index, start in enumerate(range(0, len(works), _MAX_CAPTURE_ENTRIES)):
-        if shard_index >= _MAX_CAPTURE_SHARDS:
-            raise _PreparationRejected("capacity_exceeded")
+    for shard_index, batch in enumerate(batches):
         operation.checkpoint()
+        revalidate_selected_batch(batch, operation)
         ownership.root_owner.revalidate()
         manager = ArtifactLeaseManager(artifact_root=str(artifact_root), trust=artifact_capture_trust(trust))
         candidate = manager.begin_candidate(deadline=operation.deadline)
@@ -368,7 +377,6 @@ def _capture_work_sequence(works, ownership, artifact_root, operation, budget, t
             raise _PreparationRejected("capacity_exceeded")
         shard = CaptureShard(shard_index, manager, candidate.group)
         ownership.register_shard(shard)
-        batch = works[start:start + _MAX_CAPTURE_ENTRIES]
         requests = tuple(_request_for_work(work) for work in batch)
         remaining = budget.max_artifact_bytes - budget.artifact_bytes
         if remaining <= 0:
@@ -402,55 +410,139 @@ def _probe_and_plan(configuration, captured, ownership, discovery_root, operatio
             storage = TemporaryStorageOwner(discovery_root)
             owner = _make_cleanup_owner(None, storage)
             ownership.register_module_owner(owner, point.hook_name)
+
             def probe_hook(session):
                 """Probe all module candidates through one owned session."""
                 result_entries = []
                 for item in modules:
                     operation.checkpoint()
-                    entry, result = session.probe(item.work.candidate, captured_path=item.captured_path, timeout_ms=_remaining_ms(operation))
+                    entry, result = session.probe(
+                        item.work.candidate,
+                        captured_path=item.captured_path,
+                        timeout_ms=_remaining_ms(operation),
+                    )
                     operation.checkpoint()
                     if not result.cleanup_confirmed or session.state == "cleanup_pending":
                         raise _PreparationRejected("cleanup_pending")
-                    if executable and (not entry.entry_valid or entry.load_status != "ready"
-                            or result.status != "success" or entry.source_path != item.captured_path
-                            or entry.logical_name != item.work.candidate.logical_name):
-                        raise _PreparationRejected("binding_conflict")
+                    if (executable or getattr(point, "resources", None) is not None) and (
+                        not entry.entry_valid or entry.load_status != "ready"
+                        or result.status != "success"
+                        or entry.source_path != item.captured_path
+                        or entry.logical_name != item.work.candidate.logical_name
+                    ):
+                        raise _point_plan_rejection(point, "binding_conflict")
                     result_entries.append((entry, item.lease.identity))
                 if not session.close():
                     raise _PreparationRejected("cleanup_pending")
                 return tuple(result_entries)
+
             root_owner = getattr(ownership, "root_owner", None)
             if root_owner is not None:
                 root_owner.revalidate()
-            result = _run_with_module_probe_session(root=modules[0].work.inventory_root, hook_name=point.hook_name, temp_root=str(discovery_root), owner=owner, operation=probe_hook, budget=make_discovery_budget_for_deadline(operation.deadline, cancellation))
+            result = _run_with_module_probe_session(
+                root=modules[0].work.inventory_root,
+                hook_name=point.hook_name,
+                temp_root=str(discovery_root),
+                owner=owner,
+                operation=probe_hook,
+                budget=make_discovery_budget_for_deadline(operation.deadline, cancellation),
+            )
             if result is None:
                 raise _PreparationRejected("trust_rejected")
             entries.extend(result)
-        failures = tuple(ConfiguredModuleFailure(f"{point.hook_name}:{entry.logical_name}", "invalid_entry" if entry.load_status == "invalid_entry" else "load_error") for entry, _ in entries if not entry.entry_valid)
-        module_bindings = tuple(Binding(binding_id=f"module:{entry.logical_name}", event_name=point.definition.name, event_version=point.definition.major_version, handler_ref=f"{entry.logical_name}:main", max_concurrency=point.max_concurrency) for entry, _ in entries)
-        script_result = HookScriptDiscoveryResult(True, ()) if point.script is not None else None
+        failures = tuple(
+            ConfiguredModuleFailure(
+                f"{point.hook_name}:{entry.logical_name}",
+                "invalid_entry" if entry.load_status == "invalid_entry" else "load_error",
+            )
+            for entry, _ in entries if not entry.entry_valid
+        )
+        module_bindings = tuple(
+            Binding(
+                binding_id=f"module:{entry.logical_name}",
+                event_name=point.definition.name,
+                event_version=point.definition.major_version,
+                handler_ref=f"{entry.logical_name}:main",
+                max_concurrency=point.max_concurrency,
+            )
+            for entry, _ in entries
+        )
+        script_result = (
+            HookScriptDiscoveryResult(True, ())
+            if script_selection_configured(point)
+            else None
+        )
         script_ids = tuple(item.lease.identity for item in scripts)
         if scripts:
-            script_result = HookScriptDiscoveryResult(True, tuple(
-                HookScriptEntry(item.captured_path, item.work.entry.basename,
-                                item.work.entry.final_registered_name) for item in scripts))
-        plan = build_hook_point_binding_plan_from_discovery(hook_point=point.hook_name, module_bindings=module_bindings, bindings_per_event=configuration.settings.limits.bindings_per_event, hook_script_configured=point.script is not None, discovery_result=script_result)
+            script_result = HookScriptDiscoveryResult(
+                True,
+                tuple(
+                    HookScriptEntry(
+                        item.captured_path,
+                        item.work.entry.basename,
+                        item.work.entry.final_registered_name,
+                    )
+                    for item in scripts
+                ),
+            )
+        plan = build_hook_point_binding_plan_from_discovery(
+            hook_point=point.hook_name,
+            module_bindings=module_bindings,
+            bindings_per_event=configuration.settings.limits.bindings_per_event,
+            hook_script_configured=script_selection_configured(point),
+            discovery_result=script_result,
+        )
         if not plan.accepted:
-            raise _PreparationRejected("binding_conflict")
+            raise _point_plan_rejection(point, "binding_conflict")
         binding_ids = tuple(f"{point.hook_name}:{entry.logical_name}" for entry, _ in entries)
-        if scripts:
+        if script_selection_configured(point):
             binding_ids += ("hook_script",)
-        summary = ConfiguredPlanSummary(point.hook_name, point.definition.name, point.definition.major_version, binding_ids, tuple(sorted(set([identity for _, identity in entries] + list(script_ids)))), failures)
+        summary = ConfiguredPlanSummary(
+            point.hook_name,
+            point.definition.name,
+            point.definition.major_version,
+            binding_ids,
+            tuple(sorted(set([identity for _, identity in entries] + list(script_ids)))),
+            failures,
+        )
         complete = _build_executable_plan(point, by_hook[hook_index]) if executable else None
-        plans.append(_PrivatePlan(summary, point.module_args, tuple(sorted(point.module_kwargs.items())), script_ids, complete, point.inject_hook_context))
+        plans.append(
+            _PrivatePlan(
+                summary,
+                point.module_args,
+                tuple(sorted(point.module_kwargs.items())),
+                script_ids,
+                complete,
+                point.inject_hook_context,
+            )
+        )
     return tuple(plans)
 
 
+def _point_plan_rejection(point, token):
+    """Select the typed rejection boundary for one Hook Point."""
+    if getattr(point, "resources", None) is not None:
+        return SelectedResourceRejected(token)
+    return _PreparationRejected(token)
+
+
+def _build_executable_plan(point, captured):
+    """Translate only explicit adapter plan guards at orchestration boundary."""
+    try:
+        return build_executable_plan(point, captured)
+    except _ExecutablePlanRejected as exc:
+        raise _point_plan_rejection(point, exc.token) from None
+
+
 def _request_for_work(work):
-    """Convert a work record to one exact U07 request."""
+    """Convert a work record to one exact capture request."""
     if isinstance(work, _ModuleWork):
         return ArtifactCaptureRequest(work.candidate.source_path, work.candidate.kind, work.candidate.logical_name)
-    return ArtifactCaptureRequest(work.entry.source_path, "script", work.entry.final_registered_name, work.point.script.platform_policy)
+    settings = script_settings(work.point)
+    return ArtifactCaptureRequest(
+        work.entry.source_path, "script", work.entry.final_registered_name,
+        settings.platform_policy,
+    )
 
 
 def _map_capture_batch(batch, lease):
@@ -462,6 +554,10 @@ def _map_capture_batch(batch, lease):
     for index, (work, request, entry) in enumerate(zip(batch, (_request_for_work(item) for item in batch), lease.entries, strict=True)):
         if entry.index != index or entry.kind != request.kind or entry.logical_name != request.logical_name or entry.validation.source_path != request.source_path:
             raise _PreparationRejected("artifact_rejected")
+        try:
+            validate_selected_capture(work, entry)
+        except SelectedResourceRejected as exc:
+            raise _PreparationRejected(exc.token) from None
         relative = Path(entry.relative_path)
         if relative.is_absolute():
             raise _PreparationRejected("artifact_rejected")
@@ -490,11 +586,11 @@ def _discover(point, operation, configuration, preparation_budget):
     return inventory
 
 
+
 def _batches(items, size):
     """Yield deterministic bounded batches."""
     for start in range(0, len(items), size):
         yield items[start:start + size]
-
 
 def _remaining_ms(operation):
     """Return remaining positive milliseconds."""
@@ -564,44 +660,3 @@ class _PreparedCaptureOwner:
         """Retry only the exact debt with a fresh finite cleanup budget."""
         return (self._ownership.retry_prepared_cleanup(debt_id) if self._prepared
                 else self._ownership.retry_cleanup(debt_id))
-
-
-def _build_executable_plan(point, captured):
-    """Build complete semantics solely from correlated original capture records."""
-    from topsailai.hooks.hook_point_plan_contracts import (
-        CapturedModule, CapturedScript, DefaultScriptHook, HookPointPlan, ModuleSource,
-    )
-    from topsailai.hooks.hook_script_contracts import HookScriptExecutionOptions, HookScriptExecutionPolicy
-    from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
-    from topsailai.hooks.module_invocation_protocol import ModuleInvocation
-    from topsailai.hooks.result_contracts import HandlerIdentity
-
-    if len(captured) > 128 or (captured and len({item.lease.identity for item in captured}) != 1):
-        raise _PreparationRejected("binding_conflict")
-    modules, scripts = [], []
-    for item in captured:
-        index = item.entry_index
-        entry = item.lease.entries[index]
-        work = item.work
-        request = _request_for_work(work)
-        if (entry.index, entry.kind, entry.logical_name, entry.validation.source_path) != (
-                index, request.kind, request.logical_name, request.source_path):
-            raise _PreparationRejected("artifact_rejected")
-        if isinstance(work, _ModuleWork):
-            logical = work.candidate.logical_name
-            source = ModuleSource(f"{point.hook_name}:{logical}", work.candidate.source_path,
-                logical, work.candidate.kind, f"{logical}:main",
-                ModuleInvocation(point.module_args, dict(point.module_kwargs),
-                                 inject_hook_context=point.inject_hook_context))
-            modules.append(CapturedModule(HandlerIdentity(f"module-{index}", source.registered_name, "module"),
-                source, item.lease.identity, index, entry.relative_path, item.captured_path,
-                entry.content_sha256, entry.validation.deployment_sha256))
-        else:
-            scripts.append(CapturedScript(HandlerIdentity(f"script-{index}", work.entry.final_registered_name, "script"),
-                item.lease.identity, index, work.entry.source_path, work.entry.basename,
-                entry.relative_path, item.captured_path, entry.content_sha256, entry.validation.deployment_sha256))
-    return HookPointPlan(point.hook_name, tuple(modules), DefaultScriptHook(tuple(scripts), point.script is not None),
-        point.script.options if point.script else HookScriptExecutionOptions(),
-        point.script.policy if point.script else HookScriptExecutionPolicy(),
-        ArtifactCapturePolicy(max_entries=max(1, len(captured))),
-        platform_policy=point.script.platform_policy if point.script else ExecutablePlatformPolicy("posix"))
