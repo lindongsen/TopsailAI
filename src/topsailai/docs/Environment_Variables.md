@@ -362,6 +362,26 @@ These variables configure the optional tool-call approval gate. When enabled, ea
 
 ## Hook Configuration
 
+### Generic Hook Point Prototype
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_HOOK_POINTS` | `{}` | Prototype JSON object mapping exact point names to `modules` and/or `scripts`; each value is an absolute file/folder path or list of paths. Read on first point invocation; restart or explicitly call `initialize_hook_points(config)` to replace the snapshot. |
+
+The input prototype calls `hook__workspace__before__input_message()` without application
+binding. Internal point-local resources merge with configured external resources. Direct-child
+membership is rediscovered per invocation; same-kind duplicate filenames reject the point.
+Modules (`.py`, excluding `__init__.py`) run before executable Scripts, each in filename order.
+Scripts run directly without a manifest, interpreter allowlist or dependency admission.
+This POSIX-only prototype is independent of the legacy configured-Hook variables below;
+it does not remove their trust rules. Its five-second aggregate execution budget is not a strict
+total-call bound: discovery and global-lock waiting are not bounded by that timer, and cleanup
+may add a one-second wait per child. It discards plugin output/return values and reports
+ordinary failures without changing input. Unresolved cleanup records block new plugin starts;
+there is no explicit operator settlement API, and restart does not prove descendants are gone.
+Process-group cleanup is not a sandbox and does not contain deliberately escaping descendants.
+
+
 ### Configured Hook Bootstrap
 
 These variables are read once by the application configuration boundary and passed to the Hook framework as a typed immutable bootstrap. Registrar, Executor, decorators, Runtime, and workers do not read the process environment.

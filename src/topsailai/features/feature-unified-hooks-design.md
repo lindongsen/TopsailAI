@@ -6,11 +6,41 @@ ProjectFolder: /TopsailAI/src/topsailai
 ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
-status: framework and opt-in summary Module/Script integration implemented; final acceptance and broader rollout pending
-scope: standalone framework and explicitly configured summary Module/Script integration; other application-domain integrations deferred
+status: generic input Hook Point prototype Human accepted; legacy framework final acceptance and broader rollout pending
+scope: generic input Hook Point prototype plus retained framework and opt-in summary integration; broader rollout deferred
 ---
 
 # Standalone Unified Hook Framework
+
+## Human revision and accepted generic-entry prototype
+
+**Decision precedence — 2026-10-16:** the following Human decisions supersede conflicting execution-authorization, public-entry and initialization/lifecycle requirements for the generic Hook Point target. The older sections remain historical architecture and describe retained legacy implementations; they must not be used to require trust admission, an observer adapter or HookApplication on the new input path. This is a scoped prototype acceptance, not a migration of the complete framework or broader production rollout.
+
+Human corrections, verbatim:
+
+> 不需要所谓的“部署信任、解释器与依赖准入”，判定文件有可执行权限，直接执行就可以了。
+
+> 我看到input_message引入了这个方法 observe_before_input，这个不对啊，我要求的是 引入 hook point，observe_before_input 太过具体了。
+
+> 那个HookApplication 完全不需要存在！初始启动方 直接写在 hooks/__init__.py 就可以了。
+
+Human acceptance and commit authorization: “达到预期了：请更新文档并commit”.
+
+The target is a native business function calling `hook_point_xxx()` directly (`def func_native(): hook_point_xxx(); ...`), without Hook-specific arguments, constructor fields, observer adapters or application-binding objects. The point automatically loads bundled point-local and environment-configured external Modules/Scripts. `input_message()` now calls the zero-argument `hook__workspace__before__input_message()` after input-mode selection and before reading; input signatures, command interception and exit behavior remain unchanged.
+
+| Revised group | Accepted target and implemented prototype boundary |
+|---|---|
+| Execution authorization | Scripts with executable permission are attempted directly; no deployment manifest, interpreter allowlist or dependency-closure admission. Ordinary OS execution failure is reported. This does not make subprocesses a sandbox or roll back side effects. |
+| Hook Point public entry | A named point delegates to the generic `invoke_hook_point()` entry. It automatically merges local and external resources, runs Modules before Scripts, and sorts each kind by filename. The prototype uses a small separate executor, not the legacy Runtime/default `hook_script` result plan. |
+| Initialization and lifecycle ownership | Bootstrap is in `hooks/__init__.py`; first invocation reads `TOPSAILAI_HOOK_POINTS` into a cached detached snapshot. No HookApplication is required. Legacy application-bound APIs remain available and are not deleted or automatically migrated. |
+
+`TOPSAILAI_HOOK_POINTS` maps exact point names to `modules` and/or `scripts`, each an absolute file/folder string or list. Membership is rediscovered per invocation, directories use direct children only, and duplicate same-kind filenames reject the whole point. Modules are `.py` files excluding `__init__.py`, run as child-process `main(**kwargs)` entries; return values/output are discarded. Scripts are launched directly without a shell wrapper. See the configuration reference for the environment contract; no additional variable is introduced.
+
+Implementation: `hooks/__init__.py`, `hooks/point_entry.py`, `hooks/point_entry_worker.py`, `hooks/points/workspace/before_input_message/__init__.py` and `workspace/input_tool.py`. gpt-astra recorded the design, ds-coder implemented/repaired, and gpt-sol independently reviewed. First review REJECTED two cleanup defects: cleanup replacing a host interruption, and loss of child recovery ownership. Both were repaired and independently reproduced; final verdict **ACCEPTED WITH MINOR ISSUES**. Independent focused evidence: **43 passed in 2.57s, exit 0; `hooks/point_entry.py` 179/179 statements and 62/62 branches, 100%**. This evidence is scoped, not full-project coverage.
+
+Original KeyboardInterrupt/SystemExit/CancelledError identity propagates through cleanup failures. Exact cleanup records retain process responsibility; group-signal failure still attempts direct-child reaping, unresolved ownership blocks new plugin starts, and reaped historical PGIDs are never re-signalled. A group whose settlement cannot be confirmed may keep execution blocked indefinitely; no explicit operator settlement API exists. Restart does not prove escaped descendants have exited.
+
+Limits: POSIX only, no new decorator integration, no full regression/cross-platform/production-lifecycle acceptance. The five-second execution budget is not a strict total-duration bound: discovery and global-lock waiting are not bounded by that timer, and cleanup may add a one-second wait per child. Process-creation handoff interruptions, escaped descendants and machine failure remain outside prototype guarantees. Plugin stderr is discarded; path/exit diagnostics are limited. No real bell execution or audibility is claimed. The residual stale task-document statuses are synchronized by this documentation update.
 
 ## Status and scope
 
@@ -39,6 +69,8 @@ A **Hook Point** is a named extension location. A **Module Hook** is a plugin re
 - `hook_name` plus `scripts` or `folder` configures the default Hook. Explicit lists select members, not execution order. Startup/lazy registration, decorators, and function-body calls are convenience wrappers and must preserve the same unified plan and lifecycle.
 
 ### Configurable local and external resources
+
+**Revision note:** trust admission and explicit-only bundled activation below are superseded for the generic-entry target by [Human revision](#human-revision-and-accepted-generic-entry-prototype); retained prepared/summary paths keep their existing behavior.
 
 **Human requirement (2026-10-15):** “把这个要求明确地写到设计文档里面，这个要求不仅用在scripts,同样也适用于modules。 scripts/modules 不仅仅是 point 文件夹里面的系统自带，也可以外部扩展”. Configuration determines which resources execute; adding a point must not require Hook-specific parameters, constructor fields or call-chain plumbing in the original function/class. Use an exact-position unified dispatch/access call or a decorator at a true function boundary; see [Layering and ownership](#layering-and-ownership).
 
@@ -179,6 +211,8 @@ Implemented `HookStatus` values include: success, error, timeout, invalid_output
 Reports and diagnostics remain bounded. Dispatch owns its short-lived report. Non-waiting admission, background handles and result polling are not part of the target API; U10 removed emission APIs and receipts without aliases or background substitutes.
 
 ## Registration, discovery and configuration
+
+**Revision note:** manifest-based registration below describes the retained framework, not a prerequisite for the accepted auto-loading generic input entry; see [Human revision](#human-revision-and-accepted-generic-entry-prototype).
 
 Use an explicit manifest or typed API registration. Target Module handler references identify importable `module:main` entries; the explicitly legacy generic Binding API still accepts arbitrary `module:callable` references and is not the ordinary target registration contract. Closures, live instances, lambdas, and implicitly inherited thread-local agents are not supported. Configuration parsing must not import plugin modules.
 
@@ -441,6 +475,8 @@ The Executor uses `point.name` for Catalog, registration, and configuration look
 
 ### Directories, Responsibilities, and Execution Protocols
 
+**Revision note:** the adapter-only business entry and trusted source selection below remain legacy summary-path descriptions. The generic input target uses a named point directly and executable-permission-only Scripts; see [Human revision](#human-revision-and-accepted-generic-entry-prototype).
+
 Use Option B: an independent subdirectory per point. The following layout is relative to ProjectFolder. Point declarations and phase-one Module directories are implemented; scripts directories are optional and are not created without resources:
 
 ```text
@@ -629,6 +665,8 @@ Unknown values must have the confirmed absence representation, not be disguised 
 Length limits do not equal sanitization. The host retains full internal diagnostics; future summary-body access requires a separate policy for permissions, transfer scope, limits, retention/deletion, and sanitization. Authorization does not permit unlimited output.
 
 ### Integration and Division of Responsibilities with Existing Mechanisms
+
+**Revision note:** mandatory application composition/Executor injection below is retained summary implementation history, superseded as a generic-entry requirement by [Human revision](#human-revision-and-accepted-generic-entry-prototype).
 
 Use the generic [Layering and ownership](#layering-and-ownership) and [Shared execution facade](#shared-execution-facade) contracts, with the following summarize-specific composition decisions. Application composition structure: EventDefinition + HookPointDeclaration → explicit HookPointCatalog + trusted preparation request → HookRuntime + application HookScope → Registrar → Executor → explicit injection into ContextRuntime. The implemented summary path uses an explicit `SummaryPreparationRequest` and deployment-owned `ConfiguredTrustPolicy`, not the simplified Script-only bootstrap: `SummaryHooksOwner` creates Runtime/Scope, `ConfiguredHookRegistrar.from_prepared()` invokes `register_summary_prepared()`, and the Executor is injected into ContextRuntime. Complete Module/Script point plans, including optional direct-child Script membership, are prepared and published with per-point dispositions; no partial-point admission or hot reload is added. The generic scripts/folder bootstrap retains its separate whole-layer policy; it does not supply Module configuration.
 
@@ -880,6 +918,8 @@ await runtime.adispatch_configured(...)
 
 ### Layering and ownership
 
+**Revision note:** requiring application startup binding or HookApplication below is superseded for the generic-entry target. Package bootstrap and direct point invocation are accepted; existing application-bound APIs remain legacy behavior. See [Human revision](#human-revision-and-accepted-generic-entry-prototype).
+
 The target dependency flow is:
 
 ```text
@@ -903,6 +943,8 @@ Application shutdown stops access admission, settles in-flight work, closes Regi
 The first release owns configured registrations in one application-level Scope with the Runtime lifetime. The [summarize application](#integration-and-division-of-responsibilities-with-existing-mechanisms) explicitly selects that owner with eager registration, per-Hook disable-not-fail visibility, and Registrar → Scope → Runtime shutdown; generic lazy mode remains available to other integrations. Short-lived request-level configured scopes are deferred because they would repeat capture and retirement. Runtime close first closes admission, settles Registrar waiters and owned deliveries under existing deadlines, retires plans and artifacts, and reports bounded cleanup debt.
 
 ### Environment-driven bootstrap
+
+**Revision note:** the manifest/pin and deep-environment restrictions below describe legacy configured bootstrap only. Generic-entry initialization reads TOPSAILAI_HOOK_POINTS in hooks/__init__.py without that admission; see [Human revision](#human-revision-and-accepted-generic-entry-prototype).
 
 Environment is read exactly once at the application configuration boundary and converted into a deeply detached typed snapshot. No dispatch, decorator wrapper, Registrar, or worker reads `os.environ`.
 
@@ -952,6 +994,8 @@ Reload consumes a complete, already validated snapshot and creates a new configu
 U10 removed nonwaiting Runtime/facade methods and receipts; Catalog background mode is rejected, with no alias or hidden replacement. Lazy dispatch and adispatch share registration singleflight and wait for the unified execution result. Failed desired-revision preparation retains the active valid revision; readiness must track both rather than erase the old plan.
 
 ### Shared execution facade
+
+**Revision note:** the application-provider facade below is retained, but not required on the accepted input path; the generic named point delegates to invoke_hook_point instead. See [Human revision](#human-revision-and-accepted-generic-entry-prototype).
 
 The implemented controlled access/provider resolves the already prepared application-owned Executor and delegates to this same facade. It supplies no alternate execution engine, registration cache, implicit Runtime construction or application lifetime. `hooks/application_access.py` exports `HookApplicationAccess`, `HookExecutorAccess`, `bind_hook_application()` and `get_hook_executor()`; `workspace/hooks_application.py` owns application binding and shutdown. Broader external-resource bootstrap and wider application rollout remain target work.
 

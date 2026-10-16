@@ -270,9 +270,11 @@ def input_message(tips: str = "", hook: HookInstruction = None) -> str:
     """
     print(SPLIT_LINE)
     multiline = env_tool.is_chat_multi_line()
-    from topsailai.hooks.points.workspace.input_adapter import observe_before_input
+    from topsailai.hooks.points.workspace.before_input_message import (
+        hook__workspace__before__input_message,
+    )
 
-    observe_before_input(multiline=multiline)
+    hook__workspace__before__input_message()
     try:
         if multiline:
             return input_multi_line(tips, hook)

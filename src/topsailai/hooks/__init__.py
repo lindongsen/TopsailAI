@@ -193,3 +193,44 @@ __all__ = [
     "settle_unconfigured_hook_script",
     "validate_payload",
 ]
+
+
+# The prototype is independent of legacy application-bound dispatch.
+from threading import RLock as _HookPointLock
+
+_point_configuration = None
+_point_configuration_lock = _HookPointLock()
+
+
+def initialize_hook_points(config=None):
+    """Read prototype environment once, or publish an explicit detached snapshot."""
+    import json
+    import os
+    from topsailai.hooks.point_entry import decode_points
+
+    global _point_configuration
+    if config is None:
+        config = json.loads(os.environ.get("TOPSAILAI_HOOK_POINTS", "{}"))
+    candidate = decode_points(config)
+    with _point_configuration_lock:
+        _point_configuration = candidate
+    return candidate
+
+
+def invoke_hook_point(name, **payload):
+    """Resolve bundled and configured resources without application assembly."""
+    import logging
+    from topsailai.hooks.point_entry import execute_point
+
+    try:
+        with _point_configuration_lock:
+            points = _point_configuration
+            if points is None:
+                points = initialize_hook_points()
+        return execute_point(name, points, payload=payload)
+    except Exception:
+        logging.getLogger(__name__).exception("Hook Point %s initialization failed", name)
+        return ()
+
+
+__all__ += ["initialize_hook_points", "invoke_hook_point"]
