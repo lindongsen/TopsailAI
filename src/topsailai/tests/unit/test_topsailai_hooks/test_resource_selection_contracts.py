@@ -8,7 +8,6 @@ from topsailai.hooks.resource_selection_contracts import (
     HookPointResourceSelection,
     HookResourceSelection,
 )
-from topsailai.hooks.resource_selection_mapping import decode_point_resource_selection
 
 
 @pytest.mark.parametrize(
@@ -29,7 +28,8 @@ def test_contract_matrix_uses_exact_values(
     expected_folder: str | None,
 ) -> None:
     """Both Hook kinds use the same immutable source grammar and values."""
-    point = decode_point_resource_selection({kind: source})
+    selection = HookResourceSelection(files=expected_files, folder=expected_folder)
+    point = HookPointResourceSelection(**{kind: selection})
     selected = getattr(point, kind)
     other = point.scripts if kind == "modules" else point.modules
     assert selected is not None

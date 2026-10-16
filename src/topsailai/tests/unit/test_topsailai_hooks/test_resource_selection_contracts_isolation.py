@@ -1,4 +1,4 @@
-"""Focused tests for strict, side-effect-free selection mapping decoders."""
+"""Contracts isolation and bounded child collector regressions. Author: DawsonLin."""
 from __future__ import annotations
 import json
 import os
@@ -6,168 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 import pytest
-from topsailai.hooks.resource_selection_contracts import HookResourceSelection
-from topsailai.hooks.resource_selection_mapping import (
-    decode_point_resource_selection,
-    decode_resource_selection,
-)
-@pytest.mark.parametrize(
-    ("kind", "source", "expected_files", "expected_folder"),
-    [
-        ("modules", {"file": "module.py"}, ("module.py",), None),
-        ("modules", {"files": ["a.py", "b.py"]}, ("a.py", "b.py"), None),
-        ("modules", {"folder": "modules"}, (), "modules"),
-        ("scripts", {"file": "run.sh"}, ("run.sh",), None),
-        ("scripts", {"files": ["a.sh", "b.sh"]}, ("a.sh", "b.sh"), None),
-        ("scripts", {"folder": "scripts"}, (), "scripts"),
-    ],
-)
-def test_decoder_supports_both_point_kinds_and_all_source_forms(
-    kind: str,
-    source: dict[str, object],
-    expected_files: tuple[str, ...],
-    expected_folder: str | None,
-) -> None:
-    """Modules and Scripts decode to exact values with the other kind absent."""
-    point = decode_point_resource_selection({kind: source})
-    selected = getattr(point, kind)
-    other = point.scripts if kind == "modules" else point.modules
-    assert isinstance(selected, HookResourceSelection)
-    assert selected.files == expected_files
-    assert selected.folder == expected_folder
-    assert other is None
-def test_decoder_normalizes_and_detaches_nested_values() -> None:
-    """Later caller mutations do not alter decoded records."""
-    source = {"modules": {"files": ["a.py", "b.py"]}, "scripts": {"folder": "scripts"}}
-    point = decode_point_resource_selection(source)
-    source["modules"]["files"].append("changed.py")  # type: ignore[index]
-    source["scripts"]["folder"] = "changed"  # type: ignore[index]
-    assert point.modules is not None and point.modules.files == ("a.py", "b.py")
-    assert point.scripts is not None and point.scripts.folder == "scripts"
-    assert decode_resource_selection({"file": "one.py"}).files == ("one.py",)
-    assert decode_point_resource_selection({}).modules is None
-@pytest.mark.parametrize("path", ["x" * 4096, "目录/脚本.sh", "/absolute/path"])
-def test_decoder_preserves_boundary_and_unicode_paths(path: str) -> None:
-    """Accepted paths remain unresolved text, including Unicode and absolute paths."""
-    source_forms = ("file", "folder") if len(path) == 4096 else ("folder",)
-    for key in source_forms:
-        selection = decode_resource_selection({key: path})
-        assert selection.files == ((path,) if key == "file" else ())
-        assert selection.folder == (path if key == "folder" else None)
-def test_decoder_rejects_path_boundaries_and_nul_in_every_path_source() -> None:
-    """NUL and 4097-character paths fail for file, files, and folder."""
-    invalid = (
-        {"file": "a\x00b"},
-        {"files": ["a", "b\x00c"]},
-        {"folder": "a\x00b"},
-        {"file": "x" * 4097},
-        {"files": ["x" * 4097]},
-        {"folder": "x" * 4097},
-    )
-    for value in invalid:
-        with pytest.raises(ValueError, match="invalid Hook resource selection mapping"):
-            decode_resource_selection(value)
-@pytest.mark.parametrize(
-    "value",
-    [
-        {},
-        {"file": "a", "folder": "b"},
-        {"file": "a", "files": ["a"]},
-        {"file": True},
-        {"file": 1},
-        {"files": []},
-        {"files": ()},
-        {"files": ["a", True]},
-        {"files": ["a", 1]},
-        {"files": ["a", "a"]},
-        {"folder": ""},
-        {"folder": None},
-        {"unknown": "a"},
-        [],
-        None,
-        {1: "a"},
-    ],
-)
-def test_decoder_rejects_malformed_selection(value: object) -> None:
-    """Malformed containers, types, nulls, conflicts, unknowns, and duplicates fail closed."""
-    with pytest.raises((TypeError, ValueError)):
-        decode_resource_selection(value)
-def test_decoder_rejects_malformed_point_selection() -> None:
-    """Point mappings accept only modules and scripts with non-null selectors."""
-    for value in (
-        {"unknown": {"file": "a"}},
-        {"modules": None},
-        {"scripts": []},
-        {"modules": {"file": "a", "files": ["b"]}},
-        [],
-        None,
-    ):
-        with pytest.raises(ValueError, match="invalid Hook resource selection mapping"):
-            decode_point_resource_selection(value)
-def test_decoder_enforces_exact_member_boundary() -> None:
-    """The exact 1024 boundary is accepted and the next member fails."""
-    accepted = [str(index) for index in range(1024)]
-    assert decode_resource_selection({"files": accepted}).files == tuple(accepted)
-    with pytest.raises(ValueError, match="invalid Hook resource selection mapping"):
-        decode_resource_selection({"files": accepted + ["1024"]})
-class _MaliciousList(list[str]):
-    """A list lookalike whose behavior must not be invoked by the decoder."""
-    def __iter__(self):
-        raise AssertionError("custom iteration must not run")
-    def __len__(self):
-        raise AssertionError("custom length must not run")
-    def __eq__(self, other: object) -> bool:
-        raise AssertionError("custom equality must not run")
-class _MaliciousString(str):
-    """A string lookalike whose content operations must not be invoked."""
-    def __bool__(self):
-        raise AssertionError("custom truth testing must not run")
-    def __len__(self):
-        raise AssertionError("custom length must not run")
-    def __contains__(self, value: object) -> bool:
-        raise AssertionError("custom containment must not run")
-    def __eq__(self, other: object) -> bool:
-        raise AssertionError("custom equality must not run")
-    def __str__(self) -> str:
-        raise AssertionError("custom string conversion must not run")
-class _MaliciousDict(dict):
-    """A mapping lookalike rejected before custom mapping behavior runs."""
-    def __iter__(self):
-        raise AssertionError("custom mapping iteration must not run")
-    def __len__(self):
-        raise AssertionError("custom mapping length must not run")
-    def __getitem__(self, key):
-        raise AssertionError("custom mapping item access must not run")
-    def __eq__(self, other: object) -> bool:
-        raise AssertionError("custom mapping equality must not run")
-    def __str__(self) -> str:
-        raise AssertionError("custom mapping string conversion must not run")
-@pytest.mark.parametrize(
-    ("source", "argument"),
-    [
-        ({"files": _MaliciousList(["a"])}, "mapping"),
-        (_MaliciousDict(file="a"), "mapping"),
-        ({"file": _MaliciousString("a")}, "path"),
-        ({"files": [_MaliciousString("a")]}, "path"),
-        ({"folder": _MaliciousString("a")}, "path"),
-    ],
-)
-def test_decoder_rejects_lookalikes_without_invoking_them(
-    source: object, argument: str
-) -> None:
-    """Exact built-in checks prevent arbitrary mapping, container, and path behavior."""
-    with pytest.raises(ValueError, match="invalid Hook resource selection mapping"):
-        decode_resource_selection(source)
-@pytest.mark.parametrize("path_source", ["file", "files", "folder"])
-def test_decoder_rejects_malicious_string_on_each_path_branch(path_source: str) -> None:
-    """Path lookalikes are rejected before content operations execute."""
-    value: object
-    if path_source == "files":
-        value = {"files": [_MaliciousString("a")]}
-    else:
-        value = {path_source: _MaliciousString("a")}
-    with pytest.raises(ValueError, match="invalid Hook resource selection mapping"):
-        decode_resource_selection(value)
+
 def _run_bounded_child(script: str, cwd: str, *, args: tuple[str, ...] = ()) -> tuple[int, bytes, bytes, bool]:
     """Run one owned child with bounded output and independent cleanup."""
     import selectors
@@ -543,8 +382,8 @@ def test_exception_graph_allows_shared_ancestor_and_rejects_context_cycle() -> N
     with pytest.raises(AssertionError):
         _assert_exception_graph_acyclic(root)
 
-def test_decoder_has_no_external_side_effects_in_isolated_process(monkeypatch) -> None:
-    """Load and exercise both U1 modules in a guarded child process."""
+def test_contracts_have_no_external_side_effects_in_isolated_process(monkeypatch) -> None:
+    """Load and exercise retained contracts in a guarded child process."""
     source_root = str(Path(__file__).resolve().parents[3])
     script = r'''
 import builtins
@@ -557,7 +396,7 @@ import types
 
 root = pathlib.Path(sys.argv[1])
 required_stdlib = {"__future__", "dataclasses", "typing"}
-allowed_project = {"topsailai.hooks.resource_selection_contracts", "topsailai.hooks.resource_selection_mapping"}
+allowed_project = {"topsailai.hooks.resource_selection_contracts"}
 original_import = builtins.__import__
 seen_imports = []
 
@@ -591,14 +430,13 @@ hooks = types.ModuleType("topsailai.hooks")
 hooks.__path__ = [str(root / "hooks")]
 sys.modules["topsailai"] = package
 sys.modules["topsailai.hooks"] = hooks
-for name in ("resource_selection_contracts", "resource_selection_mapping"):
+for name in ("resource_selection_contracts",):
     path = root / "hooks" / (name + ".py")
     spec = importlib.util.spec_from_file_location("topsailai.hooks." + name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
 contracts = sys.modules["topsailai.hooks.resource_selection_contracts"]
-mapping = sys.modules["topsailai.hooks.resource_selection_mapping"]
 
 builtins.__import__ = guard_import
 try:
@@ -628,7 +466,7 @@ try:
             raise AssertionError("arbitrary metadata access was invoked: " + name)
     assert not namespace_has_runtime_origin({"innocuous": AttributeAccessSentinel()})
 
-    for module in (contracts, mapping):
+    for module in (contracts,):
         assert not namespace_has_runtime_origin(module.__dict__)
     calls = []
     def blocked(name):
@@ -671,16 +509,17 @@ try:
     calls.clear()
     seen_imports.clear()
     contracts_type = contracts.HookResourceSelection
-    for label, source in (("file", {"file": "module.py"}), ("files", {"files": ["a.py", "b.py"]}), ("folder", {"folder": "modules"})):
-        decoded = mapping.decode_resource_selection(source)
-        assert decoded.files == (("module.py",) if label == "file" else ("a.py", "b.py") if label == "files" else ())
-        assert decoded.folder == ("modules" if label == "folder" else None)
-        contracts_type(files=("module.py",)) if label == "file" else contracts_type(files=("a.py", "b.py")) if label == "files" else contracts_type(folder="modules")
     for kind in ("modules", "scripts"):
-        for _, source in (("file", {"file": "module.py"}), ("files", {"files": ["a.py", "b.py"]}), ("folder", {"folder": "modules"})):
-            decoded = mapping.decode_point_resource_selection({kind: source})
-            assert getattr(decoded, kind) is not None
-            assert getattr(decoded, "scripts" if kind == "modules" else "modules") is None
+        for label, files, folder in (
+            ("file", ("module.py",), None),
+            ("files", ("a.py", "b.py"), None),
+            ("folder", (), "modules"),
+        ):
+            selection = contracts_type(files=files, folder=folder)
+            point = contracts.HookPointResourceSelection(**{kind: selection})
+            assert selection.files == files and selection.folder == folder
+            assert getattr(point, kind) is selection
+            assert getattr(point, "scripts" if kind == "modules" else "modules") is None
     assert calls == []
     assert all(name in required_stdlib or name in allowed_project for name, _, _ in seen_imports), seen_imports
     print(json.dumps({"calls": calls, "target_modules_loaded": True}))
