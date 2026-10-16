@@ -3,9 +3,12 @@
 Author: DawsonLin
 """
 
+import importlib.machinery
 import json
 import os
+import shutil
 from pathlib import Path
+import sysconfig
 from unittest.mock import Mock
 
 import pytest
@@ -13,6 +16,7 @@ import pytest
 import topsailai.hooks as hooks
 from topsailai.hooks.point_entry import decode_points, execute_point
 from topsailai.hooks.points.workspace.before_input_message import NAME
+from topsailai.tests.unit.test_topsailai_hooks.module_discovery_helpers import compile_extension
 
 
 @pytest.fixture(autouse=True)
@@ -294,3 +298,49 @@ def test_cleanup_host_interrupt_retains_owner(tmp_path, monkeypatch, primary_pre
     assert record.process is child
     child.wait.side_effect = None
     assert point_entry.retry_cleanup(record)
+
+
+def require_compiler():
+    """Skip compiled-extension cases when no C compiler or headers are available."""
+    if not shutil.which("cc") or not sysconfig.get_paths().get("include"):
+        pytest.skip("compiled-extension fixture requires a C compiler and Python headers")
+
+
+def test_compiled_extension_module_executes(tmp_path):
+    """A real platform extension is admitted and its main entry runs to success."""
+    require_compiler()
+    external = tmp_path / "external"
+    external.mkdir()
+    extension = compile_extension(external, "compiled_plugin")
+    assert extension.name.endswith(importlib.machinery.EXTENSION_SUFFIXES[0])
+    points = decode_points({NAME: {"modules": str(external)}})
+    result = execute_point(NAME, points, payload={}, internal_root=tmp_path / "empty")
+    assert [(item.kind, item.name, item.status) for item in result] == [
+        ("module", extension.name, "success")]
+
+
+def test_duplicate_logical_name_rejects_compiled_and_source(tmp_path):
+    """A source and extension sharing one logical name reject the whole point."""
+    require_compiler()
+    external = tmp_path / "external"
+    external.mkdir()
+    module(external / "same.py", tmp_path / "trace", "NO")
+    compile_extension(external, "same")
+    points = decode_points({NAME: {"modules": str(external)}})
+    result = execute_point(NAME, points, payload={}, internal_root=tmp_path / "empty")
+    assert result == ()
+    assert not (tmp_path / "trace").exists()
+
+
+def test_source_module_and_init_exclusion_unchanged(tmp_path):
+    """Plain source Modules still run while __init__.py stays excluded."""
+    external = tmp_path / "external"
+    external.mkdir()
+    output = tmp_path / "trace"
+    module(external / "plain.py", output, "ok")
+    (external / "__init__.py").write_text("raise RuntimeError('not a member')")
+    points = decode_points({NAME: {"modules": str(external)}})
+    result = execute_point(NAME, points, payload={}, internal_root=tmp_path / "empty")
+    assert [(item.kind, item.name, item.status) for item in result] == [
+        ("module", "plain.py", "success")]
+    assert output.read_text() == "ok"

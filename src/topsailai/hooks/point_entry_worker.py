@@ -4,6 +4,7 @@ Author: DawsonLin
 """
 
 import asyncio
+import importlib.machinery
 import importlib.util
 import inspect
 import json
@@ -11,11 +12,22 @@ from pathlib import Path
 import sys
 
 
+def _logical_name(path):
+    """Derive the import identity so PyInit_<name> matches a compiled extension."""
+    if path.name.endswith(".py"):
+        return path.name[:-3]
+    suffixes = tuple(sorted(importlib.machinery.EXTENSION_SUFFIXES, key=len, reverse=True))
+    for suffix in suffixes:
+        if path.name.endswith(suffix):
+            return path.name[: -len(suffix)]
+    return path.stem
+
+
 def run():
     """Import a selected file only in the child and await any normal awaitable."""
     path = Path(sys.argv[1])
     sys.path.insert(0, str(path.parent))
-    spec = importlib.util.spec_from_file_location("hook_point_plugin", path)
+    spec = importlib.util.spec_from_file_location(_logical_name(path), path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     result = module.main(**json.loads(sys.argv[2]))

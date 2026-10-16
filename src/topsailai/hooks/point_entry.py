@@ -3,6 +3,7 @@
 Author: DawsonLin
 """
 
+import importlib.machinery
 from dataclasses import dataclass
 import logging
 import os
@@ -98,10 +99,23 @@ def _discover(selections, internal, kind):
         if len(candidates) + len(entries) > 128:
             raise ValueError("Hook resource count exceeded")
         entries.extend(path for path in candidates if _eligible(path, kind))
-    names = [path.name for path in entries]
+    names = [_logical_name(path, kind) for path in entries]
     if len(names) != len(set(names)):
         raise ValueError("Duplicate Hook resource name")
     return tuple(sorted(entries, key=lambda path: path.name))
+
+
+def _logical_name(path, kind):
+    """Derive the import identity by stripping one recognized Module suffix."""
+    if kind != "module":
+        return path.name
+    if path.name.endswith(".py"):
+        return path.name[:-3]
+    suffixes = tuple(sorted(importlib.machinery.EXTENSION_SUFFIXES, key=len, reverse=True))
+    for suffix in suffixes:
+        if path.name.endswith(suffix):
+            return path.name[: -len(suffix)]
+    return path.name
 
 
 def _eligible(path, kind):
@@ -111,8 +125,17 @@ def _eligible(path, kind):
     if not path.is_file():
         return False
     if kind == "module":
-        return path.suffix == ".py" and path.name != "__init__.py"
+        return _is_module_name(path.name)
     return os.access(path, os.X_OK)
+
+
+def _is_module_name(name):
+    """Accept Python source or a platform interpreter extension, excluding __init__."""
+    if name == "__init__.py":
+        return False
+    if name.endswith(".py"):
+        return True
+    return any(name.endswith(suffix) for suffix in importlib.machinery.EXTENSION_SUFFIXES)
 
 
 def execute_point(name, points, *, payload, timeout_seconds=5.0, internal_root=None):
