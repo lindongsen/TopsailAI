@@ -38,11 +38,21 @@ A **Hook Point** is a named extension location. A **Module Hook** is a plugin re
 - Script files are internal entries of this default Hook, not peer Hooks, one Binding per script, or an independently dispatchable scripts-only plan. A result merely labelled `binding_id="hook_script"` does not satisfy the contract unless the default Hook is actually in the unified plan.
 - `hook_name` plus `scripts` or `folder` configures the default Hook. Explicit lists select members, not execution order. Startup/lazy registration, decorators, and function-body calls are convenience wrappers and must preserve the same unified plan and lifecycle.
 
+### Configurable local and external resources
+
+**Human requirement (2026-10-15):** “把这个要求明确地写到设计文档里面，这个要求不仅用在scripts,同样也适用于modules。 scripts/modules 不仅仅是 point 文件夹里面的系统自带，也可以外部扩展”. Configuration determines which resources execute; adding a point must not require Hook-specific parameters, constructor fields or call-chain plumbing in the original function/class. Use an exact-position unified dispatch/access call or a decorator at a true function boundary; see [Layering and ownership](#layering-and-ownership).
+
+Both Module and Script resources may be system-provided resources conventionally organized under a point's local `modules/` and `scripts/`, or deployment-authorized external extension files/folders outside the point tree. Local folders are organizational defaults, not exclusive sources; mere placement does not register, authorize or activate anything. No resource is implicitly enabled merely because it is bundled with the application.
+
+Local and external resources share deployment trust and security admission, bounded discovery, immutable capture, duplicate final-name rejection, deterministic ordering, aggregate deadlines, cancellation, lifecycle ownership, cleanup-debt accounting and last-known-good replacement guarantees. External Modules still expose `main(*args, **kwargs)` and run first; external Scripts remain entries of the exactly one terminal `hook_script`, never peer Hooks or a separate dispatcher. No inline import/execution shortcut or trust exemption is permitted.
+
 ### Deterministic name keys
 
 Sorting is case-sensitive ascending Unicode code-point order, without locale collation, case folding, numeric/natural sorting, or Unicode normalization. Both Module and Script keys are their final registered name strings, not binding priorities or list positions. Duplicate registered names within the same handler kind and Hook Point reject the complete candidate before publication. Module discovery can derive a logical import name using the complete interpreter-recognized suffix, but the final registered name is the ordering authority.
 
 Script names have no framework-imposed format restriction: no required prefix, extension or basename-only rule. Executability, trust and path admission are separate safety checks, not naming restrictions. No case folding or name normalization changes the sorting key. Explicit lists select entries only; neither list position nor path is a tie-break for duplicate registered names. For directory discovery, generating a normalized root-relative path as the registered name is a proposed default to distinguish files in different subdirectories; the Human has not explicitly approved that generation rule. Display the generated names before publication rather than silently treating basename as authority.
+
+For both local and external Modules and Scripts, explicit lists select resources, never execution order. Folder selections discover eligible resources under declared finite depth/count/byte and admission rules, then sort by final registered name. Filename order applies where the admitted name is the filename; nested external basename versus root-relative name generation remains an unresolved policy decision, not approval for recursive Module discovery or silent name normalization. Duplicate names reject the complete candidate rather than using paths or list position as tie-breaks.
 
 Configured preparation discovers, captures and validates executable sources for publication. Ordinary U06D registration retains source descriptors; dispatch prepares a fresh captured candidate under its shared deadline. Execution consumes an immutable admitted snapshot: later source changes cannot alter that snapshot, but can affect a subsequent ordinary dispatch or configured reload.
 
@@ -173,6 +183,10 @@ Reports and diagnostics remain bounded. Dispatch owns its short-lived report. No
 Use an explicit manifest or typed API registration. Target Module handler references identify importable `module:main` entries; the explicitly legacy generic Binding API still accepts arbitrary `module:callable` references and is not the ordinary target registration contract. Closures, live instances, lambdas, and implicitly inherited thread-local agents are not supported. Configuration parsing must not import plugin modules.
 
 The application reads a chosen config source once and passes settings to HookRuntime. `HookSettings.from_mapping()` accepts runtime settings (`schema_version`, `enabled`, and `limits`); definitions and bindings are registered through the typed API rather than embedded in that mapping. No new environment-variable family is prescribed. Configured module/script discovery is explicit and rooted at caller-supplied paths; there is no implicit crawling of the working directory, installed packages, or arbitrary search paths.
+
+Target source selection is symmetrical for both handler kinds: a single external file, an explicit list of files, or a configured folder of eligible resources. A single file is a one-member selection. Local defaults are selected through the same trusted preparation path. Exact schema keys, combination/override rules for local and external selections, and external nested discovery/name generation must be specified before implementation; this target does not introduce an already accepted JSON schema. Modules need callable-main admission, while Scripts need platform executable/format admission; symmetry of configuration does not erase those distinct safety checks.
+
+**Current implementation boundary:** the generic environment bootstrap/configuration principally exposes Script `scripts` or `folder`. The selected-resource preparation path and summary prepared-plan handoff now provide committed Module/Script resource preparation, including explicit selected resources, but they do not constitute the complete external Module file/list/folder bootstrap contract. Reuse that handoff rather than claiming it is absent; extending it to symmetrical configurable external sources remains work. Evidence: `884c5140` (`hooks/configured_contracts.py`, `hooks/configured_preparation.py`, `hooks/configured_resource_contracts.py`, `hooks/configured_resource_preparation.py`, `hooks/configured_resource_sources.py`).
 
 Illustrative configuration:
 
@@ -478,7 +492,7 @@ Prepared Script directories use bounded direct-child membership; ordinary subdir
 
 The unchanged generic `ConfiguredHookBinding.scripts`/`folder` API is separate: `folder` remains recursively scanned and mutually exclusive with explicit `scripts`. Placement alone implies neither registration nor authority. Target the Script resource directory, not the entire point directory; do not confuse generic recursive discovery with prepared summary direct-child membership.
 
-Reference cross-point shared resources from a shared location through configuration rather than duplicating them. Top-level `scripts/` is for standalone tools/operational scripts, not point-specific resources. Legacy generic Binding observers using `handler(context)` (Binding.handler_ref), configured Modules using `main(*args, **kwargs)`, and the Script protocol are not interchangeable. The ordinary target registration contract remains Module `main`, as defined in [Registration, discovery and configuration](#registration-discovery-and-configuration).
+Reference cross-point shared resources from a shared location through configuration rather than duplicating them. Top-level `scripts/` conventionally holds standalone tools/operational scripts; an eligible file there or outside the point tree may also be explicitly selected as an external Hook resource under deployment trust. Point-local `modules/` and `scripts/` are not exclusive resource locations and do not imply automatic discovery or registration. The direct-child summary membership rules above describe the current implementation, not a prohibition on future authorized external sources. Legacy generic Binding observers using `handler(context)` (Binding.handler_ref), configured Modules using `main(*args, **kwargs)`, and the Script protocol are not interchangeable. The ordinary target registration contract remains Module `main`, as defined in [Registration, discovery and configuration](#registration-discovery-and-configuration).
 
 Each point retains the [Authoritative Hook Point contract](#authoritative-hook-point-contract), including its single built-in terminal `hook_script`, Module-before-Script name ordering, and cleanup-safe prerequisites. Business resources must not replace, duplicate, or bypass that unified plan; no scripts-only dispatch chain is added.
 
@@ -735,6 +749,8 @@ Extend, rather than duplicate, the acceptance checklist above:
 | Precise v1 field table | P0-4 rules/boundary approved; implementer submits exact types, required/enums/lengths/absence and per-point availability for Human confirmation before coding |
 | Application wiring/cross-worker reentry | Application owner is decided; confirm composition files, shared Executor injection/isolation boundaries, and identification mechanisms. Cross-worker runtime persistence is outside phase one; per-session scoping is a P2 revisit |
 | timeout | Determine each point's timeout and the total business budget to prevent prolonged plugin blocking |
+| Symmetrical external resource configuration | Freeze Module/Script file/list/folder schema, local/external combination rules, eligible-folder policy and nested registered-name generation; reuse existing prepared handoff without claiming generic Module bootstrap completion |
+| Controlled application access | Implemented in `hooks/application_access.py` and `workspace/hooks_application.py`; remaining work is broader rollout/acceptance of propagation and signature-preserving insertion beyond the committed application/input path |
 
 Open items are not allowed by default: security, behavior, and permissions require prior confirmation; subsequent plans resolve other implementation details within the agreed rules.
 
@@ -825,6 +841,19 @@ One framework provides registration, event delivery, ordering, isolated executio
 
 ## Configuration convenience and migration boundary
 
+The target convenience contract selects Module and Script file/list/folder sources symmetrically, including point-local defaults and authorized external extensions. The currently implemented `scripts`/`folder` spelling below is Script-specific; it must not be presented as the completed Module configuration contract. Both kinds feed the same unified point plan and retain whole-candidate rejection and last-known-good replacement.
+
+Conceptual input-point selection (source choices only, not a runnable configuration schema):
+
+| Point | Kind | Example configured selection |
+|---|---|---|
+| `hook__workspace__before__input_message` | Script file | Human example: `/TopsailAI/src/topsailai/scripts/act_bell.sh` (project-relative `scripts/act_bell.sh`) |
+| Same point | Script folder | Deployment-authorized external `input-scripts/` directory |
+| Same point | Module file/list | Deployment-authorized external `input_observer.py`, or an explicit list of Module files |
+| Same point | Module folder | Deployment-authorized external `input-modules/` directory containing eligible `main` Modules |
+
+The external Module/folder paths are conceptual deployment selections, not claims that files exist or are currently accepted by bootstrap. Every selection requires authorized roots, dependency/closure evidence and platform admission. The bell example does not promise execution or audibility: its `#!/usr/bin/env bash` shebang requires admission under the actual policy, and isolated/captured stdout or an unavailable controlling terminal means a BEL result is not proof of audible terminal output. Do not relax trust, replay untrusted terminal controls, or expand child capabilities to make it work.
+
 `hook_name` plus exactly one of `scripts` or `folder` is a convenience interface for the Hook Point's default Script Hook, not permission to publish a second first-class plan type. Both source forms use the name key above; list order is not an execution contract. For this generic configured API, folder enumeration remains bounded, recursive and no-symlink, with shell-free format validation and deployment-owned trust. The prepared summary path instead uses direct-child Script membership as described in [Directories, Responsibilities, and Execution Protocols](#directories-responsibilities-and-execution-protocols). Invalid or duplicate entries reject the whole change and preserve the previous unified plan.
 
 The implemented legacy Hook-name validator retains the exact case-sensitive `^hook_[a-z][a-z0-9_]*$` contract, without event-name, path, prefix or alias fallback. The implemented new-point validator adds a strict double-underscore branch, matching point/event names and phase validation while preserving the legacy branch (see [Naming, Phases, and Framework Validation](#naming-phases-and-framework-validation)). Identical complete plans are successful no-ops; replacement must preserve unrelated registrations and admitted old snapshots. Execution retains existing failure, timeout and cancellation policies with no automatic retry. Scope and Runtime close own plan removal, admitted-work settlement, artifact retirement and bounded cleanup recovery.
@@ -865,13 +894,19 @@ application configuration boundary
      U06 sync/U08 awaited execution and U07 desired-active diagnostics are implemented
 ```
 
-Core business modules receive a `ConfiguredHookExecutor` explicitly. They never read environment variables, parse Hook configuration, scan script folders, build trust assertions, or mutate Runtime trust. Decorator and explicit insertion styles must call the same Executor and Registrar; neither may duplicate discovery, registration, failure caching, reload, or cleanup logic.
+**Target adjustment — no signature refactor:** application startup owns environment/configuration, trust, Runtime, Scope, Registrar and Executor, and explicitly binds a controlled application-scoped, context-isolated access/provider. Business code uses that unified access at an exact checkpoint, or the decorator uses its provider at a genuine before/success/error function boundary. Merely adding a Hook must not require Executor parameters, Hook constructor fields, a new service class, or call-chain dependency plumbing in the original function/class. This replaces mandatory per-call explicit Executor injection as the usability target. The controlled application access/provider is implemented in `343c8fa0`, and application-owned lifecycle is implemented in `9a1f846b`; broader rollout and generic external-resource bootstrap remain pending.
+
+The binding is not an arbitrary mutable process-global singleton or a hidden thread-local agent. Application instances must not overwrite or borrow each other's bindings. Tasks/contexts carry only their owning application binding; threads require deliberate owner-validated propagation, not ambient inheritance or cross-thread fallback. Nested binding restores the previous context with an exact ownership token; tests restore bindings even on exceptions. Disabled/unbound report-type access returns a deterministic unavailable/no-op diagnostic without creating resources; closed bindings reject admission and never recreate or borrow a Runtime. Authorized blocking points must fail according to their Catalog contract, never treat missing binding as successful execution. The implemented access surface is `HookApplicationAccess` and `HookExecutorAccess`, provided by `bind_hook_application()` and `get_hook_executor()` in `hooks/application_access.py`; unavailable-state rejection reasons include `application_unbound`, `application_disabled`, `application_context_mismatch`, and `application_closed`. Extensions beyond this committed scope remain implementation design work.
+
+Application shutdown stops access admission, settles in-flight work, closes Registrar → Scope → Runtime under bounded cleanup policy, and invalidates the binding; cleanup debt remains explicit. Input functions, sessions and decorators do not own shared shutdown. Business modules never read environment/configuration, discover Module/Script sources, construct Runtime, build trust assertions or mutate Runtime trust. Decorator and explicit insertion styles resolve the same Executor and Registrar; neither duplicates discovery, registration, failure caching, reload or cleanup logic.
 
 The first release owns configured registrations in one application-level Scope with the Runtime lifetime. The [summarize application](#integration-and-division-of-responsibilities-with-existing-mechanisms) explicitly selects that owner with eager registration, per-Hook disable-not-fail visibility, and Registrar → Scope → Runtime shutdown; generic lazy mode remains available to other integrations. Short-lived request-level configured scopes are deferred because they would repeat capture and retirement. Runtime close first closes admission, settles Registrar waiters and owned deliveries under existing deadlines, retires plans and artifacts, and reports bounded cleanup debt.
 
 ### Environment-driven bootstrap
 
 Environment is read exactly once at the application configuration boundary and converted into a deeply detached typed snapshot. No dispatch, decorator wrapper, Registrar, or worker reads `os.environ`.
+
+The current environment interface locates versioned configuration/trust files; direct inline environment lists are not implemented. Future configuration must express local/external Module and Script selections symmetrically at this startup boundary, never through deep business-layer environment reads. Exact schema/environment extensions remain pending. When implementation lands, synchronize `env_template`, `docs/Environment_Variables.md`, API and owning factual documentation; this documentation-only target update changes no environment behavior or factual environment reference.
 
 The implemented variables are:
 
@@ -918,6 +953,8 @@ U10 removed nonwaiting Runtime/facade methods and receipts; Catalog background m
 
 ### Shared execution facade
 
+The implemented controlled access/provider resolves the already prepared application-owned Executor and delegates to this same facade. It supplies no alternate execution engine, registration cache, implicit Runtime construction or application lifetime. `hooks/application_access.py` exports `HookApplicationAccess`, `HookExecutorAccess`, `bind_hook_application()` and `get_hook_executor()`; `workspace/hooks_application.py` owns application binding and shutdown. Broader external-resource bootstrap and wider application rollout remain target work.
+
 The implemented waiting-only facade returns the compatibility `DispatchReport` with `unified_result`; it does not return a bare HookPointResult or derive/rewrite the unified decision:
 
 ```python
@@ -939,7 +976,7 @@ No Hook return value implicitly replaces a business result. Any future transform
 
 Decorators are intended only for callable boundaries whose timing aligns with function entry, successful return, or exceptional exit. They are not appropriate when the point belongs between statements, after a partial commit, around a branch, before mandatory cleanup, or for a fire-and-observe requirement, which the framework does not support.
 
-Implemented shape:
+Existing attribute-injection shape (retained API, not the no-signature-refactor target requirement):
 
 ```python
 @hook_point(
@@ -955,6 +992,8 @@ def operation(...): ...
 `before`, `success`, and `error` are three optional, distinct `HookPointDeclaration` references with separate stable names, schemas, policies, and budgets. They are not labels applied to one ambiguous Hook point. At least one must be supplied. The canonical post-return phase name is `success`; an API alias named `after`, if ever provided for compatibility, must resolve only to the same success-only slot and cannot coexist with `success`.
 
 For free functions, `executor_provider` may be supplied instead of `executor_attribute`. The provider is application dependency injection; it must return an existing Executor and must not read environment or create a Runtime. Instance methods use the explicitly named receiver attribute. `functools.wraps`, descriptor binding, annotations, and the original inspectable signature are preserved. For `classmethod` or `staticmethod`, the Hook decorator applies to the underlying function inside the descriptor decorator; ambiguous ordering is rejected or documented by validation rather than guessed.
+
+For the no-signature-refactor target, use the controlled application provider for free functions and methods without adding a receiver field or constructor parameter merely for Hooks. The existing `executor_provider` seam remains reusable, and application/context binding plus application-owned lifecycle are implemented; broader rollout and cross-worker propagation acceptance remain separate. Adding the decorator must preserve the original signature and calling conventions. Do not wrap all of `input_message()` to represent its interior checkpoint: the committed input path selects the input mode first and dispatches once before reading and before input-only interruption handling or `hook_message()` interception.
 
 Decorator semantics are:
 
@@ -988,7 +1027,7 @@ A synchronous function uses the identical declaration mapping; only its wrapper 
 
 ### Explicit function-body insertion
 
-Explicit insertion is the default for precise core lifecycle work. The owning module selects a catalog declaration and builds a minimal detached payload at the exact checkpoint.
+Explicit insertion is the default for precise core lifecycle work. The owning module selects a catalog declaration and builds a minimal detached payload at the exact checkpoint. Under the adjusted target it calls the implemented controlled application access/provider without changing the original function/class signature. The following examples illustrate the retained explicit-Executor API only; their added Executor argument is not a requirement for adding new points. The access call delegates to the same waiting facade and preserves the same checkpoint and exception semantics.
 
 Synchronous before/success/error example:
 
@@ -1084,6 +1123,8 @@ The Human may schedule core-code Hook-point rollout only when all of the followi
 - Decorator error-path tests prove the exact original exception object and traceback frames survive ordinary and failing `report` Hooks and an explicitly blocking error Hook; no path returns a fallback, Hook report, converted exception, or replacement exception.
 - Blocking-before tests prove callable non-entry; blocking-success tests prove the catalog explicitly approved failure after completed business work. Generators and unsafe payload exposure remain rejected.
 - Explicit insertion supports exact before/success/error checkpoints without changing business ownership.
+- New point insertion and provider-backed decorators require no Hook-specific business parameters, constructor fields or call-chain plumbing; tests prove application/context/thread isolation, test restoration, unbound/disabled/closed behavior and bounded shutdown without Runtime recreation.
+- Local and external Module/Script file/list/folder selections pass the same trust, bounded discovery, capture, duplicate-name, ordering, deadline, cancellation, cleanup and last-known-good tests. Folder semantics and generated names are reviewed before publication; a mixed Module/default-Script plan proves neither kind bypasses the unified engine.
 - One catalog contract drives both insertion styles, with reviewed schema, sensitive fields, mode, Scope, failure policy, ordering, latency, and owner.
 - Trust changes replace Runtime; graceful close prevents stale publication and reports zero unexplained cleanup debt in acceptance runs.
 - Structural performance tests prove disabled and `READY` paths perform no hidden bootstrap filesystem I/O and async first use does not block the event loop; each concrete core Hook-point rollout records and approves its numeric latency and resource budgets.
@@ -1094,6 +1135,8 @@ The Human may schedule core-code Hook-point rollout only when all of the followi
 ### Readiness status and implementation roadmap
 
 **U07–U10 are implemented; full architecture acceptance remains gated by U11H and the accepted provenance exception decision.** U06A–U06D synchronous per-point execution, `main` invocation and both name-order stages are committed and verified in their selected affected scope; the older inventory below remains historical evidence, not full lifecycle/core-rollout approval.
+
+**Additional target gaps from the Human's external-extension/no-signature-refactor requirement:** symmetrical external Module/Script configuration, complete generic external Module bootstrap/prepared-plan adaptation, remain unimplemented; the application-scoped access/provider, application-owned lifecycle, and application-bound input checkpoint are committed in the limited current scope. Resolve schema/merge and nested naming policy, then verify broader signature-preserving interior/decorator insertion and local/external parity in separately reviewed logical units. Existing summary wiring and generic Script configuration must remain intact. This design update authorizes no activation, broader rollout or capability expansion; all seven P2 gates remain closed, `cleanup_profile` remains immutable, C3 containment stays separate, child capability remains STOP and native implementation remains unauthorized.
 
 Already implemented and verified:
 
