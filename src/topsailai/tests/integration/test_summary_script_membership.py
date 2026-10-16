@@ -8,6 +8,7 @@ from tests.bdd.summary_script_membership_harness import MixedDeployment
 from topsailai.hooks.configured_executor import HookOperation
 from tests.legacy_summary_adapter_support import LegacySummaryHookAdapter
 from tests.summary_catalog_support import PHASE_ONE_DECLARATIONS
+from topsailai.hooks.points.context.summary_contracts import active_summary_point
 
 
 @pytest.fixture
@@ -148,6 +149,13 @@ def test_direct_order_and_checkpoint_custody(tmp_path, request, monkeypatch, lay
     second.emit("before_summary_generate")
     rows = tree.rows()
     assert len(rows) == 8
+    expected_point = "hook__context__before__summary_generate_" + layer
+    assert {r["point"] for r in rows} == {expected_point}
+    for row in rows:
+        assert active_summary_point(row["point"]).layer == layer
+        if "payload" in row:
+            assert row["payload"]["point_name"] == expected_point
+            assert "layer" not in row["payload"]
     assert {r["payload"]["operation_id"] for r in rows if "payload" in r} == {
         operation.operation.operation_id, second.operation.operation_id}
     assert all("payload" not in r for r in rows if r["name"] in ("A", "z"))

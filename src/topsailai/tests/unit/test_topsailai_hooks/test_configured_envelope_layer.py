@@ -1,4 +1,4 @@
-"""Catalog-derived envelope layer regressions. Author: DawsonLin."""
+"""Neutral framework envelope layer regressions. Author: DawsonLin."""
 
 import asyncio
 from dataclasses import replace
@@ -19,8 +19,8 @@ from topsailai.tests.unit.test_topsailai_hooks.test_summary_hook_points import c
 
 @pytest.mark.parametrize("contract", SUMMARY_POINTS, ids=lambda point: point.name)
 @pytest.mark.parametrize("mode", ["sync", "async"])
-def test_summary_envelope_uses_point_suffix(contract, mode):
-    """Both waiting facades derive every checkpoint layer from its declaration."""
+def test_executor_uses_neutral_layer_for_summary_declarations(contract, mode):
+    """Both waiting facades keep feature declarations in a neutral framework envelope."""
     point = replace(contract.declaration, mode=mode)
     runtime = _Runtime()
     registrar = _Registrar()
@@ -34,7 +34,7 @@ def test_summary_envelope_uses_point_suffix(contract, mode):
         report = asyncio.run(executor.adispatch(point, payload=payload, operation=operation))
     event, = runtime.events
     assert report.rejection_reason is None
-    assert event.layer == contract.layer
+    assert event.layer == "hooks"
     assert event.name == point.name
     assert event.major_version == payload["schema_version"]
     assert event.operation_id == operation.operation_id
@@ -50,12 +50,14 @@ def test_summary_envelope_uses_point_suffix(contract, mode):
 @pytest.mark.parametrize("name,event_name,expected", [
     ("hook_legacy_user2agent", "legacy.summary_user2agent", "hooks"),
     ("hook_legacy_agent2llm", "legacy.summary_agent2llm", "hooks"),
-    ("hook__billing__before__invoice_customer", "hook__billing__before__invoice_customer", "customer"),
+    ("hook__billing__before__invoice_customer", "hook__billing__before__invoice_customer", "hooks"),
     ("hook__billing__before__invoice", "hook__billing__before__invoice", "hooks"),
+    ("hook__billing__before__invoice_user2agent", "hook__billing__before__invoice_user2agent", "hooks"),
+    ("hook__billing__before__invoice_agent2llm", "hook__billing__before__invoice_agent2llm", "hooks"),
 ])
 @pytest.mark.parametrize("mode", ["sync", "async"])
-def test_layer_derivation_is_generic_and_legacy_compatible(name, event_name, expected, mode):
-    """Legacy events retain hooks; generic unified actions need no summary catalog."""
+def test_executor_does_not_infer_layer_from_action(name, event_name, expected, mode):
+    """Neither legacy names nor unified action suffixes select framework metadata."""
     point = HookPointDeclaration(name, EventDefinition(event_name, 1, {"type": "object"}),
                                 "before", mode, "test")
     runtime = _Runtime()
@@ -78,8 +80,8 @@ def test_summary_payload_layer_never_selects_envelope(contract, value):
 
 
 @pytest.mark.parametrize("layer", ["user2agent", "agent2llm"])
-def test_executor_and_real_runtime_construct_derived_envelope(tmp_path, monkeypatch, layer):
-    """Executor dispatch reaches a real Runtime event without an independent layer."""
+def test_executor_and_real_runtime_construct_neutral_envelope(tmp_path, monkeypatch, layer):
+    """Executor dispatch constructs a real Runtime event with neutral layer metadata."""
     runtime, scope = _runtime(tmp_path)
     contract = next(point for point in SUMMARY_POINTS
                     if point.layer == layer and point.name.split("__")[2] == "before")
@@ -99,7 +101,7 @@ def test_executor_and_real_runtime_construct_derived_envelope(tmp_path, monkeypa
         result = executor.dispatch(contract.declaration, payload=build_summary_payload(
             contract, operation_id="real-1"), operation=HookOperation("real-1"))
         event, = captured
-        assert event.layer == layer
+        assert event.layer == "hooks"
         assert event.name == contract.name
         assert event.operation_id == "real-1"
         assert "layer" not in event.payload
@@ -107,3 +109,25 @@ def test_executor_and_real_runtime_construct_derived_envelope(tmp_path, monkeypa
     finally:
         runtime.close()
         assert not runtime._backend.cleanup_debts()
+
+
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_payload_layer_is_data_not_envelope_metadata(mode):
+    """An allowed business field cannot override detached framework metadata."""
+    name = "hook__billing__before__invoice_customer"
+    point = HookPointDeclaration(name, EventDefinition(name, 1, {
+        "type": "object", "properties": {"layer": {"type": "string"}},
+    }), "before", mode, "test")
+    runtime = _Runtime()
+    executor = ConfiguredHookExecutor(runtime, _Scope(), _Registrar(), HookPointCatalog((point,)))
+    payload = {"layer": "customer"}
+    if mode == "sync":
+        executor.dispatch(point, payload=payload)
+    else:
+        asyncio.run(executor.adispatch(point, payload=payload))
+    event, = runtime.events
+    payload["layer"] = "changed"
+    assert event.layer == "hooks"
+    assert event.payload["layer"] == "customer"
+    with pytest.raises(TypeError):
+        event.payload["layer"] = "other"

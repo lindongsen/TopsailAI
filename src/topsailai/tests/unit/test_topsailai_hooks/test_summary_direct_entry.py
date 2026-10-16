@@ -9,7 +9,7 @@ import pytest
 import topsailai.hooks as hooks
 from topsailai.hooks.contracts import ValidationError
 from topsailai.hooks.point_entry import EntryResult, pending_cleanup
-from topsailai.hooks.points.context.summary_contracts import SUMMARY_POINTS
+from topsailai.hooks.points.context.summary_contracts import SUMMARY_POINTS, active_summary_point
 from topsailai.hooks.points.context.summary_payloads import invoke_summary_hook_point
 
 ACTIVE = tuple(point for point in SUMMARY_POINTS if point.phase_one_eligible)
@@ -63,6 +63,9 @@ def test_exact_detached_envelope(point, monkeypatch):
     context = wire["hook_context"]
     assert type(context) is dict and type(context["payload"]) is dict
     assert json.loads(json.dumps(context)) == context
+    expected_layer = "user2agent" if point.name.endswith("_user2agent") else "agent2llm"
+    assert active_summary_point(context["event_name"]).layer == expected_layer
+    assert "layer" not in context and "layer" not in context["payload"]
     assert context == {"event_name": name, "event_version": 1,
                        "operation_id": "direct-operation-1",
                        "payload": package.build_payload(**arguments(point))}
@@ -137,6 +140,12 @@ def test_external_metadata_and_direct_script(point, tmp_path):
         EntryResult("script", "z_script", "success"))
     data, marker = trace.read_text().splitlines()
     context = json.loads(data)
+    assert set(context) == {"event_name", "event_version", "operation_id", "payload"}
     assert context["event_name"] == point.name
+    expected_layer = "user2agent" if point.name.endswith("_user2agent") else "agent2llm"
+    assert active_summary_point(context["event_name"]).layer == expected_layer
+    assert context["event_version"] == 1
+    assert context["operation_id"] == "direct-operation-1"
+    assert "layer" not in context["payload"]
     assert context["payload"] == package.build_payload(**arguments(point))
     assert marker == "script"
