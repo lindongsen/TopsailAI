@@ -14,7 +14,7 @@ from topsailai.hooks.configured_contracts import SummaryPreparationRequest
 from topsailai.hooks.configured_executor import ConfiguredHookExecutor, HookOperation
 from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
 from topsailai.hooks.contracts import ValidationError
-from topsailai.hooks.points.catalog import SUMMARY_CATALOG, PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
+from tests.summary_catalog_support import SUMMARY_CATALOG, PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
 from topsailai.hooks.points.context import SummaryHookAdapter
 from topsailai.hooks.points.context.summary_contracts import SUMMARY_POINTS
 from tests.legacy_prepared_support import build_summary_preparation_request

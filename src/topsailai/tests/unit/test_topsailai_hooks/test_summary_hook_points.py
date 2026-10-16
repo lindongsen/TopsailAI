@@ -7,13 +7,15 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
 import importlib
 import threading
+import subprocess
+import sys
 
 import pytest
 
 from topsailai.hooks.configured_executor import HookOperation
 from topsailai.hooks.contracts import DispatchReport, ValidationError
-from topsailai.hooks.points import SUMMARY_CATALOG, create_summary_catalog
-from topsailai.hooks.points.catalog import PHASE_TWO_DECLARATIONS
+from tests.summary_catalog_support import SUMMARY_CATALOG, create_summary_catalog
+from tests.summary_catalog_support import PHASE_TWO_DECLARATIONS
 from topsailai.hooks.points.context import SUMMARY_POINTS, SummaryHookAdapter
 from topsailai.hooks.points.context.summary_payloads import validate_summary_payload
 
@@ -232,7 +234,7 @@ def test_imports_do_not_activate_execution(monkeypatch):
     import topsailai.hooks.configured_executor as executor_module
     import topsailai.hooks.configured_registration as registration_module
     import topsailai.hooks.runtime as runtime_module
-    import topsailai.hooks.points.catalog as catalog_module
+    import tests.summary_catalog_support as catalog_module
 
     def forbidden(*args, **kwargs):
         """Fail immediately if metadata import attempts activation."""
@@ -255,6 +257,27 @@ def test_imports_do_not_activate_execution(monkeypatch):
     for point in catalog.PHASE_TWO_DECLARATIONS:
         with pytest.raises(KeyError):
             catalog.SUMMARY_CATALOG.require(point.name)
+
+
+def test_fresh_business_imports_without_summary_catalog():
+    """Fresh business imports neither load nor expose the removed aggregate."""
+    code = """
+import importlib
+import importlib.util
+import sys
+import topsailai.hooks.points as points
+importlib.import_module('topsailai.hooks.points.context.summary_adapter')
+importlib.import_module('topsailai.hooks.points.workspace.before_input_message')
+assert not hasattr(points, 'SUMMARY_CATALOG')
+assert not hasattr(points, 'create_summary_catalog')
+assert 'tests.summary_catalog_support' not in sys.modules
+assert 'topsailai.hooks.points.catalog' not in sys.modules
+assert importlib.util.find_spec('topsailai.hooks.points.catalog') is None
+print('fresh business imports OK; no Summary aggregate')
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "fresh business imports OK" in result.stdout
 
 
 def test_direct_operation_rejects_missing_authority():

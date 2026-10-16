@@ -18,7 +18,7 @@ from topsailai.hooks import (
 )
 from topsailai.hooks.artifact_identity import python_runtime_fingerprint
 from topsailai.hooks.configured_contracts import SummaryPreparationRequest
-from topsailai.hooks.points.catalog import (
+from tests.summary_catalog_support import (
     PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS, SUMMARY_CATALOG,
 )
 import topsailai.hooks as hooks

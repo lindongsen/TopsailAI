@@ -492,7 +492,6 @@ Use Option B: an independent subdirectory per point. The following layout is rel
 ```text
 hooks/points/
 ├── __init__.py
-├── catalog.py
 └── context/
     ├── __init__.py
     ├── summary_contracts.py
@@ -523,7 +522,7 @@ Other points use the same structure as the expanded point; do not create empty m
 | Location | Sole responsibility |
 |---|---|
 | Existing framework files in `hooks/` | Generic Runtime, Registrar, Executor, and Catalog |
-| `hooks/points/catalog.py` | Explicitly import points at the composition layer and aggregate phase scope |
+| `tests/summary_catalog_support.py` | Explicit legacy test composition of phase scope; no production package-level aggregate |
 | `context/summary_contracts.py` | Shared versioned schema, snapshot types, field boundaries, and security constraints |
 | `context/summary_payloads.py` | Shared bounded, sanitized payload construction detached from business objects |
 | `context/summary_adapter.py` | Shared operation, dispatch, and report checks; begin()/emit() span the operation |
@@ -597,7 +596,7 @@ def main(operation_id, point_name):
     return {"observed": True}
 ```
 
-The Catalog explicitly imports each subdirectory's POINT and constructs `HookPointCatalog(declarations=PHASE_ONE_POINTS)`. The first-phase set contains eight declarations: BEFORE_GENERATE, AFTER_APPLY, ERROR_GENERATE, and ERROR_APPLY for each of user2agent and agent2llm; the second-phase set contains only the two layer-specific AFTER_GENERATE declarations. Importing the second-phase declaration does not activate it; aggregation neither creates a Runtime nor registers modules.
+The production `hooks.points` package no longer imports or exports a Summary Catalog aggregate. Direct entries invoke the individual points without Catalog composition. Retained prepared tests explicitly compose `HookPointCatalog` in `tests/summary_catalog_support.py`: the first-phase set contains eight declarations (BEFORE_GENERATE, AFTER_APPLY, ERROR_GENERATE, and ERROR_APPLY for each layer), while the second-phase set contains only the two AFTER_GENERATE declarations and remains excluded from that test Catalog. This test composition neither creates a Runtime nor registers modules; the generic Catalog library is retained.
 
 ### Summarize Points and Lifecycle
 

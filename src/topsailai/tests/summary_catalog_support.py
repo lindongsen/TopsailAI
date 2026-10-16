@@ -1,4 +1,4 @@
-"""Explicit summary catalog composition without runtime activation.
+"""Explicit legacy Summary catalog composition for tests only.
 
 Author: DawsonLin
 """

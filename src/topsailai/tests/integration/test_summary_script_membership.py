@@ -7,7 +7,7 @@ import pytest
 from tests.bdd.summary_script_membership_harness import MixedDeployment
 from topsailai.hooks.configured_executor import HookOperation
 from topsailai.hooks.points.context import SummaryHookAdapter
-from topsailai.hooks.points.catalog import PHASE_ONE_DECLARATIONS
+from tests.summary_catalog_support import PHASE_ONE_DECLARATIONS
 
 
 @pytest.fixture

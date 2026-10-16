@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
-from topsailai.hooks.points.catalog import PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
+from tests.summary_catalog_support import PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
 from tests.legacy_prepared_support import build_summary_preparation_request
 
 POLICY = ExecutablePlatformPolicy("posix")

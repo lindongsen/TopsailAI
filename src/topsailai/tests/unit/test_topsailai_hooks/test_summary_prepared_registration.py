@@ -8,7 +8,7 @@ from topsailai.hooks.configured_contracts import SummaryPreparationRequest
 from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
 from topsailai.hooks.configured_preparation import prepare_private
 from topsailai.hooks.configured_runtime import register_summary_prepared
-from topsailai.hooks.points.catalog import SUMMARY_CATALOG, PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
+from tests.summary_catalog_support import SUMMARY_CATALOG, PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
 from topsailai.tests.unit.test_topsailai_hooks.test_configured_preparation import secure_test_root, _runtime, _assertion
 
 

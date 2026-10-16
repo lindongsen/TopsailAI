@@ -9,7 +9,7 @@ from topsailai.hooks.configured_contracts import (
 )
 from topsailai.hooks.configuration import HookSettings
 from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
-from topsailai.hooks.points.catalog import SUMMARY_CATALOG, PHASE_ONE_DECLARATIONS
+from tests.summary_catalog_support import SUMMARY_CATALOG, PHASE_ONE_DECLARATIONS
 from topsailai.hooks.runtime import HookRuntime
 from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
 from topsailai.hooks.configured_executor import ConfiguredHookExecutor

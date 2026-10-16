@@ -20,7 +20,7 @@ from topsailai.hooks.configuration import HookLimits
 from topsailai.hooks.configured_bootstrap import load_configured_trust_manifest
 from topsailai.hooks.deployment_script_authorization import write_mixed_trust_manifest
 from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
-from topsailai.hooks.points.catalog import PHASE_ONE_DECLARATIONS
+from tests.summary_catalog_support import PHASE_ONE_DECLARATIONS
 import topsailai.hooks as hooks
 from topsailai.hooks.point_entry import pending_cleanup
 from topsailai.workspace import agent_shell

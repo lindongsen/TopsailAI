@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from topsailai.hooks import ConfiguredTrustPolicy
-from topsailai.hooks.points.catalog import PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
+from tests.summary_catalog_support import PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
 from topsailai.tests.unit.test_topsailai_hooks.test_configured_preparation import _assertion, _runtime
 from topsailai.tests.unit.test_topsailai_hooks.test_summary_events_observer_lifecycle import emit, ACTIVE, report_evidence, FUNCTIONAL_SETTINGS
 from tests.legacy_prepared_support import build_summary_preparation_request, prepared_graph
