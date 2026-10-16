@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import atexit
+import logging
+import socket
 import os
 import threading
 import time
@@ -222,6 +224,30 @@ class OpenAIResponseAdapter:
             self._close_lock = threading.Lock()
             self._close_state = self._NOT_STARTED
             self._close_error = None
+            self._reading = False
+            self._transport_lock = threading.Lock()
+            self._body_owned = False
+            response = getattr(self._response, "response", None)
+            if isinstance(response, httpx.Response) and getattr(response, "_request", None) is not None:
+                extensions = response.request.extensions
+                previous = extensions.get("trace")
+
+                def trace(event, info):
+                    """Revoke shutdown authority before HTTPcore can release this connection."""
+                    if event == "http11.receive_response_body.started":
+                        with self._transport_lock:
+                            self._body_owned = True
+                    elif event in {
+                        "http11.receive_response_body.complete",
+                        "http11.receive_response_body.failed",
+                        "http11.response_closed.started",
+                    }:
+                        with self._transport_lock:
+                            self._body_owned = False
+                    if previous is not None:
+                        return previous(event, info)
+
+                extensions["trace"] = trace
 
         def __iter__(self):
             """Return this translating stream wrapper."""
@@ -229,6 +255,10 @@ class OpenAIResponseAdapter:
 
         def __next__(self):
             """Read one item and translate deferred provider errors."""
+            with self._close_lock:
+                if self._close_state is not self._NOT_STARTED:
+                    raise StopIteration
+                self._reading = True
             try:
                 if self._iterator is self._UNSET:
                     self._iterator = iter(self._response)
@@ -249,6 +279,27 @@ class OpenAIResponseAdapter:
                     except BaseException:
                         pass
                 raise
+            finally:
+                with self._close_lock:
+                    self._reading = False
+
+        def _interrupt_read(self):
+            """Interrupt only while the exact HTTP/1 response still owns its body."""
+            response = getattr(self._response, "response", None)
+            with self._transport_lock:
+                if not self._body_owned or not self._reading or not isinstance(response, httpx.Response):
+                    return
+                if response.http_version not in {"HTTP/1.0", "HTTP/1.1"}:
+                    return
+                network = response.extensions.get("network_stream")
+                sock = network.get_extra_info("socket") if network is not None else None
+                if not isinstance(sock, socket.socket):
+                    return
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    logging.getLogger(__name__).warning(
+                        "Stream read interruption failed; continuing SDK close", exc_info=True)
 
         def close(self):
             """Close the raw SDK response at most once and retain failures."""
@@ -259,9 +310,12 @@ class OpenAIResponseAdapter:
                     return
                 self._close_state = self._RUNNING
             try:
-                close = getattr(self._response, "close", None)
-                if close is not None:
-                    close()
+                try:
+                    self._interrupt_read()
+                finally:
+                    close = getattr(self._response, "close", None)
+                    if close is not None:
+                        close()
             except BaseException as error:
                 with self._close_lock:
                     self._close_error = error

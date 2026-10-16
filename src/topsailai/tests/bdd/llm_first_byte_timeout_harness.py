@@ -22,6 +22,7 @@ from topsailai.ai_base.llm_control.response_ownership import (
     current_response_owner,
 )
 from topsailai.events import record_event as real_record_event
+from tests.bdd.first_byte_settlement_observation import observe_eof, is_late_read
 STALE_OLD = "STALE_OLD"
 FRESH_SECOND = "FRESH_SECOND"
 SIBLING = "SIBLING"
@@ -285,6 +286,8 @@ class FirstByteOwnershipScenario:
                     break
             return accepted
         self._patches.append(patch.object(AttemptResponseOwner, "publish_response", publish_response))
+        self._patches.append(patch.object(AttemptResponseOwner, "publish_eof",
+                                         observe_eof(self._owner_observations)))
         original_publish_error = AttemptResponseOwner.publish_error
         def publish_error(owner, error, *, phase="create"):
             accepted = original_publish_error(owner, error, phase=phase)
@@ -381,11 +384,11 @@ class FirstByteOwnershipScenario:
                 worker.join(timeout=30)
                 assert not worker.is_alive(), (observation["ordinal"], name)
                 ledger["workers"][name] = worker
-            assert owner.close_error is None, (observation["ordinal"], owner.close_error)
+            assert owner.close_error is None or is_late_read(observation), observation
             ledger["close_state"] = getattr(owner._close_state, "name", None)
             self.worker_ledger.append(ledger)
     def assert_first_item_settled(self) -> None:
-        """Assert first-item close initiation and expected late read evidence."""
+        """Require rejected late outcomes and exact first-item worker settlement."""
         observation = next((item for item in self.adapter_attempts if item["ordinal"] == 1), None)
         assert observation is not None, self.adapter_attempts
         owner = observation["owner"]
@@ -400,20 +403,16 @@ class FirstByteOwnershipScenario:
         assert invocation["executing_owner"] is owner, invocation
         assert invocation["invoking_owner"] is owner, invocation
         assert isinstance(invocation["thread_id"], int) and invocation["thread_id"] > 0
-        deadline = time.monotonic() + 15
-        late_errors = observation["late_errors"]
-        while not late_errors and not self._late_errors_by_owner.get(id(owner)) and time.monotonic() < deadline:
-            time.sleep(0.01)
-        late_errors = late_errors or self._late_errors_by_owner.get(id(owner), [])
-        assert late_errors, (observation, owner.close_error)
-        assert len(late_errors) == 1, late_errors
-        late_error = late_errors[0]
-        assert getattr(owner._close_state, "name", None) != "FAILED", owner._close_state
-        assert owner.disposal_error is None, owner.disposal_error
-        assert owner.close_error in (None, late_error), (owner.close_error, late_error)
-        assert isinstance(late_error, LLMProviderReadError), late_errors
-        assert str(late_error).casefold().endswith("bad file descriptor"), late_errors
-        self.join_attempt_workers(ordinals={2})
+        self.join_attempt_workers(ordinals={1, 2})
+        assert owner.fetch_finished_event.is_set() and owner.close_finished_event.is_set()
+        late_errors = observation["late_errors"] or self._late_errors_by_owner.get(id(owner), [])
+        assert observation.get("eof_rejected") or late_errors, observation
+        assert len(late_errors) <= 1 and all(isinstance(error, LLMProviderReadError) for error in late_errors)
+        assert getattr(owner._close_state, "name", None) == "SUCCEEDED", owner._close_state
+        assert owner.disposal_error is None and old_raw.is_closed
+        old = self.server.lifecycle_capture.request_handle(1)
+        assert old.response_finished.wait(5) and old.connection_closed.wait(5)
+        assert old.wait_for_thread_exit(5)
         assert self.sent == [FRESH_SECOND], self.sent
         assert self.usage == [FRESH_SECOND], self.usage
         assert all(STALE_OLD not in str(item) for item in self.events)
