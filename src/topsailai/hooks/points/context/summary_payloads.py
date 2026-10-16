@@ -117,3 +117,14 @@ def build_summary_hook_context(*, event_name, event_version, operation_id, paylo
     return _snapshot_json({"event_name": event_name, "event_version": event_version,
                            "operation_id": operation_id, "payload": snapshot.to_payload()},
                           immutable=True, max_bytes=131072)
+
+
+def invoke_summary_hook_point(name: str, payload: dict):
+    """Dispatch active validated metadata through the generic JSON worker entry."""
+    from topsailai.hooks import invoke_hook_point
+    from topsailai.hooks.contracts import _thaw_frozen_json
+
+    context = build_summary_hook_context(
+        event_name=name, event_version=SUMMARY_SCHEMA_VERSION,
+        operation_id=payload["operation_id"], payload=payload)
+    return invoke_hook_point(name, hook_context=_thaw_frozen_json(context))
