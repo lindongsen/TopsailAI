@@ -1075,5 +1075,6 @@ TOPSAILAI_THOUGHT_LINE_PATTERN_RULES=""
 
 # Generic input and Summary Hook Points: JSON point-name -> modules/scripts paths
 # Absolute file/folder strings or lists; direct children; no trust manifest required
+# Module files: .py or platform importlib.machinery.EXTENSION_SUFFIXES (.so/.pyd), excluding __init__.py
 # Empty config still discovers internal resources; Scripts receive no Summary payload
 TOPSAILAI_HOOK_POINTS="{}"
