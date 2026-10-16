@@ -45,6 +45,8 @@ from cli_topsailai.runtime_pipe import PipeDeliveryError, format_pipe_payload, s
 from cli_topsailai.shell_commands import execute_shell_command
 from cli_topsailai.process import register_process, unregister_process
 from cli_topsailai import yaml_commands
+from cli_topsailai import runtime_broadcast
+from cli_topsailai.runtime_operations import MESSAGE_LIMIT
 import cli_topsailai.state as state
 from cli_topsailai import help_text
 from cli_topsailai import completer
@@ -258,7 +260,8 @@ def stream_file(
 
     Shows the last 100 lines, then follows new writes.  Supports ``q`` to
     quit, ``/send [message]`` to send a message to the watched session,
-    ``/ctx.btw [message]`` to inject an agent2llm message, ``/control`` to
+    ``/ctx.btw [message]`` to inject an agent2llm message, ``/ctx.btw-all [message]``
+    to broadcast to discoverable same-session PIDs, ``/control`` to
     send a control request to the watched PID, or Ctrl+C for graceful exit.
 
     When ``runtime_raw`` is True, a simple curses-free raw streaming mode is
@@ -505,12 +508,12 @@ def _prompt_send_as_message(
     if output_callback is not None:
         output_callback(
             f"[ERROR] Unknown streaming command: {raw_input}. "
-            f"Use '/send [message]', '/ctx.btw [message]', '/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'."
+            f"Use '/send [message]', '/ctx.btw [message]', '/ctx.btw-all [message]', '/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'."
         )
     else:
         print(
             f"{Colors.RED}[ERROR] Unknown streaming command: {raw_input}. "
-            f"Use '/send [message]', '/ctx.btw [message]', '/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
+            f"Use '/send [message]', '/ctx.btw [message]', '/ctx.btw-all [message]', '/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
         )
     return True
 
@@ -1181,7 +1184,7 @@ def _stream_file_raw(
     print(
         f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
         f"type '/send [message]' to send a message, "
-        f"'/ctx.btw [message]' to inject an agent2llm message, "
+        f"'/ctx.btw [message]' or '/ctx.btw-all [message]' to inject agent2llm messages, "
         f"'/control <command>' to send a control request, or Ctrl+C to exit.{Colors.RESET}\n"
     )
     prompt = _build_runtime_prompt(default_session_id)
@@ -1309,7 +1312,7 @@ def _stream_file_legacy(
     print(
         f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
         f"type '/send [message]' to send a message, "
-        f"'/ctx.btw [message]' to inject an agent2llm message, "
+        f"'/ctx.btw [message]' or '/ctx.btw-all [message]' to inject agent2llm messages, "
         f"'/control <command>' to send a control request, or Ctrl+C to exit.{Colors.RESET}\n"
     )
 
@@ -1412,14 +1415,14 @@ def _handle_stream_command(
     Execute a command entered while streaming a log file.
 
     Supports ``/send`` (defaulting to the watched session), ``/ctx.btw``
-    (inject an agent2llm message), ``/control`` (targeting the watched PID),
-    ``/meta``, ``/help``, and any YAML-defined command that is available in
-    the ``runtime`` scope.
+    (inject an agent2llm message), ``/ctx.btw-all`` (broadcast an agent2llm
+    message to discoverable PIDs in the watched session), ``/control`` and
+    ``/meta``. Other runtime YAML commands remain available.
 
     Args:
         input_provider: Optional callable used to collect multi-line input
             in environments where ``input()`` is not available (e.g. the
-            curses UI).  Receives a prompt string and returns the collected
+            curses UI). Receives a prompt string and returns the collected
             text, or ``None`` if the user cancelled.
     """
     if not cmd_line:
@@ -1432,38 +1435,28 @@ def _handle_stream_command(
         return
     if cmd == "/send":
         _handle_stream_send(
-            cmd_line,
-            task_dir,
-            log_files,
-            default_session_id,
-            default_stdout_path,
-            default_pid,
-            input_provider=input_provider,
+            cmd_line, task_dir, log_files, default_session_id,
+            default_stdout_path, default_pid, input_provider=input_provider,
+        )
+        return
+    if cmd == "/ctx.btw-all":
+        _handle_stream_ctx_btw_all(
+            cmd_line, task_dir, default_session_id, input_provider=input_provider,
         )
         return
     if cmd == "/ctx.btw":
         _handle_stream_ctx_btw(
-            cmd_line,
-            task_dir,
-            default_pid=default_pid,
+            cmd_line, task_dir, default_pid=default_pid,
             input_provider=input_provider,
         )
         return
     if cmd == "/control" or cmd.startswith("/control."):
-        _handle_stream_control(
-            cmd_line,
-            task_dir,
-            default_stdout_path,
-            default_pid,
-        )
+        _handle_stream_control(cmd_line, task_dir, default_stdout_path, default_pid)
         return
     if cmd.startswith("/agent."):
         _handle_stream_agent_instruction(
-            cmd_line,
-            task_dir,
-            default_session_id,
-            default_stdout_path,
-            default_pid,
+            cmd_line, task_dir, default_session_id,
+            default_stdout_path, default_pid,
         )
         return
     if cmd == "/meta":
@@ -1473,8 +1466,6 @@ def _handle_stream_command(
         keyword = parts[1].strip() if len(parts) > 1 else None
         help_text.print_help(state.yaml_commands, state.current_scope, keyword=keyword)
         return
-    # Delegate any other slash command to the YAML command engine so that
-    # scope-aware instructions such as /git.status work in runtime scope.
     matched = yaml_commands.match_yaml_command(cmd_line, task_dir)
     if matched is not None:
         instruction, variables = matched
@@ -1483,7 +1474,9 @@ def _handle_stream_command(
 
     print(
         f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
-        f"Use '/send [message]', '/ctx.btw [message]', '/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
+        f"Use '/send [message]', '/ctx.btw [message]', '/ctx.btw-all [message]', "
+        f"'/control <command>', '/agent.<instruction> [args...]', '/meta', '/help', "
+        f"'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
     )
 
 
@@ -1657,14 +1650,10 @@ def _read_multiline_input_for_send() -> Optional[str]:
     return "\n".join(lines)
 
 
-def _read_multiline_input_for_ctx_btw() -> Optional[str]:
-    """
-    Read multi-line input until EOF (Ctrl+D) or a standalone 'EOF' line is received.
-
-    Returns ``None`` if the user cancels with Ctrl+C.
-    """
+def _read_multiline_input_for_ctx_btw(prompt_command: str = "/ctx.btw") -> Optional[str]:
+    """Read multi-line context input using the command-specific prompt."""
     print(
-        f"{Colors.CYAN}[INFO] Enter /ctx.btw message (type EOF on its own line or Ctrl+D to finish):{Colors.RESET}"
+        f"{Colors.CYAN}[INFO] Enter {prompt_command} message (type EOF on its own line or Ctrl+D to finish):{Colors.RESET}"
     )
     lines: List[str] = []
     while True:
@@ -1731,6 +1720,59 @@ def _handle_stream_ctx_btw(
         variables["pid"] = str(default_pid)
 
     yaml_commands.handle_yaml_command(instruction, variables)
+def _handle_stream_ctx_btw_all(
+    cmd_line: str,
+    task_dir: str,
+    default_session_id: Optional[str],
+    input_provider: Optional[Callable[[str], Optional[str]]] = None,
+) -> None:
+    """Broadcast a validated runtime context message to named-session PIDs."""
+    if not default_session_id or default_session_id in ("topsailai", "(temp)"):
+        print(f"{Colors.RED}[ERROR] Broadcast requires a named session.{Colors.RESET}")
+        return
+    message = cmd_line[len("/ctx.btw-all"):].strip() or None
+    if message is None:
+        if input_provider is not None:
+            message = input_provider(
+                f"{Colors.CYAN}[INFO] Enter /ctx.btw-all message (Ctrl+D to finish):{Colors.RESET}"
+            )
+        else:
+            message = _read_multiline_input_for_ctx_btw("/ctx.btw-all")
+        if message is None:
+            print(f"\n{Colors.YELLOW}[INFO] Cancelled.{Colors.RESET}")
+            return
+    if not message.strip():
+        print(f"{Colors.RED}[ERROR] Message cannot be empty.{Colors.RESET}")
+        return
+    try:
+        message.encode("utf-8")
+    except UnicodeEncodeError:
+        print(f"{Colors.RED}[ERROR] Message must be valid UTF-8.{Colors.RESET}")
+        return
+    if len(message.encode("utf-8")) > MESSAGE_LIMIT:
+        print(f"{Colors.RED}[ERROR] Message exceeds the 1 MiB limit.{Colors.RESET}")
+        return
+
+    def report(kind, value):
+        if kind == "snapshot":
+            print(f"[INFO] Broadcast snapshot for session '{default_session_id}': {value} candidate(s).")
+            return
+        detail = f": {value.detail}" if value.detail else ""
+        print(f"[INFO] PID {value.pid}: {value.status}{detail}")
+
+    result = runtime_broadcast.broadcast_message(
+        task_dir, default_session_id, message, progress_callback=report
+    )
+    counts = result.counts
+    if not result.outcomes or (len(result.outcomes) == 1 and result.outcomes[0].pid == 0):
+        status = result.outcomes[0].status if result.outcomes else "no_live_pids"
+        print(f"{Colors.RED}[ERROR] Broadcast failed for session '{default_session_id}': {status}.{Colors.RESET}")
+    print(
+        f"[INFO] Broadcast summary: queued={counts['queued']}, skipped={counts['skipped']}, "
+        f"failed={counts['failed']}, uncertain={counts['uncertain']}, "
+        f"incomplete={str(result.incomplete).lower()}; "
+        f"queueing does not confirm message consumption."
+    )
 
 
 def _format_pipe_payload(message: str) -> bytes:

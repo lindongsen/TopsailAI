@@ -15,6 +15,8 @@ references:
 ## Scope: runtime
 
 - steam log of one session
+- `/ctx.btw [message]` queues an agent2llm message for the watched PID.
+- `/ctx.btw-all [message]` queues the message for all discoverable live PIDs in the current session; temporary session id `topsailai` is rejected, partial success is allowed, failures are not automatically retried, and success means queued rather than consumed.
 
 ## Scope: project
 

@@ -228,6 +228,32 @@ class TestStreamFileRaw(unittest.TestCase):
     @patch("cli_topsailai.streaming.select.select")
     @patch("cli_topsailai.streaming._read_input_line")
     @patch("cli_topsailai.streaming._handle_stream_command")
+    def test_broadcast_command_routes_in_raw_mode(
+        self,
+        mock_handle,
+        mock_read,
+        mock_select,
+        mock_isatty,
+        mock_run,
+    ):
+        """Raw mode dispatches /ctx.btw-all through the shared handler."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "s1.1234.session.stdout")
+            with open(path, "w") as f:
+                f.write("existing line\n")
+            mock_select.side_effect = [([sys.stdin], [], []), ([], [], [])]
+            mock_read.side_effect = ["/ctx.btw-all hello", "q"]
+
+            _stream_file_raw(path, tmpdir, [], "s1", path, default_pid=1234, tail_lines=1)
+
+            self.assertEqual(mock_handle.call_args.args[0], "/ctx.btw-all hello")
+            self.assertEqual(mock_handle.call_args.args[1:6], (tmpdir, [], "s1", path, 1234))
+
+    @patch("cli_topsailai.streaming.subprocess.run")
+    @patch("cli_topsailai.streaming.sys.stdin.isatty", return_value=True)
+    @patch("cli_topsailai.streaming.select.select")
+    @patch("cli_topsailai.streaming._read_input_line")
+    @patch("cli_topsailai.streaming._handle_stream_command")
     def test_send_command_in_raw_mode(
         self,
         mock_handle,

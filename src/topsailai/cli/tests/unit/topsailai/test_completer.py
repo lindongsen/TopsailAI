@@ -220,3 +220,18 @@ def test_available_completion_yaml_boundaries(monkeypatch):
     assert "/plain" in result and "/slash" in result
     assert result.count("/refresh") == result.count("/plain") == 1
     assert result == sorted(set(result))
+
+
+
+def test_broadcast_completion_is_runtime_only(monkeypatch):
+    """Expose the broadcast command exactly once only in runtime scope."""
+    from cli_topsailai.completer import get_available_completions
+
+    monkeypatch.setattr(cli_state, "yaml_commands", [])
+    monkeypatch.setattr(cli_state, "workspace_showing_managed_projects", False)
+    for scope in ("workspace", "project", "session", "doc"):
+        monkeypatch.setattr(cli_state, "current_scope", scope)
+        assert "/ctx.btw-all" not in get_available_completions()
+    monkeypatch.setattr(cli_state, "current_scope", "runtime")
+    completions = get_available_completions()
+    assert completions.count("/ctx.btw-all") == 1
