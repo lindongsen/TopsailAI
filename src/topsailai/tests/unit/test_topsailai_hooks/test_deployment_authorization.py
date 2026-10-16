@@ -12,7 +12,7 @@ from topsailai.hooks.configured_bootstrap import load_configured_trust_manifest
 from topsailai.hooks.deployment_authorization import generate_module_trust_manifest, main
 from topsailai.tests.unit.test_topsailai_hooks.test_summary_module_directories import tree, members
 from topsailai.tests.unit.test_topsailai_hooks.test_summary_events_observer_lifecycle import ACTIVE, emit
-from topsailai.hooks.points.context import SummaryHookAdapter
+from tests.legacy_summary_adapter_support import LegacySummaryHookAdapter
 from tests.legacy_prepared_support import prepared_graph
 
 
@@ -103,7 +103,7 @@ def test_stale_or_missing_authority_has_no_partial_execution(tree, authority, ch
     try:
         dispositions = {item.hook_name: item.kind for item in owner.startup_report.dispositions}
         assert dispositions[point.name] == "unavailable_preparation_failure"
-        result = emit(SummaryHookAdapter(owner.executor), point, "unavailable")
+        result = emit(LegacySummaryHookAdapter(owner.executor), point, "unavailable")
         assert result.report.rejection_reason is not None
         assert not result.report.outcomes
         assert not marker.exists()

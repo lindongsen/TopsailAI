@@ -11,7 +11,7 @@ from topsailai.hooks.artifact_contracts import ArtifactPythonRuntimeAuthority
 from topsailai.hooks.configured_bootstrap import load_configured_trust_manifest
 from topsailai.hooks.deployment_script_authorization import write_mixed_trust_manifest
 from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
-from topsailai.hooks.points.context import SummaryHookAdapter
+from tests.legacy_summary_adapter_support import LegacySummaryHookAdapter
 from topsailai.tests.unit.test_topsailai_hooks.test_summary_events_observer_lifecycle import (
     ACTIVE, FUNCTIONAL_SETTINGS, emit, report_evidence,
 )
@@ -91,7 +91,7 @@ def start(tree, trust=None, request=None):
 def deliver(tree, owner, point, identity, expected):
     """Check actual side effects, ordered terminal children, and safe cleanup."""
     before = [] if not tree[2].exists() else tree[2].read_text().splitlines()
-    result = emit(SummaryHookAdapter(owner.executor), point, identity)
+    result = emit(LegacySummaryHookAdapter(owner.executor), point, identity)
     report = result.report
     assert report.rejection_reason is None, report_evidence(report)
     handlers = report.unified_result.handlers
@@ -150,7 +150,7 @@ def test_membership_restart_immutable_plan_and_stale_authority(deployment):
     try:
         assert next(d for d in stale.startup_report.dispositions if d.hook_name == point.name).kind == "unavailable_preparation_failure"
         before = tree[2].read_text()
-        assert emit(SummaryHookAdapter(stale.executor), point, "stale").report.rejection_reason is not None
+        assert emit(LegacySummaryHookAdapter(stale.executor), point, "stale").report.rejection_reason is not None
         assert tree[2].read_text() == before
         deliver(tree, stale, sibling, "stale-sibling", ())
     finally:
@@ -217,7 +217,7 @@ def test_complete_point_failure_and_sibling_visibility(deployment, caplog, fault
         assert (point.name, disposition.kind, disposition.reason, 1) in owner.startup_report.metrics
         assert point.name in caplog.text and disposition.kind in caplog.text
         assert not tree[2].exists()
-        report = emit(SummaryHookAdapter(owner.executor), point, "failed-point").report
+        report = emit(LegacySummaryHookAdapter(owner.executor), point, "failed-point").report
         assert report.rejection_reason is not None and not report.outcomes
         assert not tree[2].exists()
         deliver(tree, owner, sibling, "valid-sibling", ())

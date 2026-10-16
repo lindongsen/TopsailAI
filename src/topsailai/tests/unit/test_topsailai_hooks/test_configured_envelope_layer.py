@@ -8,7 +8,6 @@ import pytest
 from topsailai.hooks.configured_executor import ConfiguredHookExecutor, HookOperation
 from topsailai.hooks.contracts import EventDefinition, ValidationError
 from topsailai.hooks.hook_point_catalog import HookPointCatalog, HookPointDeclaration
-from topsailai.hooks.points.context import SummaryHookAdapter
 from topsailai.hooks.points.context.summary_contracts import SUMMARY_POINTS
 from topsailai.hooks.points.context.summary_payloads import build_summary_payload
 from topsailai.tests.unit.test_topsailai_hooks.test_configured_executor import (
@@ -79,8 +78,8 @@ def test_summary_payload_layer_never_selects_envelope(contract, value):
 
 
 @pytest.mark.parametrize("layer", ["user2agent", "agent2llm"])
-def test_adapter_and_real_runtime_construct_derived_envelope(tmp_path, monkeypatch, layer):
-    """Adapter checkpoints reach a real Runtime event without an independent layer."""
+def test_executor_and_real_runtime_construct_derived_envelope(tmp_path, monkeypatch, layer):
+    """Executor dispatch reaches a real Runtime event without an independent layer."""
     runtime, scope = _runtime(tmp_path)
     contract = next(point for point in SUMMARY_POINTS
                     if point.layer == layer and point.name.split("__")[2] == "before")
@@ -97,14 +96,14 @@ def test_adapter_and_real_runtime_construct_derived_envelope(tmp_path, monkeypat
 
     monkeypatch.setattr(runtime, "make_event", capture)
     try:
-        result = SummaryHookAdapter(executor).begin(layer, operation=HookOperation("real-1")).emit(
-            "before_summary_generate")
+        result = executor.dispatch(contract.declaration, payload=build_summary_payload(
+            contract, operation_id="real-1"), operation=HookOperation("real-1"))
         event, = captured
         assert event.layer == layer
         assert event.name == contract.name
         assert event.operation_id == "real-1"
         assert "layer" not in event.payload
-        assert result.report.event_id == event.event_id
+        assert result.event_id == event.event_id
     finally:
         runtime.close()
         assert not runtime._backend.cleanup_debts()

@@ -15,7 +15,7 @@ from topsailai.hooks.configured_executor import ConfiguredHookExecutor, HookOper
 from topsailai.hooks.configured_registration import ConfiguredHookRegistrar
 from topsailai.hooks.contracts import ValidationError
 from tests.summary_catalog_support import SUMMARY_CATALOG, PHASE_ONE_DECLARATIONS, PHASE_TWO_DECLARATIONS
-from topsailai.hooks.points.context import SummaryHookAdapter
+from tests.legacy_summary_adapter_support import LegacySummaryHookAdapter
 from topsailai.hooks.points.context.summary_contracts import SUMMARY_POINTS
 from tests.legacy_prepared_support import build_summary_preparation_request
 from topsailai.tests.unit.test_topsailai_hooks.test_configured_preparation import _runtime, _assertion
@@ -61,17 +61,17 @@ def lifecycle(tmp_path, monkeypatch):
 
 
 def prepare(lifecycle, config=None, disabled=frozenset()):
-    """Use the actual request, prepared registrar, executor, and summary adapter."""
+    """Use the real prepared pipeline with a test-only legacy bridge."""
     runtime, scope, _ = lifecycle
     request = SummaryPreparationRequest(configuration=config if config is not None else configuration(lifecycle[2].parent / "points"),
         catalog=SUMMARY_CATALOG, disabled_hook_names=disabled)
     registrar = ConfiguredHookRegistrar.from_prepared(runtime, scope, request)
     executor = ConfiguredHookExecutor(runtime, scope, registrar, SUMMARY_CATALOG)
-    return registrar, executor, SummaryHookAdapter(executor)
+    return registrar, executor, LegacySummaryHookAdapter(executor)
 
 
 def emit(adapter, point, identity="lifecycle-1"):
-    """Deliver a contract-valid checkpoint through the adapter and real executor."""
+    """Deliver a valid checkpoint through the test bridge and real executor."""
     checkpoint = point.name.split("__")[2] + "_" + point.name.split("__")[3].rsplit("_", 1)[0]
     return adapter.begin(point.layer, operation=HookOperation(identity)).emit(
         checkpoint, **classification(point))

@@ -6,7 +6,7 @@ import pytest
 
 from tests.bdd.summary_script_membership_harness import MixedDeployment
 from topsailai.hooks.configured_executor import HookOperation
-from topsailai.hooks.points.context import SummaryHookAdapter
+from tests.legacy_summary_adapter_support import LegacySummaryHookAdapter
 from tests.summary_catalog_support import PHASE_ONE_DECLARATIONS
 
 
@@ -19,8 +19,8 @@ def deployment(tmp_path, request):
 
 
 def emit(owner, identity="integration", layer="user2agent"):
-    """Use the real adapter's checkpoint custody and configured executor."""
-    operation = SummaryHookAdapter(owner.executor).begin(layer, operation=HookOperation(identity))
+    """Use the test-only legacy bridge and real configured executor."""
+    operation = LegacySummaryHookAdapter(owner.executor).begin(layer, operation=HookOperation(identity))
     return operation, operation.emit("before_summary_generate")
 
 

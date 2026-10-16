@@ -64,8 +64,8 @@ def start(tree, *, unauthorized=None):
 
 def members(owner, point, identity):
     """Assert actual ordered execution and terminal custody through the application owner."""
-    from topsailai.hooks.points.context import SummaryHookAdapter
-    result = emit(SummaryHookAdapter(owner.executor), point, identity)
+    from tests.legacy_summary_adapter_support import LegacySummaryHookAdapter
+    result = emit(LegacySummaryHookAdapter(owner.executor), point, identity)
     assert result.report.rejection_reason is None, (identity, report_evidence(result.report))
     handlers = result.report.unified_result.handlers
     assert handlers[-1].handler.name == "hook_script", (identity, report_evidence(result.report))
@@ -127,8 +127,8 @@ def test_unauthorized_addition_rejects_whole_point_not_sibling(tree):
         dispositions = {item.hook_name: item for item in owner.startup_report.dispositions}
         assert dispositions[point.name].kind == "unavailable_preparation_failure"
         assert dispositions[sibling.name].kind == "registered"
-        from topsailai.hooks.points.context import SummaryHookAdapter
-        result = emit(SummaryHookAdapter(owner.executor), point, "unavailable")
+        from tests.legacy_summary_adapter_support import LegacySummaryHookAdapter
+        result = emit(LegacySummaryHookAdapter(owner.executor), point, "unavailable")
         assert result.report.rejection_reason is not None
         assert not result.report.outcomes
         assert not marker.exists()

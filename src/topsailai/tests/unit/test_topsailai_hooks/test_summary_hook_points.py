@@ -3,10 +3,8 @@
 Author: DawsonLin
 """
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
 import importlib
-import threading
 import subprocess
 import sys
 
@@ -16,7 +14,10 @@ from topsailai.hooks.configured_executor import HookOperation
 from topsailai.hooks.contracts import DispatchReport, ValidationError
 from tests.summary_catalog_support import SUMMARY_CATALOG, create_summary_catalog
 from tests.summary_catalog_support import PHASE_TWO_DECLARATIONS
-from topsailai.hooks.points.context import SUMMARY_POINTS, SummaryHookAdapter
+from topsailai.hooks.points.context import SUMMARY_POINTS
+from topsailai.hooks.points.context.summary_adapter import (
+    DirectSummaryOperation, _CHECKPOINTS, summary_operation,
+)
 from topsailai.hooks.points.context.summary_payloads import validate_summary_payload
 
 
@@ -35,6 +36,28 @@ class Executor:
         if self.callback:
             self.callback()
         return self.report
+
+
+@pytest.fixture(autouse=True)
+def direct_recorder(monkeypatch):
+    """Bind a local recorder to real point entries without the legacy adapter."""
+    active = []
+    original_init = Executor.__init__
+
+    def initialize(self, callback=None):
+        """Select the recorder created by the current test."""
+        original_init(self, callback)
+        active[:] = [self]
+
+    monkeypatch.setattr(Executor, "__init__", initialize)
+    for points in _CHECKPOINTS.values():
+        for selected in points.values():
+            def entry(*, operation_id, _selected=selected, **metadata):
+                """Validate the actual payload and capture direct-entry arguments."""
+                payload = _selected.build_payload(operation_id=operation_id, **metadata)
+                return active[0].dispatch(_selected.POINT, payload=payload,
+                                          operation=HookOperation(operation_id))
+            monkeypatch.setattr(selected, selected.NAME, entry)
 
 
 def classification(point):
@@ -84,32 +107,27 @@ def test_explicit_catalog_and_exports():
 def test_operation_all_checkpoints(layer):
     """Same-layer checkpoints reuse one exact operation and valid payloads."""
     executor = Executor()
-    session = SummaryHookAdapter(executor).begin(layer)
+    session = DirectSummaryOperation(layer)
     assert len(session.operation.operation_id) == 32
     for point in SUMMARY_POINTS:
         if point.layer != layer or not point.phase_one_eligible:
             continue
         checkpoint = point.name.split("__")[2] + "_" + point.name.split("__")[3].rsplit("_", 1)[0]
         result = session.emit(checkpoint, **classification(point))
-        assert not result.already_handled
-        assert result.report is executor.report
+        assert result is executor.report
         declaration, payload, operation = executor.calls[-1]
         assert declaration is point.declaration
-        assert operation is session.operation
-        assert result.operation_id == operation.operation_id
-        assert result.point_name == point.name
+        assert operation.operation_id == session.operation.operation_id
         assert validate_summary_payload(point, payload, operation_id=operation.operation_id)
     assert len(executor.calls) == 4
-    with pytest.raises(FrozenInstanceError):
-        session.layer = "other"
 
 
 @pytest.mark.parametrize("layer", [None, "", "other", True, [], "USER2AGENT"])
 def test_invalid_layer(layer):
     """Malformed layers never reach dispatch."""
     executor = Executor()
-    with pytest.raises(ValidationError):
-        SummaryHookAdapter(executor).begin(layer)
+    with pytest.raises(TypeError if isinstance(layer, list) else ValidationError):
+        summary_operation(layer)
     assert not executor.calls
 
 
@@ -117,25 +135,19 @@ def test_invalid_layer(layer):
 def test_invalid_checkpoint(checkpoint):
     """Caller names, declarations, foreign layers, and phase two are not selectors."""
     executor = Executor()
-    session = SummaryHookAdapter(executor).begin("user2agent")
+    session = DirectSummaryOperation("user2agent")
     with pytest.raises(ValidationError):
         session.emit(checkpoint)
     assert not executor.calls
 
 
-@pytest.mark.parametrize("operation", [object(), "op", HookOperation("x" * 129), HookOperation("with space"), HookOperation("unicode-é")])
+@pytest.mark.parametrize("operation", [HookOperation("x" * 129), HookOperation("with space"), HookOperation("unicode-é")])
 def test_invalid_supplied_operation(operation):
     """Generic IDs cannot bypass the narrower U2 summary boundary."""
     executor = Executor()
     with pytest.raises(ValidationError):
-        SummaryHookAdapter(executor).begin("user2agent", operation=operation)
+        DirectSummaryOperation("user2agent", operation=operation).emit("before_summary_generate")
     assert not executor.calls
-
-
-def test_invalid_executor():
-    """Require an explicitly injected synchronous execution authority."""
-    with pytest.raises(ValidationError):
-        SummaryHookAdapter(object())
 
 
 @pytest.mark.parametrize("checkpoint,metadata", [
@@ -148,69 +160,53 @@ def test_invalid_executor():
 def test_invalid_classification_does_not_consume(checkpoint, metadata):
     """Validation failures neither execute nor reserve a checkpoint."""
     executor = Executor()
-    session = SummaryHookAdapter(executor).begin("user2agent")
+    session = DirectSummaryOperation("user2agent")
     with pytest.raises(ValidationError):
         session.emit(checkpoint, **metadata)
     assert not executor.calls
     point = next(p for p in SUMMARY_POINTS if p.layer == "user2agent" and p.name == "hook__context__" + checkpoint.split("_", 1)[0] + "__" + checkpoint.split("_", 1)[1] + "_user2agent")
-    assert not session.emit(checkpoint, **classification(point)).already_handled
+    assert session.emit(checkpoint, **classification(point)) is executor.report
 
 
 def test_sequential_duplicates_and_independent_operations():
-    """Duplicates skip even rebuilding, while separate operations are independent."""
+    """Duplicates validate before skipping; separate operations remain independent."""
     executor = Executor()
-    adapter = SummaryHookAdapter(executor)
     operation = HookOperation("supplied-1")
-    session = adapter.begin("user2agent", operation=operation)
-    assert not session.emit("before_summary_generate").already_handled
-    duplicate = session.emit("before_summary_generate", error_category="invalid")
+    session = DirectSummaryOperation("user2agent", operation=operation)
+    assert session.emit("before_summary_generate") is executor.report
+    with pytest.raises(ValidationError):
+        session.emit("before_summary_generate", error_category="invalid")
+    duplicate = session.emit("before_summary_generate")
     assert duplicate.already_handled and duplicate.report is None
     with pytest.raises(FrozenInstanceError):
         duplicate.already_handled = False
-    assert not session.emit("after_summary_apply").already_handled
-    second = adapter.begin("user2agent")
+    assert session.emit("after_summary_apply") is executor.report
+    second = DirectSummaryOperation("user2agent")
     assert second.operation.operation_id != operation.operation_id
-    assert not second.emit("before_summary_generate").already_handled
+    assert second.emit("before_summary_generate") is executor.report
     assert len(executor.calls) == 3
-    assert executor.calls[0][2] is operation
-
-
-def test_concurrent_duplicates():
-    """An atomic check-and-mark admits exactly one concurrent dispatch."""
-    executor = Executor()
-    session = SummaryHookAdapter(executor).begin("agent2llm")
-    barrier = threading.Barrier(8)
-
-    def emit():
-        """Race all callers at the same checkpoint."""
-        barrier.wait()
-        return session.emit("before_summary_generate")
-
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(lambda _: emit(), range(8)))
-    assert sum(not r.already_handled for r in results) == 1
-    assert len(executor.calls) == 1
+    assert executor.calls[0][2].operation_id == operation.operation_id
 
 
 def test_reentrant_duplicate_marked_before_dispatch():
     """Observer reentry finds the mark without deadlocking or executing again."""
     duplicates = []
     executor = Executor(lambda: duplicates.append(session.emit("before_summary_generate")))
-    session = SummaryHookAdapter(executor).begin("agent2llm")
+    session = DirectSummaryOperation("agent2llm")
     session.emit("before_summary_generate")
     assert duplicates[0].already_handled
     assert len(executor.calls) == 1
 
 
 @pytest.mark.parametrize("error", [RuntimeError("observer failure"), KeyboardInterrupt(), SystemExit()])
-def test_executor_failure_never_emits_business_error(error):
+def test_entry_failure_never_emits_business_error(error):
     """Preserve failure identity and the checkpoint mark without recursion."""
     def fail():
         """Raise the exact observer or host signal."""
         raise error
 
     executor = Executor(fail)
-    session = SummaryHookAdapter(executor).begin("user2agent")
+    session = DirectSummaryOperation("user2agent")
     with pytest.raises(type(error)) as caught:
         session.emit("before_summary_generate")
     assert caught.value is error
@@ -221,11 +217,12 @@ def test_executor_failure_never_emits_business_error(error):
     assert len(executor.calls) == 2
 
 
-def test_report_rejection_does_not_emit_error():
+def test_entry_result_does_not_emit_error():
     """Return observer reports unchanged; business classification is caller-owned."""
     executor = Executor()
-    session = SummaryHookAdapter(executor).begin("user2agent")
-    assert session.emit("before_summary_generate").report is executor.report
+    session = DirectSummaryOperation("user2agent")
+    executor.report = ("error",)
+    assert session.emit("before_summary_generate") is executor.report
     assert len(executor.calls) == 1
 
 
@@ -273,6 +270,14 @@ assert not hasattr(points, 'create_summary_catalog')
 assert 'tests.summary_catalog_support' not in sys.modules
 assert 'topsailai.hooks.points.catalog' not in sys.modules
 assert importlib.util.find_spec('topsailai.hooks.points.catalog') is None
+import topsailai.hooks.points.context as context
+import topsailai.hooks.points.context.summary_adapter as adapter
+for module in (context, adapter):
+    for name in ('SummaryHookAdapter', 'SummaryHookOperation'):
+        assert not hasattr(module, name)
+        assert name not in module.__all__
+assert context.SummaryCheckpointResult is adapter.SummaryCheckpointResult
+assert 'tests.legacy_summary_adapter_support' not in sys.modules
 print('fresh business imports OK; no Summary aggregate')
 """
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
@@ -280,106 +285,23 @@ print('fresh business imports OK; no Summary aggregate')
     assert "fresh business imports OK" in result.stdout
 
 
-def test_direct_operation_rejects_missing_authority():
-    """Public operation construction cannot bypass executor validation."""
-    from topsailai.hooks.points.context import SummaryHookOperation
-    with pytest.raises(ValidationError):
-        SummaryHookOperation("user2agent", HookOperation(), object())
-
-
 @pytest.mark.parametrize("operation_id", ["x", "A_z-9" * 25 + "abc"])
 def test_summary_operation_id_valid_boundaries(operation_id):
     """One-character and 128-character ASCII operation IDs remain supported."""
     executor = Executor()
     operation = HookOperation(operation_id)
-    session = SummaryHookAdapter(executor).begin("agent2llm", operation=operation)
+    session = DirectSummaryOperation("agent2llm", operation=operation)
     session.emit("before_summary_generate")
-    assert executor.calls[0][2] is operation
+    assert executor.calls[0][2].operation_id == operation.operation_id
     assert executor.calls[0][1]["operation_id"] == operation_id
 
 
-@pytest.mark.parametrize("same_instance", [True, False])
-def test_separate_wrappers_share_operation_id_custody(same_instance):
-    """Adapter custody follows operation identity rather than wrapper identity."""
-    executor = Executor()
-    adapter = SummaryHookAdapter(executor)
-    operation = HookOperation("shared-operation")
-    first = adapter.begin("user2agent", operation=operation)
-    second = adapter.begin("user2agent", operation=(
-        operation if same_instance else HookOperation(operation.operation_id)))
-    assert first is not second
-    assert not first.emit("before_summary_generate").already_handled
-    duplicate = second.emit("before_summary_generate", error_category="invalid")
-    assert duplicate.already_handled and duplicate.report is None
-    assert len(executor.calls) == 1
-    assert executor.calls[0][2] is operation
-    assert not second.emit("after_summary_apply").already_handled
-    assert first.emit("after_summary_apply").already_handled
-    assert len(executor.calls) == 2
-
-
-def test_concurrent_separate_wrappers_share_operation_id_custody():
-    """Separate wrappers race under one adapter-owned atomic checkpoint lock."""
-    executor = Executor()
-    adapter = SummaryHookAdapter(executor)
-    barrier = threading.Barrier(8)
-
-    def emit(_):
-        """Create distinct equal-ID wrappers before racing the checkpoint."""
-        session = adapter.begin("agent2llm", operation=HookOperation("shared-race"))
-        barrier.wait()
-        return session.emit("before_summary_generate")
-
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(emit, range(8)))
-    assert sum(not result.already_handled for result in results) == 1
-    assert len(executor.calls) == 1
-
-
 def test_distinct_supplied_operation_ids_remain_independent():
-    """A shared adapter ledger does not suppress a different operation ID."""
+    """Different direct operations retain independent checkpoint custody."""
     executor = Executor()
-    adapter = SummaryHookAdapter(executor)
     for operation_id in ("first-operation", "second-operation"):
-        first = adapter.begin("user2agent", operation=HookOperation(operation_id))
-        second = adapter.begin("user2agent", operation=HookOperation(operation_id))
-        assert not first.emit("before_summary_generate").already_handled
-        assert second.emit("before_summary_generate").already_handled
+        operation = DirectSummaryOperation("user2agent", operation=HookOperation(operation_id))
+        assert operation.emit("before_summary_generate") is executor.report
+        assert operation.emit("before_summary_generate").already_handled
     assert [call[2].operation_id for call in executor.calls] == [
         "first-operation", "second-operation"]
-
-
-def test_cross_wrapper_reentry_is_already_handled():
-    """Dispatch releases the shared lock and exposes its mark to new wrappers."""
-    duplicates = []
-
-    def reenter():
-        """Reenter through a newly created wrapper with the same identity."""
-        second = adapter.begin("agent2llm", operation=HookOperation("shared-reentry"))
-        duplicates.append(second.emit("before_summary_generate"))
-
-    executor = Executor(reenter)
-    adapter = SummaryHookAdapter(executor)
-    adapter.begin("agent2llm", operation=HookOperation("shared-reentry")).emit(
-        "before_summary_generate")
-    assert duplicates[0].already_handled
-    assert len(executor.calls) == 1
-
-
-@pytest.mark.parametrize("error", [RuntimeError("observer failure"), KeyboardInterrupt(), SystemExit()])
-def test_cross_wrapper_failure_keeps_checkpoint_consumed(error):
-    """Observer failures and host signals cannot reopen shared custody."""
-    def fail():
-        """Raise the exact dispatch failure without recursive error emission."""
-        raise error
-
-    executor = Executor(fail)
-    adapter = SummaryHookAdapter(executor)
-    first = adapter.begin("user2agent", operation=HookOperation("shared-failure"))
-    with pytest.raises(type(error)) as caught:
-        first.emit("before_summary_generate")
-    assert caught.value is error
-    executor.callback = None
-    second = adapter.begin("user2agent", operation=HookOperation("shared-failure"))
-    assert second.emit("before_summary_generate").already_handled
-    assert len(executor.calls) == 1

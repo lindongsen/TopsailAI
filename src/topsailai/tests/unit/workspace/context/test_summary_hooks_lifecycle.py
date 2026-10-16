@@ -16,7 +16,7 @@ from topsailai.ai_base.llm_control.exception import (
 )
 from topsailai.hooks.contracts import DispatchReport
 from topsailai.hooks.points.context.summary_adapter import (
-    SummaryHookAdapter, _CHECKPOINTS, current_summary_operation, summary_operation,
+    DirectSummaryOperation, _CHECKPOINTS, current_summary_operation, summary_operation,
 )
 from topsailai.workspace.context import base, ctx_runtime, agent2llm
 from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
@@ -317,11 +317,13 @@ def test_control_signals_propagate_without_error_points(setup_runtime, monkeypat
     assert '__before__' in executor.calls[0][0]
 
 
-def test_adapter_idempotency_in_same_operation(setup_runtime):
+def test_direct_idempotency_in_same_operation(setup_runtime):
     """At-most-once marking prevents observer re-execution within a summary."""
     _, executor, _, _, _ = setup_runtime
-    operation = SummaryHookAdapter(executor).begin('user2agent')
-    assert not operation.emit('before_summary_generate').already_handled
+    operation = DirectSummaryOperation('user2agent')
+    result = operation.emit('before_summary_generate')
+    assert isinstance(result, DispatchReport)
+    assert result.rejection_reason == 'observer_rejected'
     assert operation.emit('before_summary_generate').already_handled
     assert len(executor.calls) == 1
 
