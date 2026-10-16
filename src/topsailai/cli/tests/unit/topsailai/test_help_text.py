@@ -222,3 +222,21 @@ def test_meta_scope_contract(capsys):
     output = capsys.readouterr().out
     assert "watched parent session" in output
     assert "/meta <number>" not in output
+
+
+
+def test_runtime_help_describes_broadcast(capsys):
+    """Runtime help exposes queue-only broadcast semantics."""
+    print_help([], "runtime")
+    output = capsys.readouterr().out
+    assert "/ctx.btw-all [message...]" in output
+    assert "discoverable live PID" in output
+    assert "does not confirm consumption" in output
+
+
+def test_runtime_scope_guide_describes_broadcast(capsys):
+    """The scope guide distinguishes watched-PID and all-PID context injection."""
+    print_scopes()
+    output = capsys.readouterr().out
+    assert "/ctx.btw-all" in output
+    assert "all discoverable live PIDs" in output

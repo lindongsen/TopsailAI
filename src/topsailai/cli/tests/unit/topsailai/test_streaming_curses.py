@@ -323,6 +323,17 @@ class TestBuildStreamCommandHandler(unittest.TestCase):
         self.assertIsNotNone(args[1]["input_provider"])
 
     @patch("cli_topsailai.streaming._handle_stream_command")
+    def test_ctx_btw_all_command_delegates(self, mock_handle):
+        """Curses mode routes broadcast through the shared handler."""
+        self.assertTrue(self.handler("/ctx.btw-all remember this"))
+        mock_handle.assert_called_once()
+        args = mock_handle.call_args
+        self.assertEqual(args[0][0], "/ctx.btw-all remember this")
+        self.assertEqual(args[0][1], "/tmp/tasks")
+        self.assertEqual(args[0][3], "s1")
+        self.assertIsNotNone(args[1]["input_provider"] )
+
+    @patch("cli_topsailai.streaming._handle_stream_command")
     def test_ctx_btw_command_delegates(self, mock_handle):
         result = self.handler("/ctx.btw remember this")
         self.assertTrue(result)

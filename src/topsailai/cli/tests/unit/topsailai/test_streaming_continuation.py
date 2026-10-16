@@ -8,7 +8,7 @@ from cli_topsailai import state, streaming
 
 
 @pytest.mark.parametrize("mode", ["raw", "legacy", "curses"])
-@pytest.mark.parametrize("command", ["/ctx.btw note", "/git status", "/send hello", "/control ping", "/help", "!git status"])
+@pytest.mark.parametrize("command", ["/ctx.btw note", "/ctx.btw-all note", "/git status", "/send hello", "/control ping", "/help", "!git status"])
 @pytest.mark.parametrize("alive", [False, True])
 @pytest.mark.parametrize("log_kind", ["session", "task"])
 def test_commands_remain_until_explicit_quit(tmp_path, mode, command, alive, log_kind):
