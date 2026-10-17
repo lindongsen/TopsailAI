@@ -7,7 +7,7 @@ ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
 status: input and Summary direct-entry migration accepted through U4; U5 overall acceptance pending
-scope: direct input and eight Summary Hook Points plus retained legacy libraries; broader rollout deferred
+scope: direct input and eight ACTIVE Summary Hook Points (plus two inactive phase-two candidates) plus retained legacy libraries; broader rollout deferred
 ---
 
 # Standalone Unified Hook Framework
@@ -51,6 +51,18 @@ Since the 2026-10-16 migration, input and the eight phase-one Summary checkpoint
 The current contract is documented in [Hooks API](../docs/Hooks_API.md#current-direct-entry-architecture): `{}` still activates internal discovery; Modules receive validated metadata, while directly executed Scripts receive no Summary payload. Per-operation checkpoint and exception semantics remain intact. Dynamic discovery, `EntryResult` results, POSIX cleanup and budget limits are not the legacy prepared snapshot, last-known-good or owner lifecycle contract.
 
 Shared prepared/trust and application-access libraries remain unchanged and explicitly composable; the historical sections below do not impose those APIs on current business activation.
+
+### Current implementation inventory
+
+Eleven Hook Points are declared: ten Summary points under `hooks/points/context/` and one workspace point `hook__workspace__before__input_message` under `hooks/points/workspace/before_input_message/`.
+
+| Group | Points | Modules |
+|---|---|---|
+| ACTIVE Summary (phase one) | `before_summary_generate_{user2agent,agent2llm}`, `after_summary_apply_{user2agent,agent2llm}`, `error_summary_generate_{user2agent,agent2llm}`, `error_summary_apply_{user2agent,agent2llm}` | one `modules/observer.py` each (8 total), all delegating to `hooks/points/context/summary_events_observer/observer.py` |
+| INACTIVE Summary (phase-two candidate) | `after_summary_generate_user2agent`, `after_summary_generate_agent2llm` | none (no `modules/` directory) |
+| Workspace | `hook__workspace__before__input_message` | none (no `modules/` directory) |
+
+No `scripts/` directory exists under `hooks/points/`; `TOPSAILAI_HOOK_POINTS` defaults to `"{}"` in `env_template`, so only bundled point-local Modules execute unless external resources are configured.
 
 ## Historical prepared framework status and scope
 
@@ -441,7 +453,7 @@ This chapter integrates the approved summarize design into the framework specifi
 
 Human goal: “我要达到的效果是 增减modules 只需要 增减对应的 代码文件 就行。” Human confirmed baseline A: “A:只增减文件 + 部署授权更新 + 应用重启生效；” This is restart-based membership activation, not hot reload or implicit trust.
 
-Units 1–6 implement valid zero-resource plans, generic detached worker context, caller-owned Catalog selection, point-name-derived envelope layer, point-local Module directories and offline deployment authorization. `workspace/summary_hooks_owner.py::build_summary_preparation_request()` binds the eight phase-one points to their own `modules/` directories without listing members. Each point's `observer.py` delegates to the shared observer through `main(*, hook_context)`. The two phase-two points remain inactive. Applications must explicitly adopt this builder; ordinary AgentChat construction does not silently enable Hooks.
+Units 1–6 implement valid zero-resource plans, generic detached worker context, caller-owned Catalog selection, point-name-derived envelope layer, point-local Module directories and offline deployment authorization. The former `workspace/summary_hooks_owner.py::build_summary_preparation_request()` (now deleted) binds the eight phase-one points to their own `modules/` directories without listing members. Each point's `observer.py` delegates to the shared observer through `main(*, hook_context)`. The two phase-two points remain inactive. Applications must explicitly adopt this builder; ordinary AgentChat construction does not silently enable Hooks.
 
 `hooks/deployment_authorization.py` enumerates configured directories offline, requires an explicitly reviewed deployment closure digest and Python Runtime authority, and emits the existing v1 manifest plus its pin. It never imports candidates or certifies dependency review. Regenerate on the frozen target deployment tree, publish authority/pin and restart before new membership is prepared. Missing/stale authority rejects the complete affected point; valid empty directories retain the unique terminal `hook_script`. Scripts are not generated or merged by this Module-only entry. [The API deployment guide](../docs/Hooks_API.md#point-local-summary-module-deployment) records options, target-runtime restrictions and explicit composition requirements.
 
@@ -494,29 +506,35 @@ Use Option B: an independent subdirectory per point. The following layout is rel
 ```text
 hooks/points/
 ├── __init__.py
-└── context/
-    ├── __init__.py
-    ├── summary_contracts.py
-    ├── summary_payloads.py
-    ├── summary_adapter.py
-    ├── before_summary_generate_user2agent/
-    │   ├── __init__.py
-    │   ├── point.py
-    │   ├── payloads.py
-    │   ├── modules/                  # Optional
-    │   │   ├── __init__.py
-    │   │   └── observer.py
-    │   └── scripts/                  # Optional
-    │       └── audit.py
-    ├── before_summary_generate_agent2llm/
-    ├── after_summary_generate_user2agent/  # Phase-two candidate
-    ├── after_summary_generate_agent2llm/   # Phase-two candidate
-    ├── after_summary_apply_user2agent/
-    ├── after_summary_apply_agent2llm/
-    ├── error_summary_generate_user2agent/
-    ├── error_summary_generate_agent2llm/
-    ├── error_summary_apply_user2agent/
-    └── error_summary_apply_agent2llm/
+├── context/
+│   ├── __init__.py
+│   ├── summary_contracts.py
+│   ├── summary_payloads.py
+│   ├── summary_adapter.py
+│   ├── before_summary_generate_user2agent/
+│   │   ├── __init__.py
+│   │   ├── point.py
+│   │   ├── payloads.py
+│   │   ├── modules/                  # Optional
+│   │   │   └── observer.py
+│   │   └── scripts/                  # Optional, none currently present
+│   │       └── audit.py
+│   ├── before_summary_generate_agent2llm/
+│   ├── after_summary_generate_user2agent/  # Phase-two candidate
+│   ├── after_summary_generate_agent2llm/   # Phase-two candidate
+│   ├── after_summary_apply_user2agent/
+│   ├── after_summary_apply_agent2llm/
+│   ├── error_summary_generate_user2agent/
+│   ├── error_summary_generate_agent2llm/
+│   ├── error_summary_apply_user2agent/
+│   ├── error_summary_apply_agent2llm/
+│   └── summary_events_observer/
+│       ├── __init__.py
+│       └── observer.py
+└── workspace/
+    └── before_input_message/
+        ├── __init__.py
+        └── point.py
 ```
 
 Other points use the same structure as the expanded point; do not create empty modules/scripts directories or placeholder execution modules without actual execution resources. Subdirectory names are path representations omitting the fixed prefix and parent domain, not event aliases.
