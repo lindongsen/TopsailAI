@@ -361,7 +361,7 @@ class SummarizeHooksScenario:
         assert self.events[-1][3] == 1 and self.events[-1][5]
         assert any('U7 concise summary' in str(m) for m in self.events[-1][4])
         rows = [json.loads(row) for row in self.ledger.read_text().splitlines()]
-        assert all(row['pid'] != __import__('os').getpid() for row in rows)
+        assert all(row['pid'] == __import__('os').getpid() for row in rows)
         assert pending_cleanup() == ()
         assert [row['point'] for row in rows] == names
         if self.case == 'observer_failure':

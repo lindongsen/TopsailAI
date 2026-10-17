@@ -44,6 +44,9 @@ def direct_input(tmp_path, monkeypatch):
     monkeypatch.setattr(hooks, "_point_configuration", previous)
     assert not pending_cleanup()
     for row in rows():
+        if row["kind"] == "module":
+            assert row["pid"] == os.getpid()
+            continue
         with pytest.raises(ProcessLookupError):
             os.kill(row["pid"], 0)
 
@@ -75,7 +78,11 @@ def test_input_retries_without_redispatch_and_next_call_executes(direct_input, m
     assert input_tool.input_message() == "next"
     assert reads == [2, 2, 4]
     assert [row["kind"] for row in direct_input()] == ["module", "script"] * 2
-    assert len({row["pid"] for row in direct_input()}) == 4
+    module_pids = {row["pid"] for row in direct_input() if row["kind"] == "module"}
+    script_pids = {row["pid"] for row in direct_input() if row["kind"] == "script"}
+    assert module_pids == {os.getpid()}
+    assert len(script_pids) == 2
+    assert os.getpid() not in script_pids
 
 
 def test_input_exception_identity_after_workers_finish(direct_input, monkeypatch):

@@ -2,8 +2,10 @@
 
 Author: DawsonLin
 """
-
+import asyncio
 import importlib.machinery
+import importlib.util
+import inspect
 from dataclasses import dataclass
 import logging
 import os
@@ -11,6 +13,7 @@ from pathlib import Path
 import re
 import signal
 import subprocess
+import sys
 import time
 from threading import RLock
 
@@ -172,36 +175,79 @@ def _execute(kind, path, payload, deadline):
         if _cleanup_records:
             logger.error("Hook execution blocked by %s pending cleanup records", len(_cleanup_records))
             return "cleanup_failed"
-        return _execute_owned(kind, path, payload, deadline)
+        if kind == "module":
+            return _execute_module_inprocess(path, payload, deadline)
+        return _execute_script_subprocess(path, deadline)
 
 
-def _execute_owned(kind, path, payload, deadline):
-    """Run one isolated child with bounded waiting and no shell invocation."""
-    import json
-    from topsailai.utils.env_tool import resolve_python_interpreter
+def _execute_module_inprocess(path, payload, deadline):
+    """Import and invoke one Module directly in the current process.
 
+    In-process code cannot be preempted, so the aggregate deadline is checked
+    only before invocation; an overrunning Module is not killed. Ordinary
+    failures become a structured status, while host control flow propagates.
+    """
     if time.monotonic() >= deadline:
         return "timeout"
-    command = [str(path)]
-    if kind == "module":
-        command = [resolve_python_interpreter(), str(Path(__file__).with_name("point_entry_worker.py")),
-                   str(path), json.dumps(payload)]
+    try:
+        module = _import_module(path)
+        entry = getattr(module, "main", None)
+        if not callable(entry):
+            logger.error("Hook module %s has no callable main entry", path)
+            return "error"
+        result = entry(**payload)
+        if inspect.isawaitable(result):
+            asyncio.run(_await_result(result))
+        return "success"
+    except Exception:
+        logger.exception("Hook module %s execution failed", path)
+        return "error"
+
+
+def _import_module(path):
+    """Import a selected Module file in-process under its logical name."""
+    logical = _logical_name(path, "module")
+    parent = str(path.parent)
+    inserted = parent not in sys.path
+    if inserted:
+        sys.path.insert(0, parent)
+    try:
+        spec = importlib.util.spec_from_file_location(logical, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"unsupported Module source: {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        if inserted and parent in sys.path:
+            sys.path.remove(parent)
+
+
+async def _await_result(result):
+    """Adapt arbitrary awaitables to the coroutine expected by asyncio.run."""
+    return await result
+
+
+def _execute_script_subprocess(path, deadline):
+    """Run one isolated Script child with bounded waiting and no shell invocation."""
+    if time.monotonic() >= deadline:
+        return "timeout"
     process = None
     status = "error"
     primary = None
     try:
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        process = subprocess.Popen([str(path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.DEVNULL, start_new_session=True)
         _cleanup_records[id(process)] = CleanupRecord(process)
         code = _wait_owned(process, deadline)
         status = "success" if code == 0 else "error"
         if code:
-            logger.error("Hook %s %s exited with code %s", kind, path, code)
+            logger.error("Hook script %s exited with code %s", path, code)
     except subprocess.TimeoutExpired:
-        logger.error("Hook %s %s exceeded aggregate deadline", kind, path)
+        logger.error("Hook script %s exceeded aggregate deadline", path)
         status = "timeout"
     except Exception:
-        logger.exception("Hook %s %s execution failed", kind, path)
+        logger.exception("Hook script %s execution failed", path)
     except BaseException as error:
         primary = error
         raise

@@ -100,19 +100,18 @@ def test_duplicate_rejects_whole_point(tmp_path):
     assert not output.exists()
 
 
-def test_timeout_stops_successors_and_reaps(tmp_path):
-    """An over-budget real child is killed before the next Script can start."""
+def test_expired_deadline_skips_successor_after_inprocess_module(tmp_path):
+    """An in-process Module cannot be killed; the expired deadline skips successors."""
     output = tmp_path / "pid"
     slow = tmp_path / "a.py"
-    slow.write_text(f"import os,time\nfrom pathlib import Path\ndef main():\n    Path({str(output)!r}).write_text(str(os.getpid()))\n    time.sleep(30)\n")
+    slow.write_text(f"import os,time\nfrom pathlib import Path\ndef main():\n    Path({str(output)!r}).write_text(str(os.getpid()))\n    time.sleep(0.6)\n")
     marker = tmp_path / "marker"
     later = script(tmp_path / "z", marker, "NO")
     points = decode_points({NAME: {"modules": str(slow), "scripts": str(later)}})
     result = execute_point(NAME, points, payload={}, timeout_seconds=0.5)
-    assert [item.status for item in result] == ["timeout"]
+    assert [item.status for item in result] == ["success", "timeout"]
     assert not marker.exists()
-    with pytest.raises(ProcessLookupError):
-        os.kill(int(output.read_text()), 0)
+    assert int(output.read_text()) == os.getpid()
 
 
 @pytest.mark.parametrize("config", [[], {"bad": {}}, {NAME: {"unknown": []}},

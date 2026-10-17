@@ -27,6 +27,9 @@ from topsailai.workspace import agent_shell
 from tests import legacy_prepared_support
 
 
+MODULE_MEMBERS = frozenset({"Alpha", "zeta"})
+
+
 class MixedDeployment:
     """Own only fixture sources, offline authority and composed application lifetimes."""
 
@@ -124,6 +127,10 @@ os.write(int(os.environ['TOPSAILAI_HOOK_RESULT_FD']), struct.pack('!I', len(body
             result = owner.close()
             assert result.fully_closed and not result.unresolved_debts and not result.failed_stages
             assert not owner.runtime.cleanup_debts()
+        self.assert_worker_absence()
+
+    def assert_worker_absence(self):
+        """Require every observed legacy worker to be a distinct exited process."""
         for row in self.rows():
             assert row["pid"] != os.getpid()
             try:
@@ -177,6 +184,19 @@ with open({str(self.ledger)!r}, "a") as stream:
         """Require exact direct-runner custody to be settled before artifact cleanup."""
         assert pending_cleanup() == ()
         super().close()
+
+    def assert_worker_absence(self):
+        """Direct Modules run in-process; only Scripts are distinct exited processes."""
+        for row in self.rows():
+            if row["name"] in MODULE_MEMBERS:
+                assert row["pid"] == os.getpid()
+                continue
+            assert row["pid"] != os.getpid()
+            try:
+                os.kill(row["pid"], 0)
+            except ProcessLookupError:
+                continue
+            raise AssertionError(f"observed fixture worker still exists: {row['pid']}")
 
 
 class SummaryScriptScenario(SummarizeHooksScenario):
@@ -505,7 +525,8 @@ class SummaryScriptScenario(SummarizeHooksScenario):
             if self.case == "stale" and name == PHASE_ONE_DECLARATIONS[0].name:
                 expected = ["Alpha", "zeta", "A", "new", "z"]
             assert [r["name"] for r in selected] == expected
-            assert all(r["pid"] != os.getpid() for r in selected)
+            assert all(r["pid"] == os.getpid() for r in selected if r["name"] in MODULE_MEMBERS)
+            assert all(r["pid"] != os.getpid() for r in selected if r["name"] not in MODULE_MEMBERS)
             assert all("U7 runtime context" not in json.dumps(r) for r in selected)
             assert all("payload" not in r for r in selected if r["name"] in ("A", "z", "new"))
         for report in self.reports:
