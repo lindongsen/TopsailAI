@@ -264,7 +264,7 @@ class ExhaustionScenario:
             "model": "u5-exhaustion-model", "messages": [{"role": "system", "content": ""}] + messages,
             "stream": True, "max_tokens": model.max_tokens, "temperature": model.temperature,
             "top_p": model.top_p, "frequency_penalty": model.frequency_penalty,
-            "n": 1, "stop": None,
+            "n": 1, "parallel_tool_calls": False, "stop": None,
             "stream_options": {"include_usage": True},
         }
         assert all(body == expected_body for body in bodies)

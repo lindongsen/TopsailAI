@@ -205,3 +205,12 @@ Why this prevents recurrence: the runner now preserves isolated per-file imports
 ## Hook configuration convenience must preserve the Human-approved execution architecture
 
 Trigger: the request to simplify Hook-name plus scripts/folder configuration was misinterpreted as permission to introduce a standalone scripts-only registration path, and compliance was assessed against documents rewritten to match that path. Action: restore the Human's per-Hook-Point Module/default-terminal-Hook model, `main(*args, **kwargs)` entry and both name-order contracts in the design/API, and track the actual Runtime divergence separately. U06A–U06D subsequently connected unified synchronous execution, the configured adapter (`17d9e9ac`) and ordinary registration/dispatch (`14d61522`); lifecycle and migration acceptance remains in U07–U11. Prevention: compare convenience-layer proposals and runtime call graphs against the original architectural invariants and decision history before updating documents or claiming compliance; tests of isolated planners and separate Script APIs cannot prove one unified end-to-end plan.
+
+## A shared test harness fixture change can break sibling tests that build their own synthetic fixture
+
+When the LLM first-byte exhaustion harness's `expected_body` was corrected to include `parallel_tool_calls` (matching production `build_parameters_for_chat()`), a sibling unit test in `tests/unit/test_topsailai_u5_exhaustion_acceptance.py` that constructs its own synthetic request body and compares it against the same `expected_body` started failing. Per-file verification of the changed harness did not catch it; only the full runner did.
+
+Lessons:
+1. When changing a shared test fixture or expected-value constant, grep for every consumer that builds its own copy of that value, not just the harness that owns it.
+2. Verify a shared-fixture change with the full suite (or at least every file that imports the fixture), because per-file verification only covers the owning harness.
+3. Treat a new failure that appears after a test-infra fix as a coupling signal, not as an unrelated flake.

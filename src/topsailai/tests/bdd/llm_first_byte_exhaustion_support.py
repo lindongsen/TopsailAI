@@ -157,6 +157,7 @@ class ScenarioResources:
             "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE": "1",
             "TOPSAILAI_INTERACTIVE_MODE": "0", "TOPSAILAI_EVENTS_ENABLED": "0",
             "TOPSAILAI_PRINT_TOOL_STAT": "0",
+            "TOPSAILAI_ENABLE_PARALLEL_TOOL_CALLS": "0",
         }
         for key, value in values.items():
             self.environment.setenv(key, value)

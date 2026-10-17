@@ -56,6 +56,7 @@ class CachedTokensHarness:
         monkeypatch.setenv("TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES", "0")
         monkeypatch.setenv("TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP", "0")
         monkeypatch.setenv("TOPSAILAI_CONTEXT_MESSAGES_TAIL_OFFSET_TO_KEEP", "0")
+        monkeypatch.setenv("TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE", "1")
         self.model = LLMModel()
         self.messages: list[dict[str, Any]] = []
         self.last_response = None

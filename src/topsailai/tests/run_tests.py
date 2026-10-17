@@ -78,7 +78,9 @@ def build_child_env(base_env=None, src_root=None):
 # Default configuration values.
 DEFAULT_TIMEOUT = 120
 DEFAULT_SLOW_THRESHOLD = 10.0
-DEFAULT_WORKERS = 20
+# Bounded concurrency: deadline-sensitive hooks process tests are starved by
+# high parallelism (see LEARN.md); 4 workers keeps them within their budgets.
+DEFAULT_WORKERS = 4
 DEFAULT_RETRIES = 1
 
 

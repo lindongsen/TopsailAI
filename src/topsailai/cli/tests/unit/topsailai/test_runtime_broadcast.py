@@ -19,9 +19,9 @@ class TestRuntimeBroadcast(unittest.TestCase):
     """Verify discovery, filtering, deduplication, and delivery semantics."""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory(
-            dir="/TopsailAI/src/topsailai/cli/.tmp/ctx-btw-all"
-        )
+        parent = "/TopsailAI/src/topsailai/cli/.tmp/ctx-btw-all"
+        os.makedirs(parent, exist_ok=True)
+        self._tmp = tempfile.TemporaryDirectory(dir=parent)
         self.task_dir = Path(self._tmp.name)
 
     def tearDown(self):

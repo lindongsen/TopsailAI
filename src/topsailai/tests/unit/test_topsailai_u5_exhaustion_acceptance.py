@@ -524,6 +524,7 @@ def test_u5_composed_run_uses_actual_settlers_supervisor_and_caller(monkeypatch,
         body = dict(model="u5-exhaustion-model", messages=[{"role": "system", "content": ""},
                     {"role": "user", "content": "u5 exhaustion"}], stream=True, max_tokens=1,
                     temperature=0, top_p=1, frequency_penalty=0, n=1,
+                    parallel_tool_calls=False,
                     stop=None, stream_options={"include_usage": True})
         capture = SimpleNamespace(state=lambda: dict(dropped_lifecycle_count=0))
 
