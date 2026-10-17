@@ -418,6 +418,10 @@ signal.signal(signal.SIGTERM, _signal_handler)
 DEFAULT_CONFIG = {
     "ai_agent_driver": "topsailai_agent_plan_tasks",
     "workspace": ".",
+    "scan": {
+        "include_files": False,
+        "preferred_extensions": [],
+    },
     "context": {
         "_": [],
         "default": [],
@@ -449,6 +453,16 @@ ai_agent_driver: "topsailai_agent_plan_tasks"
 
 # Working directory for the launched driver.
 workspace: "."
+
+# Workspace scan configuration for the folder tree appended to the agent context.
+#   include_files:         when true, list files as well as folders. Default: false
+#                          (folders only), which keeps the first-turn context small.
+#   preferred_extensions:  while include_files is false, also list files whose
+#                          extension matches one of these entries (case-insensitive).
+#                          A leading dot is optional. Default: [] (no extra files).
+scan:
+  include_files: false
+  preferred_extensions: []
 
 # Context configuration: each item corresponds to a set of context sources.
 # Each source is either a file path (string) or a dict describing a command
@@ -565,6 +579,16 @@ ai_agent_driver: {ai_agent_driver}
 
 # Working directory for the launched driver.
 workspace: {workspace}
+
+# Workspace scan configuration for the folder tree appended to the agent context.
+#   include_files:         when true, list files as well as folders. Default: false
+#                          (folders only), which keeps the first-turn context small.
+#   preferred_extensions:  while include_files is false, also list files whose
+#                          extension matches one of these entries (case-insensitive).
+#                          A leading dot is optional. Default: [] (no extra files).
+scan:
+  include_files: false
+  preferred_extensions: []
 
 # Context configuration: each item corresponds to a set of context sources.
 # Each source is either a file path (string) or a dict describing a command
@@ -1342,7 +1366,86 @@ _SCAN_INCLUDE_FILES_TRUE = ("1", "true", "yes", "y", "on")
 _SCAN_INCLUDE_FILES_FALSE = ("", "0", "false", "no", "n", "off")
 
 
-def _resolve_scan_include_files(cli_flag=None, environ=None):
+def _normalize_preferred_extensions(raw):
+    """Normalize a preferred-extension list from settings.yaml.
+
+    Accepts a list of strings (or a single comma-separated string). Each entry
+    is stripped, lowercased, and given a leading dot when missing so matching
+    is case-insensitive and tolerant of both ``py`` and ``.py`` spellings.
+    Blank entries are dropped while the original order is preserved.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        candidates = _parse_csv_names(raw)
+    elif isinstance(raw, (list, tuple)):
+        candidates = []
+        for item in raw:
+            candidates.extend(_parse_csv_names(str(item)))
+    else:
+        print(
+            f"[TopsailAI-Launcher] Warning: 'scan.preferred_extensions' must be "
+            f"a list of strings; ignoring {type(raw).__name__!r}.",
+            file=sys.stderr,
+        )
+        return []
+
+    normalized = []
+    for name in candidates:
+        value = name.strip().lower()
+        if not value:
+            continue
+        if not value.startswith("."):
+            value = "." + value
+        if value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def _resolve_scan_settings(settings):
+    """Read the optional top-level ``scan`` section from settings.yaml.
+
+    Returns a ``(include_files, preferred_extensions)`` tuple:
+
+    - ``include_files`` is ``True``/``False`` when ``scan.include_files`` is a
+      boolean, or ``None`` when the section or key is absent so callers can
+      fall back to the environment variable and then the folders-only default.
+    - ``preferred_extensions`` is the normalized extension list; it is only
+      meaningful while ``include_files`` is false.
+
+    A malformed ``scan`` section or ``include_files`` value warns and is
+    ignored rather than aborting the launch.
+    """
+    scan_section = settings.get("scan") if isinstance(settings, dict) else None
+    if scan_section is None:
+        return None, []
+    if not isinstance(scan_section, dict):
+        print(
+            "[TopsailAI-Launcher] Warning: 'scan' must be a mapping; ignoring.",
+            file=sys.stderr,
+        )
+        return None, []
+
+    include_files = scan_section.get("include_files")
+    if include_files is None:
+        include_setting = None
+    elif isinstance(include_files, bool):
+        include_setting = include_files
+    else:
+        print(
+            f"[TopsailAI-Launcher] Warning: 'scan.include_files' must be a "
+            f"boolean; ignoring {include_files!r}.",
+            file=sys.stderr,
+        )
+        include_setting = None
+
+    preferred = _normalize_preferred_extensions(
+        scan_section.get("preferred_extensions")
+    )
+    return include_setting, preferred
+
+
+def _resolve_scan_include_files(cli_flag=None, environ=None, settings_flag=None):
     """Return True when the scanned tree should list files as well as folders.
 
     Listing every file makes the tree far larger, so folders-only is the
@@ -1350,12 +1453,15 @@ def _resolve_scan_include_files(cli_flag=None, environ=None):
 
     Priority: an explicit ``--include-files`` / ``--folders-only`` flag wins,
     then ``TOPSAILAI_SCAN_INCLUDE_FILES`` read from ``environ`` (falling back to
-    the process environment), then the folders-only default.
+    the process environment), then ``scan.include_files`` from settings.yaml,
+    then the folders-only default.
 
     Args:
         cli_flag (bool|None): Value resolved from the CLI flags, or ``None``
             when neither flag was given.
         environ (dict|None): Environment mapping to read the variable from.
+        settings_flag (bool|None): Value resolved from ``scan.include_files``,
+            or ``None`` when the setting is absent.
 
     Returns:
         bool: True to list files, False to list folders only.
@@ -1364,18 +1470,20 @@ def _resolve_scan_include_files(cli_flag=None, environ=None):
         return bool(cli_flag)
     source = environ if environ is not None else os.environ
     raw = source.get("TOPSAILAI_SCAN_INCLUDE_FILES")
-    if raw is None:
+    if raw is not None:
+        value = str(raw).strip().lower()
+        if value in _SCAN_INCLUDE_FILES_TRUE:
+            return True
+        if value in _SCAN_INCLUDE_FILES_FALSE:
+            return False
+        print(
+            f"[TopsailAI-Launcher] Warning: Invalid TOPSAILAI_SCAN_INCLUDE_FILES "
+            f"({raw!r}); using the default folders-only scan.",
+            file=sys.stderr,
+        )
         return False
-    value = str(raw).strip().lower()
-    if value in _SCAN_INCLUDE_FILES_TRUE:
-        return True
-    if value in _SCAN_INCLUDE_FILES_FALSE:
-        return False
-    print(
-        f"[TopsailAI-Launcher] Warning: Invalid TOPSAILAI_SCAN_INCLUDE_FILES "
-        f"({raw!r}); using the default folders-only scan.",
-        file=sys.stderr,
-    )
+    if settings_flag is not None:
+        return bool(settings_flag)
     return False
 
 
@@ -1486,7 +1594,7 @@ class _ScanTokenBudget:
         )
 
 
-def _scan_folder(folder, exclude_names=None, include_files=False):
+def _scan_folder(folder, exclude_names=None, include_files=False, preferred_extensions=None):
     """Scan a specific folder and print its tree structure.
 
     This reuses the same scanning logic used for agent context so that the
@@ -1497,6 +1605,9 @@ def _scan_folder(folder, exclude_names=None, include_files=False):
 
     ``include_files`` defaults to False, which lists folders only; pass True to
     list files as well.
+
+    ``preferred_extensions`` optionally lists file extensions that are kept
+    even in folders-only mode (case-insensitive).
     """
     folder = os.path.abspath(folder)
     if not os.path.isdir(folder):
@@ -1504,12 +1615,35 @@ def _scan_folder(folder, exclude_names=None, include_files=False):
         sys.exit(1)
     print(
         _scan_workspace_files(
-            folder, folder, exclude_names=exclude_names, include_files=include_files
+            folder,
+            folder,
+            exclude_names=exclude_names,
+            include_files=include_files,
+            preferred_extensions=preferred_extensions,
         )
     )
 
 
-def _scan_workspace_files(workspace, project_folder=None, exclude_names=None, include_files=False):
+def _matches_preferred_extension(name, extensions):
+    """Return True when ``name`` ends with one of the normalized extensions.
+
+    ``extensions`` entries are expected to be lowercase and dot-prefixed (as
+    produced by ``_normalize_preferred_extensions``); the comparison is
+    case-insensitive so ``README.MD`` matches ``.md``.
+    """
+    if not extensions:
+        return False
+    lowered = name.lower()
+    return any(lowered.endswith(ext) for ext in extensions)
+
+
+def _scan_workspace_files(
+    workspace,
+    project_folder=None,
+    exclude_names=None,
+    include_files=False,
+    preferred_extensions=None,
+):
     """Scan workspace and return folder structure as a tree string.
 
     If ``project_folder`` is provided and is a child of ``workspace`` (or
@@ -1528,6 +1662,10 @@ def _scan_workspace_files(workspace, project_folder=None, exclude_names=None, in
     False (folders only), which keeps the tree compact; pass True to list files
     as well as folders.
 
+    ``preferred_extensions`` optionally lists file extensions (case-insensitive,
+    leading dot optional) that are kept even in folders-only mode. It has no
+    effect when ``include_files`` is True, because every file is already listed.
+
     Symbolic links are not followed: symlinked files are listed as leaf
     entries and symlinked directories are not recursed into.
 
@@ -1542,6 +1680,8 @@ def _scan_workspace_files(workspace, project_folder=None, exclude_names=None, in
     workspace = os.path.abspath(workspace)
     if project_folder:
         project_folder = os.path.abspath(project_folder)
+
+    preferred_extensions = _normalize_preferred_extensions(preferred_extensions)
 
     max_tokens = _resolve_scan_max_tokens()
     budget = _ScanTokenBudget(max_tokens, _scan_token_counter() if max_tokens else None)
@@ -1581,10 +1721,13 @@ def _scan_workspace_files(workspace, project_folder=None, exclude_names=None, in
                 is_symlink = os.path.islink(full_path)
                 is_dir = os.path.isdir(full_path) and not is_symlink
                 # Folders-only mode (the default) drops every non-directory
-                # entry. os.path.isdir follows symlinks, so a symlinked folder
-                # stays visible as a leaf entry while a symlinked file is hidden.
+                # entry except files whose extension is in the preferred list.
+                # os.path.isdir follows symlinks, so a symlinked folder stays
+                # visible as a leaf entry while a symlinked file is hidden
+                # unless its extension is preferred.
                 if not include_files and not os.path.isdir(full_path):
-                    continue
+                    if not _matches_preferred_extension(name, preferred_extensions):
+                        continue
                 if _is_ignored(full_path, name, is_dir, local_patterns):
                     continue
                 # Filter out names excluded via environment variables.
@@ -1760,10 +1903,14 @@ def main():
             os.path.join(os.getcwd(), ".topsailai", "settings.yaml")
         )
         _apply_self_environs(scan_settings)
+        scan_include_setting, scan_preferred = _resolve_scan_settings(scan_settings)
         _scan_folder(
             args.scan,
             exclude_names=args.exclude,
-            include_files=_resolve_scan_include_files(args.include_files),
+            include_files=_resolve_scan_include_files(
+                args.include_files, settings_flag=scan_include_setting
+            ),
+            preferred_extensions=scan_preferred,
         )
         return
 
@@ -1913,14 +2060,19 @@ def main():
         merged_env["TOPSAILAI_PROJECT_FOLDER"] = project_folder
         os.environ["TOPSAILAI_PROJECT_FOLDER"] = project_folder
     # Resolve whether the scanned tree lists files as well as folders. The CLI
-    # flag wins, then TOPSAILAI_SCAN_INCLUDE_FILES from the merged environment;
-    # the default lists folders only.
-    include_files = _resolve_scan_include_files(args.include_files, merged_env)
+    # flag wins, then TOPSAILAI_SCAN_INCLUDE_FILES from the merged environment,
+    # then scan.include_files from settings.yaml; the default lists folders
+    # only. scan.preferred_extensions adds selected files in folders-only mode.
+    scan_include_setting, scan_preferred = _resolve_scan_settings(settings)
+    include_files = _resolve_scan_include_files(
+        args.include_files, merged_env, settings_flag=scan_include_setting
+    )
     folder_structure = _scan_workspace_files(
         workspace,
         project_folder,
         exclude_names=args.exclude,
         include_files=include_files,
+        preferred_extensions=scan_preferred,
     )
     message_parts = []
     if context_content:

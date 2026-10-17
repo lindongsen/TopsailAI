@@ -540,7 +540,7 @@ class TestExcludeOption(unittest.TestCase):
             self._make_tree(tmpdir)
             captured = {}
 
-            def fake_scan(workspace, project_folder=None, exclude_names=None, include_files=None):
+            def fake_scan(workspace, project_folder=None, exclude_names=None, include_files=None, preferred_extensions=None):
                 captured["exclude_names"] = exclude_names
                 captured["include_files"] = include_files
                 return "tree"
@@ -561,7 +561,7 @@ class TestExcludeOption(unittest.TestCase):
             self._make_tree(tmpdir)
             captured = {}
 
-            def fake_scan(workspace, project_folder=None, exclude_names=None, include_files=None):
+            def fake_scan(workspace, project_folder=None, exclude_names=None, include_files=None, preferred_extensions=None):
                 captured["include_files"] = include_files
                 return "tree"
 

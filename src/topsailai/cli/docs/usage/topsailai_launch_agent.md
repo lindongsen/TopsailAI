@@ -90,18 +90,39 @@ topsailai_launch_agent --scan ./src/topsailai/cli --include-files
 topsailai_launch_agent --include-files
 ```
 
-`--folders-only` forces the folders-only mode and takes precedence over an enabling environment variable. The two flags
-are mutually exclusive.
+`--folders-only` forces the folders-only mode and takes precedence over an enabling environment variable or setting. The
+two flags are mutually exclusive.
 
 Precedence:
 
 1. `--include-files` or `--folders-only` on the command line.
 2. `TOPSAILAI_SCAN_INCLUDE_FILES` from the merged environment (selected item, then base `_`, then the OS environment).
-3. Folders only.
+3. `scan.include_files` from `.topsailai/settings.yaml`.
+4. Folders only.
 
 A symlinked folder stays visible as a leaf entry in folders-only mode (it is not descended into); a symlinked file is
-hidden like any other file. Hidden names, `.gitignore` rules, and the exclusion filters described below apply unchanged
-in both modes.
+hidden like any other file unless its extension is preferred. Hidden names, `.gitignore` rules, and the exclusion filters
+described below apply unchanged in both modes.
+
+### Preferred Extensions
+
+`scan.preferred_extensions` in `.topsailai/settings.yaml` keeps selected files in the tree even while the scan is in
+folders-only mode. This gives a compact middle ground between "folders only" and "every file": the agent sees the
+directory layout plus the source files that matter, without listing build outputs, logs, or other noise.
+
+```yaml
+scan:
+  include_files: false
+  preferred_extensions: [".py", ".md"]
+```
+
+- Matching is case-insensitive, so `README.MD` matches `.md`.
+- A leading dot is optional; `py` and `.py` are equivalent.
+- The list is only consulted while `include_files` is false. When files are listed anyway (via `--include-files`,
+  `TOPSAILAI_SCAN_INCLUDE_FILES`, or `scan.include_files: true`), every file is already included.
+- Hidden names, `.gitignore` rules, `TOPSAILAI_SCAN_EXCLUDE*`, and `--exclude` still apply to preferred files.
+- The list may also be given as a single comma-separated string (`preferred_extensions: "py,md"`).
+
 
 ## Scanning a Folder
 
@@ -273,6 +294,9 @@ The settings file is `.topsailai/settings.yaml` in the current working directory
 ```yaml
 ai_agent_driver: "topsailai_agent_plan_tasks"
 workspace: "."
+scan:
+  include_files: false
+  preferred_extensions: []
 context:
   _: []
   default: []
@@ -289,6 +313,9 @@ environment:
 - `_default` is still supported for backward compatibility.
 - Context sources are either file paths (strings) or command sources (dicts).
 - File paths are relative to `workspace` unless they start with `/`.
+- The optional `scan` section controls the workspace folder tree: `include_files` (boolean, default `false`) lists
+  files as well as folders, and `preferred_extensions` (list of strings) keeps selected files in folders-only mode.
+  See "Scan Mode (Folders Only vs. Files)" and "Preferred Extensions".
 
 ### Command Context Sources
 
