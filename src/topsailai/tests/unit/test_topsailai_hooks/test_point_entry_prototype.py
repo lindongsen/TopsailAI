@@ -344,3 +344,62 @@ def test_source_module_and_init_exclusion_unchanged(tmp_path):
     assert [(item.kind, item.name, item.status) for item in result] == [
         ("module", "plain.py", "success")]
     assert output.read_text() == "ok"
+
+
+def test_symlink_child_is_admitted_and_escape_is_not_rejected(tmp_path):
+    """Characterize current admission: symlink children are followed, including escapes."""
+    from topsailai.hooks.point_entry import _eligible
+
+    inside = tmp_path / "inside"
+    inside.mkdir()
+    target_inside = module(inside / "real.py", tmp_path / "trace", "NO")
+    link_inside = inside / "link_inside.py"
+    link_inside.symlink_to(target_inside)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target_outside = module(outside / "escaped.py", tmp_path / "trace", "NO")
+    escape = tmp_path / "escape"
+    escape.mkdir()
+    link_escape = escape / "link_escape.py"
+    link_escape.symlink_to(target_outside)
+    assert _eligible(link_inside, "module") is True
+    assert _eligible(link_escape, "module") is True
+    points = decode_points({NAME: {"modules": str(escape)}})
+    result = execute_point(NAME, points, payload={}, internal_root=tmp_path / "empty")
+    assert [(item.kind, item.name) for item in result] == [("module", "link_escape.py")]
+
+
+def test_symlink_to_directory_is_skipped(tmp_path):
+    """Characterize current admission: a symlink to a directory is not eligible."""
+    from topsailai.hooks.point_entry import _eligible
+
+    parent = tmp_path / "dirlink"
+    parent.mkdir()
+    (parent / "sub").mkdir()
+    link = parent / "link_dir"
+    link.symlink_to(parent / "sub")
+    assert _eligible(link, "module") is False
+
+
+def test_broken_symlink_reports_discovery_failure(tmp_path, caplog):
+    """Characterize current admission: a dangling symlink fails the whole point."""
+    parent = tmp_path / "broken"
+    parent.mkdir()
+    (parent / "dangling.py").symlink_to(parent / "missing.py")
+    points = decode_points({NAME: {"modules": str(parent)}})
+    assert execute_point(NAME, points, payload={}, internal_root=tmp_path / "empty") == ()
+    assert "discovery failed" in caplog.text
+
+
+def test_module_ordering_uses_filename_not_logical_name(tmp_path):
+    """Characterize current ordering: the sort key is the filename, not the logical name."""
+    from topsailai.hooks.point_entry import _logical_name
+
+    folder = tmp_path / "order"
+    folder.mkdir()
+    module(folder / "a-b.py", tmp_path / "trace", "NO")
+    (folder / "a.so").write_bytes(b"\x7fELF")
+    points = decode_points({NAME: {"modules": str(folder)}})
+    result = execute_point(NAME, points, payload={}, internal_root=tmp_path / "empty")
+    assert [item.name for item in result] == ["a-b.py", "a.so"]
+    assert [_logical_name(Path(item.name), "module") for item in result] == ["a-b", "a"]

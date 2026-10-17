@@ -16,6 +16,8 @@ scope: direct input and eight Summary Hook Points plus retained legacy libraries
 
 **Decision precedence — 2026-10-16:** the following Human decisions supersede conflicting execution-authorization, public-entry and initialization/lifecycle requirements for the generic Hook Point target. The older sections remain historical architecture and describe retained legacy implementations; they must not be used to require trust admission, an observer adapter or workspace application owners on the current input/Summary path. This is a scoped prototype acceptance, not a migration of the complete framework or broader production rollout.
 
+**Maintenance scope — 2026-10-17:** Only the `point_entry` direct-entry approach (`TOPSAILAI_HOOK_POINTS` -> `hooks/point_entry.py` / `hooks/point_entry_worker.py`) is currently supported and maintained. All other resource-selection paths described in this document — the generic configured bootstrap (`ConfiguredHookBinding`), the selected-resources contract (`ConfiguredSelectedResources` / `HookPointResourceSelection`), and the historical prepared/trust summary path — are retained legacy libraries only: they are not wired into production, are not maintained, and must not be treated as supported configuration surfaces. New work and tests target `point_entry` exclusively.
+
 Human corrections, verbatim:
 
 > 不需要所谓的“部署信任、解释器与依赖准入”，判定文件有可执行权限，直接执行就可以了。
