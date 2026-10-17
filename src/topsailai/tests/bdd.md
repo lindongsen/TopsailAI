@@ -47,3 +47,40 @@ The summarize BDD suite (`cli/tests/bdd/features/summarize_feasibility.feature`,
 ## Tool Calls Normalization Suite
 
 Run the real-HTTP regression scenarios with `python -m pytest tests/bdd/test_tool_calls_normalization.py -q --color=no`. The suite uses a private mock server and temporary SQLite database per scenario.
+
+## Slow Acceptance Scenarios Are Excluded From the Default BDD Target
+
+**Date:** 2026-10-17
+
+### Rule
+
+A BDD scenario whose acceptance evidence requires a long wall-clock observation
+window MUST be marked with `pytest.mark.slow` and MUST NOT run in the default
+`make core-bdd-test` target. Run it explicitly with `make core-bdd-slow` (or
+`make test-bdd-slow`).
+
+### Why
+
+The U5 first-byte retry-exhaustion acceptance originally proved the production
+retry backoff by measuring real wall-clock gaps between attempts. The requested
+backoff sequence `[5, 10, ..., 85]` sums to `765s` per example, so the two-example
+scenario took about 26 minutes and dominated the whole BDD suite.
+
+### How the evidence is preserved
+
+- The production retry sleep is replaced through `ScenarioResources.patch()` with
+  a recording no-op seam (`ScenarioResources.install_backoff_seam()`), so the
+  journal/restore semantics of every other patch remain unchanged.
+- The scenario now asserts the **exact requested backoff sequence**
+  (`EXPECTED_BACKOFF`), which is stronger than the previous wall-clock lower
+  bound: a shortened, reordered, or missing delay is rejected.
+- The `backoff_gaps` result key is retained so the composed unit acceptance
+  (`tests/unit/test_topsailai_u5_exhaustion_acceptance.py`) keeps its positive and
+  negative matrices.
+
+### Required for a new slow scenario
+
+- Register the marker in `tests/bdd/conftest.py` (already done for `slow`).
+- Add `pytestmark = pytest.mark.slow` to the scenario entry module.
+- Keep the default target green: `make core-bdd-test` must not collect it.
+- Document the explicit command in the scenario module docstring or here.

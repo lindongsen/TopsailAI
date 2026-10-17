@@ -16,8 +16,10 @@ Note:
     test            Run all tests (core + CLI, unit + BDD)
     test-unit       Run core and CLI unit tests
     test-bdd        Run core and CLI BDD tests
+    test-bdd-slow   Run core and CLI slow BDD acceptance tests
     core-unit-test  Run core unit tests
     core-bdd-test   Run core BDD tests
+    core-bdd-slow   Run core slow BDD acceptance tests
     cli-unit-test   Run CLI unit tests
     cli-bdd-test    Run CLI BDD tests
 

@@ -14,6 +14,7 @@ from tests.bdd.llm_first_byte_exhaustion_support import ScenarioResources
 from tests.bdd.llm_first_byte_exhaustion_evidence import RunState
 
 ATTEMPTS = 18
+EXPECTED_BACKOFF = [5 * i for i in range(1, ATTEMPTS)]
 FIRST_BYTE_TIMEOUT = 1.0
 RELEASE_LIMIT = 3.0
 RAW_LIMIT = 4.0
@@ -39,6 +40,7 @@ class ExhaustionScenario:
     def prepare(self):
         """Acquire concrete resources only after external cleanup custody is installed."""
         self.resources.prepare(self.phase, self.state.install)
+        self.resources.install_backoff_seam()
 
     @property
     def records(self):
@@ -271,10 +273,9 @@ class ExhaustionScenario:
         assert captured["dropped_request_body_count"] == 0
         assert self.primary.server.lifecycle_capture.state()["dropped_lifecycle_count"] == 0
         budgets = [row["budget"] for row in self.records.values()]
-        gaps = [self.records[i + 1]["entered_at"] - self.records[i]["error_at"] for i in range(1, ATTEMPTS)]
-        if len({id(budget) for budget in budgets}) != ATTEMPTS or any(
-                gap < 5 * index for index, gap in enumerate(gaps, 1)):
-            raise AssertionError("shared budgets or shortened real backoff")
+        requested = list(self.resources.backoff_requests)
+        if len({id(budget) for budget in budgets}) != ATTEMPTS or requested != EXPECTED_BACKOFF:
+            raise AssertionError("shared budgets or altered retry backoff")
         assert not self.prompt_calls
         for field in ("invocation", "owner", "ticket"):
             assert len({id(row[field]) for row in self.records.values()}) == ATTEMPTS
@@ -282,7 +283,7 @@ class ExhaustionScenario:
         return {"bodies": bodies, "state": captured, "releases": self.releases,
                 "error": error, "settlements": self.settlements, "cleanup": cleanup,
                 "expected_body": expected_body, "final": self.records[18],
-                "backoff_gaps": gaps, "budgets": budgets, "prompt_calls": tuple(self.prompt_calls),
+                "backoff_gaps": requested, "budgets": budgets, "prompt_calls": tuple(self.prompt_calls),
                 "rows": tuple(self.records.values()), "terminal_at": self.state.terminal_at}
 
     def close(self):
@@ -514,9 +515,7 @@ def assert_completed_result(scenario) -> None:
     assert scenario.primary.server.lifecycle_capture.state()["dropped_lifecycle_count"] == 0
 
     result = scenario.result
-    assert len(result["backoff_gaps"]) == 17
-    assert all(gap >= 5 * index for index, gap in enumerate(result["backoff_gaps"], 1))
-    assert sum(result["backoff_gaps"]) >= 765
+    assert result["backoff_gaps"] == EXPECTED_BACKOFF
     assert len({id(budget) for budget in result["budgets"]}) == 18
     for ordinal, row in scenario.records.items():
         bundle = scenario.settlements[ordinal]

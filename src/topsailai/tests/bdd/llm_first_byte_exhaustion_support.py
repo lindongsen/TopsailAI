@@ -96,6 +96,7 @@ class ScenarioResources:
         self.handles = {}
         self.scopes = {}
         self.patches = []
+        self.backoff_requests = []
         self.recovery_armed = False
         self.restoration_complete = False
         self.prepared = False
@@ -126,6 +127,27 @@ class ScenarioResources:
         entry = [target, name, name in namespace, namespace.get(name), False]
         self.patches.append(entry)
         setattr(target, name, replacement)
+
+    def install_backoff_seam(self):
+        """Replace the production retry sleep with a recording no-op seam."""
+        import topsailai.ai_base.llm_base as llm_base
+
+        real_time = llm_base.time
+        requests = self.backoff_requests
+
+        class RecordingTime:
+            """Record requested retry delays while delegating every other attribute."""
+
+            def sleep(self, seconds):
+                """Record the exact requested delay and return without blocking."""
+                requests.append(seconds)
+
+            def __getattr__(self, name):
+                """Delegate non-sleep attributes to the real time module."""
+                return getattr(real_time, name)
+
+        self.patch(llm_base, "time", RecordingTime())
+        return requests
 
     def _server(self, name, config):
         """Retain a socket before thread construction and startup."""

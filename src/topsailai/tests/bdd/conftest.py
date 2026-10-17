@@ -23,6 +23,10 @@ def pytest_configure(config):
         "markers",
         "wip: scenario pinned to a known source defect, expected to fail",
     )
+    config.addinivalue_line(
+        "markers",
+        "slow: long-running acceptance scenario excluded from the default BDD target",
+    )
 
 
 pytest_plugins = [

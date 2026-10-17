@@ -584,6 +584,7 @@ def test_u5_composed_run_uses_actual_settlers_supervisor_and_caller(monkeypatch,
 
         model = SimpleNamespace(chat=chat, close=lambda: None, max_tokens=1, temperature=0, top_p=1, frequency_penalty=0)
         resources.retain("model", model)
+        resources.backoff_requests.extend(harness.EXPECTED_BACKOFF)
         state.ledger = SimpleNamespace(snapshot=lambda: tuple(callbacks), validate=lambda entries: None)
 
         def control(deadline):
