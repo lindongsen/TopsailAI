@@ -5,7 +5,7 @@ from threading import RLock
 import time
 
 from topsailai.ai_base.llm_control.attempt_control import (
-    AttemptControl, AttemptTarget, ControlProposal,
+    AttemptControl, AttemptTarget, ControlProposal, identifier,
 )
 from topsailai.ai_base.llm_control.control_command_store import CommandStore, CommandStatus
 
@@ -70,6 +70,39 @@ class RequestControl:
             if authority.snapshot().outcome is not None:
                 return CommandStatus(proposal, "rejected", "already_decided")
             return self._store.issue(proposal)
+
+    def submit_current(self, binding_id, generation, target, command_id, operation,
+                       *, capacity_unavailable=False):
+        """Replay route-owned history before submitting a frozen current target.
+
+        The application holds its route lock throughout this call. This service
+        never discovers routes or retargets an existing command to a new attempt.
+        """
+        identifier(binding_id)
+        identifier(command_id)
+        if type(generation) is not int or generation < 1:
+            raise ValueError("invalid binding generation")
+        if type(operation) is not str or operation not in ("hard_interrupt", "force_retry"):
+            raise ValueError("invalid control operation")
+        with self._lock:
+            self._store.prune()
+            previous = self._store.lookup(command_id)
+            if previous is not None:
+                original = previous.proposal.target
+                if original.binding_id != binding_id or original.generation != generation:
+                    raise ValueError("conflict")
+                if previous.proposal.operation == operation:
+                    return previous
+                proposal = ControlProposal(original, command_id, operation)
+                return CommandStatus(proposal, "rejected", "conflict")
+            if capacity_unavailable:
+                raise ValueError("unavailable/control_capacity")
+            if target is None:
+                raise ValueError("no_active_target")
+            if (type(target) is not AttemptTarget or target.binding_id != binding_id
+                    or target.generation != generation):
+                raise ValueError("stale_target")
+            return self.submit(target, command_id, operation)
 
     def probe(self, target, phase):
         """Observe a pending reference without consuming or selecting commands."""

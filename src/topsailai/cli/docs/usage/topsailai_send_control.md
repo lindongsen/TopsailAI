@@ -83,6 +83,48 @@ This additive action controls an explicitly routed AgentChat LLM request while w
 | `hard_interrupt` | Abandon the current Agent2LLM execution and User2Agent turn, keep the chat/session open, and return to fresh input without automatic retry or normal turn-completion effects. Supported only for interactive AgentChat routes. |
 | `force_retry` | Abandon the current request attempt and use the existing `LLMModel.chat()` retry loop, remaining budget and backoff. It does not restart the Agent or tools, reset the budget, or guarantee another attempt when the budget is exhausted. |
 
+### Control the current request
+
+Select one session **and process**; omitted filters can broadcast. For a manual
+shortcut, omit `target` and let the Handler freeze the current request at command
+admission:
+
+```bash
+topsailai_send_control --session_id SESSION_ID --pid PID \
+  --command llm_control --args '{"operation":"force_retry"}'
+topsailai_send_control --session_id SESSION_ID --pid PID \
+  --command llm_control --args '{"operation":"hard_interrupt"}'
+```
+
+The receipt returns the generated `result.proposal.command_id` and exact
+`result.proposal.target`. Each call without an ID is a new intent. For safe retry
+after a lost response, supply your own unique stable ID on the first call:
+
+```bash
+topsailai_send_control --session_id SESSION_ID --pid PID \
+  --command llm_control --args '{"operation":"force_retry","command_id":"unique-command-001"}'
+```
+
+Resending that ID and operation on the same route and generation returns the
+original target and current retained command state, even if the route is idle,
+a newer request is active, or control capacity is now unavailable. It never
+rebinds to that newer request. Changed operations conflict; IDs owned by another
+route or generation conflict without disclosing that command. Deduplication lasts
+only for bounded retained history (terminal records expire after 600 seconds by
+default); never reuse old IDs.
+
+A new command with no current target returns `error/no_active_target` and is not
+queued for future work. Capacity fallback rejects new commands with
+`unavailable/control_capacity`. A target selected at admission may still lose to
+normal completion or become stale; it is never retargeted. Explicit `null`, empty
+or malformed targets remain invalid, not automatic selection.
+
+Automatic selection may choose request B if A finished before admission. Use the
+explicit workflow below when the intent is to control a previously observed A.
+An explicit command can be retransmitted without its target using the same ID
+and operation. An automatic command can be retransmitted explicitly only with
+its original exact target; changing the target conflicts.
+
 ### Discover, submit and query
 
 Select one running session **and process** explicitly; omitted filters can broadcast to multiple sessions. Discover its current target first:
@@ -128,7 +170,7 @@ Malformed/obsolete ownership can instead return top-level `status: "error"`; exp
 
 - The streaming window ends at the **first decoded record**, including metadata-only records, EOF or an error; it is not a wait for the first visible token. Nonstreaming control covers request creation. Post-first-record generation, tools, unrelated background LLM calls and unbound routes are outside this action's scope.
 - Existing first-byte timeout deadlines, raising behavior and one-time warning behavior remain in force. Control can remain available with a disabled timeout or after a warn-and-continue timeout; a command does not reset the deadline or outrank an already-decided outcome. Without a command, the original request/retry behavior is preserved.
-- When control recovery capacity is exhausted, route status reports `state: "unavailable"`, `reason: "control_capacity"`; submissions return `unavailable/control_capacity`. The **whole attempt** falls back to legacy execution, with control unavailable even if capacity later frees. Only control-owned resources are finitely bounded; legacy provider workers are not globally capped or rejected by this policy.
+- When control recovery capacity is exhausted, route status reports `state: "unavailable"`, `reason: "control_capacity"`; new submissions return `unavailable/control_capacity`. The **whole attempt** falls back to legacy execution, with control unavailable even if capacity later frees. Only control-owned resources are finitely bounded; legacy provider workers are not globally capped or rejected by this policy.
 - Transport requires POSIX Unix-domain sockets and a running reachable session control channel. Hook polling is cooperative, not a strict response-latency guarantee. Deploy only trusted, nonblocking Hook Modules; they return proposals and the coordinator validates/selects them, with request abandonment outside the Hook. A blocking Hook can delay control.
 - Cleanup maintenance continues after a route closes. Permanently blocked or uncertain cleanup retains its finite slot and can force subsequent legacy fallback. Local abandonment cannot guarantee that an upstream request, generation or billing has stopped.
 - No new environment variables are required. The CLI `--timeout` controls socket communication, not the LLM first-byte deadline.

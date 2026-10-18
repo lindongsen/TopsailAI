@@ -338,7 +338,7 @@ def test_live_control_releases_exact_late_creation(operation):
 
 @pytest.mark.parametrize("payload,error", [
     ({"operation": "invalid"}, "invalid_operation"),
-    ({"operation": "force_retry"}, "exact target required"),
+    ({"operation": "force_retry", "target": None}, "exact target required"),
     ({"operation": "force_retry", "target": {}}, "AttemptTarget"),
     ({"operation": "status", "command_id": "absent"}, "unknown_command"),
 ])

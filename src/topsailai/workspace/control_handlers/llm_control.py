@@ -1,6 +1,7 @@
 """Control-channel boundary for explicitly bound LLM attempts. Author: DawsonLin."""
 from dataclasses import asdict
 import os
+from uuid import uuid4
 
 from topsailai.ai_base.llm_control.attempt_control import AttemptTarget
 from topsailai.ai_base.llm_control.request_control import REQUEST_CONTROL
@@ -43,9 +44,16 @@ class LLMControlHandler(ControlHandler):
                 return ControlResponse(request.request_id, "ok", result=result)
             if operation not in ("hard_interrupt", "force_retry"):
                 return ControlResponse(request.request_id, "error", error="invalid_operation")
-            if route.reason == "control_capacity":
+            if "target" in payload and route.reason == "control_capacity":
                 return ControlResponse(request.request_id, "error", error="unavailable/control_capacity")
             try:
+                if "target" not in payload:
+                    status = REQUEST_CONTROL.submit_current(
+                        route.binding_id, route.generation, route.target,
+                        payload.get("command_id", uuid4().hex), operation,
+                        capacity_unavailable=route.reason == "control_capacity",
+                    )
+                    return ControlResponse(request.request_id, "ok", result=asdict(status))
                 target_data = payload.get("target")
                 if type(target_data) is not dict:
                     raise ValueError("exact target required")

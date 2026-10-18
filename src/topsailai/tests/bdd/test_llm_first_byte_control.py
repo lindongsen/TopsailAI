@@ -37,8 +37,8 @@ def send(path, payload):
 def controlled_case(monkeypatch, tmp_path, request, phase, timeout):
     """Start actual OpenAI client, mock HTTP server, and authenticated control bus."""
     config = MockServerConfig(
-        response_header_delays=(60, 0) if phase == "headers" else None,
-        first_chunk_delays=(60, 0) if phase == "first_item" else None,
+        response_header_delays=(60, 60) if phase == "headers" else None,
+        first_chunk_delays=(60, 60) if phase == "first_item" else None,
         stream_response_chunks=(("STALE",), ("FRESH",)),
     )
     resources = {}
@@ -145,6 +145,27 @@ def command(control_case, operation):
     state["receipt"] = send(state["path"], {"operation": operation, "target": view["result"]["target"]})
 
 
+@when(parsers.parse('the operator sends action-only "{operation}" through the control socket'))
+@when(parsers.parse('the operator sends action-only "{operation}" with stable ID "{stable_id}" through the control socket'))
+def automatic_command(control_case, operation, stable_id=None):
+    """Submit no target and check the generated receipt over a real socket."""
+    state = control_case
+    state["operation"] = operation
+    state["automatic"] = True
+    state["at"] = time.monotonic()
+    payload = {"operation": operation}
+    if stable_id is not None:
+        stable_id = stable_id + "-" + uuid4().hex
+        payload["command_id"] = stable_id
+    state["receipt"] = send(state["path"], payload)
+    proposal = state["receipt"]["result"]["proposal"]
+    if stable_id is None:
+        assert len(proposal["command_id"]) == 32
+    else:
+        assert proposal["command_id"] == stable_id
+    assert set(proposal["target"]) == {"binding_id", "generation", "invocation_id", "attempt_id"}
+
+
 @then("the command is queued before coordinator acceptance")
 def queued(control_case):
     """Socket receipt is pending, never a claim of terminal control victory."""
@@ -157,6 +178,16 @@ def outcome(control_case, outcome):
     state = control_case
     if outcome == "fresh retry":
         assert state["server"].lifecycle_capture.wait_for_request(2, timeout=8)
+        assert state["server"].lifecycle_capture.wait_for_phase(2, state["phase"])
+        if state.get("automatic"):
+            original = state["receipt"]["result"]["proposal"]
+            current = send(state["path"], {"operation": "status"})["result"]["target"]
+            assert current != original["target"]
+            replay = send(state["path"], {"operation": state["operation"],
+                                         "command_id": original["command_id"]})
+            assert replay["result"]["proposal"] == original
+            assert replay["result"]["state"] != "queued"
+        state["server"].lifecycle_capture.request_handle(2).release_delay()
     assert state["done"].wait(8)
     if outcome == "abandoned":
         assert isinstance(state.get("error"), LLMControlledInterruptError), state
@@ -171,3 +202,40 @@ def outcome(control_case, outcome):
     if expected == 2:
         assert records[0]["body"] == records[1]["body"]
     assert not any("STALE" in item for item in state["outputs"])
+
+
+@when('the first stable-ID command response is lost before socket delivery')
+def lost_command_response(control_case, monkeypatch):
+    """Drop a real dispatched receipt before any bytes reach the requesting peer."""
+    import topsailai.workspace.control_channel.server as server_module
+
+    state = control_case
+    command_id = "lost-" + uuid4().hex
+    dropped = threading.Event()
+    original_send = server_module.send_bytes
+
+    def suppress_once(connection, encoded):
+        """Disarm before reporting loss; subsequent responses use real transport."""
+        response = json.loads(encoded)
+        proposal = (response.get("result") or {}).get("proposal", {})
+        if proposal.get("command_id") == command_id and not dropped.is_set():
+            state["receipt"] = response
+            dropped.set()
+            return False
+        return original_send(connection, encoded)
+
+    monkeypatch.setattr(server_module, "send_bytes", suppress_once)
+    state["automatic"] = True
+    state["operation"] = "force_retry"
+    state["at"] = time.monotonic()
+    before = send(state["path"], {"operation": "status"})["result"]["target"]
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+        peer.settimeout(5)
+        peer.connect(state["path"])
+        peer.sendall(json.dumps({"request_id": uuid4().hex, "action": "llm_control",
+                               "payload": {"operation": "force_retry",
+                                           "command_id": command_id}}).encode() + b"\n")
+        assert peer.recv(1) == b"", "first receipt unexpectedly reached caller"
+    assert dropped.wait(5)
+    assert state["receipt"]["result"]["proposal"]["target"] == before
+    assert state["receipt"]["result"]["proposal"]["command_id"] == command_id
