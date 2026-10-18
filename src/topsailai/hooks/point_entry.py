@@ -46,6 +46,7 @@ class EntryResult:
     returned: ReturnedValue = field(default_factory=ReturnedValue)
     started: bool = True
     exit_code: int | None = None
+    exception: Exception | None = field(default=None, repr=False, compare=False, hash=False)
 
 
 @dataclass(eq=False)
@@ -218,9 +219,9 @@ def _execute_module_inprocess(path, payload, deadline):
         if inspect.isawaitable(result):
             result = asyncio.run(_await_result(result))
         return EntryResult("module", path.name, "success", ReturnedValue(True, "direct", result))
-    except Exception:
+    except Exception as error:
         logger.exception("Hook module %s execution failed", path)
-        return EntryResult("module", path.name, "error")
+        return EntryResult("module", path.name, "error", exception=error)
 
 
 def _import_module(path):
@@ -255,6 +256,7 @@ def _execute_script_subprocess(path, deadline):
     status = "error"
     primary = None
     code = None
+    exception = None
     try:
         process = subprocess.Popen([str(path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.DEVNULL, start_new_session=True)
@@ -263,10 +265,12 @@ def _execute_script_subprocess(path, deadline):
         status = "success" if code == 0 else "error"
         if code:
             logger.error("Hook script %s exited with code %s", path, code)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as error:
+        exception = error
         logger.error("Hook script %s exceeded aggregate deadline", path)
         status = "timeout"
-    except Exception:
+    except Exception as error:
+        exception = error
         logger.exception("Hook script %s execution failed", path)
     except BaseException as error:
         primary = error
@@ -281,7 +285,7 @@ def _execute_script_subprocess(path, deadline):
                     raise
                 logger.exception("Hook cleanup interrupted; preserving primary host interruption")
     returned = ReturnedValue(True, "direct", {"exit_code": code}) if code is not None and status == "success" else ReturnedValue()
-    return EntryResult("script", path.name, status, returned, exit_code=code)
+    return EntryResult("script", path.name, status, returned, exit_code=code, exception=exception)
 
 
 def _wait_owned(process, deadline):

@@ -97,12 +97,15 @@ class ReturnedValue:
 
 @dataclass(frozen=True, slots=True)
 class ResultDiagnostic:
-    """Hold bounded producer-redacted strings, not exception objects."""
+    """Hold safe strings and an optional caller-owned in-process exception."""
     category: str
     message: str
+    exception: Exception | None = field(default=None, repr=False, compare=False, hash=False)
 
     def __post_init__(self) -> None:
         """Enforce safe structural bounds without extracting or formatting errors."""
+        if self.exception is not None and not isinstance(self.exception, Exception):
+            raise ValidationError("invalid diagnostic exception")
         _text(self.category, "diagnostic category", limit=128)
         _text(self.message, "diagnostic message", nonempty=False, limit=1024)
 

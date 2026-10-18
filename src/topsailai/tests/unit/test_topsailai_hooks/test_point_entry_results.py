@@ -42,6 +42,7 @@ def test_opaque_normal_values(tmp_path, monkeypatch, value):
     handler, terminal = result.handlers
     assert handler.returned.present and handler.returned.representation == "direct"
     assert handler.returned.value is value
+    assert handler.error is None
     assert handler.cleanup.state == result.cleanup.state == "safe"
     assert handler.execution_id == terminal.execution_id == result.execution_id
     assert handler.plan_version == result.plan_version == 0
@@ -102,6 +103,7 @@ def test_script_group_and_exit_facts(tmp_path):
     assert [item.handler.name for item in terminal.children] == ["a", "z"]
     failed, success = terminal.children
     assert failed.status == "error" and not failed.returned.present
+    assert failed.error.exception is None and success.error is None
     assert success.returned.value == {"exit_code": 0}
     assert terminal.cleanup.state == result.cleanup.state == "safe"
     assert point_entry.pending_cleanup() == ()
@@ -177,10 +179,12 @@ def test_script_timeout_and_skipped_successor(tmp_path, monkeypatch):
         path.chmod(0o755)
     child = Mock(pid=123456, wait=Mock(return_value=0))
     monkeypatch.setattr(point_entry.subprocess, "Popen", Mock(return_value=child))
-    monkeypatch.setattr(point_entry, "_wait_owned", Mock(side_effect=point_entry.subprocess.TimeoutExpired("fixture", 0)))
+    original = point_entry.subprocess.TimeoutExpired("fixture", 0)
+    monkeypatch.setattr(point_entry, "_wait_owned", Mock(side_effect=original))
     monkeypatch.setattr(point_entry.os, "killpg", Mock())
     result = run(tmp_path, scripts=paths)
     first, second = result.handlers[-1].children
+    assert first.error.exception is original
     assert result.status == result.handlers[-1].status == first.status == "timeout"
     assert second.status == "not_run" and second.not_run_reason == "timeout"
     assert result.cleanup.state == "safe" and point_entry.pending_cleanup() == ()
@@ -194,3 +198,54 @@ def test_missing_main_and_import_error(tmp_path):
     result = run(tmp_path, [missing, broken])
     assert result.status == "completed_with_errors"
     assert all(item.status == "error" and not item.returned.present for item in result.handlers[:-1])
+    assert isinstance(result.handlers[0].error.exception, RuntimeError)
+    assert result.handlers[1].error.exception is None
+
+
+@pytest.mark.parametrize("stage", ["import", "main"])
+def test_original_exception_identity(tmp_path, monkeypatch, stage):
+    """The exact caught object and traceback survive projection without copying."""
+    path = tmp_path / "raises.py"
+    path.touch()
+    original = RuntimeError("private exception")
+    def fail(*args):
+        """Raise one stable exception from import or invocation."""
+        raise original
+    importer = fail if stage == "import" else lambda _: SimpleNamespace(main=fail)
+    monkeypatch.setattr(point_entry, "_import_module", importer)
+    handler = run(tmp_path, [path]).handlers[0]
+    assert handler.error.exception is original
+    assert original.__traceback__ is not None
+    assert "private exception" not in repr(handler.error)
+
+
+def test_script_launch_exception_identity(tmp_path, monkeypatch):
+    """A host launch error retains identity rather than inventing child errors."""
+    from unittest.mock import Mock
+    path = tmp_path / "launch"
+    path.write_text("#!/bin/sh\nexit 0\n")
+    path.chmod(0o755)
+    original = OSError("launch failed")
+    monkeypatch.setattr(point_entry.subprocess, "Popen", Mock(side_effect=original))
+    handler, = run(tmp_path, scripts=[path]).handlers[-1].children
+    assert handler.status == "error" and handler.error.exception is original
+    assert point_entry.pending_cleanup() == ()
+
+
+def test_diagnostic_does_not_observe_live_exception():
+    """Opaque errors do not participate in repr, comparison or hashing."""
+    from topsailai.hooks import ResultDiagnostic, ValidationError
+    class OpaqueError(Exception):
+        """Reject incidental formatting of an opaque exception."""
+        def __repr__(self):
+            """Detect unsafe observation by result machinery."""
+            raise AssertionError("must not format")
+    error = OpaqueError()
+    first = ResultDiagnostic("error", "safe", error)
+    second = ResultDiagnostic("error", "safe")
+    assert first.exception is error and second.exception is None
+    assert first == second and hash(first) == hash(second)
+    assert repr(first) == repr(second)
+    for invalid in (object(), KeyboardInterrupt(), SystemExit(), asyncio.CancelledError()):
+        with pytest.raises(ValidationError):
+            ResultDiagnostic("error", "safe", invalid)

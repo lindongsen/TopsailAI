@@ -37,8 +37,9 @@ def handler_result(execution_id, name, kind, filename, entry, timing):
         returned=entry.returned,
         error=ResultDiagnostic(status, f"Script exited with code {entry.exit_code}"
                                if entry.exit_code is not None else
-                               "Hook resource did not complete successfully")
-        if not unrun and status in ("error", "cleanup_failed") else None,
+                               "Hook resource did not complete successfully",
+                               exception=entry.exception)
+        if not unrun and (status in ("error", "cleanup_failed") or entry.exception is not None) else None,
         timing=timing,
         cleanup=ResultCleanup("pending" if pending else "safe"),
     )
