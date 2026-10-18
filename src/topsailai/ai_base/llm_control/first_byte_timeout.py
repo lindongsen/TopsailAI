@@ -50,6 +50,10 @@ class FirstByteTimeoutMixin:
         first_byte_timeout=180, raise_on_timeout=False, *, budget=None,
     ):
         """Create a response using one absolute creation/first-item budget."""
+        from .control_runtime import current_attempt_control
+        if current_attempt_control() is not None:
+            from .control_wait import controlled_create
+            return controlled_create(self, messages, tools, tool_choice, stream, first_byte_timeout)
         owner = current_response_owner() or AttemptResponseOwner()
         budget = resolve_first_byte_budget(
             first_byte_timeout, explicit=budget or current_first_byte_budget()
@@ -248,6 +252,11 @@ class FirstByteTimeoutMixin:
         create_timed_out=False,
     ):
         """Yield a stream while applying the shared budget to its first item."""
+        from .control_runtime import current_attempt_control
+        if current_attempt_control() is not None:
+            from .control_wait import controlled_stream
+            yield from controlled_stream(self, stream, first_byte_timeout)
+            return
         owner = current_response_owner()
         timed_stream = ClosingTimedIterator(stream, owner) if owner else stream
         timing_ticket = self._get_llm_request_timing_ticket()

@@ -429,7 +429,27 @@ class AgentChat(AgentChatBase):
                         },
                         agent_type=self.ai_agent.agent_type,
                     )
-                    answer = self.ai_agent.run(step_call, message)
+                    from topsailai.ai_base.llm_control.control_runtime import (
+                        ControlRoute, application_control_scope,
+                    )
+                    route = getattr(self, "_llm_control_route", None)
+                    if (route is None or route.agent is not self.ai_agent
+                            or route.interrupt_supported != bool(interactive_enabled)):
+                        previous = route
+                        if previous is not None:
+                            with previous.lock:
+                                previous.closed = True
+                                previous.state = "unavailable"
+                        route = ControlRoute(
+                            resolve_session_id_for_files(self.ctx_runtime_data),
+                            os.getpid(), self.ai_agent,
+                            interrupt_supported=interactive_enabled,
+                        )
+                        if previous is not None:
+                            route.generation = previous.generation + 1
+                    self._llm_control_route = route
+                    with application_control_scope(route):
+                        answer = self.ai_agent.run(step_call, message)
 
                     # task
                     if task:
@@ -449,6 +469,10 @@ class AgentChat(AgentChatBase):
                         task.executor = getattr(self.ai_agent, "agent_name", "") or ""
 
             except LLMBackToChatError as e:
+                from topsailai.ai_base.llm_control.control_runtime import LLMControlledInterruptError
+                from topsailai.ai_base.llm_control.control_recovery import acknowledge_control
+                if isinstance(e, LLMControlledInterruptError):
+                    acknowledge_control(e)
                 # Back abandons this User2Agent turn. It is not an LLM Retry:
                 # Retry stays inside LLMModel.chat and resends the same request.
                 back_to_chat_requested = True

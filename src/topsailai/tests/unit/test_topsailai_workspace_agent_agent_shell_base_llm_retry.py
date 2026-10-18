@@ -9,6 +9,7 @@ from topsailai.ai_base.exception import (
     LLMBackToChatError,
     LLMRetryExhaustedError,
 )
+from topsailai.ai_base.llm_control.control_runtime import LLMControlledInterruptError
 from topsailai.workspace.agent.agent_shell_base import AgentChat
 
 
@@ -100,9 +101,10 @@ def _run_patches(*, runtime_input=None, input_messages=()):
     )
 
 
-def test_back_discards_old_message_and_runs_only_fresh_non_empty_input(agent_chat):
+@pytest.mark.parametrize("signal_type", [LLMBackToChatError, LLMControlledInterruptError])
+def test_back_discards_old_message_and_runs_only_fresh_non_empty_input(agent_chat, signal_type):
     """Back must abandon the failed message before another Agent run starts."""
-    back_error = LLMBackToChatError(
+    back_error = signal_type(
         attempts=18,
         manual_cycle_count=0,
         last_error=RuntimeError("busy"),
@@ -387,3 +389,147 @@ def test_terminal_retry_exhaustion_marks_session_error(agent_chat):
     agent_chat.call_hooks_post_succ_run.assert_not_called()
     agent_chat.call_hook_for_final_answer.assert_not_called()
     agent_chat.ctx_runtime_data.add_session_message.assert_not_called()
+
+
+@pytest.mark.parametrize("operation", ["hard_interrupt", "force_retry"])
+@pytest.mark.parametrize("replace_owner", [False, True])
+def test_control_socket_http_returns_to_actual_chat_input(agent_chat, monkeypatch, tmp_path, operation, replace_owner):
+    """Drive actual turn abandonment over socket and HTTP without catching its signal."""
+    import os
+    import threading
+    from uuid import uuid4
+    from tests.mock.llm_mock_server import MockServerConfig, create_server
+    from tests.bdd.test_llm_first_byte_control import send
+    from topsailai.ai_base.llm_base import LLMModel
+    from topsailai.workspace.control_channel.handler import ControlHandlerRegistry
+    from topsailai.workspace.control_channel.protocol import ControlContext
+    from topsailai.workspace.control_channel.server import ControlServer
+    from topsailai.workspace.control_handlers import register_control_handlers
+
+    server = create_server(MockServerConfig(
+        first_chunk_delays=(15, 0),
+        stream_response_chunks=(("STALE",), ("FRESH",)),
+    ))
+    serving = threading.Thread(target=server.serve_forever, daemon=True)
+    serving.start()
+    base = f"http://127.0.0.1:{server.server_port}/v1"
+    for key, value in {
+        "OPENAI_API_BASE": base, "OPENAI_BASE_URL": base,
+        "OPENAI_API_KEY": "mock-only", "OPENAI_MODEL": "control-chat-mock",
+        "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT": "0",
+        "TOPSAILAI_EVENTS_ENABLED": "0",
+        "TOPSAILAI_LLM_RESPONSE_EVENTS_ENABLED": "0",
+    }.items():
+        monkeypatch.setenv(key, value)
+    model = LLMModel()
+    prior_route = None
+    if replace_owner:
+        from topsailai.ai_base.llm_control.control_runtime import ControlRoute
+        from topsailai.ai_base.llm_control.attempt_control import AttemptTarget
+        prior_route = ControlRoute("previous", os.getpid(), object(), interrupt_supported=True)
+        prior_route.generation = 7
+        prior_route.target = AttemptTarget(prior_route.binding_id, 7, uuid4().hex, uuid4().hex)
+        agent_chat._llm_control_route = prior_route
+    agent_chat.ai_agent.llm_model = model
+    outputs = []
+    model.send_content = outputs.append
+    registry = ControlHandlerRegistry()
+    register_control_handlers(registry)
+    root = next(parent for parent in tmp_path.parents if parent.name == ".tmp")
+    path = str(root / (uuid4().hex[:10] + ".sock"))
+    from topsailai.workspace.agent.agent_shell_base import resolve_session_id_for_files
+    channel = ControlServer(path, registry, ControlContext(
+        session_id=resolve_session_id_for_files(agent_chat.ctx_runtime_data), pid=os.getpid(), agent_chat=agent_chat,
+    ), timeout=0.1)
+    channel.start()
+    commands = []
+    failures = []
+
+    def operator():
+        """Wait for real first-fetch I/O before sending exact-target control."""
+        try:
+            assert server.lifecycle_capture.wait_for_request(1)
+            assert server.lifecycle_capture.wait_for_phase(1, "first_item")
+            view = send(path, {"operation": "status"})
+            assert view["status"] == "ok", view
+            if prior_route is not None:
+                from dataclasses import asdict
+                current = agent_chat._llm_control_route
+                assert current is not prior_route
+                assert prior_route.closed
+                assert current.generation == 8
+                assert current.binding_id != prior_route.binding_id
+                rejected = send(path, {
+                    "operation": operation, "target": asdict(prior_route.target),
+                })
+                assert rejected["status"] == "error", rejected
+                assert view["result"]["target"]["binding_id"] == current.binding_id
+            commands.append(send(path, {
+                "operation": operation, "target": view["result"]["target"],
+            }))
+            assert commands[-1]["status"] == "ok", commands[-1]
+        except BaseException as error:
+            failures.append(error)
+            server.lifecycle_capture.request_handle(1).release_delay()
+
+    operator_thread = threading.Thread(target=operator, daemon=True)
+    messages = []
+
+    def run_agent(step_call, message):
+        """Use the production LLM retry/call path inside actual AgentChat routing."""
+        messages.append(message)
+        return model.chat([{"role": "user", "content": message}], for_stream=True, for_raw=True)
+
+    agent_chat.ai_agent.run.side_effect = run_agent
+    patches = _run_patches(runtime_input=MagicMock(), input_messages=("fresh request",))
+    try:
+        operator_thread.start()
+        with (
+            patches[0], patches[1], patches[2], patches[3], patches[4],
+            patches[5], patches[6], patches[7],
+            patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call", return_value=MagicMock()),
+        ):
+            result = agent_chat._run(message="old request", times=1, need_interactive=True)
+            assert result == "FRESH", (commands, failures, agent_chat._llm_control_route.view())
+        assert failures == []
+        assert commands[0]["result"]["state"] == "queued"
+        assert messages == (["old request", "fresh request"] if operation == "hard_interrupt" else ["old request"])
+        assert agent_chat.call_hooks_post_fail_run.call_count == (operation == "hard_interrupt")
+        agent_chat.call_hooks_post_succ_run.assert_called_once()
+        agent_chat.call_hook_for_final_answer.assert_called_once()
+        agent_chat.ctx_runtime_data.add_session_message.assert_not_called()
+        agent_chat.ctx_runtime_data.del_session_messages.assert_not_called()
+        records = server.request_body_capture.state()["request_bodies"]
+        assert len(records) == 2
+        assert records[0]["body"]["messages"][-1]["content"] == "old request"
+        assert records[1]["body"]["messages"][-1]["content"] == ("fresh request" if operation == "hard_interrupt" else "old request")
+        if operation == "force_retry":
+            assert records[0]["body"] == records[1]["body"]
+        assert not any("STALE" in item for item in outputs)
+    finally:
+        for number in (1, 2):
+            try:
+                server.lifecycle_capture.request_handle(number).release_delay()
+            except KeyError:
+                pass
+        operator_thread.join(5)
+        channel.stop()
+        server.shutdown()
+        server.server_close()
+        serving.join(5)
+        route = getattr(agent_chat, "_llm_control_route", None)
+        if route is not None:
+            from topsailai.ai_base.llm_control.control_recovery import RECOVERY_POOL
+            with RECOVERY_POOL.lock:
+                leases = tuple(RECOVERY_POOL.leases.values())
+            for lease in leases:
+                if lease.target.binding_id != route.binding_id or lease.owner is None:
+                    continue
+                owner = lease.owner
+                for worker in (owner.create_thread, owner.fetch_thread, owner.cleanup_thread):
+                    if worker is not None:
+                        worker.join(5)
+            route.reconcile()
+        model.release_all_llm_models()
+    assert not operator_thread.is_alive()
+    assert not serving.is_alive()

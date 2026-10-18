@@ -8,6 +8,7 @@ from .first_byte_deadline import (
     FirstByteBudget, current_first_byte_budget, first_byte_budget_scope,
 )
 from .response_ownership import response_ownership_scope
+from .control_runtime import attempt_control_scope, current_attempt_control
 from .request_tracking import iter_stream_for_request_timing
 
 
@@ -29,7 +30,7 @@ class LLMCallMixin:
         token_stat_ticket = self.tokenStat.add_msgs(messages)
         timeout, raise_on_timeout = self._get_first_byte_timeout_config()
         budget = FirstByteBudget.create(timeout) if timeout and timeout > 0 else None
-        with first_byte_budget_scope(budget):
+        with first_byte_budget_scope(budget), attempt_control_scope(budget, raise_on_timeout):
             return self._call_llm_model_owned_body(
                 messages, tools, tool_choice,
                 first_byte_timeout=timeout, raise_on_timeout=raise_on_timeout,
@@ -69,7 +70,7 @@ class LLMCallMixin:
         token_stat_ticket = self.tokenStat.add_msgs(messages)
         timeout, raise_on_timeout = self._get_first_byte_timeout_config()
         budget = FirstByteBudget.create(timeout) if timeout and timeout > 0 else None
-        with first_byte_budget_scope(budget):
+        with first_byte_budget_scope(budget), attempt_control_scope(budget, raise_on_timeout):
             return self._call_llm_model_by_stream_owned_body(
                 messages, tools, tool_choice,
                 first_byte_timeout=timeout, raise_on_timeout=raise_on_timeout,
@@ -98,7 +99,8 @@ class LLMCallMixin:
         sampled_chunks = [] if sample_limit > 0 else None
 
         timing_ticket = self._get_llm_request_timing_ticket()
-        current_first_operation = current_first_byte_budget() is not None
+        current_first_operation = (current_first_byte_budget() is not None
+                                   or current_attempt_control() is not None)
         guarded_response = self.iter_stream_with_first_byte_timeout(
             response,
             first_byte_timeout,

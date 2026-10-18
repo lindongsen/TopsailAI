@@ -235,3 +235,11 @@ def invoke_hook_point(name, **payload):
 
 
 __all__ += ["initialize_hook_points", "invoke_hook_point"]
+
+
+def hook__llm__before__first_byte_wait_tick(**payload):
+    """Forward structured wait observations without interpreting Module returns."""
+    return invoke_hook_point("hook__llm__before__first_byte_wait_tick", **payload)
+
+
+__all__ += ["hook__llm__before__first_byte_wait_tick"]

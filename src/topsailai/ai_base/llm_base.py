@@ -92,6 +92,11 @@ from .llm_control.request_tracking import (
 from .llm_control.response_events import LLMResponseEventMixin
 
 
+from topsailai.ai_base.llm_control.control_runtime import (
+    invocation_control, set_retry_available, LLMRequestedRetryError,
+)
+
+
 class _LazyProviderBackend:
     """Non-data descriptor resolving the provider backend on first access.
 
@@ -550,6 +555,7 @@ class LLMModel(
             tool_choice=tool_choice,
         )
 
+    @invocation_control
     def chat(
             self, messages,
             for_raw=False,
@@ -609,6 +615,7 @@ class LLMModel(
         loop_attempts = max_total_attempts if prompt_allowed else attempts_per_cycle
         for total_attempt in range(1, loop_attempts + 1):
             attempt_in_cycle = (total_attempt - 1) % attempts_per_cycle + 1
+            set_retry_available(attempt_in_cycle < attempts_per_cycle)
             i = attempt_in_cycle - 1
             if attempt_in_cycle == 1:
                 err_count_map = {}
@@ -699,6 +706,12 @@ class LLMModel(
                     messages,
                     for_response=for_response,
                 )
+            except LLMRequestedRetryError as e:
+                from .llm_control.control_recovery import acknowledge_control
+                acknowledge_control(e)
+                last_error = e
+                retry_reason = "requested_retry"
+                continue
             except KeyboardInterrupt:
                 if not prompt_allowed:
                     raise
