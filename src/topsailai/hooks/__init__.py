@@ -221,6 +221,7 @@ def invoke_hook_point(name, **payload):
     """Resolve bundled and configured resources without application assembly."""
     import logging
     from topsailai.hooks.point_entry import execute_point
+    from topsailai.hooks.point_entry_results import unavailable_result
 
     try:
         with _point_configuration_lock:
@@ -230,7 +231,7 @@ def invoke_hook_point(name, **payload):
         return execute_point(name, points, payload=payload)
     except Exception:
         logging.getLogger(__name__).exception("Hook Point %s initialization failed", name)
-        return ()
+        return unavailable_result(name, "initialization_failed")
 
 
 __all__ += ["initialize_hook_points", "invoke_hook_point"]

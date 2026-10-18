@@ -499,8 +499,12 @@ def test_business_wiring_reaches_real_workers(setup_runtime, monkeypatch, layer,
     assert [item[0] for item in reports] == [
         f'hook__context__before__summary_generate_{layer}', f'hook__context__{terminal}_{layer}']
     assert len({item[1]['hook_context']['operation_id'] for item in reports}) == 1
-    assert all([(result.kind, result.name, result.status) for result in item[2]] ==
+    assert all([(result.handler.kind, result.handler.name, result.status)
+                for result in item[2].handlers[:-1]] ==
                [('module', 'observer.py', 'success')] for item in reports)
+    assert all(item[2].status == 'success' and
+               item[2].handlers[-1].handler.name == 'hook_script' and
+               item[2].handlers[-1].children == () for item in reports)
     assert executor.calls == []
     assert current_summary_operation() is None
     assert pending_cleanup() == ()

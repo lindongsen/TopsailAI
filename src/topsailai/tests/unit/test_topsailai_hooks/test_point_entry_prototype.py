@@ -27,6 +27,11 @@ def configuration(monkeypatch):
     monkeypatch.setattr(point_entry, "_cleanup_records", {})
 
 
+def entries(result):
+    """Flatten shared envelopes for existing execution-behavior assertions."""
+    return result.handlers[:-1] + result.handlers[-1].children
+
+
 def module(path, output, text, extra=""):
     """Create a real child Module writing one ordered execution marker."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -58,7 +63,7 @@ def test_internal_external_order(tmp_path):
     points = decode_points({NAME: {"modules": str(external), "scripts": str(scripts)}})
     result = execute_point(NAME, points, payload={}, internal_root=root)
     assert output.read_text() == "abzAB"
-    assert [item.status for item in result] == ["success"] * 5
+    assert [item.status for item in entries(result)] == ["success"] * 5
 
 
 def test_env_bootstrap_real_input(tmp_path, monkeypatch):
@@ -86,7 +91,7 @@ def test_file_lists_failure_and_bad_executable(tmp_path):
     good = script(tmp_path / "z", output, "ok")
     hooks.initialize_hook_points({NAME: {"scripts": [str(good), str(bad)]}})
     result = hooks.invoke_hook_point(NAME)
-    assert [item.status for item in result] == ["error", "success"]
+    assert [item.status for item in entries(result)] == ["error", "success"]
     assert output.read_text() == "ok"
 
 
@@ -96,7 +101,7 @@ def test_duplicate_rejects_whole_point(tmp_path):
     left = module(tmp_path / "a" / "same.py", output, "a")
     right = module(tmp_path / "b" / "same.py", output, "b")
     hooks.initialize_hook_points({NAME: {"modules": [str(left), str(right)]}})
-    assert hooks.invoke_hook_point(NAME) == ()
+    assert hooks.invoke_hook_point(NAME).status == "unavailable"
     assert not output.exists()
 
 
@@ -109,7 +114,7 @@ def test_expired_deadline_skips_successor_after_inprocess_module(tmp_path):
     later = script(tmp_path / "z", marker, "NO")
     points = decode_points({NAME: {"modules": str(slow), "scripts": str(later)}})
     result = execute_point(NAME, points, payload={}, timeout_seconds=0.5)
-    assert [item.status for item in result] == ["success", "timeout"]
+    assert [item.status for item in entries(result)] == ["success", "not_run"]
     assert not marker.exists()
     assert int(output.read_text()) == os.getpid()
 
@@ -125,21 +130,21 @@ def test_invalid_configuration(config):
 
 def test_no_resources_and_bad_environment(monkeypatch, caplog):
     """Unconfigured points are no-ops and malformed environment preserves flow."""
-    assert hooks.invoke_hook_point(NAME) == ()
+    assert hooks.invoke_hook_point(NAME).status == "success"
     monkeypatch.setattr(hooks, "_point_configuration", None)
     monkeypatch.setenv("TOPSAILAI_HOOK_POINTS", "bad json")
-    assert hooks.invoke_hook_point(NAME) == ()
+    assert hooks.invoke_hook_point(NAME).status == "unavailable"
     assert "initialization failed" in caplog.text
 
 
 def test_missing_resource_and_async_module(tmp_path):
     """Report missing selection and execute async main without host event loops."""
     hooks.initialize_hook_points({NAME: {"scripts": str(tmp_path / "absent")}})
-    assert hooks.invoke_hook_point(NAME) == ()
+    assert hooks.invoke_hook_point(NAME).status == "unavailable"
     path = tmp_path / "async.py"
     path.write_text("async def main():\n    return False\n")
     hooks.initialize_hook_points({NAME: {"modules": str(path)}})
-    assert hooks.invoke_hook_point(NAME)[0].status == "success"
+    assert hooks.invoke_hook_point(NAME).handlers[0].status == "success"
 
 
 def test_module_failure_and_skipped_directory(tmp_path):
@@ -151,7 +156,7 @@ def test_module_failure_and_skipped_directory(tmp_path):
     module(tmp_path / "nested" / "no.py", output, "NO")
     (tmp_path / "__init__.py").write_text("raise RuntimeError('not a member')")
     hooks.initialize_hook_points({NAME: {"modules": str(tmp_path)}})
-    assert [r.status for r in hooks.invoke_hook_point(NAME)] == ["error", "success"]
+    assert [r.status for r in entries(hooks.invoke_hook_point(NAME))] == ["error", "success"]
     assert output.read_text() == "ok"
 
 
@@ -189,7 +194,7 @@ def test_cleanup_failure_stops_successors(tmp_path, monkeypatch):
 
     monkeypatch.setattr(point_entry, "_cleanup", settled_but_failed)
     points = decode_points({NAME: {"scripts": [str(later), str(first)]}})
-    assert [r.status for r in execute_point(NAME, points, payload={})] == ["cleanup_failed"]
+    assert [r.status for r in entries(execute_point(NAME, points, payload={}))] == ["error", "not_run"]
     assert output.read_text() == "a"
 
 
@@ -215,8 +220,8 @@ def test_invalid_name_platform_and_budget(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         execute_point("bad", (), payload={})
     monkeypatch.setattr(point_entry, "os", SimpleNamespace(name="nt"))
-    assert execute_point(NAME, (), payload={}) == ()
-    assert point_entry._execute("script", tmp_path / "unused", {}, 0) == "timeout"
+    assert execute_point(NAME, (), payload={}).status == "unavailable"
+    assert point_entry._execute("script", tmp_path / "unused", {}, 0).status == "timeout"
 
 
 def test_configuration_limits(tmp_path):
@@ -228,7 +233,7 @@ def test_configuration_limits(tmp_path):
     for index in range(129):
         (tmp_path / str(index)).write_text("")
     hooks.initialize_hook_points({NAME: {"scripts": str(tmp_path)}})
-    assert hooks.invoke_hook_point(NAME) == ()
+    assert hooks.invoke_hook_point(NAME).status == "unavailable"
 
 
 @pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit, __import__("asyncio").CancelledError])
@@ -265,12 +270,12 @@ def test_group_failure_reaps_retains_and_blocks(tmp_path, monkeypatch):
     monkeypatch.setattr(point_entry.subprocess, "Popen", launch)
     monkeypatch.setattr(point_entry, "_wait_owned", Mock(return_value=0))
     monkeypatch.setattr(point_entry.os, "killpg", kill)
-    assert point_entry._execute("script", tmp_path / "fixture", {}, float("inf")) == "cleanup_failed"
+    assert point_entry._execute("script", tmp_path / "fixture", {}, float("inf")).status == "cleanup_failed"
     child.wait.assert_called_once_with(timeout=1)
     record, = point_entry.pending_cleanup()
     assert record.process is child and record.child_reaped
     assert not record.group_settled and not record.group_retry_safe
-    assert point_entry._execute("script", tmp_path / "next", {}, float("inf")) == "cleanup_failed"
+    assert point_entry._execute("script", tmp_path / "next", {}, float("inf")).status == "cleanup_failed"
     assert launch.call_count == 1
     assert point_entry.retry_cleanup(record) is False
     assert kill.call_count == 1
@@ -314,7 +319,7 @@ def test_compiled_extension_module_executes(tmp_path):
     assert extension.name.endswith(importlib.machinery.EXTENSION_SUFFIXES[0])
     points = decode_points({NAME: {"modules": str(external)}})
     result = execute_point(NAME, points, payload={}, internal_root=tmp_path / "empty")
-    assert [(item.kind, item.name, item.status) for item in result] == [
+    assert [(item.handler.kind, item.handler.name, item.status) for item in entries(result)] == [
         ("module", extension.name, "success")]
 
 
@@ -327,7 +332,7 @@ def test_duplicate_logical_name_rejects_compiled_and_source(tmp_path):
     compile_extension(external, "same")
     points = decode_points({NAME: {"modules": str(external)}})
     result = execute_point(NAME, points, payload={}, internal_root=tmp_path / "empty")
-    assert result == ()
+    assert result.status == "unavailable"
     assert not (tmp_path / "trace").exists()
 
 
@@ -340,7 +345,7 @@ def test_source_module_and_init_exclusion_unchanged(tmp_path):
     (external / "__init__.py").write_text("raise RuntimeError('not a member')")
     points = decode_points({NAME: {"modules": str(external)}})
     result = execute_point(NAME, points, payload={}, internal_root=tmp_path / "empty")
-    assert [(item.kind, item.name, item.status) for item in result] == [
+    assert [(item.handler.kind, item.handler.name, item.status) for item in entries(result)] == [
         ("module", "plain.py", "success")]
     assert output.read_text() == "ok"
 
@@ -365,7 +370,7 @@ def test_symlink_child_is_admitted_and_escape_is_not_rejected(tmp_path):
     assert _eligible(link_escape, "module") is True
     points = decode_points({NAME: {"modules": str(escape)}})
     result = execute_point(NAME, points, payload={}, internal_root=tmp_path / "empty")
-    assert [(item.kind, item.name) for item in result] == [("module", "link_escape.py")]
+    assert [(item.handler.kind, item.handler.name) for item in entries(result)] == [("module", "link_escape.py")]
 
 
 def test_symlink_to_directory_is_skipped(tmp_path):
@@ -386,7 +391,7 @@ def test_broken_symlink_reports_discovery_failure(tmp_path, caplog):
     parent.mkdir()
     (parent / "dangling.py").symlink_to(parent / "missing.py")
     points = decode_points({NAME: {"modules": str(parent)}})
-    assert execute_point(NAME, points, payload={}, internal_root=tmp_path / "empty") == ()
+    assert execute_point(NAME, points, payload={}, internal_root=tmp_path / "empty").status == "unavailable"
     assert "discovery failed" in caplog.text
 
 
@@ -400,5 +405,5 @@ def test_module_ordering_uses_filename_not_logical_name(tmp_path):
     (folder / "a.so").write_bytes(b"\x7fELF")
     points = decode_points({NAME: {"modules": str(folder)}})
     result = execute_point(NAME, points, payload={}, internal_root=tmp_path / "empty")
-    assert [item.name for item in result] == ["a-b.py", "a.so"]
-    assert [_logical_name(Path(item.name), "module") for item in result] == ["a-b", "a"]
+    assert [item.handler.name for item in entries(result)] == ["a-b.py", "a.so"]
+    assert [_logical_name(Path(item.handler.name), "module") for item in entries(result)] == ["a-b", "a"]

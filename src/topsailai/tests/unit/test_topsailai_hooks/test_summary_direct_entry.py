@@ -115,7 +115,10 @@ def test_real_bundled_observer(point):
     """Empty explicit configuration executes each actual bundled observer in a child."""
     hooks.initialize_hook_points({})
     _, call = entry(point)
-    assert call(**arguments(point)) == (EntryResult("module", "observer.py", "success"),)
+    result = call(**arguments(point))
+    assert result.status == "success"
+    assert result.handlers[0].handler.name == "observer.py"
+    assert result.handlers[-1].handler.kind == "default_script_hook"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Generic worker cleanup requires POSIX")
@@ -134,10 +137,11 @@ def test_external_metadata_and_direct_script(point, tmp_path):
     script.chmod(0o755)
     hooks.initialize_hook_points({point.name: {"modules": str(module), "scripts": str(script)}})
     package, call = entry(point)
-    assert call(**arguments(point)) == (
-        EntryResult("module", "a_external.py", "success"),
-        EntryResult("module", "observer.py", "success"),
-        EntryResult("script", "z_script", "success"))
+    result = call(**arguments(point))
+    assert result.status == "success"
+    assert [item.handler.name for item in result.handlers] == [
+        "a_external.py", "observer.py", "hook_script"]
+    assert result.handlers[-1].children[0].handler.name == "z_script"
     data, marker = trace.read_text().splitlines()
     context = json.loads(data)
     assert set(context) == {"event_name", "event_version", "operation_id", "payload"}

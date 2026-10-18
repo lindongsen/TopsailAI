@@ -1,6 +1,5 @@
 """Exercise live point_entry Module admission in an isolated child. Author: DawsonLin."""
 
-from dataclasses import asdict
 import json
 from pathlib import Path
 import sys
@@ -16,8 +15,12 @@ def run():
     points = point_entry.decode_points(request['config'])
     results = point_entry.execute_point(request['name'], points, payload={},
                                         internal_root=Path(request['internal_root']))
+    resources = (results.handlers[:-1] + results.handlers[-1].children
+                 if results.handlers else ())
     report = {
-        'results': [asdict(item) for item in results],
+        'results': [{'kind': item.handler.kind, 'name': item.handler.name,
+                     'status': item.status} for item in resources],
+        'status': results.status,
         'pending': len(point_entry.pending_cleanup()),
         'paths': {'package': topsailai.__file__, 'point_entry': point_entry.__file__},
     }

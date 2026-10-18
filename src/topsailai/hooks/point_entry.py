@@ -6,7 +6,7 @@ import asyncio
 import importlib.machinery
 import importlib.util
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import os
 from pathlib import Path
@@ -16,6 +16,12 @@ import subprocess
 import sys
 import time
 from threading import RLock
+
+from topsailai.hooks.point_entry_results import (
+    elapsed, handler_result, point_result, unavailable_result,
+)
+from topsailai.hooks.result_contracts import ReturnedValue
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 _NAME = re.compile(r"hook__[a-z][a-z0-9]*__(?:before|after|error)__[a-z][a-z0-9_]*\Z")
@@ -37,6 +43,9 @@ class EntryResult:
     kind: str
     name: str
     status: str
+    returned: ReturnedValue = field(default_factory=ReturnedValue)
+    started: bool = True
+    exit_code: int | None = None
 
 
 @dataclass(eq=False)
@@ -145,10 +154,12 @@ def execute_point(name, points, *, payload, timeout_seconds=5.0, internal_root=N
     """Execute one name-ordered point, isolating ordinary resource failures."""
     if not _NAME.fullmatch(name):
         raise ValueError("Invalid Hook Point name")
+    start = time.monotonic()
+    execution_id = uuid4().hex
     if os.name != "posix":
         logger.error("Hook Point %s unavailable: prototype requires POSIX cleanup", name)
-        return ()
-    deadline = time.monotonic() + timeout_seconds
+        return unavailable_result(name, "unsupported_platform", start=start, execution_id=execution_id)
+    deadline = start + timeout_seconds
     _, domain, phase, action = name.split("__")
     base = internal_root or Path(__file__).parent / "points"
     folder = base / domain / f"{phase}_{action}"
@@ -158,15 +169,23 @@ def execute_point(name, points, *, payload, timeout_seconds=5.0, internal_root=N
         scripts = _discover(selected.scripts, folder / "scripts", "script")
     except Exception:
         logger.exception("Hook Point %s discovery failed", name)
-        return ()
-    results = []
+        return unavailable_result(name, "discovery_failed", start=start, execution_id=execution_id)
+    results = {"module": [], "script": []}
+    stop_reason = None
+    script_start = None
     for kind, paths in (("module", modules), ("script", scripts)):
+        if kind == "script" and stop_reason is None:
+            script_start = time.monotonic()
         for path in paths:
-            status = _execute(kind, path, payload, deadline)
-            results.append(EntryResult(kind, path.name, status))
-            if status in ("timeout", "cleanup_failed"):
-                return tuple(results)
-    return tuple(results)
+            before = time.monotonic()
+            entry = (EntryResult(kind, path.name, stop_reason, started=False) if stop_reason else
+                     _execute(kind, path, payload, deadline))
+            results[kind].append(handler_result(
+                execution_id, name, kind, path.name, entry, elapsed(before)))
+            if entry.status in ("timeout", "cleanup_failed"):
+                stop_reason = entry.status
+    return point_result(execution_id, name, results["module"], results["script"],
+                        start, script_start, stop_reason)
 
 
 def _execute(kind, path, payload, deadline):
@@ -174,7 +193,7 @@ def _execute(kind, path, payload, deadline):
     with _execution_lock:
         if _cleanup_records:
             logger.error("Hook execution blocked by %s pending cleanup records", len(_cleanup_records))
-            return "cleanup_failed"
+            return EntryResult(kind, path.name, "cleanup_failed", started=False)
         if kind == "module":
             return _execute_module_inprocess(path, payload, deadline)
         return _execute_script_subprocess(path, deadline)
@@ -188,20 +207,20 @@ def _execute_module_inprocess(path, payload, deadline):
     failures become a structured status, while host control flow propagates.
     """
     if time.monotonic() >= deadline:
-        return "timeout"
+        return EntryResult("module", path.name, "timeout", started=False)
     try:
         module = _import_module(path)
         entry = getattr(module, "main", None)
         if not callable(entry):
             logger.error("Hook module %s has no callable main entry", path)
-            return "error"
+            return EntryResult("module", path.name, "error")
         result = entry(**payload)
         if inspect.isawaitable(result):
-            asyncio.run(_await_result(result))
-        return "success"
+            result = asyncio.run(_await_result(result))
+        return EntryResult("module", path.name, "success", ReturnedValue(True, "direct", result))
     except Exception:
         logger.exception("Hook module %s execution failed", path)
-        return "error"
+        return EntryResult("module", path.name, "error")
 
 
 def _import_module(path):
@@ -231,10 +250,11 @@ async def _await_result(result):
 def _execute_script_subprocess(path, deadline):
     """Run one isolated Script child with bounded waiting and no shell invocation."""
     if time.monotonic() >= deadline:
-        return "timeout"
+        return EntryResult("script", path.name, "timeout", started=False)
     process = None
     status = "error"
     primary = None
+    code = None
     try:
         process = subprocess.Popen([str(path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.DEVNULL, start_new_session=True)
@@ -260,7 +280,8 @@ def _execute_script_subprocess(path, deadline):
                 if primary is None:
                     raise
                 logger.exception("Hook cleanup interrupted; preserving primary host interruption")
-    return status
+    returned = ReturnedValue(True, "direct", {"exit_code": code}) if code is not None and status == "success" else ReturnedValue()
+    return EntryResult("script", path.name, status, returned, exit_code=code)
 
 
 def _wait_owned(process, deadline):
