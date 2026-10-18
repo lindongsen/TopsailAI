@@ -12,6 +12,7 @@ Feature: Business callers receive original Hook Point values and exceptions
     Given result Modules configured for <case> execution
     When the caller invokes the named input Hook Point
     Then the original exception is accessible and the next Module still succeeds
+    And the failure is logged with its exception and invocation identity
     Examples:
       | case   |
       | raises |

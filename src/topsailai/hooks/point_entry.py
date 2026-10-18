@@ -181,12 +181,27 @@ def execute_point(name, points, *, payload, timeout_seconds=5.0, internal_root=N
             before = time.monotonic()
             entry = (EntryResult(kind, path.name, stop_reason, started=False) if stop_reason else
                      _execute(kind, path, payload, deadline))
+            if entry.status != "success":
+                _log_entry_failure(execution_id, name, entry)
             results[kind].append(handler_result(
                 execution_id, name, kind, path.name, entry, elapsed(before)))
             if entry.status in ("timeout", "cleanup_failed"):
                 stop_reason = entry.status
     return point_result(execution_id, name, results["module"], results["script"],
                         start, script_start, stop_reason)
+
+
+
+def _log_entry_failure(execution_id, point_name, entry):
+    """Correlate failures without logging payloads, values or traceback locals."""
+    error = entry.exception
+    trace = (type(error), error, error.__traceback__) if error is not None else None
+    logger.error(
+        "Hook resource failed point=%s execution_id=%s handler=%s:%s "
+        "status=%s started=%s exit_code=%s",
+        point_name, execution_id, entry.kind, entry.name,
+        entry.status, entry.started, entry.exit_code, exc_info=trace,
+    )
 
 
 def _execute(kind, path, payload, deadline):

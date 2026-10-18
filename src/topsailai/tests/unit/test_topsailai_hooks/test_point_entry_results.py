@@ -249,3 +249,61 @@ def test_diagnostic_does_not_observe_live_exception():
     for invalid in (object(), KeyboardInterrupt(), SystemExit(), asyncio.CancelledError()):
         with pytest.raises(ValidationError):
             ResultDiagnostic("error", "safe", invalid)
+
+
+@pytest.mark.parametrize("stage", ["import", "sync", "async", "launch", "wait", "timeout", "exit", "missing", "normal"])
+def test_correlated_failure_logging(tmp_path, monkeypatch, caplog, stage):
+    """Every failed resource exposes attributable diagnostics without payload logging."""
+    import logging
+    from unittest.mock import Mock
+
+    caplog.set_level(logging.ERROR, logger=point_entry.__name__)
+    script = stage in {"launch", "wait", "timeout", "exit"}
+    path = tmp_path / ("resource" if script else "resource.py")
+    path.write_text("#!/bin/sh\nexit 7\n" if script else "value = 1\n")
+    path.chmod(0o755)
+    original = RuntimeError("diagnostic fixture")
+    if stage == "timeout":
+        original = point_entry.subprocess.TimeoutExpired("fixture", 0)
+
+    def fail(*args):
+        """Raise the stable diagnostic object without copying."""
+        raise original
+
+    async def async_fail():
+        """Exercise the actual awaited exception path."""
+        raise original
+
+    if stage in {"import", "sync", "async", "normal"}:
+        main = async_fail if stage == "async" else fail
+        if stage == "normal":
+            main = lambda: "normal value"
+        importer = fail if stage == "import" else lambda _: SimpleNamespace(main=main)
+        monkeypatch.setattr(point_entry, "_import_module", importer)
+    if stage == "launch":
+        monkeypatch.setattr(point_entry.subprocess, "Popen", Mock(side_effect=original))
+    if stage in {"wait", "timeout"}:
+        child = Mock(pid=123456, wait=Mock(return_value=0))
+        monkeypatch.setattr(point_entry.subprocess, "Popen", Mock(return_value=child))
+        monkeypatch.setattr(point_entry, "_wait_owned", fail)
+        monkeypatch.setattr(point_entry.os, "killpg", Mock())
+    result = run(tmp_path, scripts=[path]) if script else run(tmp_path, [path])
+    records = [record for record in caplog.records if record.msg.startswith("Hook resource failed")]
+    if stage == "normal":
+        assert records == []
+        return
+    record, = records
+    assert record.levelno == logging.ERROR and record.created > 0
+    message = record.getMessage()
+    assert NAME in message and result.execution_id in message
+    assert f"handler={'script' if script else 'module'}:{path.name}" in message
+    if stage in {"exit", "missing"}:
+        assert record.exc_info is None
+        assert "status=error" in message
+        assert "exit_code=7" in message if stage == "exit" else "no callable main" in caplog.text
+        return
+    assert record.exc_info[0] is type(original)
+    assert record.exc_info[1] is original
+    assert record.exc_info[2] is original.__traceback__
+    assert type(original).__name__ in caplog.text and str(original) in caplog.text
+    assert "Traceback (most recent call last)" in caplog.text

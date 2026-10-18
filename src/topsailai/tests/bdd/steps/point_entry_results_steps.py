@@ -99,3 +99,17 @@ def interrupted(result_case):
     assert result_case.caught is result_case.shared.error
     assert result_case.result is None
     assert result_case.shared.executed == []
+
+
+@then("the failure is logged with its exception and invocation identity")
+def failure_logged(result_case, caplog):
+    """Prove the real named entry logs the same exception delivered to the caller."""
+    result = result_case.result
+    records = [record for record in caplog.records if record.msg.startswith("Hook resource failed")]
+    record, = records
+    assert record.levelname == "ERROR" and record.created > 0
+    assert NAME in record.getMessage() and result.execution_id in record.getMessage()
+    assert "handler=module:a_result.py" in record.getMessage()
+    assert record.exc_info[1] is result_case.shared.error
+    assert "RuntimeError: original Module error" in caplog.text
+    assert "Traceback (most recent call last)" in caplog.text
