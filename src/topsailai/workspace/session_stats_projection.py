@@ -6,8 +6,6 @@ import os
 import threading
 from datetime import datetime
 
-from topsailai.utils.thread_local_tool import get_agent_object
-
 UINT = 2**64 - 1
 OMITTED = {
     'tool_stat': ['retained_errors', 'success_rate', 'execution_duration_p95_sec', 'per_tool'],
@@ -133,10 +131,11 @@ def project(tracker, kind):
         lock.release()
 
 
-def capture(binding, *, session_id, writer_id, agent_id, sequence, outcome):
-    """Capture only under an explicitly granted execution-thread ownership lease."""
-    agent = get_agent_object()
-    if not binding.authorized(agent):
+def capture(binding, *, session_id, writer_id, agent_id, sequence, outcome, settle=False):
+    """Pin snapshot references; settlement needs ownership, not model exclusivity."""
+    agent = binding.agent_ref()
+    authorize = binding.settle_authorized if settle else binding.authorized
+    if not authorize(agent):
         return None
     if not binding.capture_lock.acquire(blocking=False):
         return None

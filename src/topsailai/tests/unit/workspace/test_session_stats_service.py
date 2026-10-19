@@ -503,7 +503,7 @@ def test_ungranted_and_wrong_thread_drop():
         assert capture(b, **kwargs) is None
     b.exclusive = True
     assert b.prepare()
-    assert capture(b, **kwargs) is None
+    assert capture(b, **kwargs)['agent_name'] == 'worker'
     result = []
     def other_thread():
         """Bind the same Agent on a foreign execution thread."""

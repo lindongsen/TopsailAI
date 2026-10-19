@@ -90,14 +90,20 @@ class Binding:
                 and agent is self.agent_ref()
                 and threading.get_ident() == self.owner_thread)
 
-    def prepare(self):
-        """Register a model outside checkpoints after an owner-thread switch.
+    def settle_authorized(self, agent):
+        """Require Agent/thread ownership without promising model exclusivity."""
+        return (not self.closed and agent is not None
+                and agent is self.agent_ref()
+                and threading.get_ident() == self.owner_thread)
 
-        The caller guarantees no concurrent identity/reference mutation, including
-        shared-model renames. This is an opt-in contract, not a runtime guarantee.
+    def prepare(self):
+        """Register a pinned model reference outside the settlement checkpoint.
+
+        Concurrent replacement or rename does not alter the pinned object identity.
+        This does not grant the strict model-exclusivity authorization.
         """
         agent = self.agent_ref()
-        if not self.authorized(agent):
+        if not self.settle_authorized(agent):
             return False
         model = agent.runtime.llm_model
         self.models[:] = [(ref, key) for ref, key in self.models if ref() is not None]
@@ -134,7 +140,8 @@ class Binding:
             return False
         try:
             record = capture(self, session_id=self.session, writer_id=service.writer_id,
-                             agent_id=self.agent_id, sequence=sequence, outcome=outcome)
+                             agent_id=self.agent_id, sequence=sequence, outcome=outcome,
+                             settle=True)
             line = encode(record)
         except Exception:
             return False
