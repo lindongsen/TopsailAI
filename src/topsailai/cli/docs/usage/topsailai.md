@@ -423,7 +423,7 @@ Interactive runtime and session scopes accept these exact no-argument commands:
 | Command | Current-request operation |
 |---------|---------------------------|
 | `/control.fbt.hard_interrupt` | Abandon the current turn |
-| `/control.fbt.force__retry` | Retry within the existing retry budget and backoff |
+| `/control.fbt.force_retry` | Retry within the existing retry budget and backoff |
 
 Both send `llm_control` with only the corresponding `operation`, omitting `target`
 and `command_id`. The backend freezes the current target at admission; it may

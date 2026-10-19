@@ -11,11 +11,11 @@ Feature: Current-request control shortcuts
     Examples:
       | shortcut        | operation      |
       | hard_interrupt | hard_interrupt |
-      | force__retry    | force_retry    |
+      | force_retry     | force_retry    |
 
   Scenario: Surface an idle backend rejection without retry or fallback
     Given a local control socket that returns "error"
-    When I enter "/control.fbt.force__retry" with a watched PID
+    When I enter "/control.fbt.force_retry" with a watched PID
     Then one request carries "llm_control" and operation "force_retry"
     And the control response contains "no_active_target"
 

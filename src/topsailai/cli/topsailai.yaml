@@ -156,12 +156,12 @@ instructions:
     example: "/control.fbt.hard_interrupt"
     shell: "topsailai_send_control -s '{session_id}' -c 'llm_control' -a '{\"operation\":\"hard_interrupt\"}'"
 
-  - cmd: "/control.fbt.force__retry"
+  - cmd: "/control.fbt.force_retry"
     scopes:
       - session
       - runtime
     desc: "Retry the current request before its first decoded stream record using its existing retry budget; backend admission may reject. Distinct from legacy /control.hard_interrupt. No arguments."
-    example: "/control.fbt.force__retry"
+    example: "/control.fbt.force_retry"
     shell: "topsailai_send_control -s '{session_id}' -c 'llm_control' -a '{\"operation\":\"force_retry\"}'"
 
   - cmd: "/control.soft_interrupt {args}"

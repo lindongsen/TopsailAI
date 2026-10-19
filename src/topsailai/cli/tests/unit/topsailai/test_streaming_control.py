@@ -228,7 +228,7 @@ def test_live_fbt_yaml_dispatch(monkeypatch):
     monkeypatch.setattr("cli_topsailai.process.run_external_command", lambda argv, *args: sent.append(argv))
     for scope in ("runtime", "session"):
         monkeypatch.setattr(state, "current_scope", scope)
-        for suffix, operation in (("hard_interrupt", "hard_interrupt"), ("force__retry", "force_retry")):
+        for suffix, operation in (("hard_interrupt", "hard_interrupt"), ("force_retry", "force_retry")):
             command = "/control.fbt." + suffix
             for explicit_pid, expected_pid in ((None, "2468"), (9753, "9753")):
                 _handle_stream_command(command, "/task", [], "fbt-session",
@@ -256,7 +256,8 @@ def test_live_fbt_boundaries_and_legacy(monkeypatch, capsys):
     for scope in ("runtime", "session"):
         monkeypatch.setattr(state, "current_scope", scope)
         assert yaml_commands.match_yaml_command("/control.fbt.hard__interrupt", "/task") is None
-        for suffix in ("hard_interrupt", "force__retry"):
+        assert yaml_commands.match_yaml_command("/control.fbt.force__retry", "/task") is None
+        for suffix in ("hard_interrupt", "force_retry"):
             command = "/control.fbt." + suffix
             assert yaml_commands.match_yaml_command(command + " extra", "/task") is None
             _handle_stream_command(command + " extra", "/task", [], "fbt-session", None, default_pid=2468)
@@ -265,7 +266,7 @@ def test_live_fbt_boundaries_and_legacy(monkeypatch, capsys):
     assert "Could not resolve the watched session PID" in capsys.readouterr().out
     for scope in ("workspace", "project", "doc"):
         monkeypatch.setattr(state, "current_scope", scope)
-        for suffix in ("hard_interrupt", "force__retry"):
+        for suffix in ("hard_interrupt", "force_retry"):
             assert yaml_commands.match_yaml_command("/control.fbt." + suffix, "/task") is None
     monkeypatch.setattr(state, "current_scope", "runtime")
     _handle_stream_command("/control.hard_interrupt", "/task", [], "fbt-session", None, default_pid=2468)
