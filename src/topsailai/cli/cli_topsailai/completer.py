@@ -192,7 +192,10 @@ def tab_completer(text: str, state: int) -> Optional[str]:
         # Complete /control.<action> subcommands from the registered actions.
         if text.startswith("/control."):
             actions = _get_control_action_names()
-            matches = ["/control." + a for a in actions if a.startswith(text[len("/control.") :])]
+            candidates = ["/control." + action for action in actions]
+            candidates.extend(command for command in get_available_completions()
+                              if command.startswith("/control."))
+            matches = list(dict.fromkeys(c for c in candidates if c.startswith(text)))
             if state < len(matches):
                 return matches[state]
             return None

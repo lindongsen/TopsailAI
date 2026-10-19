@@ -414,3 +414,33 @@ Use `/kill 3` to target row 3 of the currently displayed ordinary workspace task
 The confirmation identifies the row, session and exact PID and warns that unsaved work may be lost. Enter `y` or `yes` to send SIGTERM; Enter, other answers, EOF or Ctrl+C cancel without signaling. The target is only the PID column, including a task child PID when selecting a task row, never the Driver column or an inferred parent session PID. No process group or descendant traversal is performed.
 
 Successful output means the OS accepted the signal, not that the process has exited. There is no automatic SIGKILL escalation. A successful submission refreshes the list; cancellation and errors leave it unchanged. An already-exited process or permission failure is reported with PID/session context. Logs are not deleted. Numeric PIDs can be reused between list discovery, confirmation and signaling; this command does not verify process-instance identity, so inspect the selected row carefully and refresh stale lists before use. On Windows, Python's SIGTERM behavior terminates the target rather than providing POSIX graceful-handler semantics.
+
+
+## Current-request first-byte control shortcuts
+
+Interactive runtime and session scopes accept these exact no-argument commands:
+
+| Command | Current-request operation |
+|---------|---------------------------|
+| `/control.fbt.hard_interrupt` | Abandon the current turn |
+| `/control.fbt.force__retry` | Retry within the existing retry budget and backoff |
+
+Both send `llm_control` with only the corresponding `operation`, omitting `target`
+and `command_id`. The backend freezes the current target at admission; it may
+reject an idle, completed or otherwise ineligible request. The first decoded
+stream record closes the first-byte window, including a metadata-only record.
+These commands do not queue control for future requests. Runtime targets the
+watched PID and refuses to send if that PID is unavailable; session retains its
+existing session-selector behavior. `/control.hard_interrupt` remains the
+separate legacy interrupt and is not an alias for either FBT operation.
+
+Extra arguments are not accepted. For stable-ID retransmission or explicit
+targets, use the generic `/control llm_control` JSON form instead.
+
+These interactive aliases are not supported by non-interactive runtime instruction
+parsing. Use the existing structured equivalent (replace selectors as needed):
+
+```text
+topsailai runtime control llm_control -s SESSION -p PID -a '{"operation":"hard_interrupt"}'
+topsailai runtime control llm_control -s SESSION -p PID -a '{"operation":"force_retry"}'
+```

@@ -201,6 +201,7 @@ class TestGetParams:
             "get_runtime_messages",
             "get_session_messages",
             "hard_interrupt",
+            "llm_control",
             "soft_interrupt",
         ]
 

@@ -212,3 +212,61 @@ class TestRuntimeAgentInstructionShortcut(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_live_fbt_yaml_dispatch(monkeypatch):
+    """Dispatch live shortcuts with exact payloads and immutable definitions."""
+    import copy
+    from pathlib import Path
+    from cli_topsailai import state, yaml_commands
+
+    commands = yaml_commands.load_yaml_commands(str(Path(__file__).resolve().parents[3] / "topsailai.yaml"))
+    original = copy.deepcopy(commands)
+    monkeypatch.setattr(state, "yaml_commands", commands)
+    monkeypatch.setattr(state, "current_session_id", "fbt-session")
+    sent = []
+    monkeypatch.setattr("cli_topsailai.process.run_external_command", lambda argv, *args: sent.append(argv))
+    for scope in ("runtime", "session"):
+        monkeypatch.setattr(state, "current_scope", scope)
+        for suffix, operation in (("hard_interrupt", "hard_interrupt"), ("force__retry", "force_retry")):
+            command = "/control.fbt." + suffix
+            for explicit_pid, expected_pid in ((None, "2468"), (9753, "9753")):
+                _handle_stream_command(command, "/task", [], "fbt-session",
+                                       "/task/fbt-session.2468.session.stdout", default_pid=explicit_pid)
+                assert sent[-1] == ["topsailai_send_control", "-s", "fbt-session", "-c", "llm_control",
+                                    "-a", json.dumps({"operation": operation}, separators=(",", ":")),
+                                    "-p", expected_pid]
+                assert json.loads(sent[-1][6]) == {"operation": operation}
+            instruction, variables = yaml_commands.match_yaml_command(command, "/task")
+            yaml_commands.handle_yaml_command(instruction, variables)
+            assert "-p" not in sent[-1]
+    assert commands == original
+
+
+def test_live_fbt_boundaries_and_legacy(monkeypatch, capsys):
+    """Reject extra arguments, unavailable PIDs and ineligible scopes."""
+    from pathlib import Path
+    from cli_topsailai import state, yaml_commands
+
+    monkeypatch.setattr(state, "yaml_commands", yaml_commands.load_yaml_commands(
+        str(Path(__file__).resolve().parents[3] / "topsailai.yaml")))
+    monkeypatch.setattr(state, "current_session_id", "fbt-session")
+    sent = []
+    monkeypatch.setattr("cli_topsailai.process.run_external_command", lambda argv, *args: sent.append(argv))
+    for scope in ("runtime", "session"):
+        monkeypatch.setattr(state, "current_scope", scope)
+        assert yaml_commands.match_yaml_command("/control.fbt.hard__interrupt", "/task") is None
+        for suffix in ("hard_interrupt", "force__retry"):
+            command = "/control.fbt." + suffix
+            assert yaml_commands.match_yaml_command(command + " extra", "/task") is None
+            _handle_stream_command(command + " extra", "/task", [], "fbt-session", None, default_pid=2468)
+            _handle_stream_command(command, "/task", [], "fbt-session", None, default_pid=None)
+    assert sent == []
+    assert "Could not resolve the watched session PID" in capsys.readouterr().out
+    for scope in ("workspace", "project", "doc"):
+        monkeypatch.setattr(state, "current_scope", scope)
+        for suffix in ("hard_interrupt", "force__retry"):
+            assert yaml_commands.match_yaml_command("/control.fbt." + suffix, "/task") is None
+    monkeypatch.setattr(state, "current_scope", "runtime")
+    _handle_stream_command("/control.hard_interrupt", "/task", [], "fbt-session", None, default_pid=2468)
+    assert sent == [["topsailai_send_control", "-s", "fbt-session", "-c", "hard_interrupt", "-a", "{}", "-p", "2468"]]

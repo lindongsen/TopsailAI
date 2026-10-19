@@ -347,6 +347,12 @@ def print_help(
             "scopes": ["session", "runtime"],
         },
         {
+            "cmd": "/control.fbt.hard_interrupt  |  /control.fbt.force__retry",
+            "desc": "Control the current request before its first decoded stream record: abandon the turn or retry within the existing budget. No arguments; backend admission may reject. These llm_control shortcuts are distinct from legacy /control.hard_interrupt. Runtime requires the watched PID; session uses the existing session selector.",
+            "example": "Example: /control.fbt.force__retry",
+            "scopes": ["session", "runtime"],
+        },
+        {
             "cmd": "/agent.<instruction> [args...]",
             "desc": "Runtime shortcut that forwards a registered agent instruction through the control channel as call_instruction with instruction 'agent.<name>'. Positional args are split on whitespace; kwargs are not supported. Requires a resolvable watched session PID.",
             "example": "Example: /agent.models  or  /agent.models 1",

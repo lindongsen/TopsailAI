@@ -240,3 +240,22 @@ def test_runtime_scope_guide_describes_broadcast(capsys):
     output = capsys.readouterr().out
     assert "/ctx.btw-all" in output
     assert "all discoverable live PIDs" in output
+
+
+def test_fbt_help_scope_and_semantics(capsys):
+    """Distinguish current-request operations from the legacy interrupt."""
+    from pathlib import Path
+
+    for scope in ("runtime", "session"):
+        print_help([], scope, keyword="fbt")
+        output = capsys.readouterr().out
+        assert "/control.fbt.hard_interrupt" in output
+        assert "/control.fbt.force__retry" in output
+        assert "legacy /control.hard_interrupt" in output
+        assert "backend admission may reject" in output
+    for scope in ("workspace", "project", "doc"):
+        print_help([], scope)
+        assert "/control.fbt." not in capsys.readouterr().out
+    document = (Path(__file__).resolve().parents[3] / "docs/usage/topsailai.md").read_text()
+    assert "aliases are not supported by non-interactive" in document
+    assert "topsailai runtime control llm_control" in document

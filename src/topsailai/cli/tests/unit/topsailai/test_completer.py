@@ -235,3 +235,41 @@ def test_broadcast_completion_is_runtime_only(monkeypatch):
     monkeypatch.setattr(cli_state, "current_scope", "runtime")
     completions = get_available_completions()
     assert completions.count("/ctx.btw-all") == 1
+
+
+def test_live_fbt_tab_completion(monkeypatch):
+    """Merge scoped YAML shortcuts with dynamic actions without duplicates."""
+    import readline
+    from pathlib import Path
+    from cli_topsailai import completer, yaml_commands
+
+    monkeypatch.setattr(cli_state, "yaml_commands", yaml_commands.load_yaml_commands(
+        str(Path(__file__).resolve().parents[3] / "topsailai.yaml")))
+    monkeypatch.setattr(readline, "get_line_buffer", lambda: "")
+    monkeypatch.setattr(readline, "get_begidx", lambda: 0)
+    monkeypatch.setattr(completer, "_get_control_action_names", lambda: ["hard_interrupt", "llm_control", "hard_interrupt"])
+    shortcuts = ["/control.fbt.force__retry", "/control.fbt.hard_interrupt"]
+    for scope in ("runtime", "session", "workspace", "project", "doc"):
+        monkeypatch.setattr(cli_state, "current_scope", scope)
+        matches = []
+        for index in range(30):
+            value = tab_completer("/control.", index)
+            if value is None:
+                break
+            matches.append(value)
+        assert len(matches) == len(set(matches))
+        assert "/control.llm_control" in matches
+        assert "/control.hard_interrupt" in matches
+        expected = shortcuts if scope in ("runtime", "session") else []
+        assert [tab_completer("/control.fbt.", index) for index in range(len(expected))] == expected
+        assert tab_completer("/control.fbt.", len(expected)) is None
+        assert all((command in matches) == (scope in ("runtime", "session")) for command in shortcuts)
+        for command in expected:
+            assert tab_completer(command, 0) == command
+            assert tab_completer(command, 1) is None
+            assert tab_completer(command[:-4], 0) == command
+    monkeypatch.setattr(cli_state, "current_scope", "runtime")
+    assert tab_completer("/control.call_instruction ctx.h", 0) == "ctx.history"
+    assert tab_completer("/control.call_instruction ctx.h", 1) is None
+    monkeypatch.setattr(completer, "_get_control_action_names", lambda: [])
+    assert tab_completer("/control.fbt.", 0) == shortcuts[0]
