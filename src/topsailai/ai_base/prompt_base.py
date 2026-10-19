@@ -43,6 +43,9 @@ from topsailai.utils.thread_local_tool import get_session_id
 from topsailai.context.token import count_tokens
 from topsailai.context.ctx_manager import get_managers_by_env
 from topsailai.context.prompt_env import generate_prompt_for_env
+from topsailai.hooks.points.aibase.after_prompt_base_init import (
+    hook__aibase__after__prompt_base_init,
+)
 
 
 class MessageData(object):
@@ -283,6 +286,7 @@ class PromptBase(object):
         self.hooks_after_init_prompt = []
         self.hooks_after_new_session = []
         self.hooks_pre_chat = []
+        hook__aibase__after__prompt_base_init(prompt_base=self)
 
     def call_hooks_pre_chat(self):
         """ call hooks before chatting """

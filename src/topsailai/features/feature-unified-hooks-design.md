@@ -56,6 +56,10 @@ The current contract is documented in [Hooks API](../docs/Hooks_API.md#current-d
 
 Shared prepared/trust and application-access libraries remain unchanged and explicitly composable; the historical sections below do not impose those APIs on current business activation.
 
+### PromptBase initialization live-object exception
+
+The `hook__aibase__after__prompt_base_init` point is a Human-authorized local exception to the detached-payload rule: its in-process Module receives the live `PromptBase` instance as `prompt_base` after base initialization. Scripts receive no arguments or payload. Modules must not retain, mutate, serialize, or log the instance; no read-only or serialization boundary is enforced, so mutable aliasing, sensitive attributes, retained references and incomplete subclass initialization remain risks. Other Hook Point and Summary payload contracts are unchanged.
+
 ### Current implementation inventory
 
 Eleven Hook Points are declared: ten Summary points under `hooks/points/context/` and one workspace point `hook__workspace__before__input_message` under `hooks/points/workspace/before_input_message/`.

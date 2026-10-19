@@ -183,7 +183,11 @@ class SummarizeHooksScenario:
         original = hooks.invoke_hook_point
 
         def dispatch(name, **kwargs):
-            """Observe primary state without replacing configured execution."""
+            """Observe summary points without intercepting unrelated points."""
+            if not name.startswith("hook__context__"):
+                if self.control:
+                    return ()
+                return original(name, **kwargs)
             if self.control:
                 return ()
             context = kwargs['hook_context']
@@ -365,7 +369,7 @@ class SummarizeHooksScenario:
         assert pending_cleanup() == ()
         assert [row['point'] for row in rows] == names
         if self.case == 'observer_failure':
-            assert any(entry.status == 'error' for report in self.reports for entry in report)
+            assert any(entry.status == 'error' for report in self.reports for entry in report.handlers)
             assert 'observer fixture failure' not in str(self.events)
 
     def close(self):

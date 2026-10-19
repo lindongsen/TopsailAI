@@ -30,6 +30,13 @@ from tests import legacy_prepared_support
 MODULE_MEMBERS = frozenset({"Alpha", "zeta"})
 
 
+def _result_entries(report):
+    """Flatten module and terminal Script results from a direct-entry report."""
+    for handler in report.handlers:
+        yield handler
+        yield from handler.children
+
+
 class MixedDeployment:
     """Own only fixture sources, offline authority and composed application lifetimes."""
 
@@ -511,7 +518,7 @@ class SummaryScriptScenario(SummarizeHooksScenario):
         rows = [json.loads(row) for row in self.ledger.read_text().splitlines()]
         assert list(dict.fromkeys(row['point'] for row in rows)) == names
         if self.case == 'observer_failure':
-            assert any(r.status == "error" for report in self.reports for r in report)
+            assert any(r.status == "error" for report in self.reports for r in _result_entries(report))
             assert 'observer fixture failure' not in str(self.events)
 
 
@@ -530,22 +537,22 @@ class SummaryScriptScenario(SummarizeHooksScenario):
             assert all("U7 runtime context" not in json.dumps(r) for r in selected)
             assert all("payload" not in r for r in selected if r["name"] in ("A", "z", "new"))
         for report in self.reports:
-            modules = [r.name for r in report if r.kind == "module"]
+            modules = [r.handler.name for r in _result_entries(report) if r.handler.kind == "module"]
             assert modules == ["Alpha.py", "observer.py", "zeta.py"]
-            assert [r.kind for r in report] == sorted(
-                (r.kind for r in report), key=lambda kind: kind != "module")
+            assert [r.handler.kind for r in _result_entries(report)] == sorted(
+                (r.handler.kind for r in _result_entries(report)), key=lambda kind: kind != "module")
         if self.case in ("generation_failure", "application_failure", "empty_provider_exhaustion"):
             assert len(self.events) == len(self.reports) == 2
             point_name, _, operation_id, *_ = self.events[-1]
             assert "__error__" in point_name
-            failed = next(r for r in self.reports[-1] if r.name == "A")
+            failed = next(r for r in _result_entries(self.reports[-1]) if r.handler.name == "A")
             assert failed.status == "error"
             observed = [row for row in rows if row["point"] == point_name]
             assert [row["name"] for row in observed] == ["Alpha", "zeta", "A", "z"]
             assert all(row["payload"]["operation_id"] == operation_id
                 for row in observed if "payload" in row)
         elif self.case == "script_failure":
-            assert any(r.status == "error" for report in self.reports for r in report)
+            assert any(r.status == "error" for report in self.reports for r in _result_entries(report))
         assert pending_cleanup() == ()
 
     @staticmethod
