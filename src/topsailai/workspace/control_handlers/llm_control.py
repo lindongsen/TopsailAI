@@ -1,67 +1,34 @@
-"""Control-channel boundary for explicitly bound LLM attempts. Author: DawsonLin."""
-from dataclasses import asdict
+"""Stage a force-retry flag; execution belongs to the wait Hook Module."""
 import os
-from uuid import uuid4
 
-from topsailai.ai_base.llm_control.attempt_control import AttemptTarget
-from topsailai.ai_base.llm_control.request_control import REQUEST_CONTROL
+from topsailai.ai_base.llm_control.control_runtime import stage_retry
 from topsailai.workspace.control_channel.handler import ControlHandler
 from topsailai.workspace.control_channel.protocol import ControlResponse
 
 
 class LLMControlHandler(ControlHandler):
-    """Queue first-byte commands without accessing handler-thread Agent context."""
+    """Accept the retained force_retry operation without target/proposal routing."""
 
     @property
     def action(self):
-        """Expose the additive action without changing legacy interrupts."""
+        """Expose the existing CLI wire action."""
         return "llm_control"
 
     def handle(self, request, context):
-        """Authenticate server-bound ownership before scalar command projection."""
-        route = getattr(context.agent_chat, "_llm_control_route", None)
-        if (route is None or route.agent is not context.agent_chat.ai_agent
-                or route.session_id != context.session_id or route.pid != context.pid
-                or context.pid != os.getpid() or route.closed):
+        """Only stage a flag for this live process's current wait."""
+        if context.pid != os.getpid() or context.agent_chat is None:
             return ControlResponse(request.request_id, "error", error="unavailable")
-        payload = request.payload
-        operation = payload.get("operation", "status")
-        route.reconcile()
-        with route.lock:
-            if (route.closed or route.agent is not context.agent_chat.ai_agent
-                    or route is not context.agent_chat._llm_control_route):
-                return ControlResponse(request.request_id, "error", error="unavailable")
-            if operation == "status":
-                command_id = payload.get("command_id")
-                if command_id is None:
-                    result = {"state": route.state, "reason": route.reason,
-                              "target": asdict(route.target) if route.target else None}
-                else:
-                    status = REQUEST_CONTROL.status(command_id)
-                    if status is None or status.proposal.target.binding_id != route.binding_id:
-                        return ControlResponse(request.request_id, "error", error="unknown_command")
-                    result = asdict(status)
-                return ControlResponse(request.request_id, "ok", result=result)
-            if operation not in ("hard_interrupt", "force_retry"):
-                return ControlResponse(request.request_id, "error", error="invalid_operation")
-            if "target" in payload and route.reason == "control_capacity":
-                return ControlResponse(request.request_id, "error", error="unavailable/control_capacity")
-            try:
-                if "target" not in payload:
-                    status = REQUEST_CONTROL.submit_current(
-                        route.binding_id, route.generation, route.target,
-                        payload.get("command_id", uuid4().hex), operation,
-                        capacity_unavailable=route.reason == "control_capacity",
-                    )
-                    return ControlResponse(request.request_id, "ok", result=asdict(status))
-                target_data = payload.get("target")
-                if type(target_data) is not dict:
-                    raise ValueError("exact target required")
-                target = AttemptTarget(**target_data)
-                if target.binding_id != route.binding_id or target.generation != route.generation:
-                    raise ValueError("stale_target")
-                command_id = payload.get("command_id", request.request_id)
-                status = REQUEST_CONTROL.submit(target, command_id, operation)
-            except (ValueError, TypeError) as error:
-                return ControlResponse(request.request_id, "error", error=str(error))
-            return ControlResponse(request.request_id, "ok", result=asdict(status))
+        if request.payload.get("operation") != "force_retry":
+            return ControlResponse(request.request_id, "error", error="invalid_operation")
+        if "target" in request.payload:
+            return ControlResponse(request.request_id, "error", error="unsupported_target")
+        try:
+            staged = stage_retry(context.session_id or "topsailai", context.pid)
+        except OSError:
+            from topsailai.logger.log_chat import logger
+            logger.exception("Failed to stage first-byte retry session=%s pid=%s",
+                             context.session_id, context.pid)
+            return ControlResponse(request.request_id, "error", error="flag_write_failed")
+        if not staged:
+            return ControlResponse(request.request_id, "error", error="not_waiting")
+        return ControlResponse(request.request_id, "ok", result={"state": "flag_written"})

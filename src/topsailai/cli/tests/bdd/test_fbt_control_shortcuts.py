@@ -25,7 +25,7 @@ def control_endpoint(monkeypatch, capsys):
     """Own a socket server and close/join every resource at scenario teardown."""
     if not hasattr(socket, "AF_UNIX"):
         pytest.skip("Local Unix control sockets are unavailable")
-    temporary = tempfile.TemporaryDirectory(prefix="fbt-", dir=Path(__file__).resolve().parents[2] / ".tmp")
+    temporary = tempfile.TemporaryDirectory(prefix="fbt-", dir=Path(__file__).resolve().parents[3] / ".tmp")
     folder = Path(temporary.name)
     path = folder / "fbt.2468.session.sock"
     (folder / "fbt.2468.session.stdout").write_text("")
@@ -124,7 +124,7 @@ def enter_command(control_endpoint, command):
 @when("I enter a first-byte shortcut without a watched PID")
 def enter_without_pid(control_endpoint):
     """An absent watched identity must not fall back to discovery."""
-    _handle_stream_command("/control.fbt.hard_interrupt", control_endpoint["folder"], [], "fbt", None, default_pid=None)
+    _handle_stream_command("/control.fbt.force_retry", control_endpoint["folder"], [], "fbt", None, default_pid=None)
 
 
 @then(parsers.parse('one request carries "{action}" and operation "{operation}"'))

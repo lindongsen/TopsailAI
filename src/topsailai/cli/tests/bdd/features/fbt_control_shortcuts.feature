@@ -10,7 +10,6 @@ Feature: Current-request control shortcuts
 
     Examples:
       | shortcut        | operation      |
-      | hard_interrupt | hard_interrupt |
       | force_retry     | force_retry    |
 
   Scenario: Surface an idle backend rejection without retry or fallback
@@ -30,3 +29,8 @@ Feature: Current-request control shortcuts
     When I enter "/control.hard_interrupt" with a watched PID
     Then one request carries "hard_interrupt" and operation "none"
     And the control response contains "accepted"
+
+  Scenario: Reject the removed first-byte interrupt shortcut
+    Given a local control socket that returns "ok"
+    When I enter "/control.fbt.hard_interrupt" with a watched PID
+    Then no control request is sent

@@ -1,11 +1,16 @@
 """Provider-neutral first-byte timeout orchestration."""
 
 import logging
+import sys
 import threading
 import time
 
+from topsailai.hooks import hook__llm__before__first_byte_wait_tick
+from topsailai.utils.thread_local_tool import get_agent_object
+from .control_runtime import first_byte_wait_scope
+
 from .first_byte_deadline import (
-    FirstBytePhase, current_first_byte_budget, resolve_first_byte_budget,
+    FirstByteBudget, FirstBytePhase, current_first_byte_budget, resolve_first_byte_budget,
 )
 from .response_ownership import (
     AttemptResponseOwner,
@@ -30,16 +35,18 @@ def _safe_warn_once(budget, callback, elapsed):
 
 def _wait_for_events(events, budget=None, poll_interval=0.05):
     """Wait for one of several events using the supplied absolute budget."""
-    while not any(event.is_set() for event in events):
-        if budget is None:
-            timeout = poll_interval
-        else:
-            remaining = budget.remaining()
-            if remaining <= 0:
-                return False
-            timeout = min(remaining, poll_interval)
-        events[0].wait(timeout=timeout)
-    return True
+    with first_byte_wait_scope():
+        while not any(event.is_set() for event in events):
+            if budget is None:
+                timeout = poll_interval
+            else:
+                remaining = budget.remaining()
+                if remaining <= 0:
+                    return False
+                timeout = min(remaining, poll_interval)
+            hook__llm__before__first_byte_wait_tick()
+            events[0].wait(timeout=timeout)
+        return True
 
 
 class FirstByteTimeoutMixin:
@@ -50,14 +57,12 @@ class FirstByteTimeoutMixin:
         first_byte_timeout=180, raise_on_timeout=False, *, budget=None,
     ):
         """Create a response using one absolute creation/first-item budget."""
-        from .control_runtime import current_attempt_control
-        if current_attempt_control() is not None:
-            from .control_wait import controlled_create
-            return controlled_create(self, messages, tools, tool_choice, stream, first_byte_timeout)
         owner = current_response_owner() or AttemptResponseOwner()
         budget = resolve_first_byte_budget(
             first_byte_timeout, explicit=budget or current_first_byte_budget()
         )
+        if budget is None and get_agent_object() is not None:
+            budget = FirstByteBudget(sys.float_info.max, sys.float_info.max)
         if budget is None:
             params = self._build_first_byte_request_parameters(
                 messages, tools=tools, tool_choice=tool_choice, stream=stream
@@ -91,6 +96,18 @@ class FirstByteTimeoutMixin:
         ready = threading.Event()
         start_error = [None]
 
+        finish_lock = threading.Lock()
+        finished = False
+
+        def finish(ticket, primary=None):
+            """Finalize the creation ticket once across coordinator and worker."""
+            nonlocal finished
+            with finish_lock:
+                if finished:
+                    return
+                finished = True
+            self._finish_ticket(ticket, owner, primary)
+
         def create():
             """Run creation and publish a terminal phase decision."""
             ticket = None
@@ -102,25 +119,25 @@ class FirstByteTimeoutMixin:
                     started.set()
                     if raise_on_timeout and budget.expired():
                         phase.expire()
-                        self._finish_ticket(ticket, owner)
+                        finish(ticket)
                         finalized = True
                         return
                     response = self._create_first_byte_response(params)
                     phase.completed()
                     if not owner.publish_response(response):
                         phase.expire()
-                        self._finish_ticket(ticket, owner)
+                        finish(ticket)
                         finalized = True
                         return
                     if not owner.publish_outcome(response, phase="create"):
                         phase.expire()
-                        self._finish_ticket(ticket, owner)
+                        finish(ticket)
                         finalized = True
                         return
                     committed = phase.publish(allow_late=not raise_on_timeout)
                     if not committed:
                         owner.abandon()
-                        self._finish_ticket(ticket, owner)
+                        finish(ticket)
                         finalized = True
                         return
                     if not raise_on_timeout and budget.warning_required_for(phase):
@@ -135,11 +152,11 @@ class FirstByteTimeoutMixin:
                         phase.expire()
                         owner.abandon(error)
                     if ticket is not None and phase.state != "COMMITTED":
-                        self._finish_ticket(ticket, owner, error)
+                        finish(ticket, error)
                         finalized = True
                 finally:
                     if ticket is not None and not finalized and phase.state != "COMMITTED":
-                        self._finish_ticket(ticket, owner)
+                        finish(ticket)
                     owner.worker_finished(phase="create")
                     ready.set()
 
@@ -151,11 +168,23 @@ class FirstByteTimeoutMixin:
             owner.abandon()
             raise
 
+        def wait(events, active_budget=None, poll_interval=0.05):
+            """Preserve ticket custody when a wait Hook interrupts creation."""
+            try:
+                return _wait_for_events(events, active_budget, poll_interval)
+            except BaseException as error:
+                owner.abandon(error)
+                active_ticket = ticket_box[0]
+                if active_ticket is not None:
+                    self._publish_first_byte_request_ticket(active_ticket)
+                    finish(active_ticket, error)
+                raise
+
         ticket = None
         ticket_published = False
         # Observe terminal/start-failure state while waiting for the initial
         # ticket; never wait indefinitely for a ticket that cannot be created.
-        _wait_for_events((started, ready), budget)
+        wait((started, ready), budget)
         if not started.is_set() and not ready.is_set():
             if raise_on_timeout:
                 expired = phase.expire()
@@ -169,14 +198,14 @@ class FirstByteTimeoutMixin:
             else:
                 self._warn_first_byte_timeout_once(budget, budget.timeout)
                 # Warning mode continues the same request after the shared budget.
-                _wait_for_events((ready,), poll_interval=0.05)
+                wait((ready,), poll_interval=0.05)
         ticket = ticket_box[0]
         if ticket is not None:
             self._publish_first_byte_request_ticket(ticket)
             ticket_published = True
 
         if not ready.is_set():
-            if not _wait_for_events((ready,), budget):
+            if not wait((ready,), budget):
                 if raise_on_timeout:
                     expired = phase.expire()
                     if expired:
@@ -189,7 +218,7 @@ class FirstByteTimeoutMixin:
                 else:
                     self._warn_first_byte_timeout_once(budget, budget.timeout)
                     # Continue the original operation after warning threshold.
-                    _wait_for_events((ready,), poll_interval=0.05)
+                    wait((ready,), poll_interval=0.05)
         if ticket is None:
             ticket = ticket_box[0]
         if ticket is not None and not ticket_published:
@@ -201,7 +230,7 @@ class FirstByteTimeoutMixin:
                 ready_outcome = owner.take_outcome(phase="create")
                 if ready_outcome.kind == "ERROR":
                     if ticket is not None:
-                        self._finish_ticket(ticket, owner)
+                        finish(ticket)
                     raise ready_outcome.value
             expired = phase.expire()
             if start_error[0] is not None:
@@ -213,7 +242,7 @@ class FirstByteTimeoutMixin:
         outcome = owner.take_outcome(phase="create")
         if outcome.kind == "ERROR":
             if ticket is not None:
-                self._finish_ticket(ticket, owner)
+                finish(ticket)
             raise outcome.value
         if outcome.kind in {"ABANDONED", "NOT_READY"}:
             if start_error[0] is not None:
@@ -252,15 +281,12 @@ class FirstByteTimeoutMixin:
         create_timed_out=False,
     ):
         """Yield a stream while applying the shared budget to its first item."""
-        from .control_runtime import current_attempt_control
-        if current_attempt_control() is not None:
-            from .control_wait import controlled_stream
-            yield from controlled_stream(self, stream, first_byte_timeout)
-            return
         owner = current_response_owner()
         timed_stream = ClosingTimedIterator(stream, owner) if owner else stream
         timing_ticket = self._get_llm_request_timing_ticket()
         budget = current_first_byte_budget()
+        if budget is None and get_agent_object() is not None:
+            budget = FirstByteBudget(sys.float_info.max, sys.float_info.max)
         if budget is None:
             yield from self._iter_first_byte_timeout(
                 stream, first_byte_timeout, raise_on_timeout, create_timed_out,
@@ -269,7 +295,7 @@ class FirstByteTimeoutMixin:
             )
             return
         yield from self._iter_first_byte_timeout(
-            timed_stream, first_byte_timeout, raise_on_timeout, create_timed_out,
+            timed_stream, budget.timeout, raise_on_timeout, create_timed_out,
             on_timeout=self._log_first_byte_timeout,
             make_timeout_error=self._make_first_byte_timeout_error,
             owner=owner, budget=budget, timing_ticket=timing_ticket,
@@ -574,7 +600,7 @@ def iter_with_first_byte_timeout(
         worker = threading.Thread(target=fetch_first, daemon=True)
         active_owner.fetch_thread = worker
         worker.start()
-        if not ready.wait(timeout=budget.remaining()):
+        if not _wait_for_events((ready,), budget):
             if phase.committed():
                 pass
             elif ready.is_set() and decision["error"] is not None:
@@ -592,7 +618,7 @@ def iter_with_first_byte_timeout(
                     _safe_warn_once(
                         budget, on_timeout, budget.clock() - (budget.deadline - budget.timeout)
                     )
-                ready.wait()
+                _wait_for_events((ready,))
         fetch_elapsed = time.monotonic() - fetch_started_at
         if phase_logger is not None:
             try:

@@ -249,9 +249,9 @@ def test_fbt_help_scope_and_semantics(capsys):
     for scope in ("runtime", "session"):
         print_help([], scope, keyword="fbt")
         output = capsys.readouterr().out
-        assert "/control.fbt.hard_interrupt" in output
+        assert "/control.fbt.hard_interrupt" not in output
         assert "/control.fbt.force_retry" in output
-        assert "legacy /control.hard_interrupt" in output
+        assert "For interruption use /control.hard_interrupt" in output
         assert "backend admission may reject" in output
     for scope in ("workspace", "project", "doc"):
         print_help([], scope)

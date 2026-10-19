@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from topsailai.ai_base.exception import HardInterruptError, LLMBackToChatError
-from topsailai.ai_base.llm_control.control_runtime import LLMControlledInterruptError
 from topsailai.hooks.points.workspace.after_attempt_settle_user2agent import (
     hook__workspace__after__attempt_settle_user2agent,
 )
@@ -82,7 +81,7 @@ def signal(kind):
 
 @pytest.mark.parametrize("kind,outcome", [
     (None, "success"), (RuntimeError, "failure"),
-    (LLMBackToChatError, "back"), (LLMControlledInterruptError, "interrupt"),
+    (LLMBackToChatError, "back"),
     (HardInterruptError, "interrupt"), (KeyboardInterrupt, "interrupt"),
     (EOFError, "interrupt"),
 ])

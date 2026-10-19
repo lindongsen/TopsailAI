@@ -140,6 +140,11 @@ def test_timeout_owner_closes_late_response_without_claiming_it():
     """A timed-out creation closes a late response in the worker."""
     from topsailai.ai_base.llm_control.first_byte_timeout import FirstByteTimeoutMixin
 
+    from topsailai.ai_base.llm_control.first_byte_deadline import FirstByteBudget
+
+    entered, release = threading.Event(), threading.Event()
+    budget = FirstByteBudget(1.0, 1.0, clock=lambda: float(entered.is_set()) * 2)
+
     class Host(FirstByteTimeoutMixin):
         """Provide a delayed response for the creation timeout test."""
 
@@ -149,8 +154,8 @@ def test_timeout_owner_closes_late_response_without_claiming_it():
 
         def _create_first_byte_response(self, params):
             """Delay creation until the caller has abandoned the attempt."""
-            import time
-            time.sleep(0.03)
+            entered.set()
+            assert release.wait(1)
             return response
 
         def _start_first_byte_request(self):
@@ -174,11 +179,23 @@ def test_timeout_owner_closes_late_response_without_claiming_it():
             return TimeoutError("timed out")
 
     response = _Closable()
-    with pytest.raises(TimeoutError):
-        Host()._create_with_first_byte_timeout(
-            [], first_byte_timeout=0.001, raise_on_timeout=True
-        )
-    assert response.closed.wait(1)
+    with response_ownership_scope() as owner:
+        try:
+            with pytest.raises(TimeoutError):
+                Host()._create_with_first_byte_timeout(
+                    [], first_byte_timeout=1, raise_on_timeout=True, budget=budget
+                )
+            assert entered.is_set()
+            assert owner.take_outcome().kind == "ABANDONED"
+            assert not response.closed.is_set()
+        finally:
+            release.set()
+            if owner.create_thread is not None:
+                owner.create_thread.join(1)
+        assert not owner.create_thread.is_alive()
+        assert owner.create_finished_event.is_set()
+        assert response.closed.is_set()
+        assert owner.take_outcome().kind == "ABANDONED"
 
 
 

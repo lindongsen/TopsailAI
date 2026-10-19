@@ -62,17 +62,6 @@ class AttemptResponseOwner:
         self.fetch_finished_event = threading.Event()
         self.close_finished_event = threading.Event()
 
-    def control_cleanup_settled(self) -> bool:
-        """Confirm exact worker exit and unambiguous response disposal for control."""
-        with self._lock:
-            workers = (self.create_thread, self.fetch_thread, self.cleanup_thread)
-            if any(worker is not None and worker.is_alive() for worker in workers):
-                return False
-            if self.disposal_error is not None:
-                return False
-            return (self._response is _UNSET
-                    or self._close_state is _CloseState.SUCCEEDED)
-
     def publish_response(self, response) -> bool:
         """Publish response custody before any fallible response observation."""
         with self._lock:

@@ -148,14 +148,6 @@ instructions:
     example: "/control.hard_interrupt"
     shell: "topsailai_send_control -s '{session_id}' -c 'hard_interrupt' -a '{}'"
 
-  - cmd: "/control.fbt.hard_interrupt"
-    scopes:
-      - session
-      - runtime
-    desc: "Abandon the current request turn before its first decoded stream record; backend admission may reject. Distinct from legacy /control.hard_interrupt. No arguments."
-    example: "/control.fbt.hard_interrupt"
-    shell: "topsailai_send_control -s '{session_id}' -c 'llm_control' -a '{\"operation\":\"hard_interrupt\"}'"
-
   - cmd: "/control.fbt.force_retry"
     scopes:
       - session

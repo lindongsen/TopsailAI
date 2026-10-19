@@ -200,7 +200,7 @@ def test_production_owned_late_eof_forced_already_ready(monkeypatch):
     assert warnings == [(2.0, 1.0)]
     assert stream.reads == 1
     assert stream.closed == 1
-    assert gate.wait_calls == 1
+    assert gate.wait_calls == 0
 
 def test_production_owned_late_eof_forced_wait_timeout_first(monkeypatch):
     """The production-owned path also catches wait-timeout-first EOF once."""

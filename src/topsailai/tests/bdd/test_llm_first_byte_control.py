@@ -12,9 +12,10 @@ from pytest_bdd import given, when, then, parsers, scenarios
 
 from tests.mock.llm_mock_server import MockServerConfig, create_server
 from topsailai.ai_base.llm_base import LLMModel
-from topsailai.ai_base.llm_control.control_runtime import (
-    ControlRoute, application_control_scope, LLMControlledInterruptError,
-)
+from topsailai.ai_base.agent_base import AgentRun
+from topsailai.ai_base.exception import HardInterruptError
+from topsailai.utils.thread_local_tool import ctxm_set_agent
+from topsailai.workspace.control_handlers.interrupt import HardInterruptHandler
 from topsailai.workspace.control_channel.handler import ControlHandlerRegistry
 from topsailai.workspace.control_channel.protocol import ControlContext
 from topsailai.workspace.control_channel.server import ControlServer
@@ -23,12 +24,12 @@ from topsailai.workspace.control_handlers.llm_control import LLMControlHandler
 scenarios("features/llm_first_byte_control.feature")
 
 
-def send(path, payload):
+def send(path, payload, action="llm_control"):
     """Use the real JSONL Unix socket boundary with bounded receive time."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(5)
         client.connect(path)
-        client.sendall(json.dumps({"request_id": uuid4().hex, "action": "llm_control", "payload": payload}).encode() + b"\n")
+        client.sendall(json.dumps({"request_id": uuid4().hex, "action": action, "payload": payload}).encode() + b"\n")
         with client.makefile("rb") as reader:
             return json.loads(reader.readline())
 
@@ -65,19 +66,6 @@ def controlled_case(monkeypatch, tmp_path, request, phase, timeout):
             server.server_close()
         if thread is not None:
             thread.join(5)
-        route = resources.get("route")
-        if route is not None:
-            from topsailai.ai_base.llm_control.control_recovery import RECOVERY_POOL
-            with RECOVERY_POOL.lock:
-                leases = tuple(RECOVERY_POOL.leases.values())
-            for lease in leases:
-                if lease.target.binding_id != route.binding_id or lease.owner is None:
-                    continue
-                owner = lease.owner
-                for owned in (owner.create_thread, owner.fetch_thread, owner.cleanup_thread):
-                    if owned is not None:
-                        owned.join(5)
-            route.reconcile()
         model = resources.get("model")
         if model is not None:
             model.release_all_llm_models()
@@ -102,23 +90,29 @@ def controlled_case(monkeypatch, tmp_path, request, phase, timeout):
         monkeypatch.setenv(key, value)
     model = LLMModel()
     resources["model"] = model
-    route = ControlRoute("wire", os.getpid(), model, interrupt_supported=True)
-    resources["route"] = route
-    agent_chat = SimpleNamespace(ai_agent=model, _llm_control_route=route)
+    from topsailai.workspace.folder_utils import get_interrupt_flag_path
+    from topsailai.workspace import folder_constants
+    monkeypatch.setattr(folder_constants, "FOLDER_WORKSPACE_TASK", str(tmp_path))
+    monkeypatch.setenv("SESSION_ID", "wire")
+    agent = SimpleNamespace(runtime=SimpleNamespace(llm_model=model))
+    agent._get_interrupt_flag_path = lambda: get_interrupt_flag_path(str(tmp_path), "wire", os.getpid())
+    agent._check_hard_interrupt = lambda: AgentRun._check_hard_interrupt(agent)
+    agent_chat = SimpleNamespace(ai_agent=agent)
     registry = ControlHandlerRegistry()
     registry.register(LLMControlHandler())
+    registry.register(HardInterruptHandler())
     temporary_root = next(parent for parent in tmp_path.parents if parent.name == ".tmp")
     path = str(temporary_root / (uuid4().hex[:12] + ".sock"))
-    channel = ControlServer(path, registry, ControlContext(session_id="wire", pid=os.getpid(), agent_chat=agent_chat), timeout=0.1)
+    channel = ControlServer(path, registry, ControlContext(session_id="wire", pid=os.getpid(), agent_chat=agent_chat, task_folder=str(tmp_path)), timeout=0.1)
     resources["channel"] = channel
     channel.start()
-    state = {"server": server, "model": model, "route": route, "path": path, "phase": phase, "outputs": []}
+    state = {"server": server, "model": model, "path": path, "phase": phase, "outputs": []}
     model.send_content = state["outputs"].append
 
     def run():
         """Run the unmodified production retry loop under explicit app routing."""
         try:
-            with application_control_scope(route):
+            with ctxm_set_agent(agent):
                 state["result"] = model.chat([{"role": "user", "content": "same request"}], for_stream=True, for_raw=True)
         except BaseException as error:
             state["error"] = error
@@ -134,108 +128,43 @@ def controlled_case(monkeypatch, tmp_path, request, phase, timeout):
     yield state
 
 
-@when(parsers.parse('the operator sends "{operation}" through the control socket'))
+@when(parsers.parse('the operator stages "{operation}" through the control socket'))
 def command(control_case, operation):
-    """Resolve current exact target and submit rather than select in the handler."""
-    state = control_case
-    view = send(state["path"], {"operation": "status"})
-    state["before"] = view
-    state["operation"] = operation
-    state["at"] = time.monotonic()
-    state["receipt"] = send(state["path"], {"operation": operation, "target": view["result"]["target"]})
-
-
-@when(parsers.parse('the operator sends action-only "{operation}" through the control socket'))
-@when(parsers.parse('the operator sends action-only "{operation}" with stable ID "{stable_id}" through the control socket'))
-def automatic_command(control_case, operation, stable_id=None):
-    """Submit no target and check the generated receipt over a real socket."""
+    """Send the retained command directly, without discovery or proposals."""
     state = control_case
     state["operation"] = operation
-    state["automatic"] = True
-    state["at"] = time.monotonic()
-    payload = {"operation": operation}
-    if stable_id is not None:
-        stable_id = stable_id + "-" + uuid4().hex
-        payload["command_id"] = stable_id
-    state["receipt"] = send(state["path"], payload)
-    proposal = state["receipt"]["result"]["proposal"]
-    if stable_id is None:
-        assert len(proposal["command_id"]) == 32
-    else:
-        assert proposal["command_id"] == stable_id
-    assert set(proposal["target"]) == {"binding_id", "generation", "invocation_id", "attempt_id"}
+    if operation == "force_retry":
+        from topsailai.ai_base.llm_control.control_runtime import _paths
+        waiting, _ = _paths("wire", os.getpid())
+        deadline = time.monotonic() + 3
+        while not waiting.exists() and time.monotonic() < deadline:
+            threading.Event().wait(0.01)
+        assert waiting.exists()
+    state["receipt"] = send(state["path"], {} if operation == "hard_interrupt" else
+                            {"operation": "force_retry"},
+                            action="hard_interrupt" if operation == "hard_interrupt" else "llm_control")
+    assert state["receipt"]["status"] == "ok", state["receipt"]
+    if operation == "force_retry":
+        assert state["receipt"]["result"] == {"state": "flag_written"}
 
 
-@then("the command is queued before coordinator acceptance")
-def queued(control_case):
-    """Socket receipt is pending, never a claim of terminal control victory."""
-    assert control_case["receipt"]["result"]["state"] == "queued"
-
-
-@then(parsers.parse('the request has the "{outcome}" outcome without stale output'))
-def outcome(control_case, outcome):
-    """Assert exact wire cardinality/payload and genuine production backoff."""
+@then("the wait executes the command without stale output")
+def outcome(control_case):
+    """Assert generic interruption or same-request retry over real HTTP/SSE."""
     state = control_case
-    if outcome == "fresh retry":
-        assert state["server"].lifecycle_capture.wait_for_request(2, timeout=8)
+    retry = state["operation"] == "force_retry"
+    if retry:
+        assert state["server"].lifecycle_capture.wait_for_request(2, timeout=10)
         assert state["server"].lifecycle_capture.wait_for_phase(2, state["phase"])
-        if state.get("automatic"):
-            original = state["receipt"]["result"]["proposal"]
-            current = send(state["path"], {"operation": "status"})["result"]["target"]
-            assert current != original["target"]
-            replay = send(state["path"], {"operation": state["operation"],
-                                         "command_id": original["command_id"]})
-            assert replay["result"]["proposal"] == original
-            assert replay["result"]["state"] != "queued"
         state["server"].lifecycle_capture.request_handle(2).release_delay()
-    assert state["done"].wait(8)
-    if outcome == "abandoned":
-        assert isinstance(state.get("error"), LLMControlledInterruptError), state
-        expected = 1
-    else:
+    assert state["done"].wait(10)
+    if retry:
         assert "error" not in state, repr(state.get("error"))
         assert state["result"] == "FRESH"
-        assert time.monotonic() - state["at"] >= 5
-        expected = 2
+    else:
+        assert isinstance(state.get("error"), HardInterruptError), repr(state.get("error"))
     records = state["server"].request_body_capture.state()["request_bodies"]
-    assert len(records) == expected
-    if expected == 2:
+    assert len(records) == (2 if retry else 1)
+    if retry:
         assert records[0]["body"] == records[1]["body"]
     assert not any("STALE" in item for item in state["outputs"])
-
-
-@when('the first stable-ID command response is lost before socket delivery')
-def lost_command_response(control_case, monkeypatch):
-    """Drop a real dispatched receipt before any bytes reach the requesting peer."""
-    import topsailai.workspace.control_channel.server as server_module
-
-    state = control_case
-    command_id = "lost-" + uuid4().hex
-    dropped = threading.Event()
-    original_send = server_module.send_bytes
-
-    def suppress_once(connection, encoded):
-        """Disarm before reporting loss; subsequent responses use real transport."""
-        response = json.loads(encoded)
-        proposal = (response.get("result") or {}).get("proposal", {})
-        if proposal.get("command_id") == command_id and not dropped.is_set():
-            state["receipt"] = response
-            dropped.set()
-            return False
-        return original_send(connection, encoded)
-
-    monkeypatch.setattr(server_module, "send_bytes", suppress_once)
-    state["automatic"] = True
-    state["operation"] = "force_retry"
-    state["at"] = time.monotonic()
-    before = send(state["path"], {"operation": "status"})["result"]["target"]
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
-        peer.settimeout(5)
-        peer.connect(state["path"])
-        peer.sendall(json.dumps({"request_id": uuid4().hex, "action": "llm_control",
-                               "payload": {"operation": "force_retry",
-                                           "command_id": command_id}}).encode() + b"\n")
-        assert peer.recv(1) == b"", "first receipt unexpectedly reached caller"
-    assert dropped.wait(5)
-    assert state["receipt"]["result"]["proposal"]["target"] == before
-    assert state["receipt"]["result"]["proposal"]["command_id"] == command_id

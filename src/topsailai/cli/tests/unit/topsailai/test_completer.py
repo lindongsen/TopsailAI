@@ -248,7 +248,7 @@ def test_live_fbt_tab_completion(monkeypatch):
     monkeypatch.setattr(readline, "get_line_buffer", lambda: "")
     monkeypatch.setattr(readline, "get_begidx", lambda: 0)
     monkeypatch.setattr(completer, "_get_control_action_names", lambda: ["hard_interrupt", "llm_control", "hard_interrupt"])
-    shortcuts = ["/control.fbt.force_retry", "/control.fbt.hard_interrupt"]
+    shortcuts = ["/control.fbt.force_retry"]
     for scope in ("runtime", "session", "workspace", "project", "doc"):
         monkeypatch.setattr(cli_state, "current_scope", scope)
         matches = []
