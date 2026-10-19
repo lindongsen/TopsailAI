@@ -118,7 +118,11 @@ class LLMCallMixin:
             )
         else:
             timed_response = guarded_response
+        first_chunk_seen = False
         for chunk in timed_response:
+            if not first_chunk_seen:
+                first_chunk_seen = True
+                self._start_stream_content_senders()
             stream_part = self._extract_stream_part(chunk)
             try:
                 current_usage = self.get_response_usage(chunk)
@@ -179,6 +183,12 @@ class LLMCallMixin:
             sampled_chunks=sampled_chunks,
         )
         return response_object, full_content
+
+    def _start_stream_content_senders(self):
+        """Notify progress-capable senders without sending synthetic content."""
+        for sender in self.content_senders:
+            if hasattr(sender, "start_stream"):
+                sender.start_stream()
 
     def _extract_response_content(self, response):
         """Extract text from one complete provider response."""

@@ -282,6 +282,20 @@ class ContentProgress(ContentSender):
         self._token_count = 0
         self._finished = False
 
+    def start_stream(self):
+        """Reset per-request progress and render immediately on the first chunk."""
+        self._start_time = None
+        self._speed_start_time = None
+        self._last_chunk_time = None
+        self._last_refresh_time = None
+        self._char_count = 0
+        self._speed_char_count = 0
+        self._token_count = 0
+        self._finished = False
+        if self.mode != "dots":
+            self.send("")
+        return True
+
     def _estimate_tokens(self, text):
         """Estimate token count from text length."""
         if not text:
