@@ -18,6 +18,34 @@ Since the 2026-10-16 migration, input and the eight phase-one Summary checkpoint
 
 An empty `{}` configuration still discovers bundled point-local resources. Each invocation merges these with configured absolute external Module/Script file or direct-child folder selections, rejects duplicate same-kind filenames, then executes Modules before Scripts, each in case-sensitive filename order. Membership is discovered again on later calls; this is not immutable prepared capture or last-known-good publication. Modules are imported and invoked **in the current process** and receive detached JSON keyword arguments; Summary uses the validated metadata-only `hook_context` envelope. Scripts are executable files launched directly as subprocesses with no arguments or Summary payload and empty stdin; stdout/stderr are discarded, while observed exit codes are reported. No deployment manifest, interpreter allowlist or dependency admission is required on this path.
 
+### Tool execution observation points
+
+The scoped tool integration adds `hook__aibase__before__tool_execute`,
+`hook__aibase__after__tool_execute`, and `hook__aibase__error__tool_execute` at
+`ai_base/agent_types/tool.py::exec_tool_func`. Business code calls these named
+Hook Point functions directly, without a wrapper or adapter; the shared builder
+only returns metadata and never dispatches. Approval precedes the function body
+and all three points; denied calls emit none. Normal return emits before/after;
+ordinary raised exceptions emit before/error before existing error-text conversion.
+AgentToolCallException and host control flow propagate without a terminal observation.
+
+Direct invocation of the named Hook Point function is the only supported business invocation form. No `observe_*` wrapper, observer adapter, indirection layer, or payload-builder that dispatches Hooks is permitted; payload builders build data only. Adding any wrapper, adapter, or indirection requires explicit Human approval **before implementation**, never unilateral implementation. The Human rejected both `observe_before_input` and `observe_tool_execute`; see the [mandatory direct-invocation rule](../features/feature-unified-hooks-design.md#mandatory-direct-invocation-and-human-approval).
+
+Module kwargs are exactly `tool_name` (string or null), `argument_count` (integer
+or null), and `argument_keys` (sorted tuple of string key names). After adds
+`duration_sec`; error adds `error_category` (exception class name, at most 128
+characters). No values, result, exception object/message, live callable or
+`tool_call_id` is supplied. Key names themselves can disclose sensitive metadata;
+Modules must not log or retain payloads indiscriminately. Scripts receive no
+arguments and empty stdin. No bundled plugins or new environment variables exist.
+
+Returns are ignored: no veto, rewrite, approval bypass or message mutation is
+supported. Ordinary observation/preparation failures are logged and isolated;
+host interrupts propagate. Modules remain trusted in-process code, not a sandbox,
+and cannot be forcibly timed out. Existing duration includes before-Hook time
+and excludes after-Hook time. Tool-message pairing and result handling stay
+unchanged. Approval and batch hooks remain outside this extension.
+
 ### PromptBase initialization live-object exception
 
 The `hook__aibase__after__prompt_base_init` point is a narrowly scoped exception to detached-payload guidance: it receives the live `PromptBase` instance as the keyword `prompt_base` after base initialization completes. Only in-process Modules receive this object; Scripts are launched without arguments or payload. Modules must not retain, mutate, serialize, or log the instance or its contents. No serialization or read-only boundary is applied, so mutable aliasing, sensitive attributes and retained references remain possible; subclass-specific initialization may still be incomplete at this checkpoint. This point does not change other direct-entry or Summary payload contracts.

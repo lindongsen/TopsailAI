@@ -54,6 +54,11 @@ from topsailai.ai_base.tool_approval import (
     ToolApprovalDeniedError,
 )
 
+from topsailai.hooks.points.aibase.before_tool_execute import hook__aibase__before__tool_execute
+from topsailai.hooks.points.aibase.after_tool_execute import hook__aibase__after__tool_execute
+from topsailai.hooks.points.aibase.error_tool_execute import hook__aibase__error__tool_execute
+from topsailai.hooks.points.aibase.tool_execute_payloads import build_tool_execute_payload as hook__build_tool_execute_payload
+
 from . import context as agent_ctx
 from . import exception as agent_exception
 
@@ -172,6 +177,9 @@ def exec_tool_func(tool_func, args, tool_name:str=None):
     duration_sec = None
     started_at = time.perf_counter()
     try:
+        hook__aibase__before__tool_execute(
+            **hook__build_tool_execute_payload(tool_func, args, tool_name),
+        )
         result = tool_func(**args)
     except (agent_exception.AgentToolCallException) as e:
         duration_sec = time.perf_counter() - started_at
@@ -179,11 +187,19 @@ def exec_tool_func(tool_func, args, tool_name:str=None):
     except Exception as e:
         duration_sec = time.perf_counter() - started_at
         error = e
+        hook__aibase__error__tool_execute(
+            **hook__build_tool_execute_payload(tool_func, args, tool_name),
+            error_category=type(e).__name__[:128],
+        )
         result = str(e)
         _record_llm_response_content_error()
         print_tool.print_error(e, exception=True)
     else:
         duration_sec = time.perf_counter() - started_at
+        hook__aibase__after__tool_execute(
+            **hook__build_tool_execute_payload(tool_func, args, tool_name),
+            duration_sec=duration_sec,
+        )
     finally:
         if duration_sec is None:
             duration_sec = time.perf_counter() - started_at

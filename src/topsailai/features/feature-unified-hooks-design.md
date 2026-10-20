@@ -30,6 +30,14 @@ Human acceptance and commit authorization: “达到预期了：请更新文档�
 
 The target is a native business function calling `hook_point_xxx()` directly (`def func_native(): hook_point_xxx(); ...`), without Hook-specific arguments, constructor fields, observer adapters or application-binding objects. The point automatically loads bundled point-local and environment-configured external Modules/Scripts. `input_message()` now calls the zero-argument `hook__workspace__before__input_message()` after input-mode selection and before reading; input signatures, command interception and exit behavior remain unchanged.
 
+### Mandatory direct invocation and Human approval
+
+Business code MUST call the named Hook Point function directly; this is the only supported invocation form for the maintained direct-entry architecture. No `observe_*` wrapper, observer adapter, indirection layer, or payload-builder that dispatches Hooks is permitted. A payload builder builds data only and MUST NOT dispatch Hooks.
+
+Adding any wrapper, adapter, or indirection around a Hook Point requires explicit Human approval **before implementation**; an implementer MUST NEVER introduce one unilaterally. Historical legacy adapter/decorator descriptions below do not authorize an exception to this rule.
+
+**Human decision provenance — 2026-10-20:** the Human previously rejected `observe_before_input` (quoted above), then rejected the implementation-introduced `observe_tool_execute`: “直接写hook point方法就可以了，为什么还要observe” and “是不是设计文档要求你要加observe 的？如果是，就要改。我又没说要加observe”. The wrapper was not required by this design. The Human reiterated: “没有经过用户同意别自己乱加wrapper 特别是这个observe的wrapper”. This is a durable design constraint, not merely a local rename or one-off correction.
+
 | Revised group | Accepted target and implemented prototype boundary |
 |---|---|
 | Execution authorization | Scripts with executable permission are attempted directly; no deployment manifest, interpreter allowlist or dependency-closure admission. Ordinary OS execution failure is reported. This does not make subprocesses a sandbox or roll back side effects. |
@@ -45,6 +53,35 @@ Implementation: `hooks/__init__.py`, `hooks/point_entry.py`, `hooks/points/works
 Original KeyboardInterrupt/SystemExit/CancelledError identity propagates through cleanup failures. Exact cleanup records retain process responsibility; group-signal failure still attempts direct-child reaping, unresolved ownership blocks new plugin starts, and reaped historical PGIDs are never re-signalled. A group whose settlement cannot be confirmed may keep execution blocked indefinitely; no explicit operator settlement API exists. Restart does not prove escaped descendants have exited.
 
 Limits: POSIX only, no new decorator integration, no full regression/cross-platform/production-lifecycle acceptance. The five-second execution budget is not a strict total-duration bound: discovery and global-lock waiting are not bounded by that timer, and cleanup may add a one-second wait per child. Process-creation handoff interruptions, escaped descendants and machine failure remain outside prototype guarantees. Plugin stderr is discarded; path/exit diagnostics are limited. No real bell execution or audibility is claimed. The residual stale task-document statuses are synchronized by this documentation update.
+
+## Scoped tool execution observation extension
+
+The scoped tool integration adds `hook__aibase__before__tool_execute`,
+`hook__aibase__after__tool_execute`, and `hook__aibase__error__tool_execute` at
+`ai_base/agent_types/tool.py::exec_tool_func`. Business code calls these named
+Hook Point functions directly, without a wrapper or adapter; the shared builder
+only returns metadata and never dispatches. Approval precedes the function body
+and all three points; denied calls emit none. Normal return emits before/after;
+ordinary raised exceptions emit before/error before existing error-text conversion.
+AgentToolCallException and host control flow propagate without a terminal observation.
+
+Module kwargs are exactly `tool_name` (string or null), `argument_count` (integer
+or null), and `argument_keys` (sorted tuple of string key names). After adds
+`duration_sec`; error adds `error_category` (exception class name, at most 128
+characters). No values, result, exception object/message, live callable or
+`tool_call_id` is supplied. Key names themselves can disclose sensitive metadata;
+Modules must not log or retain payloads indiscriminately. Scripts receive no
+arguments and empty stdin. No bundled plugins or new environment variables exist.
+
+Returns are ignored: no veto, rewrite, approval bypass or message mutation is
+supported. Ordinary observation/preparation failures are logged and isolated;
+host interrupts propagate. Modules remain trusted in-process code, not a sandbox,
+and cannot be forcibly timed out. Existing duration includes before-Hook time
+and excludes after-Hook time. Tool-message pairing and result handling stay
+unchanged. Approval and batch hooks remain outside this extension.
+
+This Human-approved extension supersedes historical tool-integration exclusions only
+for these three observation points; tools/memory/skill migration remains deferred.
 
 ## Current direct-entry architecture
 

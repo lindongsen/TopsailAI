@@ -214,3 +214,12 @@ Lessons:
 1. When changing a shared test fixture or expected-value constant, grep for every consumer that builds its own copy of that value, not just the harness that owns it.
 2. Verify a shared-fixture change with the full suite (or at least every file that imports the fixture), because per-file verification only covers the owning harness.
 3. Treat a new failure that appears after a test-infra fix as a coupling signal, not as an unrelated flake.
+
+
+## Hook Point wrappers require explicit Human approval before implementation
+
+Trigger: an implementer added an `observe_*` wrapper (`observe_tool_execute`) around Hook Points without Human approval, despite the earlier rejection of `observe_before_input` and the documented direct-call architecture; the Human explicitly expressed dissatisfaction.
+
+Action: call the named Hook Point function directly, keep payload builders data-only and never dispatch Hooks from them, and obtain explicit Human approval before adding any wrapper, adapter, or indirection. Do not reinterpret implementation convenience as authorization.
+
+Why this prevents recurrence: the mandatory rule and Human decision provenance are now explicit in `features/feature-unified-hooks-design.md` and `docs/Hooks_API.md`, so future implementers cannot claim the constraint was undocumented or infer permission from historical adapter descriptions.
