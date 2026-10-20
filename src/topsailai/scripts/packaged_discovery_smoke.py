@@ -24,6 +24,8 @@ EXPECTED_ACTIONS = {
     "get_runtime_messages",
     "get_session_messages",
     "hard_interrupt",
+    "heartbeat",
+    "llm_control",
     "soft_interrupt",
 }
 EXPECTED_HOOKS = ["p010_dsml_singular_wrapper", "p020_dsml_mismatched_wrapper"]

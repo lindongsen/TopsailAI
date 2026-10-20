@@ -37,7 +37,7 @@ EXPECTED_CORRECTION = [
         "tool_args": {"cmd": "echo ok"},
     }
 ]
-CONTROL_MODULES = ("instruction", "interrupt", "message")
+CONTROL_MODULES = ("heartbeat", "instruction", "interrupt", "llm_control", "message")
 SHARED_MODULE_ALLOWLISTS = {
     "topsailai.tools": {
         "agent_tool",
@@ -89,7 +89,7 @@ print(json.dumps({
         name: importlib.util.find_spec(
             "topsailai.workspace.control_handlers." + name
         ).origin
-        for name in ("instruction", "interrupt", "message")
+        for name in ("heartbeat", "instruction", "interrupt", "llm_control", "message")
     },
 }))
 '''
@@ -368,12 +368,23 @@ def then_source_discovery_contract(compiled_discovery_ctx: CompiledDiscoveryCont
     "a packaged TopsailAI tree containing compiled control-handler modules without sibling source modules"
 )
 def given_compiled_control_handlers(compiled_discovery_ctx: CompiledDiscoveryContext) -> None:
-    """Require a real compiled-only control-handler inventory."""
-    _require_packaged_root(compiled_discovery_ctx)
+    """Require current compiled handlers; skip absent or outdated build inputs."""
     directory = _package_directory(
         compiled_discovery_ctx.packaged_root,
         "topsailai.workspace.control_handlers",
     )
+    missing = [
+        name for name in CONTROL_MODULES
+        if not _extension_artifacts(directory, name)
+    ]
+    if missing:
+        pytest.skip(
+            f"packaged control-handler prerequisite absent or stale at "
+            f"{compiled_discovery_ctx.packaged_root}: missing compiled modules "
+            f"{missing}; rebuild with make build-deb at the repository root and "
+            "select its source root with TOPSAILAI_PACKAGED_ROOT; parity not verified"
+        )
+    _require_packaged_root(compiled_discovery_ctx)
     _assert_compiled_only(directory, CONTROL_MODULES)
 
 

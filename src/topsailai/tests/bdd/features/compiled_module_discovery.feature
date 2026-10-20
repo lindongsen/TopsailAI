@@ -8,6 +8,8 @@ Feature: Compiled modules remain discoverable in packaged TopsailAI
     When source module discovery enumerates the representative registries and hooks
     Then source discovery exposes the expected modules and control actions
 
+  # Control parity requires a rebuilt package containing all current handler modules.
+  # Missing or stale module inventories skip explicitly; action mismatches still fail.
   @packaged
   Scenario: Compiled control handlers expose the same actions as source handlers
     Given a packaged TopsailAI tree containing compiled control-handler modules without sibling source modules
