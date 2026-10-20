@@ -342,8 +342,14 @@ def print_help(
         },
         {
             "cmd": "/control <command> [args_json]  |  /control.<subcommand>",
-            "desc": "Send a control request to the current session through its UDS control socket. Supported commands: call_instruction, hard_interrupt, soft_interrupt, clear_interrupt, get_runtime_messages. args_json is an optional JSON object; defaults to {}. Fixed actions can be invoked without JSON via /control.hard_interrupt, /control.soft_interrupt [reason], /control.clear_interrupt, /control.get_runtime_messages. /control.call_instruction without a JSON payload starts an interactive wizard that prompts for instruction, args, and kwargs.",
+            "desc": "Send a control request to the current session through its UDS control socket. Supported commands: heartbeat, call_instruction, hard_interrupt, soft_interrupt, clear_interrupt, get_runtime_messages. args_json is an optional JSON object; defaults to {}. Fixed actions can be invoked without JSON via /control.heartbeat, /control.hard_interrupt, /control.soft_interrupt [reason], /control.clear_interrupt, /control.get_runtime_messages. /control.call_instruction without a JSON payload starts an interactive wizard that prompts for instruction, args, and kwargs.",
             "example": "Example: /control.hard_interrupt  or  /control.soft_interrupt timeout  or  /control.call_instruction  or  /control call_instruction {\"instruction\":\"ctx.history\",\"args\":[\"arg1\"],\"kwargs\":{\"key\":\"value\"}}",
+            "scopes": ["session", "runtime"],
+        },
+        {
+            "cmd": "/control.heartbeat",
+            "desc": "Check control-channel responsiveness and return alive, pid, hostname and session_id. This does not prove Agent or LLM progress. No arguments; runtime targets the watched PID.",
+            "example": "Example: /control.heartbeat",
             "scopes": ["session", "runtime"],
         },
         {

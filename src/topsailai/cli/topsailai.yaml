@@ -136,9 +136,17 @@ instructions:
     scopes:
       - session
       - runtime
-    desc: "Send a control request to the current session through its UDS control socket. Supported commands: call_instruction, hard_interrupt, soft_interrupt, clear_interrupt, get_runtime_messages. args_json is an optional JSON object; defaults to {}. For fixed actions use the convenient /control.<subcommand> forms."
+    desc: "Send a control request to the current session through its UDS control socket. Supported commands: heartbeat, call_instruction, hard_interrupt, soft_interrupt, clear_interrupt, get_runtime_messages. args_json is an optional JSON object; defaults to {}. For fixed actions use the convenient /control.<subcommand> forms."
     example: "/control hard_interrupt  or  /control soft_interrupt {\"reason\":\"timeout\"}  or  /control call_instruction {\"instruction\":\"ctx.history\",\"args\":[\"arg1\"],\"kwargs\":{\"key\":\"value\"}}"
     shell: "topsailai_send_control -s '{session_id}' -c '{command}' -a '{args}'"
+
+  - cmd: "/control.heartbeat"
+    scopes:
+      - session
+      - runtime
+    desc: "Check control-channel responsiveness and return alive, pid, hostname and session_id; this does not prove Agent or LLM progress. No arguments."
+    example: "/control.heartbeat"
+    shell: "topsailai_send_control -s '{session_id}' -c 'heartbeat' -a '{}'"
 
   - cmd: "/control.hard_interrupt"
     scopes:
