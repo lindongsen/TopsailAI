@@ -76,12 +76,121 @@ def _resolve_tmp_cleanup_max_age_days():
     return _TMP_CLEANUP_DEFAULT_MAX_AGE_DAYS
 
 
+def _tmp_top_level_kinds(tmp_dir):
+    """Classify each depth-1 entry of .tmp/ as a file or a directory.
+
+    The classification is captured before cleanup so a top-level directory that
+    is removed during cleanup is still reported as a directory. A symlink is
+    classified by its target type, which keeps directory symlinks in the
+    directory group even though only the link itself is ever removed.
+    """
+    kinds = {}
+    try:
+        with os.scandir(tmp_dir) as entries:
+            for entry in entries:
+                try:
+                    if entry.is_symlink():
+                        is_dir = entry.is_dir()
+                    else:
+                        is_dir = entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    is_dir = False
+                kinds[entry.name] = "dir" if is_dir else "file"
+    except OSError as exc:
+        print(
+            f"[TopsailAI-Launcher] Warning: Failed to inspect temporary directory '{tmp_dir}': {exc}",
+            file=sys.stderr,
+        )
+    return kinds
+
+
+def _tmp_top_level_name(tmp_dir, path):
+    """Return the depth-1 entry name that owns an arbitrary path inside .tmp/."""
+    relative = os.path.relpath(path, tmp_dir)
+    return relative.split(os.sep, 1)[0]
+
+
+def _collect_tmp_cleanup(tmp_dir, cutoff):
+    """Remove stale entries under .tmp/ and aggregate removals by depth-1 name.
+
+    Returns a tuple of (kinds, removed, top_removed). `kinds` maps each depth-1
+    entry name to "file" or "dir"; `removed` counts the removed files and
+    symlinks beneath each depth-1 name; `top_removed` holds the depth-1 names
+    whose own entry was removed. Directories pruned only because they became
+    empty are not counted, so a folder holding one stale file reports one
+    removal instead of one per pruned ancestor. Success output is deferred to
+    `_report_tmp_cleanup` so repeated depth-1 names collapse into a single line;
+    failures keep their full path for diagnosis.
+    """
+    kinds = _tmp_top_level_kinds(tmp_dir)
+    removed = {}
+    top_removed = set()
+    for root, dirs, files in os.walk(tmp_dir, topdown=False):
+        for name in files:
+            file_path = os.path.join(root, name)
+            top_name = _tmp_top_level_name(tmp_dir, file_path)
+            try:
+                # For a symlink, remove only the link itself (never its
+                # target); for a regular file, remove it when stale.
+                if os.path.islink(file_path) or os.path.getmtime(file_path) < cutoff:
+                    os.remove(file_path)
+                    removed[top_name] = removed.get(top_name, 0) + 1
+            except OSError as exc:
+                print(
+                    f"[TopsailAI-Launcher] Warning: Failed to remove temporary file '{file_path}': {exc}",
+                    file=sys.stderr,
+                )
+        for name in dirs:
+            dir_path = os.path.join(root, name)
+            top_name = _tmp_top_level_name(tmp_dir, dir_path)
+            try:
+                if os.path.islink(dir_path):
+                    # Remove only the directory symlink, never its target.
+                    os.remove(dir_path)
+                    removed[top_name] = removed.get(top_name, 0) + 1
+                else:
+                    os.rmdir(dir_path)
+                if root == tmp_dir:
+                    top_removed.add(top_name)
+            except OSError:
+                # Directory is not empty; keep it.
+                pass
+    return kinds, removed, top_removed
+
+
+def _report_tmp_cleanup(kinds, removed, top_removed):
+    """Print one aggregated line per depth-1 entry that had removals.
+
+    Files are reported by relative name only. Directories report how many
+    entries were removed beneath them; a depth-1 directory that was removed
+    while holding no stale file counts itself as one removed entry. Entries
+    without removals are skipped and lines are sorted by name so the output is
+    deterministic.
+    """
+    for name in sorted(set(removed) | top_removed):
+        count = removed.get(name, 0)
+        if count <= 0 and name in top_removed:
+            count = 1
+        if count <= 0:
+            continue
+        if kinds.get(name, "file") == "dir":
+            print(
+                f"[TopsailAI-Launcher] Removed stale temporary entries: {name}/ ({count} removed)"
+            )
+        else:
+            print(f"[TopsailAI-Launcher] Removed stale temporary file: {name}")
+
+
 def _reset_tmp_dir(workspace):
-    """Remove stale files (older than one day) from the workspace .tmp/ directory.
+    """Remove stale entries (older than the configured age) from workspace .tmp/.
 
     Fresh files are preserved so ongoing work is not lost on relaunch. Empty
     subdirectories left behind after removing stale files are pruned, and the
     .tmp/ directory itself is recreated if missing.
+
+    Reporting is aggregated to the first level of .tmp/: each depth-1 file is
+    printed once, and each depth-1 directory is printed once with the number of
+    entries removed beneath it. Cleanup itself still walks every depth.
 
     Symlinks are handled safely so cleanup never overreaches: if the .tmp/
     directory itself is a symlink, only the symlink is removed (never the data
@@ -112,36 +221,8 @@ def _reset_tmp_dir(workspace):
         print(
             f"[TopsailAI-Launcher] Cleaning stale files in temporary directory: {tmp_dir}"
         )
-        for root, dirs, files in os.walk(tmp_dir, topdown=False):
-            for name in files:
-                file_path = os.path.join(root, name)
-                try:
-                    # For a symlink, remove only the link itself (never its
-                    # target); for a regular file, remove it when stale.
-                    if os.path.islink(file_path) or os.path.getmtime(file_path) < cutoff:
-                        os.remove(file_path)
-                        print(
-                            f"[TopsailAI-Launcher] Removed stale temporary file: {file_path}"
-                        )
-                except OSError as exc:
-                    print(
-                        f"[TopsailAI-Launcher] Warning: Failed to remove temporary file '{file_path}': {exc}",
-                        file=sys.stderr,
-                    )
-            for name in dirs:
-                dir_path = os.path.join(root, name)
-                try:
-                    if os.path.islink(dir_path):
-                        # Remove only the directory symlink, never its target.
-                        os.remove(dir_path)
-                        print(
-                            f"[TopsailAI-Launcher] Removed stale temporary directory symlink: {dir_path}"
-                        )
-                    else:
-                        os.rmdir(dir_path)
-                except OSError:
-                    # Directory is not empty; keep it.
-                    pass
+        kinds, removed, top_removed = _collect_tmp_cleanup(tmp_dir, cutoff)
+        _report_tmp_cleanup(kinds, removed, top_removed)
     try:
         os.makedirs(tmp_dir, exist_ok=True)
     except OSError as exc:

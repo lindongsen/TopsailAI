@@ -271,6 +271,28 @@ the launcher prints a warning to stderr and falls back to the default of `1` day
 TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS=0.5 topsailai_launch_agent
 ```
 
+### Stale `.tmp/` Cleanup Report
+
+Cleanup still walks every depth of `{workspace}/.tmp/`, but the report is aggregated to the first level so a large
+temporary tree does not flood the terminal:
+
+- Each depth-1 file (including a file symlink) is printed once as `Removed stale temporary file: <name>`.
+- Each depth-1 directory (including a directory symlink) is printed once as
+  `Removed stale temporary entries: <name>/ (<count> removed)`.
+- `<count>` is the number of files and symlinks removed beneath that depth-1 name. A depth-1 directory that is removed
+  while holding no stale file counts itself as one removed entry, and directories pruned only because they became empty
+  do not add to the count.
+- Entries with no removals are not printed, and lines are sorted by name.
+- Removal failures keep their full path and are written to stderr so they stay diagnosable.
+
+Example:
+
+```
+[TopsailAI-Launcher] Cleaning stale files in temporary directory: /work/my-project/.tmp
+[TopsailAI-Launcher] Removed stale temporary file: context.data
+[TopsailAI-Launcher] Removed stale temporary entries: cache/ (3 removed)
+```
+
 ## Context Item Selection
 
 When `--item` is omitted:
@@ -381,7 +403,7 @@ topsailai_launch_agent --scan ./src/topsailai/cli
 ## Notes
 
 - A temporary context message file is written under `{workspace}/.tmp/` and cleaned up on exit, uncaught exceptions, and `SIGINT`/`SIGTERM`.
-- On launch, the launcher clears stale files in `{workspace}/.tmp/`. Only files older than the configured age threshold are removed; fresher files are preserved so ongoing work is not lost on relaunch. Empty subdirectories left behind are pruned and the `.tmp/` directory is recreated if missing. Symlinks are handled safely: if the `.tmp/` directory itself is a symlink, only the symlink is removed (never the data it points to), and any symlink entry inside `.tmp/` is removed as a link only, never its target, so cleanup never deletes files outside the workspace. See `TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS` under "Environment Variables".
+- On launch, the launcher clears stale files in `{workspace}/.tmp/`. Only files older than the configured age threshold are removed; fresher files are preserved so ongoing work is not lost on relaunch. Empty subdirectories left behind are pruned and the `.tmp/` directory is recreated if missing. The report is aggregated to the first level of `.tmp/`: each depth-1 file is printed once, and each depth-1 directory is printed once with the number of entries removed beneath it, so repeated names never appear. Symlinks are handled safely: if the `.tmp/` directory itself is a symlink, only the symlink is removed (never the data it points to), and any symlink entry inside `.tmp/` is removed as a link only, never its target, so cleanup never deletes files outside the workspace. See `TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS` and "Stale `.tmp/` Cleanup Report" above.
 - The launcher changes to the configured `workspace` before running the driver.
 - In `--dry-run` mode, command context sources are listed but not executed.
 - In `--dry-run` mode, the launcher prints `[TopsailAI-Launcher] Context token count: N` for the assembled context message. The count is informational only; when it cannot be computed the launcher prints a warning and continues. Use it to check how much of the first-turn context the folder tree consumes before raising `TOPSAILAI_SCAN_MAX_TOKENS`.
