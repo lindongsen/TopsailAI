@@ -74,3 +74,20 @@ Each accepted request has a bounded `RequestHandle` available through `server.li
 ## Verify Cache Reuse
 
 Send one request, then send another request with the same leading messages and an appended suffix. The second response reports non-zero `cached_tokens`. Change or insert a message before the previously matching prefix to observe a reduced or zero hit. Query `/debug/state` to inspect `cached_messages`, `cached_tokens`, and `prompt_tokens` for every retained request.
+
+## Native Tool Call SSE Fixtures
+
+In-process tests may set `MockServerConfig(stream_tool_call_deltas=...)` to a
+request-indexed tuple of native delta tuples; `None` selects existing content
+behavior for that request. Each delta contains `tool_calls`, whose entries have
+an integer `index` and optional `id`, `type="function"`, and `function` string
+fields `name` and `arguments`. Repeated indices support fragmented arguments.
+When the option is absent, `None`, or an empty tuple (or the selected request
+entry is `None`), existing content-stream behavior is unchanged and terminates
+with `finish_reason="stop"`. When native deltas are configured for a request,
+the stream terminates with `finish_reason="tool_calls"`, including when content
+chunks precede the native deltas. Usage, `[DONE]`, error precedence and lifecycle
+timing are unchanged.
+The option independently enables streaming; without any streaming option the
+existing HTTP 400 remains. Fixtures are detached at construction and bounded to
+128 responses, 128 deltas per response, 128 calls per delta and 1 MiB total.

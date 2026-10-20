@@ -16,8 +16,10 @@ from typing import Any
 
 if __package__:
     from .llm_mock_lifecycle import LifecycleCapture, RequestHandle
+    from .llm_mock_native_stream import freeze_native_deltas, response_deltas
 else:
     from llm_mock_lifecycle import LifecycleCapture, RequestHandle
+    from llm_mock_native_stream import freeze_native_deltas, response_deltas
 
 
 @dataclass(frozen=True)
@@ -45,9 +47,11 @@ class MockServerConfig:
     complete_response_delays: tuple[float, ...] | None = None
     complete_response_replies: tuple[str, ...] | None = None
     lifecycle_capacity: int = 32
+    stream_tool_call_deltas: tuple[tuple[dict[str, Any], ...] | None, ...] | None = None
 
     def __post_init__(self) -> None:
         """Reject invalid numeric configuration."""
+        object.__setattr__(self, "_native_stream_responses", freeze_native_deltas(self.stream_tool_call_deltas))
         if not 0 <= self.port <= 65535:
             raise ValueError("port must be between 0 and 65535")
         if self.chars_per_token <= 0:
@@ -459,9 +463,10 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
                 self.server.lifecycle_capture.mark(lifecycle, "first_item_sent")
                 return
             first_item_sent = False
-            for content_index, content in enumerate(stream_chunks):
+            deltas, finish_reason = response_deltas(self.server.config, response_index, stream_chunks)
+            for content_index, delta in enumerate(deltas):
                 self._write_sse({"id": completion_id, "object": "chat.completion.chunk", "created": created,
-                    "model": model, "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}]})
+                    "model": model, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]})
                 if not first_item_sent:
                     self.server.lifecycle_capture.mark(lifecycle, "first_item_sent")
                     first_item_sent = True
@@ -469,7 +474,7 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
                 if content_index == 0 and delay > 0:
                     self._wait_delay(delay, lifecycle, "after_first_chunk")
             final_chunk = {"id": completion_id, "object": "chat.completion.chunk", "created": created,
-                "model": model, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+                "model": model, "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}]}
             if self.server.config.report_usage:
                 final_chunk["usage"] = {"prompt_tokens": cache_result["prompt_tokens"], "completion_tokens": completion_tokens,
                     "total_tokens": total_tokens, **({"prompt_tokens_details": {"cached_tokens": cache_result["cached_tokens"]}} if self.server.config.report_cache_usage else {})}
@@ -538,6 +543,7 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
             payload.get("stream")
             and self.server.config.stream_chunks is None
             and self.server.config.stream_response_chunks is None
+            and self.server.config.stream_tool_call_deltas is None
         ):
             self.server.capture_body(raw_body, parsed_body=payload)
             self._error(400, "streaming is not supported")

@@ -103,6 +103,7 @@ class ServerOwner:
         tool_calls: tuple[dict[str, Any], ...] | None = None,
         tool_call_content: str | None = None,
         reply: str | None = None,
+        stream_tool_call_deltas=None,
     ) -> "ServerOwner":
         """Start one mock server on an operating-system-assigned port."""
         scripted = (tool_calls,) if tool_calls is not None else None
@@ -112,6 +113,8 @@ class ServerOwner:
             reply=reply,
             request_body_capacity=16,
             stream_chunks=(reply,),
+            stream_response_chunks=((), (reply,)) if stream_tool_call_deltas else None,
+            stream_tool_call_deltas=stream_tool_call_deltas,
             tool_call_responses=scripted,
             tool_call_response_content=tool_call_content,
         )
@@ -135,6 +138,7 @@ class ServerOwner:
     def close(self) -> None:
         """Stop only this scenario's server and wait for its thread to exit."""
         self.server.shutdown()
+        self.server.stop_handlers(timeout=5)
         self.server.server_close()
         self.thread.join(timeout=5)
         if self.thread.is_alive():
@@ -152,6 +156,7 @@ class ToolCallsScenario:
         self.conn = f"sqlite:///{self.database_path}"
         self.server_owner = ServerOwner.start()
         self.scripted_tool_names: list[str] = []
+        self.stream_tool_call_deltas = None
         self.tool_call_response_content: str | None = None
         self.first_parsed_response: list[dict[str, Any]] | None = None
         self.dangling_call_id: str | None = None
@@ -445,6 +450,7 @@ class ToolCallsScenario:
         self.server_owner = ServerOwner.start(
             calls,
             tool_call_content=self.tool_call_response_content,
+            stream_tool_call_deltas=self.stream_tool_call_deltas,
         )
         self._point_client_at_server()
 
