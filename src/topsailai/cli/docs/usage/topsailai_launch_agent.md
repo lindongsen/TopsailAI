@@ -64,6 +64,7 @@ topsailai_launch_agent
 | Option | Description |
 |--------|-------------|
 | `--item <name>` | Select a context/environment item defined in `settings.yaml`. |
+| `--no-base-context` | Ignore the shared base context sources configured under `context._` (and the legacy `context._default`). Only the selected item's own context sources are injected. Base environment variables are still merged. |
 | `--driver <command>` | Override the `ai_agent_driver` value. |
 | `--dry-run` | Print the resolved command, working directory, and merged environment variables without executing. |
 | `--subprocess` | Use `subprocess.run()` instead of `os.system()` (default). |
@@ -301,6 +302,25 @@ When `--item` is omitted:
 - If only `_` is configured, `_` is used automatically.
 - If exactly one non-base item is configured, that item is used automatically.
 - If multiple non-base items are configured, a numbered list is shown; `default` is pre-selected if it exists.
+
+## Ignoring the Base Context
+
+`context._` (and the legacy `context._default`) is the shared base context that is injected into every launch. Pass
+`--no-base-context` to ignore it for a single run:
+
+```bash
+topsailai_launch_agent --item memo --no-base-context
+```
+
+Behavior:
+
+- Only the selected item's own context sources are read and injected into `TOPSAILAI_CONTEXT_USER_MESSAGE`.
+- Base environment variables from `environment._` / `environment._default` are still merged, so driver resolution and
+  runtime settings are unchanged. The flag affects context sources only.
+- When `--item` is omitted and only `_` is configured, the auto-selected item is `_`; with the flag the injected context
+  is empty and the launcher prints `[TopsailAI-Launcher] Base context ignored (--no-base-context): N base source(s) skipped.`
+- The interactive item-selection summary and the `--dry-run` header describe the effective sources, so base sources are
+  not advertised when they will not be used.
 
 ## Driver Resolution Priority
 

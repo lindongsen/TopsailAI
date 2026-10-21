@@ -290,6 +290,7 @@ Supported command source fields:
 **Common options:**
 
 - `--item <name>` — Select a context/environment item defined in `settings.yaml`.
+- `--no-base-context` — Ignore the shared base context sources configured under `context._` (and the legacy `context._default`); only the selected item's own context sources are injected. Base environment variables are still merged.
 - `--driver <command>` — Override the `ai_agent_driver` value.
 - `--dry-run` — Print the resolved command, working directory, and merged environment variables without executing.
 - `--subprocess` — Use `subprocess.run()` instead of `os.system()`.

@@ -15,6 +15,10 @@ enters an interactive setup guide.
 Assemble environment variables based on --item argument, read configured
 context files into TOPSAILAI_CONTEXT_USER_MESSAGE, and launch the subprocess
 via os.system (default) or subprocess.run (with --subprocess).
+
+Pass --no-base-context to ignore the shared base context sources configured
+under context._ (and the legacy context._default), so only the selected item's
+own sources are injected. Base environment variables are still merged.
 """
 
 import argparse
@@ -246,6 +250,18 @@ def _get_base_context(context_map):
     default_context = list(context_map.get("_default", []) or [])
     underscore_context = list(context_map.get("_", []) or [])
     return default_context + underscore_context
+
+
+def _resolve_base_context(context_map, ignore_base_context=False):
+    """Return the base context sources that will actually be injected.
+
+    ``ignore_base_context`` implements ``--no-base-context``: the shared
+    ``_``/``_default`` sources are dropped so only the selected item's own
+    sources are read. Base environment variables are unaffected.
+    """
+    if ignore_base_context:
+        return []
+    return _get_base_context(context_map)
 
 
 def _get_base_env(env_map):
@@ -1018,14 +1034,16 @@ def _get_context_items(context_map):
     return [k for k in context_map.keys() if not _is_base_item(k)]
 
 
-def _format_item_config(item_name, context_map, env_map):
+def _format_item_config(item_name, context_map, env_map, ignore_base_context=False):
     """Return a human-readable summary of an item's effective configuration.
 
     The summary merges the `_`/`_default` context sources and environment
     variables with the item-specific values so the user sees exactly what
-    will be used for each option.
+    will be used for each option. When ``ignore_base_context`` is set (the
+    ``--no-base-context`` flag), base context sources are omitted from the
+    summary because they will not be injected.
     """
-    base_context = _get_base_context(context_map)
+    base_context = _resolve_base_context(context_map, ignore_base_context)
     item_context = list(context_map.get(item_name, []) or [])
     merged_context = base_context + item_context
 
@@ -1065,7 +1083,7 @@ def _format_item_config(item_name, context_map, env_map):
     return "\n".join(lines)
 
 
-def _select_context_item(context_map, env_map, timeout=10.0):
+def _select_context_item(context_map, env_map, timeout=10.0, ignore_base_context=False):
     """Select a context item based on configuration and interactivity.
 
     - 0 non-base items: use the base item name if present, otherwise None.
@@ -1074,6 +1092,9 @@ def _select_context_item(context_map, env_map, timeout=10.0):
       the default choice when configured. If the prompt times out, the
       default item is used. In non-interactive mode, "default" is used if
       present, otherwise the launcher exits with an error.
+
+    ``ignore_base_context`` is forwarded to the item summary so the prompt
+    never advertises base context sources that ``--no-base-context`` drops.
     """
     items = _get_context_items(context_map)
     if len(items) <= 1:
@@ -1097,7 +1118,8 @@ def _select_context_item(context_map, env_map, timeout=10.0):
     )
     for idx, item in enumerate(items, start=1):
         print(
-            f"\n  {idx}. {_format_item_config(item, context_map, env_map)}",
+            f"\n  {idx}. "
+            f"{_format_item_config(item, context_map, env_map, ignore_base_context)}",
             file=sys.stderr,
         )
 
@@ -1903,6 +1925,17 @@ def main():
         ),
     )
     parser.add_argument(
+        "--no-base-context",
+        action="store_true",
+        dest="no_base_context",
+        help=(
+            "Ignore the shared base context sources configured under context._ "
+            "(and the legacy context._default). Only the selected item's own "
+            "context sources are injected. Base environment variables are "
+            "still merged."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         dest="dry_run",
@@ -2043,6 +2076,7 @@ def main():
                 context_map,
                 settings.get("environment", {}) or {},
                 timeout=args.select_timeout,
+                ignore_base_context=args.no_base_context,
             )
     env_map = settings.get("environment", {}) or {}
     # Resolve driver with the following priority:
@@ -2086,8 +2120,10 @@ def main():
     item_name = args.item
     print(f"[TopsailAI-Launcher] Context item: {item_name}")
 
-    # 2. Assemble context: base items first, then the specified item
-    base_context = _get_base_context(context_map)
+    # 2. Assemble context: base items first, then the specified item.
+    # --no-base-context drops the shared "_"/"_default" sources so only the
+    # selected item's own sources are injected.
+    base_context = _resolve_base_context(context_map, args.no_base_context)
     item_context = context_map.get(item_name, []) if not _is_base_item(item_name) else []
 
     if not _is_base_item(item_name) and item_name not in context_map:
@@ -2095,6 +2131,12 @@ def main():
         print("\n", file=sys.stderr)
         print_available_items(context_map)
         sys.exit(1)
+
+    if args.no_base_context:
+        print(
+            "[TopsailAI-Launcher] Base context ignored (--no-base-context): "
+            f"{len(_get_base_context(context_map))} base source(s) skipped."
+        )
 
     merged_context = list(base_context)
     merged_context.extend(item_context)
@@ -2224,7 +2266,10 @@ def main():
         print("\n--- Dry Run Mode (no actual execution) ---")
         print(f"\nCommand line:\n  {' '.join(shlex.quote(c) for c in cmd)}")
         print(f"\nWorking directory:\n  {workspace}")
-        print("\nContext sources (base + selected item):")
+        if args.no_base_context:
+            print("\nContext sources (selected item only; base ignored):")
+        else:
+            print("\nContext sources (base + selected item):")
         if normalized_context:
             for source in normalized_context:
                 if source.type == "command":

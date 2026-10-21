@@ -53,3 +53,7 @@ The CLI now provides `/agent.<instruction> [args...]` in runtime scope as a shor
 ## Aggregated `.tmp/` Cleanup Report for `topsailai_launch_agent`
 
 `topsailai_launch_agent` now reports stale `.tmp/` cleanup aggregated to the first level of the directory instead of printing one absolute path per removed entry. Cleanup still walks every depth and keeps the age threshold, symlink safety, and empty-directory pruning unchanged, but each depth-1 file is printed once by relative name and each depth-1 directory is printed once with the number of entries removed beneath it, so repeated names no longer flood the launch output.
+
+## Base Context Opt-Out for `topsailai_launch_agent`
+
+`topsailai_launch_agent` now accepts `--no-base-context`, which drops the shared base context sources configured under `context._` (and the legacy `context._default`) for a single run so only the selected item's own sources are injected into `TOPSAILAI_CONTEXT_USER_MESSAGE`. Base environment variables from `environment._` / `environment._default` are still merged, so driver resolution and runtime settings are unchanged; the interactive item-selection summary and the `--dry-run` header describe the effective sources, and the launcher prints how many base sources were skipped.
