@@ -108,6 +108,26 @@ isolated `git worktree` — that converts a suspicion into evidence;
 (3) never express a wait budget and the event that must arrive inside it as the same
 constant; drive the event with a `threading.Event` instead of a fixed sleep.
 
+Pristine-worktree attribution is mandatory before calling a failure a regression:
+run the same failing file with the same flags at the same HEAD in an isolated
+worktree, force `PYTHONPATH` to its project and source roots, and print the
+imported production module's `__file__` to prove it resolves inside that tree;
+an editable installation can otherwise silently import the modified checkout.
+Keep evidence under the workspace `.tmp`, record exact failures and per-run
+results on both trees, then remove the owned worktree and log its removal.
+Identical failures establish a pre-existing baseline; non-reproduction alone
+establishes neither causation nor a confirmed root cause.
+
+During native-SSE verification at `6fd1862eb163e1be95e0b4b8bb389efa8f45107d`,
+`tests/bdd/test_instruction_message_integrity.py` (10 failures),
+`tests/bdd/test_session_meta_name.py` (1 failure), and
+`tests/bdd/test_session_name_startup_context.py` (2 failures) reproduced the same
+failures at pristine HEAD and were classified PRE-EXISTING.
+`test_raising_timeout_uses_injected_exception` passed three reruns on each tree;
+the prior failure was classified FLAKY/transient, not established as caused by
+SSE. Verified import isolation prevents false baseline comparisons, while
+repeated runs prevent one transient result from being labelled a regression.
+
 ## A human-facing "explain the decision" block should start minimal, not grow
 
 The approval-prompt focus block was implemented with a heading plus a per-condition

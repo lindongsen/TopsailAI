@@ -84,3 +84,34 @@ scenario took about 26 minutes and dominated the whole BDD suite.
 - Add `pytestmark = pytest.mark.slow` to the scenario entry module.
 - Keep the default target green: `make core-bdd-test` must not collect it.
 - Document the explicit command in the scenario module docstring or here.
+
+
+## Unit Runner Scope and BDD Collection Boundaries
+
+`tests/run_tests.py` discovers only `tests/unit`: `TEST_DIR` selects that directory
+(line 19), and `get_test_files()` recursively selects `*.py` files whose names
+begin with `test_` beneath it (lines 87–105); it never searches `tests/bdd`.
+A GREEN unit-runner result therefore does not prove BDD acceptance.
+Run `make core-bdd-test` for non-slow core BDD scenarios and `make cli-bdd-test`
+for CLI BDD scenarios, or run the relevant BDD modules in separate pytest
+processes; disclose any unexecuted scope and run slow acceptance separately with
+`make core-bdd-slow` when required.
+
+Default pytest BDD collection is all-or-nothing: one unimportable test module
+can abort collection with exit 2 before any scenario executes. During SSE
+verification, `tests/bdd/test_heartbeat_control.py:5` imported
+`tests/bdd/steps/heartbeat_control_steps.py:13`, whose
+`from cli_topsailai.runtime_control import send_control_request` raised
+`ModuleNotFoundError: No module named 'cli_topsailai'`, aborting the non-slow
+core BDD invocation. This is historical failure evidence, not a claim that the
+current heartbeat module remains broken.
+
+Untracked WIP modules in a shared workspace can therefore block unrelated
+verification. Exclude only the unrelated paths with non-mutating
+`--ignore=<path>` flags; never delete or modify another agent's files.
+Report the ordinary workspace result separately from the scoped result and
+name every exclusion; a scoped GREEN is not workspace-wide GREEN. If a
+monolithic run is too slow or contaminated by shared process state, use one
+pytest process per BDD module and retain each exit code, scenario counts,
+failure text and elapsed time. Attribute suspected regressions using the
+[pristine-worktree procedure](../LEARN.md#an-autouse-timeout-fixture-equal-to-a-tests-sleep-turns-the-test-into-a-coin-flip).

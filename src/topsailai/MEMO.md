@@ -88,3 +88,22 @@ Summary: Plugin extends what a component can do, Hook defines when and where add
 ## Unified Hook Point implementation and remaining acceptance
 
 [MEMO.AgentCore.md](MEMO.AgentCore.md#unified-hook-point-architecture) — Input and eight Summary checkpoints now use direct named entries without workspace owners; prepared/trust and application-access libraries remain legacy APIs with separate acceptance gates.
+
+
+## MEMO: Unit Runner Scope and BDD Collection Boundaries
+
+The full rule lives in [tests/bdd.md](./tests/bdd.md#unit-runner-scope-and-bdd-collection-boundaries).
+
+Summary: `tests/run_tests.py` covers only `tests/unit`, so verify BDD separately and exclude unrelated collection blockers only with non-mutating flags while reporting the scoped result separately.
+
+## MEMO: Attribute Suspected Regressions at Pristine HEAD
+
+The full rule lives in [LEARN.md](./LEARN.md#an-autouse-timeout-fixture-equal-to-a-tests-sleep-turns-the-test-into-a-coin-flip).
+
+Summary: before calling a failure a regression, compare identical runs at pristine HEAD with explicit `PYTHONPATH` and verified imported-module paths, separating pre-existing failures and flaky outcomes from change-caused regressions.
+
+## MEMO: Native Tool Call SSE Mock Fixtures
+
+The capability is documented in [tests/mock/README.md](./tests/mock/README.md#native-tool-call-sse-fixtures).
+
+Summary: the LLM mock server supports opt-in native `tool_calls` SSE deltas while absent or empty native configuration preserves legacy content-only streaming with terminal `finish_reason="stop"`.
