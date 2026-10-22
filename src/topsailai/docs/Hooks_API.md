@@ -11,6 +11,7 @@ programming_language: python
 # Hooks Python API
 
 This document distinguishes the authoritative target public contract from the currently implemented `topsailai.hooks` APIs. U06–U10 unified waiting execution, reload diagnostics, cancellation custody and Catalog authority are committed; U11A–E have focused business/process evidence. U11H final regression and architecture acceptance remain pending, with accepted provenance REDs recorded separately. The architecture and security rationale are maintained in [`features/feature-unified-hooks-design.md`](../features/feature-unified-hooks-design.md).
+Before integrating a Hook Point into business code, follow the [Hook development before core integration](../features/feature-unified-hooks-design.md#hook-development-before-core-integration) principle.
 
 ## Current direct-entry architecture
 

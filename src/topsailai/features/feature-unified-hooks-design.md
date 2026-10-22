@@ -30,6 +30,18 @@ Human acceptance and commit authorization: “达到预期了：请更新文档�
 
 The target is a native business function calling `hook_point_xxx()` directly (`def func_native(): hook_point_xxx(); ...`), without Hook-specific arguments, constructor fields, observer adapters or application-binding objects. The point automatically loads bundled point-local and environment-configured external Modules/Scripts. `input_message()` now calls the zero-argument `hook__workspace__before__input_message()` after input-mode selection and before reading; input signatures, command interception and exit behavior remain unchanged.
 
+## Hook development before core integration
+
+**Human decision provenance — 2026-10-22:** “hooks的开发原则是先完成hooks的完整开发和测试，再接入核心代码，确保接入的时候hooks就是可用的。” This establishes the mandatory order below for every new Hook Point.
+
+- **Stage 1 — Hook development:** Define the point declaration (`NAME` constant, `EventDefinition`, and `HookPointDeclaration`), the payload contract and builder, and any optional Modules/Scripts inside `hooks/points/<module>/<point>/`.
+- **Stage 2 — Hook verification:** The Hook Point MUST pass its own unit tests, plus BDD when LLM-visible behavior is involved, before any business code calls it. Its declaration must import cleanly, and its payload contract must be enforced and asserted.
+- **Stage 3 — Core integration:** Only after Stages 1 and 2 pass may a direct named Hook Point call be inserted into the business function at the approved boundary.
+
+At the moment of integration, the Hook MUST already be usable and proven: it must import cleanly, have a passing focused test, and enforce its payload contract. Integration is not the stage at which an invalid declaration is discovered. Do not write a Hook Point and its core-code call in one unverified step. In this project, that anti-pattern allowed an integrated test collection to expose `ValueError: invalid Hook-point declaration` because the declaration used unsupported schema keywords (`const` and `additionalProperties`). A Hook defect discovered after integration forces either a business-code rollback or a weakened test and makes the Hook and business changes difficult to review or attribute independently. Developing and proving the Hook first keeps the integration diff minimal and makes Hook usability a precondition rather than a hope.
+
+This principle complements, and does not replace, the mandatory direct-invocation rule: business code calls the named Hook Point directly, without an `observe_*` wrapper, adapter, or indirection. The separate Human-approval rule for any wrapper remains in force.
+
 ### Mandatory direct invocation and Human approval
 
 Business code MUST call the named Hook Point function directly; this is the only supported invocation form for the maintained direct-entry architecture. No `observe_*` wrapper, observer adapter, indirection layer, or payload-builder that dispatches Hooks is permitted. A payload builder builds data only and MUST NOT dispatch Hooks.
@@ -913,6 +925,8 @@ Composed enabled/disabled controls verify summary/history/token equivalence, exa
 Task evidence (relative to ProjectFolder): `.tmp/summary-scripts/step144/` contains suite logs, `full-parent.json`, `full-results.txt` and `changed-scope-coverage.json`; STEP145 reports those results. This is commit-scoped unit/BDD/integration acceptance, not unrestricted full-project GREEN, full CLI restart, cross-platform, physical-custody, deployment or production-performance acceptance. U11H/provenance decisions remain separate; all seven P2 gates stay closed, `cleanup_profile` immutable, C3 containment separate, child capability STOP and native implementation unauthorized. S1–S4 introduced or changed no environment variables; `env_template` and `docs/Environment_Variables.md` require no update.
 
 ## Phased delivery
+
+Hook implementation and integration MUST follow the [Hook development before core integration](#hook-development-before-core-integration) order.
 
 ### Standalone contract and scheduler
 
