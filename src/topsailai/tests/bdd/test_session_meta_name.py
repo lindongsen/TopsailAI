@@ -46,6 +46,17 @@ def inspect_metadata(metadata_scenario):
     assert report["resumed"]["status"] == "running"
 
 
+@then("the metadata hostname matches the child process")
+def inspect_hostname(metadata_scenario):
+    """Verify the creation hostname survives every metadata update."""
+    report = metadata_scenario.integrity_report()
+    expected = report["expected_hostname"]
+    assert report["created"]["hostname"] == expected
+    assert report["named"]["hostname"] == expected
+    assert report["completed"]["hostname"] == expected
+    assert report["resumed"]["hostname"] == expected
+
+
 @then("naming uses exactly one isolated provider request")
 def inspect_requests(metadata_scenario):
     """Assert retained wire bodies and no rename-induced extra request."""

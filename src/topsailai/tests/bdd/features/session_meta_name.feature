@@ -6,4 +6,5 @@ Feature: Session names remain observable in process metadata
     Given an isolated metadata session with a real naming provider
     When the Agent completes naming and resumes the same session
     Then the metadata retains the committed name and terminal timestamp
+    And the metadata hostname matches the child process
     And naming uses exactly one isolated provider request

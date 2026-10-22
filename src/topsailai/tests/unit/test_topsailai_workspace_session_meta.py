@@ -7,10 +7,11 @@
 
 import json
 import os
+import socket
 import time
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, Mock
 
 from topsailai.workspace import session_meta
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
@@ -59,6 +60,7 @@ def test_create_session_meta_writes_correct_json():
     assert meta["version"] == 1
     assert meta["session_id"] == "s-001"
     assert meta["pid"] == os.getpid()
+    assert meta["hostname"] == socket.gethostname()
     assert meta["status"] == "running"
     assert meta["end_ts"] is None
     assert meta["agent_name"] == "FakeAgent"
@@ -78,6 +80,52 @@ def test_create_session_meta_without_agent():
     assert meta["session_id"] == "s-002"
     assert meta["agent_name"] == ""
     assert meta["model_name"] == ""
+
+
+def test_create_session_meta_hostname_resolution_failure_is_best_effort(monkeypatch, caplog):
+    monkeypatch.setattr(session_meta.socket, "gethostname", Mock(side_effect=OSError("hostname unavailable")))
+
+    path = session_meta.create_session_meta("s-hostname-error")
+
+    assert path is not None
+    assert _read_meta(path)["hostname"] == ""
+    matching = [record for record in caplog.records if "hostname unavailable" in record.getMessage()]
+    assert len(matching) == 1
+    assert matching[0].exc_info
+    assert matching[0].exc_info[0] is OSError
+    assert matching[0].exc_info[1] is not None
+    assert matching[0].exc_info[2] is not None
+
+
+def test_create_session_meta_empty_hostname_is_best_effort(monkeypatch, caplog):
+    monkeypatch.setattr(session_meta.socket, "gethostname", Mock(return_value=""))
+
+    path = session_meta.create_session_meta("s-hostname-empty")
+
+    assert path is not None
+    assert _read_meta(path)["hostname"] == ""
+    assert "Hostname resolution returned an empty value" in caplog.text
+
+
+def test_create_session_meta_whitespace_hostname_is_best_effort(monkeypatch, caplog):
+    monkeypatch.setattr(session_meta.socket, "gethostname", Mock(return_value=" \t\n"))
+
+    path = session_meta.create_session_meta("s-hostname-whitespace")
+
+    assert path is not None
+    assert _read_meta(path)["hostname"] == ""
+    assert "Hostname resolution returned an empty value" in caplog.text
+
+
+def test_create_session_meta_preserves_hostname_and_filename(monkeypatch):
+    hostname = "主机名-" + ("x" * 128)
+    monkeypatch.setattr(session_meta.socket, "gethostname", Mock(return_value=hostname))
+
+    path = session_meta.create_session_meta("s-hostname-unicode")
+
+    assert path.endswith(f"s-hostname-unicode.{os.getpid()}.session.meta")
+    assert hostname not in os.path.basename(path)
+    assert _read_meta(path)["hostname"] == hostname
 
 
 def test_update_session_meta_status():

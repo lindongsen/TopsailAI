@@ -11,6 +11,7 @@ import glob
 import json
 import logging
 import os
+import socket
 import threading
 import time
 from datetime import datetime
@@ -60,6 +61,23 @@ def _serialized_session_meta(func):
 def _now_iso8601() -> str:
     """Return the current local timestamp in ISO 8601 format."""
     return datetime.now().isoformat()
+
+
+def _get_hostname() -> str:
+    """Return the process hostname, or an empty value when unavailable."""
+    try:
+        hostname = socket.gethostname()
+    except Exception as error:
+        logger.warning(
+            "Failed to resolve hostname for session metadata: %s",
+            error,
+            exc_info=True,
+        )
+        return ""
+    if not hostname or not hostname.strip():
+        logger.warning("Hostname resolution returned an empty value")
+        return ""
+    return hostname
 
 
 def get_session_meta_path(session_id: str | None = None) -> str:
@@ -213,6 +231,7 @@ def create_session_meta(
         "session_id": resolved_session_id,
         "session_name": session_name,
         "pid": os.getpid(),
+        "hostname": _get_hostname(),
         "start_ts": _now_iso8601(),
         "end_ts": None,
         "status": STATUS_RUNNING,

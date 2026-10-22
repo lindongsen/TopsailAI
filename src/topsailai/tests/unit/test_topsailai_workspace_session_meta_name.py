@@ -37,6 +37,36 @@ def test_old_positional_call():
     assert read()["session_name"] == ""
 
 
+def test_updates_preserve_creation_hostname(monkeypatch):
+    """Rename and completion updates keep the creation-time hostname."""
+    hostname = "created-host"
+    resolver = Mock(return_value=hostname)
+    monkeypatch.setattr(meta, "_get_hostname", resolver)
+    meta.create_session_meta("names")
+
+    meta.update_session_meta_field("session_name", "renamed", "names")
+    meta.update_session_meta_status("completed", "names")
+
+    result = read()
+    assert result["hostname"] == hostname
+    assert resolver.call_count == 1
+
+
+def test_legacy_record_without_hostname_remains_valid(monkeypatch):
+    """Legacy records can be updated without hostname backfilling."""
+    path = Path(meta.get_session_meta_path("legacy-host"))
+    path.write_text(json.dumps({"status": "running", "session_name": ""}))
+    resolver = Mock(side_effect=AssertionError("legacy update must not resolve hostname"))
+    monkeypatch.setattr(meta, "_get_hostname", resolver)
+
+    meta.update_session_meta_field("session_name", "renamed", "legacy-host")
+
+    result = json.loads(path.read_text())
+    assert result["session_name"] == "renamed"
+    assert "hostname" not in result
+    resolver.assert_not_called()
+
+
 def test_legacy_and_pid_isolation(tmp_path):
     """Add a name to legacy JSON without changing another PID or extensions."""
     path = Path(meta.get_session_meta_path("names"))
@@ -55,6 +85,9 @@ def test_legacy_and_pid_isolation(tmp_path):
 @pytest.mark.parametrize("terminal", ["completed", "exit"])
 def test_interleaving_preserves_name_and_terminal(monkeypatch, first_name, terminal):
     """Force contention before the second transaction reads the shared record."""
+    hostname = "fixed-created-host"
+    resolver = Mock(return_value=hostname)
+    monkeypatch.setattr(meta, "_get_hostname", resolver)
     meta.create_session_meta("names")
     original_read = meta._read_meta
     original_lock = meta._META_LOCK
@@ -126,6 +159,8 @@ def test_interleaving_preserves_name_and_terminal(monkeypatch, first_name, termi
     assert second_read.is_set()
     result = read()
     assert result["session_name"] == "late name"
+    assert result["hostname"] == hostname
+    assert resolver.call_count == 1
     assert result["status"] == ("interrupted" if terminal == "exit" else terminal)
     assert result["end_ts"]
 

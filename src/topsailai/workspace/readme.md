@@ -228,7 +228,7 @@ The main Agent publishes a per-Agent startup-completion state after its first `n
 
 ### Session Metadata Names
 
-Session metadata lives at `{TOPSAILAI_HOME}/workspace/task/{session_id}.{pid}.session.meta`; the default `TOPSAILAI_HOME` already includes `.topsailai`. New records contain `session_name`, using the stored session name at startup or `""` when unavailable.
+Session metadata lives at `{TOPSAILAI_HOME}/workspace/task/{session_id}.{pid}.session.meta`; the default `TOPSAILAI_HOME` already includes `.topsailai`. New records contain `session_name`, using the stored session name at startup or `""` when unavailable, and `hostname`, captured once from `socket.gethostname()` when the record is created. A hostname resolution failure or empty result stores `""` without blocking metadata creation. Legacy records may omit `hostname` and remain valid; updates do not backfill or re-resolve it.
 
 Database and current-PID metadata name saves are independent best-effort operations. After the database call returns, `context.ctx_manager.update_session_name()` attempts to save the name to the matching current-PID metadata file regardless of whether the database result is `True`, `False`, or `None`. The method preserves the database return value, and asynchronous success/failure logging continues to reflect that result. Metadata write failures are logged without interrupting the Agent flow. Existing input validation and propagation of directly raised database exceptions are unchanged. Missing files are not created by rename; legacy records without the field remain valid and gain it on update. No historical migration or cross-process rename broadcast is performed.
 

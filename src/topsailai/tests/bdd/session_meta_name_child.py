@@ -33,7 +33,7 @@ def main():
     llm_shell.get_llm_chat = track_chat
     session_id = os.environ["BDD_SESSION_ID"]
     chats = []
-    snapshots = {}
+    snapshots = {"expected_hostname": session_meta.socket.gethostname()}
 
     def make_chat():
         """Construct the public shell without external workspace locking."""
