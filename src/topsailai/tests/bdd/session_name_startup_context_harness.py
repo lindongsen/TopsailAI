@@ -34,13 +34,19 @@ from topsailai.workspace import agent_shell, folder_constants, llm_shell
 
 worker_threads = []
 worker_results = []
-original_thread = ctx_manager.threading.Thread
+original_threading = ctx_manager.threading
+original_thread = original_threading.Thread
+
 class TrackedThread(original_thread):
     def start(self):
-        worker_threads.append(self)
+        target = self._target
+        if target is ctx_manager._async_update_session_name:
+            worker_threads.append(self)
         return super().start()
 
     def run(self):
+        if self not in worker_threads:
+            return super().run()
         try:
             super().run()
         except BaseException as exc:
@@ -48,8 +54,15 @@ class TrackedThread(original_thread):
             raise
         else:
             worker_results.append((self, None))
+
+class ThreadingProxy:
+    Thread = TrackedThread
+
+    def __getattr__(self, name):
+        return getattr(original_threading, name)
+
 if os.environ.get("BDD_NATIVE_TOOL_SCENARIO") != "1":
-    ctx_manager.threading.Thread = TrackedThread
+    ctx_manager.threading = ThreadingProxy()
 naming_chats = []
 _original_get_llm_chat = llm_shell.get_llm_chat
 def tracked_get_llm_chat(*args, **kwargs):
@@ -462,18 +475,28 @@ try:
         run_turn("Continue the existing plan in a later turn.", os.environ.get("BDD_AGENT_TYPE", "plan_and_execute"))
 finally:
     cleanup_errors = []
-    for worker in worker_threads:
-        worker.join(timeout=10)
-        if worker.is_alive():
-            cleanup_errors.append(AssertionError("naming worker did not exit"))
-    for worker, error in worker_results:
-        if error is not None:
-            cleanup_errors.append(error)
-    for naming_chat in naming_chats:
+    try:
+        for worker in worker_threads:
+            worker.join(timeout=10)
+            if worker.is_alive():
+                cleanup_errors.append(AssertionError("naming worker did not exit"))
+        for worker, error in worker_results:
+            if error is not None:
+                cleanup_errors.append(error)
+    finally:
         try:
-            naming_chat.close()
-        except BaseException as error:
-            cleanup_errors.append(error)
+            for naming_chat in naming_chats:
+                try:
+                    naming_chat.close()
+                except BaseException as error:
+                    cleanup_errors.append(error)
+        finally:
+            ctx_manager.threading = original_threading
+            llm_shell.get_llm_chat = _original_get_llm_chat
+            AgentStartupState.wait = original_wait
+            AgentStartupState.mark_started = original_mark_started
+            import builtins
+            builtins.open = _original_open
     if cleanup_errors:
         raise AssertionError("naming worker cleanup failed: " + "; ".join(map(str, cleanup_errors)))
 '''
