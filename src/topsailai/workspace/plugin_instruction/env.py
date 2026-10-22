@@ -12,24 +12,33 @@ from topsailai.utils.print_tool import (
     PRINT_STEP_MODE_DESCRIPTIONS,
     PRINT_STEP_MODE_ENV,
     PRINT_STEP_MODE_LIST,
+    PRINT_STEP_SENSITIVE_ARG_KEYS,
     get_print_step_mode,
 )
 
 
-def set_env(k:str, v:str):
+def set_env(k:str=None, v:str=None) -> str:
     """set environment
 
     Args:
         k (str): key
         v (str): value
     """
+    if k is None or v is None:
+        return "Usage: /env.set <name> <value>"
     k = str(k)
     v = str(v)
+    if not k or "=" in k or "\0" in k:
+        return "Invalid environment variable name"
+    if "\0" in v:
+        return "Invalid environment variable value"
     old_v = os.getenv(k)
     if k:
         os.environ[k] = v
-    print(f"set environment ok: old={old_v} new={v}")
-    return
+    sensitive = any(word in k.lower() for word in (*PRINT_STEP_SENSITIVE_ARG_KEYS, "key"))
+    result = f"set environment ok: {k} old={'***' if sensitive else old_v} new={'***' if sensitive else v}"
+    print(result)
+    return result
 
 def get_env(k:str) -> str|None:
     """get environment
