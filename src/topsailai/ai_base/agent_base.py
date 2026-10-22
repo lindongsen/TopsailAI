@@ -43,6 +43,16 @@ from topsailai.tools.base.common import (
 from topsailai.ai_base.agent_runtime import AgentRuntime
 from topsailai.ai_base.agent_tool import AgentTool
 from topsailai.ai_base.tool_call import StepCallBase
+from topsailai.hooks.points.aibase.after_agent_run import (
+    hook__aibase__after__agent_run,
+)
+from topsailai.hooks.points.aibase.agent_run_payloads import new_operation_id as hook__new_operation_id
+from topsailai.hooks.points.aibase.before_agent_run import (
+    hook__aibase__before__agent_run,
+)
+from topsailai.hooks.points.aibase.error_agent_run import (
+    hook__aibase__error__agent_run,
+)
 
 
 class AgentBase(AgentTool):
@@ -155,13 +165,58 @@ class AgentBase(AgentTool):
         Returns:
             The result of the agent execution
         """
+        operation_id = hook__new_operation_id()
         with (
                 ctxm_give_agent_name(self.agent_name),
                 ctxm_set_agent(self),
             ):
+            try:
+                from topsailai.hooks.points.aibase.before_agent_run.payloads import build_payload as hook__build_payload
+                hook__aibase__before__agent_run(
+                    **hook__build_payload(
+                        operation_id=operation_id, agent_name=self.agent_name,
+                        step_call=step_call, user_input=user_input,
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "Agent run Hook failed point=%s operation_id=%s",
+                    "hook__aibase__before__agent_run", operation_id,
+                )
             self._clear_pending_native_tool_call_responses()
             try:
-                return self._run(step_call, user_input)
+                result = self._run(step_call, user_input)
+            except Exception as error:
+                try:
+                    from topsailai.hooks.points.aibase.error_agent_run.payloads import build_payload as hook__build_payload
+                    hook__aibase__error__agent_run(
+                        **hook__build_payload(
+                            operation_id=operation_id, agent_name=self.agent_name,
+                            step_call=step_call, error=error,
+                        ),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Agent run Hook failed point=%s operation_id=%s",
+                        "hook__aibase__error__agent_run", operation_id,
+                    )
+                raise
+            else:
+                try:
+                    from topsailai.hooks.points.aibase.after_agent_run.payloads import build_payload as hook__build_payload
+                    hook__aibase__after__agent_run(
+                        **hook__build_payload(
+                            operation_id=operation_id, agent_name=self.agent_name,
+                            step_call=step_call, result=result,
+                            pending_native_tool_responses_cleared=False,
+                        ),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Agent run Hook failed point=%s operation_id=%s",
+                        "hook__aibase__after__agent_run", operation_id,
+                    )
+                return result
             finally:
                 self._clear_pending_native_tool_call_responses()
                 if self.flag_dump_messages:
