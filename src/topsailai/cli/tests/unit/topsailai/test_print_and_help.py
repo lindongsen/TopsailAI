@@ -272,7 +272,7 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
                 if not unicodedata.combining(character)
             )
 
-        expected_widths = [4, 25, 20, 5, 8, 8, 15, 26]
+        expected_widths = [4, 25, 20, 5, 10, 8, 8, 15, 26]
         for line in (header, row):
             plain_line = ansi_escape.sub("", line)
             column_widths = [display_width(column) for column in plain_line.split("|")]
@@ -304,11 +304,11 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
         self.assertEqual(row_columns[0], "12345")
         self.assertEqual(header_columns[3], "PID")
         self.assertEqual(row_columns[3], "123456789")
-        self.assertEqual(header_columns[4], "Status")
-        self.assertEqual(row_columns[4], "INPUT")
+        self.assertEqual(header_columns[5], "Status")
+        self.assertEqual(row_columns[5], "INPUT")
         self.assertNotIn("...", row_columns[0])
         self.assertNotIn("...", row_columns[3])
-        self.assertNotIn("...", row_columns[4])
+        self.assertNotIn("...", row_columns[5])
         mock_kill.assert_called_once_with(123456789, 0)
         mock_pipe_open.assert_called_once_with(file_info)
 
@@ -392,7 +392,7 @@ def test_driver_display_invalid_pid_shows_question_mark_and_keeps_boundaries():
     }
     output = ansi_escape.sub("", format_file_table([row]))
     header, _, rendered = output.splitlines()[:3]
-    assert rendered.split("|")[5].strip() == "?"
+    assert rendered.split("|")[6].strip() == "?"
     assert [offset for offset, char in enumerate(rendered) if char == "|"] == [
         offset for offset, char in enumerate(header) if char == "|"
     ]
@@ -417,11 +417,11 @@ def test_driver_display_preserves_json_states():
     output = ansi_escape.sub("", format_file_table(rows))
     lines = output.splitlines()
     header = lines[0]
-    assert header.split("|")[5].strip() == "Driver"
+    assert header.split("|")[6].strip() == "Driver"
     boundaries = [index for index, char in enumerate(header) if char == "|"]
     for index, ((state, marker), row) in enumerate(zip(cases, rows), 1):
         rendered = lines[index + 1]
-        assert rendered.split("|")[5].strip() == marker
+        assert rendered.split("|")[6].strip() == marker
         assert [offset for offset, char in enumerate(rendered) if char == "|"] == boundaries
         payload = _workspace_json_item(row, index)
         assert payload == before[index - 1]

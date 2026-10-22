@@ -59,7 +59,7 @@ def test_completed_is_idle_and_outputs_agree(session_row, tmp_path, capsys, suff
     line = next(line for line in capsys.readouterr().out.splitlines() if "sample" in line)
     assert Colors.GRAY in line
     assert Colors.GREEN not in line
-    assert line.split("|")[4].strip() == "-"
+    assert line.split("|")[5].strip() == "-"
 
 
 @pytest.mark.parametrize("content", [

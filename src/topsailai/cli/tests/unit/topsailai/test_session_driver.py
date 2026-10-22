@@ -225,9 +225,9 @@ def test_workspace_snapshot_table_json_parity(tmp_path, monkeypatch, state, caps
     monkeypatch.setattr(fmt, "is_session_pipe_open", lambda _: pytest.fail("renderer probed"))
     fmt.print_table([row])
     lines = capsys.readouterr().out.splitlines()
-    assert [cell.strip() for cell in lines[0].split("|")][4:6] == ["Status", "Driver"]
+    assert [cell.strip() for cell in lines[0].split("|")][5:7] == ["Status", "Driver"]
     display = {"ON": "123", "STALE": ":(", "EXIT": "x(", "FAIL": "x("}.get(state, state)
-    assert [cell.strip() for cell in lines[2].split("|")][4:6] == ["INPUT", display]
+    assert [cell.strip() for cell in lines[2].split("|")][5:7] == ["INPUT", display]
     item = _workspace_json_item(row, 1)
     assert item["status"] == "input" and item["pid"] == 456
     assert item["driver"] == dict(state=state, reason="fixture", driver_pid=123,
@@ -433,5 +433,5 @@ def test_workspace_invalid_raw_pid_read_only(record, monkeypatch, capsys, pid):
     assert item["driver"] is None
     fmt.print_table([row])
     cells = [cell.strip() for cell in capsys.readouterr().out.splitlines()[2].split("|")]
-    assert cells[3:6] == ["-", "-", "-"]
+    assert cells[3:7] == ["-", "", "-", "-"]
     assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in path.parent.iterdir()}

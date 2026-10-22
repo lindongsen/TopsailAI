@@ -97,20 +97,23 @@ def print_header(title: str) -> None:
     print(f"{Colors.BOLD}{Colors.CYAN}{'=' * width}{Colors.RESET}")
 
 
-def _session_meta_completed(topsailai_home: str, session_id: str, pid: int) -> bool:
-    """Read bounded completion evidence for an exactly identified session."""
-    from cli_topsailai.session_meta import read_session_meta, SessionMetaError
-
-    try:
-        return read_session_meta(topsailai_home, session_id, pid).data.get("status") == "completed"
-    except SessionMetaError:
-        return False
+def _hostname_display(value: object) -> str:
+    """Remove terminal controls and delimiters and bound hostname cell width."""
+    if not isinstance(value, str):
+        return ""
+    text = "".join(character for character in value
+                   if not unicodedata.category(character).startswith("C")
+                   and character not in "|\u2028\u2029")
+    return _fit_table_cell(text.strip(), 32).rstrip()
 
 
 def enrich_workspace_rows(files: List[dict], topsailai_home: str, *, driver_entry=None) -> None:
     """Refresh session state and attach session-level driver snapshots."""
     from cli_topsailai.session_driver import metadata_path, observe_driver
 
+    from cli_topsailai.workspace_hostname import enrich_workspace_hostnames
+
+    enrich_workspace_hostnames(files, topsailai_home)
     eligible = []
     display_session_ids = set()
     live_pids = {}
@@ -145,7 +148,7 @@ def enrich_workspace_rows(files: List[dict], topsailai_home: str, *, driver_entr
                 f"{session_id}.{pid}.session.stdout",
                 f"{session_id}.{pid}.session.stderr",
             )
-            and _session_meta_completed(topsailai_home, session_id, pid)
+            and (file_info.get("_workspace_session_meta_data") or {}).get("status") == "completed"
         ):
             file_info["workspace_status"] = "idle"
         display_session_ids.add(session_id)
@@ -214,6 +217,7 @@ def print_table(files: List[dict]) -> None:
                 "session_name": file_info.get("session_name") or "-",
                 "session": session,
                 "pid": pid_str,
+                "hostname": _hostname_display(file_info.get("hostname")),
                 "status": status_str,
                 "driver": _driver_display(observation),
                 "created": format_timestamp(file_info["ctime"]),
@@ -234,6 +238,7 @@ def print_table(files: List[dict]) -> None:
 
     w_no = dynamic_width("No", "no")
     w_pid = dynamic_width("PID", "pid")
+    w_hostname = dynamic_width("Hostname", "hostname")
     w_status = dynamic_width("Status", "status")
     w_driver = dynamic_width("Driver", "driver")
 
@@ -243,6 +248,7 @@ def print_table(files: List[dict]) -> None:
         f" {_fit_table_cell('Session Name', w_name, 'center')} |"
         f" {_fit_table_cell('Session ID', w_session, 'center')} |"
         f" {_fit_table_cell('PID', w_pid, 'center')} |"
+        f" {_fit_table_cell('Hostname', w_hostname, 'center')} |"
         f" {_fit_table_cell('Status', w_status, 'center')} |"
         f" {_fit_table_cell('Driver', w_driver, 'center')} |"
         f" {_fit_table_cell('Created', w_created, 'center')} |"
@@ -255,6 +261,7 @@ def print_table(files: List[dict]) -> None:
         f"{'-' * (w_name + 2)}+"
         f"{'-' * (w_session + 2)}+"
         f"{'-' * (w_pid + 2)}+"
+        f"{'-' * (w_hostname + 2)}+"
         f"{'-' * (w_status + 2)}+"
         f"{'-' * (w_driver + 2)}+"
         f"{'-' * (w_created + 2)}+"
@@ -271,6 +278,7 @@ def print_table(files: List[dict]) -> None:
             f" {_fit_table_cell(row_info['session_name'], w_name)} |"
             f" {_fit_table_cell(row_info['session'], w_session)} |"
             f" {_fit_table_cell(row_info['pid'], w_pid, 'center')} |"
+            f" {_fit_table_cell(row_info['hostname'], w_hostname)} |"
             f" {_fit_table_cell(row_info['status'], w_status, 'center')} |"
             f" {_fit_table_cell(row_info['driver'], w_driver, 'center')} |"
             f" {_fit_table_cell(row_info['created'], w_created, 'center')} |"

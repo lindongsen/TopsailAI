@@ -324,6 +324,7 @@ def discover_workspace_log_files(
         # Generic discovery may guess a parent when multiple session PIDs exist.
         if item.get("is_task") and len(session_candidates.get(session_id, ())) != 1:
             pid = None
+        item["_workspace_meta_pid"] = pid
         key = (session_id, pid)
         if (
             session_id not in (None, "", "(temp)")
@@ -336,6 +337,7 @@ def discover_workspace_log_files(
                 except SessionMetaError:
                     metadata[key] = None
             data = metadata[key]
+            item["_workspace_meta_snapshot"] = (home, session_id, pid, data)
             if data is not None:
                 name = data.get("session_name")
                 name = name.strip() if isinstance(name, str) else None
