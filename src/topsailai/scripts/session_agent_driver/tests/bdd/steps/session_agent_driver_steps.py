@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from pytest_bdd import given, then, when
 
-from tests.bdd.harness import (
+from ..harness import (
     TARGET_SESSION,
     run_driver,
 )

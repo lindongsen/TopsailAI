@@ -90,13 +90,13 @@ def prepare_child(monkeypatch, tmp_path):
 
 
 def test_exact_child_send(monkeypatch, tmp_path):
-    """Explicit child PID uses its own pipe, not parent resolution."""
-    record, sender = prepare_child(monkeypatch, tmp_path)
+    """Explicit child PID uses its own pipe and normalized content."""
+    _record, sender = prepare_child(monkeypatch, tmp_path)
     monkeypatch.setattr(inject_input, "_task_dir", lambda: tmp_path)
     core = Mock()
     monkeypatch.setattr(inject_input, "execute_runtime_request", core)
-    assert "pid 20" in inject_input.inject_input("s1", "continue", 20)
-    sender.assert_called_once_with(tmp_path / "s1.20.session.pipe", "continue", timeout=5.0)
+    assert "pid 20" in inject_input.inject_input("s1", "continue\nplease", 20)
+    sender.assert_called_once_with(tmp_path / "s1.20.session.pipe", "continue;please", timeout=5.0)
     core.assert_not_called()
 
 

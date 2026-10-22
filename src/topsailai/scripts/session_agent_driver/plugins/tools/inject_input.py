@@ -26,6 +26,11 @@ def _task_dir() -> Path:
     return Path(get_topsailai_home()) / "workspace" / "task"
 
 
+def _normalize_injected_content(content: str) -> str:
+    """Replace CRLF, CR, and LF separators with semicolons."""
+    return content.replace("\r\n", ";").replace("\r", ";").replace("\n", ";")
+
+
 _INPUT_GUARD = None
 _INPUT_DELIVERED = None
 
@@ -61,6 +66,7 @@ def inject_input(session_id: str, content: str, pid: int | None = None) -> str:
         raise AgentEndProcess("inject_input failed: invalid session_id")
     if not isinstance(content, str) or not content.strip():
         raise AgentEndProcess("inject_input failed: content must be nonempty text")
+    content = _normalize_injected_content(content)
     try:
         if _INPUT_GUARD is not None and not _INPUT_GUARD(session_id.strip(), pid):
             raise AgentEndProcess("inject_input rejected: analysis input owner changed")

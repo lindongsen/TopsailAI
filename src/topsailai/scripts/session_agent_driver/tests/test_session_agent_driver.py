@@ -315,6 +315,19 @@ class TestInjectInputFailure:
             inject_input("s1", "   ")
 
 
+@pytest.mark.parametrize(
+    "content, expected",
+    [("first\nsecond", "first;second"), ("first\r\nsecond", "first;second"), ("first\rsecond", "first;second")],
+)
+def test_inject_input_normalizes_newlines(monkeypatch, content, expected):
+    """Runtime-request delivery receives semicolon-separated input."""
+    transport = mock.Mock(return_value=mock.Mock(ok=True, error_code=None, message=""))
+    monkeypatch.setattr("plugins.tools.inject_input.execute_runtime_request", transport)
+    assert "s1" in inject_input("s1", content)
+    request = transport.call_args.args[0]
+    assert request.message == expected
+
+
 # ---------------------------------------------------------------------------
 # exit_process flag
 # ---------------------------------------------------------------------------
