@@ -13,15 +13,25 @@ def main():
     """Run a new session and resume its stored name without a new request."""
     workers = []
     naming_chats = []
-    original_thread = threading.Thread
+    original_threading = ctx_manager.threading
     original_get_chat = llm_shell.get_llm_chat
+    original_thread = original_threading.Thread
 
     class NamingThread(original_thread):
-        """Record the exact auto-name worker for deterministic observation."""
+        """Record only the exact auto-name worker before it starts."""
         def start(self):
-            """Retain worker identity before starting its work."""
-            workers.append(self)
+            """Retain naming workers without intercepting unrelated threads."""
+            if self._target is ctx_manager._async_update_session_name:
+                workers.append(self)
             return super().start()
+
+    class ThreadingProxy:
+        """Delegate threading operations while replacing only Thread locally."""
+        Thread = NamingThread
+
+        def __getattr__(self, name):
+            """Resolve non-Thread attributes from the real threading module."""
+            return getattr(original_threading, name)
 
     def track_chat(*args, **kwargs):
         """Retain the real naming client's cleanup owner."""
@@ -29,7 +39,7 @@ def main():
         naming_chats.append(chat)
         return chat
 
-    ctx_manager.threading.Thread = NamingThread
+    ctx_manager.threading = ThreadingProxy()
     llm_shell.get_llm_chat = track_chat
     session_id = os.environ["BDD_SESSION_ID"]
     chats = []
@@ -52,12 +62,17 @@ def main():
 
     def join_workers(_agent=None):
         """Observe naming completion before allowing session completion."""
+        failures = []
         for worker in workers:
             worker.join(10)
-            assert not worker.is_alive(), "naming worker did not exit"
+            if worker.is_alive():
+                failures.append("naming worker did not exit")
+        if failures:
+            raise AssertionError("; ".join(failures))
         snapshots["named"] = read_meta()
         snapshots["db_name"] = ctx_manager.get_session_manager().get_session(session_id).session_name
 
+    cleanup_error = None
     try:
         chat = make_chat()
         snapshots["created"] = read_meta()
@@ -68,13 +83,20 @@ def main():
         snapshots["resumed"] = read_meta()
         Path(os.environ["BDD_INTEGRITY_REPORT"]).write_text(json.dumps(snapshots))
     finally:
-        for worker in workers:
-            worker.join(10)
-            assert not worker.is_alive()
-        for chat in chats + naming_chats:
-            chat.close() if chat in naming_chats else chat.ai_agent.close()
-        ctx_manager.threading.Thread = original_thread
-        llm_shell.get_llm_chat = original_get_chat
+        try:
+            for worker in workers:
+                worker.join(10)
+                if worker.is_alive() and cleanup_error is None:
+                    cleanup_error = AssertionError("naming worker did not exit")
+        finally:
+            try:
+                for chat in chats + naming_chats:
+                    chat.close() if chat in naming_chats else chat.ai_agent.close()
+            finally:
+                ctx_manager.threading = original_threading
+                llm_shell.get_llm_chat = original_get_chat
+        if cleanup_error is not None:
+            raise cleanup_error
 
 
 if __name__ == "__main__":
