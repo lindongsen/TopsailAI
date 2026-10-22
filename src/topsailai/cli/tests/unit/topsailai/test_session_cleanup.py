@@ -14,7 +14,8 @@ import os
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
+import pytest
 
 sys.path.insert(
     0,
@@ -30,6 +31,13 @@ from cli_topsailai.session_cleanup import (
     find_related_files_for_path,
     find_session_disk_files,
 )
+
+
+@pytest.fixture(autouse=True)
+def stopped_fixture_owners(monkeypatch):
+    """These legacy disk-operation tests explicitly admit stopped owners."""
+    probe = Mock(can_clean=Mock(return_value=True))
+    monkeypatch.setattr("cli_topsailai.session_cleanup.SessionActivityProbe", lambda roots: probe)
 
 
 class TestFindRelatedFiles(unittest.TestCase):

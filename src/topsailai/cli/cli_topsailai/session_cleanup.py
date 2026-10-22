@@ -18,6 +18,7 @@ from typing import List, Optional, Tuple
 
 from cli_topsailai.log_files import _parse_stdout_filename, is_file_in_use
 from cli_topsailai.paths import get_topsailai_home
+from topsailai.context.session_activity import SessionActivityProbe
 
 
 # File extensions/patterns that belong to a session lifecycle.
@@ -48,6 +49,12 @@ def _extract_session_prefix(filename: str) -> Optional[str]:
         The ``{session_id}.{pid}`` prefix, or ``None`` if the filename does
         not match a known session/task pattern.
     """
+    for suffix in (".session.pipe", ".session.agent2llm_inject_messages.jsonl"):
+        if filename.endswith(suffix):
+            filename = filename[:-len(suffix)] + ".session.stdout"
+            break
+    if filename.endswith(".task.stderr"):
+        filename = filename[:-len(".task.stderr")] + ".task.stdout"
     session_id, pid = _parse_stdout_filename(filename)
     if pid is None:
         return None
@@ -128,6 +135,9 @@ def find_session_disk_files(task_dir: str, session_id: str) -> List[str]:
             continue
         if not _is_session_related_file(entry):
             continue
+        owner_prefix = _extract_session_prefix(entry)
+        if owner_prefix is None or owner_prefix.rsplit(".", 1)[0] != session_id:
+            continue
         full_path = os.path.join(task_dir, entry)
         if not os.path.exists(full_path):
             continue
@@ -140,6 +150,7 @@ def delete_session_disk_files(
     task_dir: str,
     session_id: str,
     dry_run: bool = False,
+    activity_probe=None,
 ) -> Tuple[List[str], List[str]]:
     """Delete all disk files associated with a session.
 
@@ -153,17 +164,23 @@ def delete_session_disk_files(
     Returns:
         Tuple of (deleted_paths, failed_paths).
     """
+    activity_probe = activity_probe if activity_probe is not None else SessionActivityProbe((task_dir,))
     paths = find_session_disk_files(task_dir, session_id)
     deleted: List[str] = []
     failed: List[str] = []
 
     for path in paths:
+        if not activity_probe.can_clean(session_id):
+            print(f"[WARN] Preserving protected session files: {session_id}")
+            break
         if dry_run:
             deleted.append(path)
             continue
         if is_file_in_use(path):
             print(f"[WARN] Skipping in-use session file: {path}")
             continue
+        if not activity_probe.can_clean(session_id):
+            break
         try:
             os.remove(path)
             print(f"[INFO] Deleted session file: {path}")
@@ -207,6 +224,7 @@ def _corresponding_stdout_path(task_dir: str, filename: str) -> Optional[str]:
 def clean_orphaned_session_files(
     task_dir: str,
     dry_run: bool = False,
+    activity_probe=None,
 ) -> Tuple[List[str], List[str]]:
     """Delete session-related files whose `.session.stdout` counterpart is gone.
 
@@ -225,6 +243,7 @@ def clean_orphaned_session_files(
     if not os.path.isdir(task_dir):
         return [], []
 
+    activity_probe = activity_probe if activity_probe is not None else SessionActivityProbe((task_dir,))
     deleted: List[str] = []
     failed: List[str] = []
 
@@ -245,11 +264,16 @@ def clean_orphaned_session_files(
         if not os.path.exists(full_path):
             continue
 
+        owner_prefix = _extract_session_prefix(entry)
+        if owner_prefix is None or not activity_probe.can_clean(owner_prefix.rsplit(".", 1)[0]):
+            continue
         if dry_run:
             deleted.append(full_path)
             continue
         if is_file_in_use(full_path):
             print(f"[WARN] Skipping in-use orphaned session file: {full_path}")
+            continue
+        if not activity_probe.can_clean(owner_prefix.rsplit(".", 1)[0]):
             continue
         try:
             os.remove(full_path)

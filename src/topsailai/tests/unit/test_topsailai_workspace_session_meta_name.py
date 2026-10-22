@@ -188,8 +188,13 @@ def test_cleanup_failure_preserves_owned_files(monkeypatch, tmp_path, kind):
     monkeypatch.setattr(meta, "os", SimpleNamespace(
         path=os.path, remove=fail_remove,
     ))
-    meta.cleanup_session_meta_files()
-    assert str(path) in failed
+    probe = Mock()
+    probe.can_clean.return_value = True
+    meta.cleanup_session_meta_files(activity_probe=probe)
+    if kind == "temporary":
+        assert str(path) not in failed
+    else:
+        assert str(path) in failed
     assert path.exists()
     assert json.loads(unrelated.read_text())["session_name"] == "other"
 

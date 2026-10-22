@@ -354,6 +354,47 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
         finally:
             session.close()
 
+    def list_cleanup_messages(self, before_seconds):
+        """Return old message IDs without changing their access timestamps."""
+        with self.SessionLocal() as session:
+            cutoff = datetime.now() - timedelta(seconds=before_seconds)
+            return [row[0] for row in session.query(Message.msg_id).filter(
+                Message.access_time < cutoff).order_by(Message.access_time, Message.msg_id).all()]
+
+    def get_message_sessions(self, msg_id):
+        """Return all session IDs referencing a message."""
+        with self.SessionLocal() as session:
+            return [row[0] for row in session.query(SessionMessage.session_id).filter(
+                SessionMessage.msg_id == msg_id).all()]
+
+    def get_session_home(self, session_id):
+        """Read recorded provenance without creating or migrating session tables."""
+        from sqlalchemy import inspect, text
+        inspector = inspect(self.engine)
+        if not inspector.has_table("session"):
+            return None
+        if "topsailai_home" not in {c["name"] for c in inspector.get_columns("session")}:
+            return None
+        with self.engine.connect() as connection:
+            row = connection.execute(text(
+                "SELECT topsailai_home FROM session WHERE session_id = :sid"),
+                {"sid": session_id}).first()
+            return row[0] if row else None
+
+    def delete_cleanup_message(self, msg_id, before_seconds):
+        """Delete one still-old message and all its mappings in one transaction."""
+        with self.SessionLocal() as session:
+            cutoff = datetime.now() - timedelta(seconds=before_seconds)
+            message = session.query(Message).filter(
+                Message.msg_id == msg_id, Message.access_time < cutoff).first()
+            if message is None:
+                return 0
+            session.query(SessionMessage).filter(SessionMessage.msg_id == msg_id).delete(
+                synchronize_session=False)
+            session.delete(message)
+            session.commit()
+            return 1
+
     def clean_messages(self, before_seconds: int) -> int:
         """
         Delete messages that have not been accessed within the specified time period.

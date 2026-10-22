@@ -28,9 +28,18 @@ from .session_manager.__base import (
     SessionData,
 )
 from .session_manager.sql import SessionSQLAlchemy, DEFAULT_CONN
+from .session_manager.base import SessionManager
+from .session_manager.manager import DefaultSessionManager
 
 
-def get_managers_by_env(count=10) -> list[ChatHistoryBase]:
+def _activity_probe():
+    """Resolve the existing home configuration once at the factory boundary."""
+    from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
+    from .session_activity import SessionActivityProbe
+    return SessionActivityProbe((FOLDER_WORKSPACE_TASK,))
+
+
+def get_managers_by_env(count=10, activity_probe=None) -> list[ChatHistoryBase]:
     """
     Get instances of chat history managers based on environment configuration.
 
@@ -54,6 +63,7 @@ def get_managers_by_env(count=10) -> list[ChatHistoryBase]:
     if not env_ctx_history_managers:
         return
 
+    activity_probe = activity_probe if activity_probe is not None else _activity_probe()
     mgrs = []
 
     # Parse manager specifications from environment variable
@@ -89,10 +99,14 @@ def get_managers_by_env(count=10) -> list[ChatHistoryBase]:
             logger.warning(f"missing parameters for this manager: [{mgr}]")
             continue
 
-        # Instantiate the manager
-        mgrs.append(
-            ALL_MANAGERS[mgr_name](*args, **kwargs)
-        )
+        # Keep storage constructors pure; cleanup policy belongs to management.
+        from .chat_history_manager.sql import ChatHistorySQLAlchemy
+        from .session_cleanup import HistoryCleanupManager
+        constructor = ALL_MANAGERS[mgr_name]
+        manager = constructor(*args, **kwargs)
+        if constructor is ChatHistorySQLAlchemy:
+            manager = HistoryCleanupManager(manager, activity_probe)
+        mgrs.append(manager)
 
         # Stop if we've reached the maximum count
         count -= 1
@@ -106,7 +120,7 @@ def get_managers_by_env(count=10) -> list[ChatHistoryBase]:
     return mgrs
 
 
-def get_session_manager(conn=None, default_conn=DEFAULT_CONN) -> SessionStorageBase:
+def get_session_manager(conn=None, default_conn=DEFAULT_CONN, activity_probe=None) -> SessionManager:
     """
     Get a session manager instance with fallback logic.
 
@@ -122,24 +136,25 @@ def get_session_manager(conn=None, default_conn=DEFAULT_CONN) -> SessionStorageB
                                      if no other options are available.
 
     Returns:
-        SessionStorageBase: An instance of session manager.
+        SessionManager: An instance of the session management contract.
 
     Raises:
         Exception: If no valid session manager can be instantiated.
     """
+    activity_probe = activity_probe if activity_probe is not None else _activity_probe()
     # Priority 1: Use provided connection string
     if conn:
-        return SessionSQLAlchemy(conn)
+        return DefaultSessionManager(SessionSQLAlchemy(conn), activity_probe)
 
     # Priority 2: Get manager from environment configuration
-    mgrs = get_managers_by_env(1)
+    mgrs = get_managers_by_env(1, activity_probe=activity_probe)
     if mgrs:
         msg_mgr = mgrs[0]
-        return SessionSQLAlchemy(msg_mgr.conn)
+        return DefaultSessionManager(SessionSQLAlchemy(msg_mgr.conn), activity_probe)
 
     # Priority 3: Use default connection string
     if default_conn:
-        return SessionSQLAlchemy(default_conn)
+        return DefaultSessionManager(SessionSQLAlchemy(default_conn), activity_probe)
 
     # If all options fail, raise exception
     raise Exception("fail to get session manager")

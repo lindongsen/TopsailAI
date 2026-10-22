@@ -10,6 +10,7 @@ import os
 import time
 
 import pytest
+from unittest.mock import MagicMock
 
 from topsailai.workspace import session_meta
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
@@ -116,7 +117,7 @@ def test_cleanup_removes_old_files(monkeypatch):
     monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")
     monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "0")
 
-    session_meta.cleanup_session_meta_files()
+    session_meta.cleanup_session_meta_files(activity_probe=MagicMock(can_clean=MagicMock(return_value=True)))
 
     assert not os.path.exists(old_path)
     assert os.path.exists(recent_path)
@@ -134,7 +135,7 @@ def test_cleanup_enforces_max_count(monkeypatch):
     monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "0")
     monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "2")
 
-    session_meta.cleanup_session_meta_files()
+    session_meta.cleanup_session_meta_files(activity_probe=MagicMock(can_clean=MagicMock(return_value=True)))
 
     remaining = [p for p in paths if os.path.exists(p)]
     assert len(remaining) == 2
@@ -227,8 +228,8 @@ def test_atomic_write_removes_partial_tmp_when_replace_fails(monkeypatch, tmp_pa
     assert not os.path.exists(path)
 
 
-def test_cleanup_removes_orphaned_tmp_files(monkeypatch):
-    """Orphaned *.session.meta.tmp files older than retention are pruned."""
+def test_cleanup_preserves_uncertain_tmp_files(monkeypatch):
+    """Incomplete ownership evidence must be retained regardless of age."""
     session_meta.create_session_meta("tmp-orphan")
     tmp_path = session_meta.get_session_meta_path("tmp-orphan") + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as fd:
@@ -242,7 +243,7 @@ def test_cleanup_removes_orphaned_tmp_files(monkeypatch):
 
     session_meta.cleanup_session_meta_files()
 
-    assert not os.path.exists(tmp_path)
+    assert os.path.exists(tmp_path)
 
 
 def test_cleanup_keeps_recent_tmp_files(monkeypatch):

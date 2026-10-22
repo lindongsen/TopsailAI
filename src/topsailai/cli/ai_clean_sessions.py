@@ -109,7 +109,9 @@ def main():
 
         for session in sessions_to_delete:
             # Delete session and its chat history from the database
-            manager.delete_session(session.session_id)
+            if not manager.delete_session(session.session_id):
+                print(f"[WARN] Preserved protected session: {session.session_id}")
+                continue
             deleted_count += 1
 
             # Clean up disk files associated with the session
@@ -122,7 +124,7 @@ def main():
 
         print(f"Successfully cleaned {deleted_count} sessions")
         print(f"Cutoff time: {cutoff_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Sessions older than {before_seconds} seconds ({before_seconds // 86400} days) have been deleted")
+        print(f"Eligible stopped sessions older than {before_seconds} seconds were deleted; protected sessions were retained")
         if failed_disk_files:
             print(f"[WARN] Failed to remove {failed_disk_files} disk file(s)")
 

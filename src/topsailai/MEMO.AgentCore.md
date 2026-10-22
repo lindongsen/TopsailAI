@@ -934,3 +934,7 @@ print_error(f"{LLM_KEYWORD_MISTAKE}: tool call missing required arguments")
 
 ### Note for maintainers
 When adding new logging around LLM behavior, prefer these constants over ad-hoc strings and use `utils/print_tool.print_*` over raw `logger.*` calls. Keeping the keyword set small and the output path consistent makes log aggregation, alerting, and interactive debugging easier.
+
+## MEMO: SQL Manager Methods Must Stay Pure
+
+Human requires: “sql的相关逻辑必须保持纯净，只有sql的逻辑”. SQL manager methods must contain only database-related logic: queries, relation lookups, and mutations such as DELETE. Database schema introspection and queries that retrieve stored fields are legitimate SQL-manager logic; interpreting those fields for runtime authority or cleanup policy belongs to the management layer. Running-state detection, task-file/PID probing, cleanup policy, and cleanup orchestration belong to the context/session management layer, not SQL managers. CLIs consume that management layer and must not duplicate its decision rules. Ordinary `del_messages()` retains its original behavior so active-session summarization remains possible. Review storage diffs for this dependency boundary before accepting cleanup changes.

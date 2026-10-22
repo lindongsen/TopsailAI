@@ -120,7 +120,7 @@ class SessionSQLAlchemy(SessionStorageBase):
 
     def create_session(self, session_data:SessionData) -> bool:
         """
-        Create a new session in the storage and keep only the most recent 100 sessions.
+        Create a new session in the storage.
 
         Args:
             session_data (SessionData): The session data to create.
@@ -151,16 +151,6 @@ class SessionSQLAlchemy(SessionStorageBase):
                 db_session.commit()
                 logger.info(f"new session: session_id={session_data.session_id}, task={session_data.task}")
 
-                # Keep only the most recent 100 sessions
-                total_count = db_session.query(Session).count()
-                if total_count and total_count > 100:
-                    # Delete the oldest sessions to keep only 100
-                    sessions_to_delete = db_session.query(Session).order_by(Session.create_time.asc()).limit(total_count - 100).all()
-                    for session in sessions_to_delete:
-                        db_session.delete(session)
-                        self.chat_history.del_messages(session_id=session.session_id)
-                    db_session.commit()
-                    logger.info(f"clear oldest sessions")
                 return True
             except Exception as e:
                 db_session.rollback()

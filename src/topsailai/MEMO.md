@@ -107,3 +107,7 @@ Summary: before calling a failure a regression, compare identical runs at pristi
 The capability is documented in [tests/mock/README.md](./tests/mock/README.md#native-tool-call-sse-fixtures).
 
 Summary: the LLM mock server supports opt-in native `tool_calls` SSE deltas while absent or empty native configuration preserves legacy content-only streaming with terminal `finish_reason="stop"`.
+
+## MEMO: SQL Manager Methods Must Stay Pure
+
+[MEMO.AgentCore.md](MEMO.AgentCore.md#memo-sql-manager-methods-must-stay-pure) — SQL managers contain only database-related logic; running-state detection and cleanup policy belong to context/session management, consumed by CLIs without duplication.

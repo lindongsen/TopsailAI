@@ -20,7 +20,7 @@ import threading
 import time
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 
 class TestGetManagersByEnv(unittest.TestCase):
@@ -156,7 +156,7 @@ class TestGetSessionManager(unittest.TestCase):
 
         # Verify
         mock_session_sql.assert_called_once_with('sqlite://test.db')
-        self.assertEqual(result, mock_instance)
+        self.assertEqual(result.storage, mock_instance)
 
     @patch('topsailai.context.ctx_manager.SessionSQLAlchemy')
     @patch('topsailai.context.ctx_manager.get_managers_by_env')
@@ -175,7 +175,7 @@ class TestGetSessionManager(unittest.TestCase):
         result = get_session_manager()
 
         # Verify
-        mock_get_managers.assert_called_once_with(1)
+        mock_get_managers.assert_called_once_with(1, activity_probe=ANY)
         mock_session_sql.assert_called_once_with('sqlite://env.db')
 
     @patch('topsailai.context.ctx_manager.SessionSQLAlchemy')

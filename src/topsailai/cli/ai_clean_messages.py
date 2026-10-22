@@ -101,7 +101,7 @@ def main():
 
         print(f"Successfully cleaned {deleted_count} messages")
         print(f"Cutoff time: {cutoff_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Messages older than {before_seconds} seconds ({before_seconds // 86400} days) have been deleted")
+        print(f"Eligible old messages were deleted; messages owned by protected sessions were retained")
 
     except Exception as e:
         print(f"Error: {e}")

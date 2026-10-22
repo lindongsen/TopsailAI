@@ -79,7 +79,9 @@ def main():
             sys.exit(1)
 
         # Delete session and its chat history
-        manager.delete_session(session_id)
+        if not manager.delete_session(session_id):
+            print(f"Error: Session '{session_id}' is protected or unavailable; nothing deleted")
+            sys.exit(1)
 
         # Clean up disk files associated with the session
         deleted, failed = delete_session_disk_files(get_task_dir(), session_id)

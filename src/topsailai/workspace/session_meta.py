@@ -17,6 +17,7 @@ from datetime import datetime
 
 from topsailai.utils import env_tool
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
+from topsailai.context.session_activity import SessionActivityProbe
 
 logger = logging.getLogger(__name__)
 
@@ -294,9 +295,20 @@ def update_session_meta_field(field: str, value, session_id: str | None = None) 
     _atomic_write(path, meta)
 
 
+def _can_remove_meta(path, activity_probe):
+    """Keep primary ownership evidence and partial writes when uncertain."""
+    name = os.path.basename(path)
+    if name.endswith(".tmp"):
+        # A partial record cannot prove its own integrity.
+        return False
+    prefix, separator, _ = name.rpartition(".session.meta")
+    session_id, dot, pid = prefix.rpartition(".")
+    return bool(separator and dot and pid.isdigit() and activity_probe.can_clean(session_id))
+
+
 @safe_session_meta
 @_serialized_session_meta
-def cleanup_session_meta_files() -> None:
+def cleanup_session_meta_files(activity_probe=None) -> None:
     """Remove old session metadata files based on retention days and max count.
 
     Configuration:
@@ -315,6 +327,7 @@ def cleanup_session_meta_files() -> None:
     )
 
     directory = FOLDER_WORKSPACE_TASK
+    activity_probe = activity_probe if activity_probe is not None else SessionActivityProbe((directory,))
     pattern = os.path.join(directory, f"*.{META_EXTENSION}")
     now = time.time()
     retention_seconds = retention_days * 86400 if retention_days > 0 else 0
@@ -334,7 +347,7 @@ def cleanup_session_meta_files() -> None:
     # Delete files older than retention period
     surviving = []
     for path, mtime in meta_files:
-        if retention_seconds > 0 and now - mtime > retention_seconds:
+        if retention_seconds > 0 and now - mtime > retention_seconds and _can_remove_meta(path, activity_probe):
             try:
                 os.remove(path)
                 logger.debug("Removed old session meta file: %s", path)
@@ -347,15 +360,15 @@ def cleanup_session_meta_files() -> None:
     if max_count > 0 and len(surviving) > max_count:
         surviving.sort(key=lambda item: item[1])
         for path, _ in surviving[: len(surviving) - max_count]:
+            if not _can_remove_meta(path, activity_probe):
+                continue
             try:
                 os.remove(path)
                 logger.debug("Removed excess session meta file: %s", path)
             except Exception:
                 pass
 
-    # Remove orphaned temporary files (e.g. *.session.meta.tmp) left behind by
-    # a failed atomic write. These are partial writes with no matching .meta
-    # file, so they are safe to prune once older than the retention period.
+    # Partial temporary records cannot prove stopped ownership; preserve them.
     tmp_pattern = os.path.join(directory, f"*.{META_EXTENSION}.tmp")
     for path in glob.glob(tmp_pattern):
         try:
@@ -364,7 +377,7 @@ def cleanup_session_meta_files() -> None:
             basename = os.path.basename(path)
             if ".session.meta.tmp" not in basename:
                 continue
-            if retention_seconds > 0 and now - os.path.getmtime(path) > retention_seconds:
+            if retention_seconds > 0 and now - os.path.getmtime(path) > retention_seconds and _can_remove_meta(path, activity_probe):
                 os.remove(path)
                 logger.debug("Removed orphaned session meta temp file: %s", path)
         except Exception:
