@@ -61,14 +61,14 @@ def test_stopped_delete_and_default_unknown(tmp_path):
 
 @pytest.mark.parametrize("all_running", [False, True])
 def test_soft_eviction_limit(tmp_path, all_running):
-    """Skip protected oldest rows and never evict the just-created session."""
+    """Protected oldest rows never cause eviction of newer retained rows."""
     mgr, task = manager(tmp_path, lambda pid: State.RUNNING if all_running or pid == 1 else State.STOPPED)
     for index in range(101):
         add_session(mgr, tmp_path, f"s{index:03}", index + 1, task)
     assert mgr.exists_session("s000")
     assert mgr.exists_session("s100")
-    assert len(mgr.list_sessions()) == (101 if all_running else 100)
-    assert mgr.exists_session("s001") == all_running
+    assert len(mgr.list_sessions()) == 101
+    assert mgr.exists_session("s001")
 
 
 def test_shared_message_all_owners(tmp_path):
@@ -233,3 +233,14 @@ def test_missing_message_owners_never_delete(owners):
     assert storage.get_message_sessions.call_count == len(owners)
     storage.delete_cleanup_message.assert_not_called()
     assert probe.can_clean.call_count == len(owners) - 1
+
+
+def test_stopped_oldest_excess_is_evicted(tmp_path):
+    """Actual SQLite retention removes only the oldest excess stopped row."""
+    mgr, task = manager(tmp_path, lambda pid: State.STOPPED)
+    for index in range(101):
+        add_session(mgr, tmp_path, f"s{index:03}", index + 1, task)
+    assert not mgr.exists_session("s000")
+    assert mgr.exists_session("s001")
+    assert mgr.exists_session("s100")
+    assert len(mgr.list_sessions()) == 100

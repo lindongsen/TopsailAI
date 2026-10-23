@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 
 from topsailai.logger import logger
+from topsailai.context.session_activity import ActivityState
 
 
 class HistoryCleanupManager:
@@ -67,16 +68,20 @@ class SessionCleanupManager:
         return self.storage.delete_session(session_id)
 
     def evict_sessions(self, new_id):
-        """Skip protected candidates and allow the soft limit to be exceeded."""
-        candidates = self.storage.list_sessions(order_by="create_time")
-        excess = len(candidates) - 100
+        """Check only oldest excess rows; protected rows keep the limit soft."""
+        sessions = self.storage.list_sessions(order_by="create_time")
+        excess = len(sessions) - 100
+        if excess <= 0:
+            return
+        candidates = [row for row in sessions if row.session_id != new_id][:excess]
+        by_home = {}
         for candidate in candidates:
-            if excess <= 0:
-                break
-            if candidate.session_id == new_id:
-                continue
-            if self.delete_session(candidate.session_id):
-                excess -= 1
+            by_home.setdefault(candidate.topsailai_home or "", []).append(candidate.session_id)
+        for home, session_ids in by_home.items():
+            observations = self.activity_probe.observe_many(session_ids, home)
+            for session_id in session_ids:
+                if observations[session_id].state == ActivityState.STOPPED:
+                    self.delete_session(session_id)
 
     def clean_sessions(self, before_seconds):
         """Select old rows while retaining the existing zero-seconds behavior."""
