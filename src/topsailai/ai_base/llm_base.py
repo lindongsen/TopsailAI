@@ -7,6 +7,7 @@
 
 import random
 import time
+from uuid import uuid4
 
 # Fixed prime sleep durations (seconds) used when retrying after
 # LLMServiceSpecialResponseError (e.g. "服务器繁忙").
@@ -15,6 +16,15 @@ _LLM_SERVICE_SPECIAL_RESPONSE_SLEEP_SECONDS = (
 )
 
 from topsailai.logger.log_chat import logger
+from topsailai.hooks.points.aibase.before_llm_chat_attempt import (
+    hook__aibase__before__llm_chat_attempt,
+)
+from topsailai.hooks.points.aibase.after_llm_chat_attempt import (
+    hook__aibase__after__llm_chat_attempt,
+)
+from topsailai.hooks.points.aibase.error_llm_chat_attempt import (
+    hook__aibase__error__llm_chat_attempt,
+)
 from topsailai.ai_base.llm_pool.provider_registry import (
     DEFAULT_LLM_PROVIDER,
     default_provider_registry,
@@ -598,6 +608,10 @@ class LLMModel(
                 for_response=for_response,
             )
 
+        operation_id = uuid4().hex
+        return_mode = "raw" if for_raw else (
+            "response_and_parsed" if for_response else "parsed"
+        )
         policy = retry_interaction_policy or LLMRetryInteractionPolicy()
         prompt_allowed = policy.can_prompt() and thread_tool.is_main_thread()
         attempts_per_cycle = 18
@@ -659,55 +673,89 @@ class LLMModel(
                 print_error(f"[{i}] blocking chat {sec}s ...")
                 time.sleep(sec)
 
+            hook__aibase__before__llm_chat_attempt(
+                schema_version=1, operation_id=operation_id,
+                attempt_number=total_attempt, loop_attempts=loop_attempts,
+                stream=bool(for_stream), return_mode=return_mode,
+                point_name="hook__aibase__before__llm_chat_attempt", outcome="before",
+            )
+            attempt_started = time.monotonic()
+            hook_in_progress = False
             try:
-                with qos_tool.log_if_slow(
-                        env_tool.EnvReaderInstance.get(
-                            "TOPSAILAI_LLM_SLOW_CHAT_THRESHOLD",
-                            default=DEFAULT_LLM_SLOW_CHAT_THRESHOLD,
-                            formatter=int,
-                        ) or DEFAULT_LLM_SLOW_CHAT_THRESHOLD,
-                        f"{LLM_KEYWORD_SERVICE}: slow chat",
-                    ) as _info:
-                    if for_stream:
-                        rsp_obj, rsp_content = self.call_llm_model_by_stream(
-                            messages,
-                            tools=tools, tool_choice=tool_choice,
-                        )
+                try:
+                    with qos_tool.log_if_slow(
+                            env_tool.EnvReaderInstance.get(
+                                "TOPSAILAI_LLM_SLOW_CHAT_THRESHOLD",
+                                default=DEFAULT_LLM_SLOW_CHAT_THRESHOLD,
+                                formatter=int,
+                            ) or DEFAULT_LLM_SLOW_CHAT_THRESHOLD,
+                            f"{LLM_KEYWORD_SERVICE}: slow chat",
+                        ) as _info:
+                        if for_stream:
+                            rsp_obj, rsp_content = self.call_llm_model_by_stream(
+                                messages,
+                                tools=tools, tool_choice=tool_choice,
+                            )
+                        else:
+                            rsp_obj, rsp_content = self.call_llm_model(
+                                messages,
+                                tools=tools, tool_choice=tool_choice,
+                            )
+
+                        _info["current_tokens"] = self.tokenStat.current_tokens
+                        _info["cached_tokens"] = self.tokenStat.current_cached_tokens
+
+                    if for_raw:
+                        result = rsp_content
                     else:
-                        rsp_obj, rsp_content = self.call_llm_model(
-                            messages,
-                            tools=tools, tool_choice=tool_choice,
+                        (
+                            rsp_obj,
+                            rsp_content,
+                            sequence,
+                            total,
+                        ) = self._split_native_tool_call_response(
+                            rsp_obj,
+                            rsp_content,
                         )
-
-                    _info["current_tokens"] = self.tokenStat.current_tokens
-                    _info["cached_tokens"] = self.tokenStat.current_cached_tokens
-
-                if for_raw:
-                    return rsp_content
-
-                (
-                    rsp_obj,
-                    rsp_content,
-                    sequence,
-                    total,
-                ) = self._split_native_tool_call_response(
-                    rsp_obj,
-                    rsp_content,
+                        if total > 1:
+                            print_info(f"Native tool call {sequence}/{total}")
+                        result = self._return_chat_response(
+                            rsp_obj,
+                            rsp_content,
+                            messages,
+                            for_response=for_response,
+                        )
+                except (HardInterruptError, LLMRequestedRetryError,
+                        LLMBackToChatError, LLMRetryExhaustedError):
+                    raise
+                except Exception as error:
+                    hook_in_progress = True
+                    hook__aibase__error__llm_chat_attempt(
+                        schema_version=1, operation_id=operation_id,
+                        attempt_number=total_attempt, loop_attempts=loop_attempts,
+                        stream=bool(for_stream), return_mode=return_mode,
+                        point_name="hook__aibase__error__llm_chat_attempt", outcome="error",
+                        duration_sec=time.monotonic() - attempt_started,
+                        error_category=type(error).__name__[:128],
+                    )
+                    hook_in_progress = False
+                    raise
+                hook_in_progress = True
+                hook__aibase__after__llm_chat_attempt(
+                    schema_version=1, operation_id=operation_id,
+                    attempt_number=total_attempt, loop_attempts=loop_attempts,
+                    stream=bool(for_stream), return_mode=return_mode,
+                    point_name="hook__aibase__after__llm_chat_attempt", outcome="success",
+                    duration_sec=time.monotonic() - attempt_started,
                 )
-                if total > 1:
-                    print_info(f"Native tool call {sequence}/{total}")
-                return self._return_chat_response(
-                    rsp_obj,
-                    rsp_content,
-                    messages,
-                    for_response=for_response,
-                )
+                hook_in_progress = False
+                return result
             except LLMRequestedRetryError as e:
                 last_error = e
                 retry_reason = "requested_retry"
                 continue
             except KeyboardInterrupt:
-                if not prompt_allowed:
+                if hook_in_progress or not prompt_allowed:
                     raise
                 if input_yes_or_no(
                         ">>> LLM Retry [yes/no] ", policy.input_func

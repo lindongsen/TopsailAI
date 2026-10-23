@@ -1,5 +1,6 @@
 """Focused flag-to-real-Hook control checks. Author: DawsonLin."""
 import os
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -178,7 +179,8 @@ def test_requested_retry_preserves_original_eighteen_attempt_budget(monkeypatch)
     from topsailai.ai_base.exception import LLMRetryExhaustedError
     from topsailai.ai_base.llm_control.llm_retry import LLMRetryInteractionPolicy
     monkeypatch.setattr(llm_base.LLMModelBase, "__init__", lambda self: None)
-    monkeypatch.setattr(llm_base, "time", SimpleNamespace(sleep=lambda seconds: None))
+    monkeypatch.setattr(llm_base, "time", SimpleNamespace(
+        sleep=lambda seconds: None, monotonic=time.monotonic))
     model = LLMModel()
     model.tokenStat = MagicMock()
     model._get_pending_native_tool_call_responses = lambda: []
