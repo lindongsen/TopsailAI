@@ -13,6 +13,7 @@ import time
 import pytest
 from unittest.mock import MagicMock, Mock
 
+from topsailai.utils import qos_tool
 from topsailai.workspace import session_meta
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
 
@@ -404,3 +405,31 @@ def test_cleanup_preserves_metadata_replaced_after_observation(monkeypatch):
     session_meta.cleanup_session_meta_files(activity_probe=probe)
 
     assert os.path.exists(path)
+
+
+@pytest.mark.parametrize(
+    ("elapsed", "expected_logs"),
+    ((4.999, 0), (5.0, 0), (5.001, 1)),
+)
+def test_cleanup_logs_critical_only_above_five_seconds(
+    monkeypatch, caplog, elapsed, expected_logs
+):
+    """Slow cleanup emits one actionable CRITICAL log above the boundary."""
+    clock = iter((100.0, 100.0 + elapsed))
+    monkeypatch.setattr(qos_tool.time, "perf_counter", lambda: next(clock))
+    caplog.set_level("CRITICAL", logger=session_meta.logger.name)
+
+    session_meta.cleanup_session_meta_files()
+
+    records = [
+        record
+        for record in caplog.records
+        if record.name == session_meta.logger.name
+        and record.levelname == "CRITICAL"
+    ]
+    assert len(records) == expected_logs
+    if expected_logs:
+        message = records[0].getMessage()
+        assert "Session metadata cleanup exceeded startup latency threshold" in message
+        assert "elapsed: 5.001s" in message
+        assert "threshold: 5s" in message

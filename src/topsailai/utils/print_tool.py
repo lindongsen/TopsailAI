@@ -471,7 +471,7 @@ def print_with_time(msg, need_format=False, color_kind=None, color_enabled=None)
     - The message content
     """
     from . import env_tool
-    if not env_tool.is_interactive_mode():
+    if not env_tool.is_print_enabled():
         return
 
     from . import thread_local_tool, format_tool

@@ -17,12 +17,13 @@ import session_agent_driver as sad
 def test_startup_forces_noninteractive_before_framework_imports(configured):
     """Override inherited interaction without losing configured exclusions."""
     source = Path(sad.__file__).read_text().split("SRC_DIR =", 1)[0]
-    environment = {"TOPSAILAI_INTERACTIVE_MODE": "1"}
+    environment = {"TOPSAILAI_INTERACTIVE_MODE": "1", "TOPSAILAI_PRINT_ENABLED": "0"}
     if configured is not None:
         environment["TOPSAILAI_CLI_AGENT_CHAT_DISABLED_TOOLS"] = configured
     with mock.patch.dict(os.environ, environment, clear=True):
         exec(compile(source, sad.__file__, "exec"), {"__file__": sad.__file__})
         assert os.environ["TOPSAILAI_INTERACTIVE_MODE"] == "0"
+        assert os.environ["TOPSAILAI_PRINT_ENABLED"] == "1"
         excluded = os.environ["TOPSAILAI_CLI_AGENT_CHAT_DISABLED_TOOLS"].split(";")
         assert {"agent_tool", "human_tool"}.issubset(excluded)
         if configured:
