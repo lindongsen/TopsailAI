@@ -73,7 +73,7 @@ The command uses the same parsing and execution mechanism as `/git`: `shlex.spli
 
 ## Workspace / Project Commands
 
-Workspace discovery reads session metadata for cold or incomplete session-ID cache entries, preserving exact completed-unnamed filtering and snapshot behavior. When the process-local cache already contains a nonblank session name and an absolute nonblank project workspace for the session ID, discovery skips that metadata read and uses the cached display values; the cache is shared across rows and PIDs, so a complete hit can show an older completed name. Named sessions do not transition to unnamed by design. Partial cache entries still read metadata, and missing, invalid, mismatched, or non-completed metadata follows the existing fallback behavior. Metadata admission remains absent-only, while successful session-info queries retain their existing updates. Explicit `/meta` and `/driver meta` commands continue to read their own metadata.
+Workspace discovery reads exact session metadata for each parent session row and hides every row whose metadata status is `completed`, regardless of whether it has a session name. Session-info display caching must not bypass this completion check, so cached names and project workspaces do not cause completed sessions to reappear after refresh. Missing, invalid, mismatched, or non-completed metadata follows the existing fallback behavior. Metadata admission remains absent-only, while successful session-info queries retain their existing updates. Explicit `/meta` and `/driver meta` commands continue to read their own metadata.
 
 | Command | Description |
 |---------|-------------|

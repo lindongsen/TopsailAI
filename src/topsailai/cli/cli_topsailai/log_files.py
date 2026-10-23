@@ -306,8 +306,7 @@ def discover_workspace_log_files(
     task_dir: str,
     on_item: Optional[Callable[[dict], None]] = None,
 ) -> List[dict]:
-    """Filter completed unnamed sessions using exact metadata before display."""
-    from cli_topsailai.session_info import has_complete_cached_session_info
+    """Hide every completed session using exact metadata before display."""
     from cli_topsailai.session_meta import SessionMetaError, read_session_meta
 
     files = discover_log_files(task_dir)
@@ -326,11 +325,7 @@ def discover_workspace_log_files(
             pid = None
         item["_workspace_meta_pid"] = pid
         key = (session_id, pid)
-        if (
-            session_id not in (None, "", "(temp)")
-            and type(pid) is int
-            and not has_complete_cached_session_info(session_id)
-        ):
+        if session_id not in (None, "", "(temp)") and type(pid) is int:
             if key not in metadata:
                 try:
                     metadata[key] = read_session_meta(home, session_id, pid).data
@@ -338,22 +333,8 @@ def discover_workspace_log_files(
                     metadata[key] = None
             data = metadata[key]
             item["_workspace_meta_snapshot"] = (home, session_id, pid, data)
-            if data is not None:
-                name = data.get("session_name")
-                name = name.strip() if isinstance(name, str) else None
-                if data.get("status") == "completed" and not name:
-                    continue
-                if data.get("status") == "completed" and name:
-                    project_workspace = data.get("project_workspace")
-                    if (
-                        not isinstance(project_workspace, str)
-                        or not project_workspace.strip()
-                        or not os.path.isabs(project_workspace)
-                    ):
-                        project_workspace = None
-                    item["_completed_session_meta"] = (
-                        session_id, pid, name, project_workspace
-                    )
+            if data is not None and data.get("status") == "completed":
+                continue
         visible.append(item)
         if on_item is not None:
             on_item(item)
