@@ -1925,7 +1925,7 @@ def main():
         ),
     )
     parser.add_argument(
-        "--no-base-context",
+        "--nbc", "--no-base-context",
         action="store_true",
         dest="no_base_context",
         help=(
