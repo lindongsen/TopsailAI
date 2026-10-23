@@ -923,3 +923,17 @@ class TestPrintToolColor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_print_info_persists_at_debug_only(monkeypatch):
+    """Keep interactive display without an INFO file record."""
+    from unittest.mock import MagicMock
+    log = MagicMock()
+    display = MagicMock()
+    monkeypatch.setattr(print_tool, "logger", log)
+    monkeypatch.setattr(print_tool, "print_with_time", display)
+    print_tool.print_info("Thinking...", color_enabled=False)
+    log.debug.assert_called_once_with("Thinking...")
+    log.info.assert_not_called()
+    display.assert_called_once_with("Thinking...", need_format=False,
+                                    color_kind="info", color_enabled=False)

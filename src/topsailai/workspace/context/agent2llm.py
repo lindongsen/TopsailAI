@@ -464,7 +464,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             )
             # Log message count and token usage after summarization
             _token_count_after = self._get_current_tokens(realtime=True)
-            logger.info("[summarize_processing] after: messages=%s, tokens=%s", len(self.ai_agent.messages), _token_count_after)
+            logger.info("[summarize_processing] after: layer=Agent2LLM, messages=%s, tokens=%s, session_id=%.128s", len(self.ai_agent.messages), _token_count_after, self.session_id or "")
             self._check_summarize_token_reduction(
                 "summarize_messages_for_processing",
                 _token_count_before,
@@ -472,7 +472,6 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             )
 
             print_info(f"!!! [Agent2LLM] [Summarization] New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]")
-            logger.info("new context messages: %s", self.ai_agent.messages)
         except HOOK__SUMMARY_CONTROL_EXCEPTIONS:
             raise
         except Exception:

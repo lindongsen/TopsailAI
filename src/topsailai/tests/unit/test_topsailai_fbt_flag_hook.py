@@ -299,3 +299,21 @@ def test_control_signal_after_ticket_admission_publishes_and_finishes_once(scope
     assert owner.take_outcome().kind == "ABANDONED"
     assert host.events.count(("finish", "ticket")) == 1
     response.close.assert_called_once()
+
+
+def test_marker_removal_keeps_debug_record(monkeypatch, tmp_path):
+    """Record actual deletion once and retain failure propagation."""
+    log = Mock()
+    monkeypatch.setattr(control, "_LOG", log)
+    marker = tmp_path / "owned-marker"
+    marker.touch()
+    control._remove(marker)
+    assert not marker.exists()
+    log.debug.assert_called_once_with("Removed first-byte control marker: %s", marker)
+    log.info.assert_not_called()
+    control._remove(marker)
+    assert log.debug.call_count == 1
+    failing = Mock()
+    failing.unlink.side_effect = PermissionError("denied")
+    with pytest.raises(PermissionError):
+        control._remove(failing)

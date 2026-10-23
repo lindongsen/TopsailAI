@@ -548,14 +548,14 @@ def print_step(msg, need_format=True, need_log=False):
     return
 
 def print_info(msg, color_enabled=None):
-    """ Print a message to both logger and console.
+    """Print a console message and retain a DEBUG diagnostic.
 
     Args:
         msg: Message content to log and print.
         color_enabled: Explicit override for color enablement (see
             :func:`_is_color_enabled`). Defaults to auto-detection.
     """
-    logger.info(msg)
+    logger.debug(msg)
     print_with_time(msg, need_format=False, color_kind="info",
                     color_enabled=color_enabled)
 

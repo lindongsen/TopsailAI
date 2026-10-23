@@ -3,13 +3,17 @@
 from __future__ import annotations
 from uuid import uuid4
 
+import logging
 import threading
 import time
 from collections import deque
 from typing import Callable, Optional
 
-from topsailai.utils.print_tool import print_info
+from topsailai.utils.print_tool import print_with_time
 from topsailai.utils.thread_local_tool import get_agent_object
+
+
+logger = logging.getLogger(__name__)
 
 
 class RequestTimingTicket:
@@ -63,6 +67,7 @@ class LLMRequestStat:
         self._id = uuid4().hex
         self._clock = clock
         self._lock = threading.RLock()
+        self._last_logged_at = None
         self._request_times = deque()
         self._requests_per_minute_max = 0
         self._total_requests = 0
@@ -209,13 +214,24 @@ class LLMRequestStat:
             return self._snapshot_locked()
 
     def print_request_stat(self, snapshot: Optional[dict] = None) -> None:
-        """Print a supplied or current request-statistics snapshot."""
+        """Display each snapshot; persist the first and activity-spaced snapshots.
+
+        Later calls persist at most once per minute. Idle time and process/turn
+        exit do not flush a final snapshot; this is observational, not accounting.
+        """
         request_stat_info = snapshot or self.get_request_stat_info()
         formatted_stat = " ".join(
             f"{key}={'null' if value is None else value}"
             for key, value in request_stat_info.items()
         )
-        print_info(f"[LLMRequestStat] {formatted_stat}")
+        message = f"[LLMRequestStat] {formatted_stat}"
+        print_with_time(message, need_format=False, color_kind="info")
+        now = self._clock()
+        with self._lock:
+            if self._last_logged_at is not None and now - self._last_logged_at < self.WINDOW_SECONDS:
+                return
+            self._last_logged_at = now
+        logger.info(message)
 
 
 def record_current_agent_response_content_error() -> None:

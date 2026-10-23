@@ -28,7 +28,7 @@ def _remove(path):
         path.unlink()
     except FileNotFoundError:
         return
-    _LOG.info("Removed first-byte control marker: %s", path)
+    _LOG.debug("Removed first-byte control marker: %s", path)
 
 
 def stage_retry(session_id, pid):

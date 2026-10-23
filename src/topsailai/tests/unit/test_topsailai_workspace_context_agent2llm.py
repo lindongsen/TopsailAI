@@ -681,10 +681,20 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
         self.test_instance._first_position = 0
         original_len = len(self.test_instance._ai_agent.messages)
         
-        with patch('topsailai.workspace.context.agent2llm.logger'):
+        payload = "private-context-" + "x" * 300000
+        prompt = MagicMock()
+        prompt.prompt_ctl.messages = [{"role": "assistant", "content": payload}]
+        self.test_instance._summarize_messages_impl = lambda messages: (prompt, payload)
+        self.test_instance._get_current_tokens = MagicMock(return_value=100)
+        with patch('topsailai.workspace.context.agent2llm.logger') as log:
             with patch('topsailai.workspace.context.agent2llm.print_info'):
                 self.test_instance.summarize_messages_for_processing()
                 self.assertNotEqual(len(self.test_instance._ai_agent.messages), original_len)
+        self.assertTrue(any(m.get("content") == payload for m in self.test_instance._ai_agent.messages))
+        rendered = [call.args[0] % call.args[1:] for call in log.info.call_args_list]
+        self.assertTrue(any("layer=Agent2LLM" in line for line in rendered))
+        self.assertTrue(any("session_id=test-session-123" in line for line in rendered))
+        self.assertTrue(all(payload not in line and len(line) < 1024 for line in rendered))
 
 
     def _make_session_messages(self, count):

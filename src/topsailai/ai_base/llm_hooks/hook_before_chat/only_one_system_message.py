@@ -41,7 +41,7 @@ def merge_system_messages(messages:list):
     }
     
     merged = [system_msg_item] + non_system_messages
-    logger.info("system messages were merged: [%s]", len(system_messages))
+    logger.debug("system messages were merged: [%s]", len(system_messages))
     return merged
 
 def hook_execute(content:list) -> list:

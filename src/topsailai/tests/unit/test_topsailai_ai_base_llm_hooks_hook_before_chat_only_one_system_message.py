@@ -139,3 +139,17 @@ class TestHookExecuteEdgeCases:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_normal_merge_logs_debug_only(monkeypatch):
+    """Keep merge diagnostics without routine INFO persistence."""
+    from unittest.mock import Mock
+    from topsailai.ai_base.llm_hooks.hook_before_chat import only_one_system_message as module
+    log = Mock()
+    monkeypatch.setattr(module, "logger", log)
+    assert module.merge_system_messages([
+        {"role": "system", "content": "a"},
+        {"role": "system", "content": "b"},
+    ]) == [{"role": "system", "content": "a\n\nb"}]
+    log.debug.assert_called_once_with("system messages were merged: [%s]", 2)
+    log.info.assert_not_called()

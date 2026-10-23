@@ -32,14 +32,14 @@ def is_tool_enabled(tool_mod):
     # disabled
     if DISABLED_TOOLS:
         if tool_name in DISABLED_TOOLS:
-            logger.warning("tool is disabled: [%s], clearly matched", tool_name)
+            logger.debug("tool is disabled: [%s], clearly matched", tool_name)
             return False
 
         for _disabled_tool in DISABLED_TOOLS:
             # disabled_tool=ai_team
             # tool_name=ai_team_tool
             if tool_name.startswith(_disabled_tool):
-                logger.warning("tool is disabled: [%s], matched=[%s]", tool_name, _disabled_tool)
+                logger.debug("tool is disabled: [%s], matched=[%s]", tool_name, _disabled_tool)
                 return False
 
     # enabled
@@ -59,10 +59,10 @@ def is_tool_enabled(tool_mod):
     try:
         if getattr(tool_mod, "FLAG_TOOL_ENABLED") is False:
             if not ENABLED_TOOLS:
-                logger.warning("tool is disabled: [%s], FLAG_TOOL_ENABLED is False and null of TOPSAILAI_ENABLED_TOOLS", tool_name)
+                logger.debug("tool is disabled: [%s], FLAG_TOOL_ENABLED is False and null of TOPSAILAI_ENABLED_TOOLS", tool_name)
                 return False
             if tool_name not in ENABLED_TOOLS:
-                logger.warning("tool is disabled: [%s], FLAG_TOOL_ENABLED is False and tool not in TOPSAILAI_ENABLED_TOOLS", tool_name)
+                logger.debug("tool is disabled: [%s], FLAG_TOOL_ENABLED is False and tool not in TOPSAILAI_ENABLED_TOOLS", tool_name)
                 return False
             return True
     except:
@@ -76,7 +76,7 @@ def is_tool_enabled(tool_mod):
         # no config, default is enabled
         return True
 
-    logger.warning("tool is disabled: [%s], unmatched", tool_name)
+    logger.debug("tool is disabled: [%s], unmatched", tool_name)
     return False
 
 # key is tool_name, value is function

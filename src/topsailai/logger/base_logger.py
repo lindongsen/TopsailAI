@@ -301,6 +301,16 @@ def setup_logger(name: str = None, log_file: str = None, level=None):
     return _logger
 
 
+class _MainFileFilter(logging.Filter):
+    """Keep routine chat records in their dedicated file, but retain errors."""
+
+    def filter(self, record):
+        """Route chat errors and all non-chat records to the main file."""
+        return record.levelno >= logging.ERROR or not (
+            record.name == "chat" or record.name.startswith("chat.")
+        )
+
+
 def configure_root_logger(level=None):
     """
     Configure the Python root logger with the project-wide formatter and level.
@@ -324,7 +334,8 @@ def configure_root_logger(level=None):
           file with the ``.ec`` extension receives only ``ERROR`` and ``CRITICAL``
           messages so that failures can be located quickly.
         - Existing root handlers are left in place; if they have no formatter, the
-          project ``AgentFormatter`` is applied.
+          project ``AgentFormatter`` is applied. All root file handlers exclude
+          chat records below ERROR; non-file handlers retain all records.
 
     Args:
         level (int or str, optional): The logging level for the root logger.
@@ -365,6 +376,12 @@ def configure_root_logger(level=None):
         for handler in root.handlers:
             if handler.formatter is None:
                 handler.setFormatter(AgentFormatter(fmt=ROOT_LOG_FORMAT))
+
+    for handler in root.handlers:
+        if isinstance(handler, logging.FileHandler) and not any(
+            isinstance(item, _MainFileFilter) for item in handler.filters
+        ):
+            handler.addFilter(_MainFileFilter())
 
     return root
 

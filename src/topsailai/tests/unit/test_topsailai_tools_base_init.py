@@ -349,3 +349,22 @@ class TestIsToolEnabledEdgeCases:
         if hasattr(mod, "FLAG_TOOL_ENABLED"):
             delattr(mod, "FLAG_TOOL_ENABLED")
         assert is_tool_enabled(mod) is True
+
+
+@pytest.mark.parametrize("enabled,disabled,flag", [
+    ([], ["file_tool"], None),
+    ([], ["file"], None),
+    ([], [], False),
+    (["other"], [], False),
+    (["other"], [], None),
+])
+def test_expected_disable_is_debug(monkeypatch, enabled, disabled, flag):
+    """Normal selection decisions must not emit warnings."""
+    import topsailai.tools.base.init as module
+    log = MagicMock()
+    monkeypatch.setattr(module, "logger", log)
+    monkeypatch.setattr(module, "ENABLED_TOOLS", enabled)
+    monkeypatch.setattr(module, "DISABLED_TOOLS", disabled)
+    assert module.is_tool_enabled(FakeModule("tools.file_tool", flag)) is False
+    log.debug.assert_called_once()
+    log.warning.assert_not_called()

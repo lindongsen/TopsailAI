@@ -318,7 +318,7 @@ def test_models_create_independent_request_trackers(monkeypatch):
 def test_print_request_stat_uses_supplied_snapshot(monkeypatch):
     """Print a supplied snapshot as ordered k=v fields."""
     print_info = MagicMock()
-    monkeypatch.setattr(request_stat_module, "print_info", print_info)
+    monkeypatch.setattr(request_stat_module, "print_with_time", print_info)
     stat = LLMRequestStat()
     snapshot = {
         "total_requests": 7,
@@ -331,14 +331,15 @@ def test_print_request_stat_uses_supplied_snapshot(monkeypatch):
 
     print_info.assert_called_once_with(
         "[LLMRequestStat] total_requests=7 requests_per_minute=3 "
-        "request_duration_avg_sec=2.5 request_duration_p95_sec=4.75"
+        "request_duration_avg_sec=2.5 request_duration_p95_sec=4.75",
+        need_format=False, color_kind="info",
     )
 
 
 def test_print_request_stat_renders_none_as_null(monkeypatch):
     """Render missing duration values as null rather than Python None."""
     print_info = MagicMock()
-    monkeypatch.setattr(request_stat_module, "print_info", print_info)
+    monkeypatch.setattr(request_stat_module, "print_with_time", print_info)
 
     LLMRequestStat(clock=lambda: 0.0).print_request_stat()
 
@@ -733,3 +734,46 @@ def test_tool_approval_denial_is_not_response_content_error():
         ) == "denied"
 
     record_error.assert_not_called()
+
+
+def test_request_stat_periodic_persistence(monkeypatch):
+    """Keep every console update but persist only periodic cumulative snapshots."""
+    clock = MutableClock()
+    stat = LLMRequestStat(clock=clock)
+    log = MagicMock()
+    display = MagicMock()
+    monkeypatch.setattr(request_stat_module, "logger", log)
+    monkeypatch.setattr(request_stat_module, "print_with_time", display)
+    for moment in (0, 1, 59.999, 60, 61):
+        clock.value = moment
+        stat.record_request()
+        stat.print_request_stat()
+    assert display.call_count == 5
+    assert log.info.call_count == 2
+    assert "total_requests=1 " in log.info.call_args_list[0].args[0]
+    assert "total_requests=4 " in log.info.call_args_list[1].args[0]
+
+
+def test_request_stat_idle_time_requires_activity_to_persist(monkeypatch):
+    """Idle time does not flush; the next display persists cumulative counters."""
+    clock = MutableClock()
+    stat = LLMRequestStat(clock=clock)
+    log = MagicMock()
+    display = MagicMock()
+    monkeypatch.setattr(request_stat_module, "logger", log)
+    monkeypatch.setattr(request_stat_module, "print_with_time", display)
+    stat.record_request()
+    stat.print_request_stat()
+    assert log.info.call_count == 1
+    clock.value = 1
+    stat.record_request()
+    stat.print_request_stat()
+    assert log.info.call_count == 1
+    clock.value = 120
+    assert stat.get_request_stat_info()["total_requests"] == 2
+    assert log.info.call_count == 1
+    assert display.call_count == 2
+    stat.print_request_stat()
+    assert display.call_count == 3
+    assert log.info.call_count == 2
+    assert "total_requests=2 " in log.info.call_args.args[0]

@@ -683,3 +683,93 @@ with tempfile.TemporaryDirectory() as tmp:
     assert lines[-3] == "True"
     assert lines[-2] == "True"
     assert lines[-1] == "True"
+
+
+def test_chat_main_file_routing_preserves_errors(tmp_path, monkeypatch):
+    """Persist routine chat once while retaining errors and external capture."""
+    import topsailai.logger.base_logger as module
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "handlers", [])
+    monkeypatch.setattr(module, "_get_default_log_file", lambda name: str(tmp_path / "main.log"))
+    configure_root_logger(logging.DEBUG)
+    main, errors = root.handlers
+    captured = []
+
+    class Capture(logging.Handler):
+        """Collect propagated records without changing file routing."""
+
+        def emit(self, record):
+            """Record each observable event."""
+            captured.append(record.getMessage())
+
+    root.addHandler(Capture())
+    chat = setup_logger("chat", str(tmp_path / "chat.log"), logging.DEBUG)
+    setup_logger("chat", str(tmp_path / "chat.log"), logging.DEBUG)
+    try:
+        for level in (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL):
+            chat.log(level, "routing-%s", level)
+        logging.getLogger("chat.child").error("child-error")
+        logging.getLogger("other").error("other-error")
+        main.flush()
+        dedicated = (tmp_path / "chat.log").read_text()
+        primary = (tmp_path / "main.log").read_text()
+        for level in (logging.DEBUG, logging.INFO, logging.WARNING):
+            assert dedicated.count(f"routing-{level}") == 1
+            assert f"routing-{level}" not in primary
+        for level in (logging.ERROR, logging.CRITICAL):
+            assert dedicated.count(f"routing-{level}") == 1
+            assert primary.count(f"routing-{level}") == 1
+        assert "child-error" in primary and "other-error" in primary
+        assert len(captured) == 7
+    finally:
+        main.close()
+        errors.close()
+
+
+def test_chat_preexisting_root_file_routing_preserves_external_capture(tmp_path, monkeypatch):
+    """Filter existing root files without suppressing external non-file capture."""
+    import topsailai.logger.base_logger as module
+    root = logging.getLogger()
+    external = logging.FileHandler(tmp_path / "external.log")
+    external.setFormatter(logging.Formatter("%(message)s"))
+    captured = []
+
+    class Capture(logging.Handler):
+        """Observe records independently of persistence routing."""
+
+        def emit(self, record):
+            """Retain the message for assertions."""
+            captured.append(record.getMessage())
+
+    capture = Capture()
+    monkeypatch.setattr(root, "handlers", [external, capture])
+    monkeypatch.setattr(root, "level", logging.DEBUG)
+    chat = setup_logger("chat", str(tmp_path / "chat.log"), logging.DEBUG)
+    try:
+        configure_root_logger(logging.DEBUG)
+        configure_root_logger(logging.DEBUG)
+        assert root.handlers == [external, capture]
+        assert len(external.filters) == 1
+        assert isinstance(external.filters[0], module._MainFileFilter)
+        assert not capture.filters
+        assert external.formatter._fmt == "%(message)s"
+        assert external.level == logging.NOTSET
+        for level in (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL):
+            chat.log(level, "external-routing-%s", level)
+        logging.getLogger("chat.child").warning("child-routine")
+        logging.getLogger("chat.child").error("child-error")
+        logging.getLogger("other").warning("other-warning")
+        external.flush()
+        primary = (tmp_path / "external.log").read_text()
+        dedicated = (tmp_path / "chat.log").read_text()
+        for level in (logging.DEBUG, logging.INFO, logging.WARNING):
+            assert f"external-routing-{level}" not in primary
+            assert dedicated.count(f"external-routing-{level}") == 1
+        for level in (logging.ERROR, logging.CRITICAL):
+            assert primary.count(f"external-routing-{level}") == 1
+            assert dedicated.count(f"external-routing-{level}") == 1
+        assert "child-routine" not in primary
+        assert "child-error" in primary and "other-warning" in primary
+        assert len(captured) == 8
+    finally:
+        external.close()
