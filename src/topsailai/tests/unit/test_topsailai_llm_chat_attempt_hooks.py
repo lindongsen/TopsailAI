@@ -185,3 +185,48 @@ def test_interactive_business_interrupt_retains_retry(case, monkeypatch):
     prompt.assert_called_once()
     assert case.model.call_llm_model.call_count == 2
     assert [phase for phase, _ in case.events] == ["before", "before", "after"]
+
+
+@pytest.mark.parametrize("phase", ["after", "error"])
+def test_later_attempt_hook_interrupt_never_prompts(case, monkeypatch, phase):
+    """A terminal Hook interruption after a retry cannot enter business prompting."""
+    error = KeyboardInterrupt()
+    first_failure = TypeError("first attempt")
+    second_result = TypeError("second attempt") if phase == "error" else (object(), "ok")
+    case.model.call_llm_model.side_effect = [first_failure, second_result]
+
+    def interrupt_later(**metadata):
+        """Allow the first failure observation and interrupt only attempt two."""
+        case.events.append((phase, metadata))
+        if metadata["attempt_number"] == 2:
+            raise error
+
+    monkeypatch.setattr(llm, f"hook__aibase__{phase}__llm_chat_attempt", interrupt_later)
+    prompt = MagicMock(side_effect=AssertionError("must not prompt"))
+    monkeypatch.setattr(llm, "input_yes_or_no", prompt)
+    policy = LLMRetryInteractionPolicy(interactive_enabled=True, input_func=lambda _: "yes")
+    with pytest.raises(KeyboardInterrupt) as caught:
+        case.model.chat([], for_raw=True, retry_interaction_policy=policy)
+    assert caught.value is error
+    assert case.model.call_llm_model.call_count == 2
+    assert [p for p, _ in case.events] == ["before", "error", "before", phase]
+    assert [v["attempt_number"] for _, v in case.events] == [1, 1, 2, 2]
+    assert len({v["operation_id"] for _, v in case.events}) == 1
+    assert case.sleeps == [5]
+    prompt.assert_not_called()
+
+
+def test_interactive_business_interrupt_declines_retry(case, monkeypatch):
+    """Declining a business interrupt retry preserves identity without another call."""
+    error = KeyboardInterrupt()
+    case.model.call_llm_model.side_effect = error
+    prompt = MagicMock(return_value=False)
+    monkeypatch.setattr(llm, "input_yes_or_no", prompt)
+    policy = LLMRetryInteractionPolicy(interactive_enabled=True, input_func=lambda _: "no")
+    with pytest.raises(KeyboardInterrupt) as caught:
+        case.model.chat([], for_raw=True, retry_interaction_policy=policy)
+    assert caught.value is error
+    prompt.assert_called_once_with(">>> LLM Retry [yes/no] ", policy.input_func)
+    assert case.model.call_llm_model.call_count == 1
+    assert [phase for phase, _ in case.events] == ["before"]
+    assert case.sleeps == []

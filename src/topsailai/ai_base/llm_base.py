@@ -680,7 +680,6 @@ class LLMModel(
                 point_name="hook__aibase__before__llm_chat_attempt", outcome="before",
             )
             attempt_started = time.monotonic()
-            hook_in_progress = False
             try:
                 try:
                     with qos_tool.log_if_slow(
@@ -725,11 +724,21 @@ class LLMModel(
                             messages,
                             for_response=for_response,
                         )
+                except KeyboardInterrupt:
+                    if not prompt_allowed:
+                        raise
+                    if input_yes_or_no(
+                            ">>> LLM Retry [yes/no] ", policy.input_func
+                        ):
+                        # This retries only the same LLM chat request. It does
+                        # not restart the Agent loop or repeat any tool call.
+                        manual_retry_requested = True
+                        continue
+                    raise
                 except (HardInterruptError, LLMRequestedRetryError,
                         LLMBackToChatError, LLMRetryExhaustedError):
                     raise
                 except Exception as error:
-                    hook_in_progress = True
                     hook__aibase__error__llm_chat_attempt(
                         schema_version=1, operation_id=operation_id,
                         attempt_number=total_attempt, loop_attempts=loop_attempts,
@@ -738,33 +747,11 @@ class LLMModel(
                         duration_sec=time.monotonic() - attempt_started,
                         error_category=type(error).__name__[:128],
                     )
-                    hook_in_progress = False
                     raise
-                hook_in_progress = True
-                hook__aibase__after__llm_chat_attempt(
-                    schema_version=1, operation_id=operation_id,
-                    attempt_number=total_attempt, loop_attempts=loop_attempts,
-                    stream=bool(for_stream), return_mode=return_mode,
-                    point_name="hook__aibase__after__llm_chat_attempt", outcome="success",
-                    duration_sec=time.monotonic() - attempt_started,
-                )
-                hook_in_progress = False
-                return result
             except LLMRequestedRetryError as e:
                 last_error = e
                 retry_reason = "requested_retry"
                 continue
-            except KeyboardInterrupt:
-                if hook_in_progress or not prompt_allowed:
-                    raise
-                if input_yes_or_no(
-                        ">>> LLM Retry [yes/no] ", policy.input_func
-                    ):
-                    # This retries only the same LLM chat request. It does
-                    # not restart the Agent loop or repeat any tool call.
-                    manual_retry_requested = True
-                    continue
-                raise
             except JsonError as e:
                 last_error = e
                 retry_reason = "json"
@@ -888,6 +875,15 @@ class LLMModel(
                 # Non-interactive callers must never block for input. The
                 # same LLM chat request continues its bounded auto-retries.
                 continue
+
+            hook__aibase__after__llm_chat_attempt(
+                schema_version=1, operation_id=operation_id,
+                attempt_number=total_attempt, loop_attempts=loop_attempts,
+                stream=bool(for_stream), return_mode=return_mode,
+                point_name="hook__aibase__after__llm_chat_attempt", outcome="success",
+                duration_sec=time.monotonic() - attempt_started,
+            )
+            return result
 
         raise LLMRetryExhaustedError(
             attempts=loop_attempts,
