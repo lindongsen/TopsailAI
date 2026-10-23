@@ -75,5 +75,6 @@ run_cli() {
 }
 
 # start
-TOPSAILAI_CHAT_MULTI_LINE=1 \
-  run_cli llm_chats "${task} ${task_ex}"
+[ -n "${TOPSAILAI_CHAT_MULTI_LINE}" ] || TOPSAILAI_CHAT_MULTI_LINE=1
+export TOPSAILAI_CHAT_MULTI_LINE
+run_cli llm_chats "${task} ${task_ex}"
