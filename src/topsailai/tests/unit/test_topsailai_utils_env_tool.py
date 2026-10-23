@@ -95,10 +95,19 @@ class TestChatMultiLine:
         with patch.dict(os.environ, {}, clear=True):
             assert is_chat_multi_line() is False
     
-    def test_chat_multi_line_disabled_explicit_0(self):
-        """Test multi-line chat is disabled when CHAT_MULTI_LINE="0"""
-        with patch.dict(os.environ, {"CHAT_MULTI_LINE": "0"}):
-            assert is_chat_multi_line() is False
+    @pytest.mark.parametrize("new,legacy,expected", [
+        ("0", "1", False), ("false", "1", False), ("off", "1", False),
+        ("no", "1", False), ("1", "0", True), ("true", "0", True),
+        ("", "1", True), (None, "1", True), ("", "0", False),
+        (None, None, False), ("", "", False),
+    ])
+    def test_chat_multi_line_disabled_explicit_0(self, new, legacy, expected):
+        """Resolve the preferred variable before the legacy fallback."""
+        values = {key: value for key, value in (
+            ("TOPSAILAI_CHAT_MULTI_LINE", new), ("CHAT_MULTI_LINE", legacy),
+        ) if value is not None}
+        with patch.dict(os.environ, values, clear=True):
+            assert is_chat_multi_line() is expected
     
     def test_chat_multi_line_enabled_1(self):
         """Test multi-line chat is enabled when CHAT_MULTI_LINE="1"""

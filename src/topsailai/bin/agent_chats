@@ -74,5 +74,5 @@ run_cli() {
 
 # start
 DEBUG=1 \
-  CHAT_MULTI_LINE=1 \
+  TOPSAILAI_CHAT_MULTI_LINE=1 \
   run_cli agent_chats "${task} ${task_ex}"

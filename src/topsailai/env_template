@@ -271,6 +271,8 @@ TOPSAILAI_PRINT_STEP_MODE=normal
 
 # Agent Type, default is react
 # Input Messages
+# Non-empty value overrides legacy CHAT_MULTI_LINE; otherwise use legacy, then 0.
+# Truthy values: 1, true, yes, on, enabled (case-insensitive).
 TOPSAILAI_CHAT_MULTI_LINE=0
 
 # Pipe-based input. Set to 1 to read interactive input from a session-scoped

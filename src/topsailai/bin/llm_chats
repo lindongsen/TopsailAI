@@ -75,5 +75,5 @@ run_cli() {
 }
 
 # start
-CHAT_MULTI_LINE=1 \
+TOPSAILAI_CHAT_MULTI_LINE=1 \
   run_cli llm_chats "${task} ${task_ex}"

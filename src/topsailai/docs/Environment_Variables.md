@@ -51,7 +51,7 @@ These variables define the agent's working environment and project access scope.
 | `TOPSAILAI_TERMINAL_TITLE_ENABLED` | `1` | When `1`, the terminal window title is updated in interactive mode using `TOPSAILAI_TERMINAL_TITLE_FORMAT`. Set to `0` to disable. |
 | `TOPSAILAI_TERMINAL_TITLE_FORMAT` | `"{host_name}:{session_name}"` | Format string for the terminal window title. Supported placeholders: `{host_name}`, `{session_name}`, `{session_id}`. `session_name` falls back to `session_id` when empty. |
 | `TOPSAILAI_PRINT_TOOL_PROMPT` | `0` | Whether to print tool prompt content. `1` = enabled. |
-| `TOPSAILAI_CHAT_MULTI_LINE` | `0` | Multi-line input mode. `1` = enabled. |
+| `TOPSAILAI_CHAT_MULTI_LINE` | `0` | Multi-line terminal input; enabled by `1`, `true`, `yes`, `on`, or `enabled` (case-insensitive), otherwise disabled. A non-empty value overrides legacy `CHAT_MULTI_LINE`; unset/empty falls back to legacy, then disabled. |
 | `TOPSAILAI_INPUT_PIPE_ENABLED` | `"0"` | Enable pipe-based input. When `1`, interactive `input()` calls read from a session-scoped named pipe (`FOLDER_WORKSPACE_TASK/{session_id}.{pid}.session.pipe`) instead of stdin. The CLI `topsailai.py` provides a `/send` command to write messages to this pipe for running sessions. |
 | `TOPSAILAI_INPUT_PIPE_TIMEOUT` | `""` | Timeout in seconds for pipe-based input. Empty, unset, or invalid means wait indefinitely. Positive float values are treated as seconds. Also used by the `/send` command when opening the pipe for writing. |
 | `TOPSAILAI_INPUT_HISTORY_MAX_SIZE` | `1048576` | Maximum size in bytes of the JSONL input history file (`.input_history.jsonl`) before rotation. Default is `1048576` (1 MiB). Values below `0` disable size-based rotation. |

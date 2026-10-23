@@ -208,20 +208,14 @@ def get_history_load_max_entries(default: int = 100) -> int:
 def is_chat_multi_line() -> bool:
     """Check if multi-line chat mode is enabled.
 
-    Multi-line chat mode is determined by the CHAT_MULTI_LINE environment variable:
-    - CHAT_MULTI_LINE="0" or not set: Single-line mode (returns False)
-    - CHAT_MULTI_LINE="1" or any other value: Multi-line mode (returns True)
+    The non-empty TOPSAILAI_CHAT_MULTI_LINE value takes precedence over
+    legacy CHAT_MULTI_LINE. Both unset or empty defaults to single-line mode.
 
     Returns:
-        bool: True if multi-line chat mode is enabled, False otherwise
+        bool: True for a supported truthy value, False otherwise.
     """
-    if os.getenv("TOPSAILAI_CHAT_MULTI_LINE", "0") != "0":
-        return True
-
-    if os.getenv("CHAT_MULTI_LINE", "0") != "0":
-        return True
-
-    return False
+    value = os.getenv("TOPSAILAI_CHAT_MULTI_LINE") or os.getenv("CHAT_MULTI_LINE", "0")
+    return is_true(value)
 
 
 def is_input_pipe_enabled() -> bool:
