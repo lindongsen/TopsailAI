@@ -58,6 +58,15 @@ def test_missing_empty_wrong_home_and_prefix(tmp_path):
     assert not SessionActivityProbe().can_clean("a")
 
 
+@pytest.mark.parametrize("session_id", ["", [], {}])
+def test_invalid_single_session_id_is_unknown(tmp_path, session_id):
+    """Invalid single-session input fails closed without requiring hashability."""
+    observation = SessionActivityProbe((tmp_path,)).observe(session_id)
+
+    assert observation.state == State.UNKNOWN
+    assert observation.reason == "missing local authority"
+
+
 def test_malformed_pid_and_partial_record(tmp_path):
     """Potentially matching malformed records retain uncertainty."""
     record(tmp_path)
@@ -144,3 +153,57 @@ def test_metadata_symlink_and_replacement(tmp_path, monkeypatch):
         return original(candidate)
     monkeypatch.setattr(Path, "lstat", replace_during_stat)
     assert not probe.can_clean("a.b[1]")
+
+
+def test_observe_many_uses_one_stable_inventory_per_root(tmp_path, monkeypatch):
+    """Batch observation scans each root twice regardless of session count."""
+    record(tmp_path, sid="first", pid=101)
+    record(tmp_path, sid="second", pid=202)
+    original = type(tmp_path).iterdir
+    calls = 0
+
+    def counted_iterdir(path):
+        """Count complete root snapshots without changing their contents."""
+        nonlocal calls
+        calls += 1
+        return original(path)
+
+    monkeypatch.setattr(type(tmp_path), "iterdir", counted_iterdir)
+    probe = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED)
+
+    observations = probe.observe_many(("first", "second"))
+
+    assert observations["first"].state == State.STOPPED
+    assert observations["second"].state == State.STOPPED
+    assert calls == 2
+
+
+def test_observe_many_preserves_prefix_conflict_uncertainty(tmp_path):
+    """A longer session owner remains malformed evidence for its shorter prefix."""
+    record(tmp_path, sid="alpha", pid=101)
+    record(tmp_path, sid="alpha.child", pid=202)
+    probe = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED)
+
+    observations = probe.observe_many(("alpha", "alpha.child"))
+
+    assert observations["alpha"].state == State.UNKNOWN
+    assert observations["alpha.child"].state == State.STOPPED
+
+
+def test_observe_many_preserves_independent_session_states(tmp_path):
+    """One live or uncertain session does not change another batch result."""
+    record(tmp_path, sid="stopped", pid=101)
+    record(tmp_path, sid="running", pid=202)
+    record(tmp_path, sid="unknown", pid=303)
+    states = {
+        101: State.STOPPED,
+        202: State.RUNNING,
+        303: State.UNKNOWN,
+    }
+    probe = SessionActivityProbe((tmp_path,), states.__getitem__)
+
+    observations = probe.observe_many(("stopped", "running", "unknown"))
+
+    assert observations["stopped"].state == State.STOPPED
+    assert observations["running"].state == State.RUNNING
+    assert observations["unknown"].state == State.UNKNOWN

@@ -307,3 +307,100 @@ def test_cleanup_keeps_recent_tmp_files(monkeypatch):
     session_meta.cleanup_session_meta_files()
 
     assert os.path.exists(tmp_path)
+
+
+def test_cleanup_batches_session_observations(monkeypatch):
+    """Cleanup asks the production probe for all candidate sessions at once."""
+    paths = []
+    for session_id in ("batch-a", "batch-b"):
+        path = session_meta.create_session_meta(session_id)
+        old_time = time.time() - 10 * 86400
+        os.utime(path, (old_time, old_time))
+        paths.append(path)
+
+    class BatchProbe(session_meta.SessionActivityProbe):
+        """Record the batch request while returning controlled observations."""
+
+        def __init__(self):
+            self.calls = []
+
+        def observe_many(self, session_ids, home=None):
+            self.calls.append(session_ids)
+            states = {
+                "batch-a": session_meta.ActivityState.STOPPED,
+                "batch-b": session_meta.ActivityState.RUNNING,
+            }
+            return {
+                session_id: MagicMock(state=states[session_id])
+                for session_id in session_ids
+            }
+
+    probe = BatchProbe()
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "0")
+
+    session_meta.cleanup_session_meta_files(activity_probe=probe)
+
+    assert probe.calls == [("batch-a", "batch-b")]
+    assert not os.path.exists(paths[0])
+    assert os.path.exists(paths[1])
+
+
+def test_cleanup_observes_retention_and_count_candidates_once(monkeypatch):
+    """Combined retention and count policies share one batch authorization."""
+    now = time.time()
+    for index, session_id in enumerate(("old", "excess", "kept")):
+        path = session_meta.create_session_meta(session_id)
+        age_days = 10 if session_id == "old" else 0
+        timestamp = now - (age_days * 86400) + index
+        os.utime(path, (timestamp, timestamp))
+
+    class BatchProbe(session_meta.SessionActivityProbe):
+        """Record the single authorization batch and stop every owner."""
+
+        def __init__(self):
+            self.calls = []
+
+        def observe_many(self, session_ids, home=None):
+            self.calls.append(session_ids)
+            return {
+                session_id: MagicMock(state=session_meta.ActivityState.STOPPED)
+                for session_id in session_ids
+            }
+
+    probe = BatchProbe()
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "1")
+
+    session_meta.cleanup_session_meta_files(activity_probe=probe)
+
+    assert probe.calls == [("excess", "old")]
+    assert not os.path.exists(session_meta.get_session_meta_path("old"))
+    assert not os.path.exists(session_meta.get_session_meta_path("excess"))
+    assert os.path.exists(session_meta.get_session_meta_path("kept"))
+
+
+def test_cleanup_preserves_metadata_replaced_after_observation(monkeypatch):
+    """A target identity change after authorization prevents its deletion."""
+    path = session_meta.create_session_meta("replaced")
+    old_time = time.time() - 10 * 86400
+    os.utime(path, (old_time, old_time))
+    probe = MagicMock(can_clean=MagicMock(return_value=True))
+    original = session_meta._cleanable_sessions
+
+    def replace_after_observation(paths, activity_probe):
+        """Replace the authorized target before deletion revalidation."""
+        decisions = original(paths, activity_probe)
+        replacement = path + ".replacement"
+        with open(replacement, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps({"session_id": "replaced", "pid": os.getpid()}))
+        os.replace(replacement, path)
+        return decisions
+
+    monkeypatch.setattr(session_meta, "_cleanable_sessions", replace_after_observation)
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "0")
+
+    session_meta.cleanup_session_meta_files(activity_probe=probe)
+
+    assert os.path.exists(path)

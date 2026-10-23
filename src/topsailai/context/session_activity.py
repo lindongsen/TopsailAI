@@ -51,19 +51,44 @@ class SessionActivityProbe:
 
     def observe(self, session_id, home=None):
         """Require consistent, nonempty owner evidence in an admitted local root."""
-        if not isinstance(session_id, str) or not session_id or not self.task_dirs:
+        if not isinstance(session_id, str) or not session_id:
             return ActivityObservation(ActivityState.UNKNOWN, "missing local authority")
+        return self.observe_many((session_id,), home)[session_id]
+
+    def observe_many(self, session_ids, home=None):
+        """Observe multiple sessions from one stable inventory per admitted root."""
+        requested = tuple(dict.fromkeys(session_ids))
+        invalid = [sid for sid in requested if not isinstance(sid, str) or not sid]
+        results = {
+            sid: ActivityObservation(ActivityState.UNKNOWN, "missing local authority")
+            for sid in invalid
+        }
+        valid = tuple(sid for sid in requested if sid not in results)
+        if not valid or not self.task_dirs:
+            results.update(
+                (sid, ActivityObservation(ActivityState.UNKNOWN, "missing local authority"))
+                for sid in valid
+            )
+            return results
         roots = self.task_dirs
         if home is not None:
             recorded = Path(home).absolute() / "workspace" / "task"
             if not home or recorded not in roots:
-                return ActivityObservation(ActivityState.UNKNOWN, "unverified recorded home")
-        results = [self._observe_root(root, session_id) for root in roots]
-        if any(r.state == ActivityState.RUNNING for r in results):
-            return ActivityObservation(ActivityState.RUNNING, "live associated PID")
-        if any(r.state == ActivityState.UNKNOWN for r in results):
-            return ActivityObservation(ActivityState.UNKNOWN, "incomplete owner evidence")
-        return ActivityObservation(ActivityState.STOPPED, "all recorded owners absent")
+                results.update(
+                    (sid, ActivityObservation(ActivityState.UNKNOWN, "unverified recorded home"))
+                    for sid in valid
+                )
+                return results
+        root_results = [self._observe_root_many(root, valid) for root in roots]
+        for session_id in valid:
+            observations = [item[session_id] for item in root_results]
+            if any(item.state == ActivityState.RUNNING for item in observations):
+                results[session_id] = ActivityObservation(ActivityState.RUNNING, "live associated PID")
+            elif any(item.state == ActivityState.UNKNOWN for item in observations):
+                results[session_id] = ActivityObservation(ActivityState.UNKNOWN, "incomplete owner evidence")
+            else:
+                results[session_id] = ActivityObservation(ActivityState.STOPPED, "all recorded owners absent")
+        return results
 
     def can_clean(self, session_id, home=None):
         """Authorize cleanup only after a fresh STOPPED observation."""
@@ -73,28 +98,68 @@ class SessionActivityProbe:
         return result.state == ActivityState.STOPPED
 
     def _observe_root(self, root, session_id):
-        """Aggregate all exact owner filenames and reject unstable inventories."""
-        pattern = re.compile(r"^" + re.escape(session_id) + r"\.([1-9][0-9]*)\.session\.(meta|stdout|stderr|events|pipe|agent2llm_inject_messages\.jsonl)$")
+        """Observe one session while retaining the single-session public behavior."""
+        return self._observe_root_many(root, (session_id,))[session_id]
+
+    def _observe_root_many(self, root, session_ids):
+        """Aggregate requested owners from one stable root inventory."""
+        unknown = ActivityObservation(ActivityState.UNKNOWN, "inventory unreadable")
         try:
-            before = tuple(sorted(p.name for p in root.iterdir()))
-            matches = [(name, pattern.fullmatch(name)) for name in before]
-            owners = [(name, int(match[1])) for name, match in matches if match]
-            malformed = any(name.startswith(session_id + ".") and ".session." in name and not match
-                            for name, match in matches)
-            if not owners:
-                return ActivityObservation(ActivityState.UNKNOWN, "no run records")
-            states = [self._observe_owner(root / name, session_id, pid) for name, pid in owners]
-            if malformed:
-                states.append(ActivityState.UNKNOWN)
-            if ActivityState.RUNNING in states:
-                return ActivityObservation(ActivityState.RUNNING, "live owner")
-            if tuple(sorted(p.name for p in root.iterdir())) != before:
-                return ActivityObservation(ActivityState.UNKNOWN, "inventory changed")
-            state = ActivityState.UNKNOWN if ActivityState.UNKNOWN in states else ActivityState.STOPPED
-            return ActivityObservation(state, "owner inventory")
+            before = tuple(sorted(path.name for path in root.iterdir()))
+            owners, malformed = self._index_inventory(before, session_ids)
+            observations = {
+                session_id: self._observe_session_owners(
+                    root,
+                    session_id,
+                    owners.get(session_id, ()),
+                    session_id in malformed,
+                )
+                for session_id in session_ids
+            }
+            if tuple(sorted(path.name for path in root.iterdir())) != before:
+                return {
+                    session_id: ActivityObservation(ActivityState.UNKNOWN, "inventory changed")
+                    for session_id in session_ids
+                }
+            return observations
         except (OSError, ValueError, OverflowError):
-            logger.warning("Cannot inspect session inventory for %s", session_id, exc_info=True)
-            return ActivityObservation(ActivityState.UNKNOWN, "inventory unreadable")
+            logger.warning("Cannot inspect session inventory", exc_info=True)
+            return {session_id: unknown for session_id in session_ids}
+
+    @staticmethod
+    def _index_inventory(inventory, session_ids):
+        """Index exact owner records in one pass over the captured inventory."""
+        requested = set(session_ids)
+        owners = {session_id: [] for session_id in session_ids}
+        malformed = set()
+        pattern = re.compile(r"^(.+)\.([1-9][0-9]*)\.session\.(meta|stdout|stderr|events|pipe|agent2llm_inject_messages\.jsonl)$")
+        for name in inventory:
+            if ".session." not in name:
+                continue
+            match = pattern.fullmatch(name)
+            exact_session_id = match[1] if match and match[1] in requested else None
+            if exact_session_id is not None:
+                owners[exact_session_id].append((name, int(match[2])))
+            prefixes = {
+                name[:index]
+                for index, character in enumerate(name)
+                if character == "."
+            }
+            prefixes.discard(exact_session_id)
+            malformed.update(prefixes & requested)
+        return owners, malformed
+
+    def _observe_session_owners(self, root, session_id, owners, malformed):
+        """Evaluate one session from its indexed owner records."""
+        if not owners:
+            return ActivityObservation(ActivityState.UNKNOWN, "no run records")
+        states = [self._observe_owner(root / name, session_id, pid) for name, pid in owners]
+        if malformed:
+            states.append(ActivityState.UNKNOWN)
+        if ActivityState.RUNNING in states:
+            return ActivityObservation(ActivityState.RUNNING, "live owner")
+        state = ActivityState.UNKNOWN if ActivityState.UNKNOWN in states else ActivityState.STOPPED
+        return ActivityObservation(state, "owner inventory")
 
     def _observe_owner(self, path, session_id, pid):
         """Validate metadata without reading pipes or trusting completion flags."""

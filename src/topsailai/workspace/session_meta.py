@@ -11,14 +11,16 @@ import glob
 import json
 import logging
 import os
+from os import lstat as _lstat
 import socket
+import stat
 import threading
 import time
 from datetime import datetime
 
 from topsailai.utils import env_tool
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
-from topsailai.context.session_activity import SessionActivityProbe
+from topsailai.context.session_activity import ActivityState, SessionActivityProbe
 
 logger = logging.getLogger(__name__)
 
@@ -314,15 +316,87 @@ def update_session_meta_field(field: str, value, session_id: str | None = None) 
     _atomic_write(path, meta)
 
 
-def _can_remove_meta(path, activity_probe):
-    """Keep primary ownership evidence and partial writes when uncertain."""
+def _parse_meta_session_id(path):
+    """Return the session identifier encoded in a complete metadata filename."""
     name = os.path.basename(path)
     if name.endswith(".tmp"):
-        # A partial record cannot prove its own integrity.
-        return False
+        return None
     prefix, separator, _ = name.rpartition(".session.meta")
     session_id, dot, pid = prefix.rpartition(".")
-    return bool(separator and dot and pid.isdigit() and activity_probe.can_clean(session_id))
+    if not separator or not dot or not pid.isdigit() or not session_id:
+        return None
+    return session_id
+
+
+def _file_identity(path):
+    """Capture the regular-file identity required for a safe later deletion."""
+    try:
+        current = _lstat(path)
+    except OSError:
+        return None
+    if not stat.S_ISREG(current.st_mode):
+        return None
+    return (
+        current.st_dev,
+        current.st_ino,
+        current.st_mode,
+        current.st_size,
+        current.st_mtime_ns,
+    )
+
+
+def _cleanable_sessions(paths, activity_probe):
+    """Return cleanup decisions using one batch observation when supported."""
+    session_ids = tuple(sorted({
+        session_id
+        for session_id in (_parse_meta_session_id(path) for path in paths)
+        if session_id
+    }))
+    if not session_ids:
+        return {}
+    observe_many = getattr(type(activity_probe), "observe_many", None)
+    if callable(observe_many):
+        observations = activity_probe.observe_many(session_ids)
+        return {
+            session_id: observations.get(session_id).state == ActivityState.STOPPED
+            if observations.get(session_id) is not None
+            else False
+            for session_id in session_ids
+        }
+    return {
+        session_id: bool(activity_probe.can_clean(session_id))
+        for session_id in session_ids
+    }
+
+
+def _capture_cleanup_candidates(paths):
+    """Capture valid metadata identities before cleanup authorization."""
+    candidates = {}
+    for path in paths:
+        session_id = _parse_meta_session_id(path)
+        identity = _file_identity(path)
+        if session_id and identity is not None:
+            candidates[path] = (session_id, identity)
+    return candidates
+
+
+def _remove_cleanable_meta(paths, candidates, decisions, message):
+    """Delete authorized metadata only when its captured identity is unchanged."""
+    removed = set()
+    for path in paths:
+        candidate = candidates.get(path)
+        if candidate is None:
+            continue
+        session_id, identity = candidate
+        if not decisions.get(session_id) or _file_identity(path) != identity:
+            continue
+        try:
+            os.remove(path)
+            removed.add(path)
+            logger.debug(message, path)
+        except OSError:
+            continue
+    return removed
 
 
 @safe_session_meta
@@ -360,32 +434,40 @@ def cleanup_session_meta_files(activity_probe=None) -> None:
             if ".session.meta" not in basename:
                 continue
             meta_files.append((path, os.path.getmtime(path)))
-        except Exception:
+        except OSError:
             continue
 
-    # Delete files older than retention period
-    surviving = []
-    for path, mtime in meta_files:
-        if retention_seconds > 0 and now - mtime > retention_seconds and _can_remove_meta(path, activity_probe):
-            try:
-                os.remove(path)
-                logger.debug("Removed old session meta file: %s", path)
-            except Exception:
-                pass
-            continue
-        surviving.append((path, mtime))
+    old_paths = [
+        path for path, mtime in meta_files
+        if retention_seconds > 0 and now - mtime > retention_seconds
+    ]
+    ordered_files = sorted(meta_files, key=lambda item: item[1])
+    initial_excess_paths = []
+    if max_count > 0 and len(ordered_files) > max_count:
+        initial_excess_paths = [
+            path for path, _ in ordered_files[: len(ordered_files) - max_count]
+        ]
+    candidate_paths = tuple(dict.fromkeys(old_paths + initial_excess_paths))
+    candidates = _capture_cleanup_candidates(candidate_paths)
+    decisions = _cleanable_sessions(candidates, activity_probe)
+    removed = _remove_cleanable_meta(
+        old_paths,
+        candidates,
+        decisions,
+        "Removed old session meta file: %s",
+    )
+    surviving = [item for item in ordered_files if item[0] not in removed]
 
-    # Enforce max count
     if max_count > 0 and len(surviving) > max_count:
-        surviving.sort(key=lambda item: item[1])
-        for path, _ in surviving[: len(surviving) - max_count]:
-            if not _can_remove_meta(path, activity_probe):
-                continue
-            try:
-                os.remove(path)
-                logger.debug("Removed excess session meta file: %s", path)
-            except Exception:
-                pass
+        excess_paths = [
+            path for path, _ in surviving[: len(surviving) - max_count]
+        ]
+        _remove_cleanable_meta(
+            excess_paths,
+            candidates,
+            decisions,
+            "Removed excess session meta file: %s",
+        )
 
     # Partial temporary records cannot prove stopped ownership; preserve them.
     tmp_pattern = os.path.join(directory, f"*.{META_EXTENSION}.tmp")
@@ -396,8 +478,7 @@ def cleanup_session_meta_files(activity_probe=None) -> None:
             basename = os.path.basename(path)
             if ".session.meta.tmp" not in basename:
                 continue
-            if retention_seconds > 0 and now - os.path.getmtime(path) > retention_seconds and _can_remove_meta(path, activity_probe):
-                os.remove(path)
-                logger.debug("Removed orphaned session meta temp file: %s", path)
-        except Exception:
-            pass
+            if retention_seconds > 0 and now - os.path.getmtime(path) > retention_seconds:
+                logger.debug("Preserved uncertain session meta temp file: %s", path)
+        except OSError:
+            continue
