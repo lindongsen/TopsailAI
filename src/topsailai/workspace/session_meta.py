@@ -19,6 +19,7 @@ import time
 from datetime import datetime
 
 from topsailai.utils import env_tool
+from topsailai.utils.qos_tool import log_if_slow_decorator
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
 from topsailai.context.session_activity import ActivityState, SessionActivityProbe
 
@@ -30,6 +31,7 @@ STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"
 STATUS_ERROR = "error"
 STATUS_INTERRUPTED = "interrupted"
+SESSION_META_CLEANUP_SLOW_SECONDS = 5
 
 _META_LOCK = threading.RLock()
 
@@ -400,6 +402,12 @@ def _remove_cleanable_meta(paths, candidates, decisions, message):
 
 
 @safe_session_meta
+@log_if_slow_decorator(
+    threshold=SESSION_META_CLEANUP_SLOW_SECONDS,
+    message="Session metadata cleanup exceeded startup latency threshold",
+    level="critical",
+    logger_obj=logger,
+)
 @_serialized_session_meta
 def cleanup_session_meta_files(activity_probe=None) -> None:
     """Remove old session metadata files based on retention days and max count.
