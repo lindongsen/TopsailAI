@@ -614,6 +614,12 @@ class TestInputFromPipeSession(unittest.TestCase):
 class TestPrivateInput(unittest.TestCase):
     """Test cases for the private _input function."""
 
+    def setUp(self):
+        """Select the input mode explicitly for pipe contract assertions."""
+        mode = patch("topsailai.workspace.input_tool.env_tool.is_chat_multi_line", return_value=False)
+        mode.start()
+        self.addCleanup(mode.stop)
+
     def tearDown(self):
         """Clean up environment variables."""
         for key in ["TOPSAILAI_INPUT_PIPE_ENABLED", "TOPSAILAI_INPUT_PIPE_TIMEOUT"]:
@@ -640,7 +646,8 @@ class TestPrivateInput(unittest.TestCase):
         self.assertEqual(result, "piped line")
         mock_input_from_pipe_session.assert_called_once_with(
             timeout=None,
-            single_line=True,
+            single_line=False,
+            raise_eof_error=False,
             prompt="prompt> ",
             history_file=FILE_INPUT_HISTORY_JSONL,
             completion_file=FILE_INPUT_COMPLETIONS,
@@ -657,7 +664,8 @@ class TestPrivateInput(unittest.TestCase):
         self.assertEqual(result, "timed piped line")
         mock_input_from_pipe_session.assert_called_once_with(
             timeout=7.5,
-            single_line=True,
+            single_line=False,
+            raise_eof_error=False,
             prompt="",
             history_file=FILE_INPUT_HISTORY_JSONL,
             completion_file=FILE_INPUT_COMPLETIONS,
@@ -665,6 +673,12 @@ class TestPrivateInput(unittest.TestCase):
 
 class TestInputOneLinePipeMode(unittest.TestCase):
     """Test input_one_line when pipe-based input is enabled."""
+
+    def setUp(self):
+        """Select the input mode explicitly for pipe contract assertions."""
+        mode = patch("topsailai.workspace.input_tool.env_tool.is_chat_multi_line", return_value=False)
+        mode.start()
+        self.addCleanup(mode.stop)
 
     def tearDown(self):
         """Clean up environment variables."""
@@ -682,7 +696,8 @@ class TestInputOneLinePipeMode(unittest.TestCase):
         self.assertEqual(result, "hello from pipe")
         mock_input_from_pipe_session.assert_called_once_with(
             timeout=None,
-            single_line=True,
+            single_line=False,
+            raise_eof_error=False,
             prompt=">>> ",
             history_file=FILE_INPUT_HISTORY_JSONL,
             completion_file=FILE_INPUT_COMPLETIONS,
@@ -699,7 +714,8 @@ class TestInputOneLinePipeMode(unittest.TestCase):
         self.assertEqual(mock_input_from_pipe_session.call_count, 2)
         mock_input_from_pipe_session.assert_called_with(
             timeout=None,
-            single_line=True,
+            single_line=False,
+            raise_eof_error=False,
             prompt=">>> ",
             history_file=FILE_INPUT_HISTORY_JSONL,
             completion_file=FILE_INPUT_COMPLETIONS,
@@ -708,6 +724,12 @@ class TestInputOneLinePipeMode(unittest.TestCase):
 
 class TestInputMultiLinePipeMode(unittest.TestCase):
     """Test input_multi_line when pipe-based input is enabled."""
+
+    def setUp(self):
+        """Select the input mode explicitly for pipe contract assertions."""
+        mode = patch("topsailai.workspace.input_tool.env_tool.is_chat_multi_line", return_value=True)
+        mode.start()
+        self.addCleanup(mode.stop)
 
     def tearDown(self):
         """Clean up environment variables."""
@@ -727,6 +749,7 @@ class TestInputMultiLinePipeMode(unittest.TestCase):
         mock_input_from_pipe_session.assert_called_with(
             timeout=None,
             single_line=True,
+            raise_eof_error=True,
             prompt="",
             history_file=FILE_INPUT_HISTORY_JSONL,
             completion_file=FILE_INPUT_COMPLETIONS,

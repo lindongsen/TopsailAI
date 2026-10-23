@@ -469,9 +469,9 @@ def _ensure_fifo(pipe_path: str) -> None:
     try:
         os.mkfifo(pipe_path)
     except FileExistsError:
-        # A leftover pipe from a crashed process; replace it.
-        _safe_unlink(pipe_path)
-        os.mkfifo(pipe_path)
+        import stat
+        if not stat.S_ISFIFO(os.lstat(pipe_path).st_mode):
+            raise ValueError(f"Pipe endpoint is not a FIFO: {pipe_path}")
 
 
 def _strip_eof_marker(text: str, eof_marker: str) -> str:
@@ -928,9 +928,11 @@ def input_from_pipe(
     if getattr(os, "mkfifo", None) is None:
         raise NotImplementedError("Named pipes are not supported on this platform")
 
+    buffered_lines = _pipe_leftover_buffer.get(pipe_path)
+    buffered_eof = bool(buffered_lines and buffered_lines[0] == eof_marker)
     buffered = _get_buffered_line(pipe_path, eof_marker)
     if buffered is not None:
-        if raise_eof_error and buffered == "":
+        if raise_eof_error and buffered_eof:
             raise EOFError(f"EOF marker '{eof_marker}' reached")
         return buffered
 
@@ -992,11 +994,8 @@ def input_from_pipe(
                 raise EOFError(f"EOF marker '{eof_marker}' reached")
             return cleaned
 
-        if single_line:
-            result = _maybe_return_single_line(decoded)
-            if result is not None:
-                return result
-
+        # A body newline is not a message boundary. Keep the read descriptor
+        # open until the terminator arrives or the writer closes.
         return None
 
     try:

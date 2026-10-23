@@ -112,8 +112,9 @@ def hook_message(message: str, hook: HookInstruction) -> bool:
 def _input(tips: str = "") -> str:
     """Unified line input: read from a named pipe or fall back to stdin.
 
-    When ``TOPSAILAI_INPUT_PIPE_ENABLED`` is set, this function reads a
-    single line from the session-scoped named pipe. Otherwise it delegates
+    When ``TOPSAILAI_INPUT_PIPE_ENABLED`` is set, this function reads
+    a complete message from the session-scoped named pipe in single-line
+    mode, or buffered message lines in multi-line mode. Otherwise it delegates
     to the built-in ``input()`` function.
 
     Args:
@@ -126,7 +127,8 @@ def _input(tips: str = "") -> str:
     if env_tool.is_input_pipe_enabled():
         return input_from_pipe_session(
             timeout=env_tool.get_input_pipe_timeout(),
-            single_line=True,
+            single_line=env_tool.is_chat_multi_line(),
+            raise_eof_error=env_tool.is_chat_multi_line(),
             prompt=tips,
             history_file=FILE_INPUT_HISTORY_JSONL,
             completion_file=FILE_INPUT_COMPLETIONS,
