@@ -142,6 +142,11 @@ def is_interactive_mode() -> bool:
     return True
 
 
+def is_print_enabled() -> bool:
+    """Allow interactive output or an explicit noninteractive print override."""
+    return is_interactive_mode() or is_true(os.getenv("TOPSAILAI_PRINT_ENABLED", "0"))
+
+
 def is_debug_mode():
     """Check if the application is running in debug mode.
 
@@ -261,7 +266,7 @@ def get_input_pipe_timeout() -> float | None:
 def is_need_print() -> bool:
     if is_debug_mode():
         return True
-    if is_interactive_mode():
+    if is_print_enabled():
         return True
     return False
 

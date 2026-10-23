@@ -110,6 +110,7 @@ def _load_script_env(env_file: Path = SCRIPT_ENV_FILE) -> None:
 def _configure_noninteractive_agent() -> None:
     """Disable interaction and preserve additional configured tool exclusions."""
     os.environ["TOPSAILAI_INTERACTIVE_MODE"] = "0"
+    os.environ["TOPSAILAI_PRINT_ENABLED"] = "1"
     name = "TOPSAILAI_CLI_AGENT_CHAT_DISABLED_TOOLS"
     excluded = [item.strip() for item in os.environ.get(name, "").split(";")]
     excluded = [item for item in excluded if item]
