@@ -101,8 +101,9 @@ def controlled_case(monkeypatch, tmp_path, request, phase, timeout):
     registry = ControlHandlerRegistry()
     registry.register(LLMControlHandler())
     registry.register(HardInterruptHandler())
-    temporary_root = next(parent for parent in tmp_path.parents if parent.name == ".tmp")
-    path = str(temporary_root / (uuid4().hex[:12] + ".sock"))
+    from tests.bdd.temp_storage import BDD_TEMP_ROOT
+    BDD_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    path = str(BDD_TEMP_ROOT / (uuid4().hex[:12] + ".sock"))
     channel = ControlServer(path, registry, ControlContext(session_id="wire", pid=os.getpid(), agent_chat=agent_chat, task_folder=str(tmp_path)), timeout=0.1)
     resources["channel"] = channel
     channel.start()
