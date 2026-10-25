@@ -60,7 +60,7 @@ class TestSetEnv(unittest.TestCase):
         with patch('topsailai.workspace.plugin_instruction.env.os.getenv', return_value=None):
             with patch('topsailai.workspace.plugin_instruction.env.os.environ', {}):
                 with patch('builtins.print') as mock_print:
-                    set_env('NEW_KEY', 'new_value')
+                    set_env('NEW_SETTING', 'new_value')
                     mock_print.assert_called_once()
                     call_args = mock_print.call_args[0][0]
                     self.assertIn('set environment ok', call_args)
@@ -74,9 +74,23 @@ class TestSetEnv(unittest.TestCase):
         with patch('topsailai.workspace.plugin_instruction.env.os.getenv', return_value='old_value'):
             with patch('topsailai.workspace.plugin_instruction.env.os.environ', {}):
                 with patch('builtins.print') as mock_print:
-                    set_env('EXISTING_KEY', 'new_value')
+                    set_env('EXISTING_SETTING', 'new_value')
                     call_args = mock_print.call_args[0][0]
                     self.assertIn('old=old_value', call_args)
+
+    def test_set_env_masks_sensitive_values(self):
+        """Test set_env masks old and new values for sensitive names"""
+        from topsailai.workspace.plugin_instruction.env import set_env
+        
+        with patch('topsailai.workspace.plugin_instruction.env.os.getenv', return_value='old_value'):
+            with patch('topsailai.workspace.plugin_instruction.env.os.environ', {}):
+                with patch('builtins.print') as mock_print:
+                    set_env('EXISTING_KEY', 'new_value')
+                    call_args = mock_print.call_args[0][0]
+                    self.assertIn('old=***', call_args)
+                    self.assertIn('new=***', call_args)
+                    self.assertNotIn('old_value', call_args)
+                    self.assertNotIn('new_value', call_args)
 
     def test_set_env_converts_to_string(self):
         """Test set_env converts key and value to string"""
