@@ -28,8 +28,16 @@ class LLMRequestStatScenario:
         )
         self.server_thread.start()
         self.visible_output: list[str] = []
-        self.print_info = MagicMock(side_effect=self.visible_output.append)
-        monkeypatch.setattr(request_stat_module, "print_info", self.print_info)
+
+        def _record(message: Any, *_args: Any, **_kwargs: Any) -> None:
+            """Record one visible console line for either print signature."""
+            self.visible_output.append(message)
+
+        self.print_with_time = MagicMock(side_effect=_record)
+        self.print_info = MagicMock(side_effect=_record)
+        monkeypatch.setattr(
+            request_stat_module, "print_with_time", self.print_with_time
+        )
         monkeypatch.setattr(
             state_visualizer_module, "print_info", self.print_info
         )
