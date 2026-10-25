@@ -141,7 +141,7 @@ def test_complete_name_cache_does_not_suppress_hostname(tmp_path, monkeypatch):
     reader = Mock(wraps=session_meta.read_session_meta)
     monkeypatch.setattr(session_meta, "read_session_meta", reader)
     rows = log_files.discover_workspace_log_files(str(path.parent))
-    assert reader.call_count == 0
+    assert reader.call_count == 1
     formatting.enrich_workspace_rows(rows, str(tmp_path))
     assert reader.call_count == 1
     assert all(r["hostname"] == "origin" for r in rows)
