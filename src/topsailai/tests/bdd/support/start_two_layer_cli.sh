@@ -63,11 +63,16 @@ export DEBUG=0
 unset CHAT_MULTI_LINE
 cd "$run_dir"
 
+# Pin the input mode per entry point. A tmux server keeps a global environment
+# that new sessions inherit, so an ambient TOPSAILAI_CHAT_MULTI_LINE would
+# otherwise decide the mode instead of this scenario.
 case "$cli_name" in
   agent_chats)
+    export TOPSAILAI_CHAT_MULTI_LINE=1
     exec "$root/bin/agent_chats"
     ;;
   plan_tasks)
+    export TOPSAILAI_CHAT_MULTI_LINE=0
     exec "$root/bin/topsailai_agent_plan_tasks"
     ;;
   *)
