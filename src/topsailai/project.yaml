@@ -22,4 +22,5 @@ Note:
     core-bdd-slow   Run core slow BDD acceptance tests
     cli-unit-test   Run CLI unit tests
     cli-bdd-test    Run CLI BDD tests
+    All test targets run through `uv run` with an explicit PYTHONPATH set inside the recipe, so results do not depend on the caller's shell environment or CWD.
 
