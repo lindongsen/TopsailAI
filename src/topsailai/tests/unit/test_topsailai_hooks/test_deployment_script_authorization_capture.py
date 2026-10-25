@@ -18,6 +18,12 @@ from topsailai.hooks.hook_script_discovery import ExecutablePlatformPolicy
 
 
 @pytest.fixture
+def tmp_path(trust_eligible_tmp_path: Path) -> Path:
+    """Use a trust-eligible temp root; artifact capture rejects /tmp ancestry."""
+    return trust_eligible_tmp_path
+
+
+@pytest.fixture
 def mixed_tree(tmp_path):
     """Prepare task-local frozen sources without executing them during generation."""
     tmp_path.chmod(0o700)

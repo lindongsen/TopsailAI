@@ -21,6 +21,13 @@ from tests.legacy_prepared_support import build_summary_preparation_request
 from topsailai.tests.unit.test_topsailai_hooks.test_configured_preparation import _runtime, _assertion
 from topsailai.tests.unit.test_topsailai_hooks.test_summary_hook_points import classification
 
+
+@pytest.fixture
+def tmp_path(trust_eligible_tmp_path: Path) -> Path:
+    """Use a trust-eligible temp root; artifact capture rejects /tmp ancestry."""
+    return trust_eligible_tmp_path
+
+
 OBSERVER = Path(__file__).resolve().parents[3] / "hooks/points/context/summary_events_observer"
 POINTS_ROOT = OBSERVER.parent
 ACTIVE = tuple(point for point in SUMMARY_POINTS if point.phase_one_eligible)

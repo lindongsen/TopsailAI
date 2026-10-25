@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
+import tempfile
 import time
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -166,3 +169,24 @@ def _resource_failures(
             ):
                 failures.append(f"cleanup debt remains: {debt.debt_id} ({debt.state})")
     return failures
+
+
+@pytest.fixture
+def trust_eligible_tmp_path() -> Iterator[Path]:
+    """Provide a task-local temp root whose ancestry satisfies artifact trust.
+
+    Artifact capture rejects any source-ancestry directory that is group- or
+    other-writable, so the default pytest basetemp under ``/tmp`` (mode 1777)
+    can never host a trusted source tree. This fixture yields an independent
+    root created under the workspace ``.tmp`` directory, whose ancestry is
+    0755. It is opt-in so tests that depend on the default basetemp,
+    including privilege-dropping and socket-path cases, keep their existing
+    behaviour.
+    """
+    workspace_tmp = Path(__file__).resolve().parents[3] / ".tmp"
+    workspace_tmp.mkdir(mode=0o755, exist_ok=True)
+    root = Path(tempfile.mkdtemp(prefix="trust-", dir=workspace_tmp))
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)

@@ -19,6 +19,12 @@ from tests.legacy_prepared_support import prepared_graph, build_summary_preparat
 
 
 @pytest.fixture
+def tmp_path(trust_eligible_tmp_path: Path) -> Path:
+    """Use a trust-eligible temp root; artifact capture rejects /tmp ancestry."""
+    return trust_eligible_tmp_path
+
+
+@pytest.fixture
 def deployment(tmp_path):
     """Create explicitly reviewed fixture sources and interpreter authority offline."""
     points = tmp_path / "points"
