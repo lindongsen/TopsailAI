@@ -1,0 +1,103 @@
+---
+maintainer: AI
+author: DawsonLin
+status: discussion-draft
+created: 2026-10-27
+---
+
+# Adapter Mapping, Delivery Plan and Discussion
+
+## Verified TopsailAI integration surface
+
+This table describes help/documentation inspected on 2026-10-27, not successful live operations. Installed behavior and compatibility must be verified before implementing an adapter release.
+
+| Abstract need | Documented CLI entry | Constraint |
+|---|---|---|
+| Discover session/task rows | topsailai workspace --format json | One document with host, pwd, home, task_dir, items and total; no verified pagination/checkpoint |
+| Session locator | item session_id and pid | Row no is presentation only; PID alone is not stable identity |
+| Provider relationships | is_task, session_name, project_workspace | Parent relations and stable task IDs need live fixtures; do not infer solely from display names |
+| Submit input | topsailai runtime send -s SESSION -p PID --message=TEXT --json | pipe_written is delivery, not consumption; 1 MiB UTF-8 body bound and standalone EOF-line restriction |
+| Queue side context | topsailai runtime btw -s SESSION -p PID --message=TEXT --json | injection_queued is not LLM consumption; append is not fully covered by transport timeout |
+| Invoke approved control | topsailai runtime control ACTION -s SESSION -p PID -a JSON --json | Correlated control acknowledgement is not completion of asynchronous business work |
+| Inspect channel health | runtime control heartbeat with exact selectors | Alive control channel is not Agent/LLM progress |
+| Read recent session stdout | topsailai runtime logs -s SESSION -p PID -n N --json | One bounded snapshot; not follow, not task stdout or stderr |
+| Read session context | runtime control get_session_messages with exact selectors | Sensitive data; separate permission, bounded output and schema validation required |
+
+Workspace JSON items are documented with no, filename, session_name, session_id, is_task, pid, status, created_at and project_workspace. Provider metadata paths must not be exposed by default in cluster summaries. Status values and reliability require fixture validation; do not map a generic status directly to task success.
+
+Runtime JSON fields are documented as ok, exit_code, action, session_id, pid, delivery_state, error_code, message, bytes_written, request_id, response and delivery_unknown. Normalize by parsing the document and checking its semantics as well as process exit. Preserve precise provider error codes in a bounded namespaced detail.
+
+`runtime logs` accepts 1–10000 lines, defaults to 20, and scans with an 8 MiB budget. Its response has lines, requested_lines, returned_lines, total_lines nullable, truncated, scan_limited, bytes_read and snapshot_size_bytes, plus selected filename. An empty scan-limited result is not proof of an empty file. Reflect truncation/limits to the user.
+
+Both session and PID selectors mean a strict intersection. Ambiguous, stale or mismatched targets fail; do not retry using a looser selector or select the newest session. CLI local checks do not prove authenticated process generation. Endpoint maintains its own generation mapping and revalidates available evidence, but cannot manufacture provider guarantees.
+
+Prefer the unified `topsailai runtime` wrapper rather than the legacy `topsailai_send_control`: the latter documentation allows multiple targets/broadcast and success if at least one target responds. Cluster commands must not inherit that ambiguity. Do not expose all dynamically registered control actions merely because a CLI can invoke them; map only reviewed standard semantics into the public Endpoint API; provider-only actions remain local.
+
+Platform distinction: network protocol and management services should be portable; the documented TopsailAI FIFO/Unix-domain control transports have platform constraints. Capabilities must reflect the actual host support. Do not advertise Windows delivery support on the strength of generic HTTP portability.
+
+## Adapter execution policy
+
+- Configure the executable and provider roots locally by binding, never from a remote command payload. Check supported CLI version/schema at adapter initialization and report degraded health on incompatible output.
+- Invoke a fixed executable with an argv array and no shell. Messages beginning with a dash use the literal assignment form; no concatenated shell strings. Preserve Unicode and whitespace; validate encoded byte length and provider framing rules.
+- Run discovery once per binding per cycle for periodic full Session reporting. Server-initiated fresh pulls use the same serialized/coalesced collector; never return stale cached data as a fresh pull result. Collect each binding independently from its Adapter CLI returned results, retain failed-source last-known data with explicit unknown/stale status, and assemble one structurally complete standard inventory with descriptive adapter metadata; Server then atomically replaces the SQLite sessions_json field only after validation. Bound historical provider inventory processing. The current full-output discovery may require a provider CLI enhancement for large histories.
+- Query logs only on explicit requests; opening a panel must not start periodic snapshot polling. MVP does not require periodic stdout snapshot refresh. No fake stdout cursor, heuristic line-deduplication or promise of complete historical output.
+- Task stdout, stderr, cursor-based follow, stable task detail/progress and transactionally consistent discovery are not established by the inspected runtime interface; keep these capability gaps explicit. Noninteractive launch/resume/stop is also not established, but is now a mandatory MVP integration requirement: verify a safe existing public provider lifecycle entry point or propose a separately authorized provider enhancement before declaring MVP complete. Do not emulate resume by starting a fresh conversation or stop by merely interrupting a turn.
+- Enforce outer process budgets and capture bounded stdout/stderr. If a killed or timed-out process might have acted, report unknown effects; stopping the CLI is not cancellation of provider work. Clean up only exact controller-owned CLI invocation helpers and descriptors; never treat reachable Agents as owned children or terminate their process trees. Provider CLI start/resume must support an independent Agent lifecycle rather than relying on Endpoint supervision.
+- Normalize pipe_written, injection_queued and control_acknowledged without upgrading them to agent consumption or task completion. Honor delivery_unknown; never automatically resend mutating operations after uncertain results.
+- Keep error context sufficient for diagnosis without logging prompts, secrets, raw environment or full output. Correlate cluster command ID with provider request ID where available; do not assume generic provider idempotency.
+
+## TUI interaction design
+
+The operator runs a cluster CLI/TUI connected only to Server. Confirmed independent executable commands: `agent-cluster-server`, `agent-cluster-endpoint` and `agent-cluster-tui`; no role subcommands under a unified executable. Service names are `agent-cluster-server` and `agent-cluster-endpoint`; the product is Agent Cluster and the project is `topsailai_agent_cluster`.
+
+Fleet view: Endpoint, connectivity/freshness, standard resource labels, active session count, waiting-input count if supported, error/degraded summary. Cached data renders immediately with freshness, not an implied live guarantee.
+
+Detail view: selected Endpoint -> Agent/Session -> optional Tasks. A lower panel can show explicitly requested bounded output snapshots; it must not periodically refresh them. Continuous follow remains an open requirement and must be backed by a verified provider capability, with source, observation time and truncation/gap indicator. Selection uses immutable IDs, not row positions.
+
+Action panel: show only supported and permitted semantic operations. Confirm target identity and generation before submit; destructive controls need an explicit confirmation. Prompt input and side-context injection are distinct actions. Render only standard API forms with semantic descriptions and risk labels; provider-specific controls remain Endpoint-local.
+
+Command panel: show admitted, dispatched, endpoint accepted, execution evidence and uncertain effects. A transport-acknowledged message must be displayed as delivered/queued, not task succeeded. Offline controls are disabled under the default policy; submitting during a disconnect race returns a durable status to inspect.
+
+MVP provides start/resume/stop actions in both TUI and noninteractive CLI, with target authorization and destructive-action confirmation where applicable. It can also provide noninteractive list/show/message/command-status/explicit-output-snapshot operations alongside TUI so automation does not scrape terminal output. These operations share Server APIs and auth, not alternate provider paths.
+
+## Questions for the next discussion
+
+### Scope and topology
+
+- Confirmed: Endpoint is machine-scoped; one OS Endpoint process hosts multiple adapters for different agents. Local multi-account execution policy still needs specification.
+- Server active pull is required and can use the existing outbound-established connection. Whether direct remote Endpoint HTTP access is also needed remains open; it is not a prerequisite for active pull.
+- Confirmed: start/resume/stop agents is required in the first release. Automatic task scheduling/placement is a separate, unapproved feature.
+- Which real second agent provider should prove the abstraction? A provider with materially different semantics is more useful than a second copy of TopsailAI.
+
+### Interaction and safety
+
+- Which instruction types are essential: user input, context injection, soft interrupt, request-level retry, stop process, or others? These are not interchangeable operations.
+- Confirmed: no periodic stdout snapshot refresh is required. Still open: are explicit reads sufficient, or must MVP provide continuous follow? Complete real-time task/session stdout plus stderr has not been requested or verified.
+- Is a single-user deployment sufficient initially, or are multiple operators/tenants required? Recommended: single administrative domain with authenticated operator scopes; retain tenant scoping seams but do not claim multi-tenant isolation yet.
+- Should commands ever queue while an Endpoint is offline? Recommended: no for MVP; avoid stale intent surprises.
+
+### Engineering choices
+
+- SQLite support and latest-only Session JSON persistence are confirmed requirements. Confirm or replace the remaining Go + HTTP/OpenAPI + WebSocket + SSE proposals.
+- Confirm fleet/history/concurrency assumptions, retention and latency budgets before treating them as acceptance commitments.
+- Confirm MVP single active Server; HA, task scheduling, automatic failover/reassignment and cross-endpoint resource placement are separate projects/features, not implied by centralized visibility.
+
+## Current conclusion
+
+The recommended abstraction is a capability-based management protocol plus Endpoint adapter contract, not a universal wrapper around CLI strings. Preserve provider truth, target identity and uncertain execution boundaries. MVP includes observation, exact instruction routing and agent start/resume/stop through one machine-scoped Endpoint with multiple adapters. Periodic stdout snapshot refresh is not required. Prove portability with another provider before claiming heterogeneous compatibility; automatic scheduling remains separate.
+
+## Planning reference
+
+Implementation phases, verification plans and execution evidence are maintained separately in `.task/plan_20261027T153140_agent-cluster-delivery.md` (project-relative path), not in the design documents.
+
+## Confirmed Session synchronization
+
+Endpoint periodically reports the full standard Session list (internally collected from sources such as TopsailAI workspace inventory); Server validates and commits the latest list to one SQLite JSON TEXT field per Endpoint. Server can actively request a fresh list. Both paths share revision checks and atomic replacement; no Session history or per-Session SQL rows. TUI refreshes current inventory after post-commit notifications, independently of stdout. Independent entry points are `agent-cluster-server`, `agent-cluster-endpoint` and `agent-cluster-tui`.
+
+## Adapter privacy and resource routing
+
+Server has no adapter table, adapter execution selector or provider-specific operation. Adapter identifiers and standard summaries may be reported inside sessions_json for display and generic filtering. Endpoint owns the private registry and maps public resource IDs/generations or launch_profile_id/profile_revision to the appropriate local adapter. TopsailAI command names, PID/provider mappings, capability translation and configuration in this document describe Endpoint internals only. Standard inventory normalizes local observations and includes adapter summaries plus Session adapter_id associations, rather than unvalidated raw CLI documents. Adding a second adapter requires no Server code, table or public schema change. Endpoint exposes aggregate collection failure and may report bounded per-adapter health summaries; Server does not independently probe or interpret adapter internals.
+
+## Controller-only collection contract
+
+Endpoint invokes the configured Adapter CLI and formats its returned data. It does not decide which provider records exist, scan processes/files independently, adopt Agent processes or implement automatic restarts. Adapter commands determine collection scope and facts, including running/exited/resumable entries; preserve evidence and unknown fields under the agreed formatting contract without inventing readiness or progress. Standard resource mapping is a controller reference, not Agent ownership. Agent lifecycle is independent of Endpoint; explicit start/resume/stop are requests sent through the corresponding CLI only. Collection failures have isolated budgets and never block other Adapter publication.
