@@ -273,6 +273,9 @@ def _warn_deprecated(old_flag: str, new_cmd: str) -> None:
 
 def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
     """Handle the non-interactive ``workspace`` subcommand."""
+    if getattr(args, "workspace_command", None) == "agent":
+        from cli_topsailai.workspace_agent_cli import run_workspace_agent_cli
+        return run_workspace_agent_cli(args.agent_args, startup_cwd=getattr(args, "startup_cwd", None))
     output_format = getattr(args, "format", None)
     if output_format == "json":
         _print_workspace_json()
@@ -1151,6 +1154,10 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         sys.exit(run_runtime_cli(argv[1:]))
 
+    if argv[:2] == ["workspace", "agent"]:
+        from cli_topsailai.workspace_agent_cli import run_workspace_agent_cli
+        sys.exit(run_workspace_agent_cli(argv[2:], startup_cwd=getattr(main, "startup_cwd", None)))
+
     if argv[:2] == ["workspace", "driver"]:
         from cli_topsailai.workspace_driver_cli import run_workspace_driver_cli
 
@@ -1388,6 +1395,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="output format (supported: json)",
     )
     workspace_parser.set_defaults(func=_handle_workspace_subcommand)
+    workspace_agent_parser = workspace_parser.add_subparsers(dest="workspace_command")
+    workspace_agent_parser.add_parser("agent", help="launch an agent in a folder",
+                                      add_help=False).add_argument("agent_args", nargs=argparse.REMAINDER)
 
     docs_parser = subparsers.add_parser(
         "docs",

@@ -47,6 +47,7 @@ references:
 - `runtime send|btw [-s SESSION] [-p PID] -m MESSAGE|--stdin`
 - `runtime control ACTION [-s SESSION] [-p PID] [-a JSON]`
 - `runtime logs [-s SESSION] [-p PID] [-n N] [--json]` — finite recent session log query
+- `workspace agent <folder> [-m MODE] [-b|--background]`
 - `workspace driver start|status|stop -s SESSION [-p PID] [--json]`
 - `project add|del|list|launch|resume`
 - `models list|add|get|update|delete`
@@ -56,3 +57,7 @@ references:
 - Interactive parameters use option flags and may provide a short alias for frequently used options.
 - Main interactive aliases are `-t` / `--tui`, `-n` / `--tail-lines`, and `-m` / `--agent-mode`.
 - Non-interactive parameters use subcommands, for example `project list`.
+
+## Non-interactive workspace agent
+
+Canonical usage: `topsailai workspace agent <folder> [-m raw|dtach|tmux] [-b|--background]`. See [the canonical workspace-agent usage contract](docs/usage/topsailai.md#workspace-agent). It launches in the foreground and resolves relative folders against the caller's original working directory. Exit codes are 2 for usage/background rejection, 3 for invalid folder, 4 for preparation, 5 for spawn/wait, 6 for unresolved custody, and 130 for cancellation; observed child statuses are preserved and signals map to `128 + signal`. A wrapper exit is not agent completion. UNIT 1A has no background submission; future `submitted` means not-ready. There is no `--json` output.

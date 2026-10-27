@@ -239,6 +239,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 |---------|-------------|
 | `runtime` | Execute one exact send, btw, control or logs operation; see the contract above. |
 | `workspace [-f json]` | Display the workspace task list and exit. The default is the human-readable table; `-f json` or `--format json` emits one JSON document. |
+| `workspace agent <folder> [-m MODE] [-b/--background]` | Launch a configured agent in the foreground; background is recognized but temporarily rejected with exit code 2. |
 | `workspace driver <start/status/stop> -s SESSION [-p PID] [--json]` | Start, inspect or stop one exact session driver; see below. |
 | `docs list` | List all usage documentation files and exit. |
 | `docs read <name>` | Read a specific usage documentation file and exit. |
@@ -255,6 +256,14 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `models clear` | Clear the workspace model selection. |
 
 The JSON workspace document contains `host`, `pwd`, `home`, `task_dir`, `items`, and `total`. Each item contains `no`, `filename`, `session_name`, `session_id`, `is_task`, `pid`, `status`, `created_at`, and `project_workspace`. `created_at` is the local creation time in ISO 8601 format with a timezone offset (`YYYY-MM-DDTHH:MM:SS+/-HHMM`), or `null` when the creation time is unavailable. Items retain the default oldest-first order. An empty workspace returns `"items": []` and `"total": 0`.
+
+## Workspace agent
+
+```text
+topsailai workspace agent <folder> [-m raw|dtach|tmux] [-b|--background]
+```
+
+The folder is resolved relative to the caller's startup directory. Foreground mode attaches to the launcher, prints `[INFO] Launching agent: ...`, restores the caller's environment and working directory, and returns its observed exit code. Exit code `2` means generic usage failure or the currently rejected `--background`; `3` means the folder is missing or not a directory; `4` means preparation failure; `5` means spawn or launcher wait failure; `6` means owned-child custody cannot be confirmed; `130` means cancellation; otherwise observed child statuses `0..255` are preserved and a signal maps to `128 + signal`. A dtach/tmux wrapper client exit is not agent completion. `--background` is recognized but currently rejected with exit code 2 and `[ERROR] --background is not yet available`; it does not launch or create files. UNIT 1A provides no background submission; a future `submitted` state would mean not-ready, not successful initialization. This command intentionally has no `--json` output. Foreground stdin and standard streams are inherited by the directly owned launcher.
 
 ## Examples
 

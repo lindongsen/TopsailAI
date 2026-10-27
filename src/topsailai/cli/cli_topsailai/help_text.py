@@ -251,6 +251,12 @@ def print_help(
             "scopes": ["workspace"],
         },
         {
+            "cmd": "topsailai workspace agent <folder> [-m MODE] [-b|--background]",
+            "desc": "Canonical foreground workspace-agent launch. See docs/usage/topsailai.md#workspace-agent. The folder is resolved against the caller's startup directory; omit -m for automatic mode selection. --background is currently rejected with exit code 2. Exit codes: 0..255 observed child status, 128+signal, 2 usage or background rejection, 3 invalid folder, 4 preparation failure, 5 spawn/wait failure, 6 unresolved custody, 130 cancellation. A wrapper exit is not agent completion. UNIT 1A has no background submission; future submitted means not-ready. No --json output.",
+            "example": "Example: topsailai workspace agent /path/to/project -m raw",
+            "scopes": ["workspace"],
+        },
+        {
             "cmd": "/agent <number|folder>",
             "desc": "Launch an agent. In workspace scope, `agent` or `/agent` (no arguments) runs the YAML-configured agent command. `agent <number|folder>` or `/agent <number|folder>` changes to the selected project workspace folder and launches topsailai_launch_agent; the number refers to the log file list in workspace scope or the project session list in project scope. An absolute/relative folder path can also be used. Use `--agent-mode raw|dtach|tmux` to control how the agent process is launched (default: dtach).",
             "example": "Example: agent  or  /agent  or  /agent 3  or  /agent /path/to/project  or  topsailai --agent-mode tmux",

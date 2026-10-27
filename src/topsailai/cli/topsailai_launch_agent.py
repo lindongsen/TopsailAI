@@ -27,6 +27,7 @@ import copy
 import json
 import dataclasses
 import os
+import re
 import select
 import shlex
 import shutil
@@ -1917,6 +1918,11 @@ def main():
         description="Launch AI Agent Driver based on .topsailai/settings.yaml"
     )
     parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Use this validated session identifier for the launched agent.",
+    )
+    parser.add_argument(
         "--item",
         default=None,
         help=(
@@ -2007,6 +2013,8 @@ def main():
         ),
     )
     args = parser.parse_args()
+    if args.session_id is not None and not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", args.session_id):
+        parser.error("--session-id must be a safe session identifier")
     # Resolve the scan content mode after self_environs are applied, so a value
     # seeded from settings.yaml is honored by both --scan and the context tree.
     if args.scan is not None:
@@ -2167,6 +2175,12 @@ def main():
     merged_env.update(base_env)
     merged_env.update(item_env)
     session_id = _ensure_session_id(merged_env)
+    if args.session_id is not None:
+        session_id = args.session_id
+        merged_env["TOPSAILAI_SESSION_ID"] = session_id
+        merged_env["SESSION_ID"] = session_id
+        os.environ["TOPSAILAI_SESSION_ID"] = session_id
+        os.environ["SESSION_ID"] = session_id
 
     # 3.5 Append context file contents and workspace folder structure to
     # TOPSAILAI_CONTEXT_USER_MESSAGE. When TOPSAILAI_PROJECT_FOLDER is set

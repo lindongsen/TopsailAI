@@ -259,3 +259,23 @@ def test_fbt_help_scope_and_semantics(capsys):
     document = (Path(__file__).resolve().parents[3] / "docs/usage/topsailai.md").read_text()
     assert "aliases are not supported by non-interactive" in document
     assert "topsailai runtime control llm_control" in document
+
+
+def test_workspace_agent_help_contract(capsys):
+    """Workspace-agent help exposes the complete foreground contract."""
+    print_help([], "workspace", keyword="workspace agent")
+    output = capsys.readouterr().out
+    assert "topsailai workspace agent <folder> [-m MODE] [-b|--background]" in output
+    for text in (
+        "2 usage or background rejection",
+        "3 invalid folder",
+        "4 preparation failure",
+        "5 spawn/wait failure",
+        "6 unresolved custody",
+        "130 cancellation",
+        "wrapper exit is not agent completion",
+        "no background submission",
+        "future submitted means not-ready",
+        "No --json output",
+    ):
+        assert text in output

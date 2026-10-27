@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shlex
+from types import SimpleNamespace
 import sys
 import tempfile
 import unicodedata
@@ -574,123 +575,152 @@ class TestResolveAgentFolder(unittest.TestCase):
         mock_lookup.assert_not_called()
 
 
+class FakeLaunchChild:
+    """Finite child double for compatibility-adapter launch tests."""
+
+    def __init__(self, returncode=0):
+        self.returncode = returncode
+        self.calls = []
+
+    def wait(self, timeout=None):
+        self.calls.append(("wait", timeout))
+        return self.returncode
+
+    def poll(self):
+        self.calls.append(("poll", None))
+        return self.returncode
+
+    def terminate(self):
+        self.calls.append(("terminate", None))
+
+    def kill(self):
+        self.calls.append(("kill", None))
+
+
 class TestLaunchAgentInFolder(unittest.TestCase):
-    """Tests for launch_agent_in_folder."""
+    """Tests for the compatibility launch adapter."""
 
-    def _assert_env_during_launch(self, expected_folder):
-        """Return a side-effect function that checks env vars during os.system."""
-        def _side_effect(_cmd):
-            self.assertEqual(
-                os.environ.get("TOPSAILAI_PWD"),
-                expected_folder,
-                "TOPSAILAI_PWD must point to the target folder during launch",
-            )
-            self.assertEqual(
-                os.environ.get("PWD"),
-                expected_folder,
-                "PWD must point to the target folder during launch",
-            )
-            self.assertEqual(
-                os.environ.get("TOPSAILAI_SESSION_ID"),
-                "",
-                "TOPSAILAI_SESSION_ID must be cleared during launch",
-            )
-        return _side_effect
+    def _launch(self, folder="/tmp", mode="raw", returncode=0):
+        child = FakeLaunchChild(returncode)
+        calls = []
 
-    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
-    @patch("cli_topsailai.project_scope.os.system")
-    @patch("cli_topsailai.project_scope.os.chdir")
-    @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_launches_agent_with_os_system_and_env(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which
-    ):
-        mock_getcwd.return_value = "/TopsailAI/cli"
-        mock_system.side_effect = self._assert_env_during_launch("/work/project-a")
-        project_scope.launch_agent_in_folder("/work/project-a")
-        mock_chdir.assert_any_call("/work/project-a")
-        mock_chdir.assert_any_call("/TopsailAI/cli")
-        mock_system.assert_called_once_with("topsailai_launch_agent")
+        def spawn(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return child
 
-    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
-    @patch("cli_topsailai.project_scope.os.system")
-    @patch("cli_topsailai.project_scope.os.chdir")
-    @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_restores_cwd_and_env_on_system_failure(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which
-    ):
-        mock_getcwd.return_value = "/TopsailAI/cli"
-        mock_system.side_effect = OSError("launch failed")
-        project_scope.launch_agent_in_folder("/work/project-a")
-        mock_chdir.assert_any_call("/work/project-a")
-        mock_chdir.assert_any_call("/TopsailAI/cli")
+        with patch("cli_topsailai.agent_launch._apply_selected_model_environment", return_value=({}, set())), \
+             patch("cli_topsailai.agent_launch._session_id", return_value="fixed-session"):
+            result = project_scope.launch_agent_in_folder(folder, agent_mode=mode, spawn=spawn)
+        return result, child, calls
 
-    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
-    @patch("cli_topsailai.project_scope.os.system")
-    @patch("cli_topsailai.project_scope.os.chdir")
-    @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_command_uses_bare_launcher_name(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which
-    ):
-        mock_getcwd.return_value = "/TopsailAI/cli"
-        mock_system.side_effect = self._assert_env_during_launch("/work/weird dir")
-        project_scope.launch_agent_in_folder("/work/weird dir")
-        mock_chdir.assert_any_call("/work/weird dir")
-        mock_chdir.assert_any_call("/TopsailAI/cli")
-        mock_system.assert_called_once_with("topsailai_launch_agent")
+    def test_launches_agent_through_injected_boundary(self):
+        result, child, calls = self._launch()
+        self.assertEqual(result, None)
+        self.assertEqual(calls[0][0], ["topsailai_launch_agent", "--subprocess", "--session-id", "fixed-session"])
+        self.assertEqual(calls[0][1]["cwd"], "/tmp")
+        self.assertEqual(calls[0][1]["env"]["TOPSAILAI_PWD"], "/tmp")
+        self.assertEqual(child.calls, [("wait", None)])
 
-    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
-    @patch("cli_topsailai.project_scope.os.system")
-    @patch("cli_topsailai.project_scope.os.chdir")
-    @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_restores_original_env_values_after_launch(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which
-    ):
-        mock_getcwd.return_value = "/TopsailAI/cli"
-        original_pwd = os.environ.get("PWD")
-        original_topsailai_pwd = os.environ.get("TOPSAILAI_PWD")
-        original_session_id = os.environ.get("TOPSAILAI_SESSION_ID")
-        project_scope.launch_agent_in_folder("/work/project-a")
-        self.assertEqual(os.environ.get("PWD"), original_pwd)
-        self.assertEqual(os.environ.get("TOPSAILAI_PWD"), original_topsailai_pwd)
-        self.assertEqual(os.environ.get("TOPSAILAI_SESSION_ID"), original_session_id)
+    def test_delegation_forwards_folder_mode_and_spawn(self):
+        child = FakeLaunchChild()
+        spawn = lambda *args, **kwargs: child
+        with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=17) as launch:
+            project_scope.launch_agent_in_folder("relative-project", agent_mode="raw", spawn=spawn)
+        launch.assert_called_once_with(
+            os.path.abspath("relative-project"), mode="raw", background=False, spawn=spawn
+        )
 
-    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
-    @patch("cli_topsailai.project_scope.os.system")
-    @patch("cli_topsailai.project_scope.os.chdir")
-    @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_clears_stale_session_id_during_launch(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which
-    ):
-        """A historical session ID must not be inherited by a new agent launch."""
-        mock_getcwd.return_value = "/TopsailAI/cli"
+    def test_restores_cwd_and_environment_after_launch(self):
+        old_cwd = os.getcwd()
+        old_values = {key: os.environ.get(key) for key in ("PWD", "TOPSAILAI_PWD", "TOPSAILAI_SESSION_ID")}
+        self._launch()
+        self.assertEqual(os.getcwd(), old_cwd)
+        for key, value in old_values.items():
+            self.assertEqual(os.environ.get(key), value)
+
+    def test_restores_state_when_model_preparation_fails(self):
+        old_cwd = os.getcwd()
+        with patch("cli_topsailai.agent_launch._apply_selected_model_environment", side_effect=RuntimeError("bad model")):
+            project_scope.launch_agent_in_folder("/tmp", agent_mode="raw", spawn=lambda *a, **k: self.fail("spawned"))
+        self.assertEqual(os.getcwd(), old_cwd)
+
+    def test_relative_folder_is_absolute_in_child(self):
+        _, _, calls = self._launch(folder=".")
+        self.assertEqual(calls[0][1]["cwd"], os.path.abspath("."))
+
+    def test_stale_identity_is_replaced_during_launch(self):
         os.environ["TOPSAILAI_SESSION_ID"] = "stale-session-id"
-        captured = {}
-
-        def _capture_and_assert(_cmd):
-            captured["session_id_during"] = os.environ.get("TOPSAILAI_SESSION_ID")
-
-        mock_system.side_effect = _capture_and_assert
         try:
-            project_scope.launch_agent_in_folder("/work/project-a")
+            _, _, calls = self._launch()
+            self.assertEqual(calls[0][1]["env"]["TOPSAILAI_SESSION_ID"], "fixed-session")
+            self.assertEqual(os.environ["TOPSAILAI_SESSION_ID"], "stale-session-id")
         finally:
             os.environ.pop("TOPSAILAI_SESSION_ID", None)
-        self.assertEqual(captured["session_id_during"], "")
+
+
+class TestLaunchAgentInFolderWithMode(unittest.TestCase):
+    """Tests for terminal-mode compatibility launches."""
+
+    def _launch(self, mode):
+        child = FakeLaunchChild()
+        calls = []
+        def spawn(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return child
+        with patch("cli_topsailai.agent_launch._apply_selected_model_environment", return_value=({}, set())), \
+             patch("cli_topsailai.agent_launch._session_id", return_value="fixed-session"):
+            project_scope.launch_agent_in_folder("/tmp", agent_mode=mode, spawn=spawn)
+        return child, calls
 
     @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
-    @patch("cli_topsailai.project_scope.os.system")
-    @patch("cli_topsailai.project_scope.os.chdir")
-    @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_converts_relative_folder_to_absolute(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which
-    ):
-        mock_getcwd.return_value = "/TopsailAI/cli"
-        mock_system.side_effect = self._assert_env_during_launch(
-            "/TopsailAI/cli/relative-project"
-        )
-        project_scope.launch_agent_in_folder("relative-project")
-        mock_chdir.assert_any_call("/TopsailAI/cli/relative-project")
-        mock_chdir.assert_any_call("/TopsailAI/cli")
+    def test_default_dtach_falls_back_to_raw_when_unavailable(self, _which):
+        child, calls = self._launch("dtach")
+        self.assertEqual(calls[0][0], "topsailai_launch_agent --subprocess --session-id fixed-session")
+        self.assertEqual(child.calls, [("wait", None)])
 
+    @patch("cli_topsailai.project_scope.shutil.which", return_value="/usr/bin/dtach")
+    @patch("cli_topsailai.project_scope._build_dtach_socket_path", return_value="/tmp/fixed.dtach")
+    def test_default_dtach_uses_dtach_when_available(self, _socket, _which):
+        _, calls = self._launch("dtach")
+        self.assertEqual(calls[0][0], "dtach -A /tmp/fixed.dtach topsailai_launch_agent --subprocess --session-id fixed-session")
+
+    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
+    def test_raw_mode_invokes_command_directly(self, _which):
+        _, calls = self._launch("raw")
+        self.assertEqual(calls[0][0], ["topsailai_launch_agent", "--subprocess", "--session-id", "fixed-session"])
+
+    @patch("cli_topsailai.project_scope.shutil.which", return_value="/usr/bin/tmux")
+    @patch("cli_topsailai.project_scope._tmux_supports_environment_option", return_value=True)
+    @patch("cli_topsailai.project_scope._generate_agent_session_name", return_value="fixed-tmux")
+    def test_tmux_mode_wraps_command(self, _name, _supports, _which):
+        deterministic_environment = {
+            "HOME": "/home/test",
+            "PATH": "/bin",
+            "PWD": "/tmp",
+            "SHELL": "/bin/sh",
+            "USER": "tester",
+            "TOPSAILAI_SESSION_ID": "fixed-session",
+        }
+        isolated_os = SimpleNamespace(environ=deterministic_environment, path=os.path)
+        child, calls = None, None
+        with patch("cli_topsailai.project_scope.os", isolated_os):
+            child, calls = self._launch("tmux")
+        self.assertEqual(
+            calls[0][0],
+            "tmux new-session -e HOME=/home/test -e PATH=/bin -e PWD=/tmp "
+            "-e SHELL=/bin/sh -e TOPSAILAI_SESSION_ID=fixed-session -e USER=tester "
+            "-s fixed-tmux topsailai_launch_agent --subprocess "
+            "--session-id fixed-session",
+        )
+        self.assertEqual(child.calls, [("wait", None)])
+
+    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
+    def test_tmux_without_tmux_fails_before_spawn(self, _which):
+        def fail_spawn(*args, **kwargs):
+            raise AssertionError("consumer-local fail-fast guard: real spawn attempted")
+        with patch("cli_topsailai.agent_launch._apply_selected_model_environment", return_value=({}, set())):
+            result = project_scope.launch_agent_in_folder("/tmp", agent_mode="tmux", spawn=fail_spawn)
+        self.assertIsNone(result)
 
 class TestBuildDtachSocketPath(unittest.TestCase):
     """Tests for _build_dtach_socket_path."""
@@ -934,112 +964,6 @@ class TestWrapCommandForAgentMode(unittest.TestCase):
             )
         self.assertIn("Unsupported agent launch mode", str(ctx.exception))
 
-
-class TestLaunchAgentInFolderWithMode(unittest.TestCase):
-    """Integration tests for launch_agent_in_folder with mode wrapping."""
-
-    @patch("cli_topsailai.project_scope._build_dtach_socket_path")
-    @patch("cli_topsailai.project_scope.shutil.which")
-    @patch("cli_topsailai.project_scope.os.system")
-    @patch("cli_topsailai.project_scope.os.chdir")
-    @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_default_dtach_uses_dtach_when_available(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which, mock_build_socket
-    ):
-        mock_getcwd.return_value = "/TopsailAI/cli"
-        mock_which.return_value = "/usr/bin/dtach"
-        mock_build_socket.return_value = "/home/user/.topsailai/workspace/task/20260707T221748.169974.dtach"
-        project_scope.launch_agent_in_folder("/work/project-a")
-        mock_system.assert_called_once()
-        called_command = mock_system.call_args[0][0]
-        self.assertTrue(called_command.startswith("dtach -A "))
-        self.assertIn("topsailai_launch_agent", called_command)
-
-    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
-    @patch("cli_topsailai.project_scope.os.system")
-    @patch("cli_topsailai.project_scope.os.chdir")
-    @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_default_dtach_falls_back_to_raw_when_dtach_unavailable(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which
-    ):
-        mock_getcwd.return_value = "/TopsailAI/cli"
-        project_scope.launch_agent_in_folder("/work/project-a")
-        mock_system.assert_called_once_with("topsailai_launch_agent")
-
-    @patch.dict(
-        os.environ,
-        {
-            "TOPSAILAI_PWD": "/work/project-a",
-            "PWD": "/work/project-a",
-        },
-        clear=False,
-    )
-    @patch("cli_topsailai.project_scope._generate_agent_session_name")
-    @patch("cli_topsailai.project_scope._tmux_supports_environment_option")
-    @patch("cli_topsailai.project_scope.shutil.which")
-    @patch("cli_topsailai.project_scope.os.system")
-    @patch("cli_topsailai.project_scope.os.chdir")
-    @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_tmux_mode_wraps_with_tmux(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which,
-        mock_supports_environment_option, mock_generate_name
-    ):
-        mock_getcwd.return_value = "/TopsailAI/cli"
-        mock_which.return_value = "/usr/bin/tmux"
-        mock_supports_environment_option.return_value = True
-        mock_generate_name.return_value = "topsailai-20260707T221748.169974"
-        os.environ.pop("TOPSAILAI_SESSION_ID", None)
-        project_scope.launch_agent_in_folder("/work/project-a", agent_mode="tmux")
-        mock_system.assert_called_once()
-        called_command = mock_system.call_args[0][0]
-        self.assertTrue(called_command.startswith("tmux new-session"))
-        self.assertIn("-e TOPSAILAI_PWD=/work/project-a", called_command)
-        self.assertIn("-e PWD=/work/project-a", called_command)
-        self.assertIn("-e TOPSAILAI_SESSION_ID=", called_command)
-        self.assertIn("topsailai_launch_agent", called_command)
-
-    @patch.dict(
-        os.environ,
-        {
-            "TOPSAILAI_PWD": "/work/project-a",
-            "PWD": "/work/project-a",
-            "TOPSAILAI_SESSION_ID": "stale-session-id",
-        },
-        clear=False,
-    )
-    @patch("cli_topsailai.project_scope._generate_agent_session_name")
-    @patch("cli_topsailai.project_scope._tmux_supports_environment_option")
-    @patch("cli_topsailai.project_scope.shutil.which")
-    @patch("cli_topsailai.project_scope.os.system")
-    @patch("cli_topsailai.project_scope.os.chdir")
-    @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_tmux_mode_clears_stale_session_id(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which,
-        mock_supports_environment_option, mock_generate_name
-    ):
-        mock_getcwd.return_value = "/TopsailAI/cli"
-        mock_which.return_value = "/usr/bin/tmux"
-        mock_supports_environment_option.return_value = True
-        mock_generate_name.return_value = "topsailai-20260707T221748.169974"
-        project_scope.launch_agent_in_folder("/work/project-a", agent_mode="tmux")
-        mock_system.assert_called_once()
-        called_command = mock_system.call_args[0][0]
-        self.assertIn("-e TOPSAILAI_SESSION_ID=", called_command)
-        self.assertNotIn("-e TOPSAILAI_SESSION_ID=stale-session-id", called_command)
-        self.assertIn("topsailai_launch_agent", called_command)
-        # Original value is restored after launch.
-        self.assertEqual(os.environ.get("TOPSAILAI_SESSION_ID"), "stale-session-id")
-
-    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
-    @patch("cli_topsailai.project_scope.os.system")
-    @patch("cli_topsailai.project_scope.os.chdir")
-    @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_raw_mode_invokes_command_directly(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which
-    ):
-        mock_getcwd.return_value = "/TopsailAI/cli"
-        project_scope.launch_agent_in_folder("/work/project-a", agent_mode="raw")
-        mock_system.assert_called_once_with("topsailai_launch_agent")
 
 class TestLoadProjectWorkspaceLookup(unittest.TestCase):
     """Tests for load_project_workspace_lookup."""

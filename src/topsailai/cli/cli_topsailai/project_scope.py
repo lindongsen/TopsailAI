@@ -610,7 +610,7 @@ def _wrap_command_for_agent_mode(
         }
         env_args = " ".join(
             f"-e {shlex.quote(_tmux_safe_env_value(f'{key}={value}'))}"
-            for key, value in env_vars.items()
+            for key, value in sorted(env_vars.items())
         )
         env_part = f" {env_args}" if env_args else ""
         return (
@@ -619,66 +619,13 @@ def _wrap_command_for_agent_mode(
 
     raise ValueError(f"Unsupported agent launch mode: {mode!r}")
 
-def launch_agent_in_folder(folder: str, agent_mode: str = "dtach") -> None:
-    """Launch ``topsailai_launch_agent`` with the selected model environment.
+def launch_agent_in_folder(folder: str, agent_mode: str = "dtach", *, spawn=None) -> None:
+    """Launch a fresh configured agent through the shared launch boundary."""
+    from cli_topsailai.agent_launch import launch_configured_agent
 
-    The target workspace and model environment are applied only for the child
-    launch and restored immediately afterward. Raw, dtach, and tmux modes use
-    the same effective project/workspace model selection.
-
-    A stale ``TOPSAILAI_SESSION_ID`` is cleared before launch so the agent
-    driver starts a fresh session instead of resuming the parent's session.
-    """
-    original_cwd = os.getcwd()
-    target_folder = os.path.abspath(folder)
-    env_keys = ("TOPSAILAI_PWD", "PWD", "TOPSAILAI_SESSION_ID")
-    original_env: Dict[str, Optional[str]] = {
-        key: os.environ.get(key) for key in env_keys
-    }
-    model_original_env: Optional[Dict[str, Optional[str]]] = {}
-    model_forwarded_keys: set[str] = set()
-
-    try:
-        os.chdir(target_folder)
-        for key in env_keys:
-            if key == "TOPSAILAI_SESSION_ID":
-                os.environ[key] = ""
-            else:
-                os.environ[key] = target_folder
-        model_environment = _apply_selected_model_environment(target_folder)
-        if model_environment is None:
-            model_original_env = None
-            return
-        model_original_env, model_forwarded_keys = model_environment
-        print(
-            f"{Colors.GREEN}[INFO] Launching agent in {target_folder} "
-            f"(mode: {agent_mode}) ...{Colors.RESET}"
-        )
-        command = _wrap_command_for_agent_mode(
-            "topsailai_launch_agent",
-            agent_mode,
-            model_forwarded_keys,
-        )
-        os.system(command)
-    except OSError as exc:
-        print(
-            f"{Colors.RED}[ERROR] Failed to change to folder '{target_folder}': {exc}{Colors.RESET}"
-        )
-    finally:
-        if model_original_env is not None:
-            _restore_environment(model_original_env)
-        for key in env_keys:
-            original_value = original_env[key]
-            if original_value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = original_value
-        try:
-            os.chdir(original_cwd)
-        except OSError as exc:
-            print(
-                f"{Colors.RED}[ERROR] Failed to restore working directory '{original_cwd}': {exc}{Colors.RESET}"
-            )
+    launch_configured_agent(
+        os.path.abspath(folder), mode=agent_mode, background=False, spawn=spawn
+    )
 
 def launch_agent_driver(
     folder: str, driver: str, session_id: str, agent_mode: str = "dtach"

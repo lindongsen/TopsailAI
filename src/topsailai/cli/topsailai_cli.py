@@ -9,6 +9,8 @@ invocations (``python topsailai.py``) continue to work.
 import os
 import sys
 
+STARTUP_CWD = os.getcwd()
+
 from dotenv import load_dotenv
 
 
@@ -40,6 +42,8 @@ import _import_topsailai  # noqa: E402,F401  (adds core project root to sys.path
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
 
 from cli_topsailai.core import main  # noqa: E402
+main.startup_cwd = STARTUP_CWD
 
 if __name__ == "__main__":
+    main.startup_cwd = STARTUP_CWD
     main(sys.argv[1:])

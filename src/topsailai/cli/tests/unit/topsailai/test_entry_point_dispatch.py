@@ -53,6 +53,91 @@ class TestEntryPointShim(unittest.TestCase):
             sys.argv = original_argv
             os.chdir(original_cwd)
 
+    def test_shim_dispatches_workspace_agent_with_original_startup_cwd(self):
+        """The real shim-to-core path preserves the caller startup directory."""
+        original_argv = sys.argv
+        original_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as startup_dir:
+            target = os.path.join(startup_dir, "project")
+            os.mkdir(target)
+            try:
+                sys.argv = ["topsailai_cli.py", "workspace", "agent", "project", "-m", "raw"]
+                os.chdir(startup_dir)
+                with patch("cli_topsailai.workspace_agent_cli.run_workspace_agent_cli", return_value=23) as launch:
+                    with self.assertRaises(SystemExit) as error:
+                        runpy.run_path(self.shim_path, run_name="__main__")
+                self.assertEqual(error.exception.code, 23)
+                launch.assert_called_once_with(["project", "-m", "raw"], startup_cwd=startup_dir)
+            finally:
+                sys.argv = original_argv
+                os.chdir(original_cwd)
+
+    def test_shim_reaches_shared_launch_with_exact_child_request(self):
+        """The real shim/core/parser path reaches only the injected spawn seam."""
+        from cli_topsailai import agent_launch
+
+        class FiniteChild:
+            def __init__(self):
+                self.calls = []
+
+            def wait(self):
+                self.calls.append(("wait", None))
+                return 17
+
+        original_argv = sys.argv
+        original_cwd = os.getcwd()
+        original_environment = dict(os.environ)
+        child = FiniteChild()
+        captured = []
+        with tempfile.TemporaryDirectory() as startup_dir:
+            target = os.path.join(startup_dir, "project")
+            os.mkdir(target)
+            try:
+                sys.argv = [
+                    "topsailai_cli.py", "workspace", "agent", "project", "-m", "raw"
+                ]
+                os.chdir(startup_dir)
+
+                def spawn(argv, **kwargs):
+                    captured.append((argv, kwargs))
+                    return child
+
+                with patch.object(agent_launch, "_spawn_process", spawn), \
+                     patch.object(agent_launch, "_session_id", return_value="shim-session"), \
+                     patch.object(
+                         agent_launch,
+                         "_apply_selected_model_environment",
+                         return_value=({}, set()),
+                     ):
+                    with self.assertRaises(SystemExit) as error:
+                        runpy.run_path(self.shim_path, run_name="__main__")
+
+                expected_environment = dict(original_environment)
+                expected_environment.update({
+                    "TOPSAILAI_PWD": target,
+                    "PWD": target,
+                    "TOPSAILAI_SESSION_ID": "shim-session",
+                    "SESSION_ID": "shim-session",
+                })
+                self.assertEqual(error.exception.code, 17)
+                self.assertEqual(len(captured), 1)
+                self.assertEqual(
+                    captured[0],
+                    (
+                        [
+                            "topsailai_launch_agent", "--subprocess",
+                            "--session-id", "shim-session",
+                        ],
+                        {"cwd": target, "env": expected_environment},
+                    ),
+                )
+                self.assertEqual(child.calls, [("wait", None)])
+                self.assertEqual(os.getcwd(), _import_topsailai.PROJECT_FOLDER_BASE)
+                self.assertEqual(dict(os.environ), original_environment)
+            finally:
+                sys.argv = original_argv
+                os.chdir(original_cwd)
+
     @patch("cli_topsailai.core.main")
     def test_shim_forwards_cli_arguments(self, mock_main):
         """CLI arguments after the program name are forwarded to main()."""
