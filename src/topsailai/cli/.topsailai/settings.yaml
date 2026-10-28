@@ -55,5 +55,3 @@ environment:
   _:
     TOPSAILAI_INTERACTIVE_MODE: "1"
   # Item-specific environment for the topsailai CLI agent.
-  topsailai:
-    TOPSAILAI_AGENT_DRIVER: "ai-team-flow-dev"
