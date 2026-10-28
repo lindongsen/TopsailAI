@@ -3,13 +3,41 @@
 import os
 import sys
 import time
+from pathlib import Path
 from typing import List
 
 from cli_topsailai.colors import Colors, colored, cprint
 from cli_topsailai.formatting import format_size, format_timestamp_full, print_header
 from cli_topsailai.log_files import is_file_in_use
 from cli_topsailai.session_cleanup import find_related_files_for_path
+from cli_topsailai.agent_launch_background import _is_active_launch_log
 
+
+
+def _launch_log_records(task_dir: str) -> List[dict]:
+    """Discover expired diagnostic launch logs without adding watcher rows."""
+    records: List[dict] = []
+    try:
+        entries = os.listdir(task_dir)
+    except OSError:
+        return records
+    for filename in entries:
+        if not filename.endswith(".agent-launch.log") and ".agent-launch.log." not in filename:
+            continue
+        # A lease sidecar is ownership evidence, never a deletable log record:
+        # removing it would make a live launch log look inactive.
+        if filename.endswith(".lease"):
+            continue
+        path = os.path.join(task_dir, filename)
+        if not os.path.isfile(path):
+            continue
+        try:
+            stat_info = os.stat(path)
+        except OSError:
+            continue
+        records.append({"filename": filename, "path": path, "size": stat_info.st_size,
+                        "mtime": stat_info.st_mtime})
+    return records
 
 def _expand_to_related_files(task_dir: str, selected: List[dict]) -> List[dict]:
     """Expand a list of selected files to include all related session files.
@@ -28,6 +56,9 @@ def _expand_to_related_files(task_dir: str, selected: List[dict]) -> List[dict]:
     """
     seen: set = set()
     expanded: List[dict] = []
+    # Keep the inventory snapshot for files that were already selected, so the
+    # mutation-time revalidation can still detect a change made after inventory.
+    snapshot = {f["path"]: f["mtime"] for f in selected}
 
     for f in selected:
         related_paths = find_related_files_for_path(task_dir, f["path"])
@@ -46,7 +77,7 @@ def _expand_to_related_files(task_dir: str, selected: List[dict]) -> List[dict]:
                 "filename": os.path.basename(path),
                 "path": path,
                 "size": stat_info.st_size,
-                "mtime": stat_info.st_mtime,
+                "mtime": snapshot.get(path, stat_info.st_mtime),
             })
 
     return expanded
@@ -94,6 +125,13 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
             "mtime": mtime,
             "age_hours": age / 3600,
         })
+
+    expired_files.extend(
+        record for record in _launch_log_records(task_dir)
+        if now - record["mtime"] > threshold_seconds
+        and not _is_active_launch_log(Path(record["path"]))
+        and not is_file_in_use(record["path"])
+    )
 
     expired_files = _expand_to_related_files(task_dir, expired_files)
 
@@ -184,6 +222,20 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
     failed_files = []
 
     for ef in expired_files:
+        # Revalidate immediately before deletion: the file may have become an
+        # active launch log, or been replaced, since the inventory was built.
+        if _is_active_launch_log(Path(ef["path"])):
+            cprint(f"[WARN] Skipping active launch log: {ef['filename']}", color=Colors.YELLOW)
+            continue
+        try:
+            current = os.stat(ef["path"])
+        except OSError as e:
+            failed_files.append((ef["filename"], str(e)))
+            cprint(f"[ERROR] Failed to delete {ef['filename']}: {e}", color=Colors.RED)
+            continue
+        if current.st_mtime != ef["mtime"]:
+            cprint(f"[WARN] Skipping changed file: {ef['filename']}", color=Colors.YELLOW)
+            continue
         try:
             os.remove(ef["path"])
             deleted_count += 1
