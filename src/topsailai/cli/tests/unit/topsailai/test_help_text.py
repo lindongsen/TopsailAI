@@ -7,6 +7,7 @@ import io
 import os
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(
@@ -280,3 +281,48 @@ def test_workspace_agent_help_contract(capsys):
         "no --json output",
     ):
         assert text in output
+
+
+def test_b24_background_contract_snapshot_and_scale(capsys, tmp_path):
+    """The documented background contract matches the implementation exactly."""
+    from cli_topsailai import agent_launch_background as bg
+
+    print_help([], "workspace", keyword="workspace agent")
+    output = capsys.readouterr().out
+    # Syntax, exit codes, retention, no-attach and no-json are all documented.
+    for text in (
+        "topsailai workspace agent <folder> [-m MODE] [-b|--background]",
+        "2 usage or background rejection",
+        "3 invalid folder",
+        "4 preparation failure",
+        "5 spawn/wait failure",
+        "6 unresolved custody",
+        "130 cancellation",
+        "Background logs and backups participate in expiry cleanup",
+        "active launch leases protect live logs",
+        "no terminal reattachment",
+        "no --json output",
+    ):
+        assert text in output
+
+    document = (Path(__file__).resolve().parents[3] / "docs/usage/topsailai.md").read_text()
+    assert "--background" in document
+    # The document states the PID contract semantically; the code must publish
+    # the actual launcher PID under the documented meaning.
+    assert "actual launcher PID" in document
+    assert "Submission is not readiness" in document
+    assert "no `--json`" in document or "no --json" in document
+    import inspect
+    supervise_source = inspect.getsource(bg._supervise)
+    assert '"launcher_pid": child.pid' in supervise_source
+
+    # Retention constants are bounded, so disk growth is bounded per launch.
+    assert bg._MAX_LOG_BYTES == 10 * 1024 * 1024
+    assert bg._MAX_BACKUPS == 2
+
+    # Cleanup is one bounded inventory pass: no per-file global rescan.
+    from cli_topsailai import cleaning
+    import inspect
+    source = inspect.getsource(cleaning._launch_log_records)
+    assert source.count("os.listdir") == 1
+    assert "os.walk" not in source
