@@ -6,6 +6,7 @@ import json
 import os
 import selectors
 import signal
+import stat as stat_module
 import subprocess
 import sys
 import tempfile
@@ -47,6 +48,13 @@ class _OsFacade:
     O_WRONLY = os.O_WRONLY
     O_CREAT = os.O_CREAT
     O_EXCL = os.O_EXCL
+    O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+    fstat = staticmethod(os.fstat)
+    stat = staticmethod(os.stat)
+    lstat = staticmethod(os.lstat)
+    unlink = staticmethod(os.unlink)
+    replace = staticmethod(os.replace)
+    S_ISREG = staticmethod(stat_module.S_ISREG)
 
 
 class _SelectorsFacade:
@@ -159,10 +167,23 @@ class _RotatingLog:
         self._size = 0
 
     def open(self) -> None:
-        """Exclusively create the active log with private permissions."""
+        """Exclusively create the active log with private permissions.
+
+        ``O_EXCL`` refuses an existing path and ``O_NOFOLLOW`` refuses a
+        symlink, so a pre-existing file or link can never be truncated or
+        followed. The opened descriptor is then verified to be a regular file
+        so a substituted special file cannot receive log bytes.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        flags = _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL
-        self._fd = _os.open(str(self.path), flags, 0o600)
+        flags = _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL | _os.O_NOFOLLOW
+        fd = _os.open(str(self.path), flags, 0o600)
+        try:
+            if not _os.S_ISREG(_os.fstat(fd).st_mode):
+                raise OSError("launch log is not a regular file")
+        except OSError:
+            _os.close(fd)
+            raise
+        self._fd = fd
         self._size = 0
 
     def _close(self) -> None:
@@ -219,7 +240,11 @@ def _drain(selector, streams: dict[int, Any], log: _RotatingLog) -> bool:
         if not chunk:
             selector.unregister(stream)
             streams.pop(key.fd, None)
-            stream.close()
+            try:
+                stream.close()
+            except OSError:
+                # A failing close must not abort supervision of a live launcher.
+                pass
             continue
         log.write(chunk)
         progressed = True
@@ -476,7 +501,7 @@ def _supervise(request: Mapping[str, Any], ack_fd: int, *, popen: Optional[Calla
     log = _RotatingLog(log_path)
     lease = active_launch_lease(log_path)
     try:
-        lease.touch(mode=0o600, exist_ok=False)
+        _write_lease(lease, pid=_os.getpid(), identity=_authoritative_child_identity(_os.getpid()))
         log.open()
         command = ["topsailai_launch_agent", "--subprocess", "--session-id", str(request["session_id"])]
         child_environment = dict(request.get("environment") or _os.environ)
@@ -711,9 +736,17 @@ def launch_background(folder: str, session_id: str, *, environment: Optional[Map
         if environment is not None:
             kwargs["env"] = dict(environment)
         supervisor = factory(command, **kwargs)
-        _os.close(write_fd)
+        # The supervisor now owns these descriptors; a failing close must not
+        # discard custody of a process that was already created.
+        try:
+            _os.close(write_fd)
+        except OSError:
+            pass
         write_fd = None
-        _os.close(cancel_read_fd)
+        try:
+            _os.close(cancel_read_fd)
+        except OSError:
+            pass
         cancel_read_fd = None
         _os.set_blocking(read_fd, False)
         init_deadline = clock() + _INIT_TIMEOUT
@@ -931,6 +964,89 @@ def active_launch_lease(path: Path) -> Path:
     return path.with_name(path.name + ".lease")
 
 
-def _is_active_launch_log(path: Path) -> bool:
-    """Return whether a launch log has an active supervisor lease."""
-    return active_launch_lease(path).exists()
+def _write_lease(lease: Path, *, pid: int, identity: Optional[tuple[int, int]]) -> None:
+    """Create the lease exclusively and record the owning supervisor identity.
+
+    The recorded owner makes the lease verifiable: a leftover file whose owner
+    is gone is stale, while a file with no readable owner is not proof of an
+    active launch.
+    """
+    payload = _json.dumps({
+        "pid": int(pid),
+        "start": None if identity is None else int(identity[1]),
+    }, separators=(",", ":"))
+    fd = _os.open(str(lease), _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL, 0o600)
+    try:
+        view = memoryview(payload.encode("utf-8"))
+        while view:
+            written = _os.write(fd, view)
+            if written <= 0:
+                raise OSError("lease write made no progress")
+            view = view[written:]
+    finally:
+        _os.close(fd)
+
+
+def _read_lease(lease: Path) -> Optional[dict[str, Any]]:
+    """Read a lease owner record, or return None when it is unreadable."""
+    try:
+        raw = lease.read_text(encoding="utf-8")
+        record = _json.loads(raw)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    pid = record.get("pid")
+    if not isinstance(pid, int) or pid <= 0:
+        return None
+    return record
+
+
+def _process_absent(pid: int) -> bool:
+    """Return whether the OS authoritatively proves the process no longer exists.
+
+    Only a missing ``/proc`` entry counts as proof of absence. Off-POSIX hosts
+    and unreadable entries are unverifiable, so they must not be treated as
+    absence.
+    """
+    if _os.name != "posix":
+        return False
+    try:
+        _os.stat(f"/proc/{int(pid)}")
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def _lease_owner_alive(lease: Path, *, identity_probe: Optional[Callable[[int], Any]] = None) -> bool:
+    """Return whether the recorded lease owner is still the same live process.
+
+    An unreadable lease or an unverifiable owner fails closed: the caller must
+    treat the log as active rather than delete a possibly live launch log. A
+    recorded owner that the OS proves absent is a stale lease, so the log is no
+    longer protected.
+    """
+    record = _read_lease(lease)
+    if record is None:
+        return True
+    pid = int(record["pid"])
+    expected_start = record.get("start")
+    if expected_start is None:
+        return True
+    current = _resolve_identity_probe(identity_probe)(pid)
+    if current is None:
+        # No identity token: the owner is either gone or unverifiable.
+        return not _process_absent(pid)
+    if isinstance(current, tuple) and len(current) == 2:
+        current = current[1]
+    return current == expected_start
+
+
+def _is_active_launch_log(path: Path, *, identity_probe: Optional[Callable[[int], Any]] = None) -> bool:
+    """Return whether a launch log is protected by a live supervisor lease."""
+    lease = active_launch_lease(path)
+    if not lease.exists():
+        return False
+    return _lease_owner_alive(lease, identity_probe=identity_probe)

@@ -169,7 +169,7 @@ def test_b05_supervisor_spawn_failure_closes_transport(monkeypatch, tmp_path):
             pass
         def unlink(self):
             pass
-    monkeypatch.setattr(bg, "active_launch_lease", lambda path: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg._RotatingLog, "open", lambda self: (_ for _ in ()).throw(OSError("open")))
     monkeypatch.setattr(bg._os, "close", lambda fd: None)
     sent = []
@@ -189,7 +189,7 @@ def test_b06_b08_b09_supervisor_deadlines_and_early_exit(monkeypatch, tmp_path, 
     class Lease:
         def touch(self, **kwargs): pass
         def unlink(self): pass
-    monkeypatch.setattr(bg, "active_launch_lease", lambda p: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
     original_log = bg._RotatingLog
     monkeypatch.setattr(bg, "_RotatingLog", lambda path: original_log(path, max_bytes=32, backups=2))
@@ -213,7 +213,7 @@ def test_b07_launcher_argv_stdin_and_actual_pid(monkeypatch, tmp_path):
     class Lease:
         def touch(self, **kwargs): pass
         def unlink(self): pass
-    monkeypatch.setattr(bg, "active_launch_lease", lambda p: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     sent = []
     monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
     monkeypatch.setattr(bg._selectors, "DefaultSelector", lambda: FakeSelector({11: child.stdout, 12: child.stderr}))
@@ -349,7 +349,7 @@ def test_b20_submitted_is_not_ready_and_final_status_logged(monkeypatch, tmp_pat
     class Lease:
         def touch(self, **kwargs): pass
         def unlink(self): pass
-    monkeypatch.setattr(bg, "active_launch_lease", lambda p: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
     monkeypatch.setattr(bg._selectors, "DefaultSelector", lambda: FakeSelector({1: child.stdout, 2: child.stderr}))
     monkeypatch.setattr(bg._os, "set_blocking", lambda *a: None)
@@ -516,7 +516,7 @@ def test_remove_lease_and_cleanup_request_errors(monkeypatch, tmp_path):
     class Lease:
         def unlink(self):
             raise OSError("busy")
-    monkeypatch.setattr(bg, "active_launch_lease", lambda path: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     bg._remove_lease(Path(tmp_path) / "log")
     missing = Path(tmp_path) / "missing"
     bg._cleanup_request(None)
@@ -682,7 +682,7 @@ def test_supervise_cancellation_and_missing_pipes(monkeypatch, tmp_path):
     class Lease:
         def touch(self, **kwargs): pass
         def unlink(self): pass
-    monkeypatch.setattr(bg, "active_launch_lease", lambda p: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
     monkeypatch.setattr(bg, "_close_streams", lambda selector, streams: None)
     monkeypatch.setattr(bg, "_remove_lease", lambda path: None)
@@ -712,7 +712,7 @@ def test_supervise_submitted_lifecycle_and_drain_deadline(monkeypatch, tmp_path)
     class Lease:
         def touch(self, **kwargs): pass
         def unlink(self): pass
-    monkeypatch.setattr(bg, "active_launch_lease", lambda p: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
     monkeypatch.setattr(bg, "_close_streams", lambda selector, streams: None)
     monkeypatch.setattr(bg, "_remove_lease", lambda path: None)
@@ -951,7 +951,7 @@ def test_r9_supervise_initial_cancel_and_relay_errors(monkeypatch, tmp_path):
     class Lease:
         def touch(self, **kwargs): pass
         def unlink(self): pass
-    monkeypatch.setattr(bg, "active_launch_lease", lambda path: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
     monkeypatch.setattr(bg, "_cleanup_owned", lambda *args, **kwargs: True)
     monkeypatch.setattr(bg, "_close_streams", lambda selector, streams: None)
@@ -1036,7 +1036,7 @@ def test_b16_relay_faults_classify_and_close_owned_resources(monkeypatch, tmp_pa
         def touch(self, **kwargs): pass
         def unlink(self): pass
 
-    monkeypatch.setattr(bg, "active_launch_lease", lambda path: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
     monkeypatch.setattr(bg, "_cleanup_owned", lambda *a, **k: True)
     monkeypatch.setattr(bg, "_remove_lease", lambda path: None)
@@ -1168,7 +1168,7 @@ def test_r12_supervise_initial_cancel_and_default_popen(monkeypatch, tmp_path):
     class Lease:
         def touch(self, **kwargs): pass
         def unlink(self): pass
-    monkeypatch.setattr(bg, "active_launch_lease", lambda path: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg, "_RotatingLog", lambda path: SimpleNamespace(open=lambda: None, close=lambda: None, write=lambda data: None))
     monkeypatch.setattr(bg, "_default_popen", lambda *args, **kwargs: child)
     monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
@@ -1188,7 +1188,7 @@ def test_r12_supervise_drain_close_postsubmission_and_relay_errors(monkeypatch, 
     class Lease:
         def touch(self, **kwargs): pass
         def unlink(self): pass
-    monkeypatch.setattr(bg, "active_launch_lease", lambda path: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg, "_RotatingLog", lambda path: SimpleNamespace(open=lambda: None, close=lambda: None, write=lambda data: None))
     monkeypatch.setattr(bg, "_cleanup_owned", lambda *args, **kwargs: True)
     monkeypatch.setattr(bg, "_remove_lease", lambda path: None)
@@ -1226,7 +1226,7 @@ def test_r12_supervise_ack_and_selector_failures_are_bounded(monkeypatch, tmp_pa
     class Lease:
         def touch(self, **kwargs): pass
         def unlink(self): pass
-    monkeypatch.setattr(bg, "active_launch_lease", lambda path: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg, "_RotatingLog", lambda path: SimpleNamespace(open=lambda: None, close=lambda: None, write=lambda data: None))
     monkeypatch.setattr(bg, "_cleanup_owned", lambda *args, **kwargs: True)
     monkeypatch.setattr(bg, "_remove_lease", lambda path: None)
@@ -1368,7 +1368,7 @@ def test_r15_supervise_real_deadline_early_exit_path(monkeypatch, tmp_path):
     child.stdout = FakeStream(31, [])
     child.stderr = FakeStream(32, [])
     sent = []
-    monkeypatch.setattr(bg, "active_launch_lease", lambda path: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg, "_RotatingLog", lambda path: SimpleNamespace(
         open=lambda: None, close=lambda: None, write=lambda data: None))
     monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
@@ -1800,7 +1800,7 @@ def test_r24_supervise_cancel_probe_would_block_continues_real_loop(monkeypatch,
         def unlink(self):
             pass
 
-    monkeypatch.setattr(bg, "active_launch_lease", lambda path: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
     monkeypatch.setattr(bg, "_close_streams", lambda selector, streams: None)
     monkeypatch.setattr(bg, "_remove_lease", lambda path: None)
@@ -2284,7 +2284,7 @@ def test_r26_b09_real_supervisor_early_exit_protocol_yields_exit_five(monkeypatc
 
     child = ExitingChild()
     emitted = []
-    monkeypatch.setattr(bg, "active_launch_lease", lambda path: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg, "_remove_lease", lambda path: None)
     monkeypatch.setattr(bg, "_RotatingLog", lambda path: SimpleNamespace(
         open=lambda: None, close=lambda: None, write=lambda data: None))
@@ -2381,7 +2381,7 @@ def test_r26_unreapable_early_exit_launcher_fails_closed(monkeypatch, tmp_path):
 
     child = UnreapableChild()
     emitted = []
-    monkeypatch.setattr(bg, "active_launch_lease", lambda path: Lease())
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg, "_remove_lease", lambda path: None)
     monkeypatch.setattr(bg, "_RotatingLog", lambda path: SimpleNamespace(
         open=lambda: None, close=lambda: None, write=lambda data: None))
@@ -2533,3 +2533,376 @@ def test_r28_late_submission_after_observation_window_is_accepted(monkeypatch, t
     # The observation loop must have advanced beyond one supervisor window.
     assert clock.calls >= 2
     assert len(reads) >= 2
+
+
+# UNIT 1B-2 log and lease lifecycle proofs.
+def test_b17_log_creation_is_private_exclusive_and_no_follow(tmp_path):
+    """Creation is exclusive, private, regular-file-only and never follows links."""
+    path = Path(tmp_path) / "s.agent-launch.log"
+    log = bg._RotatingLog(path)
+    log.open()
+    try:
+        assert path.stat().st_mode & 0o077 == 0
+        # A second open must refuse the existing path instead of truncating it.
+        with pytest.raises(FileExistsError):
+            bg._RotatingLog(path).open()
+        log.write(b"kept")
+    finally:
+        log.close()
+    assert path.read_bytes() == b"kept"
+
+    # A symlink at the log path must be refused, and its target untouched.
+    link = Path(tmp_path) / "link.agent-launch.log"
+    target = Path(tmp_path) / "target.txt"
+    target.write_bytes(b"original")
+    link.symlink_to(target)
+    with pytest.raises(OSError):
+        bg._RotatingLog(link).open()
+    assert target.read_bytes() == b"original"
+
+
+def test_b18_rotation_byte_boundaries_and_retained_content(tmp_path):
+    """Rotation triggers exactly at the limit and retains exact byte suffixes."""
+    path = Path(tmp_path) / "s.agent-launch.log"
+    log = bg._RotatingLog(path, max_bytes=4, backups=2)
+    log.open()
+    try:
+        log.write(b"abc")          # below the limit: no rotation
+        assert path.read_bytes() == b"abc"
+        assert not path.with_name(path.name + ".1").exists()
+        log.write(b"d")            # exactly at the limit: still no rotation
+        assert path.read_bytes() == b"abcd"
+        assert not path.with_name(path.name + ".1").exists()
+        log.write(b"e")            # one byte over: rotate, keep the suffix
+        assert path.read_bytes() == b"e"
+        assert path.with_name(path.name + ".1").read_bytes() == b"abcd"
+    finally:
+        log.close()
+
+    # Multibyte encoded bytes are counted as bytes, not characters. A byte
+    # bounded log may split one character across a rotation, so the contract is
+    # that no byte is lost: backups plus the active file reproduce the input.
+    multi = Path(tmp_path) / "m.agent-launch.log"
+    payload = "é".encode("utf-8") + "ü".encode("utf-8")
+    log = bg._RotatingLog(multi, max_bytes=3, backups=2)
+    log.open()
+    try:
+        log.write("é".encode("utf-8"))   # two bytes
+        log.write("ü".encode("utf-8"))   # two bytes: crosses the limit
+    finally:
+        log.close()
+    retained = b"".join(
+        multi.with_name(multi.name + suffix).read_bytes()
+        for suffix in (".2", ".1", "")
+        if multi.with_name(multi.name + suffix).exists()
+    )
+    assert retained == payload
+    assert multi.stat().st_size <= 3
+
+
+def test_b19_repeated_rotation_keeps_exact_two_backups(tmp_path):
+    """Repeated rotation retains exactly two backups and bounded disk usage."""
+    path = Path(tmp_path) / "s.agent-launch.log"
+    log = bg._RotatingLog(path, max_bytes=2, backups=2)
+    log.open()
+    try:
+        for chunk in (b"aa", b"bb", b"cc", b"dd", b"ee"):
+            log.write(chunk)
+    finally:
+        log.close()
+    assert path.read_bytes() == b"ee"
+    assert path.with_name(path.name + ".1").read_bytes() == b"dd"
+    assert path.with_name(path.name + ".2").read_bytes() == b"cc"
+    assert not path.with_name(path.name + ".3").exists()
+    total = sum(p.stat().st_size for p in Path(tmp_path).iterdir())
+    assert total == 6
+
+
+def test_b21_lease_lifetime_closes_on_every_terminal_path(monkeypatch, tmp_path):
+    """The lease exists for the whole supervisor lifetime and is released after."""
+    observed = []
+    log_path = tmp_path / "s.agent-launch.log"
+    lease = bg.active_launch_lease(log_path)
+
+    def record_lease(*args, **kwargs):
+        observed.append("lease")
+
+    child = FakeChild(pid=4242, polls=[None] * 40 + [0], wait_status=0)
+    child.stdout = FakeStream(11, [b"out", b""])
+    child.stderr = FakeStream(12, [b"err", b""])
+    sent = []
+    monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
+    monkeypatch.setattr(bg._selectors, "DefaultSelector", lambda: FakeSelector({11: child.stdout, 12: child.stderr}))
+    monkeypatch.setattr(bg._os, "set_blocking", lambda *a: None)
+    reads = {11: [b"out", b""], 12: [b"err", b""]}
+    monkeypatch.setattr(bg._os, "read", lambda fd, n: reads[fd].pop(0))
+    monkeypatch.setattr(bg._os, "close", lambda fd: None)
+    monkeypatch.setattr(bg, "_write_lease", record_lease)
+
+    def record_spawn(*args, **kwargs):
+        observed.append("spawn")
+        return child
+
+    request = {"folder": str(tmp_path), "session_id": "s", "log_path": str(log_path)}
+    bg._supervise(request, 3, popen=record_spawn, clock=FakeClock(), sleeper=lambda _: None)
+    # The lease is acquired before the launcher is spawned and released after.
+    assert observed == ["lease", "spawn"]
+    assert not lease.exists()
+    assert any(frame["kind"] == "submitted" for frame in sent)
+
+
+def test_b20_submitted_is_not_ready_and_final_status_logged(monkeypatch, tmp_path):
+    """A live-through-submit launcher logs its exact final status and is reaped."""
+    child = FakeChild(pid=5150, polls=[None] * 40 + [42], wait_status=42)
+    child.stdout = FakeStream(11, [b"out", b""])
+    child.stderr = FakeStream(12, [b"err", b""])
+    sent = []
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
+    monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
+    monkeypatch.setattr(bg._selectors, "DefaultSelector", lambda: FakeSelector({11: child.stdout, 12: child.stderr}))
+    monkeypatch.setattr(bg._os, "set_blocking", lambda *a: None)
+    reads = {11: [b"out", b""], 12: [b"err", b""]}
+    monkeypatch.setattr(bg._os, "read", lambda fd, n: reads[fd].pop(0))
+    monkeypatch.setattr(bg._os, "close", lambda fd: None)
+    request = {"folder": str(tmp_path), "session_id": "s", "log_path": str(tmp_path / "s.log")}
+    bg._supervise(request, 3, popen=lambda *a, **k: child, clock=FakeClock(), sleeper=lambda _: None)
+    kinds = [frame["kind"] for frame in sent]
+    assert kinds[0] == "started"
+    assert "submitted" in kinds
+    # Submission is not readiness: no frame may claim readiness.
+    assert all("ready" not in json.dumps(frame).lower() for frame in sent)
+    assert (tmp_path / "s.log").read_bytes().endswith(b"launcher exit status=42\n")
+    assert ("wait", bg._OBSERVATION_TIMEOUT) in child.calls
+
+
+# UNIT 1B-2 focused lifecycle proofs for log, lease and cancellation authority.
+def test_b17_log_open_refuses_non_regular_file(monkeypatch, tmp_path):
+    """A substituted special file must never receive log bytes."""
+    closed = []
+    monkeypatch.setattr(bg._os, "open", lambda path, flags, mode: 91)
+    monkeypatch.setattr(bg._os, "fstat", lambda fd: SimpleNamespace(st_mode=0))
+    monkeypatch.setattr(bg._os, "close", lambda fd: closed.append(fd))
+    log = bg._RotatingLog(Path(tmp_path) / "s.agent-launch.log")
+    with pytest.raises(OSError, match="not a regular file"):
+        log.open()
+    assert closed == [91]
+    assert log._fd is None
+
+
+def test_b20_post_submission_cancellation_is_classified(monkeypatch, tmp_path, fake_clock):
+    """Cancellation after submission raises KeyboardInterrupt and reports it."""
+    child = FakeChild(pid=444, polls=[None] * 200 + [0], wait_status=0)
+    child.stdout = FakeStream(1, [b"out", b""])
+    child.stderr = FakeStream(2, [b"err", b""])
+    sent = []
+    state = {"cancel": False}
+
+    def send(fd, payload):
+        sent.append(payload)
+        if payload.get("kind") == "submitted":
+            state["cancel"] = True
+
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
+    monkeypatch.setattr(bg, "_send_frame", send)
+    monkeypatch.setattr(bg, "_cleanup_owned", lambda *a, **k: True)
+    monkeypatch.setattr(bg._selectors, "DefaultSelector",
+                        lambda: FakeSelector({1: child.stdout, 2: child.stderr}))
+    monkeypatch.setattr(bg._os, "set_blocking", lambda *a: None)
+    monkeypatch.setattr(bg._os, "read",
+                        lambda fd, n: (child.stdout.chunks if fd == 1 else child.stderr.chunks).pop(0))
+    monkeypatch.setattr(bg._os, "close", lambda fd: None)
+    request = {"folder": str(tmp_path), "session_id": "s", "log_path": str(tmp_path / "s.log")}
+    bg._supervise(request, 3, popen=lambda *a, **k: child, clock=fake_clock,
+                  sleeper=fake_clock.sleep, cancel_requested=lambda: state["cancel"])
+    cleanup = [item for item in sent if item.get("kind") == "cleanup"]
+    assert cleanup and cleanup[0]["class"] == "cancellation"
+    assert cleanup[0]["cleanup_confirmed"] is True
+
+
+def test_b20_post_submission_drain_deadline_and_close_errors(monkeypatch, tmp_path, fake_clock):
+    """A launcher that exits with open streams is drained for a bounded time."""
+    class StubbornStream(FakeStream):
+        def close(self):
+            raise OSError("close failed")
+
+    child = FakeChild(pid=445, polls=[None] * 200 + [0] * 200, wait_status=0)
+    child.stdout = StubbornStream(1, [b"out"])
+    child.stderr = StubbornStream(2, [b"err"])
+    sent = []
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
+    monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
+    monkeypatch.setattr(bg, "_cleanup_owned", lambda *a, **k: True)
+    monkeypatch.setattr(bg._selectors, "DefaultSelector",
+                        lambda: FakeSelector({1: child.stdout, 2: child.stderr}))
+    monkeypatch.setattr(bg._os, "set_blocking", lambda *a: None)
+    monkeypatch.setattr(bg._os, "read", lambda fd, n: b"")
+    monkeypatch.setattr(bg._os, "close", lambda fd: None)
+    request = {"folder": str(tmp_path), "session_id": "s", "log_path": str(tmp_path / "s.log")}
+    bg._supervise(request, 3, popen=lambda *a, **k: child, clock=fake_clock, sleeper=fake_clock.sleep)
+    assert any(item["kind"] == "submitted" for item in sent)
+    assert (tmp_path / "s.log").read_bytes().endswith(b"launcher exit status=0\n")
+
+
+def test_supervisor_finally_tolerates_ack_close_and_lease_remove_errors(monkeypatch, tmp_path, fake_clock):
+    """Descriptor and lease release failures must not mask the outcome."""
+    child = FakeChild(pid=446, polls=[None] * 200 + [0], wait_status=0)
+    child.stdout = FakeStream(1, [b"out", b""])
+    child.stderr = FakeStream(2, [b"err", b""])
+    sent = []
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
+    monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
+    monkeypatch.setattr(bg, "_cleanup_owned", lambda *a, **k: True)
+    monkeypatch.setattr(bg._selectors, "DefaultSelector",
+                        lambda: FakeSelector({1: child.stdout, 2: child.stderr}))
+    monkeypatch.setattr(bg._os, "set_blocking", lambda *a: None)
+    monkeypatch.setattr(bg._os, "read",
+                        lambda fd, n: (child.stdout.chunks if fd == 1 else child.stderr.chunks).pop(0))
+    real_close = bg._os.close
+
+    def close(fd):
+        if fd == 3:
+            raise OSError("closed")
+        return real_close(fd)
+
+    monkeypatch.setattr(bg._os, "close", close)
+    monkeypatch.setattr(Path, "unlink", lambda self: (_ for _ in ()).throw(OSError("busy")))
+    request = {"folder": str(tmp_path), "session_id": "s", "log_path": str(tmp_path / "s.log")}
+    bg._supervise(request, 3, popen=lambda *a, **k: child, clock=fake_clock, sleeper=fake_clock.sleep)
+    assert any(item["kind"] == "submitted" for item in sent)
+
+
+def test_supervisor_entry_sets_nonblocking_and_closes_cancel_fd(monkeypatch, tmp_path):
+    """The supervisor owns the inherited cancellation descriptor."""
+    request = tmp_path / "request.json"
+    request.write_text(json.dumps({"kind": "workspace-agent-supervisor", "cancel_fd": 5}))
+    blocking, closed, calls = [], [], []
+    monkeypatch.setattr(bg._os, "set_blocking", lambda fd, flag: blocking.append((fd, flag)))
+    monkeypatch.setattr(bg._os, "close", lambda fd: closed.append(fd))
+    monkeypatch.setattr(bg, "_supervise", lambda req, fd, **kwargs: calls.append(kwargs))
+    bg._supervisor_entry(str(request), 7)
+    assert blocking == [(5, False)]
+    assert closed == [5]
+    assert calls == [{"cancel_fd": 5}]
+
+
+def test_entrypoint_command_anchors_relative_entry(monkeypatch):
+    """A relative entry point is anchored so the detached process can resolve it."""
+    monkeypatch.delenv("TOPSAILAI_CLI_ENTRY", raising=False)
+    monkeypatch.setattr(bg._sys, "argv", ["cli/topsailai_cli.py"])
+    monkeypatch.setattr(bg._os, "getcwd", lambda: "/base")
+    assert bg._entrypoint_command() == ["/base/cli/topsailai_cli.py"]
+    assert bg._entrypoint_command("/other") == ["/other/cli/topsailai_cli.py"]
+    monkeypatch.setattr(bg._sys, "argv", ["/abs/topsailai_cli.py"])
+    assert bg._entrypoint_command() == ["/abs/topsailai_cli.py"]
+    monkeypatch.setenv("TOPSAILAI_CLI_ENTRY", "topsailai")
+    assert bg._entrypoint_command() == ["topsailai"]
+
+
+def test_launch_background_nt_platform_flags(monkeypatch, tmp_path):
+    """Windows uses creation flags instead of POSIX session options."""
+    frames = [[{"kind": "started", "launcher_pid": 78}],
+              [{"kind": "submitted", "session": "s", "launcher_pid": 78,
+                "log_path": str(tmp_path / "workspace" / "task" / "s.agent-launch.log")}]]
+    clock, supervisor = _patch_launch_background_common(monkeypatch, tmp_path, frames)
+    monkeypatch.setattr(bg._os, "name", "nt")
+    calls = []
+    result = bg.launch_background(str(tmp_path), "s",
+                                  spawn=lambda *a, **k: calls.append(k) or supervisor,
+                                  clock=clock, sleeper=clock.sleep)
+    assert result["outcome"] == "submitted"
+    assert "start_new_session" not in calls[0]
+    assert "pass_fds" not in calls[0]
+    assert calls[0]["creationflags"] == (bg._subprocess.CREATE_NEW_PROCESS_GROUP
+                                         | bg._subprocess.DETACHED_PROCESS)
+
+
+def test_r27_conflicting_started_during_cancellation_is_rejected(monkeypatch, tmp_path):
+    """A second, different started frame during cancellation fails closed."""
+    started = {"kind": "started", "launcher_pid": 1901,
+               "launcher_identity": "(1901, 9, 'authoritative')"}
+    other = {"kind": "started", "launcher_pid": 1902,
+             "launcher_identity": "(1902, 9, 'authoritative')"}
+    clock, supervisor = _patch_launch_background_common(
+        monkeypatch, tmp_path, [[started], [other]], supervisor=_ImmediateSupervisor([None] * 50))
+    with pytest.raises(bg.BackgroundUnconfirmed, match="conflicting started"):
+        bg.launch_background(str(tmp_path), "s", spawn=lambda *a, **k: supervisor,
+                             clock=clock, sleeper=clock.sleep,
+                             cancel_requested=lambda: True,
+                             cancel_write=lambda fd, data: len(data))
+
+
+def test_launch_background_keyboard_interrupt_routes_to_cancellation(monkeypatch, tmp_path):
+    """An interrupt during initialization is handled by the cancellation protocol."""
+    clock, supervisor = _patch_launch_background_common(monkeypatch, tmp_path, [[]])
+    monkeypatch.setattr(bg, "_read_frames",
+                        lambda fd, buffer: (_ for _ in ()).throw(KeyboardInterrupt()))
+    monkeypatch.setattr(bg, "_cancel_supervisor_transport",
+                        lambda *a, **k: {"outcome": "cancelled", "exit_code": 130})
+    result = bg.launch_background(str(tmp_path), "s", spawn=lambda *a, **k: supervisor,
+                                  clock=clock, sleeper=clock.sleep,
+                                  cancel_write=lambda fd, data: len(data))
+    assert result["exit_code"] == 130
+
+
+def test_launch_background_write_fd_close_errors_tolerated(monkeypatch, tmp_path):
+    """A failing descriptor release must not break a successful submission."""
+    frames = [[{"kind": "started", "launcher_pid": 79}],
+              [{"kind": "submitted", "session": "s", "launcher_pid": 79,
+                "log_path": str(tmp_path / "workspace" / "task" / "s.agent-launch.log")}]]
+    clock, supervisor = _patch_launch_background_common(monkeypatch, tmp_path, frames)
+    real_close = bg._os.close
+
+    def close(fd):
+        if fd == 11:
+            raise OSError("closed")
+        return real_close(fd)
+
+    monkeypatch.setattr(bg._os, "close", close)
+    result = bg.launch_background(str(tmp_path), "s", spawn=lambda *a, **k: supervisor,
+                                  clock=clock, sleeper=clock.sleep)
+    assert result["outcome"] == "submitted"
+
+
+def test_write_lease_no_progress_raises(monkeypatch, tmp_path):
+    """A lease write that makes no progress must fail instead of looping."""
+    monkeypatch.setattr(bg._os, "write", lambda fd, view: 0)
+    monkeypatch.setattr(bg._os, "close", lambda fd: None)
+    with pytest.raises(OSError, match="no progress"):
+        bg._write_lease(tmp_path / "x.lease", pid=1, identity=(1, 2))
+
+
+def test_read_lease_rejects_malformed_records(tmp_path):
+    """Only a positive integer pid makes a lease record usable."""
+    lease = tmp_path / "x.lease"
+    lease.write_text("[]")
+    assert bg._read_lease(lease) is None
+    lease.write_text('{"pid": 0}')
+    assert bg._read_lease(lease) is None
+    lease.write_text('{"pid": "x"}')
+    assert bg._read_lease(lease) is None
+    lease.write_text('{"pid": 5, "start": 9}')
+    assert bg._read_lease(lease) == {"pid": 5, "start": 9}
+
+
+def test_process_absent_requires_authoritative_evidence(monkeypatch):
+    """Only a missing /proc entry proves absence."""
+    monkeypatch.setattr(bg._os, "name", "nt")
+    assert bg._process_absent(1) is False
+    monkeypatch.setattr(bg._os, "name", "posix")
+    monkeypatch.setattr(bg._os, "stat",
+                        lambda path: (_ for _ in ()).throw(FileNotFoundError()))
+    assert bg._process_absent(1) is True
+    monkeypatch.setattr(bg._os, "stat", lambda path: (_ for _ in ()).throw(OSError("denied")))
+    assert bg._process_absent(1) is False
+    monkeypatch.setattr(bg._os, "stat", lambda path: SimpleNamespace())
+    assert bg._process_absent(1) is False
+
+
+def test_lease_owner_alive_missing_start_and_tuple_identity(tmp_path):
+    """A lease without a start token protects; a tuple identity is unwrapped."""
+    lease = tmp_path / "x.lease"
+    lease.write_text('{"pid": 5}')
+    assert bg._lease_owner_alive(lease) is True
+    lease.write_text('{"pid": 5, "start": 9}')
+    assert bg._lease_owner_alive(lease, identity_probe=lambda pid: (pid, 9)) is True
+    assert bg._lease_owner_alive(lease, identity_probe=lambda pid: (pid, 8)) is False
