@@ -273,9 +273,22 @@ def _warn_deprecated(old_flag: str, new_cmd: str) -> None:
 
 def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
     """Handle the non-interactive ``workspace`` subcommand."""
-    if getattr(args, "workspace_command", None) == "agent":
+    workspace_command = getattr(args, "workspace_command", None)
+    if workspace_command == "agent":
         from cli_topsailai.workspace_agent_cli import run_workspace_agent_cli
-        return run_workspace_agent_cli(args.agent_args, startup_cwd=getattr(args, "startup_cwd", None))
+        return run_workspace_agent_cli(
+            args.agent_args, startup_cwd=getattr(args, "startup_cwd", None),
+        )
+    if workspace_command == "resume":
+        from cli_topsailai.workspace_resume_cli import run_workspace_resume_cli
+        resume_args = ["-s", args.session_id]
+        if args.agent_mode is not None:
+            resume_args.extend(["--agent-mode", args.agent_mode])
+        if args.background:
+            resume_args.append("--background")
+        return run_workspace_resume_cli(
+            resume_args, startup_cwd=getattr(args, "startup_cwd", None),
+        )
     output_format = getattr(args, "format", None)
     if output_format == "json":
         _print_workspace_json()
@@ -1164,6 +1177,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         from cli_topsailai.workspace_agent_cli import run_workspace_agent_cli
         sys.exit(run_workspace_agent_cli(argv[2:], startup_cwd=getattr(main, "startup_cwd", None)))
 
+    if argv[:2] == ["workspace", "resume"]:
+        from cli_topsailai.workspace_resume_cli import run_workspace_resume_cli
+
+        sys.exit(run_workspace_resume_cli(
+            argv[2:], startup_cwd=getattr(main, "startup_cwd", None),
+        ))
+
     if argv[:2] == ["workspace", "driver"]:
         from cli_topsailai.workspace_driver_cli import run_workspace_driver_cli
 
@@ -1401,9 +1421,18 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="output format (supported: json)",
     )
     workspace_parser.set_defaults(func=_handle_workspace_subcommand)
-    workspace_agent_parser = workspace_parser.add_subparsers(dest="workspace_command")
-    workspace_agent_parser.add_parser("agent", help="launch an agent in a folder",
-                                      add_help=False).add_argument("agent_args", nargs=argparse.REMAINDER)
+    workspace_subparsers = workspace_parser.add_subparsers(dest="workspace_command")
+    workspace_subparsers.add_parser(
+        "agent", help="launch an agent in a folder", add_help=False,
+    ).add_argument("agent_args", nargs=argparse.REMAINDER)
+    workspace_resume_parser = workspace_subparsers.add_parser(
+        "resume", help="resume an exact persisted session", allow_abbrev=False,
+    )
+    workspace_resume_parser.add_argument("-s", "--session", dest="session_id", required=True)
+    workspace_resume_parser.add_argument(
+        "-m", "--agent-mode", choices=("raw", "dtach", "tmux"), default=None,
+    )
+    workspace_resume_parser.add_argument("-b", "--background", action="store_true")
 
     docs_parser = subparsers.add_parser(
         "docs",

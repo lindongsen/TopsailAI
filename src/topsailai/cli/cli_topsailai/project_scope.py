@@ -13,16 +13,27 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, Callable, List
 
 if TYPE_CHECKING:
     from typing import Any, Dict, Optional
 
 from cli_topsailai.colors import Colors
+from cli_topsailai.driver_ownership import (
+    DriverOwnership,
+    describe_ownership,
+    remove_pidfile,
+    stop_owned_driver,
+)
 from cli_topsailai.formatting import _fit_table_cell
-from cli_topsailai.log_files import _find_session_stdout_file, _get_pid_from_stdout_path
+from cli_topsailai.log_files import (
+    _find_session_stdout_file,
+    _get_pid_from_stdout_path,
+    _parse_stdout_filename,
+)
 from cli_topsailai.paths import get_topsailai_home
 from cli_topsailai.projects import (
     build_managed_project_list as _build_managed_project_list,
@@ -39,6 +50,19 @@ _RESUME_DRIVER_OPTIONS = [
     "topsailai_agent_plan_tasks",
     "ai-team-flow-dev",
 ]
+
+# Environment aliases that carry the session identity into a launched child.
+# Both are set and restored together so a resumed worker observes the persisted
+# session through either alias.
+_IDENTITY_ENV_KEYS = ("TOPSAILAI_SESSION_ID", "SESSION_ID")
+
+# Environment keys mutated for one launch and restored immediately afterward.
+_LAUNCH_ENV_KEYS = ("TOPSAILAI_PWD", "PWD") + _IDENTITY_ENV_KEYS
+
+# Bounds for the single authoritative session lookup: the capture must never
+# grow without limit and a hung query must not block the resume forever.
+_LOOKUP_TIMEOUT_SECONDS = 30.0
+_LOOKUP_MAX_BYTES = 4 * 1024 * 1024
 
 
 def _is_pid_alive(pid: int) -> bool:
@@ -462,8 +486,14 @@ def _build_dtach_socket_path() -> str:
 
 
 def _generate_agent_session_name() -> str:
-    """Return a unique session name for tmux-based agent launches."""
-    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S.%f")
+    """Return a unique tmux session name for agent launches.
+
+    tmux rewrites ``.`` and ``:`` in session names, so a name containing them
+    cannot be addressed later with ``has-session``/``kill-session``. The
+    generated name therefore uses only characters tmux preserves verbatim,
+    which keeps the owned session addressable for an exact stop.
+    """
+    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S_%f")
     return f"topsailai-{timestamp}"
 
 
@@ -565,11 +595,17 @@ def _wrap_command_for_agent_mode(
     command: str,
     mode: str,
     forwarded_environment: Optional[set[str]] = None,
+    session_name: Optional[str] = None,
 ) -> str:
     """Wrap a command for raw, dtach, or tmux agent launch mode.
 
     Tmux receives the requested model environment explicitly because an
     existing tmux server may otherwise retain stale environment values.
+
+    Args:
+        session_name: Optional tmux session name. When omitted a unique name is
+            generated. Callers that must stop the session later pass the name
+            they generated so the owned session can be addressed exactly.
     """
     if mode == "raw":
         return command
@@ -597,11 +633,16 @@ def _wrap_command_for_agent_mode(
                 "dtach",
                 forwarded_environment,
             )
-        session_name = _generate_agent_session_name()
+        if session_name is None:
+            session_name = _generate_agent_session_name()
         forwarded_keys = {
             key for key in os.environ if key.startswith("TOPSAILAI_")
         }
         forwarded_keys.update(("PATH", "HOME", "SHELL", "USER", "PWD"))
+        # Both accepted identity aliases must be forwarded explicitly: an
+        # existing tmux server keeps its own environment, so an alias that is
+        # not passed with ``-e`` can retain a stale or conflicting identity.
+        forwarded_keys.update(_IDENTITY_ENV_KEYS)
         forwarded_keys.update(forwarded_environment or set())
         env_vars = {
             key: os.environ[key]
@@ -627,51 +668,257 @@ def launch_agent_in_folder(folder: str, agent_mode: str = "dtach", *, spawn=None
         os.path.abspath(folder), mode=agent_mode, background=False, spawn=spawn
     )
 
+def _stop_owned_driver(ownership, child) -> bool:
+    """Stop the whole owned driver tree and prove the driver is gone.
+
+    Returns:
+        ``True`` when the driver is proven gone, otherwise ``False`` so the
+        caller can report unresolved custody instead of claiming success.
+    """
+    return stop_owned_driver(ownership, child)
+
+
+def _spawn_owned_child(argv, **kwargs):
+    """Create the directly owned production child for one resume launch."""
+    return subprocess.Popen(argv, **kwargs)
+
+
+def _driver_argv(driver: str) -> List[str]:
+    """Split a driver command line into an executable and its arguments.
+
+    A driver value is a command line, so a custom driver may carry arguments.
+    Splitting here keeps the driver a directly owned child instead of handing
+    the whole string to a shell.
+
+    Raises:
+        ValueError: The command line is empty or cannot be parsed.
+    """
+    try:
+        argv = shlex.split(driver)
+    except ValueError as error:
+        raise ValueError(f"invalid driver command line: {error}") from error
+    if not argv:
+        raise ValueError("driver command line is empty")
+    return argv
+
+
+def _driver_is_resolvable(argv: List[str]) -> bool:
+    """Return whether the driver executable in *argv* can be resolved.
+
+    A missing executable must be reported as a launch failure instead of
+    leaking the shell's ``127`` status.
+    """
+    if not argv:
+        return False
+    executable = argv[0]
+    separators = [sep for sep in (os.sep, os.altsep) if sep]
+    if any(sep in executable for sep in separators):
+        return os.path.isfile(executable) and os.access(executable, os.X_OK)
+    return shutil.which(executable) is not None
+
+
+def _ownership_wrapper(command: str, pidfile: str) -> str:
+    """Wrap *command* so the driver records its own PID before it execs.
+
+    ``dtach`` daemonizes and ``tmux`` runs the driver inside a server, so the
+    driver is not the direct child in those modes. Recording the driver PID
+    inside the wrapper gives the caller an exact identity to stop.
+    """
+    inner = f"echo $$ > {shlex.quote(pidfile)}; exec {command}"
+    return f"sh -c {shlex.quote(inner)}"
+
+
+def _build_owned_command(
+    driver: str,
+    mode: str,
+    forwarded_environment: Optional[set[str]],
+    session_name: Optional[str],
+    pidfile: str,
+) -> tuple[str, "DriverOwnership"]:
+    """Return the command to run and the ownership record for one launch.
+
+    The effective mode is derived from the produced command because the tmux
+    wrapper may fall back to dtach or raw when tmux lacks ``new-session -e``.
+    """
+    if mode == "raw":
+        return driver, DriverOwnership(kind="raw")
+    wrapped = _ownership_wrapper(driver, pidfile)
+    command = _wrap_command_for_agent_mode(
+        wrapped, mode, forwarded_environment, session_name,
+    )
+    if command.startswith("tmux new-session"):
+        return command, DriverOwnership(
+            kind="tmux", pidfile=pidfile, session_name=session_name,
+        )
+    if command.startswith("dtach -A"):
+        return command, DriverOwnership(kind="dtach", pidfile=pidfile)
+    # The wrapper fell back to raw: the recorded PID is still the driver.
+    return command, DriverOwnership(kind="raw")
+
+
+def _build_driver_pidfile() -> str:
+    """Return an absolute path where a wrapped driver records its own PID.
+
+    The file lives under the task directory so it sits beside the other
+    session runtime artifacts, and the directory is created on demand.
+    """
+    home = get_topsailai_home()
+    task_dir = os.path.join(home, "workspace", "task")
+    os.makedirs(task_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S.%f")
+    return os.path.join(task_dir, f"{timestamp}.driver.pid")
+
+
 def launch_agent_driver(
-    folder: str, driver: str, session_id: str, agent_mode: str = "dtach"
-) -> None:
+    folder: str, driver: str, session_id: str, agent_mode: str = "dtach",
+    *, spawn=None, emit_status: bool = True,
+    prelaunch_check: Optional[Callable[[], Optional[int]]] = None,
+) -> int:
     """Launch a resume driver with the selected model environment.
 
     The target workspace, session ID, and effective model configuration are
     applied only for the child launch and restored immediately afterward.
+
+    The persisted session identity is exported through both accepted aliases so
+    the resumed worker observes the same session it was resumed from.
+
+    The driver value is a command line: it is split into an executable and its
+    arguments, so a custom driver may carry arguments while the driver itself
+    stays a directly owned child. In ``dtach`` and ``tmux`` modes the driver is
+    not the direct child, so the wrapper records the driver PID and the whole
+    owned tree is stopped on interruption.
+
+    Args:
+        prelaunch_check: Optional late revalidation invoked after preparation
+            and immediately before the child is spawned. It returns ``None`` to
+            proceed or a status code to refuse the launch.
+
+    Returns:
+        ``0`` on success, ``4`` when preparation fails, ``5`` when the launch
+        cannot be started, ``6`` when custody or restoration cannot be proven,
+        ``130`` after an interrupt, or the child exit code.
     """
     original_cwd = os.getcwd()
-    target_folder = os.path.abspath(folder)
-    env_keys = ("TOPSAILAI_PWD", "PWD", "TOPSAILAI_SESSION_ID")
     original_env: Dict[str, Optional[str]] = {
-        key: os.environ.get(key) for key in env_keys
+        key: os.environ.get(key) for key in _LAUNCH_ENV_KEYS
     }
-    model_original_env: Optional[Dict[str, Optional[str]]] = {}
-    model_forwarded_keys: set[str] = set()
+    model_restore: Dict[str, Optional[str]] = {}
+    factory = spawn or _spawn_owned_child
+    pidfile: Optional[str] = None
 
+    def _run_owned_launch() -> int:
+        """Prepare, revalidate and run one owned resume child."""
+        nonlocal pidfile
+        target_folder = os.path.abspath(folder)
+        try:
+            os.chdir(target_folder)
+            os.environ["TOPSAILAI_PWD"] = target_folder
+            os.environ["PWD"] = target_folder
+            os.environ["TOPSAILAI_SESSION_ID"] = session_id
+            os.environ["SESSION_ID"] = session_id
+            model_environment = _apply_selected_model_environment(target_folder)
+            if model_environment is None:
+                return 4
+            model_restore.update(model_environment[0])
+            forwarded_keys = model_environment[1]
+            if emit_status:
+                print(
+                    f"{Colors.GREEN}[INFO] Launching driver '{driver}' in "
+                    f"{target_folder} for session '{session_id}' "
+                    f"(mode: {agent_mode}) ...{Colors.RESET}"
+                )
+            driver_argv = _driver_argv(driver)
+            session_name = (
+                _generate_agent_session_name() if agent_mode == "tmux" else None
+            )
+            if agent_mode == "raw":
+                command, ownership = _build_owned_command(
+                    driver, agent_mode, forwarded_keys, session_name, "",
+                )
+            else:
+                pidfile = _build_driver_pidfile()
+                command, ownership = _build_owned_command(
+                    driver, agent_mode, forwarded_keys, session_name, pidfile,
+                )
+        except (RuntimeError, ValueError, OSError) as exc:
+            print(
+                f"{Colors.RED}[ERROR] Resume preparation failed: {exc}{Colors.RESET}"
+            )
+            return 4
+        if not _driver_is_resolvable(driver_argv):
+            print(
+                f"{Colors.RED}[ERROR] Driver executable not found: "
+                f"{driver_argv[0]}{Colors.RESET}"
+            )
+            return 5
+        # Late fail-closed revalidation: the caller rechecks liveness and the
+        # workspace after preparation and immediately before the launch.
+        if prelaunch_check is not None:
+            refusal = prelaunch_check()
+            if refusal is not None:
+                return refusal
+        if ownership.kind == "raw":
+            argv = driver_argv
+            kwargs = {
+                "cwd": target_folder,
+                "env": os.environ.copy(),
+                "start_new_session": True,
+            }
+        else:
+            argv = command
+            kwargs = {"cwd": target_folder, "env": os.environ.copy(), "shell": True}
+            if ownership.kind != "tmux":
+                # dtach daemonizes, so the direct child must lead its own
+                # session for the wrapper group to be addressable.
+                kwargs["start_new_session"] = True
+        try:
+            child = factory(argv, **kwargs)
+        except (OSError, ValueError) as exc:
+            print(
+                f"{Colors.RED}[ERROR] Failed to launch driver '{driver}': {exc}{Colors.RESET}"
+            )
+            return 5
+        try:
+            code = child.wait()
+        except KeyboardInterrupt:
+            if not _stop_owned_driver(ownership, child):
+                print(
+                    f"{Colors.RED}[ERROR] Resume custody unresolved: "
+                    f"session={session_id} "
+                    f"{describe_ownership(ownership, child)}{Colors.RESET}"
+                )
+                return 6
+            print(
+                f"{Colors.YELLOW}[WARN] Resume interrupted: session={session_id}{Colors.RESET}"
+            )
+            return 130
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"{Colors.RED}[ERROR] Resume wait failed: {exc}{Colors.RESET}")
+            if not _stop_owned_driver(ownership, child):
+                print(
+                    f"{Colors.RED}[ERROR] Resume custody unresolved: "
+                    f"session={session_id} "
+                    f"{describe_ownership(ownership, child)}{Colors.RESET}"
+                )
+                return 6
+            return 5
+        return code if code >= 0 else 128 + (-code)
+
+    result = 4
     try:
-        os.chdir(target_folder)
-        os.environ["TOPSAILAI_PWD"] = target_folder
-        os.environ["PWD"] = target_folder
-        os.environ["TOPSAILAI_SESSION_ID"] = session_id
-        model_environment = _apply_selected_model_environment(target_folder)
-        if model_environment is None:
-            model_original_env = None
-            return
-        model_original_env, model_forwarded_keys = model_environment
+        result = _run_owned_launch()
+    except KeyboardInterrupt:
         print(
-            f"{Colors.GREEN}[INFO] Launching driver '{driver}' in {target_folder} "
-            f"for session '{session_id}' (mode: {agent_mode}) ...{Colors.RESET}"
+            f"{Colors.YELLOW}[WARN] Resume interrupted: session={session_id}{Colors.RESET}"
         )
-        command = _wrap_command_for_agent_mode(
-            driver,
-            agent_mode,
-            model_forwarded_keys,
-        )
-        os.system(command)
-    except OSError as exc:
-        print(
-            f"{Colors.RED}[ERROR] Failed to change to folder '{target_folder}': {exc}{Colors.RESET}"
-        )
+        result = 130
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(f"{Colors.RED}[ERROR] Resume launch failed: {exc}{Colors.RESET}")
+        result = 4
     finally:
-        if model_original_env is not None:
-            _restore_environment(model_original_env)
-        for key in env_keys:
+        remove_pidfile(pidfile)
+        _restore_environment(model_restore)
+        for key in _LAUNCH_ENV_KEYS:
             original_value = original_env[key]
             if original_value is None:
                 os.environ.pop(key, None)
@@ -680,9 +927,14 @@ def launch_agent_driver(
         try:
             os.chdir(original_cwd)
         except OSError as exc:
+            # A launch that cannot restore the caller's working directory is
+            # not a clean success, so the status must reflect the failure.
             print(
-                f"{Colors.RED}[ERROR] Failed to restore working directory '{original_cwd}': {exc}{Colors.RESET}"
+                f"{Colors.RED}[ERROR] Failed to restore working directory "
+                f"'{original_cwd}': {exc}{Colors.RESET}"
             )
+            result = 6
+    return result
 
 def _prompt_for_driver() -> str:
     """Prompt the user to select an agent driver for resuming a session.
@@ -811,3 +1063,334 @@ def resume_session(
     )
     launch_agent_driver(project_workspace, driver, session_id, agent_mode=agent_mode)
     return True
+
+
+class ResumeLookupError(RuntimeError):
+    """Raised when the authoritative session lookup cannot be trusted."""
+
+
+class ResumeNotFoundError(ResumeLookupError):
+    """Raised when no unique persisted session matches the requested identity."""
+
+
+def _pid_state(pid: int) -> str:
+    """Classify a PID as ``alive``, ``dead`` or ``unknown``.
+
+    ``unknown`` is returned when the OS refuses to answer, so callers can fail
+    closed instead of treating an unverifiable process as idle.
+    """
+    try:
+        os.kill(pid, 0)
+        return "alive"
+    except ProcessLookupError:
+        return "dead"
+    except PermissionError:
+        return "unknown"
+    except OSError:
+        return "unknown"
+
+
+def _session_stdout_candidates(task_dir: str, session_id: str) -> List[str]:
+    """Return every session stdout file belonging to *session_id*.
+
+    All candidates are inspected because a newer dead file must not hide an
+    older live process for the same session.
+    """
+    candidates: List[str] = []
+    try:
+        entries = os.listdir(task_dir)
+    except FileNotFoundError:
+        return []
+    for entry in entries:
+        if not entry.endswith(".session.stdout"):
+            continue
+        full_path = os.path.join(task_dir, entry)
+        sid, _pid = _parse_stdout_filename(entry)
+        if sid == session_id:
+            candidates.append(full_path)
+    return candidates
+
+
+def session_liveness(session_id: str, *, home: Optional[str] = None) -> str:
+    """Return ``live``, ``idle`` or ``unknown`` for a persisted session.
+
+    Every native session stdout candidate is inspected. A single live process
+    proves the session is running; an unverifiable candidate makes the answer
+    ``unknown`` so the caller fails closed rather than resuming a live session.
+    """
+    if not session_id:
+        return "unknown"
+    base = home or get_topsailai_home()
+    task_dir = os.path.join(base, "workspace", "task")
+    try:
+        candidates = _session_stdout_candidates(task_dir, session_id)
+    except OSError as error:
+        print(f"[ERROR] Cannot inspect session task directory {task_dir}: {error}")
+        return "unknown"
+    if not candidates:
+        return "idle"
+    unknown = False
+    for path in candidates:
+        pid = _get_pid_from_stdout_path(path)
+        if pid is None:
+            unknown = True
+            continue
+        state = _pid_state(pid)
+        if state == "alive":
+            return "live"
+        if state == "unknown":
+            unknown = True
+    return "unknown" if unknown else "idle"
+
+
+def lookup_persisted_session(
+    session_id: str, *, query: Optional[Callable[[str], Any]] = None
+) -> Dict[str, Any]:
+    """Return the single persisted record for an exact session identity.
+
+    Exactly one authoritative query is issued. A failed query, malformed
+    payload or ambiguous result is reported as an error instead of being
+    reinterpreted as an empty (idle) result.
+
+    Raises:
+        ResumeNotFoundError: when no record matches the exact identity.
+        ResumeLookupError: when the lookup itself cannot be trusted.
+    """
+    from cli_topsailai.runtime_target import _valid_session
+
+    if not _valid_session(session_id):
+        raise ResumeLookupError("invalid session identifier")
+    runner = query or _query_session_records
+    try:
+        records = runner(session_id)
+    except ResumeLookupError:
+        raise
+    except Exception as error:
+        raise ResumeLookupError(f"session lookup failed: {error}") from error
+    if not isinstance(records, list):
+        raise ResumeLookupError("session lookup returned an unexpected payload")
+    # A malformed entry makes the whole payload untrustworthy: silently
+    # filtering it could turn a real record into a false "not found".
+    for index, record in enumerate(records):
+        if not isinstance(record, dict):
+            raise ResumeLookupError(
+                f"session lookup returned a malformed record at index {index}"
+            )
+        if not isinstance(record.get("session_id"), str):
+            raise ResumeLookupError(
+                f"session lookup record at index {index} has no session identity"
+            )
+    matches = [
+        record for record in records
+        if record.get("session_id") == session_id
+    ]
+    if not matches:
+        raise ResumeNotFoundError(f"no persisted session matches '{session_id}'")
+    if len(matches) > 1:
+        raise ResumeLookupError(
+            f"session lookup is ambiguous for '{session_id}' ({len(matches)} records)"
+        )
+    return matches[0]
+
+
+def _bounded_stream_text(stream, limit: int) -> tuple[str, bool]:
+    """Read at most *limit* bytes from a captured stream.
+
+    Returns the decoded text and whether the stream held more bytes than the
+    limit, so an oversized payload is reported instead of silently truncated.
+    """
+    stream.seek(0)
+    data = stream.read(limit + 1)
+    truncated = len(data) > limit
+    return data[:limit].decode("utf-8", "replace"), truncated
+
+
+def _lookup_diagnostic(stdout: str, stderr: str) -> str:
+    """Combine both captured channels into one bounded diagnostic.
+
+    ``topsailai_list_sessions`` reports failures on stdout, so reading only
+    stderr would lose the real cause.
+    """
+    parts = []
+    for label, text in (("stdout", stdout), ("stderr", stderr)):
+        stripped = text.strip()
+        if stripped:
+            parts.append(f"{label}: {stripped}")
+    return " | ".join(parts) if parts else "no diagnostic output"
+
+
+def _query_session_records(session_id: str) -> List[Dict[str, Any]]:
+    """Run the single authoritative session query for one identity.
+
+    The capture is bounded in both bytes and duration. A failed command, an
+    empty payload, oversized output or a malformed payload is reported as a
+    lookup failure so it can never be reinterpreted as an empty (idle) result.
+    """
+    cmd = ["topsailai_list_sessions", "--json", "--", session_id]
+    with tempfile.TemporaryFile() as out_stream, tempfile.TemporaryFile() as err_stream:
+        try:
+            result = subprocess.run(
+                cmd,
+                stdout=out_stream,
+                stderr=err_stream,
+                timeout=_LOOKUP_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise ResumeLookupError(
+                f"topsailai_list_sessions timed out after "
+                f"{_LOOKUP_TIMEOUT_SECONDS:g}s"
+            ) from error
+        except Exception as error:
+            raise ResumeLookupError(
+                f"failed to run topsailai_list_sessions: {error}"
+            ) from error
+        stdout, stdout_truncated = _bounded_stream_text(out_stream, _LOOKUP_MAX_BYTES)
+        stderr, stderr_truncated = _bounded_stream_text(err_stream, _LOOKUP_MAX_BYTES)
+    if result.returncode != 0:
+        raise ResumeLookupError(
+            f"topsailai_list_sessions failed (status {result.returncode}): "
+            f"{_lookup_diagnostic(stdout, stderr)}"
+        )
+    if stdout_truncated or stderr_truncated:
+        raise ResumeLookupError(
+            f"topsailai_list_sessions output exceeded {_LOOKUP_MAX_BYTES} bytes"
+        )
+    if not stdout.strip():
+        raise ResumeLookupError(
+            "topsailai_list_sessions produced no JSON payload: "
+            f"{_lookup_diagnostic(stdout, stderr)}"
+        )
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as error:
+        raise ResumeLookupError(
+            f"failed to parse session JSON: {error}: "
+            f"{_lookup_diagnostic(stdout, stderr)}"
+        ) from error
+    if not isinstance(payload, list):
+        raise ResumeLookupError("unexpected session JSON shape: expected list")
+    return payload
+
+
+def _validate_resume_workspace(record: Dict[str, Any]) -> str:
+    """Return the persisted workspace after strict validation.
+
+    The persisted value is authoritative: no caller cwd, history or task
+    directory fallback is applied, and no directory is created. A workspace
+    that exists but cannot be entered is rejected rather than launched into.
+    """
+    workspace = record.get("project_workspace")
+    if not isinstance(workspace, str) or not workspace:
+        raise ResumeLookupError("persisted session has no project workspace")
+    if not os.path.isabs(workspace):
+        raise ResumeLookupError(f"persisted workspace is not absolute: {workspace}")
+    if not os.path.isdir(workspace):
+        raise ResumeLookupError(f"persisted workspace is not a directory: {workspace}")
+    if not os.access(workspace, os.R_OK | os.X_OK):
+        raise ResumeLookupError(
+            f"persisted workspace is not accessible: {workspace}"
+        )
+    return workspace
+
+
+def resume_session_result(
+    session_id: str, *, agent_mode: str = "dtach", background: bool = False,
+    spawn=None, prompt_driver: bool = False, driver: Optional[str] = None,
+    emit_status: bool = True, prelaunch: Optional[Callable[[Dict[str, Any]], None]] = None,
+    query: Optional[Callable[[str], Any]] = None, home: Optional[str] = None,
+    entrypoint_base: Optional[str] = None,
+) -> int:
+    """Resume one exact persisted session and return a definite status code.
+
+    The persisted identity is resolved once, validated, revalidated immediately
+    before launch, and then handed to the shared launch boundary. The persisted
+    session ID is preserved in both identity environment aliases; no fresh
+    identity is generated for a resume.
+
+    Returns:
+        ``0`` on success, ``3`` when the identity is missing or ambiguous,
+        ``4`` when the lookup, workspace or liveness cannot be trusted,
+        ``5``/``6``/``130`` from the launch boundary, or the child exit code.
+    """
+    try:
+        record = lookup_persisted_session(session_id, query=query)
+        workspace = _validate_resume_workspace(record)
+    except ResumeNotFoundError as error:
+        print(f"{Colors.RED}[ERROR] {error}{Colors.RESET}")
+        return 3
+    except ResumeLookupError as error:
+        print(f"{Colors.RED}[ERROR] {error}{Colors.RESET}")
+        return 4
+
+    liveness = session_liveness(session_id, home=home)
+    if liveness == "live":
+        print(
+            f"{Colors.RED}[ERROR] Session '{session_id}' is already running and "
+            f"cannot be resumed.{Colors.RESET}"
+        )
+        return 4
+    if liveness != "idle":
+        print(
+            f"{Colors.RED}[ERROR] Session '{session_id}' liveness cannot be "
+            f"verified; refusing to resume.{Colors.RESET}"
+        )
+        return 4
+
+    if prelaunch is not None:
+        try:
+            prelaunch(record)
+        except ResumeLookupError as error:
+            print(f"{Colors.RED}[ERROR] {error}{Colors.RESET}")
+            return 4
+
+    selected_driver = driver
+    if selected_driver is None:
+        selected_driver = _RESUME_DRIVER_OPTIONS[1]
+    if prompt_driver:
+        selected_driver = _prompt_for_driver()
+
+    def late_check() -> Optional[int]:
+        """Revalidate workspace and liveness at the launch boundary.
+
+        This runs after model/wrapper preparation and immediately before the
+        child is spawned or the supervisor is submitted, so a session that
+        became live during preparation is refused instead of resumed.
+        """
+        try:
+            _validate_resume_workspace(record)
+        except ResumeLookupError as error:
+            print(f"{Colors.RED}[ERROR] {error}{Colors.RESET}")
+            return 4
+        late_liveness = session_liveness(session_id, home=home)
+        if late_liveness == "live":
+            print(
+                f"{Colors.RED}[ERROR] Session '{session_id}' became live before "
+                f"launch; refusing to resume.{Colors.RESET}"
+            )
+            return 4
+        if late_liveness != "idle":
+            print(
+                f"{Colors.RED}[ERROR] Session '{session_id}' liveness cannot be "
+                f"verified at launch; refusing to resume.{Colors.RESET}"
+            )
+            return 4
+        return None
+
+    if emit_status:
+        print(
+            f"{Colors.GREEN}[INFO] Resuming session '{session_id}' with driver "
+            f"'{selected_driver}' in {workspace} (mode: {agent_mode}) ...{Colors.RESET}"
+        )
+    if background:
+        from cli_topsailai.agent_launch import launch_configured_agent
+
+        return launch_configured_agent(
+            workspace, mode="raw", background=True, spawn=spawn,
+            session_id=session_id, driver=selected_driver,
+            entrypoint_base=entrypoint_base, prelaunch_check=late_check,
+        )
+    return launch_agent_driver(
+        workspace, selected_driver, session_id, agent_mode=agent_mode,
+        spawn=spawn, emit_status=False, prelaunch_check=late_check,
+    )

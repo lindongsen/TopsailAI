@@ -251,6 +251,12 @@ def print_help(
             "scopes": ["workspace"],
         },
         {
+            "cmd": "topsailai workspace resume -s SESSION [-m MODE] [-b|--background]",
+            "desc": "Resume one exact persisted idle session in its recorded workspace using topsailai_agent_plan_tasks. Foreground defaults to dtach; background defaults to raw and rejects explicit dtach/tmux. Lookup and liveness errors fail closed. Background success is submission, not readiness; see docs/usage/topsailai.md#workspace-resume. No --json, PID, or driver override is accepted.",
+            "example": "Example: topsailai workspace resume -s my-session --background",
+            "scopes": ["workspace"],
+        },
+        {
             "cmd": "topsailai workspace agent <folder> [-m MODE] [-b|--background]",
             "desc": "Workspace-agent launch in foreground or detached headless background mode. See docs/usage/topsailai.md#workspace-agent. The folder is resolved against the caller's startup directory; omit -m for automatic foreground mode selection. Background defaults to raw mode, closes stdin, reports the actual launcher PID and rotating launch-log path, and submission is not readiness. Explicit dtach/tmux with --background is rejected with exit code 2. Exit codes: 0..255 observed child status, 128+signal, 2 usage or background rejection, 3 invalid folder, 4 preparation failure, 5 spawn/wait failure, 6 unresolved custody, 130 cancellation. A wrapper exit is not agent completion. Background logs and backups participate in expiry cleanup while active launch leases protect live logs. There is no terminal reattachment and no --json output.",
             "example": "Example: topsailai workspace agent /path/to/project -m raw",

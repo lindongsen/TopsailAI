@@ -61,3 +61,9 @@ references:
 ## Non-interactive workspace agent
 
 Canonical usage: `topsailai workspace agent <folder> [-m raw|dtach|tmux] [-b|--background]`. See [the canonical workspace-agent usage contract](docs/usage/topsailai.md#workspace-agent). It launches in the foreground and resolves relative folders against the caller's original working directory. Exit codes are 2 for usage/background rejection, 3 for invalid folder, 4 for preparation, 5 for spawn/wait, 6 for unresolved custody, and 130 for cancellation; observed child statuses are preserved and signals map to `128 + signal`. A wrapper exit is not agent completion. UNIT 1A has no background submission; future `submitted` means not-ready. There is no `--json` output.
+
+## Workspace resume
+
+- `workspace resume -s SESSION [-m raw|dtach|tmux] [-b|--background]` resumes an exact persisted idle session.
+- Foreground defaults to dtach; background defaults to raw and reports submission, not readiness.
+- See [the resume contract](docs/usage/topsailai.md#workspace-resume) for validation, logs, exit codes and concurrency limitations.

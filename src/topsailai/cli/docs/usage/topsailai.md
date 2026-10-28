@@ -454,3 +454,37 @@ parsing. Use the existing structured equivalent (replace selectors as needed):
 topsailai runtime control llm_control -s SESSION -p PID -a '{"operation":"hard_interrupt"}'
 topsailai runtime control llm_control -s SESSION -p PID -a '{"operation":"force_retry"}'
 ```
+
+## Workspace resume
+
+```text
+topsailai workspace resume -s SESSION [-m raw|dtach|tmux] [-b|--background]
+```
+
+`-s` / `--session` identifies one literal persisted session, never a row number,
+prefix, newest session, or process PID. The command uses the recorded absolute
+workspace and `topsailai_agent_plan_tasks`, preserving the session identity.
+Missing records fail with 3; unavailable or ambiguous lookup, invalid workspace,
+and live or unverifiable processes fail with 4. No directory is created and
+there is no fallback to the current directory.
+
+Foreground is the default, with `dtach` as the default mode. `-m raw` waits for
+the driver and propagates its exit status; terminal wrappers can detach before
+the agent finishes. `-b` defaults to headless raw, closes stdin, and reuses the
+workspace-agent supervisor, rotating log, active lease, and expiry cleanup.
+Explicit dtach/tmux with `-b` fails with 2. Repeated identical options are
+accepted; conflicting options, extra positionals, abbreviations, `--json`, PID,
+confirmation and driver overrides are rejected.
+
+Background success means submitted, not ready or completed. Output includes
+the actual launcher PID and a private per-attempt log path; repeated resumes do
+not overwrite earlier diagnostics. Inspect the printed log or workspace task
+list; there is no terminal reattachment promise. Spawn or early-exit failure is
+5, unresolved process custody is 6, and confirmed cancellation is 130.
+
+Session lookup runs once. All relevant session stdout candidates are checked,
+and workspace/liveness are checked again before launch. These local checks do
+not provide a runtime lock: concurrent external starts and PID reuse remain
+possible. Task storage must be trusted and available; permission and I/O errors
+are not interpreted as an idle session. Existing interactive `/resume` and
+`project resume` retain their legacy prompt and boolean behavior.

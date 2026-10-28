@@ -67,17 +67,34 @@ def _stop_owned_child(child) -> bool:
 
 
 def launch_configured_agent(folder: str, *, mode: str | None, background: bool = False, spawn=None,
-                            entrypoint_base: str | None = None) -> int:
-    """Launch an agent and make restoration failure observable."""
+                            entrypoint_base: str | None = None,
+                            session_id: str | None = None,
+                            driver: str | None = None,
+                            prelaunch_check=None) -> int:
+    """Launch an agent and make restoration failure observable.
+
+    When *session_id* is supplied the launch resumes that persisted identity
+    instead of minting a fresh one, and *driver* selects the resume driver.
+
+    *prelaunch_check* is an optional late revalidation invoked after
+    preparation and immediately before the child is spawned or the supervisor
+    is submitted; it returns ``None`` to proceed or a status code to refuse.
+    """
     original_cwd = os.getcwd()
     original_environment = os.environ.copy()
     result = None
     restore_errors = []
     try:
-        result = _launch_configured_agent_impl(
-            folder, mode=mode, background=background, spawn=spawn,
-            entrypoint_base=entrypoint_base,
-        )
+        launch_kwargs = {"mode": mode, "background": background, "spawn": spawn}
+        if entrypoint_base is not None:
+            launch_kwargs["entrypoint_base"] = entrypoint_base
+        if session_id is not None:
+            launch_kwargs["session_id"] = session_id
+        if driver is not None:
+            launch_kwargs["driver"] = driver
+        if prelaunch_check is not None:
+            launch_kwargs["prelaunch_check"] = prelaunch_check
+        result = _launch_configured_agent_impl(folder, **launch_kwargs)
     finally:
         try:
             os.chdir(original_cwd)
@@ -96,9 +113,13 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
             result = 6
     return result
 
+
 def _launch_configured_agent_impl(
     folder: str, *, mode: str | None, background: bool = False, spawn=None,
     entrypoint_base: str | None = None,
+    session_id: str | None = None,
+    driver: str | None = None,
+    prelaunch_check=None,
 ) -> int:
     """Launch one configured agent and return its boundary status."""
     if background and mode in ("dtach", "tmux"):
@@ -107,14 +128,20 @@ def _launch_configured_agent_impl(
     if spawn is None:
         spawn = _spawn_process
 
-    session_id = None
+    def refuse_if_not_ready() -> int | None:
+        """Run the caller's late revalidation at the launch boundary."""
+        if prelaunch_check is None:
+            return None
+        return prelaunch_check()
+    # A resume keeps the persisted identity; a fresh launch mints a new one.
+    resumed_session = session_id
     child = None
     result = 4
     # The detached supervisor entry point is resolved against the caller's
     # invocation directory, which is captured before any folder change.
     invocation_cwd = entrypoint_base or os.getcwd()
     try:
-        session_id = _session_id()
+        session_id = resumed_session or _session_id()
         try:
             effective_mode = "raw" if background else (mode or _detect_agent_mode())
         except (RuntimeError, ValueError, OSError) as error:
@@ -128,6 +155,7 @@ def _launch_configured_agent_impl(
             from cli_topsailai.agent_launch_background import (
                 BackgroundUnconfirmed,
                 launch_background,
+                launch_log_identity,
             )
 
             try:
@@ -135,6 +163,12 @@ def _launch_configured_agent_impl(
             except (RuntimeError, ValueError, OSError) as error:
                 print(f"[ERROR] Agent launch preparation failed: {error}", file=sys.stderr)
                 return 4
+            # Late fail-closed revalidation: the caller rechecks liveness and
+            # the workspace after preparation and immediately before the
+            # supervisor is submitted.
+            refusal = refuse_if_not_ready()
+            if refusal is not None:
+                return refusal
             try:
                 background_result = launch_background(
                     folder,
@@ -142,6 +176,12 @@ def _launch_configured_agent_impl(
                     environment=os.environ.copy(),
                     spawn=spawn,
                     entrypoint_base=invocation_cwd,
+                    # A resume writes a distinct per-attempt log so an earlier
+                    # attempt's diagnostics are never truncated; a fresh launch
+                    # keeps its historical single log name.
+                    log_identity=(launch_log_identity(session_id, uuid.uuid4().hex)
+                                  if resumed_session else None),
+                    driver=driver,
                 )
             except BackgroundUnconfirmed as error:
                 print(f"[ERROR] Agent launch custody unresolved: {error}", file=sys.stderr)
@@ -171,7 +211,10 @@ def _launch_configured_agent_impl(
             f"[INFO] Launching agent: workspace={folder} mode={effective_mode} "
             f"background=no session={session_id}"
         )
-        command = ["topsailai_launch_agent", "--subprocess", "--session-id", session_id]
+        command = (
+            [driver] if driver
+            else ["topsailai_launch_agent", "--subprocess", "--session-id", session_id]
+        )
         try:
             forwarded = _prepare_environment(folder, session_id)[3]
             if effective_mode == "raw":
@@ -183,6 +226,11 @@ def _launch_configured_agent_impl(
         except (RuntimeError, ValueError, OSError) as error:
             print(f"[ERROR] Agent launch preparation failed: {error}", file=sys.stderr)
             return 4
+        # Late fail-closed revalidation immediately before the owned child is
+        # spawned, after all preparation has completed.
+        refusal = refuse_if_not_ready()
+        if refusal is not None:
+            return refusal
         try:
             child = spawn(argv, **kwargs)
         except (OSError, ValueError) as error:

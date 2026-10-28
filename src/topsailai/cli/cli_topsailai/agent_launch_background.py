@@ -503,7 +503,8 @@ def _supervise(request: Mapping[str, Any], ack_fd: int, *, popen: Optional[Calla
     try:
         _write_lease(lease, pid=_os.getpid(), identity=_authoritative_child_identity(_os.getpid()))
         log.open()
-        command = ["topsailai_launch_agent", "--subprocess", "--session-id", str(request["session_id"])]
+        command = ([str(request["driver"])] if request.get("driver") else
+                   ["topsailai_launch_agent", "--subprocess", "--session-id", str(request["session_id"])])
         child_environment = dict(request.get("environment") or _os.environ)
         child = popen(command, cwd=str(request["folder"]), env=child_environment,
                        stdin=_subprocess.DEVNULL, stdout=_subprocess.PIPE, stderr=_subprocess.PIPE,
@@ -639,6 +640,7 @@ def _supervisor_entry(request_path: str, ack_fd: int) -> None:
             pass
     if not isinstance(request, dict) or request.get("kind") != "workspace-agent-supervisor":
         raise ValueError("invalid supervisor request")
+    _validate_resume_driver(request.get("driver"))
     cancel_fd = request.get("cancel_fd")
     if cancel_fd is not None:
         _os.set_blocking(cancel_fd, False)
@@ -690,6 +692,26 @@ def _cleanup_request(path: Optional[Path]) -> None:
             pass
 
 
+def _validate_resume_driver(driver: Any) -> None:
+    """Allow only bounded built-in resume executable names, never shell input."""
+    if driver is not None and driver not in (
+        "topsailai_agent_chats", "topsailai_agent_plan_tasks", "ai-team-flow-dev",
+    ):
+        raise ValueError("invalid background resume driver")
+
+
+def launch_log_identity(session_id: str, attempt: Optional[str] = None) -> str:
+    """Return the log identity for one launch attempt.
+
+    A fresh launch uses the session identity directly. A resume keeps the
+    persisted session in arguments and output but writes to a distinct
+    per-attempt log so an earlier attempt's diagnostics are never truncated.
+    """
+    if not attempt:
+        return session_id
+    return f"{session_id}.{attempt}"
+
+
 def launch_background(folder: str, session_id: str, *, environment: Optional[Mapping[str, str]] = None,
                       spawn: Optional[Callable[..., Any]] = None,
                       entrypoint_base: Optional[str] = None,
@@ -697,11 +719,19 @@ def launch_background(folder: str, session_id: str, *, environment: Optional[Map
                       sleeper: Callable[[float], None] = time.sleep,
                       identity_probe: Optional[Callable[[int], Any]] = None,
                       cancel_requested: Optional[Callable[[], bool]] = None,
-                      cancel_write: Optional[Callable[[int, bytes], int]] = None) -> dict[str, Any]:
-    """Submit a detached supervisor and return its acknowledged launch record."""
+                      cancel_write: Optional[Callable[[int, bytes], int]] = None,
+                      log_identity: Optional[str] = None,
+                      driver: Optional[str] = None) -> dict[str, Any]:
+    """Submit a detached supervisor and return its acknowledged launch record.
+
+    *log_identity* selects the per-attempt log name while *session_id* remains
+    the persisted identity reported to the caller. *driver* selects the resume
+    driver argv executed by the supervisor.
+    """
+    _validate_resume_driver(driver)
     task_dir = Path(get_topsailai_home()) / "workspace" / "task"
     task_dir.mkdir(parents=True, exist_ok=True)
-    log_path = task_dir / f"{session_id}.agent-launch.log"
+    log_path = task_dir / f"{log_identity or session_id}.agent-launch.log"
     request_path: Optional[Path] = None
     read_fd = write_fd = cancel_read_fd = cancel_write_fd = None
     supervisor = None
@@ -716,6 +746,8 @@ def launch_background(folder: str, session_id: str, *, environment: Optional[Map
     try:
         request = {"kind": "workspace-agent-supervisor", "folder": folder,
                    "session_id": session_id, "log_path": str(log_path)}
+        if driver:
+            request["driver"] = driver
         request_path, _ = _request_file(Path(folder), request)
         read_fd, write_fd = _os.pipe()
         cancel_read_fd, cancel_write_fd = _os.pipe()

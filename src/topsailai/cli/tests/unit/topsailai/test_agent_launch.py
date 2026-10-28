@@ -348,6 +348,28 @@ def test_background_mode_delegates_without_foreground_spawn(tmp_path, capsys):
     launch.assert_called_once()
     assert "launcher_pid=1234" in capsys.readouterr().out
 
+
+def test_background_log_identity_is_per_attempt_only_for_resume(tmp_path):
+    """A fresh launch keeps its historical log name; a resume is per-attempt."""
+    with patch("cli_topsailai.agent_launch._session_id", return_value="fresh"), \
+         patch("cli_topsailai.agent_launch._apply_selected_model_environment", return_value=({}, set())), \
+         patch("cli_topsailai.agent_launch_background.launch_background", return_value={
+             "launcher_pid": 1, "log_path": str(tmp_path / "x.agent-launch.log"),
+         }) as launch:
+        assert launch_configured_agent(str(tmp_path), mode="raw", background=True) == 0
+    assert launch.call_args.kwargs["log_identity"] is None
+
+    with patch("cli_topsailai.agent_launch._apply_selected_model_environment", return_value=({}, set())), \
+         patch("cli_topsailai.agent_launch_background.launch_background", return_value={
+             "launcher_pid": 1, "log_path": str(tmp_path / "x.agent-launch.log"),
+         }) as launch:
+        assert launch_configured_agent(
+            str(tmp_path), mode="raw", background=True, session_id="persisted",
+        ) == 0
+    identity = launch.call_args.kwargs["log_identity"]
+    assert identity.startswith("persisted.")
+    assert identity != "persisted"
+
 def test_model_preparation_none_maps_to_four_without_spawn(tmp_path):
     spawned = []
     with patch("cli_topsailai.agent_launch._apply_selected_model_environment", return_value=None):

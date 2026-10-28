@@ -642,3 +642,12 @@ When a user asks to modify a script but does not explicitly specify which script
 ## Non-interactive workspace agent
 
 Canonical usage: `topsailai workspace agent <folder> [-m raw|dtach|tmux] [-b|--background]`. See the [canonical workspace-agent usage contract](docs/usage/topsailai.md#workspace-agent). The command launches a configured agent in the foreground; the folder is resolved relative to the caller's startup directory. Exit codes are 0..255 for an observed child status, 128 + signal for signal termination, 2 for usage or background rejection, 3 for an invalid folder, 4 for preparation failure, 5 for spawn or observed wait failure, 6 for unresolved child custody, and 130 for cancellation. A wrapper client exit (including dtach/tmux detach) is not proof that the agent completed. Background mode is raw/headless with stdin closed. A successful exit means only that the supervisor acknowledged a live launcher; it is not readiness. The command reports the actual launcher PID and a private rotating `.agent-launch.log` path under `TOPSAILAI_HOME/workspace/task/`. Logs and backups are eligible for expiry cleanup while active launch leases protect live logs. Use the printed workspace task-list and launch-log paths for later inspection; there is no terminal reattachment and no `--json` output.
+
+### Workspace resume in foreground or background
+
+Use `topsailai workspace resume -s SESSION [-m raw|dtach|tmux] [-b]` for one
+exact persisted idle session. Foreground defaults to dtach; background defaults
+to raw and reports submission rather than readiness. Lookup/liveness errors fail
+closed and the persisted workspace is required. See the [resume contract](docs/usage/topsailai.md#workspace-resume)
+for exit codes, attempt logs, and concurrency limitations. No public `--json` or
+driver override is supported.

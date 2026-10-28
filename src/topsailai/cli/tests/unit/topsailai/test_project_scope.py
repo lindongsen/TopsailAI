@@ -1098,74 +1098,116 @@ class TestPromptForDriver(unittest.TestCase):
         self.assertEqual(driver, "topsailai_agent_plan_tasks")
 
 
-class TestLaunchAgentDriver(unittest.TestCase):
-    """Tests for launch_agent_driver."""
+class _FakeChild:
+    """Minimal owned-child stand-in exposing the reaping contract."""
 
-    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
-    @patch("cli_topsailai.project_scope.os.system")
+    def __init__(self, code=0, interrupt=False):
+        self.code = code
+        self.interrupt = interrupt
+        self.terminated = False
+        self.killed = False
+
+    def wait(self, timeout=None):
+        if self.interrupt:
+            raise KeyboardInterrupt()
+        return self.code
+
+    def poll(self):
+        return None
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+
+
+class TestLaunchAgentDriver(unittest.TestCase):
+    """Tests for launch_agent_driver.
+
+    Every test here exercises the production path: ``spawn`` is left unset so
+    the real ``_spawn_owned_child`` factory is used, and only
+    ``subprocess.Popen`` itself is replaced.
+    """
+
+    def _which(self, driver_present=True):
+        """Resolve the driver and any wrapper tool without touching the host."""
+
+        def _resolve(name):
+            if name == "topsailai_agent_plan_tasks":
+                return "/usr/bin/topsailai_agent_plan_tasks" if driver_present else None
+            if name in ("dtach", "tmux"):
+                return f"/usr/bin/{name}"
+            return None
+
+        return _resolve
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
     def test_launches_driver_directly_without_dtach(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen, _mock_model
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
-        project_scope.launch_agent_driver(
-            "/work/project-a", "topsailai_agent_plan_tasks", "s-123"
+        mock_which.side_effect = self._which()
+        mock_popen.return_value = _FakeChild(0)
+        code = project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123",
+            agent_mode="raw",
         )
-        mock_system.assert_called_once_with("topsailai_agent_plan_tasks")
+        self.assertEqual(code, 0)
+        self.assertEqual(mock_popen.call_args.args[0], ["topsailai_agent_plan_tasks"])
+        self.assertEqual(mock_popen.call_args.kwargs["cwd"], "/work/project-a")
         mock_chdir.assert_any_call("/work/project-a")
         mock_chdir.assert_any_call("/TopsailAI/cli")
 
-    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
-    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_sets_session_id_env_var(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which
+    def test_sets_both_session_id_env_aliases(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen, _mock_model
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
-        captured = {}
+        mock_which.side_effect = self._which()
+        mock_popen.return_value = _FakeChild(0)
+        project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123",
+            agent_mode="raw",
+        )
+        child_env = mock_popen.call_args.kwargs["env"]
+        self.assertEqual(child_env["TOPSAILAI_SESSION_ID"], "s-123")
+        self.assertEqual(child_env["SESSION_ID"], "s-123")
+        self.assertEqual(child_env["PWD"], "/work/project-a")
+        self.assertEqual(child_env["TOPSAILAI_PWD"], "/work/project-a")
 
-        def _capture_system(cmd):
-            captured["cmd"] = cmd
-            captured["session_id"] = os.environ.get("TOPSAILAI_SESSION_ID")
-            captured["pwd"] = os.environ.get("PWD")
-            captured["topsailai_pwd"] = os.environ.get("TOPSAILAI_PWD")
-            return 0
-
-        mock_system.side_effect = _capture_system
-        original_session_id = os.environ.pop("TOPSAILAI_SESSION_ID", None)
-        try:
-            project_scope.launch_agent_driver(
-                "/work/project-a", "topsailai_agent_plan_tasks", "s-123"
-            )
-            self.assertEqual(captured["cmd"], "topsailai_agent_plan_tasks")
-            self.assertEqual(captured["session_id"], "s-123")
-            self.assertEqual(captured["pwd"], "/work/project-a")
-            self.assertEqual(captured["topsailai_pwd"], "/work/project-a")
-        finally:
-            if original_session_id is None:
-                os.environ.pop("TOPSAILAI_SESSION_ID", None)
-            else:
-                os.environ["TOPSAILAI_SESSION_ID"] = original_session_id
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
     @patch("cli_topsailai.project_scope._build_dtach_socket_path")
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
     @patch("cli_topsailai.project_scope.shutil.which")
-    @patch("cli_topsailai.project_scope.os.system")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
     def test_launches_with_dtach_when_available(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which, mock_build_socket
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen,
+        mock_build_socket, _mock_model
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
-        mock_which.return_value = "/usr/bin/dtach"
-        mock_build_socket.return_value = "/home/user/.topsailai/workspace/task/20260707T221748.169974.dtach"
+        mock_which.side_effect = self._which()
+        mock_build_socket.return_value = "/home/user/.topsailai/workspace/task/x.dtach"
+        mock_popen.return_value = _FakeChild(0)
         project_scope.launch_agent_driver(
             "/work/project-a", "topsailai_agent_plan_tasks", "s-123"
         )
-        mock_system.assert_called_once()
-        called_command = mock_system.call_args[0][0]
+        called_command = mock_popen.call_args.args[0]
         self.assertTrue(called_command.startswith("dtach -A "))
         self.assertIn("topsailai_agent_plan_tasks", called_command)
+        self.assertTrue(mock_popen.call_args.kwargs["shell"])
 
     @patch.dict(
         os.environ,
@@ -1176,61 +1218,451 @@ class TestLaunchAgentDriver(unittest.TestCase):
         },
         clear=False,
     )
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
     @patch("cli_topsailai.project_scope._generate_agent_session_name")
     @patch("cli_topsailai.project_scope._tmux_supports_environment_option")
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
     @patch("cli_topsailai.project_scope.shutil.which")
-    @patch("cli_topsailai.project_scope.os.system")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_tmux_mode_wraps_driver_with_tmux(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which,
-        mock_supports_environment_option, mock_generate_name
+    def test_tmux_mode_forwards_both_identity_aliases(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen,
+        mock_supports_environment_option, mock_generate_name, _mock_model
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
-        mock_which.return_value = "/usr/bin/tmux"
+        mock_which.side_effect = self._which()
         mock_supports_environment_option.return_value = True
         mock_generate_name.return_value = "topsailai-20260707T221748.169974"
+        mock_popen.return_value = _FakeChild(0)
         project_scope.launch_agent_driver(
             "/work/project-a", "topsailai_agent_plan_tasks", "s-123", agent_mode="tmux"
         )
-        mock_system.assert_called_once()
-        called_command = mock_system.call_args[0][0]
+        called_command = mock_popen.call_args.args[0]
         self.assertTrue(called_command.startswith("tmux new-session"))
         self.assertIn("-e TOPSAILAI_SESSION_ID=s-123", called_command)
+        self.assertIn("-e SESSION_ID=s-123", called_command)
         self.assertIn("-e TOPSAILAI_PWD=/work/project-a", called_command)
         self.assertIn("-e PWD=/work/project-a", called_command)
         self.assertIn("topsailai_agent_plan_tasks", called_command)
 
-    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
-    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
     def test_raw_mode_invokes_driver_directly(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen, _mock_model
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        mock_popen.return_value = _FakeChild(0)
         project_scope.launch_agent_driver(
             "/work/project-a", "topsailai_agent_plan_tasks", "s-123", agent_mode="raw"
         )
-        mock_system.assert_called_once_with("topsailai_agent_plan_tasks")
+        self.assertEqual(mock_popen.call_args.args[0], ["topsailai_agent_plan_tasks"])
+        self.assertNotIn("shell", mock_popen.call_args.kwargs)
 
-    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
-    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
     def test_restores_original_env_values_after_launch(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen, _mock_model
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        mock_popen.return_value = _FakeChild(0)
         original_pwd = os.environ.get("PWD")
         original_topsailai_pwd = os.environ.get("TOPSAILAI_PWD")
         original_session_id = os.environ.get("TOPSAILAI_SESSION_ID")
+        original_alias = os.environ.get("SESSION_ID")
         project_scope.launch_agent_driver(
-            "/work/project-a", "topsailai_agent_plan_tasks", "s-123"
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123", agent_mode="raw"
         )
         self.assertEqual(os.environ.get("PWD"), original_pwd)
         self.assertEqual(os.environ.get("TOPSAILAI_PWD"), original_topsailai_pwd)
         self.assertEqual(os.environ.get("TOPSAILAI_SESSION_ID"), original_session_id)
+        self.assertEqual(os.environ.get("SESSION_ID"), original_alias)
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_missing_executable_is_a_launch_failure(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen, _mock_model
+    ):
+        """A missing driver must not leak the shell's 127 status."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which(driver_present=False)
+        code = project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123", agent_mode="raw"
+        )
+        self.assertEqual(code, 5)
+        mock_popen.assert_not_called()
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope._stop_owned_driver", return_value=True)
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_interrupt_stops_owned_child_and_returns_130(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen,
+        mock_stop, _mock_model
+    ):
+        """The production path must reap the owned child on interruption."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        child = _FakeChild(interrupt=True)
+        mock_popen.return_value = child
+        code = project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123", agent_mode="raw"
+        )
+        self.assertEqual(code, 130)
+        mock_stop.assert_called_once()
+        self.assertIs(mock_stop.call_args.args[1], child)
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope._stop_owned_driver", return_value=False)
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_unresolved_custody_returns_6(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen,
+        _mock_stop, _mock_model
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        mock_popen.return_value = _FakeChild(interrupt=True)
+        code = project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123", agent_mode="raw"
+        )
+        self.assertEqual(code, 6)
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope._wrap_command_for_agent_mode",
+           side_effect=RuntimeError("tmux unavailable"))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_wrapper_preparation_failure_returns_4(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen,
+        _mock_wrap, _mock_model
+    ):
+        """A wrapper preparation error must not escape the status boundary."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        code = project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123", agent_mode="tmux"
+        )
+        self.assertEqual(code, 4)
+        mock_popen.assert_not_called()
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_cwd_restoration_failure_fails_closed(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen, _mock_model
+    ):
+        """A launch that cannot restore the caller cwd is not a clean success."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        mock_popen.return_value = _FakeChild(0)
+
+        def _chdir(target):
+            if target == "/TopsailAI/cli":
+                raise OSError("restore denied")
+
+        mock_chdir.side_effect = _chdir
+        code = project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123", agent_mode="raw"
+        )
+        self.assertEqual(code, 6)
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_prelaunch_refusal_prevents_spawn(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen, _mock_model
+    ):
+        """The late revalidation runs after preparation and can refuse launch."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        calls = []
+
+        def _refuse():
+            calls.append("checked")
+            return 4
+
+        code = project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123",
+            agent_mode="raw", prelaunch_check=_refuse,
+        )
+        self.assertEqual(code, 4)
+        self.assertEqual(calls, ["checked"])
+        mock_popen.assert_not_called()
+
+class TestOwnedDriverSpawn(unittest.TestCase):
+    """UNIT 3A: the driver process tree is owned in every launch mode.
+
+    These tests exercise the production seam: ``spawn`` is left unset so the
+    real ``_spawn_owned_child`` factory is used, and only
+    ``subprocess.Popen`` itself is replaced.
+    """
+
+    def _which(self, driver_present=True):
+        """Resolve the driver and any wrapper tool without touching the host."""
+
+        def _resolve(name):
+            if name == "topsailai_agent_plan_tasks":
+                return "/usr/bin/topsailai_agent_plan_tasks" if driver_present else None
+            if name in ("dtach", "tmux"):
+                return f"/usr/bin/{name}"
+            return None
+
+        return _resolve
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope._stop_owned_driver", return_value=True)
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_interrupt_in_dtach_mode_stops_owned_driver(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen,
+        mock_stop, _mock_model
+    ):
+        """dtach daemonizes, so the ownership record must be used to stop it."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        child = _FakeChild(interrupt=True)
+        mock_popen.return_value = child
+        code = project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123",
+            agent_mode="dtach",
+        )
+        self.assertEqual(code, 130)
+        mock_stop.assert_called_once()
+        ownership = mock_stop.call_args.args[0]
+        self.assertEqual(ownership.kind, "dtach")
+        self.assertTrue(ownership.pidfile)
+        self.assertIs(mock_stop.call_args.args[1], child)
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope._stop_owned_driver", return_value=True)
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope._tmux_supports_environment_option",
+           return_value=True)
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_interrupt_in_tmux_mode_stops_owned_driver(
+        self, mock_getcwd, mock_chdir, _mock_tmux_env, mock_which, mock_popen,
+        mock_stop, _mock_model
+    ):
+        """tmux runs the driver inside a server, so the session must be owned."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        child = _FakeChild(interrupt=True)
+        mock_popen.return_value = child
+        code = project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123",
+            agent_mode="tmux",
+        )
+        self.assertEqual(code, 130)
+        mock_stop.assert_called_once()
+        ownership = mock_stop.call_args.args[0]
+        self.assertEqual(ownership.kind, "tmux")
+        self.assertTrue(ownership.session_name)
+        self.assertTrue(ownership.pidfile)
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope._stop_owned_driver", return_value=False)
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_interrupt_in_dtach_mode_reports_unproven_custody(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen,
+        _mock_stop, _mock_model
+    ):
+        """A cancellation that cannot prove the driver is gone must return 6."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        mock_popen.return_value = _FakeChild(interrupt=True)
+        code = project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123",
+            agent_mode="dtach",
+        )
+        self.assertEqual(code, 6)
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_custom_driver_with_arguments_runs_without_enoent(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen, _mock_model
+    ):
+        """A custom driver command line may carry arguments, as before."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        mock_popen.return_value = _FakeChild(0)
+        code = project_scope.launch_agent_driver(
+            "/work/project-a",
+            "/usr/bin/python3 -c 'raise SystemExit(0)'",
+            "s-123",
+            agent_mode="raw",
+        )
+        self.assertEqual(code, 0)
+        argv = mock_popen.call_args.args[0]
+        self.assertEqual(argv[0], "/usr/bin/python3")
+        self.assertEqual(argv[1], "-c")
+        self.assertEqual(argv[2], "raise SystemExit(0)")
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_raw_mode_child_leads_its_own_session(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen, _mock_model
+    ):
+        """The raw driver must lead its own group so the tree is addressable."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        mock_popen.return_value = _FakeChild(0)
+        project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123",
+            agent_mode="raw",
+        )
+        self.assertTrue(mock_popen.call_args.kwargs["start_new_session"])
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope._tmux_supports_environment_option",
+           return_value=True)
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_tmux_client_does_not_lead_its_own_session(
+        self, mock_getcwd, mock_chdir, _mock_tmux_env, mock_which, mock_popen,
+        _mock_model
+    ):
+        """The tmux client shares the caller group; signalling it would kill us."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        mock_popen.return_value = _FakeChild(0)
+        project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123",
+            agent_mode="tmux",
+        )
+        self.assertNotIn("start_new_session", mock_popen.call_args.kwargs)
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope._tmux_supports_environment_option",
+           return_value=True)
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_tmux_forwards_both_identity_aliases(
+        self, mock_getcwd, mock_chdir, _mock_tmux_env, mock_which, mock_popen,
+        _mock_model
+    ):
+        """An existing tmux server must not retain a conflicting alias."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        mock_popen.return_value = _FakeChild(0)
+        project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123",
+            agent_mode="tmux",
+        )
+        command = mock_popen.call_args.args[0]
+        self.assertIn("TOPSAILAI_SESSION_ID=s-123", command)
+        self.assertIn("SESSION_ID=s-123", command)
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_dtach_wrapper_records_driver_pid(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen, _mock_model
+    ):
+        """The dtach wrapper must record the driver PID before exec."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        mock_popen.return_value = _FakeChild(0)
+        project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123",
+            agent_mode="dtach",
+        )
+        command = mock_popen.call_args.args[0]
+        self.assertIn("echo $$ >", command)
+        self.assertIn("exec topsailai_agent_plan_tasks", command)
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_missing_executable_in_custom_command_returns_5(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen, _mock_model
+    ):
+        """A missing custom executable is a launch failure, not a shell 127."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        code = project_scope.launch_agent_driver(
+            "/work/project-a", "no_such_driver --flag", "s-123", agent_mode="raw"
+        )
+        self.assertEqual(code, 5)
+        mock_popen.assert_not_called()
+
+    @patch("cli_topsailai.project_scope._apply_selected_model_environment",
+           return_value=({}, set()))
+    @patch("cli_topsailai.project_scope.subprocess.Popen")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_empty_driver_command_line_returns_4(
+        self, mock_getcwd, mock_chdir, mock_which, mock_popen, _mock_model
+    ):
+        """An unparseable driver command line is a preparation failure."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.side_effect = self._which()
+        code = project_scope.launch_agent_driver(
+            "/work/project-a", "   ", "s-123", agent_mode="raw"
+        )
+        self.assertEqual(code, 4)
+        mock_popen.assert_not_called()
+
 
 class TestResumeSession(unittest.TestCase):
     """Tests for resume_session."""
