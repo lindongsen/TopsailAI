@@ -1154,6 +1154,12 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         sys.exit(run_runtime_cli(argv[1:]))
 
+
+    if argv and argv[0] == "--internal-workspace-agent-supervisor":
+        from cli_topsailai.agent_launch_background import _supervisor_entry
+
+        _supervisor_entry(argv[1], int(argv[2]))
+        return
     if argv[:2] == ["workspace", "agent"]:
         from cli_topsailai.workspace_agent_cli import run_workspace_agent_cli
         sys.exit(run_workspace_agent_cli(argv[2:], startup_cwd=getattr(main, "startup_cwd", None)))

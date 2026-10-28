@@ -24,11 +24,13 @@ class WorkspaceAgentError(ValueError):
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the strict workspace-agent parser."""
     parser = argparse.ArgumentParser(
         prog="topsailai workspace agent",
         allow_abbrev=False,
-        description="Launch a configured agent in the foreground.",
-        epilog="--background is currently rejected with exit code 2; UNIT 1A provides no background submission.",
+        description="Launch a configured agent in a folder.",
+        epilog=("Foreground mode attaches to the launcher. Background mode is headless, "
+                "reports submission rather than readiness, and has no --json output."),
     )
     parser.add_argument("folder", help="agent workspace folder")
     parser.add_argument(
@@ -37,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "-b", "--background", action="store_true",
-        help="currently rejected with exit code 2 (foreground only)",
+        help="submit a headless raw launch under a detached supervisor",
     )
     return parser
 
@@ -57,11 +59,11 @@ def run_workspace_agent_cli(argv, *, startup_cwd: Optional[str] = None) -> int:
     """Parse and launch one configured agent without entering the watcher."""
     try:
         args = build_parser().parse_args(list(argv))
-        if args.background:
-            print("[ERROR] --background is not yet available", file=sys.stderr)
-            return 2
         modes = args.agent_mode or []
         mode = modes[0] if modes else None
+        if args.background and mode in ("dtach", "tmux"):
+            print("[ERROR] --background supports raw mode only", file=sys.stderr)
+            return 2
         target = _resolve_folder(args.folder, startup_cwd)
     except SystemExit as error:
         return int(error.code)
@@ -71,4 +73,9 @@ def run_workspace_agent_cli(argv, *, startup_cwd: Optional[str] = None) -> int:
 
     from cli_topsailai.agent_launch import launch_configured_agent
 
-    return launch_configured_agent(target, mode=mode, background=args.background)
+    return launch_configured_agent(
+        target,
+        mode=mode,
+        background=args.background,
+        entrypoint_base=startup_cwd or os.getcwd(),
+    )

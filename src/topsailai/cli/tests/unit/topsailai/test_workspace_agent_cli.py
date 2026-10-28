@@ -13,7 +13,9 @@ def test_relative_folder_uses_startup_cwd(tmp_path):
     folder.mkdir()
     with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=7) as launch:
         assert run_workspace_agent_cli(["project", "-m", "raw"], startup_cwd=str(tmp_path)) == 7
-    launch.assert_called_once_with(str(folder), mode="raw", background=False)
+    launch.assert_called_once_with(
+        str(folder), mode="raw", background=False, entrypoint_base=str(tmp_path)
+    )
 
 
 def test_missing_folder_is_rejected(tmp_path):
@@ -43,7 +45,9 @@ def test_default_mode_is_forwarded_without_auto(tmp_path):
     folder.mkdir()
     with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
         assert run_workspace_agent_cli(["project"], startup_cwd=str(tmp_path)) == 0
-    launch.assert_called_once_with(str(folder), mode=None, background=False)
+    launch.assert_called_once_with(
+        str(folder), mode=None, background=False, entrypoint_base=str(tmp_path)
+    )
 
 
 def test_repeated_conflicting_modes_are_usage_errors(tmp_path):
@@ -83,14 +87,14 @@ def test_argument_error_matrix_is_usage_error(argv, capsys):
     assert capsys.readouterr().err
 
 
-def test_dedicated_parser_help_is_offline_and_describes_background_limit(capsys):
+def test_dedicated_parser_help_is_offline_and_describes_background_contract(capsys):
     from cli_topsailai.workspace_agent_cli import build_parser
     with pytest.raises(SystemExit) as error:
         build_parser().parse_args(["--help"])
     assert error.value.code == 0
     output = capsys.readouterr().out
-    assert "--background is currently rejected with exit code 2" in output
-    assert "foreground only" in output
+    assert "Background mode is headless" in output
+    assert "submission rather than readiness" in output
 
 
 @pytest.mark.parametrize("tool, expected", [("tmux", "tmux"), ("dtach", "dtach"), (None, "raw")])
@@ -131,7 +135,9 @@ def test_real_core_parser_resolves_relative_folder_against_startup_cwd(tmp_path,
         with pytest.raises(SystemExit) as error:
             core.main(["workspace", "agent", "project", "-m", "raw"])
     assert error.value.code == 0
-    launch.assert_called_once_with(str(target), mode="raw", background=False)
+    launch.assert_called_once_with(
+        str(target), mode="raw", background=False, entrypoint_base=str(tmp_path)
+    )
 
 
 class _StatusChild:

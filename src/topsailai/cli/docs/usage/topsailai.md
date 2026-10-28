@@ -239,7 +239,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 |---------|-------------|
 | `runtime` | Execute one exact send, btw, control or logs operation; see the contract above. |
 | `workspace [-f json]` | Display the workspace task list and exit. The default is the human-readable table; `-f json` or `--format json` emits one JSON document. |
-| `workspace agent <folder> [-m MODE] [-b/--background]` | Launch a configured agent in the foreground; background is recognized but temporarily rejected with exit code 2. |
+| `workspace agent <folder> [-m MODE] [-b/--background]` | Launch a configured agent in the foreground; background is headless raw mode; explicit dtach/tmux with background is rejected with exit code 2. |
 | `workspace driver <start/status/stop> -s SESSION [-p PID] [--json]` | Start, inspect or stop one exact session driver; see below. |
 | `docs list` | List all usage documentation files and exit. |
 | `docs read <name>` | Read a specific usage documentation file and exit. |
@@ -263,7 +263,7 @@ The JSON workspace document contains `host`, `pwd`, `home`, `task_dir`, `items`,
 topsailai workspace agent <folder> [-m raw|dtach|tmux] [-b|--background]
 ```
 
-The folder is resolved relative to the caller's startup directory. Foreground mode attaches to the launcher, prints `[INFO] Launching agent: ...`, restores the caller's environment and working directory, and returns its observed exit code. Exit code `2` means generic usage failure or the currently rejected `--background`; `3` means the folder is missing or not a directory; `4` means preparation failure; `5` means spawn or launcher wait failure; `6` means owned-child custody cannot be confirmed; `130` means cancellation; otherwise observed child statuses `0..255` are preserved and a signal maps to `128 + signal`. A dtach/tmux wrapper client exit is not agent completion. `--background` is recognized but currently rejected with exit code 2 and `[ERROR] --background is not yet available`; it does not launch or create files. UNIT 1A provides no background submission; a future `submitted` state would mean not-ready, not successful initialization. This command intentionally has no `--json` output. Foreground stdin and standard streams are inherited by the directly owned launcher.
+The folder is resolved relative to the caller's startup directory. Foreground mode attaches to the launcher, prints `[INFO] Launching agent: ...`, restores the caller's environment and working directory, and returns its observed exit code. Background mode is headless raw execution with stdin closed; a detached supervisor acknowledges a live launcher and reports the actual launcher PID plus a private rotating `.agent-launch.log` under `TOPSAILAI_HOME/workspace/task/`. Submission is not readiness, there is no terminal reattachment, and active launch leases protect logs from expiry cleanup. Exit code `2` means generic usage failure or explicit dtach/tmux with background; `3` means the folder is missing or not a directory; `4` means preparation failure; `5` means spawn or launcher wait failure; `6` means startup acknowledgement or owned custody cannot be confirmed; `130` means cancellation; otherwise observed child statuses `0..255` are preserved and a signal maps to `128 + signal`. A dtach/tmux wrapper client exit is not agent completion. This command intentionally has no `--json` output. Foreground stdin and standard streams are inherited by the directly owned launcher.
 
 ## Examples
 

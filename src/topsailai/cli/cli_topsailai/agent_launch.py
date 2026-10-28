@@ -66,14 +66,18 @@ def _stop_owned_child(child) -> bool:
         return False
 
 
-def launch_configured_agent(folder: str, *, mode: str | None, background: bool = False, spawn=None) -> int:
+def launch_configured_agent(folder: str, *, mode: str | None, background: bool = False, spawn=None,
+                            entrypoint_base: str | None = None) -> int:
     """Launch an agent and make restoration failure observable."""
     original_cwd = os.getcwd()
     original_environment = os.environ.copy()
     result = None
     restore_errors = []
     try:
-        result = _launch_configured_agent_impl(folder, mode=mode, background=background, spawn=spawn)
+        result = _launch_configured_agent_impl(
+            folder, mode=mode, background=background, spawn=spawn,
+            entrypoint_base=entrypoint_base,
+        )
     finally:
         try:
             os.chdir(original_cwd)
@@ -93,23 +97,76 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
     return result
 
 def _launch_configured_agent_impl(
-    folder: str, *, mode: str | None, background: bool = False, spawn=None
+    folder: str, *, mode: str | None, background: bool = False, spawn=None,
+    entrypoint_base: str | None = None,
 ) -> int:
     """Launch one configured agent and return its boundary status."""
-    if background:
-        print("[ERROR] --background is not yet available", file=sys.stderr)
+    if background and mode in ("dtach", "tmux"):
+        print("[ERROR] --background supports raw mode only", file=sys.stderr)
         return 2
     if spawn is None:
         spawn = _spawn_process
 
-    original_cwd = os.getcwd()
-    original_environment = os.environ.copy()
     session_id = None
     child = None
     result = 4
+    # The detached supervisor entry point is resolved against the caller's
+    # invocation directory, which is captured before any folder change.
+    invocation_cwd = entrypoint_base or os.getcwd()
     try:
         session_id = _session_id()
-        effective_mode = mode or _detect_agent_mode()
+        try:
+            effective_mode = "raw" if background else (mode or _detect_agent_mode())
+        except (RuntimeError, ValueError, OSError) as error:
+            print(f"[ERROR] Agent launch preparation failed: {error}", file=sys.stderr)
+            return 4
+        if background:
+            print(
+                f"[INFO] Submitting agent: workspace={folder} mode=raw "
+                f"background=yes session={session_id}"
+            )
+            from cli_topsailai.agent_launch_background import (
+                BackgroundUnconfirmed,
+                launch_background,
+            )
+
+            try:
+                _prepare_environment(folder, session_id)
+            except (RuntimeError, ValueError, OSError) as error:
+                print(f"[ERROR] Agent launch preparation failed: {error}", file=sys.stderr)
+                return 4
+            try:
+                background_result = launch_background(
+                    folder,
+                    session_id,
+                    environment=os.environ.copy(),
+                    spawn=spawn,
+                    entrypoint_base=invocation_cwd,
+                )
+            except BackgroundUnconfirmed as error:
+                print(f"[ERROR] Agent launch custody unresolved: {error}", file=sys.stderr)
+                return 6
+            except (OSError, ValueError, RuntimeError) as error:
+                print(f"[ERROR] Agent launch failed: {error}", file=sys.stderr)
+                return 5
+            if background_result.get("outcome") == "cancelled":
+                exit_code = background_result.get("exit_code", 6)
+                if exit_code != 130 or not background_result.get("cleanup_confirmed"):
+                    return 6
+                print(f"[INFO] Agent launch cancelled: session={session_id}")
+                return 130
+            launcher_pid = background_result["launcher_pid"]
+            log_path = background_result["log_path"]
+            print(
+                f"[INFO] Agent submitted: session={session_id} "
+                f"launcher_pid={launcher_pid} mode=raw background=yes"
+            )
+            print(f"[INFO] Launch log: {log_path}")
+            print("[INFO] Startup is not confirmed; inspect the launch log and workspace task list")
+            print("[INFO] Watch: topsailai workspace")
+            print(f"[INFO] Resume when idle: topsailai project resume {session_id}")
+            return 0
+
         print(
             f"[INFO] Launching agent: workspace={folder} mode={effective_mode} "
             f"background=no session={session_id}"
@@ -166,5 +223,13 @@ def _launch_configured_agent_impl(
         else:
             print(f"[ERROR] Agent launch preparation failed: {error}", file=sys.stderr)
             result = 4
-    return result
+    except Exception as error:
+        from cli_topsailai.agent_launch_background import BackgroundUnconfirmed
 
+        if isinstance(error, BackgroundUnconfirmed):
+            print(f"[ERROR] Agent launch custody unresolved: {error}", file=sys.stderr)
+            result = 6
+        else:
+            print(f"[ERROR] Agent launch failed: {error}", file=sys.stderr)
+            result = 6 if child is not None and not _stop_owned_child(child) else 5
+    return result

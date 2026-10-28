@@ -252,7 +252,7 @@ def print_help(
         },
         {
             "cmd": "topsailai workspace agent <folder> [-m MODE] [-b|--background]",
-            "desc": "Canonical foreground workspace-agent launch. See docs/usage/topsailai.md#workspace-agent. The folder is resolved against the caller's startup directory; omit -m for automatic mode selection. --background is currently rejected with exit code 2. Exit codes: 0..255 observed child status, 128+signal, 2 usage or background rejection, 3 invalid folder, 4 preparation failure, 5 spawn/wait failure, 6 unresolved custody, 130 cancellation. A wrapper exit is not agent completion. UNIT 1A has no background submission; future submitted means not-ready. No --json output.",
+            "desc": "Workspace-agent launch in foreground or detached headless background mode. See docs/usage/topsailai.md#workspace-agent. The folder is resolved against the caller's startup directory; omit -m for automatic foreground mode selection. Background defaults to raw mode, closes stdin, reports the actual launcher PID and rotating launch-log path, and submission is not readiness. Explicit dtach/tmux with --background is rejected with exit code 2. Exit codes: 0..255 observed child status, 128+signal, 2 usage or background rejection, 3 invalid folder, 4 preparation failure, 5 spawn/wait failure, 6 unresolved custody, 130 cancellation. A wrapper exit is not agent completion. Background logs and backups participate in expiry cleanup while active launch leases protect live logs. There is no terminal reattachment and no --json output.",
             "example": "Example: topsailai workspace agent /path/to/project -m raw",
             "scopes": ["workspace"],
         },

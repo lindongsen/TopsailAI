@@ -6,6 +6,7 @@ import subprocess
 import pytest
 from unittest.mock import patch
 
+import cli_topsailai.agent_launch_background
 from cli_topsailai.agent_launch import launch_configured_agent
 
 
@@ -336,14 +337,16 @@ def test_model_preparation_values_reach_child_and_parent_is_restored(tmp_path):
             os.environ["MODEL_TEST_FORWARDED"] = original
 
 
-def test_background_rejection_has_no_side_effects(tmp_path):
-    spawn = lambda *a, **k: pytest.fail("background rejection spawned a child")
-    with patch("cli_topsailai.agent_launch._session_id", side_effect=AssertionError("session created")), \
-         patch("cli_topsailai.agent_launch._detect_agent_mode", side_effect=AssertionError("mode detected")), \
-         patch("cli_topsailai.agent_launch._prepare_environment", side_effect=AssertionError("environment prepared")):
-        assert launch_configured_agent(str(tmp_path), mode=None, background=True, spawn=spawn) == 2
-    assert list(tmp_path.iterdir()) == []
-
+def test_background_mode_delegates_without_foreground_spawn(tmp_path, capsys):
+    """Background mode delegates to the detached supervisor boundary."""
+    with patch("cli_topsailai.agent_launch._session_id", return_value="fixed"), \
+         patch("cli_topsailai.agent_launch._apply_selected_model_environment", return_value=({}, set())), \
+         patch("cli_topsailai.agent_launch_background.launch_background", return_value={
+             "launcher_pid": 1234, "log_path": str(tmp_path / "fixed.agent-launch.log"),
+         }) as launch:
+        assert launch_configured_agent(str(tmp_path), mode=None, background=True) == 0
+    launch.assert_called_once()
+    assert "launcher_pid=1234" in capsys.readouterr().out
 
 def test_model_preparation_none_maps_to_four_without_spawn(tmp_path):
     spawned = []
@@ -466,3 +469,30 @@ def test_cwd_restore_failure_still_restores_environment_with_module_local_os(tmp
     assert fake_environment == original_environment
     assert "NEW_KEY" not in fake_environment
     assert chdir_calls == ["/caller"]
+
+
+@pytest.mark.parametrize(
+    ("background_result", "expected", "message"),
+    [
+        ({"outcome": "cancelled", "exit_code": 6, "cleanup_confirmed": False}, 6, None),
+        ({"outcome": "cancelled", "exit_code": 130, "cleanup_confirmed": False}, 6, None),
+        ({"outcome": "cancelled", "exit_code": 130, "cleanup_confirmed": True}, 130, "Agent launch cancelled"),
+    ],
+)
+def test_background_cancellation_result_contracts(
+    tmp_path, capsys, background_result, expected, message
+):
+    """Map cancellation result envelopes only when custody is confirmed."""
+    with patch("cli_topsailai.agent_launch._session_id", return_value="fixed"), \
+         patch("cli_topsailai.agent_launch._apply_selected_model_environment", return_value=({}, set())), \
+         patch("cli_topsailai.agent_launch_background.launch_background", return_value=background_result):
+        assert launch_configured_agent(str(tmp_path), mode="raw", background=True) == expected
+    if message is not None:
+        assert message in capsys.readouterr().out
+
+
+def test_background_unexpected_failure_without_owned_child_maps_to_five(tmp_path):
+    """An unexpected preparation exception without a child is an ordinary failure."""
+    with patch("cli_topsailai.agent_launch._session_id", return_value="fixed"), \
+         patch("cli_topsailai.agent_launch._prepare_environment", side_effect=Exception("unexpected")):
+        assert launch_configured_agent(str(tmp_path), mode="raw") == 5
