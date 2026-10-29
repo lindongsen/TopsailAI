@@ -10,10 +10,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import select
 import shlex
 import shutil
 import subprocess
-import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import TYPE_CHECKING, Callable, List
@@ -63,6 +64,19 @@ _LAUNCH_ENV_KEYS = ("TOPSAILAI_PWD", "PWD") + _IDENTITY_ENV_KEYS
 # grow without limit and a hung query must not block the resume forever.
 _LOOKUP_TIMEOUT_SECONDS = 30.0
 _LOOKUP_MAX_BYTES = 4 * 1024 * 1024
+
+# In-flight capture tuning. The reader consumes the child pipe in chunks of at
+# most _LOOKUP_READ_CHUNK bytes and stops at the byte budget, so the retained
+# data never exceeds _LOOKUP_MAX_BYTES per channel. Bytes the child already
+# wrote into the kernel pipe buffer before consumption stopped are bounded by
+# the pipe capacity (measured 65536 bytes on this host via F_GETPIPE_SZ);
+# _LOOKUP_CAPTURE_MARGIN is a deliberately generous upper bound for that
+# unread remainder and is reported when the budget is exceeded.
+_LOOKUP_READ_CHUNK = 64 * 1024
+_LOOKUP_CAPTURE_MARGIN = 1024 * 1024
+_LOOKUP_POLL_INTERVAL = 0.01
+_LOOKUP_DRAIN_SECONDS = 5.0
+_LOOKUP_REAP_SECONDS = 5.0
 
 
 def _is_pid_alive(pid: int) -> bool:
@@ -1193,16 +1207,132 @@ def lookup_persisted_session(
     return matches[0]
 
 
-def _bounded_stream_text(stream, limit: int) -> tuple[str, bool]:
-    """Read at most *limit* bytes from a captured stream.
+class _LookupChannel:
+    """Capture one child channel under a hard in-flight byte budget.
 
-    Returns the decoded text and whether the stream held more bytes than the
-    limit, so an oversized payload is reported instead of silently truncated.
+    The descriptor is read in bounded chunks by the caller's own thread and
+    consumption stops the moment the budget is exceeded, so this process never
+    holds more than ``limit`` bytes for the channel. Overflow is therefore
+    detected while the child is still running, which lets the caller terminate
+    it instead of discovering the problem only after the child has written
+    everything.
+
+    No reader thread is used: the descriptor is non-blocking and is pumped by
+    the caller, so ``close`` only closes a raw descriptor and can never wait
+    behind a reader that is blocked on an inherited write end.
     """
-    stream.seek(0)
-    data = stream.read(limit + 1)
-    truncated = len(data) > limit
-    return data[:limit].decode("utf-8", "replace"), truncated
+
+    def __init__(self, fd: int, limit: int) -> None:
+        self._fd = fd
+        self._limit = limit
+        self._chunks: List[bytes] = []
+        self._size = 0
+        self.eof = False
+        self.overflow = False
+        self.error: Optional[BaseException] = None
+
+    @property
+    def fd(self) -> int:
+        """Return the open descriptor, or -1 once it has been closed."""
+        return self._fd
+
+    def pump(self) -> None:
+        """Read bounded chunks without ever blocking.
+
+        The descriptor is non-blocking, so this drains whatever the kernel has
+        buffered and returns as soon as the pipe is empty. Consumption stops
+        immediately once the byte budget is exceeded.
+        """
+        while self._fd >= 0 and not self.eof and not self.overflow:
+            try:
+                chunk = os.read(self._fd, _LOOKUP_READ_CHUNK)
+            except BlockingIOError:
+                return
+            except OSError as error:
+                self.error = error
+                self.eof = True
+                return
+            if not chunk:
+                self.eof = True
+                return
+            remaining = self._limit - self._size
+            if len(chunk) > remaining:
+                # Keep only the budgeted prefix; the excess proves overflow.
+                if remaining > 0:
+                    self._chunks.append(chunk[:remaining])
+                    self._size += remaining
+                self.overflow = True
+                return
+            self._chunks.append(chunk)
+            self._size += len(chunk)
+
+    def close(self) -> None:
+        """Close the raw descriptor; this never waits for a reader."""
+        fd = self._fd
+        self._fd = -1
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    @property
+    def size(self) -> int:
+        """Return the number of bytes retained for this channel."""
+        return self._size
+
+    def text(self) -> str:
+        """Return the retained bytes decoded for diagnostics."""
+        return b"".join(self._chunks).decode("utf-8", "replace")
+
+
+def _lookup_command(session_id: str) -> List[str]:
+    """Return the argv of the single authoritative session query."""
+    return ["topsailai_list_sessions", "--json", "--", session_id]
+
+
+def _reap_lookup_child(child, timeout: float) -> bool:
+    """Wait for the child within *timeout*, surviving repeated interrupts.
+
+    A second ``KeyboardInterrupt`` while reaping must not abandon the owned
+    query, so the bounded wait is retried until it completes or the deadline
+    passes.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return child.poll() is not None
+        try:
+            child.wait(timeout=remaining)
+            return True
+        except subprocess.TimeoutExpired:
+            return False
+        except KeyboardInterrupt:
+            continue
+
+
+def _terminate_lookup_child(child) -> None:
+    """Terminate and reap one lookup child by its exact PID.
+
+    The child is signalled directly, never by name or process group, and is
+    always reaped, so an overflow, timeout or interruption cannot leave an
+    orphan query process behind. Every wait is bounded, so cleanup itself can
+    never block indefinitely.
+    """
+    if child.poll() is None:
+        try:
+            child.terminate()
+        except OSError as error:
+            print(f"[WARN] Cannot terminate lookup process {child.pid}: {error}")
+    if _reap_lookup_child(child, _LOOKUP_REAP_SECONDS):
+        return
+    try:
+        child.kill()
+    except OSError as error:
+        print(f"[WARN] Cannot kill lookup process {child.pid}: {error}")
+    if not _reap_lookup_child(child, _LOOKUP_REAP_SECONDS):
+        print(f"[WARN] Lookup process {child.pid} did not exit after SIGKILL")
 
 
 def _lookup_diagnostic(stdout: str, stderr: str) -> str:
@@ -1219,42 +1349,200 @@ def _lookup_diagnostic(stdout: str, stderr: str) -> str:
     return " | ".join(parts) if parts else "no diagnostic output"
 
 
+def _open_lookup_pipes():
+    """Create the two capture pipes, closing any partial result on failure.
+
+    Non-blocking configuration is part of the same protected region as the
+    pipe creation: ``os.set_blocking`` runs after the descriptors exist, so a
+    failure there (or an interruption during setup) must still close every
+    descriptor that was created. Otherwise the descriptors would be lost
+    before the caller can take ownership of them.
+    """
+    out_read = out_write = err_read = err_write = -1
+    try:
+        out_read, out_write = os.pipe()
+        err_read, err_write = os.pipe()
+        for fd in (out_read, err_read):
+            os.set_blocking(fd, False)
+    except BaseException:
+        for fd in (out_read, out_write, err_read, err_write):
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        raise
+    return out_read, out_write, err_read, err_write
+
+
+def _pump_channels(channels, timeout: float) -> None:
+    """Consume whatever is readable on the capture descriptors within *timeout*.
+
+    Only channels that are still open and not yet at EOF are polled, so a
+    finished channel cannot make ``select`` return immediately and spin the
+    loop. When ``select`` cannot watch these descriptors the wait degrades to a
+    bounded sleep followed by non-blocking reads, so the loop stays bounded and
+    never busy-spins.
+    """
+    pending = [
+        channel for channel in channels
+        if channel.fd >= 0 and not channel.eof and not channel.overflow
+    ]
+    if not pending:
+        time.sleep(timeout)
+        return
+    readable = None
+    try:
+        readable, _, _ = select.select(
+            [channel.fd for channel in pending], [], [], timeout,
+        )
+    except (OSError, ValueError):
+        readable = None
+    if readable is None:
+        time.sleep(min(timeout, _LOOKUP_POLL_INTERVAL))
+        readable = [channel.fd for channel in pending]
+    for channel in pending:
+        if channel.fd in readable:
+            channel.pump()
+
+
+def _drain_lookup_channels(out_channel, err_channel) -> bool:
+    """Drain both channels to EOF within the bounded drain window.
+
+    Returns False when a channel is still open after the window, which happens
+    when a descendant inherited the write end. The caller reports a lookup
+    failure instead of blocking, and closing the raw descriptors afterwards
+    never waits for a reader.
+    """
+    deadline = time.monotonic() + _LOOKUP_DRAIN_SECONDS
+    while True:
+        pending = [
+            channel for channel in (out_channel, err_channel)
+            if channel.fd >= 0 and not channel.eof and not channel.overflow
+        ]
+        if not pending:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        _pump_channels(pending, min(remaining, _LOOKUP_POLL_INTERVAL))
+
+
 def _query_session_records(session_id: str) -> List[Dict[str, Any]]:
     """Run the single authoritative session query for one identity.
 
-    The capture is bounded in both bytes and duration. A failed command, an
-    empty payload, oversized output or a malformed payload is reported as a
-    lookup failure so it can never be reinterpreted as an empty (idle) result.
+    The capture is bounded in both bytes and duration, and it is pumped by this
+    thread from raw non-blocking descriptors: there is no reader thread, so no
+    close can wait behind a blocked reader. The byte budget is enforced while
+    the child is still writing, and the child is terminated and reaped on
+    overflow, timeout or interruption, so no query process is left behind.
+    Cleanup responsibility starts before the spawn, so an interruption at any
+    point after the pipes exist still closes them and reaps the child.
+    A failed command, an empty payload, oversized output or a malformed payload
+    is reported as a lookup failure so it can never be reinterpreted as an
+    empty (idle) result.
     """
-    cmd = ["topsailai_list_sessions", "--json", "--", session_id]
-    with tempfile.TemporaryFile() as out_stream, tempfile.TemporaryFile() as err_stream:
+    cmd = _lookup_command(session_id)
+    try:
+        out_read, out_write, err_read, err_write = _open_lookup_pipes()
+    except OSError as error:
+        raise ResumeLookupError(
+            f"failed to run topsailai_list_sessions: {error}"
+        ) from error
+    try:
+        out_channel = _LookupChannel(out_read, _LOOKUP_MAX_BYTES)
+        err_channel = _LookupChannel(err_read, _LOOKUP_MAX_BYTES)
+    except BaseException:
+        # Channel construction is part of the protected region: an interruption
+        # or exception here must not lose the descriptors that already exist.
+        for fd in (out_read, out_write, err_read, err_write):
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        raise
+    child = None
+    overflow = False
+    timed_out = False
+    drained = False
+    returncode = None
+    try:
         try:
-            result = subprocess.run(
+            child = subprocess.Popen(
                 cmd,
-                stdout=out_stream,
-                stderr=err_stream,
-                timeout=_LOOKUP_TIMEOUT_SECONDS,
-                check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=out_write,
+                stderr=err_write,
+                close_fds=True,
             )
-        except subprocess.TimeoutExpired as error:
-            raise ResumeLookupError(
-                f"topsailai_list_sessions timed out after "
-                f"{_LOOKUP_TIMEOUT_SECONDS:g}s"
-            ) from error
         except Exception as error:
             raise ResumeLookupError(
                 f"failed to run topsailai_list_sessions: {error}"
             ) from error
-        stdout, stdout_truncated = _bounded_stream_text(out_stream, _LOOKUP_MAX_BYTES)
-        stderr, stderr_truncated = _bounded_stream_text(err_stream, _LOOKUP_MAX_BYTES)
-    if result.returncode != 0:
+        finally:
+            # The parent must not keep the write ends, otherwise EOF never
+            # arrives. This also runs when the spawn itself failed.
+            for fd in (out_write, err_write):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        deadline = time.monotonic() + _LOOKUP_TIMEOUT_SECONDS
+        while True:
+            _pump_channels((out_channel, err_channel), _LOOKUP_POLL_INTERVAL)
+            if out_channel.overflow or err_channel.overflow:
+                overflow = True
+                break
+            if child.poll() is not None:
+                break
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+        if overflow or timed_out:
+            _terminate_lookup_child(child)
+        drained = _drain_lookup_channels(out_channel, err_channel)
+        overflow = overflow or out_channel.overflow or err_channel.overflow
+        returncode = child.poll()
+    except BaseException:
+        # Interruption or any other exceptional exit must not leave the owned
+        # query running; termination and reaping stay bounded.
+        if child is not None:
+            _terminate_lookup_child(child)
+        raise
+    finally:
+        out_channel.close()
+        err_channel.close()
+    stdout = out_channel.text()
+    stderr = err_channel.text()
+    if timed_out:
         raise ResumeLookupError(
-            f"topsailai_list_sessions failed (status {result.returncode}): "
-            f"{_lookup_diagnostic(stdout, stderr)}"
+            f"topsailai_list_sessions timed out after "
+            f"{_LOOKUP_TIMEOUT_SECONDS:g}s"
         )
-    if stdout_truncated or stderr_truncated:
+    if overflow:
         raise ResumeLookupError(
-            f"topsailai_list_sessions output exceeded {_LOOKUP_MAX_BYTES} bytes"
+            f"topsailai_list_sessions output exceeded {_LOOKUP_MAX_BYTES} bytes "
+            f"(captured {out_channel.size} bytes on stdout, "
+            f"{err_channel.size} bytes on stderr, "
+            f"pipe margin {_LOOKUP_CAPTURE_MARGIN} bytes)"
+        )
+    # An unreadable channel makes the payload untrustworthy: reporting it as a
+    # lookup failure keeps it from becoming a false "empty".
+    if out_channel.error is not None or err_channel.error is not None:
+        raise ResumeLookupError(
+            "failed to read topsailai_list_sessions output: "
+            f"{out_channel.error or err_channel.error}"
+        )
+    if not drained:
+        raise ResumeLookupError(
+            "topsailai_list_sessions output could not be drained within "
+            f"{_LOOKUP_DRAIN_SECONDS:g}s"
+        )
+    if returncode != 0:
+        raise ResumeLookupError(
+            f"topsailai_list_sessions failed (status {returncode}): "
+            f"{_lookup_diagnostic(stdout, stderr)}"
         )
     if not stdout.strip():
         raise ResumeLookupError(

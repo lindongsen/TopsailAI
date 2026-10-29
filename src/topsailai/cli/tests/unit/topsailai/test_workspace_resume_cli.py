@@ -281,53 +281,131 @@ def test_malformed_lookup_payload_is_a_lookup_failure(tmp_path, capsys):
     assert "malformed record" in capsys.readouterr().out
 
 
+def _writer_command(code):
+    """Return a real interpreter argv that runs *code* as the lookup child."""
+    import sys
+
+    return [sys.executable, "-c", code]
+
+
+def _pid_alive(pid):
+    """Return True while *pid* still exists."""
+    import os
+
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def _read_pid(path):
+    """Read a PID recorded by a writer child."""
+    import pathlib
+
+    return int(pathlib.Path(path).read_text().strip())
+
+
 def test_empty_lookup_stdout_is_a_lookup_failure(tmp_path, capsys):
     """Empty stdout cannot be read as an empty (idle) result."""
     from unittest.mock import patch
     from cli_topsailai import project_scope as scope
 
-    def _run(cmd, stdout=None, stderr=None, timeout=None, check=False):
-        """Simulate a command that exits cleanly but prints nothing."""
-        class _Result:
-            returncode = 0
-        return _Result()
-
-    with patch.object(scope.subprocess, "run", side_effect=_run):
+    with patch.object(scope, "_lookup_command", return_value=_writer_command("pass")):
         assert scope.resume_session_result("session-123", home=str(tmp_path)) == 4
     assert "no JSON payload" in capsys.readouterr().out
 
 
 def test_oversized_lookup_output_is_a_lookup_failure(tmp_path, capsys):
-    """An unbounded payload is rejected instead of silently truncated."""
+    """A writer far beyond the limit is stopped while it is still writing."""
+    import pytest
     from unittest.mock import patch
     from cli_topsailai import project_scope as scope
 
-    def _run(cmd, stdout=None, stderr=None, timeout=None, check=False):
-        """Write more bytes than the configured capture limit."""
-        stdout.write(b"[" + b" " * (scope._LOOKUP_MAX_BYTES + 16) + b"]")
-
-        class _Result:
-            returncode = 0
-        return _Result()
-
-    with patch.object(scope.subprocess, "run", side_effect=_run):
+    pidfile = tmp_path / "writer.pid"
+    progress = tmp_path / "writer.progress"
+    target = 8 * 1024 * 1024
+    code = (
+        "import os, sys\n"
+        f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
+        "written = 0\n"
+        "chunk = ' ' * 65536\n"
+        "sys.stdout.write('[')\n"
+        "sys.stdout.flush()\n"
+        "written = 1\n"
+        "while written < %d:\n"
+        "    sys.stdout.write(chunk)\n"
+        "    sys.stdout.flush()\n"
+        "    written += len(chunk)\n"
+        f"    tmp = {str(progress)!r} + '.tmp'\n"
+        "    open(tmp, 'w').write(str(written))\n"
+        f"    os.replace(tmp, {str(progress)!r})\n"
+        "sys.stdout.write(']')\n" % target
+    )
+    with patch.object(scope, "_lookup_command", return_value=_writer_command(code)):
+        with pytest.raises(scope.ResumeLookupError) as error:
+            scope._query_session_records("session-123")
+    message = str(error.value)
+    assert "exceeded" in message
+    # The retained capture must stay inside the declared budget.
+    assert "captured " in message, message
+    captured = int(message.split("captured ")[1].split(" bytes")[0])
+    assert captured <= scope._LOOKUP_MAX_BYTES
+    # The writer must have been stopped in flight, not after finishing. The
+    # progress record is replaced atomically, so a missing record means the
+    # writer was stopped before it completed even one chunk.
+    written = int(progress.read_text()) if progress.exists() else 0
+    assert written < target, f"writer completed {written} bytes before being stopped"
+    assert written <= scope._LOOKUP_MAX_BYTES + scope._LOOKUP_CAPTURE_MARGIN
+    writer_pid = _read_pid(pidfile)
+    assert not _pid_alive(writer_pid), f"writer {writer_pid} survived overflow"
+    # The public boundary reports the same failure as a lookup error.
+    with patch.object(scope, "_lookup_command", return_value=_writer_command(code)):
         assert scope.resume_session_result("session-123", home=str(tmp_path)) == 4
     assert "exceeded" in capsys.readouterr().out
 
 
-def test_lookup_timeout_is_a_lookup_failure(tmp_path, capsys):
-    """A hung authoritative query fails closed within a bounded duration."""
-    import subprocess as sp
+def test_lookup_output_exactly_at_limit_is_accepted(tmp_path):
+    """A payload of exactly the limit is a boundary, not an off-by-one reject."""
     from unittest.mock import patch
     from cli_topsailai import project_scope as scope
 
-    def _run(cmd, stdout=None, stderr=None, timeout=None, check=False):
-        """Simulate the bounded capture expiring."""
-        raise sp.TimeoutExpired(cmd, timeout)
+    limit = scope._LOOKUP_MAX_BYTES
+    code = f"import sys\nsys.stdout.write('[' + ' ' * {limit - 2} + ']')\n"
+    with patch.object(scope, "_lookup_command", return_value=_writer_command(code)):
+        assert scope._query_session_records("session-123") == []
 
-    with patch.object(scope.subprocess, "run", side_effect=_run):
-        assert scope.resume_session_result("session-123", home=str(tmp_path)) == 4
+
+def test_lookup_output_one_byte_over_limit_is_rejected(tmp_path):
+    """One byte beyond the limit is an overflow, not a silent truncation."""
+    import pytest
+    from unittest.mock import patch
+    from cli_topsailai import project_scope as scope
+
+    limit = scope._LOOKUP_MAX_BYTES
+    code = f"import sys\nsys.stdout.write('[' + ' ' * {limit - 1} + ']')\n"
+    with patch.object(scope, "_lookup_command", return_value=_writer_command(code)):
+        with pytest.raises(scope.ResumeLookupError, match="exceeded"):
+            scope._query_session_records("session-123")
+
+
+def test_lookup_timeout_is_a_lookup_failure(tmp_path, capsys):
+    """A hung authoritative query fails closed and its process is reaped."""
+    from unittest.mock import patch
+    from cli_topsailai import project_scope as scope
+
+    pidfile = tmp_path / "hung.pid"
+    code = (
+        "import os, sys, time\n"
+        f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
+        "time.sleep(120)\n"
+    )
+    with patch.object(scope, "_lookup_command", return_value=_writer_command(code)):
+        with patch.object(scope, "_LOOKUP_TIMEOUT_SECONDS", 0.5):
+            assert scope.resume_session_result("session-123", home=str(tmp_path)) == 4
     assert "timed out" in capsys.readouterr().out
+    hung_pid = _read_pid(pidfile)
+    assert not _pid_alive(hung_pid), f"hung query {hung_pid} survived timeout"
 
 
 def test_lookup_failure_diagnostic_reads_both_channels(tmp_path, capsys):
@@ -335,17 +413,25 @@ def test_lookup_failure_diagnostic_reads_both_channels(tmp_path, capsys):
     from unittest.mock import patch
     from cli_topsailai import project_scope as scope
 
-    def _run(cmd, stdout=None, stderr=None, timeout=None, check=False):
-        """Fail with the reason on stdout, as the real query command does."""
-        stdout.write(b"Error: database is locked\n")
-
-        class _Result:
-            returncode = 1
-        return _Result()
-
-    with patch.object(scope.subprocess, "run", side_effect=_run):
+    code = (
+        "import sys\n"
+        "sys.stdout.write('Error: database is locked\\n')\n"
+        "sys.exit(1)\n"
+    )
+    with patch.object(scope, "_lookup_command", return_value=_writer_command(code)):
         assert scope.resume_session_result("session-123", home=str(tmp_path)) == 4
     assert "database is locked" in capsys.readouterr().out
+
+
+def test_empty_lookup_list_is_not_found(tmp_path, capsys):
+    """A genuine empty list is a not-found result, not a lookup failure."""
+    from unittest.mock import patch
+    from cli_topsailai import project_scope as scope
+
+    code = "import sys\nsys.stdout.write('[]')\n"
+    with patch.object(scope, "_lookup_command", return_value=_writer_command(code)):
+        assert scope.resume_session_result("session-123", home=str(tmp_path)) == 3
+    assert "no persisted session matches" in capsys.readouterr().out
 
 
 def test_workspace_permission_denied_is_rejected(tmp_path, capsys):
@@ -415,3 +501,432 @@ def test_lookup_issues_exactly_one_query_and_bounded_candidates(tmp_path):
             ) == 0
     query.assert_called_once_with("session-123")
     assert len(probes) == 5
+
+
+def _wait_for_file(path, timeout=10.0):
+    """Wait until *path* exists and is non-empty, returning its text."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            text = path.read_text().strip()
+        except OSError:
+            text = ""
+        if text:
+            return text
+        time.sleep(0.01)
+    raise AssertionError(f"{path} was not written within {timeout}s")
+
+
+def _kill_exact(pid):
+    """Kill one exact PID and log the action; never signal by name."""
+    import os
+    import signal
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+        print(f"[KILLED] exact pid {pid}")
+    except ProcessLookupError:
+        pass
+
+
+def test_lookup_interrupt_terminates_and_reaps_the_query(tmp_path):
+    """An interrupted lookup must not hang and must not leave the query alive.
+
+    The lookup runs in a child process so SIGINT is delivered to that child
+    only, never to the test runner. The interruption must propagate out of the
+    lookup and the owned query must be terminated and reaped.
+    """
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    pidfile = tmp_path / "interrupt.pid"
+    query_code = (
+        "import os, time\n"
+        f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
+        "time.sleep(120)\n"
+    )
+    wrapper = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(root)!r})\n"
+        "from unittest.mock import patch\n"
+        "from cli_topsailai import project_scope as scope\n"
+        f"with patch.object(scope, '_lookup_command', return_value={[sys.executable, '-c', query_code]!r}):\n"
+        "    scope._query_session_records('session-123')\n"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", wrapper],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    query_pid = None
+    query_alive_after = None
+    started = time.monotonic()
+    try:
+        query_pid = int(_wait_for_file(pidfile))
+        os.kill(process.pid, signal.SIGINT)
+        try:
+            process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            raise AssertionError("the interrupted lookup did not return within 10s")
+        elapsed = time.monotonic() - started
+        # Observe the query state BEFORE any fallback cleanup, so the death
+        # assertion below cannot be satisfied by the test's own kill.
+        query_alive_after = _pid_alive(query_pid)
+    finally:
+        if query_pid is not None and _pid_alive(query_pid):
+            _kill_exact(query_pid)
+        if process.poll() is None:
+            _kill_exact(process.pid)
+            process.communicate()
+    # The interruption must propagate: the caller dies from SIGINT.
+    assert process.returncode == -signal.SIGINT, (
+        f"interrupt status was {process.returncode}"
+    )
+    assert elapsed < 10, f"interrupted lookup took {elapsed:.2f}s"
+    assert query_alive_after is False, (
+        f"query {query_pid} survived the interruption"
+    )
+
+
+def test_lookup_interrupt_returns_130_through_the_public_boundary(tmp_path):
+    """A real CLI process interrupted mid-lookup exits 130 and reaps the query.
+
+    SIGINT is delivered to the CLI process only, which is the production
+    interruption path: the owned query must be terminated and reaped, and the
+    documented interrupt status must still be produced by the caller. A shell
+    reports a SIGINT-terminated process as status 130, so both the signal death
+    and an explicit 130 exit are accepted.
+    """
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    pidfile = tmp_path / "boundary.pid"
+    stub = bin_dir / "topsailai_list_sessions"
+    stub.write_text(
+        "#!" + sys.executable + "\n"
+        "import os, time\n"
+        f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
+        "time.sleep(120)\n"
+    )
+    stub.chmod(0o700)
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+    env["TOPSAILAI_HOME"] = str(tmp_path / "home")
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    process = subprocess.Popen(
+        [
+            sys.executable, str(root / "topsailai_cli.py"), "workspace", "resume",
+            "-s", "session-123", "-m", "raw",
+        ],
+        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    query_pid = None
+    query_alive_after = None
+    started = time.monotonic()
+    try:
+        query_pid = int(_wait_for_file(pidfile))
+        os.kill(process.pid, signal.SIGINT)
+        try:
+            process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            raise AssertionError("the interrupted CLI did not return within 10s")
+        elapsed = time.monotonic() - started
+        # Observe the query state BEFORE any fallback cleanup, so the death
+        # assertion below cannot be satisfied by the test's own kill.
+        query_alive_after = _pid_alive(query_pid)
+    finally:
+        if query_pid is not None and _pid_alive(query_pid):
+            _kill_exact(query_pid)
+        if process.poll() is None:
+            _kill_exact(process.pid)
+            process.communicate()
+    # A shell reports SIGINT death as 130; an explicit 130 exit is equivalent.
+    assert process.returncode in (-signal.SIGINT, 130), (
+        f"interrupt status was {process.returncode}"
+    )
+    assert elapsed < 10, f"interrupted resume took {elapsed:.2f}s"
+    assert query_alive_after is False, (
+        f"query {query_pid} survived the interruption"
+    )
+
+
+def test_lookup_drain_is_bounded_when_a_descendant_holds_the_pipe(tmp_path, capsys):
+    """A descendant inheriting the pipe must not block cleanup.
+
+    The query exits after spawning a child that keeps the write end open, so
+    EOF never arrives. Cleanup must still return within the bounded drain
+    window, report a lookup failure, and reap the owned query.
+    """
+    import json
+    import time
+    from unittest.mock import patch
+    from cli_topsailai import project_scope as scope
+
+    record = tmp_path / "inherited.json"
+    code = (
+        "import json, os, subprocess, sys\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(120)'])\n"
+        f"open({str(record)!r}, 'w').write(json.dumps("
+        "{'query': os.getpid(), 'desc': child.pid}))\n"
+        "sys.stdout.write('[]')\n"
+        "sys.stdout.flush()\n"
+    )
+    started = time.monotonic()
+    try:
+        with patch.object(scope, "_lookup_command", return_value=_writer_command(code)):
+            with patch.object(scope, "_LOOKUP_DRAIN_SECONDS", 0.2):
+                with patch.object(scope, "_LOOKUP_TIMEOUT_SECONDS", 5.0):
+                    status = scope.resume_session_result(
+                        "session-123", home=str(tmp_path),
+                    )
+        elapsed = time.monotonic() - started
+        data = json.loads(record.read_text())
+    finally:
+        if record.exists():
+            data = json.loads(record.read_text())
+            if _pid_alive(data["desc"]):
+                _kill_exact(data["desc"])
+    assert status == 4, f"drain failure status was {status}"
+    assert elapsed < 5, f"bounded drain took {elapsed:.2f}s"
+    assert "could not be drained" in capsys.readouterr().out
+    assert not _pid_alive(data["query"]), (
+        f"query {data['query']} was not reaped"
+    )
+
+
+def test_lookup_pipe_setup_failure_still_reaps_the_query(tmp_path):
+    """A failure after spawn must still terminate and reap the owned query."""
+    import os
+    import time
+    from unittest.mock import patch
+    from cli_topsailai import project_scope as scope
+
+    pidfile = tmp_path / "setup.pid"
+    code = (
+        "import os, time\n"
+        f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
+        "time.sleep(120)\n"
+    )
+    query_pid = {"pid": None}
+    query_alive_after = {"alive": None}
+
+    def _fail_after_spawn(channels, timeout):
+        """Fail once the child is running, after the spawn has succeeded."""
+        query_pid["pid"] = int(_wait_for_file(pidfile))
+        raise RuntimeError("simulated post-spawn failure")
+
+    try:
+        with patch.object(scope, "_lookup_command", return_value=_writer_command(code)):
+            with patch.object(scope, "_pump_channels", side_effect=_fail_after_spawn):
+                try:
+                    scope._query_session_records("session-123")
+                except RuntimeError:
+                    failed = True
+                else:
+                    failed = False
+        # Observe the query state BEFORE any fallback cleanup, so the death
+        # assertion below cannot be satisfied by the test's own kill.
+        query_alive_after["alive"] = _pid_alive(query_pid["pid"])
+    finally:
+        if query_pid["pid"] is not None and _pid_alive(query_pid["pid"]):
+            _kill_exact(query_pid["pid"])
+    assert failed, "the post-spawn failure must propagate"
+    assert query_pid["pid"] is not None
+    assert query_alive_after["alive"] is False, (
+        f"query {query_pid['pid']} survived a post-spawn failure"
+    )
+
+
+def test_lookup_interrupt_after_spawn_still_reaps_the_query(tmp_path):
+    """A KeyboardInterrupt after the spawn must still reap the owned query.
+
+    Cleanup responsibility is established before the spawn, so an interruption
+    raised by the first fallible step after the child exists must terminate and
+    reap that child and still propagate to the caller. The interruption is
+    injected through the module's clock, which is the first statement the
+    implementation runs after the spawn returns.
+    """
+    import time
+    from unittest.mock import patch
+    from cli_topsailai import project_scope as scope
+
+    pidfile = tmp_path / "spawn-interrupt.pid"
+    code = (
+        "import os, time\n"
+        f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
+        "time.sleep(120)\n"
+    )
+    query_pid = {"pid": None}
+    query_alive_after = {"alive": None}
+    real_monotonic = time.monotonic
+
+    class _InterruptingClock:
+        """Interrupt once the spawned child is observable."""
+
+        def monotonic(self):
+            """Wait for the child, then raise KeyboardInterrupt."""
+            if query_pid["pid"] is None:
+                query_pid["pid"] = int(_wait_for_file(pidfile))
+                raise KeyboardInterrupt
+            return real_monotonic()
+
+    try:
+        with patch.object(scope, "_lookup_command", return_value=_writer_command(code)):
+            with patch.object(scope, "time", _InterruptingClock()):
+                try:
+                    scope._query_session_records("session-123")
+                except KeyboardInterrupt:
+                    interrupted = True
+                else:
+                    interrupted = False
+        # Observe the query state BEFORE any fallback cleanup, so the death
+        # assertion below cannot be satisfied by the test's own kill.
+        query_alive_after["alive"] = _pid_alive(query_pid["pid"])
+    finally:
+        if query_pid["pid"] is not None and _pid_alive(query_pid["pid"]):
+            _kill_exact(query_pid["pid"])
+    assert interrupted, "the interruption must propagate"
+    assert query_pid["pid"] is not None
+    assert query_alive_after["alive"] is False, (
+        f"query {query_pid['pid']} survived an interruption after spawn"
+    )
+
+
+def test_lookup_pipe_setup_failure_closes_every_created_descriptor(tmp_path):
+    """A non-blocking setup failure must not leak the pipe descriptors.
+
+    ``os.set_blocking`` runs after the descriptors exist, so a failure there
+    (or an interruption during setup) must still close every descriptor that
+    was created. The descriptors are tracked and probed with ``os.fstat`` so a
+    closed descriptor cannot be mistaken for a live one.
+    """
+    import os
+    from unittest.mock import patch
+    from cli_topsailai import project_scope as scope
+
+    class _OsShim:
+        """Delegate to the real os module, overriding pipe setup only."""
+
+        def __init__(self, fail_on_call, interrupt):
+            self.created = []
+            self.calls = 0
+            self._fail_on_call = fail_on_call
+            self._interrupt = interrupt
+
+        def pipe(self):
+            """Create a real pipe and record both descriptors."""
+            pair = os.pipe()
+            self.created.extend(pair)
+            return pair
+
+        def set_blocking(self, fd, blocking):
+            """Fail or interrupt on the configured setup call."""
+            self.calls += 1
+            if self._interrupt and self.calls == 1:
+                raise KeyboardInterrupt
+            if self.calls == self._fail_on_call:
+                raise OSError(9, "simulated set_blocking failure")
+            return os.set_blocking(fd, blocking)
+
+        def __getattr__(self, name):
+            """Delegate every other attribute to the real os module."""
+            return getattr(os, name)
+
+    def _is_open(fd):
+        """Return True while *fd* still refers to an open descriptor."""
+        try:
+            os.fstat(fd)
+            return True
+        except OSError:
+            return False
+
+    cases = (
+        ("first read end", 1, False),
+        ("second read end", 2, False),
+        ("interruption during setup", 0, True),
+    )
+    for label, fail_on_call, interrupt in cases:
+        shim = _OsShim(fail_on_call, interrupt)
+        with patch.object(scope, "os", shim):
+            try:
+                scope._query_session_records("session-123")
+            except (OSError, KeyboardInterrupt, scope.ResumeLookupError):
+                pass
+            else:
+                raise AssertionError(f"{label}: the setup failure did not propagate")
+        assert shim.created, f"{label}: no descriptors were created"
+        leaked = [fd for fd in shim.created if _is_open(fd)]
+        for fd in leaked:
+            os.close(fd)
+        assert not leaked, f"{label}: leaked descriptors {leaked}"
+
+def test_lookup_channel_construction_failure_closes_every_descriptor():
+    """Channel construction failures must close all four owned descriptors."""
+    import os
+    from unittest.mock import patch
+    from cli_topsailai import project_scope as scope
+
+    real_open = scope._open_lookup_pipes
+    real_channel = scope._LookupChannel
+
+    def _is_open(fd):
+        """Return True while *fd* still refers to an open descriptor."""
+        try:
+            os.fstat(fd)
+            return True
+        except OSError:
+            return False
+
+    cases = (
+        ("first channel interruption", 1, KeyboardInterrupt),
+        ("second channel interruption", 2, KeyboardInterrupt),
+        ("first channel exception", 1, RuntimeError),
+        ("second channel exception", 2, MemoryError),
+    )
+    for label, fail_on_call, exception_type in cases:
+        created = []
+        calls = {"count": 0}
+
+        def _tracking_open():
+            """Create real pipes and retain their descriptor identities."""
+            descriptors = real_open()
+            created.extend(descriptors)
+            return descriptors
+
+        def _failing_channel(fd, limit):
+            """Fail on the selected channel-construction call."""
+            calls["count"] += 1
+            if calls["count"] == fail_on_call:
+                raise exception_type(f"simulated {label}")
+            return real_channel(fd, limit)
+
+        try:
+            with patch.object(scope, "_open_lookup_pipes", _tracking_open):
+                with patch.object(scope, "_LookupChannel", _failing_channel):
+                    try:
+                        scope._query_session_records("session-123")
+                    except exception_type:
+                        failed = True
+                    else:
+                        failed = False
+            leaked = [fd for fd in created if _is_open(fd)]
+        finally:
+            for fd in created:
+                if _is_open(fd):
+                    os.close(fd)
+        assert failed, f"{label}: construction failure did not propagate"
+        assert created, f"{label}: no descriptors were created"
+        assert not leaked, f"{label}: leaked descriptors {leaked}"
