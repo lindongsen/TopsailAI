@@ -78,6 +78,24 @@ def test_core_resume_forwards_exact_background_request():
     resume.assert_called_once_with("session-123", agent_mode="raw", background=True)
 
 
+def test_core_resume_rejects_conflicting_drivers_with_global_options():
+    """Global options must not bypass conflicting resume-driver validation."""
+    import pytest
+    from cli_topsailai import core
+
+    with patch.object(core.main, "startup_cwd", None, create=True), patch(
+        "cli_topsailai.project_scope.resume_session_result"
+    ) as resume:
+        with pytest.raises(SystemExit) as error:
+            core.main([
+                "-n", "20", "workspace", "resume", "-s", "session-123",
+                "-d", "topsailai_agent_chats",
+                "-d", "topsailai_agent_plan_tasks",
+            ])
+    assert error.value.code == 2
+    resume.assert_not_called()
+
+
 def test_core_resume_rejects_missing_session_and_invalid_mode():
     """Malformed resume requests exit before touching session state."""
     import pytest
@@ -186,7 +204,7 @@ def test_exact_lookup_once_and_foreground_status(tmp_path):
         with patch.object(scope, "launch_agent_driver", return_value=17) as launch:
             assert scope.resume_session_result("123", query=query, agent_mode="raw") == 17
     query.assert_called_once_with("123")
-    assert launch.call_args.args == (str(tmp_path), "topsailai_agent_plan_tasks", "123")
+    assert launch.call_args.args == (str(tmp_path), "topsailai_agent_chats", "123")
 
 
 def test_real_foreground_resume_child_identity_and_status(tmp_path):
@@ -204,7 +222,7 @@ def test_real_foreground_resume_child_identity_and_status(tmp_path):
 
     def spawn(argv, **kwargs):
         """Replace only the external agent executable with a harmless probe."""
-        assert argv == ["topsailai_agent_plan_tasks"]
+        assert argv == ["topsailai_agent_chats"]
         code = (
             "import os,json,pathlib; "
             f"pathlib.Path({str(output)!r}).write_text(json.dumps("
@@ -241,7 +259,7 @@ def test_background_resume_preserves_identity_and_attempt_log(tmp_path, capsys):
     assert launch.call_count == 1
     assert launch.call_args.args == (str(tmp_path), "persisted")
     options = launch.call_args.kwargs
-    assert options["driver"] == "topsailai_agent_plan_tasks"
+    assert options["driver"] == "topsailai_agent_chats"
     assert options["entrypoint_base"] == "/startup"
     assert options["log_identity"].startswith("persisted.")
     assert options["environment"]["SESSION_ID"] == "persisted"

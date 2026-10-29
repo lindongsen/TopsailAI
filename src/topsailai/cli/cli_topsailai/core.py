@@ -271,6 +271,16 @@ def _warn_deprecated(old_flag: str, new_cmd: str) -> None:
     )
 
 
+class _UniqueResumeDriver(argparse.Action):
+    """Reject conflicting repeated resume drivers while allowing identical values."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        current = getattr(namespace, self.dest, None)
+        if current is not None and current != values:
+            raise argparse.ArgumentError(self, f"conflicting {option_string} values")
+        setattr(namespace, self.dest, values)
+
+
 def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
     """Handle the non-interactive ``workspace`` subcommand."""
     workspace_command = getattr(args, "workspace_command", None)
@@ -286,6 +296,8 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
             resume_args.extend(["--agent-mode", args.agent_mode])
         if args.background:
             resume_args.append("--background")
+        if args.driver is not None:
+            resume_args.extend(["--driver", args.driver])
         return run_workspace_resume_cli(
             resume_args, startup_cwd=getattr(args, "startup_cwd", None),
         )
@@ -1436,6 +1448,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         "-m", "--agent-mode", choices=("raw", "dtach", "tmux"), default=None,
     )
     workspace_resume_parser.add_argument("-b", "--background", action="store_true")
+    workspace_resume_parser.add_argument(
+        "-d", "--driver",
+        choices=("topsailai_agent_chats", "topsailai_agent_plan_tasks", "ai-team-flow-dev"),
+        default=None, action=_UniqueResumeDriver,
+    )
 
     docs_parser = subparsers.add_parser(
         "docs",

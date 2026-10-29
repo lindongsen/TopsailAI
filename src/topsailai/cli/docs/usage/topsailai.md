@@ -458,12 +458,16 @@ topsailai runtime control llm_control -s SESSION -p PID -a '{"operation":"force_
 ## Workspace resume
 
 ```text
-topsailai workspace resume -s SESSION [-m raw|dtach|tmux] [-b|--background]
+topsailai workspace resume -s SESSION [-d DRIVER] [-m raw|dtach|tmux] [-b|--background]
 ```
 
 `-s` / `--session` identifies one literal persisted session, never a row number,
 prefix, newest session, or process PID. The command uses the recorded absolute
-workspace and `topsailai_agent_plan_tasks`, preserving the session identity.
+workspace and defaults to `topsailai_agent_chats`, preserving the session identity.
+Use `-d` / `--driver` to select one of `topsailai_agent_chats`,
+`topsailai_agent_plan_tasks`, or `ai-team-flow-dev`; an explicit driver overrides
+the default. Resume driver selection does not use `ai_agent_driver` or
+`TOPSAILAI_AGENT_DRIVER`.
 Missing records fail with 3; unavailable or ambiguous lookup, invalid workspace,
 and live or unverifiable processes fail with 4. No directory is created and
 there is no fallback to the current directory.
@@ -475,7 +479,7 @@ workspace-agent supervisor, rotating log, active lease, and expiry cleanup.
 An explicit `-m raw|tmux|dtach` with `-b` selects that mechanism and fails with
 4 when it is unavailable; there is no silent fallback. Repeated identical
 options are accepted; conflicting options, extra positionals, abbreviations,
-`--json`, PID, confirmation and driver overrides are rejected.
+`--json`, PID and confirmation options are rejected.
 
 Background success means submitted, not ready or completed. Output includes
 the actual launcher PID and a private per-attempt log path; repeated resumes do

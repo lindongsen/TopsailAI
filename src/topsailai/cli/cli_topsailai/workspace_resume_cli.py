@@ -39,6 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
         "-b", "--background", action="store_true",
         help="submit the resume in headless background mode",
     )
+    parser.add_argument(
+        "-d", "--driver",
+        choices=("topsailai_agent_chats", "topsailai_agent_plan_tasks", "ai-team-flow-dev"),
+        default=None, action=_UniqueValue,
+        help="resume driver (default: topsailai_agent_chats)",
+    )
     return parser
 
 
@@ -60,6 +66,8 @@ def run_workspace_resume_cli(argv, *, startup_cwd=None) -> int:
         "agent_mode": args.agent_mode or ("raw" if args.background else "dtach"),
         "background": args.background,
     }
+    if args.driver is not None:
+        options["driver"] = args.driver
     if startup_cwd is not None:
         options["entrypoint_base"] = startup_cwd
     return resume_session_result(args.session_id, **options)

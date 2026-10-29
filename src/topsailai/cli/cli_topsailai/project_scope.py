@@ -46,6 +46,7 @@ from cli_topsailai.projects import (
 _MAX_RUNNING_STATUS_WORKERS = 8
 
 # Built-in agent drivers offered when resuming a session.
+_RESUME_DEFAULT_DRIVER = "topsailai_agent_chats"
 _RESUME_DRIVER_OPTIONS = [
     "topsailai_agent_chats",
     "topsailai_agent_plan_tasks",
@@ -1639,8 +1640,8 @@ def resume_session_result(
 
     selected_driver = driver
     if selected_driver is None:
-        selected_driver = _RESUME_DRIVER_OPTIONS[1]
-    if prompt_driver:
+        selected_driver = _RESUME_DEFAULT_DRIVER
+    if prompt_driver and driver is None:
         selected_driver = _prompt_for_driver()
 
     def late_check() -> Optional[int]:

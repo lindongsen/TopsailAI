@@ -64,6 +64,7 @@ Canonical usage: `topsailai workspace agent <folder> [-m raw|dtach|tmux] [-b|--b
 
 ## Workspace resume
 
-- `workspace resume -s SESSION [-m raw|dtach|tmux] [-b|--background]` resumes an exact persisted idle session.
+- `workspace resume -s SESSION [-d DRIVER] [-m raw|dtach|tmux] [-b|--background]` resumes an exact persisted idle session.
+- Resume defaults to `topsailai_agent_chats`; `-d/--driver` accepts `topsailai_agent_chats`, `topsailai_agent_plan_tasks`, or `ai-team-flow-dev`.
 - Foreground defaults to dtach; background defaults to raw and reports submission, not readiness.
 - See [the resume contract](docs/usage/topsailai.md#workspace-resume) for validation, logs, exit codes and concurrency limitations.
