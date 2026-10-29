@@ -17,7 +17,7 @@ def raw_custody():
     workspace = Path(__file__).resolve().parents[3]
     base = workspace / ".tmp" / "c2-reduced" / "u1-runtime"
     base.mkdir(parents=True, exist_ok=True)
-    root = base / f"run-{__import__('os').getpid()}"
+    root = base / f"run-{__import__('os').getpid()}-{__import__('uuid').uuid4().hex}"
     custody = Custody(root)
     try:
         yield custody
@@ -42,6 +42,10 @@ def raw_custody():
             archived.write_text(report.read_text(encoding="utf-8"), encoding="utf-8")
             custody.events.append(f"archived custody report {archived}")
             report.write_text(json.dumps({"events": custody.events}, indent=2), encoding="utf-8")
+        if custody.u2_marker.exists():
+            custody.u2_marker.unlink()
+            custody.events.append(f"deleted run-scoped marker {custody.u2_marker}")
+            print(f"deleted run-scoped marker {custody.u2_marker}")
         if custody.finished:
             custody.events.append(f"deleting fixture root {custody.root}")
             shutil.rmtree(custody.root)

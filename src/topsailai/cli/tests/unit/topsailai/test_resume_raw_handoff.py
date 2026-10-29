@@ -155,3 +155,94 @@ def test_process_state_unknown_and_reconfirmation_signal_gate():
         print(f"exact-PID cleanup kill pid={pid}")
         child.wait(timeout=5)
         assert Custody.process_state(pid, token, read_real_stat) == "absent"
+
+
+
+def test_cancel_owned_before_submit(raw_custody):
+    """Cancel exactly once after verified ownership and before submission."""
+    session = "c2-u2-cancel"
+    callback_calls = []
+    trigger_evidence = {}
+    submitted_gate = {"triggered": False, "bound": 256}
+
+    def cancel_requested():
+        """Trigger cancellation through a finite, non-consuming submitted gate."""
+        callback_calls.append("called")
+        assert len(callback_calls) <= submitted_gate["bound"]
+        started = [
+            frame for frame in raw_custody.observed_frames
+            if frame.get("kind") == "started"
+        ]
+        assert not any(frame.get("kind") == "submitted" for frame in raw_custody.frames)
+        if not started or trigger_evidence:
+            return False
+        telemetry = raw_custody.wait_for(raw_custody.telemetry)
+        assert len(started) == 1
+        pid, token, source = identity_from_frame(started[0])
+        assert source == "authoritative"
+        assert raw_custody.ownership is not None
+        assert raw_custody.ownership.identity == started[0]["launcher_identity"]
+        assert raw_custody.live(pid, token)
+        assert (pid, token) in raw_custody.drivers
+        proc_pid, state, proc_token, parent = _proc_identity(pid)
+        assert proc_pid == pid
+        assert state != "Z"
+        assert proc_token == token
+        assert telemetry["session"] == telemetry["top_session"] == session
+        assert int(telemetry["pid"]) == pid
+        assert int(telemetry["token"]) == token
+        assert int(telemetry["parent"]) == parent
+        assert parent in {child.pid for child in raw_custody.supervisors}
+        assert telemetry["cwd"] == str(raw_custody.workspace)
+        assert telemetry["mutation"] is None
+        assert telemetry["marker"] is None
+        assert os.readlink(f"/proc/{pid}/cwd") == str(raw_custody.workspace)
+        trigger_evidence.update(
+            pid=pid, token=token, source=source,
+            telemetry_pid=int(telemetry["pid"]),
+            telemetry_token=int(telemetry["token"]), parent=parent,
+            cwd=telemetry["cwd"],
+        )
+        raw_custody.events.append("triggered owned cancellation before submitted")
+        submitted_gate["triggered"] = True
+        return True
+
+    result = launch(
+        raw_custody, session, cancel_requested=cancel_requested,
+        submitted_gate=submitted_gate,
+    )
+    assert result == 130
+    assert callback_calls
+    assert len(callback_calls) <= submitted_gate["bound"]
+    assert submitted_gate["triggered"] is True
+    assert trigger_evidence["pid"] == trigger_evidence["telemetry_pid"]
+    assert trigger_evidence["token"] == trigger_evidence["telemetry_token"]
+    assert not any(frame.get("kind") == "submitted" for frame in raw_custody.frames)
+    cleanup = [frame for frame in raw_custody.frames if frame.get("kind") == "cleanup"]
+    assert len(cleanup) == 1
+    assert cleanup[0]["class"] == "cancellation"
+    assert cleanup[0]["cleanup_confirmed"] is True
+    assert cleanup[0]["session"] == session
+    assert cleanup[0]["launcher_pid"] == trigger_evidence["pid"]
+    assert cleanup[0]["launcher_identity"] == repr(
+        (trigger_evidence["pid"], trigger_evidence["token"], trigger_evidence["source"])
+    )
+    marker = raw_custody.root / "u2-hook-marker.log"
+    if os.environ.get("C2_U2_MUTATION") == "disable-owned-cleanup":
+        records = [json.loads(line) for line in marker.read_text(encoding="utf-8").splitlines()]
+        assert records[0]["event"] == "supervisor_environment"
+        assert records[0]["mutation"] == "disable-owned-cleanup"
+        assert records[0]["marker"] == str(marker)
+        invocations = [record for record in records if record["event"] == "invocation"]
+        assert len(invocations) == 1
+        assert invocations[0]["pid"] == trigger_evidence["pid"]
+        assert invocations[0]["token"] == trigger_evidence["token"]
+        assert invocations[0]["boundary"]
+        assert invocations[0]["boundary"] != "supervisor_exception_cleanup"
+    assert raw_custody.absent(*raw_custody.drivers[0])
+    assert raw_custody.supervisors[0].poll() is not None
+    assert raw_custody.return_state is not None
+    assert raw_custody.return_state["cwd"] == raw_custody.return_state["expected_cwd"]
+    assert raw_custody.return_state["environment"] == raw_custody.return_state["expected_environment"]
+    raw_custody.release_child()
+    raw_custody.finish()

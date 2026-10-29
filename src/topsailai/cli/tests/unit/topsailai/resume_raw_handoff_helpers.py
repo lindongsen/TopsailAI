@@ -33,11 +33,14 @@ class Custody:
         self.events: list[str] = []
         self.frames: list[dict[str, Any]] = []
         self.observed_frames: list[dict[str, Any]] = []
+        self.held_submitted_archive: list[dict[str, Any]] = []
+        self.ownership: Any | None = None
         self.telemetry = self.workspace / "telemetry.json"
         self.heartbeat = self.workspace / "heartbeat"
         self.release = self.workspace / "release"
         self.entrypoint = self._write_role("supervisor.py", _SUPERVISOR)
         self.driver = self._write_role("topsailai_agent_chats", _DRIVER)
+        self.u2_marker = self.root / "u2-hook-marker.log"
         self.finished = False
         self.return_state: dict[str, Any] | None = None
         self._original_cwd = os.getcwd()
@@ -250,21 +253,47 @@ def identity_from_frame(frame: Mapping[str, Any]) -> tuple[int, int, str]:
     return int(value[0]), int(value[1]), str(value[2])
 
 
-def launch(custody: Custody, session: str) -> int:
+def launch(
+    custody: Custody, session: str, *, cancel_requested: Any | None = None,
+    submitted_gate: Any | None = None,
+) -> int:
     """Invoke the public workspace resume route with a real raw supervisor."""
     original_read = background._read_frames
+    original_ownership = background._ownership_from_started
+    original_background_launch = background.launch_background
     original_model = project_scope._apply_selected_model_environment
     import cli_topsailai.agent_launch as agent_launch
     original_agent_model = agent_launch._apply_selected_model_environment
     original_environment = os.environ.copy()
     original_cwd = os.getcwd()
     mutation = os.environ.get("C2_CAMPAIGN_MUTATION")
+    u2_mutation = os.environ.get("C2_U2_MUTATION")
+    held_submitted: list[dict[str, Any]] = []
+
+    def observed_ownership(frame: Mapping[str, Any], session_id: str) -> Any:
+        """Capture the one production ownership call without invoking it twice."""
+        result = original_ownership(frame, session_id)
+        custody.ownership = result
+        custody.register_driver(result.launcher_pid, int(ast.literal_eval(result.identity)[1]))
+        custody.events.append("captured production ownership return and registered owner")
+        return result
 
     def observed_read(fd: Any, buffer: bytearray) -> list[dict[str, Any]]:
-        """Retain an observation copy while returning original frames to production."""
+        """Retain frames and hold submitted delivery behind the test gate."""
         frames = original_read(fd, buffer)
         observed = [dict(frame) for frame in frames]
-        for frame in frames:
+        if submitted_gate is not None and not submitted_gate.get("triggered", False):
+            released: list[dict[str, Any]] = []
+            for frame in frames:
+                if frame.get("kind") == "submitted":
+                    held_submitted.append(frame)
+                else:
+                    released.append(frame)
+            frames = released
+        elif held_submitted:
+            frames = held_submitted + frames
+            held_submitted.clear()
+        for frame in observed:
             if frame.get("kind") == "started":
                 try:
                     pid, token, _ = identity_from_frame(frame)
@@ -283,7 +312,26 @@ def launch(custody: Custody, session: str) -> int:
     os.environ.clear()
     os.environ.update(custody.environment(session))
     os.environ["TOPSAILAI_CLI_ENTRY"] = str(custody.entrypoint)
+    marker = custody.root / "u2-hook-marker.log"
+
+    def spawn_owned_supervisor(*args: Any, **kwargs: Any) -> subprocess.Popen[Any]:
+        """Add mutation variables only to the test-owned supervisor environment."""
+        if u2_mutation == "disable-owned-cleanup":
+            supervisor_environment = dict(kwargs.get("env") or os.environ)
+            supervisor_environment["C2_U2_MUTATION"] = "disable-owned-cleanup"
+            supervisor_environment["C2_U2_MARKER"] = str(marker)
+            kwargs["env"] = supervisor_environment
+        return custody.spawn(*args, **kwargs)
+
+    def launch_with_optional_cancellation(folder: str, session_id: str, **kwargs: Any) -> dict[str, Any]:
+        """Inject test-owned cancellation at the real launch seam."""
+        if cancel_requested is not None:
+            kwargs["cancel_requested"] = cancel_requested
+        return original_background_launch(folder, session_id, **kwargs)
+
     background._read_frames = observed_read
+    background._ownership_from_started = observed_ownership
+    background.launch_background = launch_with_optional_cancellation
     project_scope._apply_selected_model_environment = lambda _folder: ({}, set())
     agent_launch._apply_selected_model_environment = lambda _folder: ({}, set())
     custody.production_entry_cwd = os.getcwd()
@@ -291,7 +339,7 @@ def launch(custody: Custody, session: str) -> int:
     try:
         result = project_scope.resume_session_result(
             session, background=True, agent_mode="raw", driver="topsailai_agent_chats",
-            spawn=custody.spawn, query=lambda _session: [{
+            spawn=spawn_owned_supervisor, query=lambda _session: [{
                 "session_id": session, "project_workspace": str(custody.workspace),
             }], home=str(custody.home),
             entrypoint_base=str(Path(__file__).resolve().parents[3]),
@@ -304,17 +352,80 @@ def launch(custody: Custody, session: str) -> int:
     finally:
         if mutation != "disable-wrapper-fallback":
             custody.register_driver_from_telemetry()
+        if held_submitted:
+            custody.held_submitted_archive.extend(dict(frame) for frame in held_submitted)
+            custody.events.append(f"archived held submitted frames count={len(held_submitted)}")
+            held_submitted.clear()
         background._read_frames = original_read
+        background._ownership_from_started = original_ownership
+        background.launch_background = original_background_launch
         project_scope._apply_selected_model_environment = original_model
         agent_launch._apply_selected_model_environment = original_agent_model
         os.environ.clear()
         os.environ.update(original_environment)
         os.chdir(original_cwd)
 
-
 _SUPERVISOR = f'''#!{sys.executable}
+import inspect
+import ast
+import json
+import os
 import sys
+import time
 sys.path.insert(0, {str(Path(__file__).resolve().parents[3])!r})
+_u2_mutation = os.environ.pop("C2_U2_MUTATION", None)
+_u2_marker = os.environ.pop("C2_U2_MARKER", None)
+if _u2_marker:
+    with open(_u2_marker, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps({{"event": "supervisor_environment", "mutation": _u2_mutation, "marker": _u2_marker}}) + "\\n")
+if _u2_mutation == "disable-owned-cleanup":
+    import cli_topsailai.agent_launch_background as _background
+    _original_cleanup_owned = _background._cleanup_owned
+    _original_child_identity = _background._child_identity
+    _registered_owner = [None]
+    _owner_bound = [False]
+
+    def _u2_child_identity(child, identity_probe=None):
+        """Capture ownership only for the supervisor registration observation."""
+        identity = _original_child_identity(child, identity_probe)
+        caller = inspect.currentframe().f_back
+        registration_origin = (
+            caller is not None
+            and caller.f_code.co_name == "_supervise"
+            and caller.f_locals.get("child") is child
+        )
+        if registration_origin and not _owner_bound[0]:
+            _registered_owner[0] = tuple(identity)
+            _owner_bound[0] = True
+        return identity
+
+    _background._child_identity = _u2_child_identity
+
+    def _u2_cleanup_owned(child, *, wait_timeout=0.25, identity=None, identity_probe=None):
+        """Bypass cleanup only for the registration-bound owner identity."""
+        target_pid = getattr(child, "pid", None)
+        target_token = identity[1] if isinstance(identity, tuple) and len(identity) > 1 else None
+        boundary = inspect.currentframe().f_back.f_code.co_name
+        owner_match = (
+            _registered_owner[0] is not None
+            and target_pid == _registered_owner[0][0]
+            and isinstance(identity, tuple)
+            and tuple(identity) == _registered_owner[0]
+        )
+        record = {{
+            "event": "invocation", "pid": target_pid, "token": target_token,
+            "boundary": boundary, "bypassed": owner_match,
+        }}
+        if _u2_marker:
+            with open(_u2_marker, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record) + "\\n")
+        if owner_match:
+            return True
+        return _original_cleanup_owned(
+            child, wait_timeout=wait_timeout, identity=identity, identity_probe=identity_probe
+        )
+
+    _background._cleanup_owned = _u2_cleanup_owned
 from cli_topsailai.agent_launch_background import _supervisor_entry
 _supervisor_entry(sys.argv[2], sys.argv[3])
 '''
@@ -328,7 +439,8 @@ identity = _authoritative_child_identity(pid)
 Path(os.environ["FIXTURE_TELEMETRY"]).write_text(json.dumps({{
     "pid": pid, "token": identity[1], "parent": os.getppid(),
     "session": os.environ["SESSION_ID"], "top_session": os.environ["TOPSAILAI_SESSION_ID"],
-    "cwd": os.getcwd(), "model": os.environ["FIXTURE_MODEL"]
+    "cwd": os.getcwd(), "model": os.environ["FIXTURE_MODEL"],
+    "mutation": os.environ.get("C2_U2_MUTATION"), "marker": os.environ.get("C2_U2_MARKER")
 }}), encoding="utf-8")
 count = 0
 while not Path(os.environ["FIXTURE_RELEASE"]).exists():
