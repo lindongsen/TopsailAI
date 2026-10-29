@@ -454,7 +454,7 @@ When the CLI is showing the workspace task list (`[workspace]>`), the following 
 | `/refresh` | Reload the workspace task list. |
 | `/clean` | Remove expired files from the task directory. |
 | `/send <number> [message]` | Send a message to the running session associated with the selected entry. |
-| `/resume <number>` | Resume an idle session in its project workspace. |
+| `/resume <number> [-d DRIVER]` | Resume an idle session in its project workspace; chats is the default driver. |
 | `cd doc` | Enter doc scope and list usage documentation files under `docs/usage/`. |
 | `scopes` | Display detailed introductions and available actions for workspace, runtime, project, session, and doc scopes. |
 | `/help` | Show available commands. |
@@ -542,7 +542,7 @@ When the CLI is showing the project scope (`[project]>`), the following commands
 | `/session <number>` | Retrieve the full session context for the selected entry. |
 | `/refresh` | Reload the project session list. |
 | `/agent <number|folder>` | Launch an agent in the selected project workspace. |
-| `/resume <number>` | Resume the selected running session. |
+| `/resume <number> [-d DRIVER]` | Resume the selected idle session; chats is the default driver. |
 | `r [limit]` or `recent [limit]` | Refresh the recent project session list. If `[limit]` is provided, update the maximum number of records shown (default 30). |
 | `p` or `projects` | Switch to the managed project list. |
 | `p add [path] [name]` | Add a project to the managed project list. |
@@ -574,7 +574,7 @@ You can also manage projects and project sessions directly from the shell withou
 | `topsailai project del <path>` | Remove `<path>` from `.projects.jsonl`. The path is expanded and resolved before matching. Only the registry entry is removed. |
 | `topsailai project list` | Display all managed projects with row number, name, path, and creation time. |
 | `topsailai project launch <folder>` | Launch an agent in `<folder>` using the same behavior as the project-scope `/agent <folder>` command. |
-| `topsailai project resume <session>` | Resume an idle session using the same behavior as project-scope `/resume`; running sessions are rejected. |
+| `topsailai project resume <session> [-d DRIVER]` | Resume an idle session; the default driver is `topsailai_agent_chats`. |
 
 Examples:
 
@@ -649,5 +649,4 @@ Use `topsailai workspace resume -s SESSION [-m raw|dtach|tmux] [-b]` for one
 exact persisted idle session. Foreground defaults to dtach; background defaults
 to raw and reports submission rather than readiness. Lookup/liveness errors fail
 closed and the persisted workspace is required. See the [resume contract](docs/usage/topsailai.md#workspace-resume)
-for exit codes, attempt logs, and concurrency limitations. No public `--json` or
-driver override is supported.
+for exit codes, attempt logs, and concurrency limitations. Use `-d DRIVER` to select `topsailai_agent_chats`, `topsailai_agent_plan_tasks`, or `ai-team-flow-dev`; the default is `topsailai_agent_chats`.

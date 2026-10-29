@@ -76,7 +76,7 @@ def _make_readline_safe_prompt(prompt: str) -> str:
 
 
 
-def _resume_from_workspace_log(value, log_files, agent_mode):
+def _resume_from_workspace_log(value, log_files, agent_mode, *, driver=None):
     """Resume an idle session selected from the workspace task list.
 
     Validates the 1-based row number, resolves the session ID and project
@@ -117,7 +117,7 @@ def _resume_from_workspace_log(value, log_files, agent_mode):
         "status": selected_file.get("status", "Idle"),
         "project_workspace": project_workspace,
     }
-    resume_session("1", [synthetic_entry], agent_mode=agent_mode)
+    resume_session("1", [synthetic_entry], agent_mode=agent_mode, driver=driver)
     return True
 
 def _read_input_with_prompt(prompt: str) -> str:
@@ -185,6 +185,15 @@ def _try_handle_project_subcommand(
         return 1
 
     target = argv[2]
+    driver = None
+    if subcmd == "resume":
+        from cli_topsailai.legacy_resume_cli import parse_args
+
+        parsed = parse_args(argv[2:], target_name="session_id")
+        if parsed is None:
+            return 2
+        target = parsed.session_id
+        driver = parsed.driver
     if subcmd == "launch":
         from cli_topsailai.project_scope import launch_agent_in_folder
 
@@ -197,7 +206,10 @@ def _try_handle_project_subcommand(
         if not entries:
             print(f"{Colors.RED}[ERROR] Session not found: {target}{Colors.RESET}")
             return 1
-        resumed = resume_session("1", entries, agent_mode=agent_mode)
+        resume_options = {"agent_mode": agent_mode}
+        if driver is not None:
+            resume_options["driver"] = driver
+        resumed = resume_session("1", entries, **resume_options)
         return 0 if resumed else 1
     if subcmd == "add":
         name = " ".join(argv[3:]).strip() or None
@@ -356,6 +368,8 @@ def _handle_project_subcommand(args: argparse.Namespace) -> int:
         argv.append(project_path)
     if session_id is not None:
         argv.append(session_id)
+    if getattr(args, "driver", None) is not None:
+        argv.extend(["--driver", args.driver])
     if project_name is not None:
         argv.append(project_name)
     code = _try_handle_project_subcommand(argv, agent_mode=args.agent_mode)
@@ -1508,8 +1522,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     project_resume_parser = project_subparsers.add_parser(
         "resume",
         help="resume an idle project session",
+        allow_abbrev=False,
     )
     project_resume_parser.add_argument("session_id", help="session ID")
+    from cli_topsailai.legacy_resume_cli import add_driver_argument
+    add_driver_argument(project_resume_parser)
     project_resume_parser.set_defaults(func=_handle_project_subcommand)
     models_parser = subparsers.add_parser(
         "models",
@@ -1897,10 +1914,25 @@ def main(argv: Optional[List[str]] = None) -> None:
                 continue
 
             if action == "resume":
+                from cli_topsailai.legacy_resume_cli import parse_text
+
+                parsed = parse_text(value, target_name="session_id")
+                if parsed is None:
+                    continue
                 if state.current_scope == "project":
-                    resume_session(value, project_entries, agent_mode=args.agent_mode)
+                    resume_session(
+                        parsed.session_id,
+                        project_entries,
+                        agent_mode=args.agent_mode,
+                        driver=parsed.driver,
+                    )
                 elif state.current_scope == "workspace":
-                    _resume_from_workspace_log(value, log_files, agent_mode=args.agent_mode)
+                    _resume_from_workspace_log(
+                        parsed.session_id,
+                        log_files,
+                        agent_mode=args.agent_mode,
+                        driver=parsed.driver,
+                    )
                 else:
                     print(
                         f"\n{Colors.RED}[ERROR] /resume is only available in workspace or project scope.{Colors.RESET}"

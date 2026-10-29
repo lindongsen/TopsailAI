@@ -1685,26 +1685,27 @@ class TestResumeSession(unittest.TestCase):
     def test_resume_idle_session_default_driver(
         self, mock_stdout, mock_prompt, mock_launch
     ):
-        mock_prompt.return_value = "topsailai_agent_plan_tasks"
         entries = [self._make_entry("s-idle", "Idle", "/work/project-a")]
         project_scope.resume_session("1", entries, agent_mode="dtach")
-        mock_prompt.assert_called_once()
+        mock_prompt.assert_not_called()
         mock_launch.assert_called_once_with(
-            "/work/project-a", "topsailai_agent_plan_tasks", "s-idle", agent_mode="dtach"
+            "/work/project-a", "topsailai_agent_chats", "s-idle", agent_mode="dtach"
         )
         output = mock_stdout.getvalue()
         self.assertIn("Resuming session 's-idle'", output)
-        self.assertIn("topsailai_agent_plan_tasks", output)
+        self.assertIn("topsailai_agent_chats", output)
 
     @patch("cli_topsailai.project_scope.launch_agent_driver")
     @patch("cli_topsailai.project_scope._prompt_for_driver")
     @patch("sys.stdout", new_callable=io.StringIO)
-    def test_resume_idle_session_custom_driver(
+    def test_resume_idle_session_explicit_driver(
         self, mock_stdout, mock_prompt, mock_launch
     ):
-        mock_prompt.return_value = "ai-team-flow-dev"
         entries = [self._make_entry("s-idle", "Idle", "/work/project-a")]
-        project_scope.resume_session("1", entries, agent_mode="tmux")
+        project_scope.resume_session(
+            "1", entries, agent_mode="tmux", driver="ai-team-flow-dev"
+        )
+        mock_prompt.assert_not_called()
         mock_launch.assert_called_once_with(
             "/work/project-a", "ai-team-flow-dev", "s-idle", agent_mode="tmux"
         )
@@ -1743,12 +1744,12 @@ class TestResumeSession(unittest.TestCase):
         self, mock_stdout, mock_lookup, mock_prompt, mock_launch
     ):
         mock_lookup.return_value = {"s-idle": "/work/from-history"}
-        mock_prompt.return_value = "topsailai_agent_plan_tasks"
         entries = [self._make_entry("s-idle", "Idle", "")]
         project_scope.resume_session("1", entries, agent_mode="dtach")
+        mock_prompt.assert_not_called()
         mock_lookup.assert_called_once()
         mock_launch.assert_called_once_with(
-            "/work/from-history", "topsailai_agent_plan_tasks", "s-idle", agent_mode="dtach"
+            "/work/from-history", "topsailai_agent_chats", "s-idle", agent_mode="dtach"
         )
 
     @patch("cli_topsailai.project_scope.launch_agent_driver")
@@ -1784,7 +1785,9 @@ class TestWorkspaceResumeDelegation(unittest.TestCase):
                 "project_workspace": "/work/project-a",
             }
         ]
-        core._resume_from_workspace_log("1", log_files, agent_mode="dtach")
+        core._resume_from_workspace_log(
+            "1", log_files, agent_mode="dtach", driver="ai-team-flow-dev"
+        )
         mock_resume.assert_called_once()
         args = mock_resume.call_args
         self.assertEqual(args[0][0], "1")
@@ -1793,6 +1796,7 @@ class TestWorkspaceResumeDelegation(unittest.TestCase):
         self.assertEqual(entry["project_workspace"], "/work/project-a")
         self.assertEqual(entry["status"], "Idle")
         self.assertEqual(args[1]["agent_mode"], "dtach")
+        self.assertEqual(args[1]["driver"], "ai-team-flow-dev")
 
     @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
     @patch("cli_topsailai.project_scope.resume_session")

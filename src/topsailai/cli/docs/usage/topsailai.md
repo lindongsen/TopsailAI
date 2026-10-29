@@ -491,5 +491,4 @@ Session lookup runs once. All relevant session stdout candidates are checked,
 and workspace/liveness are checked again before launch. These local checks do
 not provide a runtime lock: concurrent external starts and PID reuse remain
 possible. Task storage must be trusted and available; permission and I/O errors
-are not interpreted as an idle session. Existing interactive `/resume` and
-`project resume` retain their legacy prompt and boolean behavior.
+are not interpreted as an idle session. Interactive `/resume` and `project resume` use chats by default, accept the same built-in `-d/--driver` choices, and retain their boolean/refusal behavior.

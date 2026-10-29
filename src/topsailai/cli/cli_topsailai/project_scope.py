@@ -1020,27 +1020,13 @@ def _resolve_session_entry(
 
 
 def resume_session(
-    arg: str, entries: List[Dict[str, Any]], agent_mode: str = "dtach"
+    arg: str, entries: List[Dict[str, Any]], agent_mode: str = "dtach", *,
+    driver: Optional[str] = None,
 ) -> bool:
-    """Resume an idle session by launching an agent driver in its workspace.
+    """Resume an idle session with the selected built-in agent driver.
 
-    The selected session must not be running.  If it is, a message is printed
-    and no action is taken.  Otherwise the user is prompted to choose an agent
-    driver (default ``topsailai_agent_plan_tasks``) and the selected driver is
-    launched directly in the session's project workspace with
-    ``TOPSAILAI_SESSION_ID`` set to the session ID.
-
-    The launch mode is controlled by *agent_mode* (``raw``, ``dtach`` or
-    ``tmux``).  See ``launch_agent_driver`` for details.
-
-    Args:
-        arg: User-provided argument, expected to be a 1-based entry number.
-        entries: Current project scope entries.
-        agent_mode: How to launch the driver: ``"raw"``, ``"dtach"`` or
-            ``"tmux"``.  Defaults to ``"dtach"``.
-
-    Returns:
-        ``True`` when the resume is launched, otherwise ``False``.
+    The explicit driver wins; otherwise the chats driver is selected without
+    prompting. Existing row, workspace, refusal and boolean behavior remains.
     """
     entry = _resolve_session_entry(arg, entries)
     if entry is None:
@@ -1071,12 +1057,19 @@ def resume_session(
         )
         return False
 
-    driver = _prompt_for_driver()
+    selected_driver = driver or _RESUME_DEFAULT_DRIVER
+    if selected_driver not in _RESUME_DRIVER_OPTIONS:
+        print(
+            f"{Colors.RED}[ERROR] Unsupported resume driver: {selected_driver}{Colors.RESET}"
+        )
+        return False
     print(
-        f"{Colors.GREEN}[INFO] Resuming session '{session_id}' with driver '{driver}' "
+        f"{Colors.GREEN}[INFO] Resuming session '{session_id}' with driver '{selected_driver}' "
         f"in {project_workspace} (mode: {agent_mode}) ...{Colors.RESET}"
     )
-    launch_agent_driver(project_workspace, driver, session_id, agent_mode=agent_mode)
+    launch_agent_driver(
+        project_workspace, selected_driver, session_id, agent_mode=agent_mode
+    )
     return True
 
 

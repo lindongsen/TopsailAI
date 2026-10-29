@@ -233,9 +233,9 @@ def print_help(
             "scopes": ["session", "runtime"],
         },
         {
-            "cmd": "/resume <number>",
-            "desc": "Resume an idle session in its project workspace. In workspace scope the number refers to the task list; in project scope it refers to the project session list. The selected session must not be running. You will be prompted to choose an agent driver (default: topsailai_agent_plan_tasks). Use `--agent-mode raw|dtach|tmux` to control how the resumed agent process is launched (default: dtach).",
-            "example": "Example: /resume 3  or  topsailai --agent-mode tmux",
+            "cmd": "/resume <number> [-d DRIVER]",
+            "desc": "Resume an idle session without a driver menu. The default driver is topsailai_agent_chats; -d/--driver accepts topsailai_agent_chats, topsailai_agent_plan_tasks, or ai-team-flow-dev. In workspace scope the number refers to the task list; in project scope it refers to the project session list. The selected session must not be running. Use --agent-mode raw|dtach|tmux to control launch mode.",
+            "example": "Example: /resume 3 -d topsailai_agent_plan_tasks",
             "scopes": ["workspace", "project"],
         },
         {
@@ -251,8 +251,8 @@ def print_help(
             "scopes": ["workspace"],
         },
         {
-            "cmd": "topsailai workspace resume -s SESSION [-m MODE] [-b|--background]",
-            "desc": "Resume one exact persisted idle session in its recorded workspace using topsailai_agent_plan_tasks. Foreground defaults to dtach; background defaults to raw and honors an explicit -m raw|tmux|dtach, failing closed when that mechanism is unavailable. Lookup and liveness errors fail closed. Background success is submission, not readiness; see docs/usage/topsailai.md#workspace-resume. No --json, PID, or driver override is accepted.",
+            "cmd": "topsailai workspace resume -s SESSION [-d DRIVER] [-m MODE] [-b|--background]",
+            "desc": "Resume one exact persisted idle session in its recorded workspace using the chats driver by default. Explicit -d/--driver accepts the three built-in drivers. Foreground defaults to dtach; background defaults to raw and honors an explicit -m raw|tmux|dtach, failing closed when unavailable. Lookup and liveness errors fail closed. Background success is submission, not readiness; see docs/usage/topsailai.md#workspace-resume. No --json or PID interface is provided.",
             "example": "Example: topsailai workspace resume -s my-session --background",
             "scopes": ["workspace"],
         },
