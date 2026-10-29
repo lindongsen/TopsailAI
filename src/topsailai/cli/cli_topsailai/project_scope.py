@@ -1583,7 +1583,7 @@ def _validate_resume_workspace(record: Dict[str, Any]) -> str:
 
 
 def resume_session_result(
-    session_id: str, *, agent_mode: str = "dtach", background: bool = False,
+    session_id: str, *, agent_mode: Optional[str] = None, background: bool = False,
     spawn=None, prompt_driver: bool = False, driver: Optional[str] = None,
     emit_status: bool = True, prelaunch: Optional[Callable[[Dict[str, Any]], None]] = None,
     query: Optional[Callable[[str], Any]] = None, home: Optional[str] = None,
@@ -1596,11 +1596,16 @@ def resume_session_result(
     session ID is preserved in both identity environment aliases; no fresh
     identity is generated for a resume.
 
+    *agent_mode* selects the launch mechanism. When it is omitted the foreground
+    default stays ``dtach`` while a background resume defaults to ``raw``, so a
+    background request never depends on an external terminal multiplexer.
+
     Returns:
         ``0`` on success, ``3`` when the identity is missing or ambiguous,
         ``4`` when the lookup, workspace or liveness cannot be trusted,
         ``5``/``6``/``130`` from the launch boundary, or the child exit code.
     """
+    effective_mode = agent_mode or ("raw" if background else "dtach")
     try:
         record = lookup_persisted_session(session_id, query=query)
         workspace = _validate_resume_workspace(record)
@@ -1668,17 +1673,17 @@ def resume_session_result(
     if emit_status:
         print(
             f"{Colors.GREEN}[INFO] Resuming session '{session_id}' with driver "
-            f"'{selected_driver}' in {workspace} (mode: {agent_mode}) ...{Colors.RESET}"
+            f"'{selected_driver}' in {workspace} (mode: {effective_mode}) ...{Colors.RESET}"
         )
     if background:
         from cli_topsailai.agent_launch import launch_configured_agent
 
         return launch_configured_agent(
-            workspace, mode="raw", background=True, spawn=spawn,
+            workspace, mode=effective_mode, background=True, spawn=spawn,
             session_id=session_id, driver=selected_driver,
             entrypoint_base=entrypoint_base, prelaunch_check=late_check,
         )
     return launch_agent_driver(
-        workspace, selected_driver, session_id, agent_mode=agent_mode,
+        workspace, selected_driver, session_id, agent_mode=effective_mode,
         spawn=spawn, emit_status=False, prelaunch_check=late_check,
     )

@@ -23,8 +23,9 @@ def build_parser() -> argparse.ArgumentParser:
         allow_abbrev=False,
         description="Resume one exact persisted session.",
         epilog=(
-            "Background mode submits a raw launch and reports submission, "
-            "not readiness; no --json output is provided."
+            "Background mode submits a headless launch and reports submission, "
+            "not readiness; the default background mechanism is raw. "
+            "No --json output is provided."
         ),
     )
     parser.add_argument("-s", "--session", dest="session_id", required=True,
@@ -32,11 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-m", "--agent-mode", choices=("raw", "dtach", "tmux"),
         default=None, dest="agent_mode", action=_UniqueValue,
-        help="agent launch mode (default: dtach)",
+        help="agent launch mode (foreground default: dtach; background default: raw)",
     )
     parser.add_argument(
         "-b", "--background", action="store_true",
-        help="submit the resume in headless raw mode",
+        help="submit the resume in headless background mode",
     )
     return parser
 
@@ -51,9 +52,6 @@ def run_workspace_resume_cli(argv, *, startup_cwd=None) -> int:
 
     if not _valid_session(args.session_id):
         print("[ERROR] Invalid session identifier", file=sys.stderr)
-        return 2
-    if args.background and args.agent_mode in ("dtach", "tmux"):
-        print("[ERROR] --background supports raw mode only", file=sys.stderr)
         return 2
 
     from cli_topsailai.project_scope import resume_session_result

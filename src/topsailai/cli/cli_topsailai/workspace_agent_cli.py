@@ -39,7 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "-b", "--background", action="store_true",
-        help="submit a headless raw launch under a detached supervisor",
+        help="submit a headless launch under a detached supervisor "
+             "(default mechanism: raw)",
     )
     return parser
 
@@ -61,9 +62,6 @@ def run_workspace_agent_cli(argv, *, startup_cwd: Optional[str] = None) -> int:
         args = build_parser().parse_args(list(argv))
         modes = args.agent_mode or []
         mode = modes[0] if modes else None
-        if args.background and mode in ("dtach", "tmux"):
-            print("[ERROR] --background supports raw mode only", file=sys.stderr)
-            return 2
         target = _resolve_folder(args.folder, startup_cwd)
     except SystemExit as error:
         return int(error.code)

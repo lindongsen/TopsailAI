@@ -239,7 +239,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 |---------|-------------|
 | `runtime` | Execute one exact send, btw, control or logs operation; see the contract above. |
 | `workspace [-f json]` | Display the workspace task list and exit. The default is the human-readable table; `-f json` or `--format json` emits one JSON document. |
-| `workspace agent <folder> [-m MODE] [-b/--background]` | Launch a configured agent in the foreground; background is headless raw mode; explicit dtach/tmux with background is rejected with exit code 2. |
+| `workspace agent <folder> [-m MODE] [-b/--background]` | Launch a configured agent in the foreground; background defaults to raw and honors an explicit `-m raw|tmux|dtach`, failing closed with exit code 4 when that mechanism is unavailable. |
 | `workspace driver <start/status/stop> -s SESSION [-p PID] [--json]` | Start, inspect or stop one exact session driver; see below. |
 | `docs list` | List all usage documentation files and exit. |
 | `docs read <name>` | Read a specific usage documentation file and exit. |
@@ -263,7 +263,7 @@ The JSON workspace document contains `host`, `pwd`, `home`, `task_dir`, `items`,
 topsailai workspace agent <folder> [-m raw|dtach|tmux] [-b|--background]
 ```
 
-The folder is resolved relative to the caller's startup directory. Foreground mode attaches to the launcher, prints `[INFO] Launching agent: ...`, restores the caller's environment and working directory, and returns its observed exit code. Background mode is headless raw execution with stdin closed; a detached supervisor acknowledges a live launcher and reports the actual launcher PID plus a private rotating `.agent-launch.log` under `TOPSAILAI_HOME/workspace/task/`. Submission is not readiness, there is no terminal reattachment, and active launch leases protect logs from expiry cleanup. Exit code `2` means generic usage failure or explicit dtach/tmux with background; `3` means the folder is missing or not a directory; `4` means preparation failure; `5` means spawn or launcher wait failure; `6` means startup acknowledgement or owned custody cannot be confirmed; `130` means cancellation; otherwise observed child statuses `0..255` are preserved and a signal maps to `128 + signal`. A dtach/tmux wrapper client exit is not agent completion. This command intentionally has no `--json` output. Foreground stdin and standard streams are inherited by the directly owned launcher.
+The folder is resolved relative to the caller's startup directory. Foreground mode attaches to the launcher, prints `[INFO] Launching agent: ...`, restores the caller's environment and working directory, and returns its observed exit code. Background mode closes stdin and defaults to `raw`, an independent new process; an explicit `-m raw|tmux|dtach` selects that mechanism and fails with `4` when it is unavailable, with no silent fallback. In every mechanism the detached supervisor spawns the launcher itself, so the reported PID is the actual launcher, and it writes a private rotating `.agent-launch.log` under `TOPSAILAI_HOME/workspace/task/`. Submission is not readiness, there is no terminal reattachment, and active launch leases protect logs from expiry cleanup. Exit code `2` means generic usage failure; `3` means the folder is missing or not a directory; `4` means preparation failure, including an unavailable background mechanism; `5` means spawn or launcher wait failure; `6` means startup acknowledgement or owned custody cannot be confirmed; `130` means cancellation; otherwise observed child statuses `0..255` are preserved and a signal maps to `128 + signal`. A dtach/tmux wrapper client exit is not agent completion. This command intentionally has no `--json` output. Foreground stdin and standard streams are inherited by the directly owned launcher.
 
 ## Examples
 
@@ -472,9 +472,10 @@ Foreground is the default, with `dtach` as the default mode. `-m raw` waits for
 the driver and propagates its exit status; terminal wrappers can detach before
 the agent finishes. `-b` defaults to headless raw, closes stdin, and reuses the
 workspace-agent supervisor, rotating log, active lease, and expiry cleanup.
-Explicit dtach/tmux with `-b` fails with 2. Repeated identical options are
-accepted; conflicting options, extra positionals, abbreviations, `--json`, PID,
-confirmation and driver overrides are rejected.
+An explicit `-m raw|tmux|dtach` with `-b` selects that mechanism and fails with
+4 when it is unavailable; there is no silent fallback. Repeated identical
+options are accepted; conflicting options, extra positionals, abbreviations,
+`--json`, PID, confirmation and driver overrides are rejected.
 
 Background success means submitted, not ready or completed. Output includes
 the actual launcher PID and a private per-attempt log path; repeated resumes do

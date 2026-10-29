@@ -128,12 +128,23 @@ def fake_clock():
     return FakeClock()
 
 
-def test_b01_background_parser_rejects_terminal_modes_before_side_effects(monkeypatch, tmp_path, capsys):
+def test_b01_background_parser_forwards_terminal_mode_before_side_effects(monkeypatch, tmp_path):
+    """A background terminal mechanism is forwarded, not rejected, before any spawn."""
+    from cli_topsailai import agent_launch as al
     from cli_topsailai.workspace_agent_cli import run_workspace_agent_cli
+
+    delegated = []
+
+    def launch(folder, **kwargs):
+        delegated.append((folder, kwargs))
+        return 0
+
     monkeypatch.setattr(bg, "get_topsailai_home", lambda: str(tmp_path))
     monkeypatch.setattr(bg._subprocess, "Popen", lambda *a, **k: pytest.fail("spawned"))
-    assert run_workspace_agent_cli([str(tmp_path), "-b", "-m", "tmux"]) == 2
-    assert "raw mode" in capsys.readouterr().err
+    monkeypatch.setattr(al, "launch_configured_agent", launch)
+    assert run_workspace_agent_cli([str(tmp_path), "-b", "-m", "tmux"]) == 0
+    assert delegated[0][1]["mode"] == "tmux"
+    assert delegated[0][1]["background"] is True
 
 
 def test_b02_and_b16_ack_payload_is_exact_and_bounded(monkeypatch):
@@ -1144,12 +1155,25 @@ def test_r11_launch_transport_and_close_failures(monkeypatch, tmp_path):
     assert close_calls == [11, 12, 10, 13]
 
 
-def test_r11_agent_launch_background_mode_rejection(monkeypatch, tmp_path, capsys):
-    from cli_topsailai.agent_launch import _launch_configured_agent_impl
-    result = _launch_configured_agent_impl(str(tmp_path), mode="tmux", background=True,
-                                           spawn=lambda *a, **k: pytest.fail("spawned"))
-    assert result == 2
-    assert "raw mode only" in capsys.readouterr().err
+def test_r11_agent_launch_background_dispatches_selected_mechanism(monkeypatch, tmp_path):
+    """A background terminal mechanism reaches the terminal submit path."""
+    from cli_topsailai import agent_launch as al
+    from cli_topsailai import agent_launch_terminal as term
+
+    submitted = []
+
+    def submit(folder, session_id, **kwargs):
+        submitted.append((folder, session_id, kwargs))
+        return {"outcome": "submitted", "launcher_pid": 4242,
+                "log_path": "/tmp/x.log", "session_id": session_id}
+
+    monkeypatch.setattr(al, "_prepare_environment", lambda folder, session_id: ((), {}, {}, {}))
+    monkeypatch.setattr(term, "submit_terminal", submit)
+    monkeypatch.setattr(al, "submit_terminal", submit, raising=False)
+    assert al._launch_configured_agent_impl(
+        str(tmp_path), mode="tmux", background=True,
+        spawn=lambda *a, **k: pytest.fail("foreground spawn")) == 0
+    assert submitted[0][2]["mechanism"] == "tmux"
 
 
 # UNIT 1B-1 round 12 targeted residual branch proofs.
@@ -1170,7 +1194,9 @@ def test_r12_supervise_initial_cancel_and_default_popen(monkeypatch, tmp_path):
         def unlink(self): pass
     monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
     monkeypatch.setattr(bg, "_RotatingLog", lambda path: SimpleNamespace(open=lambda: None, close=lambda: None, write=lambda data: None))
-    monkeypatch.setattr(bg, "_default_popen", lambda *args, **kwargs: child)
+    spawned = []
+    monkeypatch.setattr(bg, "_default_popen",
+                        lambda *args, **kwargs: spawned.append(args) or child)
     monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: sent.append(payload))
     monkeypatch.setattr(bg, "_cleanup_owned", lambda *args, **kwargs: True)
     monkeypatch.setattr(bg, "_close_streams", lambda selector, streams: None)
@@ -1180,7 +1206,11 @@ def test_r12_supervise_initial_cancel_and_default_popen(monkeypatch, tmp_path):
     monkeypatch.setattr(bg._os, "close", lambda fd: None)
     bg._supervise({"folder": str(tmp_path), "session_id": "s", "log_path": str(tmp_path / "s.log")}, 3,
                   cancel_requested=lambda: True)
-    assert sent[0]["kind"] == "started"
+    # A cancellation that is already pending must abort BEFORE the launcher
+    # exists, so no process is created that nobody owns.
+    assert spawned == []
+    assert sent[0]["kind"] == "cleanup"
+    assert sent[0]["class"] == "cancellation"
     assert sent[-1]["class"] == "cancellation"
 
 

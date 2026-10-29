@@ -268,9 +268,9 @@ def test_workspace_agent_help_contract(capsys):
     output = capsys.readouterr().out
     assert "topsailai workspace agent <folder> [-m MODE] [-b|--background]" in output
     for text in (
-        "2 usage or background rejection",
+        "2 usage failure",
         "3 invalid folder",
-        "4 preparation failure",
+        "4 preparation failure including an unavailable background mechanism",
         "5 spawn/wait failure",
         "6 unresolved custody",
         "130 cancellation",
@@ -292,9 +292,12 @@ def test_b24_background_contract_snapshot_and_scale(capsys, tmp_path):
     # Syntax, exit codes, retention, no-attach and no-json are all documented.
     for text in (
         "topsailai workspace agent <folder> [-m MODE] [-b|--background]",
-        "2 usage or background rejection",
+        "Background defaults to raw mode",
+        "honors an explicit -m raw|tmux|dtach",
+        "failing closed when that mechanism is unavailable",
+        "2 usage failure",
         "3 invalid folder",
-        "4 preparation failure",
+        "4 preparation failure including an unavailable background mechanism",
         "5 spawn/wait failure",
         "6 unresolved custody",
         "130 cancellation",

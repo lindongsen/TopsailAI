@@ -1984,5 +1984,66 @@ class TestPromptSelectionManagedProjects(unittest.TestCase):
         action, value = prompt_selection([], "/task")
         self.assertEqual(action, "agent")
         self.assertEqual(value, "2")
+
+
+class ResumeBackgroundMechanismTests(unittest.TestCase):
+    """A background resume forwards the selected mechanism instead of forcing raw."""
+
+    def _resume(self, **options):
+        """Run one resume against a stubbed lookup and launch boundary."""
+        from cli_topsailai import project_scope as scope
+
+        record = {"session_id": "session-1", "project_workspace": "/work/proj"}
+        with patch.object(scope, "lookup_persisted_session", return_value=record), \
+             patch.object(scope, "_validate_resume_workspace", return_value="/work/proj"), \
+             patch.object(scope, "session_liveness", return_value="idle"), \
+             patch("cli_topsailai.agent_launch.launch_configured_agent",
+                   return_value=0) as launch:
+            status = scope.resume_session_result("session-1", **options)
+        return status, launch
+
+    def test_background_defaults_to_raw(self):
+        """A background resume without an explicit mode uses the new process."""
+        status, launch = self._resume(background=True)
+        self.assertEqual(status, 0)
+        self.assertEqual(launch.call_args.kwargs["mode"], "raw")
+        self.assertTrue(launch.call_args.kwargs["background"])
+
+    def test_background_forwards_each_selected_mechanism(self):
+        """Every explicitly selected mechanism reaches the launch boundary."""
+        for mechanism in ("raw", "tmux", "dtach"):
+            status, launch = self._resume(background=True, agent_mode=mechanism)
+            self.assertEqual(status, 0)
+            self.assertEqual(launch.call_args.kwargs["mode"], mechanism)
+
+    def test_foreground_default_stays_dtach(self):
+        """The foreground default is unchanged by the background selection."""
+        from cli_topsailai import project_scope as scope
+
+        record = {"session_id": "session-1", "project_workspace": "/work/proj"}
+        with patch.object(scope, "lookup_persisted_session", return_value=record), \
+             patch.object(scope, "_validate_resume_workspace", return_value="/work/proj"), \
+             patch.object(scope, "session_liveness", return_value="idle"), \
+             patch.object(scope, "launch_agent_driver", return_value=0) as launch:
+            status = scope.resume_session_result("session-1")
+        self.assertEqual(status, 0)
+        self.assertEqual(launch.call_args.kwargs["agent_mode"], "dtach")
+
+    def test_background_status_line_reports_selected_mechanism(self):
+        """The status line reports the mechanism that will actually be used."""
+        from cli_topsailai import project_scope as scope
+
+        record = {"session_id": "session-1", "project_workspace": "/work/proj"}
+        with patch.object(scope, "lookup_persisted_session", return_value=record), \
+             patch.object(scope, "_validate_resume_workspace", return_value="/work/proj"), \
+             patch.object(scope, "session_liveness", return_value="idle"), \
+             patch("cli_topsailai.agent_launch.launch_configured_agent",
+                   return_value=0), \
+             patch("builtins.print") as output:
+            scope.resume_session_result("session-1", background=True, agent_mode="tmux")
+        printed = " ".join(str(call) for call in output.call_args_list)
+        self.assertIn("mode: tmux", printed)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,8 @@
 
 from unittest.mock import patch
 
+import pytest
+
 from cli_topsailai.workspace_resume_cli import build_parser, run_workspace_resume_cli
 
 
@@ -13,10 +15,17 @@ def test_parser_requires_exact_session_id():
     assert args.background is True
 
 
-def test_background_rejects_non_raw_mode(capsys):
-    """Background resume refuses terminal-attached modes before lookup."""
-    assert run_workspace_resume_cli(["-s", "session-123", "-m", "dtach", "-b"]) == 2
-    assert "raw mode only" in capsys.readouterr().err
+@pytest.mark.parametrize("mechanism", ["raw", "tmux", "dtach"])
+def test_background_forwards_each_selected_mechanism(mechanism):
+    """Background resume delegates every supported mechanism unchanged."""
+    with patch(
+        "cli_topsailai.project_scope.resume_session_result", return_value=0,
+    ) as resume:
+        assert run_workspace_resume_cli(
+            ["-s", "session-123", "-m", mechanism, "-b"]) == 0
+    resume.assert_called_once_with(
+        "session-123", agent_mode=mechanism, background=True,
+    )
 
 
 def test_resume_delegates_exact_identity_and_background_options():

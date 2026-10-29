@@ -122,9 +122,6 @@ def _launch_configured_agent_impl(
     prelaunch_check=None,
 ) -> int:
     """Launch one configured agent and return its boundary status."""
-    if background and mode in ("dtach", "tmux"):
-        print("[ERROR] --background supports raw mode only", file=sys.stderr)
-        return 2
     if spawn is None:
         spawn = _spawn_process
 
@@ -143,19 +140,31 @@ def _launch_configured_agent_impl(
     try:
         session_id = resumed_session or _session_id()
         try:
-            effective_mode = "raw" if background else (mode or _detect_agent_mode())
+            effective_mode = (mode or "raw") if background else (mode or _detect_agent_mode())
         except (RuntimeError, ValueError, OSError) as error:
             print(f"[ERROR] Agent launch preparation failed: {error}", file=sys.stderr)
             return 4
         if background:
-            print(
-                f"[INFO] Submitting agent: workspace={folder} mode=raw "
-                f"background=yes session={session_id}"
-            )
             from cli_topsailai.agent_launch_background import (
                 BackgroundUnconfirmed,
                 launch_background,
                 launch_log_identity,
+            )
+            from cli_topsailai.agent_launch_terminal import (
+                TerminalUnavailable,
+                TerminalUnconfirmed,
+                resolve_mechanism,
+                submit_terminal,
+            )
+
+            try:
+                effective_mode = resolve_mechanism(effective_mode)
+            except TerminalUnavailable as error:
+                print(f"[ERROR] Agent launch preparation failed: {error}", file=sys.stderr)
+                return 4
+            print(
+                f"[INFO] Submitting agent: workspace={folder} mode={effective_mode} "
+                f"background=yes session={session_id}"
             )
 
             try:
@@ -169,21 +178,25 @@ def _launch_configured_agent_impl(
             refusal = refuse_if_not_ready()
             if refusal is not None:
                 return refusal
+            submit_kwargs = {
+                "environment": os.environ.copy(),
+                "spawn": spawn,
+                "entrypoint_base": invocation_cwd,
+                # A resume writes a distinct per-attempt log so an earlier
+                # attempt's diagnostics are never truncated; a fresh launch
+                # keeps its historical single log name.
+                "log_identity": (launch_log_identity(session_id, uuid.uuid4().hex)
+                                 if resumed_session else None),
+                "driver": driver,
+            }
             try:
-                background_result = launch_background(
-                    folder,
-                    session_id,
-                    environment=os.environ.copy(),
-                    spawn=spawn,
-                    entrypoint_base=invocation_cwd,
-                    # A resume writes a distinct per-attempt log so an earlier
-                    # attempt's diagnostics are never truncated; a fresh launch
-                    # keeps its historical single log name.
-                    log_identity=(launch_log_identity(session_id, uuid.uuid4().hex)
-                                  if resumed_session else None),
-                    driver=driver,
-                )
-            except BackgroundUnconfirmed as error:
+                if effective_mode == "raw":
+                    background_result = launch_background(
+                        folder, session_id, **submit_kwargs)
+                else:
+                    background_result = submit_terminal(
+                        folder, session_id, mechanism=effective_mode, **submit_kwargs)
+            except (BackgroundUnconfirmed, TerminalUnconfirmed) as error:
                 print(f"[ERROR] Agent launch custody unresolved: {error}", file=sys.stderr)
                 return 6
             except (OSError, ValueError, RuntimeError) as error:
@@ -199,7 +212,7 @@ def _launch_configured_agent_impl(
             log_path = background_result["log_path"]
             print(
                 f"[INFO] Agent submitted: session={session_id} "
-                f"launcher_pid={launcher_pid} mode=raw background=yes"
+                f"launcher_pid={launcher_pid} mode={effective_mode} background=yes"
             )
             print(f"[INFO] Launch log: {log_path}")
             print("[INFO] Startup is not confirmed; inspect the launch log and workspace task list")

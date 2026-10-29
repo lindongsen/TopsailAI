@@ -102,10 +102,18 @@ _CHUNK_BYTES = 64 * 1024
 
 
 def _send_frame(fd: int, payload: Mapping[str, Any]) -> None:
-    """Write one bounded JSON frame to the private acknowledgement pipe."""
+    """Write one bounded JSON frame to the private acknowledgement channel.
+
+    The channel is either a raw descriptor (independent-process supervisor) or
+    a connected control socket (terminal-container supervisor).
+    """
     frame = _json.dumps(dict(payload), separators=(",", ":")).encode("utf-8") + b"\n"
     if len(frame) > _MAX_FRAME_BYTES:
         raise ValueError("acknowledgement frame is too large")
+    sendall = getattr(fd, "sendall", None)
+    if sendall is not None:
+        sendall(frame)
+        return
     view = memoryview(frame)
     while view:
         written = _os.write(fd, view)
@@ -114,14 +122,34 @@ def _send_frame(fd: int, payload: Mapping[str, Any]) -> None:
         view = view[written:]
 
 
-def _read_frames(fd: int, buffer: bytearray) -> list[dict[str, Any]]:
+def _close_channel(fd: Any) -> None:
+    """Close one acknowledgement channel whether it is a socket or a descriptor."""
+    close = getattr(fd, "close", None)
+    if close is not None:
+        try:
+            close()
+        except OSError:
+            pass
+        return
+    try:
+        _os.close(fd)
+    except OSError:
+        pass
+
+
+def _read_frames(fd: Any, buffer: bytearray) -> list[dict[str, Any]]:
     """Read available acknowledgement frames without blocking.
 
     EOF with a non-empty buffer is a truncated frame and is never success.
+    The channel is either a raw descriptor or a connected control socket.
     """
     frames: list[dict[str, Any]] = []
     try:
-        data = _os.read(fd, _MAX_FRAME_BYTES + 1)
+        recv = getattr(fd, "recv", None)
+        if recv is not None:
+            data = recv(_MAX_FRAME_BYTES + 1)
+        else:
+            data = _os.read(fd, _MAX_FRAME_BYTES + 1)
     except BlockingIOError:
         return frames
     if not data:
@@ -390,9 +418,16 @@ def _signal_owned(child: Any, identity: Optional[tuple[int, Any, str]] = None,
 
 
 def _validate_launcher_cleanup_ack(
-    frame: Mapping[str, Any], ownership: LauncherOwnership
+    frame: Mapping[str, Any], ownership: Optional[LauncherOwnership]
 ) -> bool:
-    """Accept cleanup proof only for the exact immutable launcher owner."""
+    """Accept cleanup proof only for the exact immutable launcher owner.
+
+    An unestablished owner cannot validate anything, so a missing ownership
+    record is a rejection rather than an attribute error: cleanup proof must
+    never be inferred from a frame whose owner was never observed.
+    """
+    if ownership is None:
+        return False
     required = ("kind", "session", "launcher_pid", "launcher_identity", "cleanup_confirmed")
     if any(key not in frame for key in required):
         return False
@@ -501,6 +536,11 @@ def _supervise(request: Mapping[str, Any], ack_fd: int, *, popen: Optional[Calla
     log = _RotatingLog(log_path)
     lease = active_launch_lease(log_path)
     try:
+        # A cancellation or a lost parent control channel that arrives before
+        # the launcher exists must abort the launch instead of creating a
+        # process nobody owns.
+        if _cancel_requested(cancel_fd, cancel_requested) or _control_lost(cancel_fd):
+            raise KeyboardInterrupt()
         _write_lease(lease, pid=_os.getpid(), identity=_authoritative_child_identity(_os.getpid()))
         log.open()
         command = ([str(request["driver"])] if request.get("driver") else
@@ -548,7 +588,9 @@ def _supervise(request: Mapping[str, Any], ack_fd: int, *, popen: Optional[Calla
                              "launcher_pid": child.pid, "log_path": request["log_path"]})
         drain_deadline = None
         while child.poll() is None or streams:
-            if _cancel_requested(cancel_fd, cancel_requested):
+            # After submission the parent closes its control channel while the
+            # launcher must keep running, so end-of-stream is not a cancellation.
+            if _cancel_requested(cancel_fd, cancel_requested, submitted=True):
                 raise KeyboardInterrupt()
             _drain(selector, streams, log)
             if child.poll() is not None:
@@ -594,24 +636,56 @@ def _supervise(request: Mapping[str, Any], ack_fd: int, *, popen: Optional[Calla
         _close_streams(selector, streams)
         log.close()
         _remove_lease(log_path)
-        try:
-            _os.close(ack_fd)
-        except OSError:
-            pass
+        _close_channel(ack_fd)
 
 
-def _cancel_requested(cancel_fd: Optional[int], callback: Optional[Callable[[], bool]]) -> bool:
-    """Consume a parent cancellation byte without blocking the supervisor."""
+def _cancel_requested(cancel_fd: Any, callback: Optional[Callable[[], bool]],
+                      *, submitted: bool = False) -> bool:
+    """Consume a parent cancellation signal without blocking the supervisor.
+
+    The cancellation channel is either a raw descriptor or a connected control
+    socket. A closed channel means cancellation only *before* submission: after
+    a successful submission the parent closes its side of the control channel
+    while the launcher must keep running, so EOF there is not a cancellation.
+    """
     if callback is not None and callback():
         return True
     if cancel_fd is None:
         return False
     try:
-        return bool(_os.read(cancel_fd, 1))
+        recv = getattr(cancel_fd, "recv", None)
+        if recv is not None:
+            data = recv(1)
+        else:
+            data = _os.read(cancel_fd, 1)
     except BlockingIOError:
         return False
     except OSError:
         return True
+    if not data:
+        return not submitted
+    return True
+
+
+def _control_lost(cancel_fd: Any) -> bool:
+    """Return whether the parent control channel is gone before submission.
+
+    Only an authoritative end-of-stream (or a hard channel error) counts, so a
+    parent that is merely idle is never mistaken for a cancelled launch.
+    """
+    if cancel_fd is None:
+        return False
+    try:
+        recv = getattr(cancel_fd, "recv", None)
+        if recv is not None:
+            data = recv(1)
+        else:
+            data = _os.read(cancel_fd, 1)
+    except BlockingIOError:
+        return False
+    except OSError:
+        return True
+    return data == b""
 
 
 def _remove_lease(path: Path) -> None:
@@ -624,10 +698,19 @@ def _remove_lease(path: Path) -> None:
         pass
 
 
-def _supervisor_entry(request_path: str, ack_fd: int) -> None:
-    """Load, consume and execute one private supervisor request."""
+def _supervisor_entry(request_path: str, ack_target: Any) -> None:
+    """Load, consume and execute one private supervisor request.
+
+    *ack_target* is either an inherited acknowledgement descriptor (raw
+    independent-process supervisor) or the parent's private control socket path
+    (terminal-container supervisor). A terminal supervisor must authenticate
+    itself before any acknowledgement is trusted.
+    """
     request_file = Path(request_path)
     cancel_fd = None
+    channel = ack_target
+    if isinstance(ack_target, str) and ack_target.isdigit():
+        channel = int(ack_target)
     try:
         with request_file.open(encoding="utf-8") as handle:
             request = _json.load(handle)
@@ -641,17 +724,26 @@ def _supervisor_entry(request_path: str, ack_fd: int) -> None:
     if not isinstance(request, dict) or request.get("kind") != "workspace-agent-supervisor":
         raise ValueError("invalid supervisor request")
     _validate_resume_driver(request.get("driver"))
-    cancel_fd = request.get("cancel_fd")
-    if cancel_fd is not None:
-        _os.set_blocking(cancel_fd, False)
+    if isinstance(channel, str):
+        from cli_topsailai.agent_launch_terminal import (
+            connect_control, write_recovery_record)
+
+        record_path = request.get("record_path")
+        if isinstance(record_path, str) and record_path:
+            # Publish identity BEFORE connecting so a handshake failure still
+            # leaves verifiable recovery custody for the parent.
+            write_recovery_record(Path(record_path))
+        channel = connect_control(channel, request)
+        cancel_fd = channel
+    else:
+        cancel_fd = request.get("cancel_fd")
+        if cancel_fd is not None:
+            _os.set_blocking(cancel_fd, False)
     try:
-        _supervise(request, ack_fd, cancel_fd=cancel_fd)
+        _supervise(request, channel, cancel_fd=cancel_fd)
     finally:
         if cancel_fd is not None:
-            try:
-                _os.close(cancel_fd)
-            except OSError:
-                pass
+            _close_channel(cancel_fd)
 
 
 def _entrypoint_command(base_dir: Optional[str] = None) -> list[str]:

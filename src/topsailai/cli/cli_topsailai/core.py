@@ -1171,7 +1171,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     if argv and argv[0] == "--internal-workspace-agent-supervisor":
         from cli_topsailai.agent_launch_background import _supervisor_entry
 
-        _supervisor_entry(argv[1], int(argv[2]))
+        # The acknowledgement target is either an inherited descriptor number
+        # (independent-process supervisor) or a private control socket path
+        # (terminal-container supervisor); only the supervisor decides which.
+        _supervisor_entry(argv[1], argv[2])
         return
     if argv[:2] == ["workspace", "agent"]:
         from cli_topsailai.workspace_agent_cli import run_workspace_agent_cli

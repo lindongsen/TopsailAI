@@ -24,12 +24,16 @@ def test_missing_folder_is_rejected(tmp_path):
     launch.assert_not_called()
 
 
-def test_background_rejects_terminal_modes(tmp_path):
+@pytest.mark.parametrize("mechanism", ["raw", "tmux", "dtach"])
+def test_background_forwards_each_selected_mechanism(tmp_path, mechanism):
+    """Background launch forwards every supported mechanism unchanged."""
     folder = tmp_path / "project"
     folder.mkdir()
-    with patch("cli_topsailai.agent_launch.launch_configured_agent") as launch:
-        assert run_workspace_agent_cli([str(folder), "-b", "-m", "tmux"]) == 2
-    launch.assert_not_called()
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli([str(folder), "-b", "-m", mechanism]) == 0
+    launch.assert_called_once_with(
+        str(folder), mode=mechanism, background=True, entrypoint_base=os.getcwd()
+    )
 
 
 def test_unknown_json_option_is_usage_error(tmp_path):
