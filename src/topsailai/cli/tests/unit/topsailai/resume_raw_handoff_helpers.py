@@ -43,11 +43,17 @@ class Custody:
         self.driver = self._write_role("topsailai_agent_chats", _DRIVER)
         self.u2_marker = self.root / "u2-hook-marker.log"
         self.u3_marker = self.root / "u3-hook-marker.log"
+        self.u4_marker = self.root / "u4-hook-marker.log"
         self.u3_original_cleanup: dict[str, Any] | None = None
         self.u3_received_cleanup: dict[str, Any] | None = None
         self.u3_receiver_frame: Mapping[str, Any] | None = None
         self.u3_transformations = 0
         self.u3_omissions = 0
+        self.u4_original_cleanup: dict[str, Any] | None = None
+        self.u4_received_cleanup: dict[str, Any] | None = None
+        self.u4_receiver_frame: Mapping[str, Any] | None = None
+        self.u4_transformations = 0
+        self.u4_omissions = 0
         self.finished = False
         self.return_state: dict[str, Any] | None = None
         self._original_cwd = os.getcwd()
@@ -277,6 +283,7 @@ def launch(
     mutation = os.environ.get("C2_CAMPAIGN_MUTATION")
     u2_mutation = os.environ.get("C2_U2_MUTATION")
     u3_mutation = os.environ.get("C2_U3_MUTATION")
+    u4_mutation = os.environ.get("C2_U4_MUTATION")
     held_submitted: list[dict[str, Any]] = []
 
     def observed_ownership(frame: Mapping[str, Any], session_id: str) -> Any:
@@ -327,6 +334,20 @@ def launch(
                 custody.u3_transformations += 1
                 custody.events.append("engaged U3 receiver launcher_pid mutation")
                 break
+        if u4_mutation in {"token", "omit-cleanup-token-check"}:
+            for index, frame in enumerate(frames):
+                if frame.get("kind") != "cleanup":
+                    continue
+                custody.u4_original_cleanup = dict(frame)
+                receiver = dict(frame)
+                pid, token, source = identity_from_frame(frame)
+                receiver["launcher_identity"] = repr((pid, token + 1, source))
+                frames[index] = receiver
+                custody.u4_received_cleanup = dict(receiver)
+                custody.u4_receiver_frame = receiver
+                custody.u4_transformations += 1
+                custody.events.append("engaged U4 receiver launcher_identity token mutation")
+                break
         custody.frames.extend(frames)
         custody.observed_frames.extend(observed)
         return frames
@@ -334,7 +355,8 @@ def launch(
     os.environ.clear()
     os.environ.update(custody.environment(session))
     os.environ["TOPSAILAI_CLI_ENTRY"] = str(custody.entrypoint)
-    marker = custody.u3_marker if u3_mutation else custody.u2_marker
+    marker = (custody.u4_marker if u4_mutation else
+              custody.u3_marker if u3_mutation else custody.u2_marker)
 
     def spawn_owned_supervisor(*args: Any, **kwargs: Any) -> subprocess.Popen[Any]:
         """Add mutation variables only to the test-owned supervisor environment."""
@@ -350,6 +372,60 @@ def launch(
         if cancel_requested is not None:
             kwargs["cancel_requested"] = cancel_requested
         return original_background_launch(folder, session_id, **kwargs)
+
+    def validate_u4(frame: Mapping[str, Any], ownership: Any) -> bool:
+        """Neutralize only the registered U4 receiver identity token comparison."""
+        original_cleanup = custody.u4_original_cleanup
+        received_cleanup = custody.u4_received_cleanup
+        if ownership is None or original_cleanup is None or received_cleanup is None:
+            return original_validator(frame, ownership)
+        frame_payload = dict(frame)
+        original_payload = dict(original_cleanup)
+        frame_identity = frame_payload.get("launcher_identity")
+        original_identity = original_payload.get("launcher_identity")
+        try:
+            received_identity = identity_from_frame(received_cleanup)
+            candidate_identity = identity_from_frame(frame)
+            owner_identity = identity_from_frame({"launcher_identity": ownership.identity})
+        except (AssertionError, KeyError, TypeError, ValueError):
+            return original_validator(frame, ownership)
+        original_payload.pop("launcher_identity", None)
+        frame_payload.pop("launcher_identity", None)
+        targeted = (
+            u4_mutation == "omit-cleanup-token-check"
+            and frame is custody.u4_receiver_frame
+            and ownership is custody.ownership
+            and frame.get("kind") == "cleanup"
+            and frame_identity == received_cleanup.get("launcher_identity")
+            and original_identity == ownership.identity
+            and received_identity[0] == owner_identity[0]
+            and received_identity[2] == owner_identity[2]
+            and candidate_identity[0] == received_identity[0]
+            and candidate_identity[2] == received_identity[2]
+            and candidate_identity[1] == received_identity[1]
+            and candidate_identity[1] != owner_identity[1]
+            and candidate_identity[1] == owner_identity[1] + 1
+            and frame_payload == original_payload
+        )
+        if not targeted:
+            return original_validator(frame, ownership)
+        private_frame = dict(frame)
+        private_frame["launcher_identity"] = original_identity
+        result = original_validator(private_frame, ownership)
+        custody.u4_omissions += 1
+        boundary = inspect.currentframe().f_back.f_code.co_name
+        record = {
+            "event": "u4_validator_omission",
+            "boundary": boundary,
+            "decision": "normalize_start_token",
+            "original_validator_result": result,
+            "received": {"launcher_identity": frame_identity},
+            "private_input": {"launcher_identity": private_frame["launcher_identity"]},
+            "owner": {"launcher_pid": ownership.launcher_pid, "identity": ownership.identity},
+        }
+        with custody.u4_marker.open("a", encoding="utf-8") as marker_file:
+            marker_file.write(json.dumps(record, sort_keys=True) + "\n")
+        return result
 
     def validate_u3(frame: Mapping[str, Any], ownership: Any) -> bool:
         """Neutralize only the registered U3 receiver PID comparison."""
@@ -407,6 +483,8 @@ def launch(
     background.launch_background = launch_with_optional_cancellation
     if u3_mutation == "omit-cleanup-pid-check":
         background._validate_launcher_cleanup_ack = validate_u3
+    elif u4_mutation == "omit-cleanup-token-check":
+        background._validate_launcher_cleanup_ack = validate_u4
     project_scope._apply_selected_model_environment = lambda _folder: ({}, set())
     agent_launch._apply_selected_model_environment = lambda _folder: ({}, set())
     custody.production_entry_cwd = os.getcwd()

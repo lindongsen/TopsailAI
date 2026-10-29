@@ -159,8 +159,10 @@ def test_process_state_unknown_and_reconfirmation_signal_gate():
 
 
 
-@pytest.mark.parametrize("mismatch_field", ["pid"], ids=["pid"])
+@pytest.mark.parametrize("mismatch_field", ["pid", "token"], ids=["pid", "token"])
 def test_cancel_rejects_mismatched_cleanup(raw_custody, mismatch_field):
+    if mismatch_field == "token":
+        return _test_cancel_rejects_mismatched_cleanup_token(raw_custody)
     """Reject a cleanup acknowledgement naming a different launcher PID."""
     session = "c2-u3-pid-mismatch"
     trigger = {}
@@ -266,6 +268,110 @@ def test_cancel_rejects_mismatched_cleanup(raw_custody, mismatch_field):
     finally:
         os.environ.pop("C2_U3_MUTATION", None)
 
+
+def _test_cancel_rejects_mismatched_cleanup_token(raw_custody):
+    """Reject a cleanup acknowledgement with only its identity token changed."""
+    session = "c2-u4-token-mismatch"
+    trigger = {}
+    callback_calls = []
+    gate = {"triggered": False, "bound": 256}
+
+    def cancel_requested():
+        """Trigger cancellation only after ownership is independently verified."""
+        callback_calls.append("called")
+        assert len(callback_calls) <= gate["bound"]
+        started = [
+            frame for frame in raw_custody.observed_frames
+            if frame.get("kind") == "started"
+        ]
+        if not started or trigger:
+            return False
+        telemetry = raw_custody.wait_for(raw_custody.telemetry)
+        pid, token, source = identity_from_frame(started[0])
+        assert source == "authoritative"
+        assert raw_custody.ownership is not None
+        assert raw_custody.ownership.launcher_pid == pid
+        assert raw_custody.live(pid, token)
+        assert (pid, token) in raw_custody.drivers
+        assert int(telemetry["pid"]) == pid
+        assert int(telemetry["token"]) == token
+        assert telemetry["session"] == telemetry["top_session"] == session
+        proc_pid, proc_state, proc_token, parent = _proc_identity(pid)
+        assert proc_pid == pid
+        assert proc_state != "Z"
+        assert proc_token == token
+        assert int(telemetry["parent"]) == parent
+        assert parent in {child.pid for child in raw_custody.supervisors}
+        assert telemetry["cwd"] == str(raw_custody.workspace)
+        assert os.readlink(f"/proc/{pid}/cwd") == str(raw_custody.workspace)
+        trigger.update(pid=pid, token=token, source=source, parent=parent)
+        gate["triggered"] = True
+        return True
+
+    os.environ["C2_U4_MUTATION"] = (
+        "omit-cleanup-token-check"
+        if os.environ.get("C2_U4_MUTATION") == "omit-cleanup-token-check"
+        else "token"
+    )
+    mutation = os.environ["C2_U4_MUTATION"]
+    try:
+        result = launch(
+            raw_custody, session, cancel_requested=cancel_requested,
+            submitted_gate=gate,
+        )
+        assert raw_custody.u4_transformations == 1
+        assert raw_custody.u4_original_cleanup is not None
+        assert raw_custody.u4_received_cleanup is not None
+        original = raw_custody.u4_original_cleanup
+        received = raw_custody.u4_received_cleanup
+        assert set(original) == set(received)
+        assert {key for key in original if original[key] != received[key]} == {"launcher_identity"}
+        assert received["launcher_pid"] == trigger["pid"]
+        assert original["launcher_pid"] == trigger["pid"]
+        assert original["launcher_identity"] == repr(
+            (trigger["pid"], trigger["token"], trigger["source"])
+        )
+        received_identity = identity_from_frame(received)
+        assert received_identity[0] == trigger["pid"]
+        assert received_identity[1] != trigger["token"]
+        assert received_identity[2] == trigger["source"]
+        assert raw_custody.return_state is not None
+        assert raw_custody.return_state["cwd"] == raw_custody.return_state["expected_cwd"]
+        assert raw_custody.return_state["environment"] == raw_custody.return_state["expected_environment"]
+        assert callback_calls
+        assert len(callback_calls) <= gate["bound"]
+        assert not any(frame.get("kind") == "submitted" for frame in raw_custody.frames)
+        cleanup = [frame for frame in raw_custody.frames if frame.get("kind") == "cleanup"]
+        assert len(cleanup) == 1
+        assert original["kind"] == "cleanup"
+        assert original["class"] == "cancellation"
+        assert original["cleanup_confirmed"] is True
+        assert original["session"] == session
+        assert original["launcher_pid"] == trigger["pid"]
+        assert trigger["parent"] in {child.pid for child in raw_custody.supervisors}
+        assert len(raw_custody.drivers) == 1
+        assert raw_custody.absent(*raw_custody.drivers[0])
+        assert raw_custody.supervisors[0].poll() is not None
+        assert raw_custody.supervisors[0].returncode is not None
+        if mutation == "omit-cleanup-token-check":
+            records = [json.loads(line) for line in raw_custody.u4_marker.read_text(encoding="utf-8").splitlines()]
+            assert len(records) == 1
+            assert records[0]["event"] == "u4_validator_omission"
+            assert records[0]["boundary"] == "consume_cancellation"
+            assert records[0]["decision"] == "normalize_start_token"
+            assert records[0]["original_validator_result"] is True
+            assert records[0]["received"]["launcher_identity"] == received["launcher_identity"]
+            assert records[0]["private_input"]["launcher_identity"] == original["launcher_identity"]
+            assert records[0]["owner"]["launcher_pid"] == trigger["pid"]
+            assert raw_custody.u4_marker.parent == raw_custody.root
+            assert raw_custody.u4_omissions == 1
+            assert result == 130
+            assert result == 6, "U4_TOKEN_MISMATCH_PUBLIC_STATUS"
+        else:
+            assert raw_custody.u4_omissions == 0
+            assert result == 6
+    finally:
+        os.environ.pop("C2_U4_MUTATION", None)
 
 def test_cancel_owned_before_submit(raw_custody):
     """Cancel exactly once after verified ownership and before submission."""
