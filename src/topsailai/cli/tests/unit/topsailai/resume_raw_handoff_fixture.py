@@ -42,7 +42,7 @@ def raw_custody():
             archived.write_text(report.read_text(encoding="utf-8"), encoding="utf-8")
             custody.events.append(f"archived custody report {archived}")
             report.write_text(json.dumps({"events": custody.events}, indent=2), encoding="utf-8")
-        for marker in (custody.u2_marker, custody.u3_marker, custody.u4_marker):
+        for marker in (custody.u2_marker, custody.u3_marker, custody.u4_marker, custody.u5_marker):
             if marker.exists():
                 marker.unlink()
                 custody.events.append(f"deleted run-scoped marker {marker}")

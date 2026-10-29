@@ -54,6 +54,13 @@ class Custody:
         self.u4_receiver_frame: Mapping[str, Any] | None = None
         self.u4_transformations = 0
         self.u4_omissions = 0
+        self.u5_marker = self.root / "u5-hook-marker.log"
+        self.u5_original_cleanup: dict[str, Any] | None = None
+        self.u5_received_cleanup: dict[str, Any] | None = None
+        self.u5_receiver_frame: Mapping[str, Any] | None = None
+        self.u5_transformations = 0
+        self.u5_omissions = 0
+        self.u5_validator_calls: list[dict[str, Any]] = []
         self.finished = False
         self.return_state: dict[str, Any] | None = None
         self._original_cwd = os.getcwd()
@@ -284,6 +291,7 @@ def launch(
     u2_mutation = os.environ.get("C2_U2_MUTATION")
     u3_mutation = os.environ.get("C2_U3_MUTATION")
     u4_mutation = os.environ.get("C2_U4_MUTATION")
+    u5_mutation = os.environ.get("C2_U5_MUTATION")
     held_submitted: list[dict[str, Any]] = []
 
     def observed_ownership(frame: Mapping[str, Any], session_id: str) -> Any:
@@ -348,6 +356,19 @@ def launch(
                 custody.u4_transformations += 1
                 custody.events.append("engaged U4 receiver launcher_identity token mutation")
                 break
+        if u5_mutation in {"session", "omit-cleanup-session-check"}:
+            for index, frame in enumerate(frames):
+                if frame.get("kind") != "cleanup":
+                    continue
+                custody.u5_original_cleanup = dict(frame)
+                receiver = dict(frame)
+                receiver["session"] = f"{frame['session']}-mismatch"
+                frames[index] = receiver
+                custody.u5_received_cleanup = dict(receiver)
+                custody.u5_receiver_frame = receiver
+                custody.u5_transformations += 1
+                custody.events.append("engaged U5 receiver session mutation")
+                break
         custody.frames.extend(frames)
         custody.observed_frames.extend(observed)
         return frames
@@ -355,7 +376,8 @@ def launch(
     os.environ.clear()
     os.environ.update(custody.environment(session))
     os.environ["TOPSAILAI_CLI_ENTRY"] = str(custody.entrypoint)
-    marker = (custody.u4_marker if u4_mutation else
+    marker = (custody.u5_marker if u5_mutation else
+              custody.u4_marker if u4_mutation else
               custody.u3_marker if u3_mutation else custody.u2_marker)
 
     def spawn_owned_supervisor(*args: Any, **kwargs: Any) -> subprocess.Popen[Any]:
@@ -427,6 +449,72 @@ def launch(
             marker_file.write(json.dumps(record, sort_keys=True) + "\n")
         return result
 
+    def validate_u5(frame: Mapping[str, Any], ownership: Any) -> bool:
+        """Neutralize only the registered U5 receiver session comparison."""
+        original_cleanup = custody.u5_original_cleanup
+        received_cleanup = custody.u5_received_cleanup
+        custody.u5_validator_calls.append({
+            "frame": frame,
+            "ownership": ownership,
+            "boundary": inspect.currentframe().f_back.f_code.co_name,
+        })
+        if ownership is None or original_cleanup is None or received_cleanup is None:
+            return original_validator(frame, ownership)
+        required = {"session", "launcher_pid", "launcher_identity", "kind", "cleanup_confirmed"}
+        original_payload = dict(original_cleanup)
+        frame_payload = dict(frame)
+        owner_identity = getattr(ownership, "identity", None)
+        original_identity = original_payload.get("launcher_identity")
+        original_valid = (
+            required <= original_payload.keys()
+            and original_payload.get("kind") == "cleanup"
+            and bool(original_payload.get("cleanup_confirmed"))
+            and original_payload.get("session") == getattr(ownership, "session", None)
+            and original_payload.get("launcher_pid") == getattr(ownership, "launcher_pid", None)
+            and original_identity == owner_identity
+        )
+        received_session = received_cleanup.get("session")
+        original_session = original_payload.get("session")
+        targeted = (
+            original_valid
+            and u5_mutation == "omit-cleanup-session-check"
+            and frame is custody.u5_receiver_frame
+            and ownership is custody.ownership
+            and frame.get("kind") == "cleanup"
+            and frame.get("session") == received_session
+            and isinstance(received_session, str)
+            and bool(received_session)
+            and received_session != original_session
+            and frame_payload == dict(received_cleanup)
+            and set(frame_payload) == set(original_payload)
+            and all(
+                key == "session" or frame_payload[key] == original_payload[key]
+                for key in original_payload
+            )
+            and isinstance(original_session, str)
+            and bool(original_session)
+        )
+        if not targeted:
+            return original_validator(frame, ownership)
+        private_frame = dict(frame)
+        private_frame["session"] = original_session
+        if private_frame["session"] != original_session:
+            return original_validator(frame, ownership)
+        result = original_validator(private_frame, ownership)
+        custody.u5_omissions += 1
+        record = {
+            "event": "u5_validator_omission",
+            "original_validator_result": result,
+            "boundary": custody.u5_validator_calls[-1]["boundary"],
+            "decision": "normalize_session",
+            "original": {"session": original_payload.get("session"), "launcher_pid": original_payload.get("launcher_pid"), "launcher_identity": original_identity},
+            "received": {"session": frame.get("session"), "launcher_pid": frame.get("launcher_pid"), "launcher_identity": frame.get("launcher_identity")},
+            "private_input": {"session": private_frame.get("session"), "launcher_pid": private_frame.get("launcher_pid"), "launcher_identity": private_frame.get("launcher_identity")},
+            "owner": {"launcher_pid": ownership.launcher_pid, "identity": ownership.identity, "session": ownership.session},
+        }
+        with custody.u5_marker.open("a", encoding="utf-8") as marker_file:
+            marker_file.write(json.dumps(record, sort_keys=True) + "\n")
+        return result
     def validate_u3(frame: Mapping[str, Any], ownership: Any) -> bool:
         """Neutralize only the registered U3 receiver PID comparison."""
         original_cleanup = custody.u3_original_cleanup
@@ -485,6 +573,8 @@ def launch(
         background._validate_launcher_cleanup_ack = validate_u3
     elif u4_mutation == "omit-cleanup-token-check":
         background._validate_launcher_cleanup_ack = validate_u4
+    elif u5_mutation in {"session", "omit-cleanup-session-check"}:
+        background._validate_launcher_cleanup_ack = validate_u5
     project_scope._apply_selected_model_environment = lambda _folder: ({}, set())
     agent_launch._apply_selected_model_environment = lambda _folder: ({}, set())
     custody.production_entry_cwd = os.getcwd()
@@ -585,7 +675,7 @@ _supervisor_entry(sys.argv[2], sys.argv[3])
 '''
 
 _DRIVER = f'''#!{sys.executable}
-import json, os, time
+import json, os, time, tempfile
 from pathlib import Path
 from cli_topsailai.agent_launch_background import _authoritative_child_identity
 pid = os.getpid()
@@ -599,7 +689,11 @@ Path(os.environ["FIXTURE_TELEMETRY"]).write_text(json.dumps({{
 count = 0
 while not Path(os.environ["FIXTURE_RELEASE"]).exists():
     count += 1
-    Path(os.environ["FIXTURE_HEARTBEAT"]).write_text(str(count), encoding="utf-8")
+    target = Path(os.environ["FIXTURE_HEARTBEAT"])
+    temp = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent, delete=False)
+    temp.write(str(count)); temp.close(); os.replace(temp.name, target)
     time.sleep(0.02)
-Path(os.environ["FIXTURE_HEARTBEAT"]).write_text("released", encoding="utf-8")
+target = Path(os.environ["FIXTURE_HEARTBEAT"])
+temp = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent, delete=False)
+temp.write("released"); temp.close(); os.replace(temp.name, target)
 '''

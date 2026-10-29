@@ -159,10 +159,12 @@ def test_process_state_unknown_and_reconfirmation_signal_gate():
 
 
 
-@pytest.mark.parametrize("mismatch_field", ["pid", "token"], ids=["pid", "token"])
+@pytest.mark.parametrize("mismatch_field", ["pid", "token", "session"], ids=["pid", "token", "session"])
 def test_cancel_rejects_mismatched_cleanup(raw_custody, mismatch_field):
     if mismatch_field == "token":
         return _test_cancel_rejects_mismatched_cleanup_token(raw_custody)
+    if mismatch_field == "session":
+        return _test_cancel_rejects_mismatched_cleanup_session(raw_custody)
     """Reject a cleanup acknowledgement naming a different launcher PID."""
     session = "c2-u3-pid-mismatch"
     trigger = {}
@@ -372,6 +374,123 @@ def _test_cancel_rejects_mismatched_cleanup_token(raw_custody):
             assert result == 6
     finally:
         os.environ.pop("C2_U4_MUTATION", None)
+
+
+def _test_cancel_rejects_mismatched_cleanup_session(raw_custody):
+    """Reject a cleanup acknowledgement with only its session changed."""
+    session = "c2-u5-session-mismatch"
+    trigger = {}
+    callback_calls = []
+    gate = {"triggered": False, "bound": 256}
+    outer_cwd = os.getcwd()
+    outer_environment = os.environ.copy()
+    previous_mutation = os.environ.get("C2_U5_MUTATION")
+
+    def cancel_requested():
+        """Trigger cancellation only after ownership and identity are verified."""
+        callback_calls.append("called")
+        assert len(callback_calls) <= gate["bound"]
+        started = [frame for frame in raw_custody.observed_frames if frame.get("kind") == "started"]
+        if not started or trigger:
+            return False
+        telemetry = raw_custody.wait_for(raw_custody.telemetry)
+        pid, token, source = identity_from_frame(started[0])
+        assert source == "authoritative"
+        assert raw_custody.ownership is not None
+        assert raw_custody.ownership.launcher_pid == pid
+        assert raw_custody.ownership.session == session
+        assert raw_custody.ownership.identity == started[0]["launcher_identity"]
+        assert raw_custody.live(pid, token)
+        assert (pid, token) in raw_custody.drivers
+        assert int(telemetry["pid"]) == pid
+        assert int(telemetry["token"]) == token
+        assert telemetry["session"] == telemetry["top_session"] == session
+        proc_pid, proc_state, proc_token, parent = _proc_identity(pid)
+        assert (proc_pid, proc_token) == (pid, token)
+        assert proc_state != "Z"
+        assert int(telemetry["parent"]) == parent
+        assert parent in {child.pid for child in raw_custody.supervisors}
+        assert telemetry["cwd"] == str(raw_custody.workspace)
+        assert os.readlink(f"/proc/{pid}/cwd") == str(raw_custody.workspace)
+        trigger.update(pid=pid, token=token, source=source, parent=parent)
+        gate["triggered"] = True
+        return True
+
+    os.environ["C2_U5_MUTATION"] = (
+        "omit-cleanup-session-check"
+        if previous_mutation == "omit-cleanup-session-check" else "session"
+    )
+    mutation = os.environ["C2_U5_MUTATION"]
+    try:
+        result = launch(raw_custody, session, cancel_requested=cancel_requested, submitted_gate=gate)
+        if previous_mutation is None:
+            os.environ.pop("C2_U5_MUTATION", None)
+        else:
+            os.environ["C2_U5_MUTATION"] = previous_mutation
+        assert os.getcwd() == outer_cwd
+        current_environment = os.environ.copy()
+        current_environment.pop("PYTEST_CURRENT_TEST", None)
+        expected_environment = dict(outer_environment)
+        expected_environment.pop("PYTEST_CURRENT_TEST", None)
+        assert current_environment == expected_environment
+        assert raw_custody.u5_transformations == 1
+        assert len(raw_custody.u5_validator_calls) == 1
+        assert raw_custody.u5_validator_calls[0]["frame"] is raw_custody.u5_receiver_frame
+        assert raw_custody.u5_validator_calls[0]["ownership"] is raw_custody.ownership
+        assert raw_custody.u5_validator_calls[0]["boundary"] == "consume_cancellation"
+        original = raw_custody.u5_original_cleanup
+        received = raw_custody.u5_received_cleanup
+        assert original is not None and received is not None
+        assert set(original) == set(received)
+        assert {key for key in original if original[key] != received[key]} == {"session"}
+        assert original["session"] == session
+        assert received["session"] != session
+        assert original["launcher_pid"] == received["launcher_pid"] == trigger["pid"]
+        assert original["launcher_identity"] == received["launcher_identity"]
+        assert raw_custody.return_state is not None
+        assert raw_custody.return_state["cwd"] == raw_custody.return_state["expected_cwd"]
+        assert raw_custody.return_state["environment"] == raw_custody.return_state["expected_environment"]
+        assert callback_calls and len(callback_calls) <= gate["bound"]
+        assert not any(frame.get("kind") == "submitted" for frame in raw_custody.frames)
+        cleanup = [frame for frame in raw_custody.frames if frame.get("kind") == "cleanup"]
+        assert len(cleanup) == 1
+        assert original["kind"] == "cleanup"
+        assert original["class"] == "cancellation"
+        assert original["cleanup_confirmed"] is True
+        assert original["session"] == raw_custody.ownership.session == session
+        assert original["launcher_identity"] == raw_custody.ownership.identity
+        assert raw_custody.absent(*raw_custody.drivers[0])
+        assert raw_custody.supervisors[0].poll() is not None
+        assert raw_custody.supervisors[0].returncode is not None
+        if mutation == "omit-cleanup-session-check":
+            records = [json.loads(line) for line in raw_custody.u5_marker.read_text(encoding="utf-8").splitlines()]
+            assert len(records) == 1
+            assert records[0]["event"] == "u5_validator_omission"
+            assert records[0]["boundary"] == "consume_cancellation"
+            assert records[0]["decision"] == "normalize_session"
+            assert records[0]["original_validator_result"] is True
+            assert records[0]["received"]["session"] == received["session"]
+            assert records[0]["private_input"]["session"] == original["session"]
+            assert records[0]["original"]["launcher_identity"] == original["launcher_identity"]
+            assert records[0]["received"]["launcher_identity"] == received["launcher_identity"]
+            assert records[0]["private_input"]["launcher_identity"] == original["launcher_identity"]
+            assert raw_custody.u5_omissions == 1
+            assert result == 130
+            assert result == 6, "U5_SESSION_MISMATCH_PUBLIC_STATUS"
+        else:
+            assert raw_custody.u5_omissions == 0
+            assert result == 6
+    finally:
+        if previous_mutation is None:
+            os.environ.pop("C2_U5_MUTATION", None)
+        else:
+            os.environ["C2_U5_MUTATION"] = previous_mutation
+        assert os.getcwd() == outer_cwd
+        current_environment = os.environ.copy()
+        current_environment.pop("PYTEST_CURRENT_TEST", None)
+        expected_environment = dict(outer_environment)
+        expected_environment.pop("PYTEST_CURRENT_TEST", None)
+        assert current_environment == expected_environment
 
 def test_cancel_owned_before_submit(raw_custody):
     """Cancel exactly once after verified ownership and before submission."""
