@@ -42,10 +42,11 @@ def raw_custody():
             archived.write_text(report.read_text(encoding="utf-8"), encoding="utf-8")
             custody.events.append(f"archived custody report {archived}")
             report.write_text(json.dumps({"events": custody.events}, indent=2), encoding="utf-8")
-        if custody.u2_marker.exists():
-            custody.u2_marker.unlink()
-            custody.events.append(f"deleted run-scoped marker {custody.u2_marker}")
-            print(f"deleted run-scoped marker {custody.u2_marker}")
+        for marker in (custody.u2_marker, custody.u3_marker):
+            if marker.exists():
+                marker.unlink()
+                custody.events.append(f"deleted run-scoped marker {marker}")
+                print(f"deleted run-scoped marker {marker}")
         if custody.finished:
             custody.events.append(f"deleting fixture root {custody.root}")
             shutil.rmtree(custody.root)

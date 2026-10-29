@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 import os
 import stat
@@ -41,6 +42,12 @@ class Custody:
         self.entrypoint = self._write_role("supervisor.py", _SUPERVISOR)
         self.driver = self._write_role("topsailai_agent_chats", _DRIVER)
         self.u2_marker = self.root / "u2-hook-marker.log"
+        self.u3_marker = self.root / "u3-hook-marker.log"
+        self.u3_original_cleanup: dict[str, Any] | None = None
+        self.u3_received_cleanup: dict[str, Any] | None = None
+        self.u3_receiver_frame: Mapping[str, Any] | None = None
+        self.u3_transformations = 0
+        self.u3_omissions = 0
         self.finished = False
         self.return_state: dict[str, Any] | None = None
         self._original_cwd = os.getcwd()
@@ -261,6 +268,7 @@ def launch(
     original_read = background._read_frames
     original_ownership = background._ownership_from_started
     original_background_launch = background.launch_background
+    original_validator = background._validate_launcher_cleanup_ack
     original_model = project_scope._apply_selected_model_environment
     import cli_topsailai.agent_launch as agent_launch
     original_agent_model = agent_launch._apply_selected_model_environment
@@ -268,6 +276,7 @@ def launch(
     original_cwd = os.getcwd()
     mutation = os.environ.get("C2_CAMPAIGN_MUTATION")
     u2_mutation = os.environ.get("C2_U2_MUTATION")
+    u3_mutation = os.environ.get("C2_U3_MUTATION")
     held_submitted: list[dict[str, Any]] = []
 
     def observed_ownership(frame: Mapping[str, Any], session_id: str) -> Any:
@@ -305,6 +314,19 @@ def launch(
                 pid, token, _ = identity_from_frame(frame)
                 frame["launcher_identity"] = repr((pid, token + 1, "authoritative"))
                 custody.events.append("engaged identity observation mutation")
+        if u3_mutation in {"pid", "omit-cleanup-pid-check"}:
+            for index, frame in enumerate(frames):
+                if frame.get("kind") != "cleanup":
+                    continue
+                custody.u3_original_cleanup = dict(frame)
+                receiver = dict(frame)
+                receiver["launcher_pid"] = int(frame["launcher_pid"]) + 1
+                frames[index] = receiver
+                custody.u3_received_cleanup = dict(receiver)
+                custody.u3_receiver_frame = receiver
+                custody.u3_transformations += 1
+                custody.events.append("engaged U3 receiver launcher_pid mutation")
+                break
         custody.frames.extend(frames)
         custody.observed_frames.extend(observed)
         return frames
@@ -312,7 +334,7 @@ def launch(
     os.environ.clear()
     os.environ.update(custody.environment(session))
     os.environ["TOPSAILAI_CLI_ENTRY"] = str(custody.entrypoint)
-    marker = custody.root / "u2-hook-marker.log"
+    marker = custody.u3_marker if u3_mutation else custody.u2_marker
 
     def spawn_owned_supervisor(*args: Any, **kwargs: Any) -> subprocess.Popen[Any]:
         """Add mutation variables only to the test-owned supervisor environment."""
@@ -329,9 +351,62 @@ def launch(
             kwargs["cancel_requested"] = cancel_requested
         return original_background_launch(folder, session_id, **kwargs)
 
+    def validate_u3(frame: Mapping[str, Any], ownership: Any) -> bool:
+        """Neutralize only the registered U3 receiver PID comparison."""
+        original_cleanup = custody.u3_original_cleanup
+        received_cleanup = custody.u3_received_cleanup
+        frame_payload = dict(frame)
+        original_payload = dict(original_cleanup or {})
+        frame_payload.pop("launcher_pid", None)
+        original_payload.pop("launcher_pid", None)
+        targeted = (
+            u3_mutation == "omit-cleanup-pid-check"
+            and frame is custody.u3_receiver_frame
+            and ownership is custody.ownership
+            and frame.get("kind") == "cleanup"
+            and "launcher_pid" in frame
+            and original_cleanup is not None
+            and received_cleanup is not None
+            and frame_payload == original_payload
+            and frame.get("launcher_pid") == received_cleanup.get("launcher_pid")
+            and frame.get("launcher_pid") != original_cleanup.get("launcher_pid")
+        )
+        if not targeted:
+            return original_validator(frame, ownership)
+        private_frame = dict(frame)
+        private_frame["launcher_pid"] = ownership.launcher_pid
+        result = original_validator(private_frame, ownership)
+        custody.u3_omissions += 1
+        boundary = inspect.currentframe().f_back.f_code.co_name
+        record = {
+            "event": "u3_validator_omission",
+            "boundary": boundary,
+            "decision": "normalize_launcher_pid",
+            "original_validator_result": result,
+            "received": {
+                "launcher_pid": frame.get("launcher_pid"),
+                "launcher_identity": frame.get("launcher_identity"),
+                "session": frame.get("session"),
+            },
+            "private_input": {
+                "launcher_pid": private_frame.get("launcher_pid"),
+                "launcher_identity": private_frame.get("launcher_identity"),
+                "session": private_frame.get("session"),
+            },
+            "owner": {
+                "launcher_pid": ownership.launcher_pid,
+                "identity": ownership.identity,
+            },
+        }
+        with custody.u3_marker.open("a", encoding="utf-8") as marker_file:
+            marker_file.write(json.dumps(record, sort_keys=True) + "\n")
+        return result
+
     background._read_frames = observed_read
     background._ownership_from_started = observed_ownership
     background.launch_background = launch_with_optional_cancellation
+    if u3_mutation == "omit-cleanup-pid-check":
+        background._validate_launcher_cleanup_ack = validate_u3
     project_scope._apply_selected_model_environment = lambda _folder: ({}, set())
     agent_launch._apply_selected_model_environment = lambda _folder: ({}, set())
     custody.production_entry_cwd = os.getcwd()
@@ -359,6 +434,7 @@ def launch(
         background._read_frames = original_read
         background._ownership_from_started = original_ownership
         background.launch_background = original_background_launch
+        background._validate_launcher_cleanup_ack = original_validator
         project_scope._apply_selected_model_environment = original_model
         agent_launch._apply_selected_model_environment = original_agent_model
         os.environ.clear()
