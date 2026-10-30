@@ -788,6 +788,7 @@ def launch_agent_driver(
     folder: str, driver: str, session_id: str, agent_mode: str = "dtach",
     *, spawn=None, emit_status: bool = True,
     prelaunch_check: Optional[Callable[[], Optional[int]]] = None,
+    receipt: Optional[Dict[str, Any]] = None, child_stdout=None,
 ) -> int:
     """Launch a resume driver with the selected model environment.
 
@@ -820,6 +821,16 @@ def launch_agent_driver(
     model_restore: Dict[str, Optional[str]] = {}
     factory = spawn or _spawn_owned_child
     pidfile: Optional[str] = None
+
+    def record(**facts) -> None:
+        """Publish only resume facts established by this launch boundary."""
+        if receipt is not None:
+            receipt.update(facts)
+
+    record(
+        session_id=session_id, workspace=os.path.abspath(folder),
+        mode=agent_mode, background=False, resumed=True,
+    )
 
     def _run_owned_launch() -> int:
         """Prepare, revalidate and run one owned resume child."""
@@ -886,6 +897,8 @@ def launch_agent_driver(
                 # dtach daemonizes, so the direct child must lead its own
                 # session for the wrapper group to be addressable.
                 kwargs["start_new_session"] = True
+        if child_stdout is not None:
+            kwargs["stdout"] = child_stdout
         try:
             child = factory(argv, **kwargs)
         except (OSError, ValueError) as exc:
@@ -893,6 +906,7 @@ def launch_agent_driver(
                 f"{Colors.RED}[ERROR] Failed to launch driver '{driver}': {exc}{Colors.RESET}"
             )
             return 5
+        record(launcher_pid=getattr(child, "pid", None), startup_confirmed=False)
         try:
             code = child.wait()
         except KeyboardInterrupt:
@@ -917,6 +931,7 @@ def launch_agent_driver(
                 )
                 return 6
             return 5
+        record(child_exit_code=code)
         return code if code >= 0 else 128 + (-code)
 
     result = 4
@@ -1582,6 +1597,7 @@ def resume_session_result(
     emit_status: bool = True, prelaunch: Optional[Callable[[Dict[str, Any]], None]] = None,
     query: Optional[Callable[[str], Any]] = None, home: Optional[str] = None,
     entrypoint_base: Optional[str] = None,
+    receipt: Optional[Dict[str, Any]] = None, child_stdout=None,
 ) -> int:
     """Resume one exact persisted session and return a definite status code.
 
@@ -1600,6 +1616,16 @@ def resume_session_result(
         ``5``/``6``/``130`` from the launch boundary, or the child exit code.
     """
     effective_mode = agent_mode or ("raw" if background else "dtach")
+
+    def record_receipt(**facts) -> None:
+        """Publish resume facts as soon as they become authoritative."""
+        if receipt is not None:
+            receipt.update(facts)
+
+    record_receipt(
+        session_id=session_id, mode=effective_mode,
+        background=background, resumed=True,
+    )
     try:
         record = lookup_persisted_session(session_id, query=query)
         workspace = _validate_resume_workspace(record)
@@ -1609,6 +1635,7 @@ def resume_session_result(
     except ResumeLookupError as error:
         print(f"{Colors.RED}[ERROR] {error}{Colors.RESET}")
         return 4
+    record_receipt(workspace=workspace)
 
     liveness = session_liveness(session_id, home=home)
     if liveness == "live":
@@ -1636,6 +1663,7 @@ def resume_session_result(
         selected_driver = _RESUME_DEFAULT_DRIVER
     if prompt_driver and driver is None:
         selected_driver = _prompt_for_driver()
+    record_receipt(driver=selected_driver)
 
     def late_check() -> Optional[int]:
         """Revalidate workspace and liveness at the launch boundary.
@@ -1676,8 +1704,10 @@ def resume_session_result(
             workspace, mode=effective_mode, background=True, spawn=spawn,
             session_id=session_id, driver=selected_driver,
             entrypoint_base=entrypoint_base, prelaunch_check=late_check,
+            receipt=receipt, child_stdout=child_stdout,
         )
     return launch_agent_driver(
         workspace, selected_driver, session_id, agent_mode=effective_mode,
         spawn=spawn, emit_status=False, prelaunch_check=late_check,
+        receipt=receipt, child_stdout=child_stdout,
     )

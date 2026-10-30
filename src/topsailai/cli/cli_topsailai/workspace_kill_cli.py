@@ -14,6 +14,12 @@ import sys
 from cli_topsailai.log_files import discover_log_files
 from cli_topsailai.paths import get_topsailai_home
 from cli_topsailai.runtime_target import _valid_session
+from cli_topsailai.workspace_receipt import (
+    emit_failure,
+    emit_receipt,
+    json_requested,
+    new_receipt,
+)
 
 
 class WorkspaceKillError(ValueError):
@@ -42,6 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
         "session_id",
         action=_UniqueSession,
         help="exact persisted session ID",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit one JSON receipt on stdout, including failures",
     )
     return parser
 
@@ -77,14 +88,25 @@ def run_workspace_kill_cli(
     signal_sender=os.kill, process_probe=os.kill
 ) -> int:
     """Resolve one session and send SIGTERM without an interactive prompt."""
+    json_mode = json_requested(argv)
     try:
         args = build_parser().parse_args(list(argv))
+        json_mode = args.json
     except SystemExit as error:
-        return int(error.code)
+        code = int(error.code)
+        # Help stays ordinary text; only a real usage failure becomes a receipt.
+        if json_mode and code != 0:
+            emit_failure("kill", code, "usage_error", "Invalid kill arguments")
+        return code
     if not _valid_session(args.session_id):
-        print("[ERROR] Invalid session identifier", file=sys.stderr)
+        if json_mode:
+            emit_failure("kill", 2, "usage_error", "Invalid session identifier",
+                         session_id=args.session_id)
+        else:
+            print("[ERROR] Invalid session identifier", file=sys.stderr)
         return 2
 
+    pid = None
     try:
         home = Path((home_resolver or get_topsailai_home)()).resolve()
         rows = discover(str(home / "workspace" / "task"))
@@ -93,16 +115,38 @@ def run_workspace_kill_cli(
         )
         signal_sender(pid, signal.SIGTERM)
     except WorkspaceKillError as error:
-        print(f"[ERROR] Cannot terminate session {args.session_id}: {error}", file=sys.stderr)
+        if json_mode:
+            emit_failure("kill", 3, str(error), "No unique live session target",
+                         session_id=args.session_id)
+        else:
+            print(f"[ERROR] Cannot terminate session {args.session_id}: {error}", file=sys.stderr)
         return 3
     except (OSError, ValueError) as error:
-        print(
-            f"[ERROR] Cannot terminate session {args.session_id}: "
-            f"{type(error).__name__}: {error}",
-            file=sys.stderr,
-        )
+        if json_mode:
+            emit_failure("kill", 4, "signal_failed",
+                         f"{type(error).__name__}: {error}",
+                         session_id=args.session_id, pid=pid)
+        else:
+            print(
+                f"[ERROR] Cannot terminate session {args.session_id}: "
+                f"{type(error).__name__}: {error}",
+                file=sys.stderr,
+            )
         return 4
 
+    if json_mode:
+        receipt = new_receipt("kill", session_id=args.session_id, pid=pid)
+        receipt.update(
+            ok=True, exit_code=0, delivery_state="signal_sent",
+            message="SIGTERM submitted; process exit is not confirmed",
+            response={
+                "signal": "SIGTERM",
+                "signal_number": int(signal.SIGTERM),
+                "exit_confirmed": False,
+            },
+        )
+        emit_receipt(receipt)
+        return 0
     print(
         f"[INFO] SIGTERM sent to session={args.session_id}, PID={pid}; "
         "process exit is not confirmed."

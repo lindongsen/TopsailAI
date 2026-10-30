@@ -70,7 +70,9 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
                             entrypoint_base: str | None = None,
                             session_id: str | None = None,
                             driver: str | None = None,
-                            prelaunch_check=None) -> int:
+                            prelaunch_check=None,
+                            receipt: dict | None = None,
+                            child_stdout=None) -> int:
     """Launch an agent and make restoration failure observable.
 
     When *session_id* is supplied the launch resumes that persisted identity
@@ -79,6 +81,12 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
     *prelaunch_check* is an optional late revalidation invoked after
     preparation and immediately before the child is spawned or the supervisor
     is submitted; it returns ``None`` to proceed or a status code to refuse.
+
+    *receipt* is an optional mutable mapping that the launch fills with the
+    facts it actually established, so a caller can publish a machine-readable
+    result without re-deriving them. *child_stdout* optionally redirects the
+    directly owned foreground child's stdout, which keeps the caller's stdout
+    free for a single result document.
     """
     original_cwd = os.getcwd()
     original_environment = os.environ.copy()
@@ -94,6 +102,10 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
             launch_kwargs["driver"] = driver
         if prelaunch_check is not None:
             launch_kwargs["prelaunch_check"] = prelaunch_check
+        if receipt is not None:
+            launch_kwargs["receipt"] = receipt
+        if child_stdout is not None:
+            launch_kwargs["child_stdout"] = child_stdout
         result = _launch_configured_agent_impl(folder, **launch_kwargs)
     finally:
         try:
@@ -120,10 +132,17 @@ def _launch_configured_agent_impl(
     session_id: str | None = None,
     driver: str | None = None,
     prelaunch_check=None,
+    receipt: dict | None = None,
+    child_stdout=None,
 ) -> int:
     """Launch one configured agent and return its boundary status."""
     if spawn is None:
         spawn = _spawn_process
+
+    def record(**facts) -> None:
+        """Publish only facts this boundary actually established."""
+        if receipt is not None:
+            receipt.update(facts)
 
     def refuse_if_not_ready() -> int | None:
         """Run the caller's late revalidation at the launch boundary."""
@@ -139,11 +158,14 @@ def _launch_configured_agent_impl(
     invocation_cwd = entrypoint_base or os.getcwd()
     try:
         session_id = resumed_session or _session_id()
+        record(session_id=session_id, workspace=folder, background=background,
+               resumed=resumed_session is not None)
         try:
             effective_mode = (mode or "raw") if background else (mode or _detect_agent_mode())
         except (RuntimeError, ValueError, OSError) as error:
             print(f"[ERROR] Agent launch preparation failed: {error}", file=sys.stderr)
             return 4
+        record(mode=effective_mode)
         if background:
             from cli_topsailai.agent_launch_background import (
                 BackgroundUnconfirmed,
@@ -162,6 +184,7 @@ def _launch_configured_agent_impl(
             except TerminalUnavailable as error:
                 print(f"[ERROR] Agent launch preparation failed: {error}", file=sys.stderr)
                 return 4
+            record(mode=effective_mode)
             print(
                 f"[INFO] Submitting agent: workspace={folder} mode={effective_mode} "
                 f"background=yes session={session_id}"
@@ -210,6 +233,8 @@ def _launch_configured_agent_impl(
                 return 130
             launcher_pid = background_result["launcher_pid"]
             log_path = background_result["log_path"]
+            record(launcher_pid=launcher_pid, log_path=log_path,
+                   startup_confirmed=False)
             print(
                 f"[INFO] Agent submitted: session={session_id} "
                 f"launcher_pid={launcher_pid} mode={effective_mode} background=yes"
@@ -239,6 +264,10 @@ def _launch_configured_agent_impl(
         except (RuntimeError, ValueError, OSError) as error:
             print(f"[ERROR] Agent launch preparation failed: {error}", file=sys.stderr)
             return 4
+        if child_stdout is not None:
+            # Keep the caller's stdout free for one result document; the
+            # launched agent's own output stays observable on stderr.
+            kwargs["stdout"] = child_stdout
         # Late fail-closed revalidation immediately before the owned child is
         # spawned, after all preparation has completed.
         refusal = refuse_if_not_ready()
@@ -249,6 +278,7 @@ def _launch_configured_agent_impl(
         except (OSError, ValueError) as error:
             print(f"[ERROR] Agent launch failed: {error}", file=sys.stderr)
             return 5
+        record(launcher_pid=getattr(child, "pid", None), startup_confirmed=False)
         try:
             code = child.wait()
         except KeyboardInterrupt:
@@ -269,6 +299,7 @@ def _launch_configured_agent_impl(
             else f"[ERROR] Agent launcher exited: code={code} session={session_id}"
         )
         print(output, file=sys.stdout if code == 0 else sys.stderr)
+        record(child_exit_code=code)
         result = code if code >= 0 else 128 + (-code)
     except KeyboardInterrupt:
         if child is not None and not _stop_owned_child(child):

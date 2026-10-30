@@ -141,7 +141,7 @@ def test_core_resume_rejects_unknown_flags_before_lookup():
     import pytest
     from cli_topsailai import core
 
-    for extra in ("--json", "--pid", "--yes", "--driver", "--agent-m", "extra"):
+    for extra in ("--pid", "--yes", "--driver", "--agent-m", "extra"):
         with patch("cli_topsailai.project_scope.resume_session_result") as resume:
             with pytest.raises(SystemExit) as error:
                 core.main(["workspace", "resume", "-s", "session-123", extra])
@@ -957,3 +957,118 @@ def test_lookup_channel_construction_failure_closes_every_descriptor():
         assert failed, f"{label}: construction failure did not propagate"
         assert created, f"{label}: no descriptors were created"
         assert not leaked, f"{label}: leaked descriptors {leaked}"
+
+
+def test_json_resume_foreground_receipt_uses_stdout_only_for_json(capsys):
+    """Foreground JSON mode reports established launcher facts in one document."""
+    import json
+
+    def resume(session_id, **kwargs):
+        kwargs["receipt"].update(
+            session_id=session_id, workspace="/work/project", mode="raw",
+            background=False, resumed=True, launcher_pid=4321,
+            startup_confirmed=False, child_exit_code=0,
+        )
+        print("resume output", file=kwargs["child_stdout"])
+        return 0
+
+    with patch("cli_topsailai.project_scope.resume_session_result", side_effect=resume):
+        assert run_workspace_resume_cli(
+            ["-s", "session-123", "-m", "raw", "--json"]
+        ) == 0
+    captured = capsys.readouterr()
+    assert captured.out.count("\n") == 1
+    payload = json.loads(captured.out)
+    assert payload["ok"] is True
+    assert payload["action"] == "resume"
+    assert payload["session_id"] == "session-123"
+    assert payload["pid"] == 4321
+    assert payload["delivery_state"] == "launcher_exited"
+    assert payload["response"] == {
+        "workspace": "/work/project", "mode": "raw", "driver": None,
+        "background": False, "resumed": True, "launcher_pid": 4321,
+        "log_path": None, "startup_confirmed": False,
+        "child_exit_code": 0,
+    }
+    assert captured.err == "resume output\n"
+
+
+def test_json_resume_background_receipt_does_not_claim_readiness(capsys):
+    """Background success means submission and explicitly not readiness."""
+    import json
+
+    def resume(session_id, **kwargs):
+        kwargs["receipt"].update(
+            session_id=session_id, workspace="/work/project", mode="raw",
+            background=True, resumed=True, launcher_pid=5432,
+            log_path="/home/task/attempt.agent-launch.log",
+            startup_confirmed=False,
+        )
+        return 0
+
+    with patch("cli_topsailai.project_scope.resume_session_result", side_effect=resume):
+        assert run_workspace_resume_cli(
+            ["-s", "session-123", "-b", "--json"]
+        ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["delivery_state"] == "submitted"
+    assert "driver" in payload["response"]
+    assert payload["response"]["startup_confirmed"] is False
+    assert "not confirmed" in payload["message"]
+
+
+@pytest.mark.parametrize("code, error_code", [
+    (3, "session_not_found"),
+    (4, "resume_refused"),
+    (5, "spawn_failed"),
+    (6, "custody_unresolved"),
+    (130, "cancelled"),
+    (17, "child_exit_status"),
+])
+def test_json_resume_failure_receipt_preserves_status(code, error_code, capsys):
+    """Resume failures retain their public status and uncertainty semantics."""
+    import json
+
+    def resume(session_id, **kwargs):
+        kwargs["receipt"].update(
+            session_id=session_id, workspace="/work/project", mode="raw",
+            background=False, resumed=True,
+        )
+        return code
+
+    with patch("cli_topsailai.project_scope.resume_session_result", side_effect=resume):
+        assert run_workspace_resume_cli(
+            ["-s", "session-123", "-m", "raw", "--json"]
+        ) == code
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["exit_code"] == code
+    assert payload["error_code"] == error_code
+    assert payload["delivery_state"] == "not_delivered"
+    assert payload["delivery_unknown"] is (code == 6)
+
+
+def test_json_resume_usage_failure_is_one_receipt(capsys):
+    """A malformed JSON request fails before lookup and remains parseable."""
+    import json
+
+    with patch("cli_topsailai.project_scope.resume_session_result") as resume:
+        assert run_workspace_resume_cli(["--json"]) == 2
+    resume.assert_not_called()
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"] == "resume"
+    assert payload["error_code"] == "usage_error"
+    assert payload["delivery_state"] == "not_delivered"
+
+
+def test_plain_resume_delegation_remains_unchanged():
+    """Omitting --json preserves the historical call boundary."""
+    with patch(
+        "cli_topsailai.project_scope.resume_session_result", return_value=17,
+    ) as resume:
+        assert run_workspace_resume_cli(
+            ["-s", "session-123", "-m", "raw"]
+        ) == 17
+    resume.assert_called_once_with(
+        "session-123", agent_mode="raw", background=False,
+    )

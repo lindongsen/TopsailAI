@@ -266,7 +266,7 @@ def test_workspace_agent_help_contract(capsys):
     """Workspace-agent help exposes the complete foreground/background contract."""
     print_help([], "workspace", keyword="workspace agent")
     output = capsys.readouterr().out
-    assert "topsailai workspace agent <folder> [-m MODE] [-b|--background]" in output
+    assert "topsailai workspace agent <folder> [-m MODE] [-b|--background] [--json]" in output
     for text in (
         "2 usage failure",
         "3 invalid folder",
@@ -278,7 +278,7 @@ def test_workspace_agent_help_contract(capsys):
         "actual launcher PID",
         "rotating launch-log path",
         "submission is not readiness",
-        "no --json output",
+        "--json emits one machine-readable receipt",
     ):
         assert text in output
 
@@ -289,9 +289,9 @@ def test_b24_background_contract_snapshot_and_scale(capsys, tmp_path):
 
     print_help([], "workspace", keyword="workspace agent")
     output = capsys.readouterr().out
-    # Syntax, exit codes, retention, no-attach and no-json are all documented.
+    # Syntax, exit codes, retention, no-attach and JSON receipts are documented.
     for text in (
-        "topsailai workspace agent <folder> [-m MODE] [-b|--background]",
+        "topsailai workspace agent <folder> [-m MODE] [-b|--background] [--json]",
         "Background defaults to raw mode",
         "honors an explicit -m raw|tmux|dtach",
         "failing closed when that mechanism is unavailable",
@@ -304,7 +304,7 @@ def test_b24_background_contract_snapshot_and_scale(capsys, tmp_path):
         "Background logs and backups participate in expiry cleanup",
         "active launch leases protect live logs",
         "no terminal reattachment",
-        "no --json output",
+        "--json emits one machine-readable receipt",
     ):
         assert text in output
 
@@ -314,7 +314,7 @@ def test_b24_background_contract_snapshot_and_scale(capsys, tmp_path):
     # the actual launcher PID under the documented meaning.
     assert "actual launcher PID" in document
     assert "Submission is not readiness" in document
-    assert "no `--json`" in document or "no --json" in document
+    assert "stdout contains exactly one receipt" in document
     import inspect
     supervise_source = inspect.getsource(bg._supervise)
     assert '"launcher_pid": child.pid' in supervise_source

@@ -3,7 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
+
+from cli_topsailai.workspace_receipt import (
+    RESUME_ERROR_CODES,
+    emit_failure,
+    emit_receipt,
+    json_requested,
+    new_receipt,
+    settle,
+)
 
 
 class _UniqueValue(argparse.Action):
@@ -24,8 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Resume one exact persisted session.",
         epilog=(
             "Background mode submits a headless launch and reports submission, "
-            "not readiness; the default background mechanism is raw. "
-            "No --json output is provided."
+            "not readiness; the default background mechanism is raw. --json "
+            "emits one receipt on stdout and redirects other output to stderr."
         ),
     )
     parser.add_argument("-s", "--session", dest="session_id", required=True,
@@ -45,19 +55,49 @@ def build_parser() -> argparse.ArgumentParser:
         default=None, action=_UniqueValue,
         help="resume driver (default: topsailai_agent_chats)",
     )
+    parser.add_argument(
+        "--json", action="store_true",
+        help="emit one JSON receipt on stdout, including failures",
+    )
     return parser
+
+
+def _receipt_response(facts: dict) -> dict:
+    """Publish only resume facts established during execution."""
+    return {
+        "workspace": facts.get("workspace"),
+        "mode": facts.get("mode"),
+        "driver": facts.get("driver"),
+        "background": facts.get("background"),
+        "resumed": facts.get("resumed"),
+        "launcher_pid": facts.get("launcher_pid"),
+        "log_path": facts.get("log_path"),
+        "startup_confirmed": facts.get("startup_confirmed", False),
+        "child_exit_code": facts.get("child_exit_code"),
+    }
 
 
 def run_workspace_resume_cli(argv, *, startup_cwd=None) -> int:
     """Parse and execute one exact persisted-session resume request."""
+    json_mode = json_requested(argv)
     try:
         args = build_parser().parse_args(list(argv))
+        json_mode = args.json
     except SystemExit as error:
-        return int(error.code)
+        code = int(error.code)
+        if json_mode and code != 0:
+            emit_failure("resume", code, "usage_error", "Invalid resume arguments")
+        return code
     from cli_topsailai.runtime_target import _valid_session
 
     if not _valid_session(args.session_id):
-        print("[ERROR] Invalid session identifier", file=sys.stderr)
+        if json_mode:
+            emit_failure(
+                "resume", 2, "usage_error", "Invalid session identifier",
+                session_id=args.session_id,
+            )
+        else:
+            print("[ERROR] Invalid session identifier", file=sys.stderr)
         return 2
 
     from cli_topsailai.project_scope import resume_session_result
@@ -70,4 +110,29 @@ def run_workspace_resume_cli(argv, *, startup_cwd=None) -> int:
         options["driver"] = args.driver
     if startup_cwd is not None:
         options["entrypoint_base"] = startup_cwd
-    return resume_session_result(args.session_id, **options)
+    if not json_mode:
+        return resume_session_result(args.session_id, **options)
+
+    facts: dict = {}
+    with contextlib.redirect_stdout(sys.stderr):
+        code = resume_session_result(
+            args.session_id, **options, receipt=facts, child_stdout=sys.stderr,
+        )
+    receipt = new_receipt(
+        "resume", session_id=args.session_id,
+        pid=facts.get("launcher_pid"),
+    )
+    settle(receipt, code, RESUME_ERROR_CODES)
+    receipt["response"] = _receipt_response(facts)
+    if facts.get("background"):
+        receipt["delivery_state"] = "submitted" if code == 0 else "not_delivered"
+        if code == 0:
+            receipt["message"] = "Resume submitted; startup is not confirmed"
+    elif facts.get("launcher_pid") is not None:
+        receipt["delivery_state"] = "launcher_exited"
+        if code == 0:
+            receipt["message"] = "Resume launcher exited"
+    else:
+        receipt["delivery_state"] = "not_delivered"
+    emit_receipt(receipt)
+    return code

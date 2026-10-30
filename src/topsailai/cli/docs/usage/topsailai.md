@@ -240,8 +240,9 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 |---------|-------------|
 | `runtime` | Execute one exact send, btw, control or logs operation; see the contract above. |
 | `workspace [-f json]` | Display the workspace task list and exit. The default is the human-readable table; `-f json` or `--format json` emits one JSON document. |
-| `workspace kill <session_id>` | Send SIGTERM to the exact session process identified by `session_id`, without confirmation. Success means the OS accepted the signal; process exit is not confirmed. |
-| `workspace agent <folder> [-m MODE] [-b/--background]` | Launch a configured agent in the foreground; background defaults to raw and honors an explicit `-m raw|tmux|dtach`, failing closed with exit code 4 when that mechanism is unavailable. |
+| `workspace kill <session_id> [--json]` | Send SIGTERM to the exact session process identified by `session_id`, without confirmation. Success means the OS accepted the signal; process exit is not confirmed. |
+| `workspace agent <folder> [-m MODE] [-b/--background] [--json]` | Launch a configured agent in the foreground; background defaults to raw and honors an explicit `-m raw|tmux|dtach`, failing closed with exit code 4 when that mechanism is unavailable. |
+| `workspace resume -s SESSION [-d DRIVER] [-m MODE] [-b/--background] [--json]` | Resume one exact persisted idle session; background success means submission rather than readiness. |
 | `workspace driver <start/status/stop> -s SESSION [-p PID] [--json]` | Start, inspect or stop one exact session driver; see below. |
 | `docs list` | List all usage documentation files and exit. |
 | `docs read <name>` | Read a specific usage documentation file and exit. |
@@ -262,10 +263,12 @@ The JSON workspace document contains `host`, `pwd`, `home`, `task_dir`, `items`,
 ## Workspace agent
 
 ```text
-topsailai workspace agent <folder> [-m raw|dtach|tmux] [-b|--background]
+topsailai workspace agent <folder> [-m raw|dtach|tmux] [-b|--background] [--json]
 ```
 
-The folder is resolved relative to the caller's startup directory. Foreground mode attaches to the launcher, prints `[INFO] Launching agent: ...`, restores the caller's environment and working directory, and returns its observed exit code. Background mode closes stdin and defaults to `raw`, an independent new process; an explicit `-m raw|tmux|dtach` selects that mechanism and fails with `4` when it is unavailable, with no silent fallback. In every mechanism the detached supervisor spawns the launcher itself, so the reported PID is the actual launcher, and it writes a private rotating `.agent-launch.log` under `TOPSAILAI_HOME/workspace/task/`. Submission is not readiness, there is no terminal reattachment, and active launch leases protect logs from expiry cleanup. Exit code `2` means generic usage failure; `3` means the folder is missing or not a directory; `4` means preparation failure, including an unavailable background mechanism; `5` means spawn or launcher wait failure; `6` means startup acknowledgement or owned custody cannot be confirmed; `130` means cancellation; otherwise observed child statuses `0..255` are preserved and a signal maps to `128 + signal`. A dtach/tmux wrapper client exit is not agent completion. This command intentionally has no `--json` output. Foreground stdin and standard streams are inherited by the directly owned launcher.
+The folder is resolved relative to the caller's startup directory. Foreground mode attaches to the launcher, prints `[INFO] Launching agent: ...`, restores the caller's environment and working directory, and returns its observed exit code. Background mode closes stdin and defaults to `raw`, an independent new process; an explicit `-m raw|tmux|dtach` selects that mechanism and fails with `4` when it is unavailable, with no silent fallback. In every mechanism the detached supervisor spawns the launcher itself, so the reported PID is the actual launcher, and it writes a private rotating `.agent-launch.log` under `TOPSAILAI_HOME/workspace/task/`. Submission is not readiness, there is no terminal reattachment, and active launch leases protect logs from expiry cleanup. Exit code `2` means generic usage failure; `3` means the folder is missing or not a directory; `4` means preparation failure, including an unavailable background mechanism; `5` means spawn or launcher wait failure; `6` means startup acknowledgement or owned custody cannot be confirmed; `130` means cancellation; otherwise observed child statuses `0..255` are preserved and a signal maps to `128 + signal`. A dtach/tmux wrapper client exit is not agent completion. With `--json`, stdout contains exactly one receipt and ordinary launcher output is redirected to stderr; without it, foreground stdin and standard streams retain their existing behavior. Background success reports `submitted`, not readiness, while foreground execution reports the observed launcher outcome.
+
+`workspace agent`, `workspace kill`, and `workspace resume` use the same stable receipt fields when `--json` is selected: `ok`, `exit_code`, `action`, `session_id`, `pid`, `delivery_state`, `error_code`, `message`, `bytes_written`, `request_id`, `response`, and `delivery_unknown`. Command-specific established facts are placed in `response`. For kill, `signal_sent` means the OS accepted `SIGTERM`, not that the process exited. For background agent or resume, `submitted` means a launcher was submitted, not that it is ready. For foreground agent or resume, `launcher_exited` reports the observed launcher outcome and does not promote a wrapper exit into agent completion.
 
 ## Examples
 
@@ -460,7 +463,7 @@ topsailai runtime control llm_control -s SESSION -p PID -a '{"operation":"force_
 ## Workspace resume
 
 ```text
-topsailai workspace resume -s SESSION [-d DRIVER] [-m raw|dtach|tmux] [-b|--background]
+topsailai workspace resume -s SESSION [-d DRIVER] [-m raw|dtach|tmux] [-b|--background] [--json]
 ```
 
 `-s` / `--session` identifies one literal persisted session, never a row number,
@@ -480,14 +483,17 @@ the agent finishes. `-b` defaults to headless raw, closes stdin, and reuses the
 workspace-agent supervisor, rotating log, active lease, and expiry cleanup.
 An explicit `-m raw|tmux|dtach` with `-b` selects that mechanism and fails with
 4 when it is unavailable; there is no silent fallback. Repeated identical
-options are accepted; conflicting options, extra positionals, abbreviations,
-`--json`, PID and confirmation options are rejected.
+options are accepted; conflicting options, extra positionals, abbreviations, PID and confirmation options are rejected.
 
-Background success means submitted, not ready or completed. Output includes
+Background success means submitted, not ready or completed. Plain output includes
 the actual launcher PID and a private per-attempt log path; repeated resumes do
-not overwrite earlier diagnostics. Inspect the printed log or workspace task
-list; there is no terminal reattachment promise. Spawn or early-exit failure is
-5, unresolved process custody is 6, and confirmed cancellation is 130.
+not overwrite earlier diagnostics. With `--json`, stdout contains exactly one
+receipt and ordinary resume and child output is redirected to stderr; the
+receipt's `response` contains the established workspace, mode, driver, background
+flag, launcher PID, log path, startup-confirmation state, and observed child status.
+Inspect the printed or reported log path or workspace task list; there is no
+terminal reattachment promise. Spawn or early-exit failure is 5, unresolved
+process custody is 6, and confirmed cancellation is 130.
 
 Session lookup runs once. All relevant session stdout candidates are checked,
 and workspace/liveness are checked again before launch. These local checks do

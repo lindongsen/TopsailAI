@@ -49,7 +49,7 @@ references:
 - `runtime send|btw [-s SESSION] [-p PID] -m MESSAGE|--stdin`
 - `runtime control ACTION [-s SESSION] [-p PID] [-a JSON]`
 - `runtime logs [-s SESSION] [-p PID] [-n N] [--json]` — finite recent session log query
-- `workspace agent <folder> [-m MODE] [-b|--background]`
+- `workspace agent <folder> [-m MODE] [-b|--background] [--json]`
 - `workspace driver start|status|stop -s SESSION [-p PID] [--json]`
 - `project add|del|list|launch|resume`
 - `models list|add|get|update|delete`
@@ -62,7 +62,7 @@ references:
 
 ## Non-interactive workspace agent
 
-Canonical usage: `topsailai workspace agent <folder> [-m raw|dtach|tmux] [-b|--background]`. See [the canonical workspace-agent usage contract](docs/usage/topsailai.md#workspace-agent). It launches in the foreground and resolves relative folders against the caller's original working directory. Exit codes are 2 for usage/background rejection, 3 for invalid folder, 4 for preparation, 5 for spawn/wait, 6 for unresolved custody, and 130 for cancellation; observed child statuses are preserved and signals map to `128 + signal`. A wrapper exit is not agent completion. UNIT 1A has no background submission; future `submitted` means not-ready. There is no `--json` output.
+Canonical usage: `topsailai workspace agent <folder> [-m raw|dtach|tmux] [-b|--background] [--json]`. See [the canonical workspace-agent usage contract](docs/usage/topsailai.md#workspace-agent). It launches in the foreground and resolves relative folders against the caller's original working directory. Exit codes are 2 for usage/background rejection, 3 for invalid folder, 4 for preparation, 5 for spawn/wait, 6 for unresolved custody, and 130 for cancellation; observed child statuses are preserved and signals map to `128 + signal`. A wrapper exit is not agent completion. Background `submitted` means not-ready. With `--json`, stdout contains one receipt and ordinary output is redirected to stderr.
 
 ## Resume commands
 
@@ -70,7 +70,7 @@ Canonical usage: `topsailai workspace agent <folder> [-m raw|dtach|tmux] [-b|--b
 
 ## Workspace resume
 
-- `workspace resume -s SESSION [-d DRIVER] [-m raw|dtach|tmux] [-b|--background]` resumes an exact persisted idle session.
+- `workspace resume -s SESSION [-d DRIVER] [-m raw|dtach|tmux] [-b|--background] [--json]` resumes an exact persisted idle session.
 - Resume defaults to `topsailai_agent_chats`; `-d/--driver` accepts `topsailai_agent_chats`, `topsailai_agent_plan_tasks`, or `ai-team-flow-dev`.
 - Foreground defaults to dtach; background defaults to raw and reports submission, not readiness.
 - See [the resume contract](docs/usage/topsailai.md#workspace-resume) for validation, logs, exit codes and concurrency limitations.

@@ -108,3 +108,103 @@ def test_core_dispatches_workspace_kill(tmp_path, monkeypatch):
         core.main(["workspace", "kill", "session-123"])
     assert error.value.code == 7
     assert called["argv"] == ["session-123"]
+
+
+def test_json_receipt_reports_signal_submission(tmp_path, rows, capsys):
+    """A successful kill emits one receipt that does not claim process exit."""
+    import json
+
+    signal_sender = Mock()
+    code = run_workspace_kill_cli(
+        ["session-123", "--json"],
+        home_resolver=lambda: str(tmp_path),
+        discover=Mock(return_value=rows),
+        signal_sender=signal_sender,
+        process_probe=lambda pid, sig: None,
+    )
+    assert code == 0
+    signal_sender.assert_called_once_with(1234, 15)
+    output = capsys.readouterr().out
+    assert output.count("\n") == 1
+    payload = json.loads(output)
+    assert payload["ok"] is True
+    assert payload["action"] == "kill"
+    assert payload["session_id"] == "session-123"
+    assert payload["pid"] == 1234
+    assert payload["delivery_state"] == "signal_sent"
+    assert payload["response"]["exit_confirmed"] is False
+    assert payload["delivery_unknown"] is False
+
+
+@pytest.mark.parametrize("argv, expected_code, expected_error", [
+    (["session-123", "--json", "extra"], 2, "usage_error"),
+    (["../outside", "--json"], 2, "usage_error"),
+])
+def test_json_receipt_covers_usage_failures(tmp_path, argv, expected_code, expected_error, capsys):
+    """Usage failures still produce exactly one parseable receipt."""
+    import json
+
+    signal_sender = Mock()
+    code = run_workspace_kill_cli(
+        argv, home_resolver=lambda: str(tmp_path),
+        discover=Mock(return_value=[]), signal_sender=signal_sender,
+    )
+    assert code == expected_code
+    signal_sender.assert_not_called()
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["exit_code"] == expected_code
+    assert payload["error_code"] == expected_error
+    assert payload["delivery_state"] == "not_delivered"
+
+
+def test_json_receipt_covers_target_and_signal_failures(tmp_path, rows, capsys):
+    """Target and signal failures keep their documented exit codes."""
+    import json
+
+    code = run_workspace_kill_cli(
+        ["session-123", "--json"], home_resolver=lambda: str(tmp_path),
+        discover=Mock(return_value=[]), signal_sender=Mock(),
+    )
+    assert code == 3
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "target_not_unique"
+    assert payload["delivery_state"] == "not_delivered"
+
+    sender = Mock(side_effect=PermissionError("denied"))
+    code = run_workspace_kill_cli(
+        ["session-123", "--json"], home_resolver=lambda: str(tmp_path),
+        discover=Mock(return_value=rows), signal_sender=sender,
+        process_probe=lambda pid, sig: None,
+    )
+    assert code == 4
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "signal_failed"
+    assert payload["pid"] == 1234
+
+
+def test_plain_mode_output_is_unchanged(tmp_path, rows, capsys):
+    """Without --json the historical plain output is preserved exactly."""
+    signal_sender = Mock()
+    assert run_workspace_kill_cli(
+        ["session-123"], home_resolver=lambda: str(tmp_path),
+        discover=Mock(return_value=rows), signal_sender=signal_sender,
+        process_probe=lambda pid, sig: None,
+    ) == 0
+    captured = capsys.readouterr()
+    assert captured.out == (
+        "[INFO] SIGTERM sent to session=session-123, PID=1234; "
+        "process exit is not confirmed.\n"
+    )
+    assert captured.err == ""
+
+
+def test_json_flag_value_is_not_mistaken_for_the_option(tmp_path, rows, capsys):
+    """A session literally named ``--json`` cannot enable JSON mode."""
+    assert run_workspace_kill_cli(
+        ["--", "--json"], home_resolver=lambda: str(tmp_path),
+        discover=Mock(return_value=[]), signal_sender=Mock(),
+    ) == 3
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "[ERROR]" in captured.err

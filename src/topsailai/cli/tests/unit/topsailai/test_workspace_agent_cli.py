@@ -1,5 +1,6 @@
 """Tests for the non-interactive workspace agent command."""
 
+import json
 import os
 from unittest.mock import patch
 
@@ -36,12 +37,34 @@ def test_background_forwards_each_selected_mechanism(tmp_path, mechanism):
     )
 
 
-def test_unknown_json_option_is_usage_error(tmp_path):
+def test_json_option_emits_foreground_receipt(tmp_path, capsys):
     folder = tmp_path / "project"
     folder.mkdir()
-    with patch("cli_topsailai.agent_launch.launch_configured_agent") as launch:
-        assert run_workspace_agent_cli([str(folder), "--json"]) == 2
-    launch.assert_not_called()
+
+    def launch(_folder, **kwargs):
+        kwargs["receipt"].update(
+            session_id="session-1", workspace=str(folder), mode="raw",
+            background=False, resumed=False, launcher_pid=321,
+            startup_confirmed=False, child_exit_code=0,
+        )
+        print("child output", file=kwargs["child_stdout"])
+        return 0
+
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", side_effect=launch):
+        assert run_workspace_agent_cli([str(folder), "--json"]) == 0
+    captured = capsys.readouterr()
+    receipt = json.loads(captured.out)
+    assert receipt["ok"] is True
+    assert receipt["action"] == "agent"
+    assert receipt["session_id"] == "session-1"
+    assert receipt["pid"] == 321
+    assert receipt["delivery_state"] == "launcher_exited"
+    assert receipt["response"] == {
+        "workspace": str(folder), "mode": "raw", "background": False,
+        "resumed": False, "launcher_pid": 321, "log_path": None,
+        "startup_confirmed": False, "child_exit_code": 0,
+    }
+    assert captured.err == "child output\n"
 
 
 def test_default_mode_is_forwarded_without_auto(tmp_path):
