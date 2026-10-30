@@ -620,6 +620,9 @@ def handle_yaml_command(
                 print_info("No configurable environment variables matched.")
                 return "yaml_handled"
             source, names = result
+            from cli_topsailai.completer import register_environment_completions
+
+            register_environment_completions(names)
             print_info(f"Source: {source}")
             for name in names:
                 print_info(name)

@@ -151,9 +151,10 @@ class TestEnvironmentSearchCommand(unittest.TestCase):
         self.assertEqual(variables["args"], "OPENAI HISTORY")
 
     @patch("cli_topsailai.yaml_commands.print_info")
+    @patch("cli_topsailai.completer.register_environment_completions")
     @patch("cli_topsailai.env_search.find_environment_variables")
-    def test_handler_prints_source_and_names_without_values(
-        self, mock_find, mock_print_info
+    def test_handler_prints_source_and_registers_names_without_values(
+        self, mock_find, mock_register, mock_print_info
     ):
         mock_find.return_value = (
             "/tmp/.env.local",
@@ -164,6 +165,7 @@ class TestEnvironmentSearchCommand(unittest.TestCase):
         action = handle_yaml_command(instruction, {"args": "OPENAI"})
 
         self.assertEqual(action, "yaml_handled")
+        mock_register.assert_called_once_with(["OPENAI_API_KEY", "OPENAI_MODEL"])
         printed = [call.args[0] for call in mock_print_info.call_args_list]
         self.assertEqual(
             printed,

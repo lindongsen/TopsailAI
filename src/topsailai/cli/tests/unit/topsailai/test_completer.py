@@ -17,9 +17,57 @@ sys.path.insert(
 
 import cli_topsailai.state as cli_state
 from cli_topsailai.completer import (
+    _environment_completion_names,
     get_control_instruction_names,
+    get_environment_completions,
+    register_environment_completions,
     tab_completer,
 )
+
+
+class TestEnvironmentCompleter(unittest.TestCase):
+    """Tests for environment-variable result completion."""
+
+    def setUp(self):
+        _environment_completion_names.clear()
+
+    def tearDown(self):
+        _environment_completion_names.clear()
+
+    def test_registration_deduplicates_and_sorts_names(self):
+        register_environment_completions(["TOPSAILAI_MODEL", "OPENAI_MODEL"])
+        register_environment_completions(["OPENAI_MODEL", "OPENAI_API_KEY"])
+
+        self.assertEqual(
+            get_environment_completions(),
+            ["OPENAI_API_KEY", "OPENAI_MODEL", "TOPSAILAI_MODEL"],
+        )
+
+    @patch("readline.get_begidx", return_value=9)
+    @patch("readline.get_line_buffer", return_value="/env.get OPEN")
+    def test_env_get_completes_registered_name(self, _mock_line, _mock_begidx):
+        register_environment_completions(["OPENAI_MODEL", "TOPSAILAI_MODEL"])
+
+        self.assertEqual(tab_completer("OPEN", 0), "OPENAI_MODEL")
+        self.assertIsNone(tab_completer("OPEN", 1))
+
+    @patch("readline.get_begidx", return_value=12)
+    @patch("readline.get_line_buffer", return_value="/env.search open")
+    def test_env_search_completes_case_insensitively(
+        self, _mock_line, _mock_begidx
+    ):
+        register_environment_completions(["OPENAI_MODEL", "TOPSAILAI_HISTORY"])
+
+        self.assertEqual(tab_completer("open", 0), "OPENAI_MODEL")
+
+    @patch("readline.get_begidx", return_value=6)
+    @patch("readline.get_line_buffer", return_value="/send OPEN")
+    def test_unrelated_command_does_not_complete_environment_name(
+        self, _mock_line, _mock_begidx
+    ):
+        register_environment_completions(["OPENAI_MODEL"])
+
+        self.assertIsNone(tab_completer("OPEN", 0))
 
 
 class TestControlCompleter(unittest.TestCase):

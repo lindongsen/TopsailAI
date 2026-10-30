@@ -109,6 +109,24 @@ def get_available_completions() -> List[str]:
     return sorted(unique)
 
 
+_environment_completion_names: set[str] = set()
+
+
+def register_environment_completions(names: List[str]) -> None:
+    """Retain environment-variable names for subsequent TAB completion."""
+    _environment_completion_names.update(name for name in names if name)
+
+
+def get_environment_completions(prefix: str = "") -> List[str]:
+    """Return retained environment-variable names matching *prefix*."""
+    normalized_prefix = prefix.casefold()
+    return sorted(
+        name
+        for name in _environment_completion_names
+        if name.casefold().startswith(normalized_prefix)
+    )
+
+
 def _get_file_completions(prefix: str) -> List[str]:
     """Return file-system completion candidates for *prefix*."""
     expanded = expand_path(prefix)
@@ -162,12 +180,26 @@ def _get_control_action_names() -> List[str]:
         return []
 
 
+def _is_environment_completion_position(line_prefix: str) -> bool:
+    """Return whether the current token accepts an environment-variable name."""
+    parts = line_prefix.strip().split()
+    if not parts:
+        return False
+    if parts[0] == "/env.search":
+        return True
+    return parts[0] in ("/env.get", "/env.set") and len(parts) == 1
+
+
 def tab_completer(text: str, state: int) -> Optional[str]:
     """readline tab completion callback."""
     try:
         import readline
 
         line = readline.get_line_buffer()
+        line_prefix = line[:readline.get_begidx()]
+        if _is_environment_completion_position(line_prefix):
+            matches = get_environment_completions(text)
+            return matches[state] if state < len(matches) else None
         if (cli_state.current_scope == "workspace"
                 and not cli_state.workspace_showing_managed_projects
                 and line[:readline.get_begidx()].strip() == "/driver"):
