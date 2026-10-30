@@ -240,6 +240,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 |---------|-------------|
 | `runtime` | Execute one exact send, btw, control or logs operation; see the contract above. |
 | `workspace [-f json]` | Display the workspace task list and exit. The default is the human-readable table; `-f json` or `--format json` emits one JSON document. |
+| `workspace kill <session_id>` | Send SIGTERM to the exact session process identified by `session_id`, without confirmation. Success means the OS accepted the signal; process exit is not confirmed. |
 | `workspace agent <folder> [-m MODE] [-b/--background]` | Launch a configured agent in the foreground; background defaults to raw and honors an explicit `-m raw|tmux|dtach`, failing closed with exit code 4 when that mechanism is unavailable. |
 | `workspace driver <start/status/stop> -s SESSION [-p PID] [--json]` | Start, inspect or stop one exact session driver; see below. |
 | `docs list` | List all usage documentation files and exit. |

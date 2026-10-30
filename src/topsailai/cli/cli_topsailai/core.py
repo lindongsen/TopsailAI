@@ -301,6 +301,9 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
         return run_workspace_agent_cli(
             args.agent_args, startup_cwd=getattr(args, "startup_cwd", None),
         )
+    if workspace_command == "kill":
+        from cli_topsailai.workspace_kill_cli import run_workspace_kill_cli
+        return run_workspace_kill_cli([args.session_id])
     if workspace_command == "resume":
         from cli_topsailai.workspace_resume_cli import run_workspace_resume_cli
         resume_args = ["-s", args.session_id]
@@ -1470,6 +1473,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     workspace_subparsers.add_parser(
         "agent", help="launch an agent in a folder", add_help=False,
     ).add_argument("agent_args", nargs=argparse.REMAINDER)
+    workspace_kill_parser = workspace_subparsers.add_parser(
+        "kill", help="send SIGTERM to one exact session", allow_abbrev=False,
+    )
+    workspace_kill_parser.add_argument("session_id", help="exact session ID")
+    workspace_kill_parser.set_defaults(func=_handle_workspace_subcommand)
     workspace_resume_parser = workspace_subparsers.add_parser(
         "resume", help="resume an exact persisted session", allow_abbrev=False,
     )
