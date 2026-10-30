@@ -627,8 +627,10 @@ def handle_yaml_command(
                 for assignment in result.assignments
             ]
             register_environment_completions(names)
-            for result in results:
-                print_info(f"Source: {result.source}")
+            for index, result in enumerate(results):
+                if index:
+                    print_info("")
+                print_info(f"> Source: {result.source}")
                 for assignment in result.assignments:
                     print_info(f"{assignment.name}={assignment.value}")
             return "yaml_handled"

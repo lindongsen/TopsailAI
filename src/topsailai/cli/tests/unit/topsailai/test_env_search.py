@@ -203,7 +203,7 @@ class TestEnvironmentSearchCommand(unittest.TestCase):
     @patch("cli_topsailai.yaml_commands.print_info")
     @patch("cli_topsailai.completer.register_environment_completions")
     @patch("cli_topsailai.env_search.find_environment_variables")
-    def test_handler_prints_layered_values_and_registers_all_names(
+    def test_handler_formats_layered_values_and_registers_all_names(
         self, mock_find, mock_register, mock_print_info
     ):
         mock_find.return_value = [
@@ -222,14 +222,40 @@ class TestEnvironmentSearchCommand(unittest.TestCase):
 
         self.assertEqual(action, "yaml_handled")
         mock_register.assert_called_once_with(["OPENAI_API_KEY", "OPENAI_MODEL"])
-        printed = [call.args[0] for call in mock_print_info.call_args_list]
         self.assertEqual(
-            printed,
+            [call.args[0] for call in mock_print_info.call_args_list],
             [
-                "Source: /tmp/.env.local",
+                "> Source: /tmp/.env.local",
                 "OPENAI_API_KEY=local-secret",
-                "Source: /tmp/.env",
+                "",
+                "> Source: /tmp/.env",
                 "OPENAI_MODEL=gpt-test",
+            ],
+        )
+
+    @patch("cli_topsailai.yaml_commands.print_info")
+    @patch("cli_topsailai.completer.register_environment_completions")
+    @patch("cli_topsailai.env_search.find_environment_variables")
+    def test_handler_formats_single_source_without_trailing_separator(
+        self, mock_find, mock_register, mock_print_info
+    ):
+        mock_find.return_value = [
+            EnvironmentSearchResult(
+                "/tmp/env_template",
+                [EnvironmentAssignment("OPENAI_TIMEOUT", "30")],
+            )
+        ]
+        instruction = {"cmd": "/env.search {args}", "shell": ""}
+
+        action = handle_yaml_command(instruction, {"args": "TIMEOUT"})
+
+        self.assertEqual(action, "yaml_handled")
+        mock_register.assert_called_once_with(["OPENAI_TIMEOUT"])
+        self.assertEqual(
+            [call.args[0] for call in mock_print_info.call_args_list],
+            [
+                "> Source: /tmp/env_template",
+                "OPENAI_TIMEOUT=30",
             ],
         )
 
