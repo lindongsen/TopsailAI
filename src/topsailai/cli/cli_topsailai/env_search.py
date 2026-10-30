@@ -11,7 +11,7 @@ from typing import Iterable, List, Optional, Sequence
 from cli_topsailai.paths import get_topsailai_home
 
 _ENV_ASSIGNMENT_PATTERN = re.compile(
-    r"^\s*(?:#\s*)?(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$"
+    r"^\s*(#\s*)?(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$"
 )
 
 
@@ -52,19 +52,27 @@ def parse_search_terms(raw_args: str) -> List[str]:
 
 
 def read_environment_assignments(path: str) -> List[EnvironmentAssignment]:
-    """Read the first assignment for each variable name from one environment file."""
+    """Read unique assignments, preferring active lines over commented defaults."""
     assignments: List[EnvironmentAssignment] = []
-    seen = set()
+    assignment_indexes = {}
+    commented_names = set()
     with open(path, "r", encoding="utf-8") as env_file:
         for line in env_file:
             match = _ENV_ASSIGNMENT_PATTERN.match(line.rstrip("\r\n"))
             if not match:
                 continue
-            name = match.group(1)
-            if name in seen:
+            is_commented = match.group(1) is not None
+            name = match.group(2)
+            assignment = EnvironmentAssignment(name=name, value=match.group(3))
+            if name not in assignment_indexes:
+                assignment_indexes[name] = len(assignments)
+                assignments.append(assignment)
+                if is_commented:
+                    commented_names.add(name)
                 continue
-            seen.add(name)
-            assignments.append(EnvironmentAssignment(name=name, value=match.group(2)))
+            if name in commented_names and not is_commented:
+                assignments[assignment_indexes[name]] = assignment
+                commented_names.remove(name)
     return assignments
 
 

@@ -31,7 +31,7 @@ class TestEnvironmentSearch(unittest.TestCase):
             ["openai", "tool call"],
         )
 
-    def test_read_assignments_preserves_values_and_first_duplicate(self):
+    def test_read_assignments_preserves_values_and_first_equal_status_duplicate(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             env_path = os.path.join(tmpdir, ".env")
             with open(env_path, "w", encoding="utf-8") as env_file:
@@ -52,6 +52,31 @@ class TestEnvironmentSearch(unittest.TestCase):
                     EnvironmentAssignment("OPENAI_API_KEY", "secret-value"),
                     EnvironmentAssignment("TOPSAILAI_MODEL", "visible model"),
                     EnvironmentAssignment("EMPTY_VALUE", ""),
+                ],
+            )
+
+    def test_read_assignments_prefers_active_duplicate_and_preserves_order(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = os.path.join(tmpdir, ".env")
+            with open(env_path, "w", encoding="utf-8") as env_file:
+                env_file.write(
+                    "# COMMENTED_FIRST=commented\n"
+                    "ACTIVE_FIRST=active\n"
+                    "COMMENTED_FIRST=active\n"
+                    "# ACTIVE_FIRST=commented\n"
+                    "ACTIVE_DUPLICATE=first\n"
+                    "ACTIVE_DUPLICATE=second\n"
+                    "# COMMENTED_DUPLICATE=first\n"
+                    "# COMMENTED_DUPLICATE=second\n"
+                )
+
+            self.assertEqual(
+                read_environment_assignments(env_path),
+                [
+                    EnvironmentAssignment("COMMENTED_FIRST", "active"),
+                    EnvironmentAssignment("ACTIVE_FIRST", "active"),
+                    EnvironmentAssignment("ACTIVE_DUPLICATE", "first"),
+                    EnvironmentAssignment("COMMENTED_DUPLICATE", "first"),
                 ],
             )
 
