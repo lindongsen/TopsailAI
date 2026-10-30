@@ -46,6 +46,7 @@ def test_json_option_emits_foreground_receipt(tmp_path, capsys):
             session_id="session-1", workspace=str(folder), mode="raw",
             background=False, resumed=False, launcher_pid=321,
             startup_confirmed=False, child_exit_code=0,
+            launcher_exit_observed=True,
         )
         print("child output", file=kwargs["child_stdout"])
         return 0
@@ -65,6 +66,46 @@ def test_json_option_emits_foreground_receipt(tmp_path, capsys):
         "startup_confirmed": False, "child_exit_code": 0,
     }
     assert captured.err == "child output\n"
+
+
+def test_json_foreground_pid_without_observed_exit_is_uncertain(tmp_path, capsys):
+    """A spawned launcher is not reported exited when wait and cleanup are unresolved."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+
+    def launch(_folder, **kwargs):
+        kwargs["receipt"].update(
+            session_id="session-1", workspace=str(folder), mode="raw",
+            background=False, launcher_pid=321, spawn_confirmed=True,
+            effect_uncertain=True,
+        )
+        return 6
+
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", side_effect=launch):
+        assert run_workspace_agent_cli([str(folder), "--json"]) == 6
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["delivery_state"] == "delivery_unknown"
+    assert receipt["delivery_unknown"] is True
+    assert "retry blindly" in receipt["message"]
+
+
+def test_json_background_unconfirmed_effect_is_not_not_delivered(tmp_path, capsys):
+    """An unresolved background acknowledgement preserves uncertain side effects."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+
+    def launch(_folder, **kwargs):
+        kwargs["receipt"].update(
+            session_id="session-1", workspace=str(folder), mode="raw",
+            background=True, submission_attempted=True, effect_uncertain=True,
+        )
+        return 6
+
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", side_effect=launch):
+        assert run_workspace_agent_cli([str(folder), "-b", "--json"]) == 6
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["delivery_state"] == "delivery_unknown"
+    assert receipt["delivery_unknown"] is True
 
 
 def test_default_mode_is_forwarded_without_auto(tmp_path):

@@ -240,7 +240,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 |---------|-------------|
 | `runtime` | Execute one exact send, btw, control or logs operation; see the contract above. |
 | `workspace [-f json]` | Display the workspace task list and exit. The default is the human-readable table; `-f json` or `--format json` emits one JSON document. |
-| `workspace kill <session_id> [--json]` | Send SIGTERM to the exact session process identified by `session_id`, without confirmation. Success means the OS accepted the signal; process exit is not confirmed. |
+| `workspace kill <session_id> -g GENERATION [--json]` | Send SIGTERM without confirmation only when the exact session process generation is still verified. Obtain `GENERATION` from `workspace -f json`; success means the OS accepted the signal, not that process exit was confirmed. |
 | `workspace agent <folder> [-m MODE] [-b/--background] [--json]` | Launch a configured agent in the foreground; background defaults to raw and honors an explicit `-m raw|tmux|dtach`, failing closed with exit code 4 when that mechanism is unavailable. |
 | `workspace resume -s SESSION [-d DRIVER] [-m MODE] [-b/--background] [--json]` | Resume one exact persisted idle session; background success means submission rather than readiness. |
 | `workspace driver <start/status/stop> -s SESSION [-p PID] [--json]` | Start, inspect or stop one exact session driver; see below. |
@@ -258,7 +258,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `models select <number-or-name>` | Set the workspace default model selection. |
 | `models clear` | Clear the workspace model selection. |
 
-The JSON workspace document contains `host`, `pwd`, `home`, `task_dir`, `items`, and `total`. Each item contains `no`, `filename`, `session_name`, `session_id`, `is_task`, `pid`, `status`, `created_at`, and `project_workspace`. `created_at` is the local creation time in ISO 8601 format with a timezone offset (`YYYY-MM-DDTHH:MM:SS+/-HHMM`), or `null` when the creation time is unavailable. Items retain the default oldest-first order. An empty workspace returns `"items": []` and `"total": 0`.
+The JSON workspace document contains `host`, `pwd`, `home`, `task_dir`, `items`, and `total`. Each item contains `no`, `filename`, `session_name`, `session_id`, `is_task`, `pid`, `process_generation`, `status`, `completed`, `driver`, `created_at`, and `project_workspace`. `process_generation` is the positive operating-system process generation required by non-interactive `workspace kill`; it is present only when an ordinary session process is currently verified to hold that exact session stdout file, and otherwise is `null`. Callers must not substitute a PID, timestamp, row number, or older generation. `created_at` is the local creation time in ISO 8601 format with a timezone offset (`YYYY-MM-DDTHH:MM:SS+/-HHMM`), or `null` when the creation time is unavailable. Items retain the default oldest-first order. An empty workspace returns `"items": []` and `"total": 0`.
 
 ## Workspace agent
 
@@ -424,11 +424,19 @@ Runtime `/meta` remains unchanged: it reads the watched parent session metadata 
 
 ## Workspace process termination
 
-Use `/kill 3` to target row 3 of the currently displayed ordinary workspace task list. Exactly one positive row number is required. Project, runtime, session, doc and managed-project views reject this command. Rows whose PID column is `-` are not eligible; PID 1 and the CLI's own PID are also rejected.
+Interactive `/kill 3` targets row 3 of the currently displayed ordinary workspace task list. Exactly one positive row number is required. Project, runtime, session, doc and managed-project views reject this command. Rows whose PID column is `-` are not eligible; PID 1 and the CLI's own PID are also rejected.
 
-The confirmation identifies the row, session and exact PID and warns that unsaved work may be lost. Enter `y` or `yes` to send SIGTERM; Enter, other answers, EOF or Ctrl+C cancel without signaling. The target is only the PID column, including a task child PID when selecting a task row, never the Driver column or an inferred parent session PID. No process group or descendant traversal is performed.
+The interactive confirmation identifies the row, session and exact PID and warns that unsaved work may be lost. Enter `y` or `yes` to send SIGTERM; Enter, other answers, EOF or Ctrl+C cancel without signaling. The target is only the PID column, including a task child PID when selecting a task row, never the Driver column or an inferred parent session PID. No process group or descendant traversal is performed. This interactive legacy path does not verify process-instance identity, so refresh stale lists before use.
 
-Successful output means the OS accepted the signal, not that the process has exited. There is no automatic SIGKILL escalation. A successful submission refreshes the list; cancellation and errors leave it unchanged. An already-exited process or permission failure is reported with PID/session context. Logs are not deleted. Numeric PIDs can be reused between list discovery, confirmation and signaling; this command does not verify process-instance identity, so inspect the selected row carefully and refresh stale lists before use. On Windows, Python's SIGTERM behavior terminates the target rather than providing POSIX graceful-handler semantics.
+Non-interactive termination uses a stricter contract:
+
+```text
+topsailai workspace kill SESSION -g GENERATION [--json]
+```
+
+Obtain `SESSION` and its non-null `process_generation` from the same recent `topsailai workspace -f json` snapshot. The command examines every exact ordinary session stdout row for that session, ignores rows whose original process is authoritatively absent, and requires exactly one live process that still holds its matching stdout file. Its immutable process generation must equal `GENERATION`; a bare session or PID never authorizes termination. Stale generations, PID reuse, unavailable identity evidence, changed file ownership and multiple live instances fail without sending a signal.
+
+On supported Linux systems, the command opens a pidfd for the verified PID, revalidates its process identity, and submits exactly one SIGTERM through that bound handle. If pidfd support or authoritative identity evidence is unavailable, it fails closed rather than falling back to `os.kill`. Success means the OS accepted the signal for that verified process instance; it does not confirm exit, stop descendants, retry, escalate to SIGKILL, or delete logs. JSON success reports `delivery_state="signal_sent"` and returns the verified generation in `response.generation`. Exit `2` is invalid syntax or selector, `3` is target/identity/generation rejection, and `4` is signal submission failure.
 
 
 ## Current-request first-byte control shortcuts

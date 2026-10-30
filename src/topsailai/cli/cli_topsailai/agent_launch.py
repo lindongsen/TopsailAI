@@ -212,6 +212,7 @@ def _launch_configured_agent_impl(
                                  if resumed_session else None),
                 "driver": driver,
             }
+            record(submission_attempted=True)
             try:
                 if effective_mode == "raw":
                     background_result = launch_background(
@@ -220,6 +221,7 @@ def _launch_configured_agent_impl(
                     background_result = submit_terminal(
                         folder, session_id, mechanism=effective_mode, **submit_kwargs)
             except (BackgroundUnconfirmed, TerminalUnconfirmed) as error:
+                record(effect_uncertain=True)
                 print(f"[ERROR] Agent launch custody unresolved: {error}", file=sys.stderr)
                 return 6
             except (OSError, ValueError, RuntimeError) as error:
@@ -228,13 +230,15 @@ def _launch_configured_agent_impl(
             if background_result.get("outcome") == "cancelled":
                 exit_code = background_result.get("exit_code", 6)
                 if exit_code != 130 or not background_result.get("cleanup_confirmed"):
+                    record(effect_uncertain=True)
                     return 6
+                record(cancellation_confirmed=True)
                 print(f"[INFO] Agent launch cancelled: session={session_id}")
                 return 130
             launcher_pid = background_result["launcher_pid"]
             log_path = background_result["log_path"]
             record(launcher_pid=launcher_pid, log_path=log_path,
-                   startup_confirmed=False)
+                   startup_confirmed=False, submission_confirmed=True)
             print(
                 f"[INFO] Agent submitted: session={session_id} "
                 f"launcher_pid={launcher_pid} mode={effective_mode} background=yes"
@@ -278,18 +282,22 @@ def _launch_configured_agent_impl(
         except (OSError, ValueError) as error:
             print(f"[ERROR] Agent launch failed: {error}", file=sys.stderr)
             return 5
-        record(launcher_pid=getattr(child, "pid", None), startup_confirmed=False)
+        record(launcher_pid=getattr(child, "pid", None), startup_confirmed=False,
+               spawn_confirmed=True)
         try:
             code = child.wait()
         except KeyboardInterrupt:
             if not _stop_owned_child(child):
+                record(effect_uncertain=True)
                 print(f"[ERROR] Agent launch custody unresolved: session={session_id}", file=sys.stderr)
                 return 6
+            record(cancellation_confirmed=True)
             print(f"[ERROR] Agent launch interrupted: session={session_id}", file=sys.stderr)
             return 130
         except (OSError, subprocess.TimeoutExpired) as error:
             print(f"[ERROR] Agent launcher wait failed: {error}", file=sys.stderr)
             if not _stop_owned_child(child):
+                record(effect_uncertain=True)
                 print(f"[ERROR] Agent launch custody unresolved: session={session_id}", file=sys.stderr)
                 return 6
             return 5
@@ -299,19 +307,25 @@ def _launch_configured_agent_impl(
             else f"[ERROR] Agent launcher exited: code={code} session={session_id}"
         )
         print(output, file=sys.stdout if code == 0 else sys.stderr)
-        record(child_exit_code=code)
+        record(child_exit_code=code, launcher_exit_observed=True)
         result = code if code >= 0 else 128 + (-code)
     except KeyboardInterrupt:
         if child is not None and not _stop_owned_child(child):
+            record(effect_uncertain=True)
             print(f"[ERROR] Agent launch custody unresolved: session={session_id}", file=sys.stderr)
             result = 6
         else:
+            record(cancellation_confirmed=True)
             print(f"[ERROR] Agent launch interrupted: session={session_id}", file=sys.stderr)
             result = 130
     except (RuntimeError, ValueError, OSError) as error:
         if child is not None:
             print(f"[ERROR] Agent launcher failed after spawn: {error}", file=sys.stderr)
-            result = 6 if not _stop_owned_child(child) else 5
+            if not _stop_owned_child(child):
+                record(effect_uncertain=True)
+                result = 6
+            else:
+                result = 5
         else:
             print(f"[ERROR] Agent launch preparation failed: {error}", file=sys.stderr)
             result = 4
@@ -319,9 +333,14 @@ def _launch_configured_agent_impl(
         from cli_topsailai.agent_launch_background import BackgroundUnconfirmed
 
         if isinstance(error, BackgroundUnconfirmed):
+            record(effect_uncertain=True)
             print(f"[ERROR] Agent launch custody unresolved: {error}", file=sys.stderr)
             result = 6
         else:
             print(f"[ERROR] Agent launch failed: {error}", file=sys.stderr)
-            result = 6 if child is not None and not _stop_owned_child(child) else 5
+            if child is not None and not _stop_owned_child(child):
+                record(effect_uncertain=True)
+                result = 6
+            else:
+                result = 5
     return result

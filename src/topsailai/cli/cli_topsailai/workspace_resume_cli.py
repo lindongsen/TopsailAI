@@ -11,6 +11,7 @@ from cli_topsailai.workspace_receipt import (
     emit_failure,
     emit_receipt,
     json_requested,
+    launch_delivery_state,
     new_receipt,
     settle,
 )
@@ -124,15 +125,13 @@ def run_workspace_resume_cli(argv, *, startup_cwd=None) -> int:
     )
     settle(receipt, code, RESUME_ERROR_CODES)
     receipt["response"] = _receipt_response(facts)
-    if facts.get("background"):
-        receipt["delivery_state"] = "submitted" if code == 0 else "not_delivered"
-        if code == 0:
-            receipt["message"] = "Resume submitted; startup is not confirmed"
-    elif facts.get("launcher_pid") is not None:
-        receipt["delivery_state"] = "launcher_exited"
-        if code == 0:
-            receipt["message"] = "Resume launcher exited"
-    else:
-        receipt["delivery_state"] = "not_delivered"
+    receipt["delivery_state"] = launch_delivery_state(facts, code)
+    if receipt["delivery_state"] == "delivery_unknown":
+        receipt["delivery_unknown"] = True
+        receipt["message"] = "Resume effects are uncertain; do not retry blindly"
+    elif receipt["delivery_state"] == "submitted" and code == 0:
+        receipt["message"] = "Resume submitted; startup is not confirmed"
+    elif receipt["delivery_state"] == "launcher_exited" and code == 0:
+        receipt["message"] = "Resume launcher exited"
     emit_receipt(receipt)
     return code

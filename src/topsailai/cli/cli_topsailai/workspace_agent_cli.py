@@ -13,6 +13,7 @@ from cli_topsailai.workspace_receipt import (
     emit_failure,
     emit_receipt,
     json_requested,
+    launch_delivery_state,
     new_receipt,
     settle,
 )
@@ -135,20 +136,15 @@ def run_workspace_agent_cli(argv, *, startup_cwd: Optional[str] = None) -> int:
     )
     settle(receipt, code, AGENT_ERROR_CODES)
     receipt["response"] = _receipt_response(facts)
-    if facts.get("background"):
-        # A background request only ever proves submission, never readiness.
-        receipt["delivery_state"] = "submitted" if code == 0 else "not_delivered"
-        if code == 0:
-            receipt["message"] = "Launch submitted; startup is not confirmed"
-    elif facts.get("launcher_pid") is not None:
-        # The launcher was spawned and observed, so its exit is a real fact;
-        # a wrapper exit still does not prove agent completion.
-        receipt["delivery_state"] = "launcher_exited"
-        if code == 0:
-            receipt["message"] = (
-                "Launcher exited; a wrapper exit is not agent completion"
-            )
-    else:
-        receipt["delivery_state"] = "not_delivered"
+    receipt["delivery_state"] = launch_delivery_state(facts, code)
+    if receipt["delivery_state"] == "delivery_unknown":
+        receipt["delivery_unknown"] = True
+        receipt["message"] = "Launch effects are uncertain; do not retry blindly"
+    elif receipt["delivery_state"] == "submitted" and code == 0:
+        receipt["message"] = "Launch submitted; startup is not confirmed"
+    elif receipt["delivery_state"] == "launcher_exited" and code == 0:
+        receipt["message"] = (
+            "Launcher exited; a wrapper exit is not agent completion"
+        )
     emit_receipt(receipt)
     return code

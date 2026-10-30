@@ -16,6 +16,8 @@ def test_json_requested_ignores_consumed_values():
     assert receipts.json_requested(["folder", "--json"]) is True
     assert receipts.json_requested(["-m", "--json"]) is False
     assert receipts.json_requested(["-s", "--json"]) is False
+    assert receipts.json_requested(["-g", "--json"]) is False
+    assert receipts.json_requested(["--generation", "--json"]) is False
     assert receipts.json_requested(["--", "--json"]) is False
     assert receipts.json_requested([]) is False
 

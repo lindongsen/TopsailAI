@@ -119,3 +119,17 @@ Traced input capture, FIFO writing, and receiver parsing; confirmed that the sen
 ### Why this prevents recurrence
 
 Validating reserved framing markers before transport prevents silent partial delivery until sender and receiver can adopt a collision-free framing protocol together.
+
+## Process control receipts require instance authority and explicit milestones
+
+### Trigger
+
+The workspace JSON receipt implementation exposed two safety gaps: non-interactive kill authorized a target from a historical log filename and live PID alone, while launch and resume receipts inferred delivery or launcher exit from a return code, background mode, or PID presence.
+
+### Action taken
+
+Required callers to use the verified process generation published only for a live process holding its exact session stdout file, revalidated that identity after opening a pidfd, and failed closed when identity or bound signaling was unavailable. Launch and resume now record submission, observed wait completion, confirmed cancellation, and uncertain effects at their actual boundaries, and receipt states are derived only from those facts.
+
+### Why this prevents recurrence
+
+Binding termination to the current process instance prevents stale logs and PID reuse from authorizing a signal to an unrelated process, while evidence-based receipt states prevent automation from blindly retrying an operation whose side effects may already have occurred or treating PID presence as proof that a launcher exited.

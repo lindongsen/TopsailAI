@@ -50,6 +50,7 @@ references:
 - `runtime control ACTION [-s SESSION] [-p PID] [-a JSON]`
 - `runtime logs [-s SESSION] [-p PID] [-n N] [--json]` — finite recent session log query
 - `workspace agent <folder> [-m MODE] [-b|--background] [--json]`
+- `workspace kill SESSION -g GENERATION [--json]` — requires the verified `process_generation` from `workspace -f json` and fails closed when process-instance evidence changes or is unavailable
 - `workspace driver start|status|stop -s SESSION [-p PID] [--json]`
 - `project add|del|list|launch|resume`
 - `models list|add|get|update|delete`

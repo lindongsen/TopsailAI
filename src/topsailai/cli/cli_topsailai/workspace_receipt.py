@@ -46,6 +46,7 @@ RESUME_ERROR_CODES = {
 # is never mistaken for the JSON flag itself.
 _VALUE_FLAGS = frozenset({
     "-m", "--agent-mode", "-s", "--session", "-d", "--driver",
+    "-g", "--generation",
 })
 
 
@@ -104,6 +105,17 @@ def settle(receipt: dict, exit_code: int, error_codes: dict, *, message: str = "
     receipt["message"] = message or error_code
     receipt["delivery_unknown"] = exit_code == 6
     return receipt
+
+
+def launch_delivery_state(facts: dict, exit_code: int) -> str:
+    """Derive launch delivery only from explicit execution milestones."""
+    if facts.get("launcher_exit_observed"):
+        return "launcher_exited"
+    if facts.get("submission_confirmed"):
+        return "submitted"
+    if facts.get("effect_uncertain") or exit_code == 6:
+        return "delivery_unknown"
+    return "not_delivered"
 
 
 def emit_receipt(receipt: dict) -> None:

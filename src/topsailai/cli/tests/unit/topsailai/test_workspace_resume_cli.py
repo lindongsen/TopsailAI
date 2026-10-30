@@ -968,6 +968,7 @@ def test_json_resume_foreground_receipt_uses_stdout_only_for_json(capsys):
             session_id=session_id, workspace="/work/project", mode="raw",
             background=False, resumed=True, launcher_pid=4321,
             startup_confirmed=False, child_exit_code=0,
+            launcher_exit_observed=True,
         )
         print("resume output", file=kwargs["child_stdout"])
         return 0
@@ -1002,7 +1003,7 @@ def test_json_resume_background_receipt_does_not_claim_readiness(capsys):
             session_id=session_id, workspace="/work/project", mode="raw",
             background=True, resumed=True, launcher_pid=5432,
             log_path="/home/task/attempt.agent-launch.log",
-            startup_confirmed=False,
+            startup_confirmed=False, submission_confirmed=True,
         )
         return 0
 
@@ -1044,8 +1045,31 @@ def test_json_resume_failure_receipt_preserves_status(code, error_code, capsys):
     assert payload["ok"] is False
     assert payload["exit_code"] == code
     assert payload["error_code"] == error_code
-    assert payload["delivery_state"] == "not_delivered"
+    expected_state = "delivery_unknown" if code == 6 else "not_delivered"
+    assert payload["delivery_state"] == expected_state
     assert payload["delivery_unknown"] is (code == 6)
+
+
+def test_json_resume_pid_without_observed_exit_is_uncertain(capsys):
+    """Resume does not infer launcher exit from a recorded PID alone."""
+    import json
+
+    def resume(session_id, **kwargs):
+        kwargs["receipt"].update(
+            session_id=session_id, workspace="/work/project", mode="raw",
+            background=False, launcher_pid=4321, spawn_confirmed=True,
+            effect_uncertain=True,
+        )
+        return 6
+
+    with patch("cli_topsailai.project_scope.resume_session_result", side_effect=resume):
+        assert run_workspace_resume_cli(
+            ["-s", "session-123", "-m", "raw", "--json"]
+        ) == 6
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["delivery_state"] == "delivery_unknown"
+    assert payload["delivery_unknown"] is True
+    assert "retry blindly" in payload["message"]
 
 
 def test_json_resume_usage_failure_is_one_receipt(capsys):

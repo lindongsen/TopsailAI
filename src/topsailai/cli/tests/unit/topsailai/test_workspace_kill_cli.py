@@ -1,102 +1,169 @@
-"""Tests for non-interactive workspace session termination.
+"""Tests for exact process-instance workspace termination.
 
 Author: DawsonLin
 """
 
+import json
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
 from cli_topsailai import core
-from cli_topsailai.workspace_kill_cli import run_workspace_kill_cli
+from cli_topsailai.workspace_kill_cli import (
+    KillTarget,
+    WorkspaceKillError,
+    _resolve_target,
+    _signal_bound,
+    run_workspace_kill_cli,
+)
 
 
 @pytest.fixture
-def rows():
-    """Return one exact ordinary session row."""
+def rows(tmp_path):
+    """Return one exact ordinary session row with a concrete evidence path."""
+    path = tmp_path / "workspace" / "task" / "session-123.1234.session.stdout"
+    path.parent.mkdir(parents=True)
+    path.write_text("log")
     return [{
-        "session_id": "session-123",
-        "pid": 1234,
-        "session_pid": 1234,
-        "filename": "session-123.1234.session.stdout",
-        "is_task": False,
+        "session_id": "session-123", "pid": 1234, "session_pid": 1234,
+        "filename": path.name, "path": str(path), "is_task": False,
     }]
 
 
-def invoke(tmp_path, rows, signal_sender):
-    """Run the command with isolated discovery and signal seams."""
+def invoke(tmp_path, rows, sender, argv=None, *, identity_probe=None,
+           relation_probe=None):
+    """Run the command with isolated discovery and process-identity seams."""
     discover = Mock(return_value=rows)
+    kwargs = {
+        "home_resolver": lambda: str(tmp_path), "discover": discover,
+        "bound_signal_sender": sender,
+        "identity_probe": identity_probe or (lambda pid: (pid, 77)),
+        "relation_probe": relation_probe or (lambda pid, path: True),
+        "absence_probe": lambda pid: False,
+    }
     code = run_workspace_kill_cli(
-        ["session-123"],
-        home_resolver=lambda: str(tmp_path),
-        discover=discover,
-        signal_sender=signal_sender,
-        process_probe=lambda pid, sig: None,
+        argv or ["session-123", "--generation", "77"], **kwargs,
     )
     discover.assert_called_once_with(str(Path(tmp_path) / "workspace" / "task"))
     return code
 
 
-def test_kill_sends_sigterm_without_confirmation(tmp_path, rows):
-    """A valid session is terminated directly without reading input."""
-    signal_sender = Mock()
-    assert invoke(tmp_path, rows, signal_sender) == 0
-    signal_sender.assert_called_once_with(1234, 15)
+def test_kill_signals_exact_verified_instance(tmp_path, rows):
+    """A matching generation and evidence relation authorize one signal."""
+    sender = Mock()
+    assert invoke(tmp_path, rows, sender) == 0
+    target, sig = sender.call_args.args
+    assert target == KillTarget(1234, 77, (1234, 77))
+    assert sig == 15
 
 
 @pytest.mark.parametrize("session_id", ["", ".", "..", "../outside", "a/b", "a\\b", "nul\0id"])
 def test_invalid_session_is_rejected_before_discovery(tmp_path, session_id):
     """Invalid identifiers cannot reach discovery or signaling."""
     discover = Mock()
-    signal_sender = Mock()
+    sender = Mock()
     assert run_workspace_kill_cli(
-        [session_id], home_resolver=lambda: str(tmp_path),
-        discover=discover, signal_sender=signal_sender,
+        [session_id, "-g", "77"], home_resolver=lambda: str(tmp_path),
+        discover=discover, bound_signal_sender=sender,
     ) == 2
     discover.assert_not_called()
-    signal_sender.assert_not_called()
+    sender.assert_not_called()
 
 
-@pytest.mark.parametrize("bad_rows", [
-    [],
-    [{"session_id": "session-123", "pid": 1234, "filename": "session-123.1234.task.stdout", "is_task": True}],
-    [
-        {"session_id": "session-123", "pid": 1234, "filename": "session-123.1234.session.stdout", "is_task": False},
-        {"session_id": "session-123", "pid": 1235, "filename": "session-123.1235.session.stdout", "is_task": False},
-    ],
+@pytest.mark.parametrize("argv", [
+    ["session-123"], ["session-123", "-g", "0"],
+    ["session-123", "-g", "-1"], ["session-123", "-g", "x"],
+    ["session-123", "-g", "77", "-g", "78"],
 ])
-def test_non_unique_or_task_target_is_rejected(tmp_path, bad_rows):
-    """Missing, task-only and ambiguous rows never authorize signaling."""
-    signal_sender = Mock()
-    assert invoke(tmp_path, bad_rows, signal_sender) == 3
-    signal_sender.assert_not_called()
+def test_generation_is_required_and_strict(tmp_path, argv):
+    """A bare PID/session selector never authorizes termination."""
+    sender = Mock()
+    assert run_workspace_kill_cli(argv, home_resolver=lambda: str(tmp_path),
+                                  discover=Mock(), bound_signal_sender=sender) == 2
+    sender.assert_not_called()
 
 
-@pytest.mark.parametrize("pid", [1, 9999])
-def test_protected_or_dead_target_is_rejected(tmp_path, rows, monkeypatch, pid):
-    """Protected and non-existent process targets are rejected before SIGTERM."""
-    rows[0]["pid"] = pid
-    rows[0]["filename"] = f"session-123.{pid}.session.stdout"
-    signal_sender = Mock()
-    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.getpid", lambda: 9999)
-    if pid == 1:
-        assert invoke(tmp_path, rows, signal_sender) == 3
-    else:
-        assert invoke(tmp_path, rows, signal_sender) == 3
-    signal_sender.assert_not_called()
+def test_stale_generation_is_rejected_without_signal(tmp_path, rows):
+    """A queued request for an older process generation fails closed."""
+    sender = Mock()
+    assert invoke(tmp_path, rows, sender,
+                  ["session-123", "-g", "76"]) == 3
+    sender.assert_not_called()
 
 
-def test_signal_failure_is_reported(tmp_path, rows, monkeypatch):
-    """A signal delivery failure returns an error without claiming success."""
-    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.kill", lambda pid, sig: None)
-    sender = Mock(side_effect=PermissionError("denied"))
-    assert invoke(tmp_path, rows, sender) == 4
-    sender.assert_called_once_with(1234, 15)
+def test_reused_pid_without_original_evidence_is_rejected(tmp_path, rows):
+    """A live process that does not hold the historical stdout is not the owner."""
+    sender = Mock()
+    assert invoke(tmp_path, rows, sender, relation_probe=lambda pid, path: False) == 3
+    sender.assert_not_called()
 
 
-def test_core_dispatches_workspace_kill(tmp_path, monkeypatch):
-    """The top-level workspace parser routes kill to the non-interactive handler."""
+def test_unavailable_identity_evidence_is_rejected(tmp_path, rows):
+    """Unreadable immutable identity evidence is uncertainty, not absence."""
+    sender = Mock()
+    assert invoke(tmp_path, rows, sender, identity_probe=lambda pid: None) == 3
+    sender.assert_not_called()
+
+
+def test_one_live_instance_among_historical_rows_is_selected(tmp_path, rows):
+    """Authoritatively absent historical rows do not make one live run ambiguous."""
+    old = dict(rows[0], pid=1233,
+               filename="session-123.1233.session.stdout",
+               path=str(tmp_path / "workspace/task/session-123.1233.session.stdout"))
+    sender = Mock()
+    discover = Mock(return_value=[old, rows[0]])
+    code = run_workspace_kill_cli(
+        ["session-123", "-g", "77"],
+        home_resolver=lambda: str(tmp_path), discover=discover,
+        identity_probe=lambda pid: (pid, 77) if pid == 1234 else None,
+        absence_probe=lambda pid: pid == 1233,
+        relation_probe=lambda pid, path: True,
+        bound_signal_sender=sender,
+    )
+    assert code == 0
+    assert sender.call_args.args[0].pid == 1234
+
+
+def test_multiple_verified_live_instances_are_rejected(tmp_path, rows):
+    """No newest-row heuristic selects among concurrent live executions."""
+    second = dict(rows[0], pid=1235,
+                  filename="session-123.1235.session.stdout",
+                  path=str(tmp_path / "workspace/task/session-123.1235.session.stdout"))
+    sender = Mock()
+    assert invoke(tmp_path, [rows[0], second], sender) == 3
+    sender.assert_not_called()
+
+
+def test_signal_bound_revalidates_identity_after_pidfd_open(monkeypatch):
+    """An identity change between selection and signaling sends no signal."""
+    sent = Mock()
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.pidfd_open", lambda pid: 9)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.close", Mock())
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.signal.pidfd_send_signal", sent)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli._process_identity",
+                        lambda pid: (pid, 78))
+    with pytest.raises(WorkspaceKillError, match="target_changed"):
+        _signal_bound(KillTarget(1234, 77, (1234, 77)), 15)
+    sent.assert_not_called()
+
+
+def test_signal_bound_uses_pidfd(monkeypatch):
+    """The successful signal is bound to the opened immutable process handle."""
+    sent = Mock()
+    closed = Mock()
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.pidfd_open", lambda pid: 9)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.os.close", closed)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli.signal.pidfd_send_signal", sent)
+    monkeypatch.setattr("cli_topsailai.workspace_kill_cli._process_identity",
+                        lambda pid: (pid, 77))
+    _signal_bound(KillTarget(1234, 77, (1234, 77)), 15)
+    sent.assert_called_once_with(9, 15)
+    closed.assert_called_once_with(9)
+
+
+def test_core_forwards_workspace_kill_options(monkeypatch):
+    """The public dispatcher preserves generation and JSON arguments."""
     called = {}
 
     def fake(argv):
@@ -105,106 +172,64 @@ def test_core_dispatches_workspace_kill(tmp_path, monkeypatch):
 
     monkeypatch.setattr("cli_topsailai.workspace_kill_cli.run_workspace_kill_cli", fake)
     with pytest.raises(SystemExit) as error:
-        core.main(["workspace", "kill", "session-123"])
+        core.main(["workspace", "kill", "session-123", "-g", "77", "--json"])
     assert error.value.code == 7
-    assert called["argv"] == ["session-123"]
+    assert called["argv"] == ["session-123", "-g", "77", "--json"]
 
 
-def test_json_receipt_reports_signal_submission(tmp_path, rows, capsys):
-    """A successful kill emits one receipt that does not claim process exit."""
-    import json
+def test_public_workspace_kill_help_advertises_contract(capsys):
+    """Public help exposes both generation binding and JSON output offline."""
+    with pytest.raises(SystemExit) as error:
+        core.main(["workspace", "kill", "--help"])
+    assert error.value.code == 0
+    output = capsys.readouterr().out
+    assert "usage: topsailai workspace kill" in output
+    assert "--generation" in output and "--json" in output
 
-    signal_sender = Mock()
-    code = run_workspace_kill_cli(
-        ["session-123", "--json"],
-        home_resolver=lambda: str(tmp_path),
-        discover=Mock(return_value=rows),
-        signal_sender=signal_sender,
-        process_probe=lambda pid, sig: None,
-    )
+
+def test_json_receipt_reports_verified_generation(tmp_path, rows, capsys):
+    """A successful receipt identifies the exact generation signaled."""
+    sender = Mock()
+    code = invoke(tmp_path, rows, sender,
+                  ["session-123", "-g", "77", "--json"])
     assert code == 0
-    signal_sender.assert_called_once_with(1234, 15)
     output = capsys.readouterr().out
     assert output.count("\n") == 1
     payload = json.loads(output)
-    assert payload["ok"] is True
-    assert payload["action"] == "kill"
-    assert payload["session_id"] == "session-123"
     assert payload["pid"] == 1234
     assert payload["delivery_state"] == "signal_sent"
+    assert payload["response"]["generation"] == 77
     assert payload["response"]["exit_confirmed"] is False
-    assert payload["delivery_unknown"] is False
 
 
-@pytest.mark.parametrize("argv, expected_code, expected_error", [
-    (["session-123", "--json", "extra"], 2, "usage_error"),
-    (["../outside", "--json"], 2, "usage_error"),
-])
-def test_json_receipt_covers_usage_failures(tmp_path, argv, expected_code, expected_error, capsys):
-    """Usage failures still produce exactly one parseable receipt."""
-    import json
-
-    signal_sender = Mock()
-    code = run_workspace_kill_cli(
-        argv, home_resolver=lambda: str(tmp_path),
-        discover=Mock(return_value=[]), signal_sender=signal_sender,
-    )
-    assert code == expected_code
-    signal_sender.assert_not_called()
+def test_json_target_failure_is_one_receipt(tmp_path, rows, capsys):
+    """A stale remote selector remains parseable and sends no signal."""
+    sender = Mock()
+    assert invoke(tmp_path, rows, sender,
+                  ["session-123", "-g", "76", "--json"]) == 3
     payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is False
-    assert payload["exit_code"] == expected_code
-    assert payload["error_code"] == expected_error
+    assert payload["error_code"] == "generation_mismatch"
     assert payload["delivery_state"] == "not_delivered"
+    sender.assert_not_called()
 
 
-def test_json_receipt_covers_target_and_signal_failures(tmp_path, rows, capsys):
-    """Target and signal failures keep their documented exit codes."""
-    import json
-
-    code = run_workspace_kill_cli(
-        ["session-123", "--json"], home_resolver=lambda: str(tmp_path),
-        discover=Mock(return_value=[]), signal_sender=Mock(),
-    )
-    assert code == 3
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error_code"] == "target_not_unique"
-    assert payload["delivery_state"] == "not_delivered"
-
-    sender = Mock(side_effect=PermissionError("denied"))
-    code = run_workspace_kill_cli(
-        ["session-123", "--json"], home_resolver=lambda: str(tmp_path),
-        discover=Mock(return_value=rows), signal_sender=sender,
-        process_probe=lambda pid, sig: None,
-    )
-    assert code == 4
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error_code"] == "signal_failed"
-    assert payload["pid"] == 1234
-
-
-def test_plain_mode_output_is_unchanged(tmp_path, rows, capsys):
-    """Without --json the historical plain output is preserved exactly."""
-    signal_sender = Mock()
-    assert run_workspace_kill_cli(
-        ["session-123"], home_resolver=lambda: str(tmp_path),
-        discover=Mock(return_value=rows), signal_sender=signal_sender,
-        process_probe=lambda pid, sig: None,
-    ) == 0
+def test_plain_mode_reports_generation(tmp_path, rows, capsys):
+    """Human output identifies the process generation used for authorization."""
+    assert invoke(tmp_path, rows, Mock()) == 0
     captured = capsys.readouterr()
-    assert captured.out == (
-        "[INFO] SIGTERM sent to session=session-123, PID=1234; "
-        "process exit is not confirmed.\n"
-    )
+    assert "PID=1234, generation=77" in captured.out
     assert captured.err == ""
 
 
-def test_json_flag_value_is_not_mistaken_for_the_option(tmp_path, rows, capsys):
-    """A session literally named ``--json`` cannot enable JSON mode."""
-    assert run_workspace_kill_cli(
-        ["--", "--json"], home_resolver=lambda: str(tmp_path),
-        discover=Mock(return_value=[]), signal_sender=Mock(),
-    ) == 3
+def test_generation_value_named_json_does_not_enable_json_mode(tmp_path, capsys):
+    """An invalid generation value cannot change the requested output format."""
+    code = run_workspace_kill_cli(
+        ["session-123", "-g", "--json"],
+        home_resolver=lambda: str(tmp_path), discover=Mock(),
+        bound_signal_sender=Mock(),
+    )
+
     captured = capsys.readouterr()
+    assert code == 2
     assert captured.out == ""
-    assert "[ERROR]" in captured.err
+    assert "generation" in captured.err

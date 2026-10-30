@@ -285,3 +285,73 @@ def test_workspace_subcommand_defaults_to_hidden(monkeypatch):
     core._handle_workspace_subcommand(Namespace(workspace_command=None, format=None))
 
     table.assert_called_once_with(include_completed=False)
+
+
+def test_workspace_json_exposes_verified_process_generation(monkeypatch):
+    """Expose generation only when the live process owns its session stdout."""
+    from cli_topsailai import agent_launch_process
+
+    row = {
+        "filename": "sample.1234.session.stdout",
+        "path": "/task/sample.1234.session.stdout",
+        "session_id": "sample",
+        "pid": 1234,
+        "workspace_pid": 1234,
+        "is_task": False,
+    }
+    relation = Mock(return_value=True)
+    identity = Mock(return_value=(1234, 987654))
+    monkeypatch.setattr(log_files, "is_process_holding_file", relation)
+    monkeypatch.setattr(agent_launch_process, "_process_identity", identity)
+
+    item = core._workspace_json_item(row, 1)
+
+    assert item["process_generation"] == 987654
+    relation.assert_called_once_with(1234, row["path"])
+    identity.assert_called_once_with(1234)
+
+
+@pytest.mark.parametrize("change", [
+    {"is_task": True},
+    {"path": None},
+    {"filename": "sample.1234.session.stderr"},
+    {"filename": "sample.1234.stdout"},
+])
+def test_workspace_json_omits_unverified_process_generation(monkeypatch, change):
+    """Task rows and incomplete evidence cannot mint kill authorization."""
+    from cli_topsailai import agent_launch_process
+
+    row = {
+        "filename": "sample.1234.session.stdout",
+        "path": "/task/sample.1234.session.stdout",
+        "session_id": "sample",
+        "pid": 1234,
+        "workspace_pid": 1234,
+        "is_task": False,
+    }
+    row.update(change)
+    identity = Mock(return_value=(1234, 987654))
+    monkeypatch.setattr(agent_launch_process, "_process_identity", identity)
+
+    assert core._workspace_json_item(row, 1)["process_generation"] is None
+    identity.assert_not_called()
+
+
+def test_workspace_json_omits_generation_when_file_ownership_is_unverified(monkeypatch):
+    """A reused PID without the original stdout relation is not authorized."""
+    from cli_topsailai import agent_launch_process
+
+    row = {
+        "filename": "sample.1234.session.stdout",
+        "path": "/task/sample.1234.session.stdout",
+        "session_id": "sample",
+        "pid": 1234,
+        "workspace_pid": 1234,
+        "is_task": False,
+    }
+    identity = Mock(return_value=(1234, 987654))
+    monkeypatch.setattr(log_files, "is_process_holding_file", Mock(return_value=False))
+    monkeypatch.setattr(agent_launch_process, "_process_identity", identity)
+
+    assert core._workspace_json_item(row, 1)["process_generation"] is None
+    identity.assert_not_called()

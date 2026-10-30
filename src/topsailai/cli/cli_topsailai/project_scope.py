@@ -906,17 +906,20 @@ def launch_agent_driver(
                 f"{Colors.RED}[ERROR] Failed to launch driver '{driver}': {exc}{Colors.RESET}"
             )
             return 5
-        record(launcher_pid=getattr(child, "pid", None), startup_confirmed=False)
+        record(launcher_pid=getattr(child, "pid", None), startup_confirmed=False,
+               spawn_confirmed=True)
         try:
             code = child.wait()
         except KeyboardInterrupt:
             if not _stop_owned_driver(ownership, child):
+                record(effect_uncertain=True)
                 print(
                     f"{Colors.RED}[ERROR] Resume custody unresolved: "
                     f"session={session_id} "
                     f"{describe_ownership(ownership, child)}{Colors.RESET}"
                 )
                 return 6
+            record(cancellation_confirmed=True)
             print(
                 f"{Colors.YELLOW}[WARN] Resume interrupted: session={session_id}{Colors.RESET}"
             )
@@ -924,6 +927,7 @@ def launch_agent_driver(
         except (OSError, subprocess.TimeoutExpired) as exc:
             print(f"{Colors.RED}[ERROR] Resume wait failed: {exc}{Colors.RESET}")
             if not _stop_owned_driver(ownership, child):
+                record(effect_uncertain=True)
                 print(
                     f"{Colors.RED}[ERROR] Resume custody unresolved: "
                     f"session={session_id} "
@@ -931,7 +935,7 @@ def launch_agent_driver(
                 )
                 return 6
             return 5
-        record(child_exit_code=code)
+        record(child_exit_code=code, launcher_exit_observed=True)
         return code if code >= 0 else 128 + (-code)
 
     result = 4

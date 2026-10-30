@@ -303,7 +303,12 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
         )
     if workspace_command == "kill":
         from cli_topsailai.workspace_kill_cli import run_workspace_kill_cli
-        return run_workspace_kill_cli([args.session_id])
+        kill_args = list(args.kill_args)
+        if getattr(args, "kill_help", False):
+            kill_args.insert(0, "--help")
+        if kill_args and kill_args[0] == "--":
+            kill_args = kill_args[1:]
+        return run_workspace_kill_cli(kill_args)
     if workspace_command == "resume":
         from cli_topsailai.workspace_resume_cli import run_workspace_resume_cli
         resume_args = ["-s", args.session_id]
@@ -1133,9 +1138,25 @@ def _print_workspace_table(include_completed: bool = False) -> None:
 
 
 def _workspace_json_item(file_info: dict, index: int) -> dict:
-    """Build one stable JSON item from a discovered workspace log file."""
+    """Build one stable JSON item with optional process-generation evidence."""
+    from cli_topsailai.agent_launch_process import _process_identity
+    from cli_topsailai.log_files import is_process_holding_file
+
     pid = file_info.get("workspace_pid")
     status = file_info.get("workspace_status", "idle")
+    generation = None
+    evidence_pid = file_info.get("pid")
+    evidence_path = file_info.get("path")
+    session_id = file_info.get("session_id")
+    expected_name = f"{session_id}.{evidence_pid}.session.stdout"
+    if (not file_info.get("is_task") and type(evidence_pid) is int
+            and isinstance(session_id, str)
+            and file_info.get("filename") == expected_name
+            and isinstance(evidence_path, str)
+            and is_process_holding_file(evidence_pid, evidence_path)):
+        identity = _process_identity(evidence_pid)
+        if identity is not None:
+            generation = identity[1]
     observation = file_info.get("driver_observation")
     driver = None
     if observation is not None:
@@ -1160,6 +1181,7 @@ def _workspace_json_item(file_info: dict, index: int) -> dict:
         "session_id": file_info.get("session_id"),
         "is_task": bool(file_info.get("is_task", False)),
         "pid": pid,
+        "process_generation": generation,
         "status": status,
         "completed": bool(file_info.get("workspace_completed", False)),
         "driver": driver,
@@ -1474,9 +1496,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         "agent", help="launch an agent in a folder", add_help=False,
     ).add_argument("agent_args", nargs=argparse.REMAINDER)
     workspace_kill_parser = workspace_subparsers.add_parser(
-        "kill", help="send SIGTERM to one exact session", allow_abbrev=False,
+        "kill", help="send SIGTERM to one exact session", add_help=False,
     )
-    workspace_kill_parser.add_argument("session_id", help="exact session ID")
+    workspace_kill_parser.add_argument(
+        "-h", "--help", action="store_true", dest="kill_help",
+    )
+    workspace_kill_parser.add_argument("kill_args", nargs=argparse.REMAINDER)
     workspace_kill_parser.set_defaults(func=_handle_workspace_subcommand)
     workspace_resume_parser = workspace_subparsers.add_parser(
         "resume", help="resume an exact persisted session", allow_abbrev=False,
