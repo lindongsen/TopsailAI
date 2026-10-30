@@ -285,7 +285,11 @@ def to_topsailai_format(content:str|list|dict, key_name:str, value_name:str, for
     if isinstance(content, str):
         if key_name not in content:
             return content
-        content = simplejson.loads(content)
+        parsed_content = simplejson.loads(content)
+        if not all(isinstance(item, dict) and key_name in item
+                   for item in to_list(parsed_content)):
+            return content
+        content = parsed_content
 
     result = ""
     for d in to_list(content):

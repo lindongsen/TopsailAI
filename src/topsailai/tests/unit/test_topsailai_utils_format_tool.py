@@ -249,3 +249,37 @@ class TestToTopsailaiFormat:
         result = to_topsailai_format(content, "step", "text")
         expected = "topsailai.thought\nThinking\n\n"
         assert result == expected
+
+
+    @pytest.mark.parametrize("content", [
+        '[{"cmd": "echo ok", "timeout": 120}, {"step_name": "action"}]',
+        '[{"step_name": "action"}, {"cmd": "echo ok"}]',
+        '{"payload": {"step_name": "action"}}',
+        '{"description": "step_name"}',
+        '[{"step_name": "action"}, 42]',
+        '"step_name"',
+    ])
+    def test_unrecognized_serialized_steps_remain_verbatim(self, content):
+        """Preserve JSON that mentions a step key without a complete step shape."""
+        assert to_topsailai_format(content, "step_name", "raw_text") == content
+
+    def test_valid_serialized_steps_still_render(self):
+        """Keep rendering complete step lists, including steps without raw text."""
+        content = '[{"step_name": "thought", "raw_text": "Think"}, {"step_name": "action"}]'
+        assert to_topsailai_format(content, "step_name", "raw_text") == (
+            "topsailai.thought\nThink\n\ntopsailai.action\n\n"
+        )
+
+    def test_mixed_json_survives_request_message_formatting(self):
+        """Exercise the request formatter with the incident's mixed JSON shape."""
+        from unittest.mock import patch
+        from topsailai.ai_base.llm_control.message import format_messages
+
+        content = '[{"cmd": "echo ok", "timeout": 120}, {"step_name": "action"}]'
+        messages = [
+            {"role": "system", "content": "Use topsailai.action steps"},
+            {"role": "assistant", "content": content},
+        ]
+        with patch("topsailai.ai_base.llm_control.message.hook_execute", return_value=None):
+            result = format_messages(messages, "step_name", "raw_text")
+        assert result[1]["content"] == content
