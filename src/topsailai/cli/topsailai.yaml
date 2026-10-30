@@ -217,7 +217,7 @@ instructions:
   - cmd: "/env.search {args}"
     scopes:
       - workspace
-    desc: "Fuzzy-search configurable environment-variable names with OR semantics, using .env.local, .env, then env_template"
+    desc: "Fuzzy-search layered environment assignments with OR semantics, values, and source precedence"
     example: "/env.search OPENAI MODEL"
     shell: ""
 

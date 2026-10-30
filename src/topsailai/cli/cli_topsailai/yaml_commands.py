@@ -612,20 +612,25 @@ def handle_yaml_command(
                 print_error("Usage: /env.search <term> [term...]")
                 return "yaml_handled"
             try:
-                result = find_environment_variables(terms)
+                results = find_environment_variables(terms)
             except OSError as error:
                 print_error(f"Failed to search environment configuration: {error}")
                 return "yaml_handled"
-            if result is None:
+            if not results:
                 print_info("No configurable environment variables matched.")
                 return "yaml_handled"
-            source, names = result
             from cli_topsailai.completer import register_environment_completions
 
+            names = [
+                assignment.name
+                for result in results
+                for assignment in result.assignments
+            ]
             register_environment_completions(names)
-            print_info(f"Source: {source}")
-            for name in names:
-                print_info(name)
+            for result in results:
+                print_info(f"Source: {result.source}")
+                for assignment in result.assignments:
+                    print_info(f"{assignment.name}={assignment.value}")
             return "yaml_handled"
 
         if cmd.startswith("/env.set"):

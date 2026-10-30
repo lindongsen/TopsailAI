@@ -92,7 +92,7 @@ Workspace discovery reads exact session metadata for each parent session row and
 | `/models` | List registry entries and select the workspace default or active-project override. |
 | `/models current` | Show the effective model and whether it comes from project or workspace selection. |
 | `/models clear` | Clear the model selection for the current workspace or project scope. |
-| `/env.search <term> [term...]` | Fuzzy-search configurable environment-variable names case-insensitively. Multiple terms use OR semantics. The command checks `{TOPSAILAI_HOME}/.env.local`, then `{TOPSAILAI_HOME}/.env`, then the TopsailAI project `env_template`, and stops at the first source containing matches. It prints names only, never values. Matching names become TAB-completion candidates for subsequent `/env.get`, `/env.set`, and `/env.search` input in the current CLI process. |
+| `/env.search <term> [term...]` | Fuzzy-search configurable environment variables case-insensitively. Multiple terms use OR semantics. The command checks `{TOPSAILAI_HOME}/.env.local`, then `{TOPSAILAI_HOME}/.env`, then the TopsailAI project `env_template`. It displays matching `NAME=VALUE` assignments from every source while suppressing names already found in a higher-priority source. Displayed names become TAB-completion candidates for subsequent `/env.get`, `/env.set`, and `/env.search` input in the current CLI process. Values can contain secrets and are intentionally shown by this command. |
 | `/send <number> [message]` | Send a message to the running session associated with the selected entry. |
 | `/clean` | Remove expired files from the task directory. |
 | `cd doc` | Enter doc scope and list usage documentation files under `docs/usage/`. |

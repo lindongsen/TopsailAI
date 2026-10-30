@@ -60,4 +60,4 @@ The CLI now provides `/agent.<instruction> [args...]` in runtime scope as a shor
 
 ## Environment Variable Search
 
-The workspace CLI now provides `/env.search <term> [term...]` to fuzzy-search configurable environment-variable names with case-insensitive OR matching, stopping at the first matching source in `.env.local`, `.env`, and `env_template` precedence order while never printing configuration values.
+The workspace CLI provides `/env.search <term> [term...]` to fuzzy-search configurable environment variables with case-insensitive OR matching, display layered `NAME=VALUE` results from `.env.local`, `.env`, and `env_template` while suppressing lower-priority duplicate names, and retain displayed names for TAB completion.

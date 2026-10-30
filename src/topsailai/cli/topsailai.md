@@ -38,7 +38,7 @@ references:
 
 ## Workspace commands
 
-- `/env.search <term> [term...]` fuzzy-searches configurable environment-variable names with case-insensitive OR matching, checking `.env.local`, `.env`, then `env_template` and stopping at the first source with matches; values are never printed.
+- `/env.search <term> [term...]` fuzzy-searches configurable environment variables with case-insensitive OR matching, checking `.env.local`, `.env`, then `env_template`; it displays matching `NAME=VALUE` assignments from every source, suppresses names already found in a higher-priority source, and retains displayed names for TAB completion.
 - `/driver log <number>` reads the bounded active driver log in workspace scope.
 - `/driver meta <number>` reads validated active driver metadata in workspace scope and differs from `/meta`.
 - `r all` or `/refresh all` includes rows whose exact session metadata records `status: completed`; they render `DONE`. A plain `r` or `/refresh` restores the default hidden view.

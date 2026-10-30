@@ -450,7 +450,7 @@ When the CLI is showing the workspace task list (`[workspace]>`), the following 
 | `/driver stop <number>` | Gracefully stop its verified driver, not the session; see [driver usage](docs/usage/topsailai.md#workspace-session-drivers). |
 | `/driver log <number>` | Read the bounded driver log snapshot. |
 | `/driver meta <number>` | Read the driver metadata snapshot; distinct from `/meta`. |
-| `/env.search <term> [term...]` | Fuzzy-search configurable environment-variable names with case-insensitive OR matching. It checks `.env.local`, `.env`, then `env_template`, stops at the first source with matches, and never prints values. |
+| `/env.search <term> [term...]` | Fuzzy-search configurable environment variables with case-insensitive OR matching. It checks `.env.local`, `.env`, then `env_template`, displays matching `NAME=VALUE` assignments from every source, and suppresses names already found in a higher-priority source. Displayed names are retained as TAB-completion candidates. |
 | `/kill <number>` | Send SIGTERM to the PID displayed on the selected row after explicit y/N confirmation; see [termination contract](docs/usage/topsailai.md#workspace-process-termination). |
 | `/refresh` | Reload the workspace task list. `r all` or `/refresh all` also includes rows whose metadata status is `completed`; a plain `r` or `/refresh` restores the default hidden view. |
 | `/clean` | Remove expired files from the task directory. |

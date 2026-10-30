@@ -1,17 +1,34 @@
-"""Search configurable environment-variable names by source precedence."""
+"""Search configurable environment variables by source precedence."""
 
 from __future__ import annotations
 
 import os
 import re
 import shlex
-from typing import Iterable, List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Iterable, List, Optional, Sequence
 
 from cli_topsailai.paths import get_topsailai_home
 
 _ENV_ASSIGNMENT_PATTERN = re.compile(
-    r"^\s*(?:#\s*)?(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*="
+    r"^\s*(?:#\s*)?(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$"
 )
+
+
+@dataclass(frozen=True)
+class EnvironmentAssignment:
+    """One environment-variable assignment read from a configuration source."""
+
+    name: str
+    value: str
+
+
+@dataclass(frozen=True)
+class EnvironmentSearchResult:
+    """Unique matching assignments contributed by one configuration source."""
+
+    source: str
+    assignments: List[EnvironmentAssignment]
 
 
 def get_environment_search_sources() -> List[str]:
@@ -34,40 +51,46 @@ def parse_search_terms(raw_args: str) -> List[str]:
     return [term.casefold() for term in terms if term]
 
 
-def read_environment_names(path: str) -> List[str]:
-    """Read assignment names from one environment file without reading values."""
-    names: List[str] = []
+def read_environment_assignments(path: str) -> List[EnvironmentAssignment]:
+    """Read the first assignment for each variable name from one environment file."""
+    assignments: List[EnvironmentAssignment] = []
     seen = set()
     with open(path, "r", encoding="utf-8") as env_file:
         for line in env_file:
-            match = _ENV_ASSIGNMENT_PATTERN.match(line)
+            match = _ENV_ASSIGNMENT_PATTERN.match(line.rstrip("\r\n"))
             if not match:
                 continue
             name = match.group(1)
-            if name not in seen:
-                seen.add(name)
-                names.append(name)
-    return names
+            if name in seen:
+                continue
+            seen.add(name)
+            assignments.append(EnvironmentAssignment(name=name, value=match.group(2)))
+    return assignments
 
 
 def find_environment_variables(
     terms: Sequence[str], sources: Optional[Iterable[str]] = None
-) -> Optional[Tuple[str, List[str]]]:
-    """Return matches from the first source with any case-insensitive OR match."""
+) -> List[EnvironmentSearchResult]:
+    """Return layered OR matches while suppressing lower-priority duplicate names."""
     normalized_terms = [term.casefold() for term in terms if term]
     if not normalized_terms:
-        return None
+        return []
 
+    results: List[EnvironmentSearchResult] = []
+    cached_names = set()
     for path in sources or get_environment_search_sources():
         try:
-            names = read_environment_names(path)
+            assignments = read_environment_assignments(path)
         except FileNotFoundError:
             continue
-        matches = [
-            name
-            for name in names
-            if any(term in name.casefold() for term in normalized_terms)
-        ]
+        matches = []
+        for assignment in assignments:
+            if assignment.name in cached_names:
+                continue
+            if not any(term in assignment.name.casefold() for term in normalized_terms):
+                continue
+            cached_names.add(assignment.name)
+            matches.append(assignment)
         if matches:
-            return path, matches
-    return None
+            results.append(EnvironmentSearchResult(source=path, assignments=matches))
+    return results

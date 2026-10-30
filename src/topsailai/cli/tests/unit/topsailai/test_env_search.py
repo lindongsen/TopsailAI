@@ -8,10 +8,12 @@ from unittest.mock import patch
 
 import cli_topsailai.state as cli_state
 from cli_topsailai.env_search import (
+    EnvironmentAssignment,
+    EnvironmentSearchResult,
     find_environment_variables,
     get_environment_search_sources,
     parse_search_terms,
-    read_environment_names,
+    read_environment_assignments,
 )
 from cli_topsailai.yaml_commands import (
     handle_yaml_command,
@@ -29,22 +31,28 @@ class TestEnvironmentSearch(unittest.TestCase):
             ["openai", "tool call"],
         )
 
-    def test_read_environment_names_includes_commented_assignments_only(self):
+    def test_read_assignments_preserves_values_and_first_duplicate(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             env_path = os.path.join(tmpdir, ".env")
             with open(env_path, "w", encoding="utf-8") as env_file:
                 env_file.write(
                     "# Optional setting follows\n"
-                    "# SECRET_TOKEN=commented\n"
+                    "# SECRET_TOKEN=commented value\n"
                     "OPENAI_API_KEY=secret-value\n"
-                    "export TOPSAILAI_MODEL=visible-name-only\n"
+                    "export TOPSAILAI_MODEL=visible model\n"
+                    "EMPTY_VALUE=\n"
                     "OPENAI_API_KEY=duplicate\n"
                     "INVALID-NAME=value\n"
                 )
 
             self.assertEqual(
-                read_environment_names(env_path),
-                ["SECRET_TOKEN", "OPENAI_API_KEY", "TOPSAILAI_MODEL"],
+                read_environment_assignments(env_path),
+                [
+                    EnvironmentAssignment("SECRET_TOKEN", "commented value"),
+                    EnvironmentAssignment("OPENAI_API_KEY", "secret-value"),
+                    EnvironmentAssignment("TOPSAILAI_MODEL", "visible model"),
+                    EnvironmentAssignment("EMPTY_VALUE", ""),
+                ],
             )
 
     def test_multiple_terms_use_case_insensitive_or_matching(self):
@@ -64,59 +72,101 @@ class TestEnvironmentSearch(unittest.TestCase):
 
             self.assertEqual(
                 result,
-                (env_path, ["OPENAI_MODEL", "TOPSAILAI_HISTORY_MAX_SIZE"]),
+                [
+                    EnvironmentSearchResult(
+                        env_path,
+                        [
+                            EnvironmentAssignment("OPENAI_MODEL", "x"),
+                            EnvironmentAssignment("TOPSAILAI_HISTORY_MAX_SIZE", "1"),
+                        ],
+                    )
+                ],
             )
 
-    def test_first_source_with_matches_wins(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            local_path = os.path.join(tmpdir, ".env.local")
-            env_path = os.path.join(tmpdir, ".env")
-            with open(local_path, "w", encoding="utf-8") as env_file:
-                env_file.write("OPENAI_MODEL=local\n")
-            with open(env_path, "w", encoding="utf-8") as env_file:
-                env_file.write("OPENAI_API_BASE=default\n")
-
-            result = find_environment_variables(
-                ["openai"],
-                sources=[local_path, env_path],
-            )
-
-            self.assertEqual(result, (local_path, ["OPENAI_MODEL"]))
-
-    def test_source_without_matches_falls_through(self):
+    def test_all_sources_contribute_unique_matches_in_priority_order(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             local_path = os.path.join(tmpdir, ".env.local")
             env_path = os.path.join(tmpdir, ".env")
             template_path = os.path.join(tmpdir, "env_template")
             with open(local_path, "w", encoding="utf-8") as env_file:
-                env_file.write("OTHER=value\n")
+                env_file.write("OPENAI_MODEL=local\n")
             with open(env_path, "w", encoding="utf-8") as env_file:
-                env_file.write("ANOTHER=value\n")
+                env_file.write(
+                    "OPENAI_MODEL=default\n"
+                    "OPENAI_BASE_URL=https://default.example\n"
+                )
             with open(template_path, "w", encoding="utf-8") as env_file:
-                env_file.write("TOPSAILAI_USE_TOOL_CALLS=1\n")
+                env_file.write(
+                    "OPENAI_MODEL=template\n"
+                    "OPENAI_BASE_URL=https://template.example\n"
+                    "OPENAI_TIMEOUT=30\n"
+                )
 
             result = find_environment_variables(
-                ["tool"],
+                ["openai"],
                 sources=[local_path, env_path, template_path],
             )
 
             self.assertEqual(
                 result,
-                (template_path, ["TOPSAILAI_USE_TOOL_CALLS"]),
+                [
+                    EnvironmentSearchResult(
+                        local_path,
+                        [EnvironmentAssignment("OPENAI_MODEL", "local")],
+                    ),
+                    EnvironmentSearchResult(
+                        env_path,
+                        [
+                            EnvironmentAssignment(
+                                "OPENAI_BASE_URL", "https://default.example"
+                            )
+                        ],
+                    ),
+                    EnvironmentSearchResult(
+                        template_path,
+                        [EnvironmentAssignment("OPENAI_TIMEOUT", "30")],
+                    ),
+                ],
             )
 
-    def test_missing_sources_are_skipped(self):
+    def test_source_without_matches_and_missing_sources_are_skipped(self):
         with tempfile.TemporaryDirectory() as tmpdir:
+            local_path = os.path.join(tmpdir, ".env.local")
             template_path = os.path.join(tmpdir, "env_template")
+            with open(local_path, "w", encoding="utf-8") as env_file:
+                env_file.write("OTHER=value\n")
             with open(template_path, "w", encoding="utf-8") as env_file:
-                env_file.write("TOPSAILAI_MODEL=value\n")
+                env_file.write("TOPSAILAI_USE_TOOL_CALLS=1\n")
 
             result = find_environment_variables(
-                ["model"],
-                sources=[os.path.join(tmpdir, "missing"), template_path],
+                ["tool"],
+                sources=[
+                    local_path,
+                    os.path.join(tmpdir, "missing"),
+                    template_path,
+                ],
             )
 
-            self.assertEqual(result, (template_path, ["TOPSAILAI_MODEL"]))
+            self.assertEqual(
+                result,
+                [
+                    EnvironmentSearchResult(
+                        template_path,
+                        [EnvironmentAssignment("TOPSAILAI_USE_TOOL_CALLS", "1")],
+                    )
+                ],
+            )
+
+    def test_no_matching_assignments_returns_empty_list(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = os.path.join(tmpdir, ".env")
+            with open(env_path, "w", encoding="utf-8") as env_file:
+                env_file.write("UNRELATED=value\n")
+
+            self.assertEqual(
+                find_environment_variables(["model"], sources=[env_path]),
+                [],
+            )
 
     def test_default_sources_use_home_then_project_template(self):
         with patch.dict(os.environ, {"TOPSAILAI_HOME": "/tmp/example-home"}):
@@ -153,13 +203,19 @@ class TestEnvironmentSearchCommand(unittest.TestCase):
     @patch("cli_topsailai.yaml_commands.print_info")
     @patch("cli_topsailai.completer.register_environment_completions")
     @patch("cli_topsailai.env_search.find_environment_variables")
-    def test_handler_prints_source_and_registers_names_without_values(
+    def test_handler_prints_layered_values_and_registers_all_names(
         self, mock_find, mock_register, mock_print_info
     ):
-        mock_find.return_value = (
-            "/tmp/.env.local",
-            ["OPENAI_API_KEY", "OPENAI_MODEL"],
-        )
+        mock_find.return_value = [
+            EnvironmentSearchResult(
+                "/tmp/.env.local",
+                [EnvironmentAssignment("OPENAI_API_KEY", "local-secret")],
+            ),
+            EnvironmentSearchResult(
+                "/tmp/.env",
+                [EnvironmentAssignment("OPENAI_MODEL", "gpt-test")],
+            ),
+        ]
         instruction = {"cmd": "/env.search {args}", "shell": ""}
 
         action = handle_yaml_command(instruction, {"args": "OPENAI"})
@@ -169,9 +225,13 @@ class TestEnvironmentSearchCommand(unittest.TestCase):
         printed = [call.args[0] for call in mock_print_info.call_args_list]
         self.assertEqual(
             printed,
-            ["Source: /tmp/.env.local", "OPENAI_API_KEY", "OPENAI_MODEL"],
+            [
+                "Source: /tmp/.env.local",
+                "OPENAI_API_KEY=local-secret",
+                "Source: /tmp/.env",
+                "OPENAI_MODEL=gpt-test",
+            ],
         )
-        self.assertNotIn("secret", "\n".join(printed))
 
     @patch("cli_topsailai.yaml_commands.print_error")
     def test_handler_requires_at_least_one_term(self, mock_print_error):
@@ -185,7 +245,7 @@ class TestEnvironmentSearchCommand(unittest.TestCase):
         )
 
     @patch("cli_topsailai.yaml_commands.print_info")
-    @patch("cli_topsailai.env_search.find_environment_variables", return_value=None)
+    @patch("cli_topsailai.env_search.find_environment_variables", return_value=[])
     def test_handler_reports_no_matches(self, _mock_find, mock_print_info):
         instruction = {"cmd": "/env.search {args}", "shell": ""}
 
