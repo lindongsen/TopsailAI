@@ -213,6 +213,14 @@ instructions:
     example: "/env.get OPENAI_MODEL"
     shell: ""
 
+  # /env.search, Search configurable environment variable names
+  - cmd: "/env.search {args}"
+    scopes:
+      - workspace
+    desc: "Fuzzy-search configurable environment-variable names with OR semantics, using .env.local, .env, then env_template"
+    example: "/env.search OPENAI MODEL"
+    shell: ""
+
   # /env.set, Set environment variable
   - cmd: "/env.set {key} {value}"
     scopes:

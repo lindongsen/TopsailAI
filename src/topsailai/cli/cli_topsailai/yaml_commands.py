@@ -597,6 +597,34 @@ def handle_yaml_command(
                 print_error("Usage: /env.get {key}")
             return "yaml_handled"
 
+        if cmd.startswith("/env.search"):
+            from cli_topsailai.env_search import (
+                find_environment_variables,
+                parse_search_terms,
+            )
+
+            try:
+                terms = parse_search_terms(variables.get("args", ""))
+            except ValueError as error:
+                print_error(str(error))
+                return "yaml_handled"
+            if not terms:
+                print_error("Usage: /env.search <term> [term...]")
+                return "yaml_handled"
+            try:
+                result = find_environment_variables(terms)
+            except OSError as error:
+                print_error(f"Failed to search environment configuration: {error}")
+                return "yaml_handled"
+            if result is None:
+                print_info("No configurable environment variables matched.")
+                return "yaml_handled"
+            source, names = result
+            print_info(f"Source: {source}")
+            for name in names:
+                print_info(name)
+            return "yaml_handled"
+
         if cmd.startswith("/env.set"):
             key = variables.get("key", "").strip()
             value = variables.get("value", "").strip()
