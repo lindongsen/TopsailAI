@@ -140,16 +140,22 @@ def enrich_workspace_rows(files: List[dict], topsailai_home: str, *, driver_entr
             metadata_path(topsailai_home, session_id)
         except (ValueError, TypeError):
             continue
-        if (
-            file_info["workspace_status"] == "running"
-            and not file_info.get("is_task")
-            and source_pid == pid
+        # One completion evidence flag drives both the status downgrade and the
+        # visible DONE marker, so an unfiltered "r all" list stays readable.
+        # Identity uses the raw filename PID, not the liveness-probed one: the
+        # discovery filter drops rows by metadata status regardless of liveness,
+        # so a completed row whose process already exited must still be marked.
+        completed = (
+            not file_info.get("is_task")
+            and source_pid == file_info.get("pid")
             and file_info.get("filename") in (
-                f"{session_id}.{pid}.session.stdout",
-                f"{session_id}.{pid}.session.stderr",
+                f"{session_id}.{source_pid}.session.stdout",
+                f"{session_id}.{source_pid}.session.stderr",
             )
             and (file_info.get("_workspace_session_meta_data") or {}).get("status") == "completed"
-        ):
+        )
+        file_info["workspace_completed"] = completed
+        if completed and file_info["workspace_status"] == "running":
             file_info["workspace_status"] = "idle"
         display_session_ids.add(session_id)
         if not valid_pid:
@@ -210,6 +216,10 @@ def print_table(files: List[dict]) -> None:
         status_str = {"input": "INPUT", "running": "RUN"}.get(
             file_info.get("workspace_status"), "-"
         )
+        # A completed row is only marked when it would otherwise render as idle,
+        # so INPUT/RUN precedence and their colors stay unchanged.
+        if status_str == "-" and file_info.get("workspace_completed"):
+            status_str = "DONE"
         observation = file_info.get("driver_display_observation")
         rows.append(
             {

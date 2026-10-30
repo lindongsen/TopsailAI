@@ -389,7 +389,7 @@ From this list you can:
 
 - Type a number and press `Enter` to watch that file.
 - Use `/session <number>` to retrieve the full session context.
-- Use `/refresh` to reload the list.
+- Use `/refresh` to reload the list. Rows whose exact session metadata records `status: completed` are hidden by default; use `r all` or `/refresh all` to include them (they render `DONE`), and a plain `r` or `/refresh` restores the default view.
 - Use `/kill <number>` to terminate the displayed row PID after confirmation.
 - Use `/clean` to remove expired files.
 - Use `/send <number> [message]` to send a message to a running session.
@@ -451,7 +451,7 @@ When the CLI is showing the workspace task list (`[workspace]>`), the following 
 | `/driver log <number>` | Read the bounded driver log snapshot. |
 | `/driver meta <number>` | Read the driver metadata snapshot; distinct from `/meta`. |
 | `/kill <number>` | Send SIGTERM to the PID displayed on the selected row after explicit y/N confirmation; see [termination contract](docs/usage/topsailai.md#workspace-process-termination). |
-| `/refresh` | Reload the workspace task list. |
+| `/refresh` | Reload the workspace task list. `r all` or `/refresh all` also includes rows whose metadata status is `completed`; a plain `r` or `/refresh` restores the default hidden view. |
 | `/clean` | Remove expired files from the task directory. |
 | `/send <number> [message]` | Send a message to the running session associated with the selected entry. |
 | `/resume <number> [-d DRIVER]` | Resume an idle session in its project workspace; chats is the default driver. |

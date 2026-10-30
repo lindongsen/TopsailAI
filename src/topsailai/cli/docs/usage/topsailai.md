@@ -73,7 +73,7 @@ The command uses the same parsing and execution mechanism as `/git`: `shlex.spli
 
 ## Workspace / Project Commands
 
-Workspace discovery reads exact session metadata for each parent session row and hides every row whose metadata status is `completed`, regardless of whether it has a session name. Session-info display caching must not bypass this completion check, so cached names and project workspaces do not cause completed sessions to reappear after refresh. Missing, invalid, mismatched, or non-completed metadata follows the existing fallback behavior. Metadata admission remains absent-only, while successful session-info queries retain their existing updates. Explicit `/meta` and `/driver meta` commands continue to read their own metadata.
+Workspace discovery reads exact session metadata for each parent session row and hides every row whose metadata status is `completed` by default, regardless of whether it has a session name. Run `r all` or `/refresh all` in ordinary workspace scope to include those rows; the mode persists across later refreshes until a plain `r` or `/refresh` restores the default. Included completed rows keep their derived process status but render `DONE` in the status cell, and the non-interactive `workspace -a/--all` flag and the `completed` JSON field expose the same evidence. Task rows are never marked `DONE` because completion evidence requires the row PID to equal the session PID. Session-info display caching must not bypass this completion check, so cached names and project workspaces do not cause completed sessions to reappear after refresh. Missing, invalid, mismatched, or non-completed metadata follows the existing fallback behavior. Metadata admission remains absent-only, while successful session-info queries retain their existing updates. Explicit `/meta` and `/driver meta` commands continue to read their own metadata.
 
 | Command | Description |
 |---------|-------------|
@@ -85,7 +85,7 @@ Workspace discovery reads exact session metadata for each parent session row and
 | `/driver log <number>` | Read the bounded driver log snapshot. |
 | `/driver meta <number>` | Read the driver metadata snapshot; distinct from `/meta`. |
 | `/kill <number>` | Send SIGTERM to exactly the displayed row PID after y/N confirmation (ordinary workspace only). |
-| `/refresh` | Re-scan the task directory and refresh the list. |
+| `/refresh` | Re-scan the task directory and refresh the list. `r all` or `/refresh all` also includes rows whose metadata status is `completed`; a plain `r` or `/refresh` restores the default hidden view. |
 | `/session <number\|session_id>` | Retrieve full context messages for a session. |
 | `/agent [<number\|folder>]` | Launch an agent. With no argument, run the YAML-configured agent command. With an argument, change to the selected folder and run `topsailai_launch_agent`. The effective model selection is applied to the child process. |
 | `/resume <number>` | Resume the selected running session with the effective model selection. |

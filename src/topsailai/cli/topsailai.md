@@ -40,6 +40,7 @@ references:
 
 - `/driver log <number>` reads the bounded active driver log in workspace scope.
 - `/driver meta <number>` reads validated active driver metadata in workspace scope and differs from `/meta`.
+- `r all` or `/refresh all` includes rows whose exact session metadata records `status: completed`; they render `DONE`. A plain `r` or `/refresh` restores the default hidden view.
 
 ## Non-interactive subcommands
 

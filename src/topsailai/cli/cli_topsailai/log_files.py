@@ -305,8 +305,17 @@ def discover_log_files(
 def discover_workspace_log_files(
     task_dir: str,
     on_item: Optional[Callable[[dict], None]] = None,
+    *,
+    include_completed: bool = False,
 ) -> List[dict]:
-    """Hide every completed session using exact metadata before display."""
+    """Hide every completed session using exact metadata before display.
+
+    ``include_completed`` is an explicit opt-in used by the ``r all`` command.
+    Metadata is read for every row before the filter decision, so requesting
+    completed rows adds no extra I/O. The ``_workspace_meta_pid`` and
+    ``_workspace_meta_snapshot`` markers are always attached before the drop so
+    hostname and session-name enrichment still work for retained rows.
+    """
     from cli_topsailai.session_meta import SessionMetaError, read_session_meta
 
     files = discover_log_files(task_dir)
@@ -333,7 +342,8 @@ def discover_workspace_log_files(
                     metadata[key] = None
             data = metadata[key]
             item["_workspace_meta_snapshot"] = (home, session_id, pid, data)
-            if data is not None and data.get("status") == "completed":
+            if (not include_completed and data is not None
+                    and data.get("status") == "completed"):
                 continue
         visible.append(item)
         if on_item is not None:

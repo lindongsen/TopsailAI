@@ -50,3 +50,8 @@ project_scope_limit: Optional[int] = 30
 # "p" / "projects" command. In this sub-view bare numeric input is blocked
 # and "r" returns to the normal workspace task list.
 workspace_showing_managed_projects: bool = False
+
+# True when the workspace task list includes rows whose exact session metadata
+# records status=completed. Set by "r all" / "refresh all" and cleared by a
+# plain "r" / "/refresh".
+workspace_show_completed: bool = False

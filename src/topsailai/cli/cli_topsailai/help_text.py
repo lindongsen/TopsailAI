@@ -210,8 +210,8 @@ def print_help(
         },
         {
             "cmd": "/refresh",
-            "desc": "Re-scan the task directory and refresh the file list.",
-            "example": "",
+            "desc": "Re-scan the task directory and refresh the file list. In workspace scope, r all or /refresh all also shows rows whose session metadata records status=completed.",
+            "example": "Example: r all",
             "scopes": ["workspace", "project", "doc"],
         },
         {

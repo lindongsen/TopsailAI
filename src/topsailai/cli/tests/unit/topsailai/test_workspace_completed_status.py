@@ -54,12 +54,13 @@ def test_completed_is_idle_and_outputs_agree(session_row, tmp_path, capsys, suff
     assert session_row["workspace_pid"] == 1234
     result = _workspace_json_item(session_row, 1)
     assert result["status"] == "idle"
+    assert result["completed"] is True
     assert result["pid"] == 1234
     formatting.print_table([session_row])
     line = next(line for line in capsys.readouterr().out.splitlines() if "sample" in line)
     assert Colors.GRAY in line
     assert Colors.GREEN not in line
-    assert line.split("|")[5].strip() == "-"
+    assert line.split("|")[5].strip() == "DONE"
 
 
 @pytest.mark.parametrize("content", [

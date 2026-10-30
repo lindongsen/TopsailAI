@@ -314,10 +314,11 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
             resume_args, startup_cwd=getattr(args, "startup_cwd", None),
         )
     output_format = getattr(args, "format", None)
+    include_completed = bool(getattr(args, "all", False))
     if output_format == "json":
-        _print_workspace_json()
+        _print_workspace_json(include_completed=include_completed)
     else:
-        _print_workspace_table()
+        _print_workspace_table(include_completed=include_completed)
     return 0
 
 
@@ -813,6 +814,14 @@ def prompt_selection(
                         continue
                 return ("show_recent_projects", None)
 
+            # Workspace scope: "r all" / "refresh all" opts in to showing rows
+            # whose exact session metadata records status=completed. This must
+            # be checked before the plain r/refresh binding below.
+            if state.current_scope == "workspace" and lower_input in (
+                "r all", "/r all", "refresh all", "/refresh all"
+            ):
+                return ("refresh", "all")
+
             if lower_input in ("r", "refresh", "/refresh"):
                 return ("refresh", None)
             if lower_input.startswith("/clean") or lower_input.startswith("clean"):
@@ -1069,7 +1078,7 @@ def prompt_selection(
                 else:
                     print(
                         f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
-                        f"Please enter a number, /refresh, /session {{number}}, "
+                        f"Please enter a number, /refresh, r all, /session {{number}}, "
                         f"/agent {{number|folder}}, /resume {{number}}, "
                         f"{'/kill <number>, /meta <number>, /driver <number>, /driver status <number>, /driver stop <number>, /driver log <number>, /driver meta <number>, ' if state.current_scope == 'workspace' else ''}"
                         f"/clean, /send, /help, or 'q'.{Colors.RESET}"
@@ -1088,12 +1097,12 @@ def prompt_selection(
             return ("quit", None)
 
 
-def _print_workspace_table() -> None:
+def _print_workspace_table(include_completed: bool = False) -> None:
     """Print the workspace task list and return.
 
     This helper is used by the ``-w`` / ``--workspace`` flag to display the
     same table that normally appears at the ``[workspace]>`` prompt without
-    entering interactive mode.
+    entering interactive mode. ``include_completed`` mirrors ``r all``.
     """
     from cli_topsailai.formatting import print_header, print_table
     from cli_topsailai.log_files import discover_workspace_log_files as discover_log_files
@@ -1110,7 +1119,7 @@ def _print_workspace_table() -> None:
     print(f"{Colors.DIM}HOME: {topsailai_home}{Colors.RESET}")
     print(f"{Colors.DIM}DIR:  {task_dir}{Colors.RESET}")
 
-    log_files = discover_log_files(task_dir)
+    log_files = discover_log_files(task_dir, include_completed=include_completed)
     enrich_files_with_session_names(log_files)
     _enrich_driver_rows(log_files, topsailai_home, driver_authority)
     if log_files:
@@ -1149,13 +1158,14 @@ def _workspace_json_item(file_info: dict, index: int) -> dict:
         "is_task": bool(file_info.get("is_task", False)),
         "pid": pid,
         "status": status,
+        "completed": bool(file_info.get("workspace_completed", False)),
         "driver": driver,
         "created_at": created_at,
         "project_workspace": file_info.get("project_workspace"),
     }
 
 
-def _print_workspace_json() -> None:
+def _print_workspace_json(include_completed: bool = False) -> None:
     """Print the workspace task list as one JSON document."""
     from cli_topsailai.log_files import discover_workspace_log_files as discover_log_files
     from cli_topsailai.paths import get_topsailai_home
@@ -1164,7 +1174,7 @@ def _print_workspace_json() -> None:
     topsailai_home = get_topsailai_home()
     driver_authority = _driver_authority(os.environ)
     task_dir = os.path.join(topsailai_home, "workspace", "task")
-    log_files = discover_log_files(task_dir)
+    log_files = discover_log_files(task_dir, include_completed=include_completed)
     enrich_files_with_session_names(log_files)
     _enrich_driver_rows(log_files, topsailai_home, driver_authority)
     items = [
@@ -1449,6 +1459,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         dest="format",
         help="output format (supported: json)",
     )
+    workspace_parser.add_argument(
+        "-a", "--all",
+        action="store_true",
+        dest="all",
+        help="include rows whose session metadata records status=completed",
+    )
     workspace_parser.set_defaults(func=_handle_workspace_subcommand)
     workspace_subparsers = workspace_parser.add_subparsers(dest="workspace_command")
     workspace_subparsers.add_parser(
@@ -1659,7 +1675,11 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     print(f"{Colors.DIM}Refreshing list...{Colors.RESET}")
     sys.stdout.flush()
-    log_files = discover_log_files(task_dir, on_item=_print_refresh_item)
+    log_files = discover_log_files(
+        task_dir,
+        on_item=_print_refresh_item,
+        include_completed=state.workspace_show_completed,
+    )
     enrich_files_with_session_names(log_files)
     enrich_running_unnamed_sessions(log_files)
     _enrich_driver_rows(log_files, topsailai_home, driver_authority)
@@ -1673,7 +1693,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         state.workspace_showing_managed_projects = False
         print(f"{Colors.DIM}Refreshing list...{Colors.RESET}")
         sys.stdout.flush()
-        log_files = discover_log_files(task_dir, on_item=_print_refresh_item)
+        log_files = discover_log_files(
+            task_dir,
+            on_item=_print_refresh_item,
+            include_completed=state.workspace_show_completed,
+        )
         enrich_files_with_session_names(log_files)
         enrich_running_unnamed_sessions(log_files)
         _enrich_driver_rows(log_files, topsailai_home, driver_authority)
@@ -1794,6 +1818,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                 break
 
             if action == "refresh":
+                if state.current_scope == "workspace":
+                    # "r all" opts in to completed rows; plain r/refresh resets.
+                    state.workspace_show_completed = value == "all"
                 if state.current_scope == "project":
                     _refresh_project_scope()
                 elif state.current_scope == "doc":
@@ -1824,7 +1851,11 @@ def main(argv: Optional[List[str]] = None) -> None:
                     continue
                 child = _handle_driver_action(
                     action, value, log_files, topsailai_home, driver_authority,
-                    dict(os.environ), lambda: discover_log_files(task_dir))
+                    dict(os.environ),
+                    lambda: discover_log_files(
+                        task_dir,
+                        include_completed=state.workspace_show_completed,
+                    ))
                 if child is not None:
                     driver_children.append(child)
                 _reap_driver_children(driver_children)
