@@ -518,3 +518,42 @@ def test_background_unexpected_failure_without_owned_child_maps_to_five(tmp_path
     with patch("cli_topsailai.agent_launch._session_id", return_value="fixed"), \
          patch("cli_topsailai.agent_launch._prepare_environment", side_effect=Exception("unexpected")):
         assert launch_configured_agent(str(tmp_path), mode="raw") == 5
+
+
+def test_fresh_session_id_is_short_and_parseable():
+    """A fresh identity stays short, dot-free and recoverable from a filename."""
+    import re
+
+    from cli_topsailai.log_files import parse_stdout_filename
+
+    session_id = agent_launch_module._session_id()
+
+    assert len(session_id) == 15
+    assert session_id.startswith("wa-")
+    assert re.fullmatch(r"wa-[0-9a-f]{12}", session_id)
+    assert "." not in session_id
+    assert session_id not in ("topsailai", "(temp)", ".", "..")
+    assert parse_stdout_filename(f"{session_id}.1234.session.stdout") == (session_id, "1234")
+
+
+def test_fresh_session_ids_are_distinct():
+    """Two fresh launches never share one identity."""
+    assert agent_launch_module._session_id() != agent_launch_module._session_id()
+
+
+def test_resume_keeps_persisted_identity_without_minting(tmp_path):
+    """A resume reuses the persisted identity and never calls the minting helper."""
+    child = FakeChild(returncode=0)
+    calls = []
+
+    def spawn(argv, **kwargs):
+        calls.append(argv)
+        return child
+
+    with patch("cli_topsailai.agent_launch._apply_selected_model_environment", side_effect=_model_environment), \
+         patch("cli_topsailai.agent_launch._session_id", side_effect=AssertionError("minted on resume")):
+        assert launch_configured_agent(
+            str(tmp_path), mode="raw", spawn=spawn, session_id="persisted-id",
+        ) == 0
+
+    assert calls == [["topsailai_launch_agent", "--subprocess", "--session-id", "persisted-id"]]

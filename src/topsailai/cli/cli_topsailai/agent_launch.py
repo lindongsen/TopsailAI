@@ -20,8 +20,14 @@ def _spawn_process(*args, **kwargs):
 
 
 def _session_id() -> str:
-    """Create an explicit identity for a fresh workspace launch."""
-    return f"workspace-agent-{uuid.uuid4().hex}"
+    """Create an explicit identity for a fresh workspace launch.
+
+    The identifier stays short enough to read in the workspace list while
+    keeping 48 bits of randomness, which matches the entropy already used for
+    terminal attempt directories. It must not contain a dot because stdout
+    filenames are parsed by splitting on dots.
+    """
+    return f"wa-{uuid.uuid4().hex[:12]}"
 
 
 def _prepare_environment(folder: str, session_id: str):
