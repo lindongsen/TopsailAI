@@ -97,8 +97,9 @@ def test_dedicated_parser_help_is_offline_and_describes_background_contract(caps
         build_parser().parse_args(["--help"])
     assert error.value.code == 0
     output = capsys.readouterr().out
-    assert "Background mode is headless" in output
-    assert "submission rather than readiness" in output
+    normalized = " ".join(output.split())
+    assert "Background mode is headless" in normalized
+    assert "submission rather than readiness" in normalized
 
 
 @pytest.mark.parametrize("tool, expected", [("tmux", "tmux"), ("dtach", "dtach"), (None, "raw")])
