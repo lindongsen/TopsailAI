@@ -44,6 +44,7 @@ topsailai_session_info <session_id>
 |-------|-------------|
 | `session_id` | Session identifier. |
 | `session_name` | Human-readable session name. |
+| `category` | Stored session category; empty values are displayed as `(none)` in text and `""` in JSON. |
 | `task` | Task description. |
 | `project_workspace` | Recorded project workspace path. |
 | `pwd` | Recorded working directory. |

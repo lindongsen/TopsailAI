@@ -22,6 +22,7 @@ from sqlalchemy.sql import func as sql_func, text
 from datetime import datetime, timedelta
 
 from topsailai.context.chat_history_manager.sql import ChatHistorySQLAlchemy
+from topsailai.context.session_category import resolve_session_category
 from topsailai.logger.log_chat import logger
 
 from .__base import SessionStorageBase, SessionData
@@ -402,55 +403,34 @@ class SessionSQLAlchemy(SessionStorageBase):
             finally:
                 db_session.close()
 
+    def _apply_session_filters(self, query, sessions=None, category=None):
+        """Apply ID and optional exact category predicates before pagination."""
+        if sessions:
+            query = query.filter(Session.session_id.in_(sessions))
+        if category is not None:
+            query = query.filter(Session.category == resolve_session_category(category))
+        return query
+
     def list_sessions(
         self,
         sessions: list[str] = None,
         order_by: str = None,
         offset: int = 0,
         limit: int = None,
+        category: str = None,
     ) -> list[SessionData]:
-        """
-        List sessions from the storage with optional filtering, sorting, and pagination.
-
-        Args:
-            sessions (list[str], optional): A list of session IDs to include.
-                When provided, only sessions whose ID is in this list are returned.
-                When empty or None, all sessions are returned.
-            order_by (str, optional): Field name to sort by. Supported fields are
-                ``session_id``, ``session_name``, ``task``, and ``create_time``.
-                Prefix the field name with ``-`` for descending order
-                (e.g., ``-create_time``). When not provided, sessions are ordered
-                by ``create_time`` descending.
-            offset (int, optional): Number of sessions to skip. Defaults to ``0``.
-            limit (int, optional): Maximum number of sessions to return.
-                If ``None``, all matching sessions are returned.
-
-        Returns:
-            list[SessionData]: List of session data objects matching the query.
-        """
+        """List sessions with SQL-side ID/category filtering and pagination."""
         db_session = self.SessionLocal()
         try:
-            query = db_session.query(Session)
-
-            # Apply session ID filter if provided
-            if sessions:
-                query = query.filter(Session.session_id.in_(sessions))
-
-            # Apply ordering
+            query = self._apply_session_filters(
+                db_session.query(Session), sessions=sessions, category=category
+            )
             query = self._apply_order_by(query, order_by)
-
-            # Apply offset if provided
             if offset is not None:
                 query = query.offset(offset)
-
-            # Apply limit if provided, otherwise get all
-            if limit is not None:
-                sessions = query.limit(limit).all()
-            else:
-                sessions = query.all()
-
+            rows = query.limit(limit).all() if limit is not None else query.all()
             result = []
-            for session in sessions:
+            for session in rows:
                 session_data = SessionData(
                     session_id=session.session_id,
                     task=session.task,
@@ -470,6 +450,21 @@ class SessionSQLAlchemy(SessionStorageBase):
         except Exception as e:
             db_session.rollback()
             logger.error(f"list_sessions failed: {e}")
+            raise e
+        finally:
+            db_session.close()
+
+    def count_sessions(self, sessions: list[str] = None, category: str = None) -> int:
+        """Count sessions matching ID/category filters without pagination."""
+        db_session = self.SessionLocal()
+        try:
+            query = self._apply_session_filters(
+                db_session.query(Session), sessions=sessions, category=category
+            )
+            return query.count()
+        except Exception as e:
+            db_session.rollback()
+            logger.error(f"count_sessions failed: {e}")
             raise e
         finally:
             db_session.close()

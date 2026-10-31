@@ -133,6 +133,7 @@ class SessionStorageBase(object):
         order_by: str = None,
         offset: int = 0,
         limit: int = None,
+        category: str = None,
     ) -> list[SessionData]:
         """
         Retrieve stored sessions, optionally filtered, sorted, and paginated.
@@ -158,6 +159,10 @@ class SessionStorageBase(object):
             NotImplementedError: This is an abstract method that must be
                 implemented by concrete storage classes.
         """
+        raise NotImplementedError
+
+    def count_sessions(self, sessions: list[str] = None, category: str = None) -> int:
+        """Return the number of sessions matching the selection filters."""
         raise NotImplementedError
 
     def delete_session(self, session_id: str):

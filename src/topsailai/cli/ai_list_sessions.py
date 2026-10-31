@@ -42,6 +42,7 @@ import _import_topsailai
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
 
 from topsailai.context.ctx_manager import get_session_manager
+from topsailai.context.session_category import resolve_session_category
 
 
 def _supports_color():
@@ -115,6 +116,7 @@ def _format_session(session, index, total_width, color_enabled):
         created = session.create_time.strftime("%Y-%m-%dT%H:%M:%S")
         relative = _relative_time(session.create_time)
 
+    category = str(getattr(session, "category", "") or "")
     task = str(session.task) if session.task else ""
     project_workspace = str(session.project_workspace) if session.project_workspace else ""
     pwd = str(session.pwd) if session.pwd else ""
@@ -141,6 +143,9 @@ def _format_session(session, index, total_width, color_enabled):
 
     name_label = _color("Name:".ljust(label_width), yellow, color_enabled)
     lines.append(f"{indent}{name_label} {name}")
+
+    category_label = _color("Category:".ljust(label_width), yellow, color_enabled)
+    lines.append(f"{indent}{category_label} {category or "(none)"}")
 
     task_label = _color("Task:".ljust(label_width), yellow, color_enabled)
     wrap_width = max(total_width - len(value_prefix), 20)
@@ -184,7 +189,7 @@ def _format_session(session, index, total_width, color_enabled):
     return "\n".join(lines)
 
 
-def format_sessions(sessions):
+def format_sessions(sessions, matched_count=None):
     """
     Format session data for display in a human-readable card format.
 
@@ -200,13 +205,18 @@ def format_sessions(sessions):
                         - project_workspace: Project workspace path
                         - pwd: Working directory
                         - topsailai_home: TopsailAI home directory
+        matched_count (int, optional): Number of rows matching the category filter
+            before pagination. When no sessions are displayed, it is still shown
+            when supplied for an explicit category filter.
 
     Returns:
         str: Formatted string containing all sessions in card format.
-             Returns "No sessions found." if sessions list is empty.
+             Returns "No sessions found." for an unfiltered empty result.
     """
     if not sessions:
-        return "No sessions found."
+        if matched_count is None:
+            return "No sessions found."
+        return f"No sessions found.\nMatched Total: {matched_count}"
 
     color_enabled = _supports_color()
     total_width = shutil.get_terminal_size().columns
@@ -233,6 +243,8 @@ def format_sessions(sessions):
     output.append("")
     output.append(separator)
     output.append(f"Total: {len(sessions)} session{'s' if len(sessions) != 1 else ''}")
+    if matched_count is not None:
+        output.append(f"Matched Total: {matched_count}")
 
     return "\n".join(output)
 
@@ -247,6 +259,7 @@ def _session_to_dict(session):
     return {
         "session_id": str(session.session_id) if session.session_id else "",
         "session_name": str(session.session_name) if session.session_name else "",
+        "category": str(getattr(session, "category", "") or ""),
         "create_time": session.create_time.strftime("%Y-%m-%dT%H:%M:%S") if session.create_time else "",
         "task": str(session.task) if session.task else "",
         "project_workspace": str(session.project_workspace) if session.project_workspace else "",
@@ -362,6 +375,12 @@ def main():
         help="Database connection string (default: sqlite:///sessions.db)",
     )
     parser.add_argument(
+        "--category",
+        dest="session_category",
+        default=None,
+        help="Filter by exact category; omit to include all categories, use an empty value for uncategorized sessions",
+    )
+    parser.add_argument(
         "--no-color",
         action="store_true",
         help="Disable colored output",
@@ -424,12 +443,24 @@ def main():
         if order_by is None:
             order_by = _parse_order_by(args.sort)
 
-        sessions = manager.list_sessions(
-            sessions=_parse_sessions(args.sessions),
-            order_by=order_by,
-            offset=args.offset,
-            limit=args.limit,
-        )
+        query_sessions = _parse_sessions(args.sessions)
+        normalized_category = None
+        if args.session_category is not None:
+            normalized_category = resolve_session_category(args.session_category)
+        list_kwargs = {
+            "sessions": query_sessions,
+            "order_by": order_by,
+            "offset": args.offset,
+            "limit": args.limit,
+        }
+        if normalized_category is not None:
+            list_kwargs["category"] = normalized_category
+        sessions = manager.list_sessions(**list_kwargs)
+        matched_count = None
+        if normalized_category is not None:
+            matched_count = manager.count_sessions(
+                sessions=query_sessions, category=normalized_category
+            )
         sessions = _filter_sessions(sessions, args.has_project)
         sessions = _filter_sessions_by_time(
             sessions,
@@ -440,7 +471,7 @@ def main():
         if args.json:
             print(format_sessions_json(sessions))
         else:
-            formatted_output = format_sessions(sessions)
+            formatted_output = format_sessions(sessions, matched_count=matched_count)
             print(formatted_output)
     except Exception as e:
         print(f"Error: {e}")

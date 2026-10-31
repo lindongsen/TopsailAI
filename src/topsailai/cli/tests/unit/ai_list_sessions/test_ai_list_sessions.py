@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
 from unittest import mock
 
 # Ensure the cli package and src modules are importable.
@@ -18,6 +19,7 @@ sys.path.insert(0, CLI_ROOT)
 sys.path.insert(0, SRC_ROOT)
 
 import ai_list_sessions
+import topsailai_session_info
 from topsailai.context.ctx_manager import get_session_manager
 from topsailai.context.session_manager import SessionData
 
@@ -37,6 +39,7 @@ class FakeSession:
         total_tokens=0,
         total_cached_tokens=0,
         total_completion_tokens=0,
+        category="",
     ):
         self.session_id = session_id
         self.session_name = session_name
@@ -48,6 +51,7 @@ class FakeSession:
         self.total_tokens = total_tokens
         self.total_cached_tokens = total_cached_tokens
         self.total_completion_tokens = total_completion_tokens
+        self.category = category
 
 class TestRelativeTime(unittest.TestCase):
     """Tests for _relative_time helper."""
@@ -500,6 +504,218 @@ class TestJsonAndFilterFlags(unittest.TestCase):
         ids = {s["session_id"] for s in data}
         self.assertNotIn("early", ids)
         self.assertIn("late", ids)
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_category_filter_and_matched_total(self, _mock_tty):
+        """Category filtering occurs before pagination and reports the match count."""
+        manager = get_session_manager(self.db_conn)
+        for session_id, category in (("agent-1", "agent"), ("chat-1", "chat"), ("agent-2", "agent")):
+            manager.create_session(SessionData(session_id=session_id, task="task", category=category))
+        with mock.patch("sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn,
+                                      "--category", "agent", "--offset", "1", "--limit", "1", "--no-color"]):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                ai_list_sessions.main()
+                text = output.getvalue()
+        self.assertIn("agent-2", text)
+        self.assertNotIn("chat-1", text)
+        self.assertIn("Total: 1 session", text)
+        self.assertIn("Matched Total: 2", text)
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_category_empty_pages_keep_matched_total(self, _mock_tty):
+        """Filtered empty pages expose the pre-pagination matched total."""
+        manager = get_session_manager(self.db_conn)
+        manager.create_session(SessionData(session_id="agent-1", task="task", category="agent"))
+        manager.create_session(SessionData(session_id="agent-2", task="task", category="agent"))
+
+        scenarios = [
+            (["--category", "missing"], "Matched Total: 0"),
+            (["--category", "agent", "--offset", "99"], "Matched Total: 2"),
+            (["--category", "agent", "--limit", "0"], "Matched Total: 2"),
+        ]
+        for options, expected in scenarios:
+            with self.subTest(options=options):
+                with mock.patch("sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn,
+                                              "--no-color", *options]):
+                    with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                        ai_list_sessions.main()
+                self.assertIn(expected, output.getvalue())
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_unfiltered_empty_page_keeps_legacy_output(self, _mock_tty):
+        """An omitted category filter preserves the legacy empty output."""
+        with mock.patch("sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn, "--no-color"]):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                ai_list_sessions.main()
+        self.assertEqual(output.getvalue().strip(), "No sessions found.")
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_category_json_and_empty_filter(self, _mock_tty):
+        """JSON exposes category and an empty value selects uncategorized rows."""
+        manager = get_session_manager(self.db_conn)
+        manager.create_session(SessionData(session_id="agent", task="task", category="agent"))
+        manager.create_session(SessionData(session_id="empty", task="task", category=""))
+        with mock.patch("sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn,
+                                      "--category", "", "--json", "--no-color"]):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                ai_list_sessions.main()
+                data = json.loads(output.getvalue())
+        self.assertEqual([row["session_id"] for row in data], ["empty"])
+        self.assertEqual(data[0]["category"], "")
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_invalid_category_logs_error_and_selects_empty(self, _mock_tty):
+        """Invalid category values log the original value and select empty rows."""
+        manager = get_session_manager(self.db_conn)
+        manager.create_session(SessionData(session_id="empty", task="task", category=""))
+        manager.create_session(SessionData(session_id="agent", task="task", category="agent"))
+        with self.assertLogs("topsailai.context.session_category", level="ERROR") as logs:
+            with mock.patch("sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn,
+                                          "--category", "Agent\n", "--json", "--no-color"]):
+                with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                    ai_list_sessions.main()
+                    data = json.loads(output.getvalue())
+        self.assertTrue(any("Agent\\n" in message for message in logs.output))
+        self.assertEqual([row["session_id"] for row in data], ["empty"])
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_category_text_and_omitted_filter_ignore_environment(self, _mock_tty):
+        """Text displays category while omitted filtering remains independent of environment."""
+        manager = get_session_manager(self.db_conn)
+        manager.create_session(SessionData(session_id="agent", task="task", category="agent"))
+        manager.create_session(SessionData(session_id="empty", task="task", category=""))
+        with mock.patch.dict(os.environ, {"TOPSAILAI_SESSION_CATEGORY": "agent"}, clear=False):
+            with mock.patch("sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn, "--no-color"]):
+                with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                    ai_list_sessions.main()
+                    text = output.getvalue()
+        self.assertIn("Category:", text)
+        self.assertIn("agent", text)
+        self.assertIn("empty", text)
+
+
+    @mock.patch.object(ai_list_sessions, "_supports_color", return_value=False)
+    @mock.patch("shutil.get_terminal_size", return_value=mock.Mock(columns=80))
+    def test_list_format_missing_category_attribute_displays_none(self, _mock_size, _mock_color):
+        """Legacy list session-like objects without category remain renderable."""
+        class LegacySession:
+            session_id = "legacy-list"
+            session_name = None
+            create_time = datetime(2026, 7, 5, 10, 30, 15)
+            task = "legacy task"
+            project_workspace = None
+            pwd = None
+            topsailai_home = None
+            total_tokens = 0
+            total_cached_tokens = 0
+            total_completion_tokens = 0
+
+        output = ai_list_sessions.format_sessions([LegacySession()])
+        self.assertIn("legacy-list", output)
+        self.assertIn("Category:", output)
+        self.assertIn("(none)", output)
+
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_repeated_category_uses_last_value(self, _mock_tty):
+        """Argparse uses the last repeated category value."""
+        manager = get_session_manager(self.db_conn)
+        manager.create_session(SessionData(session_id="agent", task="task", category="agent"))
+        manager.create_session(SessionData(session_id="chat", task="task", category="chat"))
+        with mock.patch("sys.argv", [
+            "ai_list_sessions.py", "--db-conn", self.db_conn, "--json",
+            "--category", "agent", "--category", "chat", "--no-color",
+        ]):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                ai_list_sessions.main()
+                data = json.loads(output.getvalue())
+        assert [row["session_id"] for row in data] == ["chat"]
+        assert [row["category"] for row in data] == ["chat"]
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_category_combined_with_project_filter(self, _mock_tty):
+        """Category remains restrictive when combined with page-local project filtering."""
+        manager = get_session_manager(self.db_conn)
+        manager.create_session(SessionData(
+            session_id="agent-project", task="task", category="agent",
+            project_workspace="/work/project",
+        ))
+        manager.create_session(SessionData(
+            session_id="agent-no-project", task="task", category="agent",
+        ))
+        manager.create_session(SessionData(
+            session_id="chat-project", task="task", category="chat",
+            project_workspace="/work/project",
+        ))
+        with mock.patch("sys.argv", [
+            "ai_list_sessions.py", "--db-conn", self.db_conn, "--json",
+            "--category", "agent", "--has-project", "--no-color",
+        ]):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                ai_list_sessions.main()
+                data = json.loads(output.getvalue())
+        assert [row["session_id"] for row in data] == ["agent-project"]
+        assert all(row["category"] == "agent" for row in data)
+
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_cli_list_and_detail_do_not_write_rows_schema_or_meta(self, _mock_tty):
+        """Listing and detail reads preserve database, schema, file, and meta state."""
+        manager = get_session_manager(self.db_conn)
+        manager.create_session(SessionData(
+            session_id="readonly-agent", task="task", category="agent",
+            project_workspace="/work/project",
+        ))
+        manager.create_session(SessionData(
+            session_id="readonly-chat", task="task", category="chat",
+        ))
+        home = Path(tempfile.mkdtemp())
+        meta_dir = home / "workspace" / "task"
+        meta_dir.mkdir(parents=True)
+        meta_file = meta_dir / "readonly-agent.1.session.meta"
+        meta_file.write_bytes(b"meta-before\n")
+
+        def snapshot():
+            import sqlite3
+            with sqlite3.connect(self.db_path) as connection:
+                rows = connection.execute(
+                    "SELECT * FROM session ORDER BY session_id"
+                ).fetchall()
+                schema = connection.execute(
+                    "PRAGMA table_info(session)"
+                ).fetchall()
+            return rows, schema, Path(self.db_path).read_bytes()
+
+        def meta_snapshot():
+            return {
+                path.relative_to(home): path.read_bytes()
+                for path in home.rglob("*")
+                if path.is_file()
+            }
+
+        def meta_paths_snapshot():
+            return sorted(path.relative_to(home) for path in home.rglob("*"))
+
+        before = snapshot()
+        before_meta = meta_snapshot()
+        with mock.patch("sys.argv", [
+            "ai_list_sessions.py", "--db-conn", self.db_conn,
+            "--category", "agent", "--json", "--no-color",
+        ]):
+            with mock.patch("sys.stdout", new_callable=io.StringIO):
+                ai_list_sessions.main()
+
+        with mock.patch("sys.stdout", new_callable=io.StringIO):
+            assert topsailai_session_info.main([
+                "readonly-agent", "--db-conn", self.db_conn,
+                "--home", str(home), "--json",
+            ]) == 0
+
+        assert snapshot() == before
+        assert meta_snapshot() == before_meta
+        assert meta_paths_snapshot() == sorted({Path("workspace"), Path("workspace/task"), *before_meta})
+        import shutil
+        shutil.rmtree(home)
 
 
 if __name__ == "__main__":

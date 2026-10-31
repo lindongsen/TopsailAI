@@ -36,10 +36,16 @@ class DefaultSessionManager(SessionManager):
         return created
 
     def list_sessions(self, sessions: list[str] | None = None, order_by: str | None = None,
-                      offset: int = 0, limit: int | None = None) -> list[SessionData]:
-        """List sessions with existing filters and ordering."""
-        return self.storage.list_sessions(sessions=sessions, order_by=order_by,
-                                          offset=offset, limit=limit)
+                      offset: int = 0, limit: int | None = None, category: str | None = None) -> list[SessionData]:
+        """List sessions with existing filters, category, ordering and pagination."""
+        kwargs = {"sessions": sessions, "order_by": order_by, "offset": offset, "limit": limit}
+        if category is not None:
+            kwargs["category"] = category
+        return self.storage.list_sessions(**kwargs)
+
+    def count_sessions(self, sessions: list[str] | None = None, category: str | None = None) -> int:
+        """Count sessions matching the selection filters."""
+        return self.storage.count_sessions(sessions=sessions, category=category)
 
     def update_session_name(self, session_id: str, session_name: str) -> bool:
         """Update the stored session name."""

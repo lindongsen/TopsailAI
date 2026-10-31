@@ -158,6 +158,7 @@ def _session_to_dict(session: SessionData, home: str) -> dict[str, Any]:
         # Original SessionData fields
         "session_id": session_id,
         "session_name": str(session.session_name) if session.session_name else "",
+        "category": str(getattr(session, "category", "") or ""),
         "task": str(session.task) if session.task else "",
         "project_workspace": str(session.project_workspace) if session.project_workspace else "",
         "pwd": str(session.pwd) if session.pwd else "",
@@ -222,6 +223,7 @@ def _format_session(session: SessionData, home: str, color_enabled: bool) -> str
 
     add_row("Session ID", session_id)
     add_row("Name", name)
+    add_row("Category", str(getattr(session, "category", "") or "") or "(none)")
 
     time_value = created
     if relative:

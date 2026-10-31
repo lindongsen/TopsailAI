@@ -129,6 +129,7 @@ class TestSessionToDict:
             session_id="abc123",
             task="Do something useful.",
             session_name="test-session",
+            category="agent",
             project_workspace="/workspace/abc",
             pwd="/workspace/abc/src",
             topsailai_home="/home/user/.topsailai",
@@ -138,6 +139,7 @@ class TestSessionToDict:
         data = si._session_to_dict(session, str(tmp_path))
         assert data["session_id"] == "abc123"
         assert data["session_name"] == "test-session"
+        assert data["category"] == "agent"
         assert data["task"] == "Do something useful."
         assert data["project_workspace"] == "/workspace/abc"
         assert data["pwd"] == "/workspace/abc/src"
@@ -224,6 +226,7 @@ class TestFormatSessionJson:
         expected_keys = {
             "session_id",
             "session_name",
+            "category",
             "task",
             "project_workspace",
             "pwd",
@@ -420,6 +423,43 @@ class TestMain:
         captured = capsys.readouterr()
         assert code == 1
         assert "[ERROR]" in captured.out
+
+    @patch.object(si, "_supports_color", return_value=False)
+    @patch("shutil.get_terminal_size", return_value=Mock(columns=80))
+    def test_format_missing_category_displays_none(self, _mock_size, _mock_color, tmp_path: Path):
+        """Legacy session-like objects without category remain renderable."""
+        class LegacySession:
+            session_id = "legacy"
+            session_name = None
+            task = "legacy task"
+            project_workspace = None
+            pwd = None
+            topsailai_home = None
+            create_time = None
+            total_tokens = 0
+            total_completion_tokens = 0
+            total_cached_tokens = 0
+
+        output = si._format_session(LegacySession(), str(tmp_path), False)
+        assert "Category:" in output
+        assert "(none)" in output
+
+
+    def test_main_real_db_category_json_and_text(self, tmp_path: Path, capsys):
+        """The real detail entry point exposes the stored category in both modes."""
+        db_path = tmp_path / "sessions.db"
+        db_conn = f"sqlite:///{db_path}"
+        manager = get_session_manager(db_conn)
+        manager.create_session(SessionData(session_id="real-category", task="Task", category="agent"))
+
+        assert si.main(["real-category", "--db-conn", db_conn, "--home", str(tmp_path), "--json"]) == 0
+        parsed = json.loads(capsys.readouterr().out)
+        assert parsed["category"] == "agent"
+
+        assert si.main(["real-category", "--db-conn", db_conn, "--home", str(tmp_path), "--no-color"]) == 0
+        text = capsys.readouterr().out
+        assert "Category:" in text
+        assert "agent" in text
 
 
 if __name__ == "__main__":

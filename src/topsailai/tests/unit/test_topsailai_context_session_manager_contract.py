@@ -14,6 +14,7 @@ OPERATIONS = [
     ("exists_session", ("s",), {}),
     ("get_session", ("s",), {}),
     ("list_sessions", (), {"sessions": ["s"], "order_by": "create_time", "offset": 2, "limit": 3}),
+    ("count_sessions", (), {"sessions": ["s"], "category": "agent"}),
     ("update_session_name", ("s", "name"), {}),
     ("retrieve_messages", ("s",), {}),
     ("get_messages_by_session", ("s",), {}),
@@ -29,7 +30,7 @@ def test_abstract_contract_is_fully_implemented():
         SessionManager()
     assert not DefaultSessionManager.__abstractmethods__
     assert SessionManager.__abstractmethods__ == {
-        "chat_history", "create_session", "delete_session", "clean_sessions",
+        "chat_history", "create_session", "delete_session", "clean_sessions", "count_sessions",
         *(name for name, _, _ in OPERATIONS),
     }
     assert SessionManager.__abstractmethods__ <= DefaultSessionManager.__dict__.keys()
@@ -168,3 +169,32 @@ def test_factory_age_cleanup_rechecks_real_activity_probe(tmp_path, monkeypatch,
         storage.delete_session.assert_called_once_with("s")
     else:
         storage.delete_session.assert_not_called()
+
+
+@pytest.mark.parametrize("category", [None, "", "agent"])
+def test_list_and_count_forward_category_matrix(category):
+    """Forward omitted, empty, and nonempty category values exactly."""
+    class RecordingStorage:
+        def __init__(self):
+            self.calls = []
+            self.chat_history = Mock()
+
+        def list_sessions(self, **kwargs):
+            self.calls.append(("list", kwargs))
+            return []
+
+        def count_sessions(self, **kwargs):
+            self.calls.append(("count", kwargs))
+            return 0
+
+    storage = RecordingStorage()
+    manager = DefaultSessionManager(storage, Mock())
+    manager.list_sessions(category=category)
+    manager.count_sessions(category=category)
+    list_kwargs = storage.calls[0][1]
+    count_kwargs = storage.calls[1][1]
+    expected_list = {"sessions": None, "order_by": None, "offset": 0, "limit": None}
+    if category is not None:
+        expected_list["category"] = category
+    assert list_kwargs == expected_list
+    assert count_kwargs == {"sessions": None, "category": category}
