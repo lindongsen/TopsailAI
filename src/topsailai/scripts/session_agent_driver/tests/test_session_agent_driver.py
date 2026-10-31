@@ -369,3 +369,94 @@ class TestMainArgs:
                 mock.patch.object(sad.exit_process, "reset_exit_flag"), \
                 mock.patch.object(sad.exit_process, "is_exit_requested", return_value=False):
             assert sad.main([]) == 0
+
+
+# ---------------------------------------------------------------------------
+# project workspace resolution and analysis session cleanup
+# ---------------------------------------------------------------------------
+
+class TestResolveProjectWorkspace:
+    """The target session's stored workspace takes precedence over the environment."""
+
+    def test_stored_workspace_wins(self):
+        stored = mock.Mock(project_workspace="/project/real")
+        manager = mock.Mock()
+        manager.list_sessions.return_value = [stored]
+        with mock.patch.object(sad.ctx_manager, "get_session_manager", return_value=manager), \
+                mock.patch.dict(os.environ, {"TOPSAILAI_PROJECT_WORKSPACE": "/driver/cwd"}):
+            assert sad.resolve_project_workspace("s1") == "/project/real"
+        manager.list_sessions.assert_called_once_with(sessions=["s1"], limit=1)
+
+    def test_environment_fallback_when_record_missing(self):
+        manager = mock.Mock()
+        manager.list_sessions.return_value = []
+        with mock.patch.object(sad.ctx_manager, "get_session_manager", return_value=manager), \
+                mock.patch.dict(os.environ, {"TOPSAILAI_PROJECT_WORKSPACE": "/driver/cwd"}):
+            assert sad.resolve_project_workspace("s1") == "/driver/cwd"
+
+    def test_environment_fallback_when_stored_value_empty(self):
+        stored = mock.Mock(project_workspace=None)
+        manager = mock.Mock()
+        manager.list_sessions.return_value = [stored]
+        with mock.patch.object(sad.ctx_manager, "get_session_manager", return_value=manager), \
+                mock.patch.dict(os.environ, {"TOPSAILAI_PROJECT_WORKSPACE": "/driver/cwd"}):
+            assert sad.resolve_project_workspace("s1") == "/driver/cwd"
+
+    def test_environment_fallback_when_store_raises(self):
+        manager = mock.Mock()
+        manager.list_sessions.side_effect = RuntimeError("store unavailable")
+        with mock.patch.object(sad.ctx_manager, "get_session_manager", return_value=manager), \
+                mock.patch.dict(os.environ, {"TOPSAILAI_PROJECT_WORKSPACE": "/driver/cwd"}):
+            assert sad.resolve_project_workspace("s1") == "/driver/cwd"
+
+    def test_empty_string_when_no_authority(self):
+        with mock.patch.object(sad.ctx_manager, "get_session_manager", return_value=None), \
+                mock.patch.dict(os.environ, {}, clear=False):
+            saved = os.environ.pop("TOPSAILAI_PROJECT_WORKSPACE", None)
+            try:
+                assert sad.resolve_project_workspace("s1") == ""
+            finally:
+                if saved is not None:
+                    os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = saved
+
+
+class TestCleanupAnalysisSession:
+    """Cleanup reports the real outcome instead of assuming success."""
+
+    def test_reports_success_only_when_deleted(self):
+        manager = mock.Mock()
+        manager.exists_session.return_value = True
+        manager.delete_session.return_value = True
+        with mock.patch.object(sad.ctx_manager, "get_session_manager", return_value=manager), \
+                mock.patch.object(sad.logger, "info") as info:
+            sad.cleanup_analysis_session("s1")
+        manager.delete_session.assert_called_once_with("s1")
+        assert info.call_args[0][0] == "cleaned analysis session %s"
+        assert info.call_args[0][1] == "s1"
+
+    def test_warns_when_deletion_not_authorized(self):
+        manager = mock.Mock()
+        manager.exists_session.return_value = True
+        manager.delete_session.return_value = False
+        with mock.patch.object(sad.ctx_manager, "get_session_manager", return_value=manager), \
+                mock.patch.object(sad.logger, "warning") as warning, \
+                mock.patch.object(sad.logger, "info") as info:
+            sad.cleanup_analysis_session("s1")
+        assert not any("cleaned analysis session" in call[0][0] for call in info.call_args_list)
+        assert "retained" in warning.call_args[0][0]
+
+    def test_absent_session_is_not_deleted(self):
+        manager = mock.Mock()
+        manager.exists_session.return_value = False
+        with mock.patch.object(sad.ctx_manager, "get_session_manager", return_value=manager), \
+                mock.patch.object(sad.logger, "info"):
+            sad.cleanup_analysis_session("s1")
+        manager.delete_session.assert_not_called()
+
+    def test_store_failure_is_logged_not_raised(self):
+        manager = mock.Mock()
+        manager.exists_session.side_effect = RuntimeError("store unavailable")
+        with mock.patch.object(sad.ctx_manager, "get_session_manager", return_value=manager), \
+                mock.patch.object(sad.logger, "warning") as warning:
+            sad.cleanup_analysis_session("s1")
+        assert "failed to clean analysis session" in warning.call_args[0][0]

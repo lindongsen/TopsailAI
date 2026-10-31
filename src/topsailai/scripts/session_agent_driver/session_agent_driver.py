@@ -266,6 +266,19 @@ def format_messages_summary(messages) -> str:
     return summary
 
 
+def resolve_project_workspace(session_id: str) -> str:
+    """Resolve the target session's project workspace, falling back to the environment."""
+    try:
+        manager = ctx_manager.get_session_manager()
+        if manager:
+            rows = manager.list_sessions(sessions=[session_id], limit=1)
+            if rows and rows[0].project_workspace:
+                return rows[0].project_workspace
+    except Exception as error:  # noqa: BLE001
+        logger.warning("failed to read stored project workspace for %s: %s", session_id, error)
+    return os.environ.get("TOPSAILAI_PROJECT_WORKSPACE", "")
+
+
 def get_session_info(session_id: str) -> dict | None:
     """Collect session information through topsailai; None on failure (P13)."""
     rows, status = _session_snapshot(session_id)
@@ -322,7 +335,7 @@ def get_session_info(session_id: str) -> dict | None:
         "session_id": session_id,
         "pid": pid,
         "status": status,
-        "project_workspace": os.environ.get("TOPSAILAI_PROJECT_WORKSPACE", ""),
+        "project_workspace": resolve_project_workspace(session_id),
         "created_at": record.get("ctime", ""),
         "task_goal": os.environ.get(
             TASK_GOAL_ENV, "Drive the target session to completion."
@@ -351,9 +364,13 @@ def cleanup_analysis_session(session_id: str) -> None:
     """Delete the analysis session data (P8: data lifecycle management)."""
     try:
         manager = ctx_manager.get_session_manager()
-        if manager and manager.exists_session(session_id):
-            manager.delete_session(session_id)
+        if not manager or not manager.exists_session(session_id):
+            logger.info("analysis session %s already absent", session_id)
+            return
+        if manager.delete_session(session_id):
             logger.info("cleaned analysis session %s", session_id)
+        else:
+            logger.warning("analysis session %s retained: deletion not authorized", session_id)
     except Exception as error:  # noqa: BLE001
         logger.warning("failed to clean analysis session %s: %s", session_id, error)
 
