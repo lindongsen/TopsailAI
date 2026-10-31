@@ -462,6 +462,25 @@ class TestCleanupAnalysisSession:
         assert not any("cleaned analysis session" in call[0][0] for call in info.call_args_list)
         assert "retained" in warning.call_args[0][0]
 
+
+    def test_distinguishes_unavailable_manager_from_absent_session(self):
+        with mock.patch.object(sad.ctx_manager, "get_session_manager", return_value=None), \
+                mock.patch.object(sad.logger, "warning") as warning:
+            sad.cleanup_analysis_session("s1")
+        warning_message = warning.call_args[0][0]
+        assert "session manager unavailable" in warning_message
+        assert "already absent" not in warning_message
+
+        manager = mock.Mock()
+        manager.exists_session.return_value = False
+        with mock.patch.object(sad.ctx_manager, "get_session_manager", return_value=manager), \
+                mock.patch.object(sad.logger, "info") as info:
+            sad.cleanup_analysis_session("s1")
+        info_message = info.call_args[0][0]
+        assert info_message == "analysis session %s already absent"
+        assert "already absent" in info_message
+        manager.delete_session.assert_not_called()
+
     def test_absent_session_is_not_deleted(self):
         manager = mock.Mock()
         manager.exists_session.return_value = False

@@ -364,7 +364,13 @@ def cleanup_analysis_session(session_id: str) -> None:
     """Delete the analysis session data (P8: data lifecycle management)."""
     try:
         manager = ctx_manager.get_session_manager()
-        if not manager or not manager.exists_session(session_id):
+        if manager is None:
+            logger.warning(
+                "cannot verify whether analysis session %s is absent: session manager unavailable",
+                session_id,
+            )
+            return
+        if not manager.exists_session(session_id):
             logger.info("analysis session %s already absent", session_id)
             return
         if manager.delete_session(session_id):

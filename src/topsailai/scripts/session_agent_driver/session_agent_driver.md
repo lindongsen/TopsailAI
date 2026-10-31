@@ -70,7 +70,7 @@ Current source evidence (paths relative to the project workspace, verified 2026-
 - `context/session_cleanup.py:55–68` preserves the public authorization checks before storage deletion.
 - `context/session_activity.py:115–120, 186–193` permits only STOPPED and treats a live owner as RUNNING, without trusting completion flags.
 
-Do not bypass the public cleanup guard, add force-delete or environment bypass switches, treat `completed`/`end_ts` as process-exit evidence, delete metadata to hide a live owner, move lifecycle policy into SQL, or weaken RUNNING/UNKNOWN fail-closed semantics. Changing this retention policy requires a new explicit Human decision, not a bug fix. The earlier alternatives A/B/C and implementation units A1/A2/A3 are superseded and must not be implemented on the authority of that proposal. The separate P2 finding about an unavailable manager being logged as "already absent" is not reclassified by this decision.
+Do not bypass the public cleanup guard, add force-delete or environment bypass switches, treat `completed`/`end_ts` as process-exit evidence, delete metadata to hide a live owner, move lifecycle policy into SQL, or weaken RUNNING/UNKNOWN fail-closed semantics. Changing this retention policy requires a new explicit Human decision, not a bug fix. The earlier alternatives A/B/C and implementation units A1/A2/A3 are superseded and must not be implemented on the authority of that proposal.
 
 ## Environment Variables
 
