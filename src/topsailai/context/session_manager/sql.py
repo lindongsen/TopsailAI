@@ -12,6 +12,7 @@
       - create_time, creation time of this record; default is local time;
 '''
 
+import re
 import threading
 
 from sqlalchemy import create_engine, Column, String, Text, DateTime, Integer
@@ -54,6 +55,7 @@ class Session(Base):
     total_cached_tokens = Column(Integer, default=0)
     total_completion_tokens = Column(Integer, default=0)
     create_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
+    update_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
 
 class SessionSQLAlchemy(SessionStorageBase):
     """
@@ -97,6 +99,17 @@ class SessionSQLAlchemy(SessionStorageBase):
         with self.engine.connect() as conn:
             if conn.dialect.name != "sqlite":
                 return
+            update_time = conn.execute(text(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'session'"
+            )).scalar_one_or_none()
+            if update_time and (
+                    "WITHOUT ROWID" in update_time.upper()
+                    or re.search(r"\bSTRICT\b", update_time, re.IGNORECASE)
+                    or re.search(r"\bGENERATED\b|\bAS\s*\(", update_time, re.IGNORECASE)):
+                if "GENERATED" in update_time.upper() or re.search(
+                        r"\bAS\s*\(", update_time, re.IGNORECASE):
+                    raise RuntimeError("Unsupported generated column in SQLite session table DDL")
+                raise RuntimeError("Unsupported SQLite session table DDL options")
             columns = (
                 "project_workspace", "pwd", "topsailai_home", "total_tokens",
                 "total_cached_tokens", "total_completion_tokens",
@@ -117,6 +130,218 @@ class SessionSQLAlchemy(SessionStorageBase):
                     else:
                         conn.execute(text(f"ALTER TABLE session ADD COLUMN {column_name} TEXT"))
             conn.commit()
+            result = conn.execute(
+                text("SELECT 1 FROM pragma_table_info('session') WHERE name = 'update_time'")
+            )
+            if result.fetchone():
+                return
+            self._rebuild_sqlite_session_table(conn)
+
+    def _rebuild_sqlite_session_table(self, conn):
+        """Add update_time while preserving the existing SQLite session schema."""
+        table_name = SessionStorageBase.tb_session
+        temporary_name = f"{table_name}__update_time_new"
+        quote_identifier = lambda value: '"' + value.replace('"', '""') + '"'
+        table_identifier = quote_identifier(table_name)
+        temporary_identifier = quote_identifier(temporary_name)
+
+        def split_table_items(body):
+            """Split table definitions at commas outside quotes and parentheses."""
+            items = []
+            start = 0
+            depth = 0
+            quote = None
+            index = 0
+            while index < len(body):
+                char = body[index]
+                if quote:
+                    if char == quote:
+                        if index + 1 < len(body) and body[index + 1] == quote:
+                            index += 1
+                        else:
+                            quote = None
+                elif char in "'\"`":
+                    quote = char
+                elif char == '[':
+                    quote = ']'
+                elif char == '(':
+                    depth += 1
+                elif char == ')':
+                    depth -= 1
+                    if depth < 0:
+                        raise RuntimeError("Unsupported SQLite session table DDL")
+                elif char == ',' and depth == 0:
+                    items.append(body[start:index].strip())
+                    start = index + 1
+                index += 1
+            if quote or depth:
+                raise RuntimeError("Unsupported SQLite session table DDL")
+            items.append(body[start:].strip())
+            if any(not item for item in items):
+                raise RuntimeError("Unsupported SQLite session table DDL")
+            return items
+
+        def table_body(ddl):
+            """Return the table body and trailing options after its outer parentheses."""
+            opening = ddl.find('(', ddl.lower().find('session'))
+            if opening < 0:
+                raise RuntimeError("Unsupported SQLite session table DDL")
+            depth = 0
+            quote = None
+            closing = None
+            for index in range(opening, len(ddl)):
+                char = ddl[index]
+                if quote:
+                    if char == quote:
+                        quote = None
+                elif char in "'\"`":
+                    quote = char
+                elif char == '[':
+                    quote = ']'
+                elif char == '(':
+                    depth += 1
+                elif char == ')':
+                    depth -= 1
+                    if depth == 0:
+                        closing = index
+                        break
+                    if depth < 0:
+                        break
+            if closing is None or ddl[closing + 1:].strip():
+                raise RuntimeError("Unsupported SQLite session table DDL options")
+            return ddl[opening + 1:closing]
+
+        def index_inventory(connection, name):
+            """Return index semantics, including indexes created by constraints."""
+            result = []
+            for row in connection.execute(text(
+                f"PRAGMA index_list({quote_identifier(name)})"
+            )).fetchall():
+                index_name, unique, origin, partial = row[1], row[2], row[3], row[4]
+                columns = tuple(item[2] for item in connection.execute(text(
+                    f"PRAGMA index_info({quote_identifier(index_name)})"
+                )).fetchall())
+                sql = connection.execute(text(
+                    "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = :name"
+                ), {"name": index_name}).scalar_one_or_none()
+                result.append((index_name, sql, unique, origin, partial, columns))
+            return tuple(sorted(result))
+
+        def inventory(connection, name, data_columns=None):
+            """Return the SQLite schema and data inventory for a table."""
+            columns = connection.execute(text(f"PRAGMA table_info({quote_identifier(name)})")).fetchall()
+            foreign_keys = connection.execute(text(
+                f"PRAGMA foreign_key_list({quote_identifier(name)})"
+            )).fetchall()
+            indexes = index_inventory(connection, name)
+            triggers = tuple(connection.execute(text(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type = 'trigger' AND tbl_name = :name ORDER BY name"
+            ), {"name": name}).fetchall())
+            names = data_columns or [row[1] for row in columns]
+            projection = ", ".join(quote_identifier(column) for column in names)
+            rows = tuple(connection.execute(text(
+                f"SELECT {projection} FROM {quote_identifier(name)} ORDER BY rowid"
+            )).fetchall())
+            return columns, foreign_keys, indexes, triggers, rows
+
+        original_ddl = conn.execute(text(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = :name"
+        ), {"name": table_name}).scalar_one_or_none()
+        if not original_ddl:
+            raise RuntimeError("SQLite session migration cannot find the session table DDL")
+        create_pattern = re.compile(
+            r'^(\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?)("session"|`session`|\[session\]|session)(\s*\()',
+            re.IGNORECASE | re.DOTALL,
+        )
+        match = create_pattern.match(original_ddl)
+        if not match:
+            raise RuntimeError("Unsupported SQLite session table DDL")
+        body = table_body(original_ddl)
+        items = split_table_items(body)
+        upper_ddl = original_ddl.upper()
+        if "WITHOUT ROWID" in upper_ddl or " STRICT" in upper_ddl:
+            raise RuntimeError("Unsupported SQLite session table DDL options")
+        if any(re.search(r"\bGENERATED\b|\bAS\s*\(", item, re.IGNORECASE) for item in items):
+            raise RuntimeError("Unsupported generated column in SQLite session table DDL")
+
+        before = inventory(conn, table_name)
+        if any(row[1] == "update_time" for row in before[0]):
+            return
+        temporary_exists = conn.execute(text(
+            "SELECT 1 FROM sqlite_master WHERE name = :name"
+        ), {"name": temporary_name}).scalar_one_or_none()
+        if temporary_exists:
+            raise RuntimeError("SQLite session migration found a stale replacement table")
+
+        constraint_pattern = re.compile(
+            r"^(PRIMARY\s+KEY|UNIQUE|CHECK|FOREIGN\s+KEY|CONSTRAINT)\b",
+            re.IGNORECASE,
+        )
+        insert_at = next((index for index, item in enumerate(items)
+                          if constraint_pattern.match(item)), len(items))
+        items.insert(insert_at, "update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP")
+        create_ddl = (
+            match.group(1) + temporary_identifier + match.group(3)
+            + ", ".join(items) + ")"
+        )
+        original_columns = [row[1] for row in before[0]]
+        quoted_columns = ", ".join(quote_identifier(column) for column in original_columns)
+        old_rows = before[4]
+        original_foreign_keys = conn.execute(text("PRAGMA foreign_keys")).scalar()
+        conn.commit()
+        migration_error = None
+        try:
+            conn.execute(text("PRAGMA foreign_keys = 0"))
+            conn.commit()
+            conn.exec_driver_sql("BEGIN")
+            conn.execute(text(create_ddl))
+            conn.execute(text(
+                f"INSERT INTO {temporary_identifier} ({quoted_columns}, update_time) "
+                f"SELECT {quoted_columns}, create_time FROM {table_identifier}"
+            ))
+            conn.execute(text(f"DROP TABLE {table_identifier}"))
+            conn.execute(text(f"ALTER TABLE {temporary_identifier} RENAME TO {table_identifier}"))
+            for index_name, index_sql, *_ in before[2]:
+                if index_sql:
+                    conn.execute(text(index_sql))
+            for _, trigger_sql in before[3]:
+                conn.execute(text(trigger_sql))
+            after = inventory(conn, table_name, original_columns)
+            if after[0][:-1] != before[0] or after[1] != before[1]:
+                raise RuntimeError("SQLite session migration changed table constraints")
+            if after[2] != before[2]:
+                raise RuntimeError("SQLite session migration changed the index inventory")
+            if after[3] != before[3] or after[4] != old_rows:
+                raise RuntimeError("SQLite session migration changed schema or row data")
+            update_rows = conn.execute(text(
+                f"SELECT update_time, create_time FROM {table_identifier} ORDER BY rowid"
+            )).fetchall()
+            if any(update_time != create_time for update_time, create_time in update_rows):
+                raise RuntimeError("SQLite session migration did not backfill update_time")
+            update_column = next(row for row in after[0] if row[1] == "update_time")
+            if update_column[2].upper() != "DATETIME" or update_column[3] != 1 \
+                    or "CURRENT_TIMESTAMP" not in update_column[4].upper() \
+                    or update_column[5] != 0:
+                raise RuntimeError("SQLite session migration changed update_time definition")
+            conn.commit()
+        except BaseException as error:
+            migration_error = error
+            try:
+                conn.rollback()
+            except BaseException:
+                logger.exception("SQLite session migration rollback failed")
+            raise
+        finally:
+            try:
+                if conn.in_transaction():
+                    conn.rollback()
+                conn.execute(text(f"PRAGMA foreign_keys = {int(bool(original_foreign_keys))}"))
+                conn.commit()
+            except BaseException:
+                if migration_error is None:
+                    raise
+                logger.exception("SQLite session migration foreign-key restoration failed")
 
     def create_session(self, session_data:SessionData) -> bool:
         """
@@ -138,6 +363,7 @@ class SessionSQLAlchemy(SessionStorageBase):
                 if db_session.query(Session).filter(Session.session_id == session_data.session_id).first():
                     raise ValueError(f"Session {session_data.session_id} already exists")
 
+                session_time = session_data.create_time or datetime.now()
                 new_session = Session(
                     session_id=session_data.session_id,
                     session_name=session_data.session_name,
@@ -145,7 +371,8 @@ class SessionSQLAlchemy(SessionStorageBase):
                     project_workspace=session_data.project_workspace,
                     pwd=session_data.pwd,
                     topsailai_home=session_data.topsailai_home,
-                    create_time=session_data.create_time or datetime.now()
+                    create_time=session_time,
+                    update_time=session_time
                 )
                 db_session.add(new_session)
                 db_session.commit()
@@ -220,6 +447,7 @@ class SessionSQLAlchemy(SessionStorageBase):
                 )
                 session_data.session_name = session.session_name
                 session_data.create_time = session.create_time
+                session_data.update_time = session.update_time
                 result.append(session_data)
             return result
         except Exception as e:
@@ -295,6 +523,7 @@ class SessionSQLAlchemy(SessionStorageBase):
             )
             session_data.session_name = session.session_name
             session_data.create_time = session.create_time
+            session_data.update_time = session.update_time
             return session_data
         except Exception as e:
             db_session.rollback()
@@ -434,7 +663,10 @@ class SessionSQLAlchemy(SessionStorageBase):
                 logger.warning(f"update_session_name: session not found: session_id={session_id}")
                 return False
 
+            if session.session_name == session_name:
+                return True
             session.session_name = session_name
+            session.update_time = datetime.now()
             db_session.commit()
             logger.info(f"update_session_name: session_id={session_id}, session_name={session_name}")
             return True
@@ -468,13 +700,16 @@ class SessionSQLAlchemy(SessionStorageBase):
                     "UPDATE session SET "
                     "total_tokens = total_tokens + :tokens, "
                     "total_cached_tokens = total_cached_tokens + :cached, "
-                    "total_completion_tokens = total_completion_tokens + :completion "
+                    "total_completion_tokens = total_completion_tokens + :completion, "
+                    "update_time = CASE WHEN :has_delta = 1 THEN :update_time ELSE update_time END "
                     "WHERE session_id = :session_id"
                 ),
                 {
                     "tokens": delta_tokens,
                     "cached": delta_cached,
                     "completion": delta_completion,
+                    "has_delta": int(bool(delta_tokens or delta_cached or delta_completion)),
+                    "update_time": datetime.now(),
                     "session_id": session_id,
                 },
             )

@@ -13,9 +13,11 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
-from sqlalchemy import text
+from sqlalchemy import text, event
 
 from topsailai.context.session_manager.sql import SessionSQLAlchemy, SessionData, Session
+from topsailai.context.chat_history_manager.__base import ChatHistoryMessageData
+import topsailai.context.session_manager.sql as session_sql
 
 
 class TestSessionSQLAlchemy:
@@ -988,3 +990,332 @@ class TestSessionTokenAccumulation:
             }
         finally:
             migrated.engine.dispose()
+
+
+class TestSessionUpdateTime:
+    """Test session-row update_time semantics."""
+
+    @pytest.fixture
+    def session_mgr(self):
+        """Create an in-memory manager for update_time tests."""
+        return SessionSQLAlchemy("sqlite:///:memory:")
+
+    def test_create_and_read_exposes_update_time(self, session_mgr):
+        """Creation initializes update_time and read mappings expose it."""
+        session_mgr.create_session(SessionData(session_id="update_time", task="task"))
+        session = session_mgr.get_session("update_time")
+        listed = session_mgr.list_sessions()[0]
+
+        assert session.update_time == session.create_time
+        assert listed.update_time == session.update_time
+        assert Session.update_time.type.__class__ is Session.create_time.type.__class__
+        assert Session.update_time.nullable is False
+        assert str(Session.update_time.server_default.arg).upper() == "CURRENT_TIMESTAMP"
+
+    def test_changed_name_updates_timestamp_but_identical_name_does_not(self, session_mgr):
+        """Only an actual session-name change advances update_time."""
+        data = SessionData(session_id="update_name", session_name="old", task="task")
+        data.create_time = datetime(2020, 1, 1, 0, 0, 0)
+        session_mgr.create_session(data)
+        original = session_mgr.get_session("update_name").update_time
+
+        assert session_mgr.update_session_name("update_name", "old") is True
+        assert session_mgr.get_session("update_name").update_time == original
+
+        new_time = datetime(2030, 1, 1, 0, 0, 1)
+        with patch.object(session_sql, "datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = new_time
+            assert session_mgr.update_session_name("update_name", "new") is True
+        assert session_mgr.get_session("update_name").update_time == new_time
+
+    def test_token_update_changes_timestamp_but_zero_delta_does_not(self, session_mgr):
+        """Raw token updates advance time only for non-zero normalized deltas."""
+        data = SessionData(session_id="token_time", task="task")
+        data.create_time = datetime(2020, 1, 1, 0, 0, 0)
+        session_mgr.create_session(data)
+        original = session_mgr.get_session("token_time").update_time
+
+        assert session_mgr.accumulate_session_tokens("token_time", 0, -1, -2) is True
+        assert session_mgr.get_session("token_time").update_time == original
+
+        new_time = datetime(2030, 1, 1, 0, 0, 1)
+        with patch.object(session_sql, "datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = new_time
+            assert session_mgr.accumulate_session_tokens("token_time", 1, 0, 0) is True
+        updated = session_mgr.get_session("token_time").update_time
+        assert updated == new_time
+        assert session_mgr.get_session("token_time").total_tokens == 1
+
+
+    def test_transaction_rollback_preserves_update_time(self, session_mgr):
+        """A failed session-row update leaves the fixed old timestamp unchanged."""
+        old_time = datetime(2020, 1, 1, 0, 0, 0)
+        data = SessionData(session_id="rollback_time", task="task")
+        data.create_time = old_time
+        session_mgr.create_session(data)
+        with patch.object(session_sql, "datetime", side_effect=RuntimeError("clock")):
+            assert session_mgr.update_session_name("rollback_time", "new") is None
+        session = session_mgr.get_session("rollback_time")
+        assert session.session_name is None
+        assert session.update_time == old_time
+
+    def _sqlite_snapshot(self, connection, expected_columns=None, include_update_time=True):
+        """Capture the selected session schema, indexes, triggers, and rows for comparison."""
+        all_columns = tuple(connection.execute(text(
+            "PRAGMA table_info(\"session\")"
+        )).fetchall())
+        selected_names = expected_columns or tuple(row[1] for row in all_columns)
+        allowed_names = set(selected_names)
+        if include_update_time:
+            allowed_names.add("update_time")
+        columns = tuple(row for row in all_columns if row[1] in allowed_names)
+        foreign_keys = tuple(connection.execute(text(
+            "PRAGMA foreign_key_list(\"session\")"
+        )).fetchall())
+        indexes = []
+        for row in connection.execute(text("PRAGMA index_list(\"session\")")).fetchall():
+            index_name, unique, origin, partial = row[1], row[2], row[3], row[4]
+            index_columns = tuple(item[2] for item in connection.execute(text(
+                f"PRAGMA index_info(\"{index_name.replace(chr(34), chr(34) * 2)}\")"
+            )).fetchall())
+            index_sql = connection.execute(text(
+                "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = :name"
+            ), {"name": index_name}).scalar_one_or_none()
+            indexes.append((index_name, index_sql, unique, origin, partial, index_columns))
+        triggers = tuple(connection.execute(text(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' "
+            "AND tbl_name = 'session' ORDER BY name"
+        )).fetchall())
+        projection = ", ".join(f'"{column}"' for column in selected_names)
+        ordering = ", ".join(f'"{column}"' for column in selected_names)
+        rows = tuple(connection.execute(text(
+            f"SELECT {projection} FROM session ORDER BY {ordering}"
+        )).fetchall())
+        return columns, foreign_keys, tuple(sorted(indexes)), triggers, rows
+
+    def _without_update_time(self, snapshot):
+        """Remove the migration-added column from a schema snapshot."""
+        columns, foreign_keys, indexes, triggers, rows = snapshot
+        return tuple(row for row in columns if row[1] != "update_time"), foreign_keys, indexes, triggers, rows
+
+
+    def test_sqlite_migration_backfills_and_is_idempotent(self, tmp_path):
+        """Legacy rows use create_time as the backfill and repeat unchanged."""
+        from sqlalchemy import create_engine
+        path = tmp_path / "backfill.db"
+        engine = create_engine(f"sqlite:///{path}")
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE session (session_id TEXT PRIMARY KEY, task TEXT NOT NULL, "
+                "create_time DATETIME NOT NULL)"
+            ))
+            connection.execute(text(
+                "INSERT INTO session VALUES ('legacy', 'task', '2020-01-01 00:00:00')"
+            ))
+        engine.dispose()
+        manager = SessionSQLAlchemy(f"sqlite:///{path}")
+        with manager.engine.connect() as connection:
+            first = self._sqlite_snapshot(connection)
+            row = connection.execute(text(
+                "SELECT create_time, update_time FROM session WHERE session_id='legacy'"
+            )).one()
+            assert row[0] == row[1]
+        manager.engine.dispose()
+        manager = SessionSQLAlchemy(f"sqlite:///{path}")
+        with manager.engine.connect() as connection:
+            second = self._sqlite_snapshot(connection)
+            assert second == first
+            assert connection.execute(text(
+                "SELECT count(*) FROM sqlite_master WHERE name='session__update_time_new'"
+            )).scalar() == 0
+        manager.engine.dispose()
+
+    def test_sqlite_migration_preserves_constraints_indexes_and_data(self, tmp_path):
+        """A rebuild preserves complete schema, index, trigger, and row inventories."""
+        from sqlalchemy import create_engine
+        path = tmp_path / "preserve.db"
+        engine = create_engine(f"sqlite:///{path}")
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE owner (id INTEGER PRIMARY KEY)"))
+            connection.execute(text(
+                "CREATE TABLE session (session_id TEXT PRIMARY KEY, owner_id INTEGER NOT NULL, "
+                "task TEXT NOT NULL, create_time DATETIME NOT NULL, "
+                "UNIQUE(task), CHECK(length(task) > 0), "
+                "FOREIGN KEY(owner_id) REFERENCES owner(id))"
+            ))
+            connection.execute(text("CREATE INDEX session_task_explicit ON session(task)"))
+            connection.execute(text("CREATE TABLE session_audit (session_id TEXT)"))
+            connection.execute(text(
+                "CREATE TRIGGER session_audit_trigger AFTER UPDATE OF task ON session "
+                "BEGIN INSERT INTO session_audit VALUES (NEW.session_id); END"
+            ))
+            connection.execute(text("INSERT INTO owner VALUES (1)"))
+            connection.execute(text(
+                "INSERT INTO session VALUES ('legacy', 1, 'task', '2020-01-01 00:00:00')"
+            ))
+        with engine.connect() as connection:
+            before_columns = tuple(row[1] for row in connection.execute(text(
+                "PRAGMA table_info(\"session\")"
+            )).fetchall())
+            before = self._sqlite_snapshot(connection, before_columns, include_update_time=False)
+        engine.dispose()
+        manager = SessionSQLAlchemy(f"sqlite:///{path}")
+        with manager.engine.connect() as connection:
+            after = self._sqlite_snapshot(connection, before_columns)
+            assert tuple(row for row in after[0] if row[1] != "update_time") == before[0]
+            assert after[1:] == before[1:]
+            assert any(item[3] == "u" and item[5] == ("task",) for item in after[2])
+            assert any(item[1] is not None and item[0] == "session_task_explicit" for item in after[2])
+            assert after[3]
+            assert after[4] == (("legacy", 1, "task", "2020-01-01 00:00:00"),)
+            assert connection.execute(text(
+                "SELECT update_time = create_time FROM session"
+            )).scalar() == 1
+        manager.engine.dispose()
+
+    def test_sqlite_migration_failure_then_retry_is_safe(self, tmp_path):
+        """An interrupted copy preserves exception, FK mode, schema, and retry data."""
+        from sqlalchemy import create_engine
+        path = tmp_path / "retry.db"
+        engine = create_engine(f"sqlite:///{path}")
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE session (session_id TEXT PRIMARY KEY, task TEXT, create_time DATETIME)"
+            ))
+            connection.execute(text(
+                "INSERT INTO session VALUES ('legacy', 'task', '2020-01-01 00:00:00')"
+            ))
+        manager = SessionSQLAlchemy.__new__(SessionSQLAlchemy)
+        manager.engine = engine
+        injected = KeyboardInterrupt("copy interrupted")
+        original_ddl = None
+        with engine.connect() as connection:
+            original_ddl = connection.execute(text(
+                "SELECT sql FROM sqlite_master WHERE name='session'"
+            )).scalar_one()
+            original_fk = connection.execute(text("PRAGMA foreign_keys")).scalar()
+            def fail_copy(_connection, cursor, statement, parameters, context, executemany):
+                """Interrupt the replacement row copy once."""
+                if "INSERT INTO \"session__update_time_new\"" in statement:
+                    raise injected
+            event.listen(engine, "before_cursor_execute", fail_copy)
+            with pytest.raises(KeyboardInterrupt) as caught:
+                manager._rebuild_sqlite_session_table(connection)
+            event.remove(engine, "before_cursor_execute", fail_copy)
+            assert caught.value is injected
+            assert connection.execute(text("PRAGMA foreign_keys")).scalar() == original_fk
+        with engine.connect() as connection:
+            assert connection.execute(text(
+                "SELECT sql FROM sqlite_master WHERE name='session'"
+            )).scalar_one() == original_ddl
+            assert connection.execute(text(
+                "SELECT count(*) FROM sqlite_master WHERE name='session__update_time_new'"
+            )).scalar() == 0
+            assert connection.execute(text("SELECT task FROM session")).scalar() == "task"
+            manager._rebuild_sqlite_session_table(connection)
+            row = connection.execute(text(
+                "SELECT create_time, update_time FROM session"
+            )).one()
+            assert row[0] == row[1]
+        engine.dispose()
+
+    def test_sqlite_migration_quoted_and_constrained_tables(self, tmp_path):
+        """Quoted names and a table-level UNIQUE constraint preserve data and indexes."""
+        from sqlalchemy import create_engine
+        for name, ddl in (
+            ("quoted", 'CREATE TABLE "session" (session_id TEXT PRIMARY KEY, task TEXT, create_time DATETIME)'),
+            ("unique", 'CREATE TABLE session (session_id TEXT PRIMARY KEY, task TEXT, create_time DATETIME, UNIQUE(task))'),
+        ):
+            path = tmp_path / f"{name}.db"
+            engine = create_engine(f"sqlite:///{path}")
+            with engine.begin() as connection:
+                connection.execute(text(ddl))
+                connection.execute(text(
+                    "INSERT INTO session VALUES ('legacy', 'task', '2020-01-01 00:00:00')"
+                ))
+            engine.dispose()
+            manager = SessionSQLAlchemy(f"sqlite:///{path}")
+            with manager.engine.connect() as connection:
+                assert connection.execute(text(
+                    "SELECT update_time = create_time FROM session"
+                )).scalar() == 1
+                assert connection.execute(text("SELECT task FROM session")).scalar() == "task"
+                if name == "unique":
+                    indexes = connection.execute(text("PRAGMA index_list(\"session\")")).fetchall()
+                    assert any(row[2] == 1 and row[3] == "u" for row in indexes)
+                    unique_name = next(row[1] for row in indexes if row[2] == 1 and row[3] == "u")
+                    assert tuple(row[2] for row in connection.execute(
+                        text(f"PRAGMA index_info(\"{unique_name}\")")
+                    ).fetchall()) == ("task",)
+            manager.engine.dispose()
+
+    def test_sqlite_unsupported_ddl_fails_closed(self, tmp_path):
+        """The real initializer rejects unsupported DDL without mutation."""
+        from sqlalchemy import create_engine
+        ddls = (
+            ("without", "CREATE TABLE session (session_id TEXT PRIMARY KEY, task TEXT, create_time TEXT) WITHOUT ROWID"),
+            ("strict", "CREATE TABLE session (session_id TEXT PRIMARY KEY, task TEXT, create_time TEXT) STRICT"),
+            ("generated", "CREATE TABLE session (session_id TEXT PRIMARY KEY, task TEXT, create_time DATETIME, derived TEXT AS (task))"),
+        )
+        for name, ddl in ddls:
+            path = tmp_path / f"{name}.db"
+            engine = create_engine(f"sqlite:///{path}")
+            with engine.begin() as connection:
+                connection.execute(text(ddl))
+                connection.execute(text(
+                    "INSERT INTO session(session_id, task, create_time) VALUES ('legacy', 'task', '2020-01-01 00:00:00')"
+                ))
+            with engine.connect() as connection:
+                before = self._sqlite_snapshot(connection)
+                before_schema = tuple(connection.execute(text(
+                    "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name"
+                )).fetchall())
+            engine.dispose()
+            with pytest.raises(RuntimeError, match="Unsupported") as raised:
+                SessionSQLAlchemy(f"sqlite:///{path}")
+            assert "Unsupported" in str(raised.value)
+            check_engine = create_engine(f"sqlite:///{path}")
+            with check_engine.connect() as connection:
+                after_schema = tuple(connection.execute(text(
+                    "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name"
+                )).fetchall())
+                assert after_schema == before_schema
+                assert self._sqlite_snapshot(connection) == before
+            check_engine.dispose()
+
+    def test_sqlite_migration_restores_foreign_keys_after_failure(self, tmp_path):
+        """Failure after FK disabling restores the original connection setting."""
+        from sqlalchemy import create_engine
+        for enabled in (0, 1):
+            path = tmp_path / f"foreign-keys-{enabled}.db"
+            engine = create_engine(f"sqlite:///{path}")
+            with engine.begin() as connection:
+                connection.execute(text(
+                    "CREATE TABLE session (session_id TEXT PRIMARY KEY, task TEXT, create_time DATETIME)"
+                ))
+            manager = SessionSQLAlchemy.__new__(SessionSQLAlchemy)
+            manager.engine = engine
+            with engine.connect() as connection:
+                connection.execute(text(f"PRAGMA foreign_keys = {enabled}"))
+                connection.commit()
+                original = connection.execute(text("PRAGMA foreign_keys")).scalar()
+                def fail_rebuild(_connection, cursor, statement, parameters, context, executemany):
+                    """Fail after the migration has disabled foreign keys."""
+                    if "CREATE TABLE \"session__update_time_new\"" in statement:
+                        raise RuntimeError("rebuild")
+                event.listen(engine, "before_cursor_execute", fail_rebuild)
+                with pytest.raises(RuntimeError, match="rebuild"):
+                    manager._rebuild_sqlite_session_table(connection)
+                event.remove(engine, "before_cursor_execute", fail_rebuild)
+                assert connection.execute(text("PRAGMA foreign_keys")).scalar() == original
+            engine.dispose()
+
+    def test_message_only_changes_leave_update_time_unchanged(self, session_mgr):
+        """Message-store writes do not change the session-row timestamp."""
+        old_time = datetime(2020, 1, 1, 0, 0, 0)
+        data = SessionData(session_id="message_time", task="task")
+        data.create_time = old_time
+        session_mgr.create_session(data)
+        before = session_mgr.get_session("message_time").update_time
+        session_mgr.chat_history.add_message(ChatHistoryMessageData("message", "message-id", "message_time"))
+        assert session_mgr.get_session("message_time").update_time == before

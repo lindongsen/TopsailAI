@@ -65,6 +65,7 @@ class SessionData(object):
         self.pwd = pwd
         self.topsailai_home = topsailai_home
         self.create_time = None
+        self.update_time = None
         self.total_tokens = total_tokens
         self.total_cached_tokens = total_cached_tokens
         self.total_completion_tokens = total_completion_tokens
