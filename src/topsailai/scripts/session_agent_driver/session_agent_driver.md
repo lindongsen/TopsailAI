@@ -51,6 +51,27 @@ tools:
   polling.
 - `exit_process(session_id=None)` — request the driver to exit its loop.
 
+## Analysis Session Retention Is Intentional
+
+**Human decision — 2026-10-31. Status: intentional designed behavior, not a bug (formerly review finding P1 #2).**
+
+Human.Topsail said:
+
+> 这个问题不解决，我是特意为之，你记到它的文档里面。下次遇到就有依据了，避免被认为是bug。
+
+The driver owns each analysis round and deliberately runs the analysis Agent in its own long-lived process. Finishing a round does not end that process. Analysis metadata therefore records the driver PID, and the public cleanup guard refuses deletion while that owner is alive. The driver deliberately retains the analysis session record rather than weakening the general fail-closed PID-exit protection for analysis sessions.
+
+**Expected consequence:** analysis session DB rows/history accumulate across rounds by design. A completed analysis round whose session remains present while the driver is alive is expected retention, not a leak to fix or a defect to re-report. This is distinct from cleanup of the driver's own lock, metadata and logs described below; process exit alone does not automatically delete analysis DB/history records or guarantee cleanup authorization.
+
+Current source evidence (paths relative to the project workspace, verified 2026-10-31):
+
+- `scripts/session_agent_driver/session_agent_driver.py:433, 451–473` allocates a per-round analysis ID and runs the Agent in-process; `486–492` attempts cleanup, and `363–375` preserves the record when deletion is refused.
+- `workspace/session_meta.py:233–241` records the current PID (`os.getpid()`).
+- `context/session_cleanup.py:55–68` preserves the public authorization checks before storage deletion.
+- `context/session_activity.py:115–120, 186–193` permits only STOPPED and treats a live owner as RUNNING, without trusting completion flags.
+
+Do not bypass the public cleanup guard, add force-delete or environment bypass switches, treat `completed`/`end_ts` as process-exit evidence, delete metadata to hide a live owner, move lifecycle policy into SQL, or weaken RUNNING/UNKNOWN fail-closed semantics. Changing this retention policy requires a new explicit Human decision, not a bug fix. The earlier alternatives A/B/C and implementation units A1/A2/A3 are superseded and must not be implemented on the authority of that proposal. The separate P2 finding about an unavailable manager being logged as "already absent" is not reclassified by this decision.
+
 ## Environment Variables
 
 | Variable | Default | Description |
