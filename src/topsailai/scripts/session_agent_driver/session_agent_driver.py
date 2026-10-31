@@ -48,7 +48,7 @@ DEFAULT_TIMEOUT = 120
 LOG_TAIL_LINES = 100
 MESSAGES_SUMMARY_MAX_CHARS = 8000
 MESSAGES_SUMMARY_MAX_ITEMS = 20
-ANALYSIS_SESSION_PREFIX = "session_agent_driver_"
+ANALYSIS_SESSION_PREFIX = "sad-"
 
 DEFAULT_PROMPT = """# Session Analysis Task
 
@@ -430,7 +430,7 @@ def _run_analysis_agent(session_id: str) -> None:
     if session_info["status"] != "input":
         return
     prompt = render_analysis_prompt(session_info)
-    analysis_session_id = ANALYSIS_SESSION_PREFIX + uuid.uuid4().hex
+    analysis_session_id = ANALYSIS_SESSION_PREFIX + uuid.uuid4().hex[:12]
     timeout = _read_int_env(TIMEOUT_ENV, DEFAULT_TIMEOUT)
     logger.info(
         "starting analysis agent %s for session %s (status=%s)",

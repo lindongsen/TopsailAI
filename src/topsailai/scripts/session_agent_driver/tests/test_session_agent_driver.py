@@ -195,6 +195,23 @@ class TestRenderAnalysisPrompt:
 # _read_int_env
 # ---------------------------------------------------------------------------
 
+
+
+class TestAnalysisSessionId:
+    """Analysis sessions use the driver's short, filename-safe identifier."""
+
+    def test_format(self):
+        analysis_session_id = sad.ANALYSIS_SESSION_PREFIX + sad.uuid.uuid4().hex[:12]
+        assert sad.ANALYSIS_SESSION_PREFIX == "sad-"
+        assert len(analysis_session_id) == 16
+        assert analysis_session_id.startswith("sad-")
+        assert all(character in "0123456789abcdef" for character in analysis_session_id[4:])
+
+    def test_generated_ids_are_distinct(self):
+        first = sad.ANALYSIS_SESSION_PREFIX + sad.uuid.uuid4().hex[:12]
+        second = sad.ANALYSIS_SESSION_PREFIX + sad.uuid.uuid4().hex[:12]
+        assert first != second
+
 class TestReadIntEnv:
     def test_default(self):
         with mock.patch.dict(os.environ, {}, clear=False):
