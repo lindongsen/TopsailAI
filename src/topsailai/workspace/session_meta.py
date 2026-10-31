@@ -22,6 +22,7 @@ from topsailai.utils import env_tool
 from topsailai.utils.qos_tool import log_if_slow_decorator
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
 from topsailai.context.session_activity import ActivityState, SessionActivityProbe
+from topsailai.context.session_category import resolve_session_category
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +197,7 @@ def _get_feature_flags() -> dict:
 @safe_session_meta
 @_serialized_session_meta
 def create_session_meta(
-    session_id: str | None = None, ai_agent=None, session_name: str = ""
+    session_id: str | None = None, ai_agent=None, session_name: str = "", category: str = ""
 ) -> str | None:
     """Create the initial session metadata file.
 
@@ -206,6 +207,7 @@ def create_session_meta(
         session_id: Optional session identifier.
         ai_agent: Optional AI agent instance to extract agent metadata.
         session_name: Current session name, or empty when unavailable.
+        category: Session category, or empty when unavailable.
 
     Returns:
         Path to the created metadata file, or None on failure.
@@ -234,6 +236,7 @@ def create_session_meta(
         "version": META_VERSION,
         "session_id": resolved_session_id,
         "session_name": session_name,
+        "category": resolve_session_category(category),
         "pid": os.getpid(),
         "hostname": _get_hostname(),
         "start_ts": _now_iso8601(),

@@ -46,7 +46,10 @@ class TestAgentChatStartupStateWiring(unittest.TestCase):
             )
 
         create_meta.assert_called_once_with(
-            session_id=session_id, ai_agent=fake_agent, session_name=session_name or ""
+            session_id=session_id,
+            ai_agent=fake_agent,
+            session_name=session_name or "",
+            category="",
         )
         captured["agent_state"] = fake_agent.startup_state
         self.assertIs(result, fake_chat)

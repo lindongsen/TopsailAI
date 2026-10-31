@@ -280,7 +280,13 @@ def _get_agent_chat_impl(
     # Session metadata (best-effort, failures are logged inside the helpers)
     session_data = ctx_runtime_data.session_data
     session_name = getattr(session_data, "session_name", "") or ""
-    create_session_meta(session_id=session_id, ai_agent=ai_agent, session_name=session_name)
+    session_category = getattr(session_data, "category", "") or ""
+    create_session_meta(
+        session_id=session_id,
+        ai_agent=ai_agent,
+        session_name=session_name,
+        category=session_category,
+    )
     cleanup_session_meta_files()
     # Hook Instruction
     ##########################################################################################

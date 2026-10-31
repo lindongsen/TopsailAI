@@ -494,3 +494,111 @@ def test_llm_existing_session_keeps_category_without_update(monkeypatch):
 
     assert after.category == "agent"
     assert statements == []
+
+
+def test_agent_factory_writes_db_category_to_meta_on_resume(monkeypatch, tmp_path):
+    """Agent metadata uses the persisted DB category instead of new environment input."""
+    import json
+    from pathlib import Path
+    from topsailai.workspace import agent_shell, session_meta
+    from topsailai.context.session_manager.sql import SessionSQLAlchemy
+
+    storage = SessionSQLAlchemy("sqlite:///:memory:")
+    monkeypatch.setattr(session_meta, "FOLDER_WORKSPACE_TASK", str(tmp_path))
+    monkeypatch.setattr(agent_shell.ctx_manager, "get_session_manager", lambda: storage)
+
+    class RuntimeData(_FakeRuntimeData):
+        """Runtime fixture that reads the authoritative session record."""
+
+        def __init__(self):
+            self.messages = []
+            self.session_id = ""
+
+        @property
+        def session_data(self):
+            return storage.get_session(self.session_id)
+    monkeypatch.setattr(agent_shell, "ContextRuntimeData", RuntimeData)
+    monkeypatch.setattr(agent_shell, "get_ai_agent", lambda **kwargs: _FakeAgent())
+    monkeypatch.setattr(agent_shell, "ContextRuntimeAIAgent", lambda data: object())
+    monkeypatch.setattr(agent_shell, "ContextRuntimeInstructions", lambda data: type(
+        "Instructions", (), {"instructions": {}})())
+    monkeypatch.setattr(agent_shell, "HookInstruction", lambda **kwargs: type("Hooks", (), {
+        "load_instructions": lambda self, instructions: None,
+    })())
+    monkeypatch.setattr(agent_shell, "AgentChat", lambda **kwargs: type("Chat", (), {})())
+    monkeypatch.setattr(agent_shell, "record_project_history", lambda session_id: None)
+    monkeypatch.setattr(agent_shell, "cleanup_session_meta_files", lambda: None)
+    monkeypatch.setattr(agent_shell, "print_tool", type("Print", (), {
+        "print_info": staticmethod(lambda value: None),
+    })())
+    monkeypatch.setattr(agent_shell, "_cleanup_stale_interrupt_flag", lambda session_id, pid: None)
+    monkeypatch.setattr(agent_shell, "get_message", lambda **kwargs: "")
+    monkeypatch.setenv("TOPSAILAI_AUTO_SESSION_NAME_ENABLED", "0")
+    monkeypatch.setenv("TOPSAILAI_SESSION_CATEGORY", "agent")
+
+    agent_shell.get_agent_chat(
+        session_id="meta-category", message="task", need_input_message=False,
+        need_print_session=False, need_project_workspace_lock=False,
+    )
+    path = session_meta.get_session_meta_path("meta-category")
+    assert json.loads(Path(path).read_text())["category"] == "agent"
+
+    monkeypatch.setenv("TOPSAILAI_SESSION_CATEGORY", "chat")
+    agent_shell.get_agent_chat(
+        session_id="meta-category", message="task", need_input_message=False,
+        need_print_session=False, need_project_workspace_lock=False,
+    )
+    assert json.loads(Path(path).read_text())["category"] == "agent"
+
+
+
+def test_agent_factory_empty_db_category_beats_legacy_meta_and_environment(monkeypatch, tmp_path):
+    """An empty DB category replaces stale metadata and environment values."""
+    import json
+    from pathlib import Path
+    from topsailai.context.session_manager.__base import SessionData
+    from topsailai.context.session_manager.sql import SessionSQLAlchemy
+    from topsailai.workspace import agent_shell, session_meta
+
+    storage = SessionSQLAlchemy("sqlite:///:memory:")
+    storage.create_session(SessionData("meta-empty", category=""))
+    monkeypatch.setattr(session_meta, "FOLDER_WORKSPACE_TASK", str(tmp_path))
+    path = Path(session_meta.get_session_meta_path("meta-empty"))
+    path.write_text(json.dumps({"status": "running", "category": "legacy_value"}))
+
+    class RuntimeData(_FakeRuntimeData):
+        """Runtime fixture that reads the authoritative empty DB category."""
+
+        def __init__(self):
+            self.messages = []
+            self.session_id = ""
+
+        @property
+        def session_data(self):
+            return storage.get_session(self.session_id)
+    monkeypatch.setattr(agent_shell.ctx_manager, "get_session_manager", lambda: storage)
+    monkeypatch.setattr(agent_shell, "ContextRuntimeData", RuntimeData)
+    monkeypatch.setattr(agent_shell, "get_ai_agent", lambda **kwargs: _FakeAgent())
+    monkeypatch.setattr(agent_shell, "ContextRuntimeAIAgent", lambda data: object())
+    monkeypatch.setattr(agent_shell, "ContextRuntimeInstructions", lambda data: type(
+        "Instructions", (), {"instructions": {}})())
+    monkeypatch.setattr(agent_shell, "HookInstruction", lambda **kwargs: type("Hooks", (), {
+        "load_instructions": lambda self, instructions: None,
+    })())
+    monkeypatch.setattr(agent_shell, "AgentChat", lambda **kwargs: type("Chat", (), {})())
+    monkeypatch.setattr(agent_shell, "record_project_history", lambda session_id: None)
+    monkeypatch.setattr(agent_shell, "cleanup_session_meta_files", lambda: None)
+    monkeypatch.setattr(agent_shell, "print_tool", type("Print", (), {
+        "print_info": staticmethod(lambda value: None),
+    })())
+    monkeypatch.setattr(agent_shell, "_cleanup_stale_interrupt_flag", lambda session_id, pid: None)
+    monkeypatch.setattr(agent_shell, "get_message", lambda **kwargs: "")
+    monkeypatch.setenv("TOPSAILAI_AUTO_SESSION_NAME_ENABLED", "0")
+    monkeypatch.setenv("TOPSAILAI_SESSION_CATEGORY", "chat")
+
+    agent_shell.get_agent_chat(
+        session_id="meta-empty", message="task", need_input_message=False,
+        need_print_session=False, need_project_workspace_lock=False,
+    )
+
+    assert json.loads(path.read_text())["category"] == ""

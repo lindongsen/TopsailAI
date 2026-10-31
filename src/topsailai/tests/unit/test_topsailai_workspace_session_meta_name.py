@@ -88,7 +88,7 @@ def test_interleaving_preserves_name_and_terminal(monkeypatch, first_name, termi
     hostname = "fixed-created-host"
     resolver = Mock(return_value=hostname)
     monkeypatch.setattr(meta, "_get_hostname", resolver)
-    meta.create_session_meta("names")
+    meta.create_session_meta("names", category="agent")
     original_read = meta._read_meta
     original_lock = meta._META_LOCK
     first_read = threading.Event()
@@ -160,9 +160,10 @@ def test_interleaving_preserves_name_and_terminal(monkeypatch, first_name, termi
     result = read()
     assert result["session_name"] == "late name"
     assert result["hostname"] == hostname
+    assert result["category"] == "agent"
     assert resolver.call_count == 1
-    assert result["status"] == ("interrupted" if terminal == "exit" else terminal)
     assert result["end_ts"]
+    assert result["status"] == ("interrupted" if terminal == "exit" else terminal)
 
 
 def test_replace_failure_preserves_json(monkeypatch, caplog):

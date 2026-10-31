@@ -6,6 +6,7 @@
 '''
 
 import json
+import logging
 import os
 import socket
 import time
@@ -433,3 +434,64 @@ def test_cleanup_logs_critical_only_above_five_seconds(
         assert "Session metadata cleanup exceeded startup latency threshold" in message
         assert "elapsed: 5.001s" in message
         assert "threshold: 5s" in message
+
+
+def test_create_session_meta_writes_category(caplog):
+    """Creation stores a valid session category without an error log."""
+    path = session_meta.create_session_meta("s-category", category="agent")
+    assert _read_meta(path)["category"] == "agent"
+    assert not [record for record in caplog.records if record.levelno == logging.ERROR]
+
+
+def test_create_session_meta_category_defaults_to_empty():
+    """Creation defaults the session category to an empty string."""
+    path = session_meta.create_session_meta("s-category-default")
+    assert _read_meta(path)["category"] == ""
+
+
+@pytest.mark.parametrize("category", ["Agent", "chat x", "chat-x", "聊天", "agent\n"])
+def test_create_session_meta_rejects_invalid_category(caplog, category):
+    """Invalid categories are empty and logged with their original value."""
+    path = session_meta.create_session_meta("s-category-invalid", category=category)
+    assert _read_meta(path)["category"] == ""
+    records = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(records) == 1
+    assert repr(category)[1:-1] in records[0].getMessage()
+
+
+def test_legacy_meta_without_category_is_not_backfilled():
+    """Updating legacy metadata does not add the optional category field."""
+    path = session_meta.get_session_meta_path("s-category-legacy")
+    legacy = {"status": "running", "session_name": ""}
+    with open(path, "w", encoding="utf-8") as fd:
+        json.dump(legacy, fd)
+
+    session_meta.update_session_meta_field("session_name", "renamed", "s-category-legacy")
+    session_meta.update_session_meta_status("completed", "s-category-legacy")
+
+    result = _read_meta(path)
+    assert result.get("category", "") == ""
+    assert "category" not in result
+
+
+def test_legacy_meta_read_does_not_modify_bytes():
+    """Reading legacy metadata without category leaves its bytes unchanged."""
+    path = session_meta.get_session_meta_path("s-category-read-only")
+    with open(path, "wb") as fd:
+        fd.write(b'{"status":"running","session_name":""}')
+    before = open(path, "rb").read()
+
+    result = session_meta._read_meta(path)
+
+    assert result.get("category", "") == ""
+    assert "category" not in result
+    assert open(path, "rb").read() == before
+
+
+def test_category_survives_name_and_end_updates():
+    """Name and terminal updates preserve the creation category."""
+    path = session_meta.create_session_meta("s-category-updates", category="agent")
+    session_meta.update_session_meta_field("session_name", "renamed", "s-category-updates")
+    session_meta.update_session_meta_status("completed", "s-category-updates")
+    result = _read_meta(path)
+    assert result["category"] == "agent"
