@@ -29,9 +29,9 @@ _OWNER_SUFFIXES = (
     "agent2llm_interrupt.fbt_retry",
 )
 _OWNER_PATTERN = re.compile(
-    r"^(.+)\.([1-9][0-9]*)\.session\.("
+    r"^(.+)\.([1-9][0-9]*)\.session\.((?:"
     + "|".join(re.escape(suffix) for suffix in _OWNER_SUFFIXES)
-    + r")$"
+    + r"|stats\.[1-9][0-9]*\.jsonl))$"
 )
 
 

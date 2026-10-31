@@ -32,6 +32,7 @@ def test_owner_states(tmp_path, state):
     "pipe",
     "sock",
     "stats.jsonl",
+    "stats.1.jsonl",
     "agent2llm_inject_messages.jsonl",
     "agent2llm_interrupt.flag",
     "agent2llm_interrupt.fbt_waiting",
@@ -41,6 +42,28 @@ def test_fallback_inventory(tmp_path, suffix):
     """Fallback records are inspected by name without reading their payload."""
     record(tmp_path, suffix=suffix)
     assert SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).can_clean("a.b[1]")
+
+
+def test_real_stats_writer_rotation_is_cleanable(tmp_path):
+    """Production stats rotation remains recognized by the cleanup probe."""
+    from topsailai.workspace.session_stats_writer import StatsWriter, StorageConfig
+
+    writer = StatsWriter(
+        "a_b",
+        directory=tmp_path,
+        diagnostic=lambda category, name: True,
+        config=StorageConfig(max_size_bytes=4096),
+    )
+    line = b"{" + b"x" * 4093 + b"}\n"
+    assert writer.append(line).ok
+    assert writer.append(line).ok
+    rotated = writer.backup(1)
+    assert rotated.exists()
+    record(tmp_path, sid="a_b", pid=writer.pid)
+
+    probe = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED)
+    assert probe.observe("a_b").state == State.STOPPED
+    assert probe.can_clean("a_b")
 
 
 @pytest.mark.parametrize("suffix", ["stats.jsonl", "sock", "agent2llm_interrupt.flag"])
