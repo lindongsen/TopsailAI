@@ -12,6 +12,28 @@ import psutil
 
 logger = logging.getLogger(__name__)
 
+# Owner record suffixes produced by the framework. Every entry must have a
+# production writer; unknown suffixes stay malformed evidence and fail closed.
+_OWNER_SUFFIXES = (
+    "meta",
+    "meta.tmp",
+    "stdout",
+    "stderr",
+    "events",
+    "pipe",
+    "sock",
+    "stats.jsonl",
+    "agent2llm_inject_messages.jsonl",
+    "agent2llm_interrupt.flag",
+    "agent2llm_interrupt.fbt_waiting",
+    "agent2llm_interrupt.fbt_retry",
+)
+_OWNER_PATTERN = re.compile(
+    r"^(.+)\.([1-9][0-9]*)\.session\.("
+    + "|".join(re.escape(suffix) for suffix in _OWNER_SUFFIXES)
+    + r")$"
+)
+
 
 class ActivityState(str, Enum):
     """Describe evidence, not a cross-process lifecycle lock."""
@@ -132,7 +154,7 @@ class SessionActivityProbe:
         requested = set(session_ids)
         owners = {session_id: [] for session_id in session_ids}
         malformed = set()
-        pattern = re.compile(r"^(.+)\.([1-9][0-9]*)\.session\.(meta|stdout|stderr|events|pipe|agent2llm_inject_messages\.jsonl)$")
+        pattern = _OWNER_PATTERN
         for name in inventory:
             if ".session." not in name:
                 continue

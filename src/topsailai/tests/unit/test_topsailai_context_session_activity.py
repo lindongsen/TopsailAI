@@ -25,11 +25,41 @@ def test_owner_states(tmp_path, state):
     assert probe.can_clean("a.b[1]") == (state == State.STOPPED)
 
 
-@pytest.mark.parametrize("suffix", ["stdout", "stderr", "events", "pipe", "agent2llm_inject_messages.jsonl"])
+@pytest.mark.parametrize("suffix", [
+    "stdout",
+    "stderr",
+    "events",
+    "pipe",
+    "sock",
+    "stats.jsonl",
+    "agent2llm_inject_messages.jsonl",
+    "agent2llm_interrupt.flag",
+    "agent2llm_interrupt.fbt_waiting",
+    "agent2llm_interrupt.fbt_retry",
+])
 def test_fallback_inventory(tmp_path, suffix):
     """Fallback records are inspected by name without reading their payload."""
     record(tmp_path, suffix=suffix)
     assert SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).can_clean("a.b[1]")
+
+
+@pytest.mark.parametrize("suffix", ["stats.jsonl", "sock", "agent2llm_interrupt.flag"])
+def test_framework_auxiliary_records_do_not_block_cleanup(tmp_path, suffix):
+    """Framework auxiliary records must not be treated as malformed evidence."""
+    record(tmp_path, suffix="meta")
+    (tmp_path / f"a.b[1].123.session.{suffix}").write_text("auxiliary")
+    observation = SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).observe("a.b[1]")
+
+    assert observation.state == State.STOPPED
+    assert observation.reason == "all recorded owners absent"
+
+
+def test_unknown_suffix_still_fails_closed(tmp_path):
+    """An unrecognized owner-like record keeps cleanup unauthorized."""
+    record(tmp_path)
+    (tmp_path / "a.b[1].123.session.unknown_suffix").write_text("{}")
+
+    assert not SessionActivityProbe((tmp_path,), lambda pid: State.STOPPED).can_clean("a.b[1]")
 
 
 def test_multiple_owners_and_pid_reuse(tmp_path):
