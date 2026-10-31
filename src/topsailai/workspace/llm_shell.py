@@ -29,6 +29,7 @@ from topsailai.utils import (
 )
 from topsailai.workspace.input_tool import get_message
 from topsailai.context import ctx_manager
+from topsailai.context.session_category import load_session_category
 
 
 class LLMChat(object):
@@ -134,6 +135,7 @@ def get_llm_chat(
         need_print_message: bool = True,
         func_formatter_messages=None,
         load_startup_context: bool = True,
+        session_category: str | None = None,
     ) -> LLMChat:
     """
     Create and return an LLMChat instance for interacting with a Large Language Model.
@@ -182,6 +184,12 @@ def get_llm_chat(
         >>> response = chat.chat()
         >>> print(response)
     """
+    resolved_session_category = (
+        load_session_category(os.environ)
+        if session_category is None
+        else session_category
+    )
+
     if not message:
         message = get_message(need_input=need_input_message)
 
@@ -205,7 +213,11 @@ def get_llm_chat(
         messages_from_session = ctx_manager.get_messages_by_session(session_id)
         if not messages_from_session:
             assert message, "message is null"
-            ctx_manager.create_session(session_id, task=message)
+            ctx_manager.create_session(
+                session_id,
+                task=message,
+                category=resolved_session_category,
+            )
     else:
         assert message, "message is null"
 

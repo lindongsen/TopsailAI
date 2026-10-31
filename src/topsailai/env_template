@@ -63,6 +63,11 @@ TOPSAILAI_AUTO_SESSION_NAME_ENABLED=1
 # Maximum length in characters for auto-generated session names. Default is 30.
 TOPSAILAI_AUTO_SESSION_NAME_MAX_LENGTH=30
 
+# Session category for newly created sessions. Empty by default.
+# Valid values contain only lowercase letters, digits, and underscores.
+# Invalid values are logged at ERROR level and stored as an empty category.
+TOPSAILAI_SESSION_CATEGORY=""
+
 # =============================================================================
 # Duplicate Tool Call Detection
 # =============================================================================

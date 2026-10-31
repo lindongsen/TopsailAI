@@ -33,6 +33,7 @@ class SessionData(object):
         total_tokens: int = 0,
         total_cached_tokens: int = 0,
         total_completion_tokens: int = 0,
+        category: str = "",
     ):
         """
         Initialize a SessionData instance.
@@ -51,6 +52,7 @@ class SessionData(object):
                 Defaults to 0.
             total_completion_tokens (int, optional): Accumulated completion tokens.
                 Defaults to 0.
+            category (str, optional): Session category. Defaults to an empty string.
 
         Note:
             Additional attributes like session_name and create_time are
@@ -69,6 +71,7 @@ class SessionData(object):
         self.total_tokens = total_tokens
         self.total_cached_tokens = total_cached_tokens
         self.total_completion_tokens = total_completion_tokens
+        self.category = category
 
     @property
     def total_prompt_tokens(self):

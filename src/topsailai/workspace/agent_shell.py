@@ -26,6 +26,7 @@ from topsailai.workspace.session_meta import (
     cleanup_session_meta_files,
 )
 from topsailai.context import ctx_manager
+from topsailai.context.session_category import load_session_category
 from topsailai.context.agent_startup import AgentStartupState
 from topsailai.workspace.input_tool import (
     get_message,
@@ -158,6 +159,7 @@ def _get_agent_chat_impl(
         need_project_workspace_lock:bool=True,
         *,
         agent_startup_state: AgentStartupState | None = None,
+        session_category: str = "",
     ) -> AgentChat:
     """Internal implementation of get_agent_chat()."""
     if need_print_session is None:
@@ -245,6 +247,7 @@ def _get_agent_chat_impl(
                 task=message[:100],
                 agent_name=resolved_agent_name,
                 agent_startup_state=agent_startup_state,
+                category=session_category,
             )
 
     # ai agent
@@ -326,6 +329,7 @@ def get_agent_chat(
         need_input_message:bool=True,
         need_set_agent_name_to_thread_local:bool=True,
         need_project_workspace_lock:bool=True,
+        session_category: str | None = None,
     ) -> AgentChat:
     """Create and return an AgentChat instance with all required components.
 
@@ -352,6 +356,11 @@ def get_agent_chat(
         AgentChat: A fully initialized AgentChat instance ready for conversation.
     """
     startup_state = AgentStartupState()
+    resolved_session_category = (
+        load_session_category(os.environ)
+        if session_category is None
+        else session_category
+    )
     lock_ctx = ctxm_project_workspace_lock if need_project_workspace_lock else ctxm_void
     try:
         with lock_ctx() as has_lock:
@@ -372,6 +381,7 @@ def get_agent_chat(
                 need_set_agent_name_to_thread_local=need_set_agent_name_to_thread_local,
                 need_project_workspace_lock=need_project_workspace_lock,
                 agent_startup_state=startup_state,
+                session_category=resolved_session_category,
             )
     except BaseException:
         startup_state.cancel()

@@ -56,6 +56,7 @@ class Session(Base):
     total_completion_tokens = Column(Integer, default=0)
     create_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
     update_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
+    category = Column(Text, nullable=False, default="", server_default="")
 
 class SessionSQLAlchemy(SessionStorageBase):
     """
@@ -112,7 +113,7 @@ class SessionSQLAlchemy(SessionStorageBase):
                 raise RuntimeError("Unsupported SQLite session table DDL options")
             columns = (
                 "project_workspace", "pwd", "topsailai_home", "total_tokens",
-                "total_cached_tokens", "total_completion_tokens",
+                "total_cached_tokens", "total_completion_tokens", "category",
             )
             numeric_columns = {
                 "total_tokens", "total_cached_tokens", "total_completion_tokens",
@@ -126,6 +127,10 @@ class SessionSQLAlchemy(SessionStorageBase):
                     if column_name in numeric_columns:
                         conn.execute(text(
                             f"ALTER TABLE session ADD COLUMN {column_name} INTEGER DEFAULT 0"
+                        ))
+                    elif column_name == "category":
+                        conn.execute(text(
+                            "ALTER TABLE session ADD COLUMN category TEXT NOT NULL DEFAULT ''"
                         ))
                     else:
                         conn.execute(text(f"ALTER TABLE session ADD COLUMN {column_name} TEXT"))
@@ -343,6 +348,16 @@ class SessionSQLAlchemy(SessionStorageBase):
                     raise
                 logger.exception("SQLite session migration foreign-key restoration failed")
 
+    @staticmethod
+    def _normalize_category(category: str) -> str:
+        """Return a valid category or an empty string and log invalid input."""
+        if category == "":
+            return ""
+        if isinstance(category, str) and re.fullmatch(r"[a-z0-9_]+", category):
+            return category
+        logger.error("Invalid session category %r; storing an empty string", category)
+        return ""
+
     def create_session(self, session_data:SessionData) -> bool:
         """
         Create a new session in the storage.
@@ -371,6 +386,7 @@ class SessionSQLAlchemy(SessionStorageBase):
                     project_workspace=session_data.project_workspace,
                     pwd=session_data.pwd,
                     topsailai_home=session_data.topsailai_home,
+                    category=self._normalize_category(session_data.category),
                     create_time=session_time,
                     update_time=session_time
                 )
@@ -444,6 +460,7 @@ class SessionSQLAlchemy(SessionStorageBase):
                     total_tokens=session.total_tokens or 0,
                     total_cached_tokens=session.total_cached_tokens or 0,
                     total_completion_tokens=session.total_completion_tokens or 0,
+                    category=session.category or "",
                 )
                 session_data.session_name = session.session_name
                 session_data.create_time = session.create_time
@@ -520,6 +537,7 @@ class SessionSQLAlchemy(SessionStorageBase):
                 total_tokens=session.total_tokens or 0,
                 total_cached_tokens=session.total_cached_tokens or 0,
                 total_completion_tokens=session.total_completion_tokens or 0,
+                category=session.category or "",
             )
             session_data.session_name = session.session_name
             session_data.create_time = session.create_time

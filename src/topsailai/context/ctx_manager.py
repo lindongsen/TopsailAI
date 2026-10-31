@@ -409,6 +409,7 @@ def create_session(
         session_mgr: SessionStorageBase = None,
         agent_name: str = None,
         agent_startup_state=None,
+        category: str = "",
     ) -> bool:
     """
     Create a new session for a specific task.
@@ -422,6 +423,7 @@ def create_session(
             If None, a new one is created.
         agent_name (str, optional): Base agent name for the asynchronous rename
             worker. Falls back to TOPSAILAI_AGENT_NAME, then TopsailAI.
+        category (str, optional): Session category. Defaults to an empty string.
 
     Returns:
         bool: True if session was created successfully, False otherwise.
@@ -446,6 +448,7 @@ def create_session(
             project_workspace=env_paths["project_workspace"],
             pwd=env_paths["pwd"],
             topsailai_home=env_paths["topsailai_home"],
+            category=category,
         )
     )
 
