@@ -18,25 +18,72 @@ import (
 func TestMain(m *testing.M) {
 	if os.Getenv("AGENT_CLUSTER_COMMAND_HELPER") == "1" {
 		if path := os.Getenv("AGENT_CLUSTER_COMMAND_HELPER_ARGV"); path != "" {
-			_ = os.WriteFile(path, []byte(strings.Join(os.Args[1:], "\x00")), 0o600)
+			if err := os.WriteFile(path, []byte(strings.Join(os.Args[1:], "\x00")), 0o600); err != nil {
+				fmt.Fprintf(os.Stderr, "write helper argv %q: %v\n", path, err)
+				os.Exit(1)
+			}
 		}
 		if path := os.Getenv("AGENT_CLUSTER_COMMAND_HELPER_PID"); path != "" {
-			_ = os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0o600)
+			if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+				fmt.Fprintf(os.Stderr, "write helper pid %q: %v\n", path, err)
+				os.Exit(1)
+			}
 		}
 		switch os.Getenv("AGENT_CLUSTER_COMMAND_HELPER_OUTPUT") {
 		case "output":
-			_, _ = os.Stdout.WriteString(`{"data":"bounded provider output","truncated":false}`)
+			if _, err := os.Stdout.WriteString(`{"data":"bounded provider output","truncated":false}`); err != nil {
+				fmt.Fprintf(os.Stderr, "write helper output: %v\n", err)
+				os.Exit(1)
+			}
 		case "oversized":
-			data, _ := json.Marshal(map[string]any{"data": strings.Repeat("x", 1<<20), "truncated": false})
-			_, _ = os.Stdout.Write(data)
-			time.Sleep(5 * time.Second)
+			data, err := json.Marshal(map[string]any{"data": strings.Repeat("x", 1<<20), "truncated": false})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "marshal helper output: %v\n", err)
+				os.Exit(1)
+			}
+			var record *os.File
+			if path := os.Getenv("AGENT_CLUSTER_COMMAND_HELPER_RECORD"); path != "" {
+				record, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "open helper output record %q: %v\n", path, err)
+					os.Exit(1)
+				}
+				defer record.Close()
+			}
+			for offset := 0; offset < len(data); {
+				end := offset + 4096
+				if end > len(data) {
+					end = len(data)
+				}
+				written, writeErr := os.Stdout.Write(data[offset:end])
+				if written > 0 && record != nil {
+					if _, err := record.Write(data[offset : offset+written]); err != nil {
+						fmt.Fprintf(os.Stderr, "write helper output record: %v\n", err)
+						os.Exit(1)
+					}
+				}
+				offset += written
+				if writeErr != nil {
+					fmt.Fprintf(os.Stderr, "write helper output: %v\n", writeErr)
+					os.Exit(1)
+				}
+			}
 			if path := os.Getenv("AGENT_CLUSTER_COMMAND_HELPER_DONE"); path != "" {
-				_ = os.WriteFile(path, []byte("complete\n"), 0o600)
+				if err := os.WriteFile(path, []byte("complete\n"), 0o600); err != nil {
+					fmt.Fprintf(os.Stderr, "write helper completion marker %q: %v\n", path, err)
+					os.Exit(1)
+				}
 			}
 		case "discover":
-			_, _ = os.Stdout.WriteString(`{"sessions":[],"complete":true}`)
+			if _, err := os.Stdout.WriteString(`{"sessions":[],"complete":true}`); err != nil {
+				fmt.Fprintf(os.Stderr, "write helper discovery output: %v\n", err)
+				os.Exit(1)
+			}
 		default:
-			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"command_id": "cmd-1", "outcome": "accepted", "effect_certainty": "acknowledged", "delivery_boundary": "submitted"})
+			if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"command_id": "cmd-1", "outcome": "accepted", "effect_certainty": "acknowledged", "delivery_boundary": "submitted"}); err != nil {
+				fmt.Fprintf(os.Stderr, "write helper response: %v\n", err)
+				os.Exit(1)
+			}
 		}
 		return
 	}
@@ -110,15 +157,31 @@ func TestReadOutputTranslatesOpaqueResourceID(t *testing.T) {
 		t.Fatalf("argv=%q", args)
 	}
 }
-
 func TestOutputIsBoundedDuringRead(t *testing.T) {
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER", "1")
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_OUTPUT", "oversized")
 	pidPath := t.TempDir() + "/pid"
 	donePath := t.TempDir() + "/done"
+	recordPath := t.TempDir() + "/output"
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_PID", pidPath)
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_DONE", donePath)
+	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_RECORD", recordPath)
 	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ProviderKey: "native-output"}})
+
+	completedStarted := time.Now()
+	if _, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "res-output"}, Limit: 2 << 20}); err != nil {
+		t.Fatalf("complete output: %v", err)
+	}
+	if _, statErr := os.Stat(donePath); statErr != nil {
+		t.Fatalf("completion marker was not written: %v", statErr)
+	}
+	if elapsed := time.Since(completedStarted); elapsed > 2*time.Second {
+		t.Fatalf("completion marker was delayed: %s", elapsed)
+	}
+	if err := os.Remove(donePath); err != nil {
+		t.Fatal(err)
+	}
+
 	started := time.Now()
 	result, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "res-output"}, Limit: 16})
 	if !errors.Is(err, ErrOutputTooLarge) {
@@ -126,6 +189,14 @@ func TestOutputIsBoundedDuringRead(t *testing.T) {
 	}
 	if len(strings.Join(result.Lines, "\n")) > 16 {
 		t.Fatalf("returned output length=%d", len(strings.Join(result.Lines, "\n")))
+	}
+	recorded, readErr := os.ReadFile(recordPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	fullOutputSize := len(`{"data":""}`) + (1 << 20) + len(`,"truncated":false}`)
+	if len(recorded) == 0 || len(recorded) >= fullOutputSize {
+		t.Fatalf("recorded output bytes=%d, want between 0 and full output size %d", len(recorded), fullOutputSize)
 	}
 	if _, statErr := os.Stat(donePath); !os.IsNotExist(statErr) {
 		t.Fatalf("helper completed output: stat=%v", statErr)
@@ -152,7 +223,6 @@ func TestOutputIsBoundedDuringRead(t *testing.T) {
 		t.Fatalf("bounded read waited too long: %s", elapsed)
 	}
 }
-
 func TestNewCommandAdapterRejectsInvalidConfiguration(t *testing.T) {
 	for _, config := range []CommandConfig{{}, {AdapterID: "a"}, {AdapterID: "a", ProviderType: "p", Command: "c"}} {
 		if _, err := NewCommandAdapter(config); err == nil {
