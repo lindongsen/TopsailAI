@@ -353,7 +353,6 @@ func TestSelectedSessionFreshnessRejectsInvalidReports(t *testing.T) {
 	}{
 		{name: "stale", mutate: func(session *protocol.Session) { session.Stale = true }, want: "stale=true"},
 		{name: "unknown", mutate: func(session *protocol.Session) { session.Unknown = true }, want: "unknown=true"},
-		{name: "missing collection status", mutate: func(session *protocol.Session) { session.CollectionStatus = "" }, want: "collection_status="},
 		{name: "failed collection", mutate: func(session *protocol.Session) { session.CollectionStatus = protocol.CollectionFailed }, want: "collection_status=failed"},
 	}
 	for _, testCase := range cases {
@@ -388,5 +387,42 @@ func TestMissingAdapterSummaryDoesNotBlockFreshSession(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "running") {
 		t.Fatalf("fresh session was not usable: %q", output.String())
+	}
+}
+
+func TestSessionFreshnessInheritsInventoryCollectionStatus(t *testing.T) {
+	cases := []struct {
+		name       string
+		inventory  string
+		explicit   string
+		wantError  string
+		wantPrompt string
+	}{
+		{name: "top level succeeded", inventory: protocol.CollectionSucceeded, wantPrompt: "cluster[ep/session-1]> "},
+		{name: "top level failed", inventory: protocol.CollectionFailed, wantError: "collection_status=failed"},
+		{name: "top level missing", inventory: "", wantError: "collection_status="},
+		{name: "explicit session succeeds", inventory: protocol.CollectionFailed, explicit: protocol.CollectionSucceeded, wantPrompt: "cluster[ep/session-1]> "},
+		{name: "explicit session fails", inventory: protocol.CollectionSucceeded, explicit: protocol.CollectionFailed, wantError: "collection_status=failed"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			inventory := freshTestInventory()
+			inventory.CollectionStatus = testCase.inventory
+			inventory.Sessions[0].CollectionStatus = testCase.explicit
+			stub := &freshnessStub{inventory: inventory}
+			var output, errorsOut strings.Builder
+			if err := RunInteractive(context.Background(), stub, strings.NewReader("use ep session-1\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if testCase.wantError != "" {
+				if !strings.Contains(errorsOut.String(), testCase.wantError) {
+					t.Fatalf("errors=%q want substring %q", errorsOut.String(), testCase.wantError)
+				}
+				return
+			}
+			if errorsOut.Len() != 0 || !strings.Contains(output.String(), testCase.wantPrompt) {
+				t.Fatalf("use was not accepted: output=%q errors=%q", output.String(), errorsOut.String())
+			}
+		})
 	}
 }

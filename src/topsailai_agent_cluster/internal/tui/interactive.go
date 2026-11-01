@@ -207,7 +207,7 @@ func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveSta
 			continue
 		}
 		report, ok := loaded.reports[endpoint.EndpointID]
-		if !ok || !report.ReportComplete || report.CollectionStatus != protocol.CollectionSucceeded {
+		if !ok || !report.ReportComplete {
 			return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("endpoint %q inventory is unavailable", state.EndpointID)
 		}
 		for index := range report.Sessions {
@@ -215,7 +215,7 @@ func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveSta
 				continue
 			}
 			session := &report.Sessions[index]
-			if err := validateSessionFreshness(*session); err != nil {
+			if err := validateSessionFreshness(report, *session); err != nil {
 				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, err
 			}
 			if err := validateAdapterFreshness(report, session.AdapterID); err != nil {
@@ -248,14 +248,14 @@ func interactiveUse(parent context.Context, api InteractiveAPI, state *interacti
 	}
 	for _, endpoint := range loaded.endpoints {
 		report, ok := loaded.reports[endpoint.EndpointID]
-		if endpoint.EndpointID != args[0] || !ok || !report.ReportComplete || report.CollectionStatus != protocol.CollectionSucceeded {
+		if endpoint.EndpointID != args[0] || !ok || !report.ReportComplete {
 			continue
 		}
 		for _, session := range report.Sessions {
 			if session.SessionID != args[1] || session.Generation == "" {
 				continue
 			}
-			if freshnessErr := validateSessionFreshness(session); freshnessErr != nil {
+			if freshnessErr := validateSessionFreshness(report, session); freshnessErr != nil {
 				return freshnessErr
 			}
 			if freshnessErr := validateAdapterFreshness(report, session.AdapterID); freshnessErr != nil {
@@ -268,9 +268,13 @@ func interactiveUse(parent context.Context, api InteractiveAPI, state *interacti
 	return fmt.Errorf("session %q was not found on endpoint %q", args[1], args[0])
 }
 
-func validateSessionFreshness(session protocol.Session) error {
-	if session.Stale || session.Unknown || session.CollectionStatus != protocol.CollectionSucceeded {
-		return fmt.Errorf("session %q is not fresh: stale=%t unknown=%t collection_status=%s", session.SessionID, session.Stale, session.Unknown, session.CollectionStatus)
+func validateSessionFreshness(report protocol.InventoryReport, session protocol.Session) error {
+	collectionStatus := session.CollectionStatus
+	if collectionStatus == "" {
+		collectionStatus = report.CollectionStatus
+	}
+	if session.Stale || session.Unknown || collectionStatus != protocol.CollectionSucceeded {
+		return fmt.Errorf("session %q is not fresh: stale=%t unknown=%t collection_status=%s", session.SessionID, session.Stale, session.Unknown, collectionStatus)
 	}
 	return nil
 }
