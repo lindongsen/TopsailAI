@@ -49,7 +49,10 @@ type FaultInjection struct {
 func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	t.Helper()
 	root := t.TempDir()
-	certs := Certificates(t, root)
+	certs, err := CertificatesE(root)
+	if err != nil {
+		return nil, fmt.Errorf("create certificates: %w", err)
+	}
 	serverBin, endpointBin, fixtureBin := filepath.Join(root, "server"), filepath.Join(root, "endpoint"), filepath.Join(root, "fixture")
 	if err := Build(serverBin, "./src/main/agent-cluster-server"); err != nil {
 		return nil, err
@@ -60,14 +63,35 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if err := Build(fixtureBin, "./tests/fixtures/provider"); err != nil {
 		return nil, err
 	}
-	cluster := &Cluster{Root: root, API: FreePort(t), Channel: FreePort(t), ServerDB: filepath.Join(root, "server.db"), EndpointDB: filepath.Join(root, "endpoint.db"), Record: filepath.Join(root, "records.jsonl"), Certs: certs}
+	apiPort, err := FreePortE()
+	if err != nil {
+		return nil, fmt.Errorf("allocate API port: %w", err)
+	}
+	channelPort, err := FreePortE()
+	if err != nil {
+		return nil, fmt.Errorf("allocate channel port: %w", err)
+	}
+	cluster := &Cluster{Root: root, API: apiPort, Channel: channelPort, ServerDB: filepath.Join(root, "server.db"), EndpointDB: filepath.Join(root, "endpoint.db"), Record: filepath.Join(root, "records.jsonl"), Certs: certs}
 	serverEnv := []string{"AGENT_CLUSTER_API_LISTEN_ADDR=127.0.0.1:" + cluster.API, "AGENT_CLUSTER_CHANNEL_LISTEN_ADDR=127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_DATABASE_PATH=" + cluster.ServerDB, "AGENT_CLUSTER_AUTH_TOKEN=secret", "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + certs.ServerCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + certs.ServerKey}
 	serverEnv = appendFaultEnvironment(serverEnv, options.Faults)
 	for key, value := range options.Environment {
 		serverEnv = append(serverEnv, key+"="+value)
 	}
-	cluster.Server = StartProcess(t, serverBin, serverEnv)
-	WaitHTTP(t, cluster.URL("/healthz"), "", http.StatusOK, 15*time.Second)
+	cluster.Server, err = StartProcessE(serverBin, serverEnv)
+	if err != nil {
+		return nil, err
+	}
+	t.Cleanup(func() {
+		if err := StopProcessE(cluster.Endpoint); err != nil {
+			t.Logf("stop endpoint: %v", err)
+		}
+		if err := StopProcessE(cluster.Server); err != nil {
+			t.Logf("stop server: %v", err)
+		}
+	})
+	if err := WaitHTTPE(cluster.URL("/healthz"), "", http.StatusOK, 15*time.Second); err != nil {
+		return nil, err
+	}
 	mode := "one"
 	if options.Faults.NoSessions {
 		mode = "empty"
@@ -95,20 +119,26 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 			adapterArgs[i]["args"] = append(adapterArgs[i]["args"].([]string), "--fail-execution")
 		}
 	}
-	adapterJSON, err := json.Marshal(adapterArgs)
+	adapterJSON, err := marshalAdapterConfigurationFn(adapterArgs)
 	if err != nil {
-		t.Fatal(err)
+		return nil, fmt.Errorf("marshal adapter configuration: %w", err)
 	}
 	args := "AGENT_CLUSTER_ADAPTERS=" + string(adapterJSON)
 	endpointEnv := []string{"AGENT_CLUSTER_CHANNEL_ADDRESS=wss://127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH=" + cluster.EndpointDB, "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + certs.ClientCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + certs.ClientKey, args}
 	endpointEnv = appendFaultEnvironment(endpointEnv, options.Faults)
 	cluster.EndpointPath = endpointBin
 	cluster.EndpointEnv = append([]string(nil), endpointEnv...)
-	cluster.Endpoint = StartProcess(t, endpointBin, endpointEnv)
-	WaitInventory(t, cluster.URL("/api/v1/endpoints/endpoint-1/session-state"), "secret", 20*time.Second)
-	t.Cleanup(func() { StopProcess(t, cluster.Endpoint); StopProcess(t, cluster.Server) })
+	cluster.Endpoint, err = StartProcessE(endpointBin, endpointEnv)
+	if err != nil {
+		return nil, err
+	}
+	if err := WaitInventoryE(cluster.URL("/api/v1/endpoints/endpoint-1/session-state"), "secret", 20*time.Second); err != nil {
+		return nil, err
+	}
 	return cluster, nil
 }
+
+var marshalAdapterConfigurationFn = json.Marshal
 
 // WaitForBeforeInvocationCrash waits for the process-composition crash marker.
 func (c *Cluster) WaitForBeforeInvocationCrash(t testing.TB, limit time.Duration) {
