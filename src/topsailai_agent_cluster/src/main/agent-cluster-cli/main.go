@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/mattn/go-isatty"
 
 	"topsailai_agent_cluster/internal/client"
 	"topsailai_agent_cluster/internal/protocol"
@@ -22,7 +25,13 @@ func main() {
 }
 
 func run(args []string) error {
-	flags := flag.NewFlagSet("agent-cluster-tui", flag.ContinueOnError)
+	terminal := isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
+	return runWithIO(args, os.Stdin, os.Stdout, os.Stderr, terminal)
+}
+
+func runWithIO(args []string, input io.Reader, output, errors io.Writer, terminal bool) error {
+	flags := flag.NewFlagSet("agent-cluster-cli", flag.ContinueOnError)
+	flags.SetOutput(errors)
 	jsonMode := flags.Bool("json", false, "write structured JSON")
 	filter := flags.String("endpoint", "", "filter by endpoint ID")
 	confirmed := flags.Bool("yes", false, "confirm a mutating action")
@@ -40,32 +49,44 @@ func run(args []string) error {
 	}
 	api := client.NewAPIClient(*serverURL, *token)
 	ctx := context.Background()
+	if flags.Arg(0) == "interactive" {
+		if flags.NArg() != 1 {
+			return fmt.Errorf("usage: interactive")
+		}
+		if *jsonMode || *confirmed {
+			return fmt.Errorf("interactive does not support --json or --yes")
+		}
+		if !terminal {
+			return fmt.Errorf("interactive mode requires a terminal on stdin")
+		}
+		return tui.RunInteractive(ctx, api, input, output, errors, tui.InteractiveOptions{MaxBytes: *maxBytes, WaitTimeoutMS: *waitTimeoutMS})
+	}
 	switch flags.Arg(0) {
 	case "list":
-		return list(ctx, api, *filter, *jsonMode)
+		return list(ctx, api, output, *filter, *jsonMode)
 	case "show":
 		if flags.NArg() != 2 {
 			return fmt.Errorf("usage: show <endpoint-id-or-session-id>")
 		}
-		return show(ctx, api, flags.Arg(1), *jsonMode)
+		return show(ctx, api, output, flags.Arg(1), *jsonMode)
 	case "logs":
 		if flags.NArg() != 3 {
 			return fmt.Errorf("usage: logs <endpoint-id> <session-id>")
 		}
-		return logs(ctx, api, flags.Arg(1), flags.Arg(2), *maxBytes, *jsonMode)
+		return logs(ctx, api, output, flags.Arg(1), flags.Arg(2), *maxBytes, *jsonMode)
 	case "status":
 		if flags.NArg() != 2 {
 			return fmt.Errorf("usage: status <command-id>")
 		}
-		return status(ctx, api, flags.Arg(1), *jsonMode)
+		return status(ctx, api, output, flags.Arg(1), *jsonMode)
 	case "send", "btw", "control", "start", "resume", "stop":
-		return action(ctx, api, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision)
+		return action(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision)
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
 	}
 }
 
-func list(ctx context.Context, api *client.APIClient, filter string, jsonMode bool) error {
+func list(ctx context.Context, api *client.APIClient, output io.Writer, filter string, jsonMode bool) error {
 	endpoints, err := api.ListEndpoints(ctx)
 	if err != nil {
 		return err
@@ -79,13 +100,13 @@ func list(ctx context.Context, api *client.APIClient, filter string, jsonMode bo
 	}
 	rows := tui.ListRows(endpoints, reports, filter)
 	if jsonMode {
-		return tui.RenderJSON(os.Stdout, rows)
+		return tui.RenderJSON(output, rows)
 	}
-	tui.RenderRows(os.Stdout, rows)
+	tui.RenderRows(output, rows)
 	return nil
 }
 
-func show(ctx context.Context, api *client.APIClient, id string, jsonMode bool) error {
+func show(ctx context.Context, api *client.APIClient, output io.Writer, id string, jsonMode bool) error {
 	endpoints, err := api.ListEndpoints(ctx)
 	if err != nil {
 		return err
@@ -116,23 +137,23 @@ func show(ctx context.Context, api *client.APIClient, id string, jsonMode bool) 
 		detail.Unavailable = append(detail.Unavailable, "capabilities: "+capabilityErr.Error())
 	}
 	if jsonMode {
-		return tui.RenderJSON(os.Stdout, detail)
+		return tui.RenderJSON(output, detail)
 	}
-	tui.RenderDetail(os.Stdout, detail)
+	tui.RenderDetail(output, detail)
 	return nil
 }
 
 // status renders one durable command result with conservative evidence wording.
-func status(ctx context.Context, api *client.APIClient, commandID string, jsonMode bool) error {
+func status(ctx context.Context, api *client.APIClient, output io.Writer, commandID string, jsonMode bool) error {
 	result, err := api.GetCommand(ctx, commandID)
 	if err != nil {
 		return err
 	}
 	if jsonMode {
-		return tui.RenderJSON(os.Stdout, result)
+		return tui.RenderJSON(output, result)
 	}
 	label := tui.StatusLabel(protocol.CommandStatus(stringValue(result, "status")), tui.ReceiptForStatus(result))
-	fmt.Fprintln(os.Stdout, label)
+	fmt.Fprintln(output, label)
 	return nil
 }
 
@@ -141,7 +162,7 @@ func stringValue(values map[string]any, key string) string {
 	return value
 }
 
-func logs(ctx context.Context, api *client.APIClient, endpointID, resourceID string, maxBytes int, jsonMode bool) error {
+func logs(ctx context.Context, api *client.APIClient, output io.Writer, endpointID, resourceID string, maxBytes int, jsonMode bool) error {
 	report, err := api.GetInventory(ctx, endpointID)
 	if err != nil {
 		return err
@@ -159,19 +180,19 @@ func logs(ctx context.Context, api *client.APIClient, endpointID, resourceID str
 	}
 	if snapshot.ErrorCode != "" {
 		if jsonMode {
-			return tui.RenderJSON(os.Stdout, snapshot)
+			return tui.RenderJSON(output, snapshot)
 		}
-		fmt.Fprintln(os.Stdout, snapshot.ErrorCode)
+		fmt.Fprintln(output, snapshot.ErrorCode)
 		return nil
 	}
 	if jsonMode {
-		return tui.RenderJSON(os.Stdout, snapshot)
+		return tui.RenderJSON(output, snapshot)
 	}
-	tui.RenderSnapshot(os.Stdout, snapshot.ObservedAtMS, snapshot.Data, snapshot.Truncated)
+	tui.RenderSnapshot(output, snapshot.ObservedAtMS, snapshot.Data, snapshot.Truncated)
 	return nil
 }
 
-func action(ctx context.Context, api *client.APIClient, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision string) error {
+func action(ctx context.Context, api *client.APIClient, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision string) error {
 	operation := args[0]
 	if operation == "stop" && len(args) < 4 {
 		return fmt.Errorf("usage: stop <endpoint-id> <resource-id> <generation>")
@@ -238,9 +259,9 @@ func action(ctx context.Context, api *client.APIClient, args []string, confirmed
 		return err
 	}
 	if jsonMode {
-		return tui.RenderJSON(os.Stdout, result)
+		return tui.RenderJSON(output, result)
 	}
-	return tui.RenderJSON(os.Stdout, result)
+	return tui.RenderJSON(output, result)
 }
 
 func operationName(value string) string {

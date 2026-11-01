@@ -362,8 +362,8 @@ func (c *Cluster) BuildTUI(tb testing.TB) (string, error) {
 	if c.TUIPath != "" {
 		return c.TUIPath, nil
 	}
-	path := filepath.Join(c.Root, "agent-cluster-tui")
-	if err := Build(path, "./src/main/agent-cluster-tui"); err != nil {
+	path := filepath.Join(c.Root, "agent-cluster-cli")
+	if err := Build(path, "./src/main/agent-cluster-cli"); err != nil {
 		return "", err
 	}
 	c.TUIPath = path

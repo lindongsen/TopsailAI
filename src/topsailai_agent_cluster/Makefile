@@ -4,7 +4,7 @@ build:
 	mkdir -p .tmp/artifacts
 	go build -o .tmp/artifacts/agent-cluster-server ./src/main/agent-cluster-server
 	go build -o .tmp/artifacts/agent-cluster-endpoint ./src/main/agent-cluster-endpoint
-	go build -o .tmp/artifacts/agent-cluster-tui ./src/main/agent-cluster-tui
+	go build -o .tmp/artifacts/agent-cluster-cli ./src/main/agent-cluster-cli
 
 vet:
 	go vet ./...
@@ -22,7 +22,7 @@ build-testhooks:
 	mkdir -p .tmp/artifacts
 	go build -tags=testhooks -o .tmp/artifacts/agent-cluster-server ./src/main/agent-cluster-server
 	go build -tags=testhooks -o .tmp/artifacts/agent-cluster-endpoint ./src/main/agent-cluster-endpoint
-	go build -tags=testhooks -o .tmp/artifacts/agent-cluster-tui ./src/main/agent-cluster-tui
+	go build -tags=testhooks -o .tmp/artifacts/agent-cluster-cli ./src/main/agent-cluster-cli
 
 integration:
 	go test -tags='integration testhooks' ./tests/integration -count=1
