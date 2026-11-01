@@ -1,0 +1,151 @@
+package tui
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"strings"
+	"time"
+
+	"topsailai_agent_cluster/internal/protocol"
+)
+
+func interactiveLogs(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, maxBytes int, out io.Writer) error {
+	endpointID, resourceID := state.endpoint, state.session
+	if rest != "" {
+		args := strings.Fields(rest)
+		if len(args) != 2 {
+			return fmt.Errorf("usage: logs [endpoint] [session]")
+		}
+		endpointID, resourceID = args[0], args[1]
+	}
+	if endpointID == "" || resourceID == "" {
+		return fmt.Errorf("no session selected; use <endpoint> <session>")
+	}
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	generation := ""
+	if rest == "" {
+		_, _, session, err := findSelected(ctx, api, state)
+		if err != nil {
+			return err
+		}
+		generation = session.Generation
+	} else {
+		report, err := api.GetInventory(ctx, endpointID)
+		if err != nil {
+			return err
+		}
+		for _, session := range report.Sessions {
+			if session.SessionID == resourceID {
+				generation = session.Generation
+				break
+			}
+		}
+	}
+	snapshot, err := api.GetOutput(ctx, endpointID, resourceID, generation, maxBytes)
+	if err != nil {
+		return err
+	}
+	if snapshot.ErrorCode != "" {
+		_, err = fmt.Fprintln(out, snapshot.ErrorCode)
+		return err
+	}
+	RenderSnapshot(out, snapshot.ObservedAtMS, snapshot.Data, snapshot.Truncated)
+	return nil
+}
+
+func interactiveValue(values map[string]any, key string) string {
+	value, _ := values[key].(string)
+	return value
+}
+
+func interactiveStatus(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, out io.Writer) error {
+	commandID := strings.TrimSpace(rest)
+	if commandID == "" {
+		commandID = state.commandID
+	}
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	if commandID == "" {
+		_, _, session, err := findSelected(ctx, api, state)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(out, session.State)
+		return err
+	}
+	result, err := api.GetCommand(ctx, commandID)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, StatusLabel(protocol.CommandStatus(interactiveValue(result, "status")), ReceiptForStatus(result)))
+	return err
+}
+
+func interactiveSend(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, reader *bufio.Reader, out io.Writer, options InteractiveOptions) error {
+	if state.endpoint == "" || state.session == "" {
+		return fmt.Errorf("no session selected; use <endpoint> <session>")
+	}
+	payloadText := strings.TrimSpace(rest)
+	if payloadText == "" {
+		var err error
+		payloadText, err = reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return err
+		}
+		payloadText = strings.TrimSpace(payloadText)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(payloadText), &payload); err != nil {
+		return fmt.Errorf("payload must be a JSON object: %w", err)
+	}
+	preview := payloadText
+	if len(preview) > 512 {
+		preview = preview[:512] + "..."
+	}
+	if _, err := fmt.Fprintf(out, "send %s? Confirm send? [y/N] ", preview); err != nil {
+		return err
+	}
+	answer, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return err
+	}
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer != "y" && answer != "yes" {
+		_, writeErr := fmt.Fprintln(out, "send cancelled")
+		return writeErr
+	}
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	_, _, session, err := findSelected(ctx, api, state)
+	if err != nil {
+		return err
+	}
+	descriptor, err := PreflightCapability(ctx, api, state.endpoint, protocol.OperationMessageSend)
+	if err != nil {
+		return err
+	}
+	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: fmt.Sprintf("cli-%d", time.Now().UnixNano()), IssuerID: "operator", Scope: "operator", EndpointID: state.endpoint, Target: &protocol.CommandTarget{Kind: "session", ResourceID: state.session, Generation: session.Generation}, Operation: protocol.OperationMessageSend, OperationVersion: "v1", CapabilityRevision: descriptor.Revision, PayloadSchemaVersion: "v1", Payload: json.RawMessage(payloadText), ExecuteBeforeAtMS: time.Now().Add(5 * time.Minute).UnixMilli(), Budget: protocol.Budget{WaitTimeoutMS: options.WaitTimeoutMS}}
+	result, err := api.AdmitCommand(ctx, intent)
+	if err != nil {
+		return err
+	}
+	state.commandID, _ = result["command_id"].(string)
+	if state.commandID == "" {
+		state.commandID = intent.CommandID
+	}
+	if _, err = fmt.Fprintln(out, "command submitted:", state.commandID); err != nil {
+		return err
+	}
+	waitCtx, waitCancel := WaitContext(ctx, intent.Budget)
+	defer waitCancel()
+	result, err = WaitForTerminal(waitCtx, api, state.commandID, 100*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, StatusLabel(protocol.CommandStatus(interactiveValue(result, "status")), ReceiptForStatus(result)))
+	return err
+}
