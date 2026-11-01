@@ -459,6 +459,7 @@ def _run_analysis_agent(session_id: str) -> None:
                 message=prompt,
                 disabled_tools=["agent_tool", "human_tool", "file_tool"],
                 need_project_workspace_lock=False,  # P2: avoid lock contention
+                session_category="agent_driver",
                 need_input_message=False,
             )
             old_handler = signal.signal(signal.SIGALRM, _timeout_handler)

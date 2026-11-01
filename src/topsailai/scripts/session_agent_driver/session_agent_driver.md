@@ -41,6 +41,11 @@ The polling loop checks the target session status:
 | `running` | process alive but not waiting for input | wait for next poll |
 | `idle` | process exited | exit the polling loop |
 
+
+Each analysis Agent session is explicitly created with the `agent_driver` category,
+which takes precedence over `TOPSAILAI_SESSION_CATEGORY` for that analysis
+session. The driver does not change the target session's category or reclassify
+historical sessions.
 The analysis agent inspects the session context and calls one of the plugin
 tools:
 
