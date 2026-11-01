@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -124,3 +125,59 @@ func (s *actionPathStub) AdmitCommand(_ context.Context, intent protocol.Immutab
 	s.intents = append(s.intents, intent)
 	return map[string]any{"command_id": "cmd-1"}, nil
 }
+
+func TestEntryExitCodesAndInjectedTTY(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		terminal bool
+		wantCode int
+		wantErr  string
+	}{
+		{name: "quit", args: []string{"interactive"}, terminal: true, wantCode: 0},
+		{name: "exit", args: []string{"interactive"}, terminal: true, wantCode: 0},
+		{name: "eof", args: []string{"interactive"}, terminal: true, wantCode: 0},
+		{name: "non tty", args: []string{"interactive"}, terminal: false, wantCode: 2, wantErr: "interactive mode requires a terminal on stdin"},
+		{name: "json scope", args: []string{"--json", "interactive"}, terminal: true, wantCode: 2, wantErr: "interactive does not support --json or --yes"},
+		{name: "unknown", args: []string{"unknown"}, terminal: true, wantCode: 2, wantErr: `unknown command "unknown"`},
+		{name: "missing command", args: nil, terminal: true, wantCode: 2, wantErr: "a command is required: list, show, logs, send, stop"},
+	}
+	inputs := map[string]string{"quit": "quit\n", "exit": "exit\n", "eof": ""}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var output, diagnostics strings.Builder
+			code := runExitCode(tc.args, strings.NewReader(inputs[tc.name]), &output, &diagnostics, func() bool { return tc.terminal })
+			if code != tc.wantCode {
+				t.Fatalf("exit code=%d want=%d diagnostics=%q", code, tc.wantCode, diagnostics.String())
+			}
+			if tc.wantErr != "" {
+				want := tc.wantErr + "\n"
+				if diagnostics.String() != want {
+					t.Fatalf("diagnostics=%q want %q", diagnostics.String(), want)
+				}
+			}
+		})
+	}
+}
+
+func TestInjectedTTYTrueEntersInteractiveWithoutRealTerminal(t *testing.T) {
+	var output, diagnostics strings.Builder
+	code := runExitCode([]string{"interactive"}, strings.NewReader("quit\n"), &output, &diagnostics, func() bool { return true })
+	if code != 0 {
+		t.Fatalf("exit code=%d diagnostics=%q", code, diagnostics.String())
+	}
+	if !strings.Contains(output.String(), "cluster") || !strings.Contains(output.String(), ">") {
+		t.Fatalf("interactive output=%q", output.String())
+	}
+}
+
+func TestInteractiveFatalWriterMapsToExitCode(t *testing.T) {
+	code := runExitCode([]string{"interactive"}, strings.NewReader("quit\n"), &failingMainWriter{}, &strings.Builder{}, func() bool { return true })
+	if code != 2 {
+		t.Fatalf("exit code=%d want=2", code)
+	}
+}
+
+type failingMainWriter struct{}
+
+func (*failingMainWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }

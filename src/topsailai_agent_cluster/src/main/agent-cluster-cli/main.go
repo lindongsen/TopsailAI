@@ -17,15 +17,38 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
-	}
+	os.Exit(runExitCode(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, defaultTerminalDetector))
 }
 
 func run(args []string) error {
-	terminal := isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
-	return runWithIO(args, os.Stdin, os.Stdout, os.Stderr, terminal)
+	_, err := runWithExitCode(args, os.Stdin, os.Stdout, os.Stderr, defaultTerminalDetector)
+	return err
+}
+
+func runExitCode(args []string, input io.Reader, output, errors io.Writer, terminal TerminalDetector) int {
+	code, _ := runWithExitCode(args, input, output, errors, terminal)
+	return code
+}
+
+type TerminalDetector func() bool
+
+func defaultTerminalDetector() bool {
+	fd := os.Stdin.Fd()
+	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
+}
+
+func runWithExitCode(args []string, input io.Reader, output, errors io.Writer, terminal TerminalDetector) (int, error) {
+	if terminal == nil {
+		terminal = func() bool { return false }
+	}
+	err := runWithIO(args, input, output, errors, terminal())
+	if err != nil {
+		if _, writeErr := fmt.Fprintln(errors, err); writeErr != nil {
+			return 2, writeErr
+		}
+		return 2, err
+	}
+	return 0, nil
 }
 
 func runWithIO(args []string, input io.Reader, output, errors io.Writer, terminal bool) error {
