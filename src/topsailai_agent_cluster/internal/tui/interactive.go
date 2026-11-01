@@ -18,6 +18,7 @@ type InteractiveOptions struct {
 	MaxBytes      int
 	WaitTimeoutMS int64
 	LineLimit     int
+	Color         ColorPolicy
 }
 
 type reportLoad struct {
@@ -50,7 +51,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 	reader := bufio.NewReaderSize(input, options.LineLimit+1)
 	state := interactiveState{}
 	for {
-		if err := writePrompt(out, state); err != nil {
+		if err := writePrompt(output, state, options.Color); err != nil {
 			return err
 		}
 		line, overflow, err := readLine(reader, options.LineLimit)
@@ -76,7 +77,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			}
 			continue
 		}
-		exit, execErr := executeInteractiveLine(parent, api, &state, line, reader, out, errOut, options)
+		exit, execErr := executeInteractiveLine(parent, api, &state, line, reader, out, output, errOut, options)
 		if execErr != nil {
 			if _, writeErr := fmt.Fprintln(errOut, "error:", execErr); writeErr != nil {
 				return writeErr
@@ -91,7 +92,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 	}
 }
 
-func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *interactiveState, line string, reader *bufio.Reader, out, errOut io.Writer, options InteractiveOptions) (bool, error) {
+func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *interactiveState, line string, reader *bufio.Reader, out, trustedOut, errOut io.Writer, options InteractiveOptions) (bool, error) {
 	name, rest := splitCommand(line)
 	switch name {
 	case "help", "?":
@@ -103,6 +104,8 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		return true, nil
 	case "list":
 		return false, interactiveList(ctx, api, strings.TrimSpace(rest), out)
+	case "table":
+		return false, interactiveTable(ctx, api, strings.TrimSpace(rest), trustedOut, errOut, options.Color)
 	case "use":
 		return false, interactiveUse(ctx, api, state, rest)
 	case "show":
@@ -144,21 +147,12 @@ func readLine(reader *bufio.Reader, limit int) (string, bool, error) {
 	return strings.TrimSuffix(line, "\n"), false, err
 }
 
-func writePrompt(out io.Writer, state interactiveState) error {
-	if state.EndpointID == "" {
-		_, err := io.WriteString(out, "cluster> ")
-		return err
-	}
-	marker := ""
-	if state.Invalidated {
-		marker = "!"
-	}
-	_, err := fmt.Fprintf(out, "cluster[%s/%s%s]> ", state.EndpointID, state.SessionID, marker)
-	return err
+func writePrompt(out io.Writer, state interactiveState, policy ColorPolicy) error {
+	return RenderPrompt(out, state.EndpointID, state.SessionID, state.Invalidated, policy)
 }
 
 func printHelp(out io.Writer) error {
-	_, err := fmt.Fprintln(out, "commands: list [endpoint], use <endpoint> <session>, show, logs, send <json>, status, refresh, help, quit")
+	_, err := fmt.Fprintln(out, "commands: list [endpoint], table [endpoint], use <endpoint> <session>, show, logs, send <json>, status, refresh, help, quit")
 	return err
 }
 
@@ -184,6 +178,12 @@ func loadReports(ctx context.Context, api InteractiveAPI, endpointFilter string)
 		loaded.reports[endpoint.EndpointID] = report
 	}
 	return loaded, nil
+}
+
+func interactiveTable(parent context.Context, api InteractiveAPI, filter string, out, errors io.Writer, color ColorPolicy) error {
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).Table(ctx, out, errors, filter, false, TableOptions{Color: color})
 }
 
 func interactiveList(parent context.Context, api InteractiveAPI, filter string, out io.Writer) error {
@@ -268,12 +268,15 @@ func interactiveRefresh(parent context.Context, api InteractiveAPI, state *inter
 }
 
 func interactiveShow(parent context.Context, api InteractiveAPI, state *interactiveState, id string, out io.Writer) error {
-	if err := state.requireUsable(); err != nil {
-		return err
+	if state.Invalidated {
+		return state.requireUsable()
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	if id == "" {
+		if err := state.requireUsable(); err != nil {
+			return err
+		}
 		_, _, session, err := findSelected(ctx, api, state)
 		if err != nil {
 			return err

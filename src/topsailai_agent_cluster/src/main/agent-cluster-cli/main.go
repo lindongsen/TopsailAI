@@ -38,6 +38,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	token := flags.String("token", os.Getenv("AGENT_CLUSTER_TOKEN"), "Server bearer token")
 	waitTimeoutMS := flags.Int64("wait-timeout-ms", 0, "maximum local wait for command completion in milliseconds")
 	maxBytes := flags.Int("max-bytes", 64<<10, "maximum output snapshot size in bytes")
+	noColor := flags.Bool("no-color", false, "disable terminal colors")
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
 	if err := flags.Parse(args); err != nil {
@@ -58,11 +59,13 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if !terminal {
 			return fmt.Errorf("interactive mode requires a terminal on stdin")
 		}
-		return tui.RunInteractive(ctx, api, input, output, errors, tui.InteractiveOptions{MaxBytes: *maxBytes, WaitTimeoutMS: *waitTimeoutMS})
+		return tui.RunInteractive(ctx, api, input, output, errors, tui.InteractiveOptions{MaxBytes: *maxBytes, WaitTimeoutMS: *waitTimeoutMS, Color: tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)})
 	}
 	switch flags.Arg(0) {
 	case "list":
 		return list(ctx, api, output, *filter, *jsonMode)
+	case "table":
+		return table(ctx, api, output, errors, *filter, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
 	case "show":
 		if flags.NArg() != 2 {
 			return fmt.Errorf("usage: show <endpoint-id-or-session-id>")
@@ -87,6 +90,10 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 
 func legacyRunner(api tui.CommandAPI) tui.CommandRunner {
 	return tui.CommandRunner{API: api, Policy: tui.LegacyPolicy}
+}
+
+func table(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, jsonMode bool, color tui.ColorPolicy) error {
+	return legacyRunner(api).Table(ctx, output, errors, filter, jsonMode, tui.TableOptions{Color: color})
 }
 
 func list(ctx context.Context, api tui.CommandAPI, output io.Writer, filter string, jsonMode bool) error {
@@ -179,3 +186,5 @@ func envOr(name, fallback string) string {
 	}
 	return fallback
 }
+
+func noColorPresent() bool { _, ok := os.LookupEnv("NO_COLOR"); return ok }
