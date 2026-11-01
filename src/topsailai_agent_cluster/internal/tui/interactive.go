@@ -44,31 +44,28 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		options.MaxBytes = 64 << 10
 	}
 	if options.LineLimit <= 0 {
-		options.LineLimit = 64 << 10
+		options.LineLimit = 8192
 	}
 	out := newSafeWriter(output)
 	errOut := newSafeWriter(errors)
-	reader := bufio.NewReaderSize(input, options.LineLimit+1)
+	reader := bufio.NewReaderSize(input, 4096)
 	state := interactiveState{}
 	for {
 		if err := writePrompt(output, state, options.Color); err != nil {
 			return err
 		}
 		line, overflow, err := readLine(reader, options.LineLimit)
-		if err != nil {
-			if err == io.EOF {
-				if line == "" {
-					return nil
-				}
-			} else {
-				return err
-			}
-		}
 		if overflow {
 			if _, writeErr := fmt.Fprintln(errOut, "input line exceeds the maximum length"); writeErr != nil {
 				return writeErr
 			}
+			if err == io.EOF {
+				return nil
+			}
 			continue
+		}
+		if err != nil && err != io.EOF {
+			return err
 		}
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
 		if line == "" {
@@ -83,10 +80,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 				return writeErr
 			}
 		}
-		if exit {
-			return nil
-		}
-		if err == io.EOF {
+		if exit || err == io.EOF {
 			return nil
 		}
 	}
@@ -133,18 +127,26 @@ func splitCommand(line string) (string, string) {
 }
 
 func readLine(reader *bufio.Reader, limit int) (string, bool, error) {
-	line, err := reader.ReadString('\n')
-	if len(line) > limit {
-		for err == nil && !strings.HasSuffix(line, "\n") {
-			var discarded string
-			discarded, err = reader.ReadString('\n')
-			if strings.HasSuffix(discarded, "\n") {
-				break
+	var line strings.Builder
+	for {
+		fragment, err := reader.ReadSlice('\n')
+		if line.Len()+len(fragment) > limit {
+			for err == bufio.ErrBufferFull {
+				fragment, err = reader.ReadSlice('\n')
+				if strings.HasSuffix(string(fragment), "\n") {
+					break
+				}
 			}
+			return "", true, err
 		}
-		return "", true, nil
+		line.Write(fragment)
+		if err == nil || err == io.EOF {
+			return strings.TrimSuffix(line.String(), "\n"), false, err
+		}
+		if err != bufio.ErrBufferFull {
+			return "", false, err
+		}
 	}
-	return strings.TrimSuffix(line, "\n"), false, err
 }
 
 func writePrompt(out io.Writer, state interactiveState, policy ColorPolicy) error {

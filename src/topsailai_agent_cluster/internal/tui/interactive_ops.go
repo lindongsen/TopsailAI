@@ -64,16 +64,20 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	}
 	payloadText := strings.TrimSpace(rest)
 	if payloadText == "" {
-		var err error
-		payloadText, err = reader.ReadString('\n')
-		if err != nil && err != io.EOF {
-			return err
-		}
-		payloadText = strings.TrimSpace(payloadText)
+		return fmt.Errorf("payload must be a JSON object")
+	}
+	if len(payloadText) == 0 || len(payloadText) > options.LineLimit {
+		return fmt.Errorf("payload exceeds the maximum length")
 	}
 	var payload map[string]any
-	if err := json.Unmarshal([]byte(payloadText), &payload); err != nil {
-		return fmt.Errorf("payload must be a JSON object: %w", err)
+	if err := json.Unmarshal([]byte(payloadText), &payload); err != nil || payload == nil {
+		return fmt.Errorf("payload must be a JSON object")
+	}
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	beforeCapability, err := PreflightCapability(ctx, api, state.EndpointID, protocol.OperationMessageSend)
+	if err != nil {
+		return err
 	}
 	preview := payloadText
 	if len(preview) > 512 {
@@ -82,20 +86,25 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if _, err := fmt.Fprintf(out, "send %s? Confirm send? [y/N] ", preview); err != nil {
 		return err
 	}
-	answer, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return err
+	answer, overflow, err := readLine(reader, options.LineLimit)
+	if overflow || err != nil {
+		return fmt.Errorf("confirmation requires a complete line")
 	}
 	answer = strings.ToLower(strings.TrimSpace(answer))
 	if answer != "y" && answer != "yes" {
 		_, writeErr := fmt.Fprintln(out, "send cancelled")
 		return writeErr
 	}
-	ctx, cancel := commandContext(parent)
-	defer cancel()
 	_, _, session, err := findSelected(ctx, api, state)
 	if err != nil {
 		return err
+	}
+	afterCapability, err := PreflightCapability(ctx, api, state.EndpointID, protocol.OperationMessageSend)
+	if err != nil {
+		return err
+	}
+	if afterCapability.Revision != beforeCapability.Revision {
+		return fmt.Errorf("capability changed after confirmation; send cancelled")
 	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
 	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: json.RawMessage(payloadText), Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
