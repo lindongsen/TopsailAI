@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/mattn/go-isatty"
 
@@ -86,113 +85,28 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	}
 }
 
-func list(ctx context.Context, api *client.APIClient, output io.Writer, filter string, jsonMode bool) error {
-	endpoints, err := api.ListEndpoints(ctx)
-	if err != nil {
-		return err
-	}
-	reports := make(map[string]protocol.InventoryReport, len(endpoints))
-	for _, endpoint := range endpoints {
-		report, fetchErr := api.GetInventory(ctx, endpoint.EndpointID)
-		if fetchErr == nil {
-			reports[endpoint.EndpointID] = report
-		}
-	}
-	rows := tui.ListRows(endpoints, reports, filter)
-	if jsonMode {
-		return tui.RenderJSON(output, rows)
-	}
-	tui.RenderRows(output, rows)
-	return nil
+func legacyRunner(api tui.CommandAPI) tui.CommandRunner {
+	return tui.CommandRunner{API: api, Policy: tui.LegacyPolicy}
 }
 
-func show(ctx context.Context, api *client.APIClient, output io.Writer, id string, jsonMode bool) error {
-	endpoints, err := api.ListEndpoints(ctx)
-	if err != nil {
-		return err
-	}
-	reports := make(map[string]protocol.InventoryReport, len(endpoints))
-	for _, endpoint := range endpoints {
-		report, fetchErr := api.GetInventory(ctx, endpoint.EndpointID)
-		if fetchErr == nil {
-			reports[endpoint.EndpointID] = report
-		}
-	}
-	endpoint, report, session, err := tui.FindSession(id, endpoints, reports)
-	if err != nil {
-		return err
-	}
-	capabilities, capabilityErr := api.GetCapabilities(ctx, endpoint.EndpointID)
-	detail := tui.Detail{Endpoint: endpoint, Session: session, Inventory: report, Capabilities: capabilities}
-	resourceID := ""
-	if session != nil {
-		resourceID = session.SessionID
-	}
-	if commands, commandErr := api.ListCommands(ctx, endpoint.EndpointID, resourceID, 20); commandErr == nil {
-		detail.CommandHistory = commands
-	} else {
-		detail.Unavailable = append(detail.Unavailable, "commands: "+commandErr.Error())
-	}
-	if capabilityErr != nil {
-		detail.Unavailable = append(detail.Unavailable, "capabilities: "+capabilityErr.Error())
-	}
-	if jsonMode {
-		return tui.RenderJSON(output, detail)
-	}
-	tui.RenderDetail(output, detail)
-	return nil
+func list(ctx context.Context, api tui.CommandAPI, output io.Writer, filter string, jsonMode bool) error {
+	return legacyRunner(api).List(ctx, output, filter, jsonMode)
+}
+
+func show(ctx context.Context, api tui.CommandAPI, output io.Writer, id string, jsonMode bool) error {
+	return legacyRunner(api).Show(ctx, output, id, jsonMode)
 }
 
 // status renders one durable command result with conservative evidence wording.
-func status(ctx context.Context, api *client.APIClient, output io.Writer, commandID string, jsonMode bool) error {
-	result, err := api.GetCommand(ctx, commandID)
-	if err != nil {
-		return err
-	}
-	if jsonMode {
-		return tui.RenderJSON(output, result)
-	}
-	label := tui.StatusLabel(protocol.CommandStatus(stringValue(result, "status")), tui.ReceiptForStatus(result))
-	fmt.Fprintln(output, label)
-	return nil
+func status(ctx context.Context, api tui.CommandAPI, output io.Writer, commandID string, jsonMode bool) error {
+	return legacyRunner(api).Status(ctx, output, commandID, jsonMode)
 }
 
-func stringValue(values map[string]any, key string) string {
-	value, _ := values[key].(string)
-	return value
+func logs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID, resourceID string, maxBytes int, jsonMode bool) error {
+	return legacyRunner(api).Logs(ctx, output, endpointID, resourceID, maxBytes, jsonMode)
 }
 
-func logs(ctx context.Context, api *client.APIClient, output io.Writer, endpointID, resourceID string, maxBytes int, jsonMode bool) error {
-	report, err := api.GetInventory(ctx, endpointID)
-	if err != nil {
-		return err
-	}
-	generation := ""
-	for _, session := range report.Sessions {
-		if session.SessionID == resourceID {
-			generation = session.Generation
-			break
-		}
-	}
-	snapshot, err := api.GetOutput(ctx, endpointID, resourceID, generation, maxBytes)
-	if err != nil {
-		return err
-	}
-	if snapshot.ErrorCode != "" {
-		if jsonMode {
-			return tui.RenderJSON(output, snapshot)
-		}
-		fmt.Fprintln(output, snapshot.ErrorCode)
-		return nil
-	}
-	if jsonMode {
-		return tui.RenderJSON(output, snapshot)
-	}
-	tui.RenderSnapshot(output, snapshot.ObservedAtMS, snapshot.Data, snapshot.Truncated)
-	return nil
-}
-
-func action(ctx context.Context, api *client.APIClient, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision string) error {
+func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision string) error {
 	operation := args[0]
 	if operation == "stop" && len(args) < 4 {
 		return fmt.Errorf("usage: stop <endpoint-id> <resource-id> <generation>")
@@ -222,46 +136,22 @@ func action(ctx context.Context, api *client.APIClient, output io.Writer, args [
 			return err
 		}
 	}
-	parameters := string(payload)
-	if err := tui.RequireConfirmation(confirmed, operation, resourceID, parameters); err != nil {
-		return err
-	}
-	operationName := operationName(operation)
-	descriptor, err := tui.PreflightCapability(ctx, api, endpointID, operationName)
+	operationValue := operationName(operation)
+	request := tui.ActionRequest{Operation: operationValue, OperationLabel: operation, EndpointID: endpointID, ResourceID: resourceID, Generation: generation, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS, Profile: profile, ProfileRevision: profileRevision}
+	runner := legacyRunner(api)
+	intent, err := runner.PrepareAction(ctx, request)
 	if err != nil {
 		return err
 	}
-	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: fmt.Sprintf("tui-%d", time.Now().UnixNano()), IssuerID: "operator", Scope: "operator", EndpointID: endpointID, Operation: operationName, OperationVersion: "v1", CapabilityRevision: descriptor.Revision, PayloadSchemaVersion: "v1", Payload: payload, Budget: protocol.Budget{WaitTimeoutMS: waitTimeoutMS}, ExecuteBeforeAtMS: time.Now().Add(5 * time.Minute).UnixMilli()}
-	if operationName != "agent.start" {
-		intent.Target = &target
-	}
-	if operationName == "agent.start" {
-		intent.LaunchProfileID, intent.ProfileRevision = profile, profileRevision
-		if intent.LaunchProfileID == "" || intent.ProfileRevision == "" {
-			return fmt.Errorf("start requires --profile and --profile-revision")
-		}
-	}
-	if !json.Valid(payload) {
-		return fmt.Errorf("payload must be valid JSON")
-	}
-	result, err := api.AdmitCommand(ctx, intent)
+	actionResult, err := runner.SubmitAction(ctx, intent)
 	if err != nil {
 		return err
 	}
-	commandID, _ := result["command_id"].(string)
-	if commandID == "" {
-		commandID = intent.CommandID
-	}
-	waitCtx, waitCancel := tui.WaitContext(ctx, intent.Budget)
-	defer waitCancel()
-	result, err = tui.WaitForTerminal(waitCtx, api, commandID, 100*time.Millisecond)
+	result, err := runner.WaitAction(ctx, actionResult, intent.Budget)
 	if err != nil {
 		return err
 	}
-	if jsonMode {
-		return tui.RenderJSON(output, result)
-	}
-	return tui.RenderJSON(output, result)
+	return runner.RenderAction(output, result)
 }
 
 func operationName(value string) string {

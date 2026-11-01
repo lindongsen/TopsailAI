@@ -171,3 +171,24 @@ func TestInteractiveGenerationChangePreventsAdmission(t *testing.T) {
 		t.Fatalf("missing generation error: %q", errorsOut.String())
 	}
 }
+func TestInteractiveShowRejectsSelectedGenerationChange(t *testing.T) {
+	stub := &interactiveStub{
+		endpoints:   []protocol.Endpoint{{EndpointID: "endpoint-1"}},
+		reports:     map[string]protocol.InventoryReport{"endpoint-1": testInventory()},
+		changeAfter: 2,
+	}
+	var output, errorsOut strings.Builder
+	input := "use endpoint-1 session-1\nshow\nquit\n"
+	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errorsOut.String(), "selected session generation changed; use the session again") {
+		t.Fatalf("missing generation fencing error: %q", errorsOut.String())
+	}
+	if strings.Contains(output.String(), "session: session-1 adapter=") {
+		t.Fatalf("show returned details after generation change: %q", output.String())
+	}
+	if stub.inventoryCalls != 2 {
+		t.Fatalf("inventory calls=%d want=2", stub.inventoryCalls)
+	}
+}

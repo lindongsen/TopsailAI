@@ -11,16 +11,7 @@ import (
 	"topsailai_agent_cluster/internal/protocol"
 )
 
-// InteractiveAPI is the subset of the Server client used by the REPL.
-type InteractiveAPI interface {
-	ListEndpoints(context.Context) ([]protocol.Endpoint, error)
-	GetInventory(context.Context, string) (protocol.InventoryReport, error)
-	GetCapabilities(context.Context, string) (protocol.CapabilityDescriptor, error)
-	GetCommand(context.Context, string) (map[string]any, error)
-	ListCommands(context.Context, string, string, int) ([]map[string]any, error)
-	GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error)
-	AdmitCommand(context.Context, protocol.ImmutableIntent) (map[string]any, error)
-}
+// InteractiveAPI is defined as the shared CommandAPI alias in commands.go.
 
 // InteractiveOptions controls bounded REPL behavior.
 type InteractiveOptions struct {
@@ -196,17 +187,7 @@ func loadReports(ctx context.Context, api InteractiveAPI, endpointFilter string)
 func interactiveList(parent context.Context, api InteractiveAPI, filter string, out io.Writer) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	loaded, err := loadReports(ctx, api, filter)
-	if err != nil {
-		return err
-	}
-	RenderRows(out, ListRows(loaded.endpoints, loaded.reports, filter))
-	for endpointID, fetchErr := range loaded.errors {
-		if _, writeErr := fmt.Fprintf(out, "endpoint %s unavailable: %v\n", endpointID, fetchErr); writeErr != nil {
-			return writeErr
-		}
-	}
-	return nil
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).List(ctx, out, filter, false)
 }
 
 func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveState) (protocol.Endpoint, protocol.InventoryReport, *protocol.Session, error) {
@@ -286,39 +267,12 @@ func interactiveRefresh(parent context.Context, api InteractiveAPI, state *inter
 func interactiveShow(parent context.Context, api InteractiveAPI, state *interactiveState, id string, out io.Writer) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	var endpoint protocol.Endpoint
-	var report protocol.InventoryReport
-	var session *protocol.Session
-	var err error
 	if id == "" {
-		endpoint, report, session, err = findSelected(ctx, api, state)
-	} else {
-		loaded, loadErr := loadReports(ctx, api, id)
-		if loadErr != nil {
-			return loadErr
+		_, _, session, err := findSelected(ctx, api, state)
+		if err != nil {
+			return err
 		}
-		if fetchErr, ok := loaded.errors[id]; ok {
-			return fmt.Errorf("endpoint %q unavailable: %w", id, fetchErr)
-		}
-		endpoint, report, session, err = FindSession(id, loaded.endpoints, loaded.reports)
+		id = session.SessionID
 	}
-	if err != nil {
-		return err
-	}
-	capabilities, capabilityErr := api.GetCapabilities(ctx, endpoint.EndpointID)
-	detail := Detail{Endpoint: endpoint, Session: session, Inventory: report, Capabilities: capabilities}
-	resourceID := ""
-	if session != nil {
-		resourceID = session.SessionID
-	}
-	if commands, commandErr := api.ListCommands(ctx, endpoint.EndpointID, resourceID, 20); commandErr == nil {
-		detail.CommandHistory = commands
-	} else {
-		detail.Unavailable = append(detail.Unavailable, "commands unavailable")
-	}
-	if capabilityErr != nil {
-		detail.Unavailable = append(detail.Unavailable, "capabilities unavailable")
-	}
-	RenderDetail(out, detail)
-	return nil
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).Show(ctx, out, id, false)
 }

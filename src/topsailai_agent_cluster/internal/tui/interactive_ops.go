@@ -26,35 +26,7 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	generation := ""
-	if rest == "" {
-		_, _, session, err := findSelected(ctx, api, state)
-		if err != nil {
-			return err
-		}
-		generation = session.Generation
-	} else {
-		report, err := api.GetInventory(ctx, endpointID)
-		if err != nil {
-			return err
-		}
-		for _, session := range report.Sessions {
-			if session.SessionID == resourceID {
-				generation = session.Generation
-				break
-			}
-		}
-	}
-	snapshot, err := api.GetOutput(ctx, endpointID, resourceID, generation, maxBytes)
-	if err != nil {
-		return err
-	}
-	if snapshot.ErrorCode != "" {
-		_, err = fmt.Fprintln(out, snapshot.ErrorCode)
-		return err
-	}
-	RenderSnapshot(out, snapshot.ObservedAtMS, snapshot.Data, snapshot.Truncated)
-	return nil
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, out, endpointID, resourceID, maxBytes, false)
 }
 
 func interactiveValue(values map[string]any, key string) string {
@@ -77,12 +49,7 @@ func interactiveStatus(parent context.Context, api InteractiveAPI, state *intera
 		_, err = fmt.Fprintln(out, session.State)
 		return err
 	}
-	result, err := api.GetCommand(ctx, commandID)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(out, StatusLabel(protocol.CommandStatus(interactiveValue(result, "status")), ReceiptForStatus(result)))
-	return err
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).Status(ctx, out, commandID, false)
 }
 
 func interactiveSend(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, reader *bufio.Reader, out io.Writer, options InteractiveOptions) error {
@@ -124,28 +91,22 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if err != nil {
 		return err
 	}
-	descriptor, err := PreflightCapability(ctx, api, state.endpoint, protocol.OperationMessageSend)
+	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
+	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.endpoint, ResourceID: state.session, Generation: session.Generation, Payload: json.RawMessage(payloadText), Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
 	if err != nil {
 		return err
 	}
-	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: fmt.Sprintf("cli-%d", time.Now().UnixNano()), IssuerID: "operator", Scope: "operator", EndpointID: state.endpoint, Target: &protocol.CommandTarget{Kind: "session", ResourceID: state.session, Generation: session.Generation}, Operation: protocol.OperationMessageSend, OperationVersion: "v1", CapabilityRevision: descriptor.Revision, PayloadSchemaVersion: "v1", Payload: json.RawMessage(payloadText), ExecuteBeforeAtMS: time.Now().Add(5 * time.Minute).UnixMilli(), Budget: protocol.Budget{WaitTimeoutMS: options.WaitTimeoutMS}}
-	result, err := api.AdmitCommand(ctx, intent)
+	actionResult, err := runner.SubmitAction(ctx, intent)
 	if err != nil {
 		return err
 	}
-	state.commandID, _ = result["command_id"].(string)
-	if state.commandID == "" {
-		state.commandID = intent.CommandID
-	}
+	state.commandID = actionResult.CommandID
 	if _, err = fmt.Fprintln(out, "command submitted:", state.commandID); err != nil {
 		return err
 	}
-	waitCtx, waitCancel := WaitContext(ctx, intent.Budget)
-	defer waitCancel()
-	result, err = WaitForTerminal(waitCtx, api, state.commandID, 100*time.Millisecond)
+	result, err := runner.WaitAction(ctx, actionResult, intent.Budget)
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(out, StatusLabel(protocol.CommandStatus(interactiveValue(result, "status")), ReceiptForStatus(result)))
-	return err
+	return runner.RenderAction(out, result)
 }
