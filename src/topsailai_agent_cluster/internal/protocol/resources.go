@@ -13,13 +13,16 @@ type Endpoint struct {
 
 // Session identifies a provider session without exposing provider routing details.
 type Session struct {
-	SessionID    string `json:"session_id"`
-	AgentID      string `json:"agent_id"`
-	Generation   string `json:"generation"`
-	AdapterID    string `json:"adapter_id"`
-	State        string `json:"state"`
-	StateReason  string `json:"state_reason,omitempty"`
-	ObservedAtMS int64  `json:"observed_at_ms"`
+	SessionID        string `json:"session_id"`
+	AgentID          string `json:"agent_id"`
+	Generation       string `json:"generation"`
+	AdapterID        string `json:"adapter_id"`
+	State            string `json:"state"`
+	StateReason      string `json:"state_reason,omitempty"`
+	Stale            bool   `json:"stale,omitempty"`
+	Unknown          bool   `json:"unknown,omitempty"`
+	CollectionStatus string `json:"collection_status,omitempty"`
+	ObservedAtMS     int64  `json:"observed_at_ms"`
 }
 
 // AdapterSummary describes an adapter as report data, not an execution selector.
@@ -34,5 +37,5 @@ type AdapterSummary struct {
 	LastAttemptAtMS  int64                `json:"last_attempt_at_ms"`
 	LastSuccessAtMS  *int64               `json:"last_success_at_ms,omitempty"`
 	DataKnown        bool                 `json:"data_known"`
-	Stale            bool                 `json:"stale"`
+	Stale            bool                 `json:"stale,omitempty"`
 }

@@ -3,11 +3,25 @@ package tui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"topsailai_agent_cluster/internal/protocol"
 )
+
+func TestInteractiveWriterFailureReturnsWithoutPanic(t *testing.T) {
+	stub := &interactiveStub{}
+	err := RunInteractive(context.Background(), stub, strings.NewReader("help\n"), &failingWriter{}, &strings.Builder{}, InteractiveOptions{})
+	if err == nil || err.Error() != "write failed" {
+		t.Fatalf("unexpected writer error: %v", err)
+	}
+}
+
+type failingWriter struct{}
+
+func (*failingWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }
 
 func TestInteractiveContinuesAfterRecoveredCommandFailure(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}, failList: true}
@@ -137,5 +151,242 @@ func TestSafeWriterBoundsUnterminatedSequence(t *testing.T) {
 	}
 	if output.String() != "prefix" {
 		t.Fatalf("unexpected bounded output=%q", output.String())
+	}
+}
+
+func TestSendAdmissionUncertainRetainsID(t *testing.T) {
+	stub := &uncertainAdmissionStub{inventory: freshTestInventory()}
+	var output, errorsOut strings.Builder
+	input := "use ep session-1\nsend {\"text\":\"hi\"}\ny\nstatus\nquit\n"
+	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("POST count=%d want=1", stub.admit)
+	}
+	diagnostic := errorsOut.String()
+	marker := "error: command "
+	start := strings.Index(diagnostic, marker)
+	if start < 0 {
+		t.Fatalf("missing retained ID diagnostic: %q", diagnostic)
+	}
+	fields := strings.Fields(diagnostic[start+len("error: "):])
+	if len(fields) < 8 || fields[0] != "command" || fields[2] != "result" || fields[3] != "unknown;" || fields[4] != "use" || fields[5] != "status" {
+		t.Fatalf("unexpected diagnostic: %q", diagnostic)
+	}
+	commandID := fields[1]
+	if fields[6] != commandID || stub.commands != 1 || stub.lastCommand != commandID {
+		t.Fatalf("status queries=%d id=%q diagnostic_id=%q", stub.commands, stub.lastCommand, commandID)
+	}
+}
+
+func TestSendWaitBudgetIndependentFromAdmissionContext(t *testing.T) {
+	reader := &deadlineWaitReader{}
+	runner := CommandRunner{API: reader}
+	parent, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	<-parent.Done()
+	started := time.Now()
+	result, err := runner.WaitAction(parent, ActionResult{CommandID: "cmd-1"}, protocol.Budget{WaitTimeoutMS: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["status"] != string(protocol.StatusFinished) {
+		t.Fatalf("result=%#v", result)
+	}
+	if reader.calls != 2 || time.Since(started) < time.Millisecond {
+		t.Fatalf("calls=%d elapsed=%s", reader.calls, time.Since(started))
+	}
+}
+
+func TestSelectedAdapterFreshnessRejectsUse(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		adapt protocol.AdapterSummary
+		want  string
+	}{
+		{name: "stale", adapt: protocol.AdapterSummary{AdapterID: "adapter-1", DataKnown: true, Stale: true, CollectionStatus: protocol.CollectionSucceeded}, want: "stale=true"},
+		{name: "unknown", adapt: protocol.AdapterSummary{AdapterID: "adapter-1", DataKnown: false, CollectionStatus: protocol.CollectionSucceeded}, want: "unknown=true"},
+		{name: "incomplete", adapt: protocol.AdapterSummary{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionPartial}, want: "collection_status=partial"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			stub := &freshnessStub{inventory: freshTestInventoryWithAdapter(testCase.adapt)}
+			var output, errorsOut strings.Builder
+			if err := RunInteractive(context.Background(), stub, strings.NewReader("use ep session-1\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(errorsOut.String(), testCase.want) {
+				t.Fatalf("errors=%q want %q", errorsOut.String(), testCase.want)
+			}
+		})
+	}
+}
+
+func TestSelectedAdapterFreshnessChangesBeforeSend(t *testing.T) {
+	stub := &freshnessStub{
+		inventory: freshTestInventoryWithAdapter(protocol.AdapterSummary{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}),
+		second:    freshTestInventoryWithAdapter(protocol.AdapterSummary{AdapterID: "adapter-1", DataKnown: true, Stale: true, CollectionStatus: protocol.CollectionSucceeded}),
+	}
+	var output, errorsOut strings.Builder
+	input := "use ep session-1\nsend {\"text\":\"hi\"}\ny\nquit\n"
+	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("POST count=%d want=0", stub.admit)
+	}
+	if !strings.Contains(errorsOut.String(), "stale=true") {
+		t.Fatalf("errors=%q", errorsOut.String())
+	}
+}
+
+type uncertainAdmissionStub struct {
+	interactiveStub
+	inventory   protocol.InventoryReport
+	admit       int
+	commands    int
+	lastCommand string
+}
+
+func (s *uncertainAdmissionStub) ListEndpoints(context.Context) ([]protocol.Endpoint, error) {
+	return []protocol.Endpoint{{EndpointID: "ep"}}, nil
+}
+func (s *uncertainAdmissionStub) GetInventory(context.Context, string) (protocol.InventoryReport, error) {
+	return s.inventory, nil
+}
+func (s *uncertainAdmissionStub) GetCapabilities(context.Context, string) (protocol.CapabilityDescriptor, error) {
+	return protocol.CapabilityDescriptor{Revision: "r1", Capabilities: []protocol.Capability{{Name: protocol.OperationMessageSend}}}, nil
+}
+func (s *uncertainAdmissionStub) GetCommand(_ context.Context, commandID string) (map[string]any, error) {
+	s.commands++
+	s.lastCommand = commandID
+	return map[string]any{"status": string(protocol.StatusFinished)}, nil
+}
+func (s *uncertainAdmissionStub) AdmitCommand(context.Context, protocol.ImmutableIntent) (map[string]any, error) {
+	s.admit++
+	return nil, errors.New("transport timeout")
+}
+
+func (s *uncertainAdmissionStub) ListCommands(context.Context, string, string, int) ([]map[string]any, error) {
+	return nil, nil
+}
+func (s *uncertainAdmissionStub) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+	return protocol.OutputSnapshotResponse{}, nil
+}
+
+type deadlineWaitReader struct {
+	calls int
+}
+
+func (r *deadlineWaitReader) ListEndpoints(context.Context) ([]protocol.Endpoint, error) {
+	return nil, nil
+}
+func (r *deadlineWaitReader) GetInventory(context.Context, string) (protocol.InventoryReport, error) {
+	return protocol.InventoryReport{}, nil
+}
+func (r *deadlineWaitReader) GetCapabilities(context.Context, string) (protocol.CapabilityDescriptor, error) {
+	return protocol.CapabilityDescriptor{}, nil
+}
+func (r *deadlineWaitReader) ListCommands(context.Context, string, string, int) ([]map[string]any, error) {
+	return nil, nil
+}
+func (r *deadlineWaitReader) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+	return protocol.OutputSnapshotResponse{}, nil
+}
+func (r *deadlineWaitReader) AdmitCommand(context.Context, protocol.ImmutableIntent) (map[string]any, error) {
+	return nil, nil
+}
+func (r *deadlineWaitReader) GetCommand(context.Context, string) (map[string]any, error) {
+	r.calls++
+	if r.calls == 1 {
+		return map[string]any{"status": string(protocol.StatusExecuting)}, nil
+	}
+	return map[string]any{"status": string(protocol.StatusFinished)}, nil
+}
+
+type freshnessStub struct {
+	inventory protocol.InventoryReport
+	second    protocol.InventoryReport
+	calls     int
+	admit     int
+}
+
+func (s *freshnessStub) ListEndpoints(context.Context) ([]protocol.Endpoint, error) {
+	return []protocol.Endpoint{{EndpointID: "ep"}}, nil
+}
+func (s *freshnessStub) GetInventory(context.Context, string) (protocol.InventoryReport, error) {
+	s.calls++
+	if s.second.Adapters != nil && s.calls > 1 {
+		return s.second, nil
+	}
+	return s.inventory, nil
+}
+func (s *freshnessStub) GetCapabilities(context.Context, string) (protocol.CapabilityDescriptor, error) {
+	return protocol.CapabilityDescriptor{Revision: "r1", Capabilities: []protocol.Capability{{Name: protocol.OperationMessageSend}}}, nil
+}
+func (s *freshnessStub) GetCommand(context.Context, string) (map[string]any, error) {
+	return map[string]any{"status": string(protocol.StatusFinished)}, nil
+}
+func (s *freshnessStub) ListCommands(context.Context, string, string, int) ([]map[string]any, error) {
+	return nil, nil
+}
+func (s *freshnessStub) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+	return protocol.OutputSnapshotResponse{}, nil
+}
+func (s *freshnessStub) AdmitCommand(context.Context, protocol.ImmutableIntent) (map[string]any, error) {
+	s.admit++
+	return map[string]any{"command_id": "cmd-1"}, nil
+}
+
+func freshTestInventory() protocol.InventoryReport {
+	return freshTestInventoryWithAdapter(protocol.AdapterSummary{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded})
+}
+func freshTestInventoryWithAdapter(adapter protocol.AdapterSummary) protocol.InventoryReport {
+	return protocol.InventoryReport{ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{adapter}, Sessions: []protocol.Session{{SessionID: "session-1", AdapterID: "adapter-1", Generation: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}}}
+}
+
+func TestSelectedSessionFreshnessRejectsInvalidReports(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*protocol.Session)
+		want   string
+	}{
+		{name: "stale", mutate: func(session *protocol.Session) { session.Stale = true }, want: "stale=true"},
+		{name: "unknown", mutate: func(session *protocol.Session) { session.Unknown = true }, want: "unknown=true"},
+		{name: "missing collection status", mutate: func(session *protocol.Session) { session.CollectionStatus = "" }, want: "collection_status="},
+		{name: "failed collection", mutate: func(session *protocol.Session) { session.CollectionStatus = protocol.CollectionFailed }, want: "collection_status=failed"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			inventory := freshTestInventory()
+			testCase.mutate(&inventory.Sessions[0])
+			stub := &freshnessStub{inventory: inventory}
+			var output, errorsOut strings.Builder
+			if err := RunInteractive(context.Background(), stub, strings.NewReader("use ep session-1\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(errorsOut.String(), testCase.want) {
+				t.Fatalf("errors=%q want substring %q", errorsOut.String(), testCase.want)
+			}
+		})
+	}
+}
+
+func TestMissingAdapterSummaryDoesNotBlockFreshSession(t *testing.T) {
+	inventory := protocol.InventoryReport{
+		ReportComplete:   true,
+		CollectionStatus: protocol.CollectionSucceeded,
+		Sessions:         []protocol.Session{{SessionID: "session-1", AdapterID: "unreported-adapter", Generation: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}},
+	}
+	stub := &freshnessStub{inventory: inventory}
+	var output, errorsOut strings.Builder
+	if err := RunInteractive(context.Background(), stub, strings.NewReader("use ep session-1\nstatus\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if errorsOut.Len() != 0 {
+		t.Fatalf("unexpected errors for absent adapter summary: %q", errorsOut.String())
+	}
+	if !strings.Contains(output.String(), "running") {
+		t.Fatalf("fresh session was not usable: %q", output.String())
 	}
 }

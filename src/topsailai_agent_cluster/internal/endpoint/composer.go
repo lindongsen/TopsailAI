@@ -27,6 +27,9 @@ func (c *Collector) compose(observedAtMS int64) protocol.InventoryReport {
 				if session.AdapterID == "" {
 					session.AdapterID = source.AdapterID
 				}
+				session.Stale = source.Stale
+				session.Unknown = !source.DataKnown
+				session.CollectionStatus = source.CollectionStatus
 				report.Sessions = append(report.Sessions, session)
 			}
 		}

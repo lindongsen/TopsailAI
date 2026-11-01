@@ -113,7 +113,8 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	}
 	actionResult, err := runner.SubmitAction(ctx, intent)
 	if err != nil {
-		return err
+		state.commandID = intent.CommandID
+		return fmt.Errorf("command %s result unknown; use status %s to query; %w", intent.CommandID, intent.CommandID, err)
 	}
 	state.commandID = actionResult.CommandID
 	if _, err = fmt.Fprintln(out, "command submitted:", state.commandID); err != nil {

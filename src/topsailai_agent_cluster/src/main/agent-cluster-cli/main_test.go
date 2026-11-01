@@ -9,6 +9,13 @@ import (
 	"topsailai_agent_cluster/internal/tui"
 )
 
+func TestInteractiveRejectsJSONScope(t *testing.T) {
+	err := runWithIO([]string{"--json", "interactive"}, strings.NewReader("quit\n"), &strings.Builder{}, &strings.Builder{}, true)
+	if err == nil || err.Error() != "interactive does not support --json or --yes" {
+		t.Fatalf("unexpected JSON scope result: %v", err)
+	}
+}
+
 func TestInteractiveRejectsNonTerminalBeforeNetwork(t *testing.T) {
 	err := runWithIO([]string{"--server-url", "http://127.0.0.1:1", "interactive"}, strings.NewReader("quit\n"), &strings.Builder{}, &strings.Builder{}, false)
 	if err == nil || err.Error() != "interactive mode requires a terminal on stdin" {
@@ -99,7 +106,7 @@ func (s *actionPathStub) ListEndpoints(context.Context) ([]protocol.Endpoint, er
 	return []protocol.Endpoint{{EndpointID: "ep"}}, nil
 }
 func (s *actionPathStub) GetInventory(context.Context, string) (protocol.InventoryReport, error) {
-	return protocol.InventoryReport{ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Sessions: []protocol.Session{{SessionID: "session", Generation: "gen", State: "running"}}}, nil
+	return protocol.InventoryReport{ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}}, Sessions: []protocol.Session{{SessionID: "session", AdapterID: "adapter-1", Generation: "gen", State: "running", CollectionStatus: protocol.CollectionSucceeded}}}, nil
 }
 func (s *actionPathStub) GetCapabilities(context.Context, string) (protocol.CapabilityDescriptor, error) {
 	return protocol.CapabilityDescriptor{Revision: "rev-1", Capabilities: []protocol.Capability{{Name: protocol.OperationMessageSend}}}, nil

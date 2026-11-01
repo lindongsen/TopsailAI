@@ -215,6 +215,12 @@ func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveSta
 				continue
 			}
 			session := &report.Sessions[index]
+			if err := validateSessionFreshness(*session); err != nil {
+				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, err
+			}
+			if err := validateAdapterFreshness(report, session.AdapterID); err != nil {
+				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, err
+			}
 			if session.Generation == "" || session.Generation != state.Generation {
 				state.invalidate("selected session generation changed")
 				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session generation changed; use the session again")
@@ -246,13 +252,41 @@ func interactiveUse(parent context.Context, api InteractiveAPI, state *interacti
 			continue
 		}
 		for _, session := range report.Sessions {
-			if session.SessionID == args[1] && session.Generation != "" {
-				state.reset(args[0], args[1], session.Generation)
-				return nil
+			if session.SessionID != args[1] || session.Generation == "" {
+				continue
 			}
+			if freshnessErr := validateSessionFreshness(session); freshnessErr != nil {
+				return freshnessErr
+			}
+			if freshnessErr := validateAdapterFreshness(report, session.AdapterID); freshnessErr != nil {
+				return freshnessErr
+			}
+			state.reset(args[0], args[1], session.Generation)
+			return nil
 		}
 	}
 	return fmt.Errorf("session %q was not found on endpoint %q", args[1], args[0])
+}
+
+func validateSessionFreshness(session protocol.Session) error {
+	if session.Stale || session.Unknown || session.CollectionStatus != protocol.CollectionSucceeded {
+		return fmt.Errorf("session %q is not fresh: stale=%t unknown=%t collection_status=%s", session.SessionID, session.Stale, session.Unknown, session.CollectionStatus)
+	}
+	return nil
+}
+
+func validateAdapterFreshness(report protocol.InventoryReport, adapterID string) error {
+	for _, adapter := range report.Adapters {
+		if adapter.AdapterID != adapterID {
+			continue
+		}
+		if adapter.Stale || !adapter.DataKnown || adapter.CollectionStatus != protocol.CollectionSucceeded {
+			return fmt.Errorf("adapter %q is not fresh: stale=%t unknown=%t collection_status=%s", adapterID, adapter.Stale, !adapter.DataKnown, adapter.CollectionStatus)
+		}
+		return nil
+	}
+	// Adapter freshness is optional when no matching summary is present.
+	return nil
 }
 
 func interactiveRefresh(parent context.Context, api InteractiveAPI, state *interactiveState, out io.Writer) error {

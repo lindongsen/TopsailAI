@@ -82,7 +82,7 @@ func (r CommandRunner) SubmitAction(ctx context.Context, intent protocol.Immutab
 
 // WaitAction polls the durable command result within the requested local budget.
 func (r CommandRunner) WaitAction(ctx context.Context, action ActionResult, budget protocol.Budget) (map[string]any, error) {
-	waitCtx, cancel := WaitContext(ctx, budget)
+	waitCtx, cancel := WaitContext(context.WithoutCancel(ctx), budget)
 	defer cancel()
 	return WaitForTerminal(waitCtx, r.API, action.CommandID, 100*time.Millisecond)
 }
