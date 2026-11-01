@@ -1,0 +1,140 @@
+package client
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+
+	"topsailai_agent_cluster/internal/protocol"
+)
+
+// APIClient calls the authenticated Server operator API.
+type APIClient struct {
+	HTTPClient *http.Client
+	BaseURL    string
+	Token      string
+}
+
+// NewAPIClient constructs an API client for baseURL and bearer token.
+func NewAPIClient(baseURL, token string) *APIClient {
+	return &APIClient{HTTPClient: http.DefaultClient, BaseURL: strings.TrimRight(baseURL, "/"), Token: token}
+}
+
+// ListEndpoints returns the current endpoint projection.
+func (c *APIClient) ListEndpoints(ctx context.Context) ([]protocol.Endpoint, error) {
+	var result []protocol.Endpoint
+	if err := c.get(ctx, "/api/v1/endpoints", &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// GetInventory returns the latest inventory report for endpointID.
+func (c *APIClient) GetInventory(ctx context.Context, endpointID string) (protocol.InventoryReport, error) {
+	var result protocol.InventoryReport
+	err := c.get(ctx, "/api/v1/endpoints/"+endpointID+"/session-state", &result)
+	return result, err
+}
+
+// GetCapabilities returns the standard capabilities visible for endpointID.
+func (c *APIClient) GetCapabilities(ctx context.Context, endpointID string) (protocol.CapabilityDescriptor, error) {
+	var result protocol.CapabilityDescriptor
+	err := c.get(ctx, "/api/v1/endpoints/"+endpointID+"/capabilities", &result)
+	return result, err
+}
+
+// GetCommand returns durable command evidence by ID.
+func (c *APIClient) GetCommand(ctx context.Context, commandID string) (map[string]any, error) {
+	var result map[string]any
+	err := c.get(ctx, "/api/v1/commands/"+commandID, &result)
+	return result, err
+}
+
+// ListCommands returns recent commands for an endpoint or resource.
+func (c *APIClient) ListCommands(ctx context.Context, endpointID, resourceID string, limit int) ([]map[string]any, error) {
+	path := fmt.Sprintf("/api/v1/commands?endpoint_id=%s&resource_id=%s&limit=%d", url.QueryEscape(endpointID), url.QueryEscape(resourceID), limit)
+	var result []map[string]any
+	if err := c.get(ctx, path, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// OutputSnapshot is the Server response for a bounded runtime output request.
+type OutputSnapshot = protocol.OutputSnapshotResponse
+
+// GetOutput retrieves a bounded output snapshot for a resource.
+func (c *APIClient) GetOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes int) (protocol.OutputSnapshotResponse, error) {
+	path := fmt.Sprintf("/api/v1/output?endpoint_id=%s&resource_id=%s&generation=%s&max_bytes=%d", url.QueryEscape(endpointID), url.QueryEscape(resourceID), url.QueryEscape(generation), maxBytes)
+	var result protocol.OutputSnapshotResponse
+	err := c.get(ctx, path, &result)
+	return result, err
+}
+
+// AdmitCommand submits one immutable command intent.
+func (c *APIClient) AdmitCommand(ctx context.Context, intent protocol.ImmutableIntent) (map[string]any, error) {
+	var result map[string]any
+	err := c.request(ctx, http.MethodPost, "/api/v1/commands", intent, &result)
+	return result, err
+}
+
+// CancelCommand requests cancellation before dispatch.
+func (c *APIClient) CancelCommand(ctx context.Context, commandID string) (map[string]any, error) {
+	var result map[string]any
+	err := c.request(ctx, http.MethodPost, "/api/v1/commands/"+commandID+"/cancel", nil, &result)
+	return result, err
+}
+
+func (c *APIClient) get(ctx context.Context, path string, target any) error {
+	return c.request(ctx, http.MethodGet, path, nil, target)
+}
+
+func (c *APIClient) request(ctx context.Context, method, path string, body any, target any) error {
+	var reader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(data)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, reader)
+	if err != nil {
+		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	httpClient := c.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var envelope struct {
+		Code    any             `json:"code"`
+		Message string          `json:"message"`
+		Data    json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("server request failed (%d): %s", resp.StatusCode, envelope.Message)
+	}
+	if target == nil || len(envelope.Data) == 0 || string(envelope.Data) == "null" {
+		return nil
+	}
+	return json.Unmarshal(envelope.Data, target)
+}
