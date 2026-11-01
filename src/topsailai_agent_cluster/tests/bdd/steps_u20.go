@@ -118,11 +118,20 @@ func runHumanTUIStatus() error {
 	if err != nil {
 		return fmt.Errorf("run real human TUI status: %w; stderr=%s", err, stderr)
 	}
-	phase := activeScenario.tuiExpectedState
-	if phase != "" {
-		if err := os.WriteFile(filepath.Join(activeScenario.holdDir, "release-"+phase), []byte("release\n"), 0o600); err != nil {
-			return err
-		}
+	if err := writeRelease(activeScenario.holdDir, activeScenario.tuiExpectedState); err != nil {
+		return err
+	}
+	return nil
+}
+
+// writeRelease releases a configured phase gate and ignores scenarios without one.
+func writeRelease(holdDir, phase string) error {
+	if holdDir == "" || phase == "" {
+		return nil
+	}
+	path := filepath.Join(holdDir, "release-"+phase)
+	if err := os.WriteFile(path, []byte("release\n"), 0o600); err != nil {
+		return fmt.Errorf("write release file %q: %w", path, err)
 	}
 	return nil
 }
