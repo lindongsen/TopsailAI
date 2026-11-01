@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -141,25 +142,73 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 var marshalAdapterConfigurationFn = json.Marshal
 
 // WaitForBeforeInvocationCrash waits for the process-composition crash marker.
-func (c *Cluster) WaitForBeforeInvocationCrash(t testing.TB, limit time.Duration) {
-	t.Helper()
+func (c *Cluster) WaitForBeforeInvocationCrashE(limit time.Duration) error {
 	marker := c.EndpointDB + ".crash-before-invocation"
 	deadline := time.Now().Add(limit)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(marker); err == nil {
-			return
+			return nil
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	t.Fatalf("Endpoint did not reach accepted journal crash marker %s", marker)
+	return fmt.Errorf("wait for crash marker before deadline: %s", marker)
 }
 
-// RestartEndpoint stops and starts the owned Endpoint with its original configuration.
+// WaitForBeforeInvocationCrash preserves the legacy testing.TB API.
+func (c *Cluster) WaitForBeforeInvocationCrash(t testing.TB, limit time.Duration) {
+	t.Helper()
+	if err := c.WaitForBeforeInvocationCrashE(limit); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// RestartEndpointE stops and starts the owned Endpoint with its original configuration.
+func (c *Cluster) RestartEndpointE() error {
+	if err := stopProcessForRestartE(c.Endpoint); err != nil {
+		return fmt.Errorf("stop endpoint: %w", err)
+	}
+	endpoint, err := StartProcessE(c.EndpointPath, c.EndpointEnv)
+	if err != nil {
+		return fmt.Errorf("start endpoint: %w", err)
+	}
+	c.Endpoint = endpoint
+	if err := WaitInventoryE(c.URL("/api/v1/endpoints/endpoint-1/session-state"), "secret", 20*time.Second); err != nil {
+		return fmt.Errorf("wait for endpoint inventory: %w", err)
+	}
+	return nil
+}
+
+// stopProcessForRestartE terminates the endpoint and accepts its expected non-zero exit status.
+func stopProcessForRestartE(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil || cmd.ProcessState != nil {
+		return fmt.Errorf("endpoint process is not running")
+	}
+	pid := cmd.Process.Pid
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("signal process %d: %w", pid, err)
+	}
+	if err := cmd.Wait(); err != nil && !expectedEndpointExit(err) {
+		return fmt.Errorf("wait for endpoint process %d: %w", pid, err)
+	}
+	return nil
+}
+
+// expectedEndpointExit reports the exit status produced by a deliberate endpoint stop.
+func expectedEndpointExit(err error) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	code := exitErr.ExitCode()
+	return code == 98 || code == -1
+}
+
+// RestartEndpoint preserves the legacy testing.TB API.
 func (c *Cluster) RestartEndpoint(t testing.TB) {
 	t.Helper()
-	StopProcess(t, c.Endpoint)
-	c.Endpoint = StartProcess(t, c.EndpointPath, c.EndpointEnv)
-	WaitInventory(t, c.URL("/api/v1/endpoints/endpoint-1/session-state"), "secret", 20*time.Second)
+	if err := c.RestartEndpointE(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // Stop stops all processes owned by the cluster exactly once.
@@ -179,20 +228,19 @@ func (c *Cluster) Stop(t testing.TB) {
 // URL returns a Server API URL for the cluster.
 func (c *Cluster) URL(path string) string { return "http://127.0.0.1:" + c.API + path }
 
-// Request performs an authenticated request against the real Server.
-func (c *Cluster) Request(t testing.TB, method, path string, payload any) (int, []byte) {
-	t.Helper()
+// RequestE performs an authenticated request against the real Server.
+func (c *Cluster) RequestE(method, path string, payload any) (int, []byte, error) {
 	var body io.Reader
 	if payload != nil {
 		data, err := json.Marshal(payload)
 		if err != nil {
-			t.Fatal(err)
+			return 0, nil, fmt.Errorf("marshal request payload: %w", err)
 		}
 		body = bytes.NewReader(data)
 	}
 	req, err := http.NewRequest(method, c.URL(path), body)
 	if err != nil {
-		t.Fatal(err)
+		return 0, nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer secret")
 	if payload != nil {
@@ -200,66 +248,50 @@ func (c *Cluster) Request(t testing.TB, method, path string, payload any) (int, 
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatal(err)
+		return 0, nil, fmt.Errorf("send request: %w", err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatal(err)
+		return 0, nil, fmt.Errorf("read response: %w", err)
 	}
-	return resp.StatusCode, data
+	return resp.StatusCode, data, nil
 }
 
-// WaitHTTP waits for a bounded HTTP status result.
-func WaitHTTP(t testing.TB, url, token string, want int, limit time.Duration) {
+// Request preserves the legacy testing.TB API.
+func (c *Cluster) Request(t testing.TB, method, path string, payload any) (int, []byte) {
 	t.Helper()
-	deadline := time.Now().Add(limit)
-	for time.Now().Before(deadline) {
-		req, _ := http.NewRequest(http.MethodGet, url, nil)
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == want {
-				return
-			}
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatalf("HTTP %s did not return %d", url, want)
-}
-
-// WaitInventory waits for the first real Endpoint inventory report.
-func WaitInventory(t testing.TB, url, token string, limit time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(limit)
-	for time.Now().Before(deadline) {
-		req, _ := http.NewRequest(http.MethodGet, url, nil)
-		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			data, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK && (bytes.Contains(data, []byte("fixture-main")) || bytes.Contains(data, []byte("adapter-a"))) {
-				return
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	t.Fatal("real Endpoint inventory was not reported")
-}
-
-// ProviderInvocations returns the fixture's durable invocation evidence.
-func (c *Cluster) ProviderInvocations(t testing.TB) []map[string]any {
-	t.Helper()
-	data, err := os.ReadFile(c.Record)
-	if os.IsNotExist(err) {
-		return nil
-	}
+	status, body, err := c.RequestE(method, path, payload)
 	if err != nil {
 		t.Fatal(err)
+	}
+	return status, body
+}
+
+// WaitHTTP preserves the legacy testing.TB API.
+func WaitHTTP(t testing.TB, url, token string, want int, limit time.Duration) {
+	t.Helper()
+	if err := WaitHTTPE(url, token, want, limit); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// WaitInventory preserves the legacy testing.TB API.
+func WaitInventory(t testing.TB, url, token string, limit time.Duration) {
+	t.Helper()
+	if err := WaitInventoryE(url, token, limit); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ProviderInvocationsE returns durable fixture invocation evidence.
+func (c *Cluster) ProviderInvocationsE() ([]map[string]any, error) {
+	data, err := os.ReadFile(c.Record)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read provider invocation record: %w", err)
 	}
 	var result []map[string]any
 	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
@@ -268,9 +300,19 @@ func (c *Cluster) ProviderInvocations(t testing.TB) []map[string]any {
 		}
 		var item map[string]any
 		if err := json.Unmarshal(line, &item); err != nil {
-			t.Fatal(err)
+			return nil, fmt.Errorf("decode provider invocation record: %w", err)
 		}
 		result = append(result, item)
+	}
+	return result, nil
+}
+
+// ProviderInvocations preserves the legacy testing.TB API.
+func (c *Cluster) ProviderInvocations(t testing.TB) []map[string]any {
+	t.Helper()
+	result, err := c.ProviderInvocationsE()
+	if err != nil {
+		t.Fatal(err)
 	}
 	return result
 }

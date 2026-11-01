@@ -14,7 +14,11 @@ import (
 // registerNotificationSteps registers real SSE and manifest assertions.
 func registerNotificationSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^an isolated Agent Cluster server with notifications$`, func() error {
-		activeScenario.world = NewWorld(activeTest)
+		world, err := NewWorld(activeTest)
+		if err != nil {
+			return err
+		}
+		activeScenario.world = world
 		return activeScenario.world.startEvents()
 	})
 	ctx.Step(`^an inventory changed event for "([^"]*)" is observable$`, func(endpoint string) error {
@@ -31,7 +35,10 @@ func registerNotificationSteps(ctx *godog.ScenarioContext) {
 		}
 	})
 	ctx.Step(`^the manifest reports revision (\d+) for "([^"]*)"$`, func(revision int64, endpoint string) error {
-		resp, body := activeScenario.world.Request(activeTest, http.MethodGet, "/api/v1/manifest", nil)
+		resp, body, err := activeScenario.world.RequestE(http.MethodGet, "/api/v1/manifest", nil)
+		if err != nil {
+			return err
+		}
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("manifest status %d", resp.StatusCode)
 		}

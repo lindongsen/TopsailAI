@@ -20,7 +20,11 @@ func registerCapabilitySteps(ctx *godog.ScenarioContext) {
 		if activeScenario.world == nil {
 			return errors.New("scenario server is not initialized")
 		}
-		activeScenario.lastStatus, activeScenario.lastBody = activeScenario.world.UnsupportedCapability()
+		status, body, err := activeScenario.world.UnsupportedCapability()
+		if err != nil {
+			return err
+		}
+		activeScenario.lastStatus, activeScenario.lastBody = status, body
 		return nil
 	})
 	ctx.Step(`^the response is unsupported$`, func() error {
@@ -106,7 +110,11 @@ func (m *capabilityMapper) LookupResourceID(_ context.Context, resourceID string
 
 func configureCapabilityAdapter(pidfd bool) error {
 	if activeScenario.world == nil {
-		activeScenario.world = NewWorld(activeTest)
+		world, err := NewWorld(activeTest)
+		if err != nil {
+			return err
+		}
+		activeScenario.world = world
 	}
 	root := activeScenario.world.Root
 	script := filepath.Join(root, "capability-provider")

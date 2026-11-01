@@ -15,23 +15,36 @@ import (
 // registerInventorySteps registers real HTTP inventory assertions.
 func registerInventorySteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^an isolated Agent Cluster server$`, func() error {
-		activeScenario.world = NewWorld(activeTest)
+		world, err := NewWorld(activeTest)
+		if err != nil {
+			return err
+		}
+		activeScenario.world = world
 		return nil
 	})
 	ctx.Step(`^endpoint "([^"]*)" submits a complete inventory with revision (\d+)$`, func(endpoint string, revision int64) error {
 		report := validReport(endpoint, revision, false)
-		resp, body := activeScenario.world.Request(activeTest, http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", report)
+		resp, body, err := activeScenario.world.RequestE(http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", report)
+		if err != nil {
+			return err
+		}
 		activeScenario.lastStatus, activeScenario.lastBody = resp.StatusCode, body
 		return nil
 	})
 	ctx.Step(`^endpoint "([^"]*)" submits an empty complete inventory with revision (\d+)$`, func(endpoint string, revision int64) error {
 		report := validReport(endpoint, revision, true)
-		resp, body := activeScenario.world.Request(activeTest, http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", report)
+		resp, body, err := activeScenario.world.RequestE(http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", report)
+		if err != nil {
+			return err
+		}
 		activeScenario.lastStatus, activeScenario.lastBody = resp.StatusCode, body
 		return nil
 	})
 	ctx.Step(`^endpoint "([^"]*)" submits an invalid inventory$`, func(endpoint string) error {
-		resp, body := activeScenario.world.Request(activeTest, http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", map[string]any{"schema_version": "v1"})
+		resp, body, err := activeScenario.world.RequestE(http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", map[string]any{"schema_version": "v1"})
+		if err != nil {
+			return err
+		}
 		activeScenario.lastStatus, activeScenario.lastBody = resp.StatusCode, body
 		return nil
 	})
@@ -48,7 +61,10 @@ func registerInventorySteps(ctx *godog.ScenarioContext) {
 		return nil
 	})
 	ctx.Step(`^the latest inventory for "([^"]*)" contains adapter "([^"]*)"$`, func(endpoint, adapterID string) error {
-		resp, body := activeScenario.world.Request(activeTest, http.MethodGet, "/api/v1/endpoints/"+endpoint+"/session-state", nil)
+		resp, body, err := activeScenario.world.RequestE(http.MethodGet, "/api/v1/endpoints/"+endpoint+"/session-state", nil)
+		if err != nil {
+			return err
+		}
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("get status %d", resp.StatusCode)
 		}
@@ -66,7 +82,10 @@ func registerInventorySteps(ctx *godog.ScenarioContext) {
 		return fmt.Errorf("adapter %q not found", adapterID)
 	})
 	ctx.Step(`^the latest inventory for "([^"]*)" contains zero sessions$`, func(endpoint string) error {
-		resp, body := activeScenario.world.Request(activeTest, http.MethodGet, "/api/v1/endpoints/"+endpoint+"/session-state", nil)
+		resp, body, err := activeScenario.world.RequestE(http.MethodGet, "/api/v1/endpoints/"+endpoint+"/session-state", nil)
+		if err != nil {
+			return err
+		}
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("get status %d", resp.StatusCode)
 		}
@@ -140,7 +159,10 @@ func registerInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 			{AdapterID: "source-good", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, DataKnown: true, LastAttemptAtMS: now, LastSuccessAtMS: &now},
 			{AdapterID: "source-bad", ProviderType: "fixture", CollectionStatus: protocol.CollectionFailed, DataKnown: false, LastAttemptAtMS: now},
 		}, Sessions: []protocol.Session{{SessionID: "good-session", AdapterID: "source-good", Generation: "good-generation", State: "idle"}}}
-		resp, body := activeScenario.world.Request(activeTest, http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", report)
+		resp, body, err := activeScenario.world.RequestE(http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", report)
+		if err != nil {
+			return err
+		}
 		activeScenario.lastStatus, activeScenario.lastBody = resp.StatusCode, body
 		return nil
 	})
@@ -176,7 +198,10 @@ func registerInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 		report.Adapters[0].LastSuccessAtMS = &now
 		report.Adapters[0].DataKnown = true
 		report.Adapters[0].Stale = false
-		resp, body := activeScenario.world.Request(activeTest, http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", report)
+		resp, body, err := activeScenario.world.RequestE(http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", report)
+		if err != nil {
+			return err
+		}
 		activeScenario.lastStatus, activeScenario.lastBody = resp.StatusCode, body
 		return nil
 	})
@@ -199,12 +224,18 @@ func registerInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 		report.Adapters[0].Stale = true
 		report.Adapters[0].LastAttemptAtMS = attempt
 		report.Adapters[0].LastSuccessAtMS = previous
-		resp, body := activeScenario.world.Request(activeTest, http.MethodPut, "/api/v1/endpoints/endpoint-1/session-state", report)
+		resp, body, err := activeScenario.world.RequestE(http.MethodPut, "/api/v1/endpoints/endpoint-1/session-state", report)
+		if err != nil {
+			return err
+		}
 		activeScenario.lastStatus, activeScenario.lastBody = resp.StatusCode, body
 		return nil
 	})
 	ctx.Step(`^the latest inventory retains the sessions and marks the source stale with unchanged success time$`, func() error {
-		resp, body := activeScenario.world.Request(activeTest, http.MethodGet, "/api/v1/endpoints/endpoint-1/session-state", nil)
+		resp, body, err := activeScenario.world.RequestE(http.MethodGet, "/api/v1/endpoints/endpoint-1/session-state", nil)
+		if err != nil {
+			return err
+		}
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("get status=%d", resp.StatusCode)
 		}
@@ -226,7 +257,10 @@ func registerInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^endpoint "([^"]*)" submits a first failure with no known data$`, func(endpoint string) error {
 		now := time.Now().UnixMilli()
 		report := protocol.InventoryReport{SchemaVersion: "v1", SourceGeneration: endpoint + "-generation", SnapshotRevision: 1, ObservedAtMS: now, ReportComplete: false, CollectionStatus: protocol.CollectionUnknown, Adapters: []protocol.AdapterSummary{{AdapterID: "unknown-source", ProviderType: "fixture", CollectionStatus: protocol.CollectionUnknown, LastAttemptAtMS: now, DataKnown: false}}}
-		resp, body := activeScenario.world.Request(activeTest, http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", report)
+		resp, body, err := activeScenario.world.RequestE(http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", report)
+		if err != nil {
+			return err
+		}
 		activeScenario.lastStatus, activeScenario.lastBody = resp.StatusCode, body
 		return nil
 	})
@@ -248,7 +282,10 @@ func registerInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^endpoint "([^"]*)" submits a truncated partial report$`, func(endpoint string) error {
 		now := time.Now().UnixMilli()
 		report := protocol.InventoryReport{SchemaVersion: "v1", SourceGeneration: endpoint + "-generation", SnapshotRevision: 1, ObservedAtMS: now, ReportComplete: false, CollectionStatus: protocol.CollectionPartial, Adapters: []protocol.AdapterSummary{{AdapterID: "partial-source", ProviderType: "fixture", CollectionStatus: protocol.CollectionPartial, LastAttemptAtMS: now, DataKnown: true}}, Sessions: []protocol.Session{{SessionID: "partial-session", AdapterID: "partial-source", Generation: "partial-generation"}}}
-		resp, body := activeScenario.world.Request(activeTest, http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", report)
+		resp, body, err := activeScenario.world.RequestE(http.MethodPut, "/api/v1/endpoints/"+endpoint+"/session-state", report)
+		if err != nil {
+			return err
+		}
 		activeScenario.lastStatus, activeScenario.lastBody = resp.StatusCode, body
 		return nil
 	})

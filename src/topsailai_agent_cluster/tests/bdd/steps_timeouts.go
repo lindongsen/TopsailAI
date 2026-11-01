@@ -47,7 +47,10 @@ func registerTimeoutSteps(ctx *godog.ScenarioContext) {
 		return nil
 	})
 	ctx.Step(`^the command remains queryable$`, func() error {
-		resp, body := activeScenario.world.Request(activeTest, http.MethodGet, "/api/v1/commands/bdd-wait-timeout", nil)
+		resp, body, err := activeScenario.world.RequestE(http.MethodGet, "/api/v1/commands/bdd-wait-timeout", nil)
+		if err != nil {
+			return err
+		}
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("query status=%d body=%s", resp.StatusCode, body)
 		}
@@ -68,7 +71,11 @@ func registerTimeoutSteps(ctx *godog.ScenarioContext) {
 	})
 	ctx.Step(`^a command "([^"]*)" is submitted$`, func(id string) error { _, err := submitCommand(id, "late"); return err })
 	ctx.Step(`^a running cluster with one endpoint$`, func() error {
-		activeScenario.world = NewWorld(activeTest)
+		world, err := NewWorld(activeTest)
+		if err != nil {
+			return err
+		}
+		activeScenario.world = world
 		return nil
 	})
 	ctx.Step(`^I submit a command with a sufficient wait budget$`, func() error {
@@ -132,10 +139,17 @@ func registerTimeoutSteps(ctx *godog.ScenarioContext) {
 		}
 		var statusCode int
 		var body []byte
+		var err error
 		if activeScenario.realCommandID != "" {
-			statusCode, body = activeScenario.world.realCluster.Request(activeTest, http.MethodGet, "/api/v1/commands/"+commandID, nil)
+			statusCode, body, err = activeScenario.world.realRequestE(http.MethodGet, "/api/v1/commands/"+commandID, nil)
+			if err != nil {
+				return err
+			}
 		} else {
-			response, responseBody := activeScenario.world.Request(activeTest, http.MethodGet, "/api/v1/commands/"+commandID, nil)
+			response, responseBody, err := activeScenario.world.RequestE(http.MethodGet, "/api/v1/commands/"+commandID, nil)
+			if err != nil {
+				return err
+			}
 			statusCode, body = response.StatusCode, responseBody
 		}
 		if statusCode != http.StatusOK {
@@ -159,10 +173,17 @@ func registerTimeoutSteps(ctx *godog.ScenarioContext) {
 		}
 		var statusCode int
 		var body []byte
+		var err error
 		if activeScenario.realCommandID != "" {
-			statusCode, body = activeScenario.world.realCluster.Request(activeTest, http.MethodGet, "/api/v1/commands/"+commandID, nil)
+			statusCode, body, err = activeScenario.world.realRequestE(http.MethodGet, "/api/v1/commands/"+commandID, nil)
+			if err != nil {
+				return err
+			}
 		} else {
-			response, responseBody := activeScenario.world.Request(activeTest, http.MethodGet, "/api/v1/commands/"+commandID, nil)
+			response, responseBody, err := activeScenario.world.RequestE(http.MethodGet, "/api/v1/commands/"+commandID, nil)
+			if err != nil {
+				return err
+			}
 			statusCode, body = response.StatusCode, responseBody
 		}
 		if statusCode != http.StatusOK {
@@ -180,7 +201,10 @@ func registerTimeoutSteps(ctx *godog.ScenarioContext) {
 		return nil
 	})
 	ctx.Step(`^a later query returns the same command$`, func() error {
-		resp, body := activeScenario.world.Request(activeTest, http.MethodGet, "/api/v1/commands/bdd-late-result", nil)
+		resp, body, err := activeScenario.world.RequestE(http.MethodGet, "/api/v1/commands/bdd-late-result", nil)
+		if err != nil {
+			return err
+		}
 		if resp.StatusCode != http.StatusOK || !bytes.Contains(body, []byte("bdd-late-result")) {
 			return fmt.Errorf("query status=%d body=%s", resp.StatusCode, body)
 		}

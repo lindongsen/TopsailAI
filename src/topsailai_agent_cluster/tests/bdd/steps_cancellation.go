@@ -17,12 +17,16 @@ func registerCancellationSteps(ctx *godog.ScenarioContext) {
 		scenario := activeScenario
 		scenario.world.Commands.DispatchDelay = 2 * time.Second
 		done := make(chan struct{})
+		scenario.commandDone = done
 		go func() { _, _ = submitCommandForScenario(scenario, id, "cancel"); close(done) }()
 		time.Sleep(25 * time.Millisecond)
 		return nil
 	})
 	ctx.Step(`^the command "([^"]*)" is cancelled before dispatch$`, func(id string) error {
-		resp, body := activeScenario.world.Request(activeTest, http.MethodPost, "/api/v1/commands/"+id+"/cancel", nil)
+		resp, body, err := activeScenario.world.RequestE(http.MethodPost, "/api/v1/commands/"+id+"/cancel", nil)
+		if err != nil {
+			return err
+		}
 		activeScenario.lastStatus, activeScenario.lastBody = resp.StatusCode, body
 		return nil
 	})
@@ -44,7 +48,10 @@ func registerCancellationSteps(ctx *godog.ScenarioContext) {
 		return err
 	})
 	ctx.Step(`^the command "([^"]*)" is cancelled after dispatch$`, func(id string) error {
-		resp, body := activeScenario.world.Request(activeTest, http.MethodPost, "/api/v1/commands/"+id+"/cancel", nil)
+		resp, body, err := activeScenario.world.RequestE(http.MethodPost, "/api/v1/commands/"+id+"/cancel", nil)
+		if err != nil {
+			return err
+		}
 		activeScenario.lastStatus, activeScenario.lastBody = resp.StatusCode, body
 		return nil
 	})
@@ -61,16 +68,24 @@ func registerCancellationSteps(ctx *godog.ScenarioContext) {
 		return nil
 	})
 	ctx.Step(`^cancellation and dispatch race for command "([^"]*)"$`, func(id string) error {
-		activeScenario.world.Commands.DispatchDelay = 10 * time.Millisecond
+		scenario := activeScenario
+		scenario.world.Commands.DispatchDelay = 10 * time.Millisecond
 		done := make(chan struct{})
 		var sendStatus int
 		var sendErr error
-		go func() { sendStatus, sendErr = submitCommand(id, "race"); close(done) }()
+		go func() {
+			sendStatus, sendErr = submitIntentForScenario(scenario, id, "race", time.UnixMilli(4102444800000))
+			close(done)
+		}()
 		time.Sleep(time.Millisecond)
-		resp, body := activeScenario.world.Request(activeTest, http.MethodPost, "/api/v1/commands/"+id+"/cancel", nil)
+		resp, body, err := scenario.world.RequestE(http.MethodPost, "/api/v1/commands/"+id+"/cancel", nil)
+		if err != nil {
+			<-done
+			return err
+		}
 		cancelStatus, cancelBody := resp.StatusCode, body
 		<-done
-		activeScenario.lastStatus, activeScenario.lastBody = cancelStatus, cancelBody
+		scenario.lastStatus, scenario.lastBody = cancelStatus, cancelBody
 		if cancelStatus != http.StatusOK && cancelStatus != http.StatusConflict {
 			return fmt.Errorf("race cancellation status=%d body=%s", cancelStatus, cancelBody)
 		}
@@ -83,7 +98,10 @@ func registerCancellationSteps(ctx *godog.ScenarioContext) {
 		if activeScenario.lastStatus != http.StatusOK && activeScenario.lastStatus != http.StatusConflict {
 			return fmt.Errorf("unexpected race status=%d", activeScenario.lastStatus)
 		}
-		resp, body := activeScenario.world.Request(activeTest, http.MethodGet, "/api/v1/commands/bdd-cancel-race", nil)
+		resp, body, err := activeScenario.world.RequestE(http.MethodGet, "/api/v1/commands/bdd-cancel-race", nil)
+		if err != nil {
+			return err
+		}
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("final query status=%d body=%s", resp.StatusCode, body)
 		}

@@ -15,14 +15,19 @@ func registerRecoverySteps(ctx *godog.ScenarioContext) {
 	})
 	ctx.Step(`^a real command is submitted before invocation crash$`, func() error {
 		id := fmt.Sprintf("bdd-recovery-pre-%d", time.Now().UnixNano())
-		activeScenario.realCommandID = id
+		scenario := activeScenario
+		scenario.realCommandID = id
 		done := make(chan error, 1)
 		go func() {
-			_, err := activeScenario.world.SubmitRealCommandWithID(id, "message.send", "fixture-session", "fixture-generation", `{"text":"recovery"}`)
+			_, err := scenario.world.SubmitRealCommandWithID(id, "message.send", "fixture-session", "fixture-generation", `{"text":"recovery"}`)
 			done <- err
 		}()
-		activeScenario.world.realCluster.WaitForBeforeInvocationCrash(activeTest, 10*time.Second)
-		if err := activeScenario.world.RestartRealEndpoint(); err != nil {
+		if err := scenario.world.realCluster.WaitForBeforeInvocationCrashE(10 * time.Second); err != nil {
+			<-done
+			return err
+		}
+		if err := scenario.world.RestartRealEndpoint(); err != nil {
+			<-done
 			return err
 		}
 		if err := <-done; err != nil {

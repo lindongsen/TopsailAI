@@ -35,6 +35,7 @@ type Scenario struct {
 	tuiExpectedState  string
 	holdDir           string
 	scenarioName      string
+	commandDone       chan struct{}
 }
 
 var activeScenario *Scenario
@@ -54,18 +55,19 @@ type World struct {
 }
 
 // NewWorld creates a scenario-scoped server and SQLite database on a dynamic port.
-func NewWorld(t *testing.T) *World {
+func NewWorld(t *testing.T) (*World, error) {
 	t.Helper()
 	root := t.TempDir()
 	store, err := serverstorage.Open(context.Background(), filepath.Join(root, "server.db"))
 	if err != nil {
-		t.Fatal(err)
+		return nil, fmt.Errorf("open scenario store: %w", err)
 	}
 	broker := serverapi.NewEventBroker(16)
 	transport := &bddTransport{}
 	commands := &serverapi.CommandService{Store: store, Transport: transport}
 	if err := store.UpsertEndpoint(context.Background(), protocol.Endpoint{EndpointID: "endpoint-1", InstanceID: "bdd-instance", DisplayName: "BDD Endpoint", ConnectionState: "online", ObservedAtMS: 1, CapabilityRevision: "c1"}, 1); err != nil {
-		t.Fatal(err)
+		_ = store.Close()
+		return nil, fmt.Errorf("seed scenario endpoint: %w", err)
 	}
 	server := httptest.NewServer(serverapi.NewHandlerWithCommandsAndBroker(store, "bdd-token", commands, broker))
 	world := &World{Root: root, Store: store, Server: server, Client: server.Client(), Token: "bdd-token", Commands: commands, Transport: transport}
@@ -75,7 +77,7 @@ func NewWorld(t *testing.T) *World {
 			t.Logf("close scenario store: %v", err)
 		}
 	})
-	return world
+	return world, nil
 }
 
 // StartRealCluster starts the real Server, Endpoint, and Provider fixture processes.
@@ -104,7 +106,9 @@ func (w *World) RestartRealEndpoint() error {
 	if w.realCluster == nil || activeTest == nil {
 		return fmt.Errorf("real cluster is not running")
 	}
-	w.realCluster.RestartEndpoint(activeTest)
+	if err := w.realCluster.RestartEndpointE(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -113,7 +117,10 @@ func (w *World) SubmitInventory(report protocol.InventoryReport) error {
 	if w.realCluster == nil {
 		return fmt.Errorf("real cluster is not running")
 	}
-	status, body := w.realCluster.Request(activeTest, http.MethodPut, "/api/v1/endpoints/endpoint-1/session-state", report)
+	status, body, err := w.realRequestE(http.MethodPut, "/api/v1/endpoints/endpoint-1/session-state", report)
+	if err != nil {
+		return err
+	}
 	if status != http.StatusOK {
 		return fmt.Errorf("inventory submission status=%d body=%s", status, body)
 	}
@@ -161,7 +168,10 @@ func (w *World) submitRealCommand(commandID, operation, target, generation, payl
 	if target != "" {
 		intent["target"] = map[string]any{"kind": "session", "resource_id": target, "generation": generation}
 	}
-	status, body := w.realCluster.Request(activeTest, http.MethodPost, "/api/v1/commands", intent)
+	status, body, err := w.realRequestE(http.MethodPost, "/api/v1/commands", intent)
+	if err != nil {
+		return "", err
+	}
 	if status != http.StatusAccepted && status != http.StatusOK {
 		return "", fmt.Errorf("submit command status=%d body=%s", status, body)
 	}
@@ -195,12 +205,23 @@ func (w *World) resolveRealTarget(target, generation string) (string, string, er
 	return resourceID, generation, nil
 }
 
+// realRequestE performs a real-cluster request without terminating the BDD test process.
+func (w *World) realRequestE(method, path string, payload any) (int, []byte, error) {
+	if w.realCluster == nil {
+		return 0, nil, fmt.Errorf("real cluster is not running")
+	}
+	return w.realCluster.RequestE(method, path, payload)
+}
+
 // RealCommandStatus reads one command without changing its durable execution fact.
 func (w *World) RealCommandStatus(commandID string) (map[string]any, error) {
 	if w.realCluster == nil {
 		return nil, fmt.Errorf("real cluster is not running")
 	}
-	status, body := w.realCluster.Request(activeTest, http.MethodGet, "/api/v1/commands/"+commandID, nil)
+	status, body, err := w.realRequestE(http.MethodGet, "/api/v1/commands/"+commandID, nil)
+	if err != nil {
+		return nil, err
+	}
 	if status != http.StatusOK {
 		return nil, fmt.Errorf("command status=%d body=%s", status, body)
 	}
@@ -218,7 +239,10 @@ func (w *World) CancelRealCommand(commandID string) (int, []byte, error) {
 	if w.realCluster == nil {
 		return 0, nil, fmt.Errorf("real cluster is not running")
 	}
-	status, body := w.realCluster.Request(activeTest, http.MethodPost, "/api/v1/commands/"+commandID+"/cancel", nil)
+	status, body, err := w.realRequestE(http.MethodPost, "/api/v1/commands/"+commandID+"/cancel", nil)
+	if err != nil {
+		return 0, nil, err
+	}
 	return status, body, nil
 }
 
@@ -230,7 +254,10 @@ func (w *World) PollRealCommand(commandID string, timeout time.Duration) (map[st
 	deadline := time.Now().Add(timeout)
 	var last map[string]any
 	for time.Now().Before(deadline) {
-		status, body := w.realCluster.Request(activeTest, http.MethodGet, "/api/v1/commands/"+commandID, nil)
+		status, body, err := w.realRequestE(http.MethodGet, "/api/v1/commands/"+commandID, nil)
+		if err != nil {
+			return nil, err
+		}
 		if status == http.StatusOK {
 			var envelope struct {
 				Data map[string]any `json:"data"`
@@ -281,7 +308,10 @@ func (w *World) PollRealCommandForCaller(commandID string, timeout time.Duration
 	deadline := time.Now().Add(timeout)
 	var last map[string]any
 	for time.Now().Before(deadline) {
-		status, body := w.realCluster.Request(activeTest, http.MethodGet, "/api/v1/commands/"+commandID, nil)
+		status, body, err := w.realRequestE(http.MethodGet, "/api/v1/commands/"+commandID, nil)
+		if err != nil {
+			return nil, err
+		}
 		if status == http.StatusOK {
 			var envelope struct {
 				Data map[string]any `json:"data"`
@@ -318,7 +348,11 @@ func (w *World) ProviderInvocationCount() (int, error) {
 	if w.realCluster == nil {
 		return 0, fmt.Errorf("real cluster is not running")
 	}
-	return len(w.realCluster.ProviderInvocations(activeTest)), nil
+	invocations, err := w.realCluster.ProviderInvocationsE()
+	if err != nil {
+		return 0, err
+	}
+	return len(invocations), nil
 }
 
 // RealInventory reads the latest inventory through the real Server HTTP boundary.
@@ -326,7 +360,10 @@ func (w *World) RealInventory() (map[string]any, error) {
 	if w.realCluster == nil {
 		return nil, fmt.Errorf("real cluster is not running")
 	}
-	status, body := w.realCluster.Request(activeTest, http.MethodGet, "/api/v1/endpoints/endpoint-1/session-state", nil)
+	status, body, err := w.realRequestE(http.MethodGet, "/api/v1/endpoints/endpoint-1/session-state", nil)
+	if err != nil {
+		return nil, err
+	}
 	if status != http.StatusOK {
 		return nil, fmt.Errorf("inventory status=%d body=%s", status, body)
 	}
@@ -359,20 +396,19 @@ func (t *bddTransport) Count() int { t.mu.Lock(); defer t.mu.Unlock(); return t.
 // URL builds an endpoint relative to the scenario's dynamically allocated listener.
 func (w *World) URL(path string) string { return w.Server.URL + path }
 
-// Request performs an authenticated real HTTP request against the scenario server.
-func (w *World) Request(t *testing.T, method, path string, body any) (*http.Response, []byte) {
-	t.Helper()
+// RequestE performs an authenticated scenario HTTP request and returns failures to the step.
+func (w *World) RequestE(method, path string, body any) (*http.Response, []byte, error) {
 	var payload []byte
 	if body != nil {
 		var err error
 		payload, err = json.Marshal(body)
 		if err != nil {
-			t.Fatal(err)
+			return nil, nil, fmt.Errorf("marshal scenario request: %w", err)
 		}
 	}
 	req, err := http.NewRequestWithContext(context.Background(), method, w.URL(path), bytes.NewReader(payload))
 	if err != nil {
-		t.Fatal(err)
+		return nil, nil, fmt.Errorf("create scenario request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+w.Token)
 	if body != nil {
@@ -380,10 +416,20 @@ func (w *World) Request(t *testing.T, method, path string, body any) (*http.Resp
 	}
 	resp, err := w.Client.Do(req)
 	if err != nil {
-		t.Fatal(err)
+		return nil, nil, fmt.Errorf("send scenario request: %w", err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read scenario response: %w", err)
+	}
+	return resp, data, nil
+}
+
+// Request preserves the legacy test API for non-step callers.
+func (w *World) Request(t *testing.T, method, path string, body any) (*http.Response, []byte) {
+	t.Helper()
+	resp, data, err := w.RequestE(method, path, body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,22 +464,26 @@ func (w *World) RequestContext(ctx context.Context, method, path string, body an
 }
 
 // UnsupportedCapability requests an unsupported capability through the real HTTP boundary.
-func (w *World) UnsupportedCapability() (int, []byte) {
+func (w *World) UnsupportedCapability() (int, []byte, error) {
 	report := validReport("endpoint-1", 1, true)
-	_, _ = w.Request(activeTest, http.MethodPut, "/api/v1/endpoints/endpoint-1/session-state", report)
-	resp, body := w.Request(activeTest, http.MethodGet, "/api/v1/endpoints/endpoint-1/capabilities?name=unsupported.example", nil)
-	return resp.StatusCode, body
+	if _, _, err := w.RequestE(http.MethodPut, "/api/v1/endpoints/endpoint-1/session-state", report); err != nil {
+		return 0, nil, err
+	}
+	resp, body, err := w.RequestE(http.MethodGet, "/api/v1/endpoints/endpoint-1/capabilities?name=unsupported.example", nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, body, nil
 }
 
 // Eventually polls a bounded assertion until it succeeds or the scenario expires.
-func Eventually(t *testing.T, check func() bool) {
-	t.Helper()
+func Eventually(check func() bool) error {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if check() {
-			return
+			return nil
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	t.Fatal("condition was not satisfied before scenario deadline")
+	return fmt.Errorf("condition was not satisfied before scenario deadline")
 }

@@ -39,7 +39,10 @@ func u24AssertControlSupported() error {
 	if count < 1 {
 		return fmt.Errorf("provider invocation count=%d, want at least 1", count)
 	}
-	invocations := activeScenario.world.realCluster.ProviderInvocations(activeTest)
+	invocations, err := activeScenario.world.realCluster.ProviderInvocationsE()
+	if err != nil {
+		return err
+	}
 	operation, _ := invocations[len(invocations)-1]["operation"].(string)
 	if operation != "execution.interrupt" {
 		return fmt.Errorf("provider operation=%q, want execution.interrupt", operation)

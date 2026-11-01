@@ -81,7 +81,10 @@ func u21SubmitBadStart() error {
 		"payload_schema_version": "v1", "payload": map[string]any{},
 		"execute_before_at_ms": time.Now().Add(time.Minute).UnixMilli(),
 	}
-	status, body := activeScenario.world.realCluster.Request(activeTest, http.MethodPost, "/api/v1/commands", intent)
+	status, body, err := activeScenario.world.realRequestE(http.MethodPost, "/api/v1/commands", intent)
+	if err != nil {
+		return err
+	}
 	if status != http.StatusAccepted && status != http.StatusOK {
 		return fmt.Errorf("start submission status=%d body=%s", status, body)
 	}

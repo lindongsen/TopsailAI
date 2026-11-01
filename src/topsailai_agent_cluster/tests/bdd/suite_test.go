@@ -57,6 +57,10 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	registerU22Steps(ctx)
 	registerU24Steps(ctx)
 	ctx.After(func(goCtx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
+		if activeScenario != nil && activeScenario.commandDone != nil {
+			<-activeScenario.commandDone
+			activeScenario.commandDone = nil
+		}
 		if activeScenario != nil && activeScenario.world != nil {
 			activeScenario.world.StopRealCluster()
 		}

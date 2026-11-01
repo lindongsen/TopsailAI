@@ -33,7 +33,10 @@ func registerCommandSteps(ctx *godog.ScenarioContext) {
 		return nil
 	})
 	ctx.Step(`^command "([^"]*)" has one durable record$`, func(commandID string) error {
-		resp, body := activeScenario.world.Request(activeTest, http.MethodGet, "/api/v1/commands/"+commandID, nil)
+		resp, body, err := activeScenario.world.RequestE(http.MethodGet, "/api/v1/commands/"+commandID, nil)
+		if err != nil {
+			return err
+		}
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("query status %d", resp.StatusCode)
 		}
@@ -65,7 +68,10 @@ func submitIntent(commandID, payload string, expiry time.Time) (int, error) {
 
 func submitIntentForScenario(scenario *Scenario, commandID, payload string, expiry time.Time) (int, error) {
 	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: commandID, EndpointID: "endpoint-1", Operation: "send", OperationVersion: "v1", CapabilityRevision: "c1", PayloadSchemaVersion: "v1", Payload: json.RawMessage(fmt.Sprintf(`{"text":%q}`, payload)), ExecuteBeforeAtMS: expiry.UnixMilli()}
-	resp, body := scenario.world.Request(activeTest, http.MethodPost, "/api/v1/commands", intent)
+	resp, body, err := scenario.world.RequestE(http.MethodPost, "/api/v1/commands", intent)
+	if err != nil {
+		return 0, err
+	}
 	scenario.lastStatus = resp.StatusCode
 	scenario.lastBody = body
 	return resp.StatusCode, nil
