@@ -37,6 +37,30 @@ def test_load_session_category_rejects_invalid_values(caplog, value):
     assert repr(value)[1:-1] in records[0].message
 
 
+@pytest.mark.parametrize(
+    ("loader_input", "default", "expected"),
+    [
+        ({}, "agent", "agent"),
+        ({"TOPSAILAI_SESSION_CATEGORY": ""}, "agent", "agent"),
+        ({"TOPSAILAI_SESSION_CATEGORY": "hosting"}, "agent", "hosting"),
+        ({"TOPSAILAI_SESSION_CATEGORY": "Agent"}, "agent", ""),
+        ({"TOPSAILAI_SESSION_CATEGORY": "agent\n"}, "agent", ""),
+    ],
+)
+def test_load_session_category_applies_default_only_to_missing_or_empty(
+    caplog, loader_input, default, expected
+):
+    """Loader defaults do not mask invalid non-empty environment values."""
+    with caplog.at_level(logging.ERROR):
+        result = load_session_category(loader_input, default=default)
+
+    assert result == expected
+    if expected == "":
+        assert any(record.levelno == logging.ERROR for record in caplog.records) == (
+            loader_input.get("TOPSAILAI_SESSION_CATEGORY", "") != ""
+        )
+
+
 def test_ctx_create_session_forwards_explicit_category():
     """The context facade forwards category explicitly into SessionData."""
     from topsailai.context import ctx_manager
@@ -71,7 +95,7 @@ def test_agent_factory_uses_environment_category_once():
                 lock.return_value.__exit__.return_value = False
                 assert agent_shell.get_agent_chat(need_project_workspace_lock=False) == "chat"
 
-    load.assert_called_once_with(os.environ)
+    load.assert_called_once_with(os.environ, default="agent")
     assert impl.call_args.kwargs["session_category"] == "agent"
 
 
@@ -260,7 +284,7 @@ def _patch_real_llm_factory(monkeypatch, storage):
 
 
 @pytest.mark.parametrize("environment_value", ["", "Agent", "chat x", "chat-x", "聊天", "agent\n"])
-def test_agent_environment_categories_reach_storage_as_empty(
+def test_agent_environment_categories_reach_storage(
     monkeypatch, caplog, environment_value
 ):
     """Invalid agent environment categories reach SQLite as a real empty string."""
@@ -280,7 +304,7 @@ def test_agent_environment_categories_reach_storage_as_empty(
             need_project_workspace_lock=False,
         )
 
-    assert _query_session_category(storage, session_id) == ""
+    assert _query_session_category(storage, session_id) == ("agent" if environment_value == "" else "")
     if environment_value:
         assert any(record.levelno == logging.ERROR for record in caplog.records)
         assert repr(environment_value)[1:-1] in caplog.text
@@ -289,7 +313,7 @@ def test_agent_environment_categories_reach_storage_as_empty(
 
 
 @pytest.mark.parametrize("environment_value", ["", "Agent", "chat x", "chat-x", "聊天", "agent\n"])
-def test_llm_environment_categories_reach_storage_as_empty(
+def test_llm_environment_categories_reach_storage(
     monkeypatch, caplog, environment_value
 ):
     """Invalid LLM environment categories reach SQLite as a real empty string."""
@@ -309,7 +333,7 @@ def test_llm_environment_categories_reach_storage_as_empty(
             need_stdout=False,
         )
 
-    assert _query_session_category(storage, session_id) == ""
+    assert _query_session_category(storage, session_id) == ("chat" if environment_value == "" else "")
     if environment_value:
         assert any(record.levelno == logging.ERROR for record in caplog.records)
         assert repr(environment_value)[1:-1] in caplog.text
@@ -353,6 +377,35 @@ def test_agent_explicit_category_overrides_environment_without_loading(monkeypat
     assert _query_session_category(storage, "agent-explicit") == "chat"
 
 
+@pytest.mark.parametrize("invalid_value", ["Agent", "agent chat", "agent\n"])
+def test_agent_explicit_invalid_category_overrides_environment(
+    monkeypatch, caplog, invalid_value
+):
+    """An invalid explicit agent category beats a valid environment category."""
+    from topsailai.context.session_manager.sql import SessionSQLAlchemy
+
+    storage = SessionSQLAlchemy("sqlite:///:memory:")
+    agent_shell = _patch_real_agent_factory(monkeypatch, storage)
+    monkeypatch.setenv("TOPSAILAI_SESSION_CATEGORY", "hosting")
+    loader = MagicMock()
+    monkeypatch.setattr(agent_shell, "load_session_category", loader)
+
+    with caplog.at_level(logging.ERROR):
+        agent_shell.get_agent_chat(
+            session_id="agent-invalid-explicit-" + str(abs(hash(invalid_value))),
+            message="task", session_category=invalid_value,
+            need_input_message=False, need_print_session=False,
+            need_project_workspace_lock=False,
+        )
+
+    session_id = "agent-invalid-explicit-" + str(abs(hash(invalid_value)))
+    assert _query_session_category(storage, session_id) == ""
+    assert not loader.called
+    records = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(records) == 1
+    assert repr(invalid_value)[1:-1] in records[0].message
+
+
 def test_agent_explicit_empty_category_overrides_environment(monkeypatch):
     """An explicit empty agent category is not replaced by the environment."""
     from topsailai.context.session_manager.sql import SessionSQLAlchemy
@@ -371,6 +424,26 @@ def test_agent_explicit_empty_category_overrides_environment(monkeypatch):
     )
 
     assert _query_session_category(storage, "agent-empty") == ""
+
+
+def test_agent_explicit_none_uses_entry_default_when_environment_is_empty(monkeypatch):
+    """An explicit None selects the agent entry default for empty environment input."""
+    from topsailai.context.session_manager.sql import SessionSQLAlchemy
+
+    storage = SessionSQLAlchemy("sqlite:///:memory:")
+    agent_shell = _patch_real_agent_factory(monkeypatch, storage)
+    monkeypatch.delenv("TOPSAILAI_SESSION_CATEGORY", raising=False)
+
+    agent_shell.get_agent_chat(
+        session_id="agent-default",
+        message="task",
+        session_category=None,
+        need_input_message=False,
+        need_print_session=False,
+        need_project_workspace_lock=False,
+    )
+
+    assert _query_session_category(storage, "agent-default") == "agent"
 
 
 def test_agent_existing_session_keeps_category_without_update(monkeypatch):
@@ -434,6 +507,34 @@ def test_llm_explicit_category_overrides_environment_without_loading(monkeypatch
     assert _query_session_category(storage, "llm-explicit") == "chat"
 
 
+@pytest.mark.parametrize("invalid_value", ["Agent", "agent chat", "agent\n"])
+def test_llm_explicit_invalid_category_overrides_environment(
+    monkeypatch, caplog, invalid_value
+):
+    """An invalid explicit LLM category beats a valid environment category."""
+    from topsailai.context.session_manager.sql import SessionSQLAlchemy
+
+    storage = SessionSQLAlchemy("sqlite:///:memory:")
+    llm_shell = _patch_real_llm_factory(monkeypatch, storage)
+    monkeypatch.setenv("TOPSAILAI_SESSION_CATEGORY", "hosting")
+    loader = MagicMock()
+    monkeypatch.setattr(llm_shell, "load_session_category", loader)
+
+    with caplog.at_level(logging.ERROR):
+        llm_shell.get_llm_chat(
+            message="task", session_id="llm-invalid-explicit-" + str(abs(hash(invalid_value))),
+            session_category=invalid_value, need_input_message=False,
+            need_print_session=False, need_stdout=False,
+        )
+
+    session_id = "llm-invalid-explicit-" + str(abs(hash(invalid_value)))
+    assert _query_session_category(storage, session_id) == ""
+    assert not loader.called
+    records = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(records) == 1
+    assert repr(invalid_value)[1:-1] in records[0].message
+
+
 def test_llm_explicit_empty_category_overrides_environment(monkeypatch):
     """An explicit empty LLM category is not replaced by the environment."""
     from topsailai.context.session_manager.sql import SessionSQLAlchemy
@@ -452,6 +553,26 @@ def test_llm_explicit_empty_category_overrides_environment(monkeypatch):
     )
 
     assert _query_session_category(storage, "llm-empty") == ""
+
+
+def test_llm_explicit_none_uses_entry_default_when_environment_is_empty(monkeypatch):
+    """An explicit None selects the LLM entry default for empty environment input."""
+    from topsailai.context.session_manager.sql import SessionSQLAlchemy
+
+    storage = SessionSQLAlchemy("sqlite:///:memory:")
+    llm_shell = _patch_real_llm_factory(monkeypatch, storage)
+    monkeypatch.delenv("TOPSAILAI_SESSION_CATEGORY", raising=False)
+
+    llm_shell.get_llm_chat(
+        message="task",
+        session_id="llm-default",
+        session_category=None,
+        need_input_message=False,
+        need_print_session=False,
+        need_stdout=False,
+    )
+
+    assert _query_session_category(storage, "llm-default") == "chat"
 
 
 def test_llm_existing_session_keeps_category_without_update(monkeypatch):
@@ -596,9 +717,139 @@ def test_agent_factory_empty_db_category_beats_legacy_meta_and_environment(monke
     monkeypatch.setenv("TOPSAILAI_AUTO_SESSION_NAME_ENABLED", "0")
     monkeypatch.setenv("TOPSAILAI_SESSION_CATEGORY", "chat")
 
-    agent_shell.get_agent_chat(
-        session_id="meta-empty", message="task", need_input_message=False,
-        need_print_session=False, need_project_workspace_lock=False,
-    )
+    statements, listener = _record_category_updates(storage)
+    try:
+        agent_shell.get_agent_chat(
+            session_id="meta-empty", message="task", need_input_message=False,
+            need_print_session=False, need_project_workspace_lock=False,
+        )
+    finally:
+        event.remove(storage.engine, "before_cursor_execute", listener)
 
+    assert _query_session_category(storage, "meta-empty") == ""
     assert json.loads(path.read_text())["category"] == ""
+    assert statements == []
+
+
+
+def test_agent_entry_default_writes_database_and_real_meta(monkeypatch, tmp_path):
+    """The entry default traverses the real DB-to-meta path as agent."""
+    import json
+    from pathlib import Path
+    from topsailai.context import ctx_manager
+    from topsailai.context.session_manager.sql import SessionSQLAlchemy
+    from topsailai.workspace import agent_shell, session_meta
+
+    storage = SessionSQLAlchemy("sqlite:///:memory:")
+    monkeypatch.delenv("TOPSAILAI_SESSION_CATEGORY", raising=False)
+    monkeypatch.setenv("TOPSAILAI_AUTO_SESSION_NAME_ENABLED", "0")
+    monkeypatch.setattr(session_meta, "FOLDER_WORKSPACE_TASK", str(tmp_path))
+    monkeypatch.setattr(ctx_manager, "get_session_manager", lambda: storage)
+    monkeypatch.setattr(agent_shell, "get_ai_agent", lambda **kwargs: _FakeAgent())
+    class RuntimeData(_FakeRuntimeData):
+        """Runtime fixture that reads the persisted session without shadow state."""
+
+        def __init__(self):
+            self.messages = []
+            self.session_id = ""
+
+        @property
+        def session_data(self):
+            return storage.get_session(self.session_id)
+
+    monkeypatch.setattr(agent_shell, "ContextRuntimeData", RuntimeData)
+    monkeypatch.setattr(agent_shell, "ContextRuntimeAIAgent", lambda data: object())
+    monkeypatch.setattr(agent_shell, "ContextRuntimeInstructions", lambda data: type("I", (), {"instructions": {}})())
+    monkeypatch.setattr(agent_shell, "HookInstruction", lambda **kwargs: type("H", (), {
+        "load_instructions": lambda self, instructions: None,
+    })())
+    monkeypatch.setattr(agent_shell, "AgentChat", lambda **kwargs: type("Chat", (), {})())
+    monkeypatch.setattr(agent_shell, "record_project_history", lambda session_id: None)
+    monkeypatch.setattr(agent_shell, "cleanup_session_meta_files", lambda: None)
+    monkeypatch.setattr(agent_shell, "print_tool", type("P", (), {"print_info": staticmethod(lambda value: None)})())
+    monkeypatch.setattr(agent_shell, "_cleanup_stale_interrupt_flag", lambda session_id, pid: None)
+    monkeypatch.setattr(agent_shell, "get_message", lambda **kwargs: "")
+
+    agent_shell.get_agent_chat(session_id="default-meta", message="task",
+                               need_input_message=False, need_print_session=False,
+                               need_project_workspace_lock=False, session_category=None)
+    assert _query_session_category(storage, "default-meta") == "agent"
+    meta_path = session_meta.get_session_meta_path("default-meta")
+    assert json.loads(Path(meta_path).read_text())["category"] == "agent"
+
+
+def test_llm_historical_empty_category_is_not_updated(monkeypatch):
+    """LLM resume preserves an empty database category without UPDATE."""
+    from topsailai.context.session_manager.__base import SessionData
+    from topsailai.context.session_manager.sql import SessionSQLAlchemy
+    from topsailai.context import ctx_manager
+
+    storage = SessionSQLAlchemy("sqlite:///:memory:")
+    storage.create_session(SessionData("llm-empty-history", category=""))
+    llm_shell = _patch_real_llm_factory(monkeypatch, storage)
+    monkeypatch.setenv("TOPSAILAI_SESSION_CATEGORY", "chat")
+    monkeypatch.setattr(ctx_manager, "get_messages_by_session", lambda session_id: [{"role": "user", "content": "old"}])
+    statements, listener = _record_category_updates(storage)
+    try:
+        llm_shell.get_llm_chat(message="task", session_id="llm-empty-history",
+                               need_input_message=False, need_print_session=False,
+                               need_stdout=False)
+    finally:
+        event.remove(storage.engine, "before_cursor_execute", listener)
+    assert _query_session_category(storage, "llm-empty-history") == ""
+    assert statements == []
+
+
+def test_summary_independent_chat_does_not_create_ambient_session(monkeypatch):
+    """Independent summary uses an empty session ID despite ambient session state."""
+    from topsailai.context import ctx_manager
+    from topsailai.context.session_manager.sql import SessionSQLAlchemy
+    from topsailai.workspace.context.base import ContextRuntimeBase
+    from topsailai.workspace import llm_shell
+
+    storage = SessionSQLAlchemy("sqlite:///:memory:")
+    monkeypatch.setenv("SESSION_ID", "ambient-test")
+    monkeypatch.delenv("TOPSAILAI_SESSION_CATEGORY", raising=False)
+    monkeypatch.setattr(ctx_manager, "get_session_manager", lambda: storage)
+    create = MagicMock(wraps=ctx_manager.create_session)
+    monkeypatch.setattr(ctx_manager, "create_session", create)
+    monkeypatch.setattr(llm_shell, "record_project_history", lambda session_id: None)
+    monkeypatch.setattr(llm_shell.file_tool, "get_file_content_fuzzy", lambda value: (True, ""))
+    model = type("Model", (), {"content_senders": [], "max_tokens": 4096,
+                                "temperature": 0.3,
+                                "chat": lambda self, *args, **kwargs: "summary"})
+    monkeypatch.setattr(llm_shell, "LLMModel", model)
+    before = storage.engine.connect().execute(__import__("sqlalchemy").text("SELECT COUNT(*) FROM session")).scalar()
+    runtime = ContextRuntimeBase()
+    chat = runtime._build_independent_summary_chat("task", "")
+    assert chat.chat(need_print=False, need_env_message=False) == "summary"
+    after = storage.engine.connect().execute(__import__("sqlalchemy").text("SELECT COUNT(*) FROM session")).scalar()
+    create.assert_not_called()
+    assert before == after == 0
+
+
+def test_auto_session_name_does_not_create_ambient_session(monkeypatch):
+    """Automatic naming uses an empty session ID and returns the model result."""
+    from sqlalchemy import text
+    from topsailai.context import ctx_manager
+    from topsailai.context.session_manager.sql import SessionSQLAlchemy
+    from topsailai.workspace import llm_shell
+
+    storage = SessionSQLAlchemy("sqlite:///:memory:")
+    monkeypatch.setenv("SESSION_ID", "ambient-test")
+    monkeypatch.delenv("TOPSAILAI_SESSION_CATEGORY", raising=False)
+    monkeypatch.setattr(ctx_manager, "get_session_manager", lambda: storage)
+    monkeypatch.setattr(llm_shell, "record_project_history", lambda session_id: None)
+    monkeypatch.setattr(llm_shell.file_tool, "get_file_content_fuzzy", lambda value: (True, ""))
+    model = type("Model", (), {"content_senders": [], "max_tokens": 4096,
+                                "temperature": 0.3,
+                                "chat": lambda self, *args, **kwargs: "Named session"})
+    monkeypatch.setattr(llm_shell, "LLMModel", model)
+    create = MagicMock(wraps=ctx_manager.create_session)
+    monkeypatch.setattr(ctx_manager, "create_session", create)
+    before = storage.engine.connect().execute(text("SELECT COUNT(*) FROM session")).scalar()
+    result = ctx_manager.generate_session_name("ambient-test", "task")
+    after = storage.engine.connect().execute(text("SELECT COUNT(*) FROM session")).scalar()
+    assert result == "Named session"
+    create.assert_not_called()
+    assert before == after == 0

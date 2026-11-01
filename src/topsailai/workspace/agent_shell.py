@@ -363,7 +363,7 @@ def get_agent_chat(
     """
     startup_state = AgentStartupState()
     resolved_session_category = (
-        load_session_category(os.environ)
+        load_session_category(os.environ, default="agent")
         if session_category is None
         else session_category
     )

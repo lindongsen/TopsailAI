@@ -19,6 +19,9 @@ def resolve_session_category(session_category: str) -> str:
     return ""
 
 
-def load_session_category(environ: Mapping[str, str]) -> str:
-    """Load and validate the session category from a supplied environment mapping."""
-    return resolve_session_category(environ.get(SESSION_CATEGORY_ENV, ""))
+def load_session_category(environ: Mapping[str, str], default: str = "") -> str:
+    """Load and validate a category, using default only for missing or empty input."""
+    value = environ.get(SESSION_CATEGORY_ENV, default)
+    if value == "":
+        value = default
+    return resolve_session_category(value)

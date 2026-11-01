@@ -72,7 +72,7 @@ Factory for creating fully configured `AgentChat` instances.
   - Tool-module `OBSERVATION` remains available for one-time or runtime context that intentionally belongs in a user-role message.
   - Startup user observation combines `TOPSAILAI_CONTEXT_USER_MESSAGE` with non-empty `{TOPSAILAI_HOME}/USER.md` content. PromptBase automatically loads USER.md at most once per process, then sets `TOPSAILAI_CONTEXT_LOAD_USER_MD_ENABLED=0`; explicit context remains per-instance.
   - Automatic USER.md loading is enabled by default; false, empty, or invalid values disable it, and the process-wide latch does not affect `TOPSAILAI_CONTEXT_USER_MESSAGE`.
-- `get_agent_chat()` — assembles complete chat session:
+- `get_agent_chat()` — assembles complete chat session; new sessions default to category `agent` when `TOPSAILAI_SESSION_CATEGORY` is unset or empty.
   - Initializes `ContextRuntimeData`, `ContextRuntimeAIAgent`, `ContextRuntimeInstructions`
   - Creates `HookInstruction` and loads plugin instructions
   - Sets up session, reads initial message, creates `AgentChat`
@@ -148,7 +148,7 @@ Agent-callable tools for pruning messages in both layers.
 Direct LLM chat interface, bypassing the agent framework.
 
 - `LLMChat` — manages `PromptBase` + `LLMModel` conversation
-- `get_llm_chat()` — factory with session support, reads messages from `ctx_manager`
+- `get_llm_chat()` — factory with session support, reads messages from `ctx_manager`; new sessions default to category `chat` when `TOPSAILAI_SESSION_CATEGORY` is unset or empty.
 - Used internally by `_summarize_messages()` for context compression
 
 ### Plugin Instructions

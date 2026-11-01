@@ -185,7 +185,7 @@ def get_llm_chat(
         >>> print(response)
     """
     resolved_session_category = (
-        load_session_category(os.environ)
+        load_session_category(os.environ, default="chat")
         if session_category is None
         else session_category
     )
