@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"topsailai_agent_cluster/internal/protocol"
@@ -19,6 +21,8 @@ type InteractiveOptions struct {
 	WaitTimeoutMS int64
 	LineLimit     int
 	Color         ColorPolicy
+	Interrupt     <-chan os.Signal
+	CloseInput    bool
 }
 
 type reportLoad struct {
@@ -30,6 +34,54 @@ type reportLoad struct {
 type interactiveState struct {
 	interactiveSelection
 	commandID string
+}
+
+type interruptController struct {
+	mu                 sync.Mutex
+	cancel             context.CancelFunc
+	promptInterrupted  bool
+	commandInterrupted bool
+	input              io.Closer
+}
+
+func (c *interruptController) setCancel(cancel context.CancelFunc) {
+	c.mu.Lock()
+	c.cancel = cancel
+	c.mu.Unlock()
+}
+
+func (c *interruptController) clearCancel() {
+	c.mu.Lock()
+	c.cancel = nil
+	c.mu.Unlock()
+}
+
+func (c *interruptController) interrupt() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cancel != nil {
+		c.commandInterrupted = true
+		c.cancel()
+		return
+	}
+	c.promptInterrupted = true
+	if c.input != nil {
+		_ = c.input.Close()
+	}
+}
+
+func (c *interruptController) takeCommandInterrupted() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	interrupted := c.commandInterrupted
+	c.commandInterrupted = false
+	return interrupted
+}
+
+func (c *interruptController) promptWasInterrupted() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.promptInterrupted
 }
 
 // RunInteractive executes the stream-driven operator REPL.
@@ -46,15 +98,44 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 	if options.LineLimit <= 0 {
 		options.LineLimit = 8192
 	}
+	controller := &interruptController{}
+	if options.CloseInput {
+		if closer, ok := input.(io.Closer); ok {
+			controller.input = closer
+		}
+	}
+	stopWatcher := make(chan struct{})
+	var watcher sync.WaitGroup
+	if options.Interrupt != nil {
+		watcher.Add(1)
+		go func() {
+			defer watcher.Done()
+			select {
+			case <-options.Interrupt:
+				controller.interrupt()
+			case <-stopWatcher:
+			}
+		}()
+	}
+	defer func() {
+		close(stopWatcher)
+		watcher.Wait()
+	}()
 	out := newSafeWriter(output)
 	errOut := newSafeWriter(errors)
 	reader := bufio.NewReaderSize(input, 4096)
 	state := interactiveState{}
 	for {
+		if controller.promptWasInterrupted() {
+			return ErrInteractiveInterrupt
+		}
 		if err := writePrompt(output, state, options.Color); err != nil {
 			return err
 		}
 		line, overflow, err := readLine(reader, options.LineLimit)
+		if controller.promptWasInterrupted() {
+			return ErrInteractiveInterrupt
+		}
 		if overflow {
 			if _, writeErr := fmt.Fprintln(errOut, "input line exceeds the maximum length"); writeErr != nil {
 				return writeErr
@@ -74,7 +155,17 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			}
 			continue
 		}
-		exit, execErr := executeInteractiveLine(parent, api, &state, line, reader, out, output, errOut, options)
+		commandCtx, cancel := context.WithCancel(parent)
+		controller.setCancel(cancel)
+		exit, execErr := executeInteractiveLine(commandCtx, api, &state, line, reader, out, output, errOut, options)
+		controller.clearCancel()
+		cancel()
+		if controller.takeCommandInterrupted() {
+			if _, writeErr := fmt.Fprintln(errOut, "interrupted"); writeErr != nil {
+				return writeErr
+			}
+			continue
+		}
 		if execErr != nil {
 			if _, writeErr := fmt.Fprintln(errOut, "error:", execErr); writeErr != nil {
 				return writeErr
@@ -85,6 +176,9 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		}
 	}
 }
+
+// ErrInteractiveInterrupt marks an interrupt received while reading the prompt.
+var ErrInteractiveInterrupt = fmt.Errorf("interactive interrupted")
 
 func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *interactiveState, line string, reader *bufio.Reader, out, trustedOut, errOut io.Writer, options InteractiveOptions) (bool, error) {
 	name, rest := splitCommand(line)

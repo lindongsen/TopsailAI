@@ -3,22 +3,25 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/tui"
 )
 
 func TestInteractiveRejectsJSONScope(t *testing.T) {
-	err := runWithIO([]string{"--json", "interactive"}, strings.NewReader("quit\n"), &strings.Builder{}, &strings.Builder{}, true)
+	err := runWithIO([]string{"--json", "interactive"}, strings.NewReader("quit\n"), &strings.Builder{}, &strings.Builder{}, true, nil)
 	if err == nil || err.Error() != "interactive does not support --json or --yes" {
 		t.Fatalf("unexpected JSON scope result: %v", err)
 	}
 }
 
 func TestInteractiveRejectsNonTerminalBeforeNetwork(t *testing.T) {
-	err := runWithIO([]string{"--server-url", "http://127.0.0.1:1", "interactive"}, strings.NewReader("quit\n"), &strings.Builder{}, &strings.Builder{}, false)
+	err := runWithIO([]string{"--server-url", "http://127.0.0.1:1", "interactive"}, strings.NewReader("quit\n"), &strings.Builder{}, &strings.Builder{}, false, nil)
 	if err == nil || err.Error() != "interactive mode requires a terminal on stdin" {
 		t.Fatalf("unexpected non-terminal result: %v", err)
 	}
@@ -181,3 +184,21 @@ func TestInteractiveFatalWriterMapsToExitCode(t *testing.T) {
 type failingMainWriter struct{}
 
 func (*failingMainWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }
+
+func TestPromptInterruptMapsToExitCode130(t *testing.T) {
+	input, inputWriter := io.Pipe()
+	defer inputWriter.Close()
+	signals := make(chan os.Signal, 1)
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		signals <- os.Interrupt
+	}()
+	var output, diagnostics strings.Builder
+	code, err := runWithSignals([]string{"interactive"}, input, &output, &diagnostics, func() bool { return true }, signals)
+	if code != 130 {
+		t.Fatalf("exit code=%d want=130 diagnostics=%q", code, diagnostics.String())
+	}
+	if !errors.Is(err, tui.ErrInteractiveInterrupt) {
+		t.Fatalf("error=%v want interactive interrupt", err)
+	}
+}

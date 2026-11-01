@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
 
 	"github.com/mattn/go-isatty"
@@ -26,7 +28,10 @@ func run(args []string) error {
 }
 
 func runExitCode(args []string, input io.Reader, output, errors io.Writer, terminal TerminalDetector) int {
-	code, _ := runWithExitCode(args, input, output, errors, terminal)
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt)
+	defer signal.Stop(interrupts)
+	code, _ := runWithSignals(args, input, output, errors, terminal, interrupts)
 	return code
 }
 
@@ -38,12 +43,19 @@ func defaultTerminalDetector() bool {
 }
 
 func runWithExitCode(args []string, input io.Reader, output, errors io.Writer, terminal TerminalDetector) (int, error) {
+	return runWithSignals(args, input, output, errors, terminal, nil)
+}
+
+func runWithSignals(args []string, input io.Reader, output, errorOutput io.Writer, terminal TerminalDetector, interrupts <-chan os.Signal) (int, error) {
 	if terminal == nil {
 		terminal = func() bool { return false }
 	}
-	err := runWithIO(args, input, output, errors, terminal())
+	err := runWithIO(args, input, output, errorOutput, terminal(), interrupts)
 	if err != nil {
-		if _, writeErr := fmt.Fprintln(errors, err); writeErr != nil {
+		if errors.Is(err, tui.ErrInteractiveInterrupt) {
+			return 130, err
+		}
+		if _, writeErr := fmt.Fprintln(errorOutput, err); writeErr != nil {
 			return 2, writeErr
 		}
 		return 2, err
@@ -51,7 +63,7 @@ func runWithExitCode(args []string, input io.Reader, output, errors io.Writer, t
 	return 0, nil
 }
 
-func runWithIO(args []string, input io.Reader, output, errors io.Writer, terminal bool) error {
+func runWithIO(args []string, input io.Reader, output, errors io.Writer, terminal bool, interrupts <-chan os.Signal) error {
 	flags := flag.NewFlagSet("agent-cluster-cli", flag.ContinueOnError)
 	flags.SetOutput(errors)
 	jsonMode := flags.Bool("json", false, "write structured JSON")
@@ -82,7 +94,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if !terminal {
 			return fmt.Errorf("interactive mode requires a terminal on stdin")
 		}
-		return tui.RunInteractive(ctx, api, input, output, errors, tui.InteractiveOptions{MaxBytes: *maxBytes, WaitTimeoutMS: *waitTimeoutMS, Color: tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)})
+		return tui.RunInteractive(ctx, api, input, output, errors, tui.InteractiveOptions{MaxBytes: *maxBytes, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)})
 	}
 	switch flags.Arg(0) {
 	case "list":
