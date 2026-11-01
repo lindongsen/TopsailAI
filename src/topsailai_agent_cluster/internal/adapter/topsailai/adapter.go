@@ -1,6 +1,7 @@
 package topsailai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -108,12 +109,42 @@ type workspaceResponse struct {
 }
 
 type workspaceItem struct {
-	SessionID         string `json:"session_id"`
-	ProcessGeneration string `json:"process_generation"`
-	Generation        string `json:"generation"`
-	State             string `json:"state"`
-	Status            string `json:"status"`
-	AgentID           string `json:"agent_id"`
+	SessionID         string          `json:"session_id"`
+	ProcessGeneration json.RawMessage `json:"process_generation"`
+	Generation        json.RawMessage `json:"generation"`
+	State             string          `json:"state"`
+	Status            string          `json:"status"`
+	AgentID           string          `json:"agent_id"`
+}
+
+func workspaceGeneration(raw json.RawMessage) (string, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return "", nil
+	}
+	if raw[0] == '"' {
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return "", err
+		}
+		return value, nil
+	}
+	if raw[0] == '-' || (raw[0] >= '0' && raw[0] <= '9') {
+		start := 0
+		if raw[0] == '-' {
+			start = 1
+		}
+		if start == len(raw) {
+			return "", fmt.Errorf("generation number is not an integer: %s", raw)
+		}
+		for _, character := range raw[start:] {
+			if character < '0' || character > '9' {
+				return "", fmt.Errorf("generation number is not an integer: %s", raw)
+			}
+		}
+		return string(raw), nil
+	}
+	return "", fmt.Errorf("generation must be a string, integer, or null")
 }
 
 // Discover reads the bounded workspace JSON and returns opaque session resources.
@@ -132,12 +163,17 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 	nowMS := time.Now().UnixMilli()
 	result := adapter.DiscoverResult{Complete: true, CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: nowMS, LastSuccessAtMS: nowMS, DataKnown: true}
 	for _, item := range response.Items {
-		generation := item.ProcessGeneration
+		generation, err := workspaceGeneration(item.ProcessGeneration)
 		if generation == "" {
-			generation = item.Generation
+			generation, err = workspaceGeneration(item.Generation)
 		}
+		if err != nil {
+			return adapter.DiscoverResult{}, fmt.Errorf("decode workspace generation: %w", err)
+		}
+		// Workspace history can contain idle records without a provider generation;
+		// they cannot be addressed safely, so exclude them from routable sessions.
 		if item.SessionID == "" || generation == "" {
-			return adapter.DiscoverResult{}, errors.New("workspace item misses session_id or process_generation")
+			continue
 		}
 		resourceID, err := a.resourceID(ctx, item.SessionID)
 		if err != nil {
@@ -210,14 +246,19 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 	var stdin []byte
 	switch operation {
 	case "send", protocol.OperationMessageSend:
-		args = []string{"runtime", "send", providerKey, "--json"}
-		stdin = intent.Payload
+		message, err := runtimeMessage(intent.Payload)
+		if err != nil {
+			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "invalid_payload")}, err
+		}
+		args = []string{"runtime", "send", "-s", providerKey, "-m", message, "--json"}
 	case "btw", protocol.OperationContextInject:
-		args = []string{"runtime", "btw", providerKey, "--json"}
-		stdin = intent.Payload
+		message, err := runtimeMessage(intent.Payload)
+		if err != nil {
+			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "invalid_payload")}, err
+		}
+		args = []string{"runtime", "btw", "-s", providerKey, "-m", message, "--json"}
 	case protocol.OperationExecutionInterrupt, "control":
-		args = []string{"runtime", "control", providerKey, "--json"}
-		stdin = intent.Payload
+		args = []string{"runtime", "control", "-s", providerKey, "-a", string(intent.Payload), "--json"}
 	case protocol.OperationAgentStart:
 		if intent.LaunchProfileID == "" {
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "profile_required")}, errors.New("launch profile is required")
@@ -240,6 +281,23 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 		return adapter.ExecuteResult{Receipt: receipt}, runErr
 	}
 	return adapter.ExecuteResult{Receipt: receiptFromJSON(intent, output)}, nil
+}
+
+func runtimeMessage(payload []byte) (string, error) {
+	var value struct {
+		Text    string `json:"text"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(payload, &value); err != nil {
+		return "", fmt.Errorf("decode runtime payload: %w", err)
+	}
+	if value.Text != "" {
+		return value.Text, nil
+	}
+	if value.Message != "" {
+		return value.Message, nil
+	}
+	return "", errors.New("runtime payload requires text or message")
 }
 
 func (a *Adapter) providerTarget(target *protocol.CommandTarget) (string, error) {
@@ -277,7 +335,7 @@ func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest)
 	if limit <= 0 || limit > 10000 {
 		limit = 20
 	}
-	output, err := a.run(ctx, []string{"runtime", "logs", key, "-n", fmt.Sprint(limit), "--json"}, nil)
+	output, err := a.run(ctx, []string{"runtime", "logs", "-s", key, "-n", fmt.Sprint(limit), "--json"}, nil)
 	if err != nil {
 		return adapter.OutputResult{}, err
 	}

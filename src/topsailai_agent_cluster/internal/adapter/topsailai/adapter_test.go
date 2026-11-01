@@ -102,7 +102,40 @@ func TestDiscoverUsesOpaqueIDsAndRejectsMalformedOrTruncatedResults(t *testing.T
 	}
 }
 
-func TestExecuteUsesFixedArgvAndStdinForInjectionPayload(t *testing.T) {
+func TestDiscoverSkipsWorkspaceRowsWithoutGeneration(t *testing.T) {
+	runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"idle-history","status":"idle"},{"session_id":"live-session","process_generation":"g1","status":"running"}],"total":2}`)}
+	a := newTestAdapter(t, runner)
+	result, err := a.Discover(context.Background(), adapter.DiscoverRequest{})
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if len(result.Sessions) != 1 || result.Sessions[0].Generation != "g1" {
+		t.Fatalf("routable sessions = %#v, want one generation g1 session", result.Sessions)
+	}
+	if result.Sessions[0].SessionID != "res_live-session" {
+		t.Fatalf("session ID = %q, want opaque mapping", result.Sessions[0].SessionID)
+	}
+}
+
+func TestDiscoverAcceptsNumericStringAndNullGenerations(t *testing.T) {
+	runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"numeric","process_generation":435912980},{"session_id":"string","process_generation":"g1"},{"session_id":"idle","process_generation":null}]}`)}
+	a := newTestAdapter(t, runner)
+	result, err := a.Discover(context.Background(), adapter.DiscoverRequest{})
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if len(result.Sessions) != 2 {
+		t.Fatalf("session count = %d, want 2: %#v", len(result.Sessions), result.Sessions)
+	}
+	if result.Sessions[0].SessionID != "res_numeric" || result.Sessions[0].Generation != "435912980" {
+		t.Fatalf("numeric session = %#v", result.Sessions[0])
+	}
+	if result.Sessions[1].SessionID != "res_string" || result.Sessions[1].Generation != "g1" {
+		t.Fatalf("string session = %#v", result.Sessions[1])
+	}
+}
+
+func TestExecuteUsesProviderCLIFlagsAndMessagePayload(t *testing.T) {
 	runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"provider-secret","process_generation":"g1"}]}`)}
 	a := newTestAdapter(t, runner)
 	result, err := a.Discover(context.Background(), adapter.DiscoverRequest{})
@@ -116,14 +149,12 @@ func TestExecuteUsesFixedArgvAndStdinForInjectionPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(runner.args, []string{"runtime", "send", "provider-secret", "--json"}) {
-		t.Fatalf("unexpected argv: %#v", runner.args)
+	wantArgs := []string{"runtime", "send", "-s", "provider-secret", "-m", "-- -g value with spaces \"quotes\"\nnext", "--json"}
+	if !reflect.DeepEqual(runner.args, wantArgs) {
+		t.Fatalf("unexpected argv: %#v, want %#v", runner.args, wantArgs)
 	}
-	if string(runner.stdin) != string(payload) {
-		t.Fatalf("payload was not passed literally: %q", runner.stdin)
-	}
-	if len(runner.args) > 5 {
-		t.Fatal("payload became an argument")
+	if len(runner.stdin) != 0 {
+		t.Fatalf("payload unexpectedly went to stdin: %q", runner.stdin)
 	}
 }
 
@@ -161,7 +192,7 @@ func TestTopsailaiAdapterExecutesDeclaredInterruptOperation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("declared interrupt operation failed: %v", err)
 	}
-	if !reflect.DeepEqual(runner.args, []string{"runtime", "control", "provider-secret", "--json"}) {
+	if !reflect.DeepEqual(runner.args, []string{"runtime", "control", "-s", "provider-secret", "-a", `{"text":"interrupt"}`, "--json"}) {
 		t.Fatalf("unexpected interrupt argv: %#v", runner.args)
 	}
 }
@@ -191,6 +222,9 @@ func TestReadOutputMarksProviderTruncation(t *testing.T) {
 	output, err := a.ReadOutput(context.Background(), adapter.OutputRequest{Target: protocol.CommandTarget{ResourceID: result.Sessions[0].SessionID}, Limit: 10})
 	if err != nil || !output.Truncated || !output.ScanLimited {
 		t.Fatalf("truncation not reported: %#v %v", output, err)
+	}
+	if !reflect.DeepEqual(runner.args, []string{"runtime", "logs", "-s", "s", "-n", "10", "--json"}) {
+		t.Fatalf("unexpected logs argv: %#v", runner.args)
 	}
 }
 
