@@ -27,10 +27,8 @@ type reportLoad struct {
 }
 
 type interactiveState struct {
-	endpoint   string
-	session    string
-	generation string
-	commandID  string
+	interactiveSelection
+	commandID string
 }
 
 // RunInteractive executes the stream-driven operator REPL.
@@ -147,11 +145,15 @@ func readLine(reader *bufio.Reader, limit int) (string, bool, error) {
 }
 
 func writePrompt(out io.Writer, state interactiveState) error {
-	if state.endpoint == "" {
+	if state.EndpointID == "" {
 		_, err := io.WriteString(out, "cluster> ")
 		return err
 	}
-	_, err := fmt.Fprintf(out, "cluster[%s/%s]> ", state.endpoint, state.session)
+	marker := ""
+	if state.Invalidated {
+		marker = "!"
+	}
+	_, err := fmt.Fprintf(out, "cluster[%s/%s%s]> ", state.EndpointID, state.SessionID, marker)
 	return err
 }
 
@@ -191,33 +193,34 @@ func interactiveList(parent context.Context, api InteractiveAPI, filter string, 
 }
 
 func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveState) (protocol.Endpoint, protocol.InventoryReport, *protocol.Session, error) {
-	if state.endpoint == "" || state.session == "" {
-		return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("no session selected; use <endpoint> <session>")
+	if err := state.requireUsable(); err != nil {
+		return protocol.Endpoint{}, protocol.InventoryReport{}, nil, err
 	}
-	loaded, err := loadReports(ctx, api, state.endpoint)
+	loaded, err := loadReports(ctx, api, state.EndpointID)
 	if err != nil {
 		return protocol.Endpoint{}, protocol.InventoryReport{}, nil, err
 	}
 	for _, endpoint := range loaded.endpoints {
-		if endpoint.EndpointID != state.endpoint {
+		if endpoint.EndpointID != state.EndpointID {
 			continue
 		}
 		report, ok := loaded.reports[endpoint.EndpointID]
 		if !ok || !report.ReportComplete || report.CollectionStatus != protocol.CollectionSucceeded {
-			return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("endpoint %q inventory is unavailable", state.endpoint)
+			return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("endpoint %q inventory is unavailable", state.EndpointID)
 		}
 		for index := range report.Sessions {
-			if report.Sessions[index].SessionID != state.session {
+			if report.Sessions[index].SessionID != state.SessionID {
 				continue
 			}
 			session := &report.Sessions[index]
-			if session.Generation == "" || session.Generation != state.generation {
+			if session.Generation == "" || session.Generation != state.Generation {
+				state.invalidate("selected session generation changed")
 				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session generation changed; use the session again")
 			}
 			return endpoint, report, session, nil
 		}
 	}
-	return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %q was not found", state.session)
+	return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %q was not found", state.SessionID)
 }
 
 func interactiveUse(parent context.Context, api InteractiveAPI, state *interactiveState, rest string) error {
@@ -242,7 +245,7 @@ func interactiveUse(parent context.Context, api InteractiveAPI, state *interacti
 		}
 		for _, session := range report.Sessions {
 			if session.SessionID == args[1] && session.Generation != "" {
-				state.endpoint, state.session, state.generation = args[0], args[1], session.Generation
+				state.reset(args[0], args[1], session.Generation)
 				return nil
 			}
 		}
@@ -251,7 +254,7 @@ func interactiveUse(parent context.Context, api InteractiveAPI, state *interacti
 }
 
 func interactiveRefresh(parent context.Context, api InteractiveAPI, state *interactiveState, out io.Writer) error {
-	if state.endpoint == "" {
+	if state.EndpointID == "" {
 		return interactiveList(parent, api, "", out)
 	}
 	ctx, cancel := commandContext(parent)
@@ -260,11 +263,14 @@ func interactiveRefresh(parent context.Context, api InteractiveAPI, state *inter
 	if err != nil {
 		return err
 	}
-	state.generation = session.Generation
+	_ = session
 	return nil
 }
 
 func interactiveShow(parent context.Context, api InteractiveAPI, state *interactiveState, id string, out io.Writer) error {
+	if err := state.requireUsable(); err != nil {
+		return err
+	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	if id == "" {

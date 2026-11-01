@@ -11,12 +11,13 @@ import (
 )
 
 type interactiveStub struct {
-	endpoints      []protocol.Endpoint
-	reports        map[string]protocol.InventoryReport
-	admit          int
-	failList       bool
-	changeAfter    int
-	inventoryCalls int
+	endpoints          []protocol.Endpoint
+	reports            map[string]protocol.InventoryReport
+	admit              int
+	failList           bool
+	changeAfter        int
+	generationSequence []string
+	inventoryCalls     int
 }
 
 func (s *interactiveStub) ListEndpoints(context.Context) ([]protocol.Endpoint, error) {
@@ -32,7 +33,15 @@ func (s *interactiveStub) GetInventory(_ context.Context, id string) (protocol.I
 	if !ok {
 		return protocol.InventoryReport{}, errors.New("missing inventory")
 	}
-	if s.changeAfter > 0 && s.inventoryCalls >= s.changeAfter {
+	if len(s.generationSequence) > 0 {
+		index := s.inventoryCalls - 1
+		if index >= len(s.generationSequence) {
+			index = len(s.generationSequence) - 1
+		}
+		report.Sessions = append([]protocol.Session(nil), report.Sessions...)
+		report.Sessions[0].Generation = s.generationSequence[index]
+	} else if s.changeAfter > 0 && s.inventoryCalls >= s.changeAfter {
+		report.Sessions = append([]protocol.Session(nil), report.Sessions...)
 		report.Sessions[0].Generation = "generation-2"
 	}
 	return report, nil
@@ -190,5 +199,49 @@ func TestInteractiveShowRejectsSelectedGenerationChange(t *testing.T) {
 	}
 	if stub.inventoryCalls != 2 {
 		t.Fatalf("inventory calls=%d want=2", stub.inventoryCalls)
+	}
+}
+
+func TestReplacementInvalidationIsStickyAndRequiresUse(t *testing.T) {
+	stub := &interactiveStub{
+		endpoints:          []protocol.Endpoint{{EndpointID: "endpoint-1"}},
+		reports:            map[string]protocol.InventoryReport{"endpoint-1": testInventory()},
+		generationSequence: []string{"generation-1", "generation-2", "generation-1", "generation-1", "generation-1"},
+	}
+	var output, errorsOut strings.Builder
+	input := "use endpoint-1 session-1\nrefresh\nrefresh\nuse endpoint-1 session-1\nstatus\nquit\n"
+	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "cluster[endpoint-1/session-1!]> ") {
+		t.Fatalf("missing invalidated prompt: %q", output.String())
+	}
+	if strings.Count(errorsOut.String(), "selected session generation changed; use the session again") != 1 {
+		t.Fatalf("unexpected generation errors: %q", errorsOut.String())
+	}
+	if !strings.Contains(errorsOut.String(), "selected session invalidated; use the session again") {
+		t.Fatalf("missing sticky invalidation error: %q", errorsOut.String())
+	}
+	if !strings.Contains(output.String(), "running") {
+		t.Fatalf("explicit use did not restore operation: %q", output.String())
+	}
+}
+
+func TestInvalidatedSelectionRejectsTargetOperationsWithoutAdmission(t *testing.T) {
+	stub := &interactiveStub{
+		endpoints:          []protocol.Endpoint{{EndpointID: "endpoint-1"}},
+		reports:            map[string]protocol.InventoryReport{"endpoint-1": testInventory()},
+		generationSequence: []string{"generation-1", "generation-2"},
+	}
+	var output, errorsOut strings.Builder
+	input := "use endpoint-1 session-1\nrefresh\nshow\nlogs\nstatus\nsend {\"text\":\"blocked\"}\ny\nquit\n"
+	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("invalidated send admitted %d commands", stub.admit)
+	}
+	if strings.Count(errorsOut.String(), "selected session invalidated; use the session again") != 4 {
+		t.Fatalf("unexpected invalidation errors: %q", errorsOut.String())
 	}
 }
