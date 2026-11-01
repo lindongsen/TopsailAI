@@ -144,3 +144,29 @@ func TestHTTPRoutesValidateMethodsAndCapabilities(t *testing.T) {
 		t.Fatalf("cancel=%d", rec.Code)
 	}
 }
+
+func TestCommandHTTPRoutesWithStore(t *testing.T) {
+	store := commandTestStore(t)
+	defer store.Close()
+	service := &CommandService{Store: store}
+	h := NewHandlerWithCommands(store, "secret", service)
+	call := func(method, path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if got := call(http.MethodGet, "/api/v1/commands"); got.Code != http.StatusOK {
+		t.Fatalf("commands list status=%d", got.Code)
+	}
+	if got := call(http.MethodGet, "/api/v1/commands/missing"); got.Code != http.StatusNotFound {
+		t.Fatalf("missing command status=%d", got.Code)
+	}
+	if got := call(http.MethodPut, "/api/v1/commands"); got.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("commands method status=%d", got.Code)
+	}
+	if got := call(http.MethodGet, "/api/v1/commands/"); got.Code != http.StatusNotFound {
+		t.Fatalf("empty command status=%d", got.Code)
+	}
+}

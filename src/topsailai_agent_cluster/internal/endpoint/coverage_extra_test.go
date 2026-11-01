@@ -64,3 +64,16 @@ type testAdapterForCoverage struct{ adapter.Adapter }
 func (testAdapterForCoverage) Describe(context.Context) (adapter.Descriptor, error) {
 	return adapter.Descriptor{Capabilities: protocol.CapabilityDescriptor{Capabilities: []protocol.Capability{{Name: "send", Version: "v1"}}}}, nil
 }
+
+func TestCollectorRejectsInvalidTimeoutAndObservationTime(t *testing.T) {
+	if _, err := NewCollector(context.Background(), nil, 0, nil); err == nil {
+		t.Fatal("zero timeout was accepted")
+	}
+	collector, err := NewCollector(context.Background(), nil, time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := collector.Collect(context.Background(), 0); err == nil || err.Error() != "observation time must be positive" {
+		t.Fatalf("invalid observation result=%v", err)
+	}
+}

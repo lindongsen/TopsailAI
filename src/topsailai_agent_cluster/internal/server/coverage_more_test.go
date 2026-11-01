@@ -6,8 +6,9 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"testing"
 
+	"testing"
+	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/security"
 	serverstorage "topsailai_agent_cluster/internal/storage/server"
 )
@@ -60,5 +61,36 @@ func TestHandlerReadinessAndCommandServiceUnavailable(t *testing.T) {
 		if rec.Code != tc.want {
 			t.Fatalf("%s %s status=%d want=%d", tc.method, tc.path, rec.Code, tc.want)
 		}
+	}
+}
+
+type coverageOutputRequester struct{}
+
+func (coverageOutputRequester) RequestOutput(context.Context, string, protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error) {
+	return protocol.OutputSnapshotResponse{}, nil
+}
+
+func TestHandlerDirectHTTPBranches(t *testing.T) {
+	store := commandTestStore(t)
+	defer store.Close()
+	h := &Handler{Store: store, Authenticator: security.BearerAuthenticator{Token: "secret"}, MaxBodyBytes: 1024, Output: coverageOutputRequester{}}
+	call := func(method, path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if got := call(http.MethodGet, "/api/v1/endpoints"); got.Code != http.StatusOK {
+		t.Fatalf("endpoint list status=%d", got.Code)
+	}
+	if got := call(http.MethodGet, "/api/v1/endpoints/missing"); got.Code != http.StatusNotFound {
+		t.Fatalf("endpoint resource status=%d", got.Code)
+	}
+	if got := call(http.MethodPost, "/api/v1/output"); got.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("output method status=%d", got.Code)
+	}
+	if got := call(http.MethodGet, "/api/v1/output"); got.Code != http.StatusBadRequest {
+		t.Fatalf("output target status=%d", got.Code)
 	}
 }

@@ -91,3 +91,23 @@ func TestCommandServiceDispatchBranches(t *testing.T) {
 		t.Fatalf("wrong envelope=%#v", transport.envelope)
 	}
 }
+
+func TestCommandServiceNowUsesConfiguredAndDefaultClock(t *testing.T) {
+	configured := time.Unix(123, 0)
+	service := &CommandService{Now: func() time.Time { return configured }}
+	if got := service.now(); !got.Equal(configured) {
+		t.Fatalf("configured time=%v", got)
+	}
+	service.Now = nil
+	before := time.Now()
+	got := service.now()
+	if got.Before(before) || got.After(time.Now()) {
+		t.Fatalf("default time=%v", got)
+	}
+}
+
+func TestChannelTransportRejectsUnavailableChannel(t *testing.T) {
+	if err := (ChannelTransport{}).Send(context.Background(), protocol.TransportEnvelope{}); err == nil || err.Error() != "channel server is unavailable" {
+		t.Fatalf("unavailable channel error=%v", err)
+	}
+}

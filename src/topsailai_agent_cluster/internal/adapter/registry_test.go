@@ -47,3 +47,19 @@ func TestRegistrySupportsMultipleInstancesAndRejectsDuplicates(t *testing.T) {
 		t.Fatal("expected duplicate instance error")
 	}
 }
+
+func TestRegistryRejectsInvalidRegistrationAndConfiguration(t *testing.T) {
+	r := NewRegistry()
+	if err := r.RegisterType("", nil); err == nil {
+		t.Fatal("invalid registration was accepted")
+	}
+	if _, err := r.Configure(context.Background(), Config{}); err == nil || err.Error() != "adapter ID and provider type are required" {
+		t.Fatalf("invalid configuration error = %v", err)
+	}
+	if _, err := r.Configure(context.Background(), Config{AdapterID: "a", ProviderType: "missing"}); err == nil || err.Error() != "provider type \"missing\" is not registered" {
+		t.Fatalf("unregistered provider error = %v", err)
+	}
+	if _, ok := r.Get("missing"); ok {
+		t.Fatal("unknown adapter was returned")
+	}
+}

@@ -1,9 +1,12 @@
 package endpoint
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,10 +147,13 @@ func TestServiceWaitForChannelReadyHonorsContext(t *testing.T) {
 
 var _ adapter.Adapter = (*coverageAdapter)(nil)
 
-type coverageAdapter struct{}
+type coverageAdapter struct {
+	executeCalls int
+	lastIntent   protocol.ImmutableIntent
+}
 
 func (*coverageAdapter) Describe(context.Context) (adapter.Descriptor, error) {
-	return adapter.Descriptor{}, nil
+	return adapter.Descriptor{Capabilities: protocol.CapabilityDescriptor{Revision: "rev-1", Capabilities: []protocol.Capability{{Name: "agent.start", Version: "v1"}}}}, nil
 }
 func (*coverageAdapter) Discover(context.Context, adapter.DiscoverRequest) (adapter.DiscoverResult, error) {
 	return adapter.DiscoverResult{}, nil
@@ -155,8 +161,10 @@ func (*coverageAdapter) Discover(context.Context, adapter.DiscoverRequest) (adap
 func (*coverageAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
 	return adapter.InspectResult{}, nil
 }
-func (*coverageAdapter) Execute(context.Context, adapter.ExecuteRequest) (adapter.ExecuteResult, error) {
-	return adapter.ExecuteResult{}, nil
+func (a *coverageAdapter) Execute(_ context.Context, request adapter.ExecuteRequest) (adapter.ExecuteResult, error) {
+	a.executeCalls++
+	a.lastIntent = request.Intent
+	return adapter.ExecuteResult{Receipt: protocol.ExecutionReceipt{CommandID: request.Intent.CommandID, Outcome: "accepted"}}, nil
 }
 func (*coverageAdapter) ReadOutput(context.Context, adapter.OutputRequest) (adapter.OutputResult, error) {
 	return adapter.OutputResult{}, nil
@@ -166,3 +174,93 @@ func (*coverageAdapter) QueryCommand(context.Context, adapter.CommandQuery) (ada
 }
 func (*coverageAdapter) Watch(context.Context) (<-chan adapter.Event, error) { return nil, nil }
 func (*coverageAdapter) Close() error                                        { return nil }
+
+type coverageHeartbeater struct {
+	err    error
+	called chan struct{}
+}
+
+func (h coverageHeartbeater) RunHeartbeat(_ context.Context, _ time.Duration) error {
+	close(h.called)
+	return h.err
+}
+
+type failingReadChannel struct {
+	*serviceChannel
+	reads int
+}
+
+func (f *failingReadChannel) Read(context.Context) (channel.Frame, error) {
+	f.reads++
+	return channel.Frame{}, errors.New("read failed")
+}
+
+func TestServiceHeartbeatAndChannelFailurePaths(t *testing.T) {
+	store := openCoverageStore(t)
+	defer store.Close()
+	heartbeat := coverageHeartbeater{err: errors.New("heartbeat failed"), called: make(chan struct{})}
+	service, err := NewService(ServiceDeps{Collector: &serviceCollector{}, Channel: newServiceChannel(), Storage: store, Heartbeater: heartbeat, HeartbeatInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.wg.Add(1)
+	go service.heartbeatLoop(context.Background())
+	select {
+	case <-heartbeat.called:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat was not started")
+	}
+	service.wg.Wait()
+
+	var logs bytes.Buffer
+	service.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	failed := &failingReadChannel{serviceChannel: newServiceChannel()}
+	service.channel = failed
+	service.wg.Add(1)
+	service.channelLoop(context.Background())
+	if failed.reads != 1 {
+		t.Fatalf("channel reads=%d, want one read before non-reconnecting exit", failed.reads)
+	}
+	if !strings.Contains(logs.String(), "read failed") {
+		t.Fatalf("channel failure log=%q, want read error", logs.String())
+	}
+}
+
+func TestServiceRecoversAcceptedAndResendsRecordedReceipts(t *testing.T) {
+	store := openCoverageStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	accepted := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "accepted", EndpointID: "e", Operation: "op", OperationVersion: "v1", CapabilityRevision: "c", PayloadSchemaVersion: "v1", Payload: []byte(`{}`)}
+	if _, _, err := store.AdmitJournal(ctx, accepted, "accepted-hash", 1); err != nil {
+		t.Fatal(err)
+	}
+	receipt := protocol.ExecutionReceipt{CommandID: "recorded", RequestHash: "recorded-hash", Outcome: "accepted"}
+	recorded := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "recorded", EndpointID: "e", Operation: "op", OperationVersion: "v1", CapabilityRevision: "c", PayloadSchemaVersion: "v1", Payload: []byte(`{}`)}
+	if _, _, err := store.AdmitJournal(ctx, recorded, "recorded-hash", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordReceipt(ctx, recorded.CommandID, receipt, 3); err != nil {
+		t.Fatal(err)
+	}
+	transport := newServiceChannel()
+	service, err := NewService(ServiceDeps{Collector: &serviceCollector{}, Channel: transport, Storage: store, Executor: coverageExecutor{receipt: protocol.ExecutionReceipt{CommandID: "accepted"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.wg.Add(1)
+	done := make(chan struct{})
+	go func() { service.resendRecordedReceipts(ctx); close(done) }()
+	<-done
+	service.wg.Wait()
+	if transport.count(channel.FrameReceipt) != 1 {
+		t.Fatalf("resent receipts=%d", transport.count(channel.FrameReceipt))
+	}
+	service.wg.Add(1)
+	done = make(chan struct{})
+	go func() { service.recoverAcceptedCommands(ctx); close(done) }()
+	<-done
+	service.wg.Wait()
+	if transport.count(channel.FrameReceipt) < 2 {
+		t.Fatalf("recovered receipts=%d", transport.count(channel.FrameReceipt))
+	}
+}

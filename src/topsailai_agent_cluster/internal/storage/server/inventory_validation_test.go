@@ -2,6 +2,8 @@ package serverstorage
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -54,5 +56,22 @@ func TestReplaceInventoryRejectsSessionWithoutIdentity(t *testing.T) {
 	}
 	if err := store.ReplaceInventory(context.Background(), "endpoint-1", report, 2); err == nil || !strings.Contains(err.Error(), "session identity and adapter are required") {
 		t.Fatalf("missing session identity was not rejected specifically: %v", err)
+	}
+}
+
+func TestCommandConstraintHelpers(t *testing.T) {
+	if isConstraint(nil) || !isConstraint(sql.ErrNoRows) || !isConstraint(errors.New("UNIQUE constraint failed")) {
+		t.Fatal("constraint errors were not classified")
+	}
+	if isConstraint(errors.New("temporary failure")) {
+		t.Fatal("non-constraint error was misclassified")
+	}
+	for _, tc := range []struct {
+		value, fragment string
+		want            bool
+	}{{"abc", "b", true}, {"abc", "", true}, {"abc", "z", false}, {"abc", "abcd", false}} {
+		if got := contains(tc.value, tc.fragment); got != tc.want {
+			t.Fatalf("contains(%q, %q)=%v want %v", tc.value, tc.fragment, got, tc.want)
+		}
 	}
 }
