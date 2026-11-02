@@ -176,6 +176,9 @@ func writeSafeASCII(clean *strings.Builder, value byte) {
 }
 
 func isSafeTerminalRune(value rune) bool {
+	if value < 0x20 || (value >= 0x7f && value <= 0x9f) {
+		return false
+	}
 	if value >= 0x202a && value <= 0x202e {
 		return false
 	}
@@ -183,7 +186,7 @@ func isSafeTerminalRune(value rune) bool {
 		return false
 	}
 	switch value {
-	case 0x200e, 0x200f, 0x061c:
+	case 0x061c, 0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x2060:
 		return false
 	}
 	return true

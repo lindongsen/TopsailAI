@@ -60,6 +60,27 @@ func TestSafeWriterDoesNotLeakControlsAcrossWrites(t *testing.T) {
 	}
 }
 
+func TestSafeWriterFiltersUnsafeUnicodeAndOSC(t *testing.T) {
+	input := "ok\x00\x1b[31mred\x1b]0;title\a\u202e\u200bend"
+	var output strings.Builder
+	writer := newSafeWriter(&output)
+	for _, chunk := range [][]byte{[]byte(input[:5]), []byte(input[5:11]), []byte(input[11:])} {
+		if _, err := writer.Write(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	got := output.String()
+	if strings.Contains(got, "\x00") || strings.Contains(got, "\x1b") || strings.Contains(got, "title") || strings.Contains(got, "\u202e") || strings.Contains(got, "\u200b") {
+		t.Fatalf("unsafe content leaked: %q", got)
+	}
+	if got != "ok�redend" {
+		t.Fatalf("unexpected sanitized output: %q", got)
+	}
+}
+
 func TestSafeWriterPreservesChunkedUTF8(t *testing.T) {
 	input := "ASCII caf\u00e9 \u4e16\u754c \U0001f44b e\u0301\n\tend"
 	for width := 1; width <= 3; width++ {

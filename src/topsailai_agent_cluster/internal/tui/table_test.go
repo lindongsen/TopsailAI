@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"topsailai_agent_cluster/internal/protocol"
 )
@@ -33,15 +34,12 @@ func TestTableColumnsWidthsAndEmptyResult(t *testing.T) {
 	}
 }
 
-func TestTableEscapesCellsAndReportsPartialFailures(t *testing.T) {
+func TestTablePreservesPrintableUnicodeAndReportsPartialFailures(t *testing.T) {
 	var out, errors strings.Builder
 	rows := []SessionRow{{EndpointID: "good", State: "running", CollectionStatus: protocol.CollectionSucceeded}}
 	failures := []EndpointFailure{{EndpointID: "bad", Err: errTableFixture}}
 	if err := RenderTable(&out, &errors, rows, failures, TableOptions{}); err != nil {
 		t.Fatal(err)
-	}
-	if strings.ContainsAny(out.String(), "\x1b\r\n\t") && strings.Count(out.String(), "\n") == 0 {
-		t.Fatal("unexpected control output")
 	}
 	if !strings.Contains(errors.String(), "endpoint bad unavailable: fixture failure") {
 		t.Fatalf("errors=%q", errors.String())
@@ -49,9 +47,27 @@ func TestTableEscapesCellsAndReportsPartialFailures(t *testing.T) {
 	if !strings.Contains(out.String(), "good") || strings.Contains(out.String(), "bad") {
 		t.Fatalf("partial table=%q", out.String())
 	}
-	if got := escapeCell("a\n\t\x1b\u202eé"); got != `a\u000A\u0009\u001B\u202E\u00E9` {
-		t.Fatalf("escaped=%q", got)
+	got := escapeCell("统一Agent管理方案 √©")
+	if got != "统一Agent管理方案 √©" || strings.Contains(got, `\\u`) {
+		t.Fatalf("printable Unicode escaped: %q", got)
 	}
+	if got := escapeCell("a\n\t"); got != "a��" {
+		t.Fatalf("control cell=%q", got)
+	}
+	if got := escapeCell("\x1b[31m\u202e\u200b"); got != "" {
+		t.Fatalf("unsafe cell=%q", got)
+	}
+}
+
+func TestTableUsesCJKDisplayWidthAndRuneSafeClip(t *testing.T) {
+	if got := displayWidth("中a"); got != 3 {
+		t.Fatalf("displayWidth=%d want=3", got)
+	}
+	clipped := clipCell("中文字符", 6)
+	if clipped != "中..." || !utf8.ValidString(clipped) {
+		t.Fatalf("clipped=%q", clipped)
+	}
+
 }
 
 var errTableFixture = tableFixtureError{}

@@ -142,30 +142,9 @@ func tableCells(row SessionRow) []string {
 	return []string{strconv.Itoa(row.No), escapeCell(endpoint), escapeCell(adapter), escapeCell(session), escapeCell(row.Generation), escapeCell(row.State), strconv.FormatBool(row.Stale), strconv.FormatBool(row.Unknown), escapeCell(row.CollectionStatus), last}
 }
 func escapeCell(value string) string {
-	var b strings.Builder
-	for len(value) > 0 {
-		r, n := utf8.DecodeRuneInString(value)
-		if r == utf8.RuneError && n == 1 {
-			b.WriteString("\\uFFFD")
-			value = value[1:]
-			continue
-		}
-		if r < 0x20 || r == 0x7f {
-			fmt.Fprintf(&b, "\\u%04X", r)
-		} else if r > 0x7e {
-			if r <= 0xffff {
-				fmt.Fprintf(&b, "\\u%04X", r)
-			} else {
-				fmt.Fprintf(&b, "\\U%08X", r)
-			}
-		} else if r == '\\' {
-			b.WriteString("\\\\")
-		} else {
-			b.WriteRune(r)
-		}
-		value = value[n:]
-	}
-	return b.String()
+	clean := sanitizeTerminal([]byte(value))
+	clean = strings.NewReplacer("\n", "�", "\r", "�", "\t", "�").Replace(clean)
+	return strings.ReplaceAll(clean, "\\", "\\\\")
 }
 func clipCell(value string, width int) string {
 	if displayWidth(value) <= width {
@@ -179,15 +158,37 @@ func clipCell(value string, width int) string {
 func safeClipIndex(value string, limit int) int {
 	used := 0
 	for i, r := range value {
-		n := utf8.RuneLen(r)
-		if used+n > limit {
+		runeWidth := runeDisplayWidth(r)
+		if used+runeWidth > limit {
 			return i
 		}
-		used += n
+		used += runeWidth
 	}
 	return len(value)
 }
-func displayWidth(value string) int { return len([]rune(value)) }
+func displayWidth(value string) int {
+	width := 0
+	for _, r := range value {
+		width += runeDisplayWidth(r)
+	}
+	return width
+}
+func runeDisplayWidth(value rune) int {
+	if value == 0 || value == utf8.RuneError || value == '\u200b' || value == '\u200c' || value == '\u200d' || value == '\u2060' {
+		return 0
+	}
+	if value >= 0x300 && value <= 0x36f {
+		return 0
+	}
+	if (value >= 0x1100 && value <= 0x115f) || (value >= 0x2329 && value <= 0x232a) ||
+		(value >= 0x2e80 && value <= 0xa4cf) || (value >= 0xac00 && value <= 0xd7a3) ||
+		(value >= 0xf900 && value <= 0xfaff) || (value >= 0xfe10 && value <= 0xfe19) ||
+		(value >= 0xfe30 && value <= 0xfe6f) || (value >= 0xff00 && value <= 0xff60) ||
+		(value >= 0xffe0 && value <= 0xffe6) || (value >= 0x1f300 && value <= 0x1faff) {
+		return 2
+	}
+	return 1
+}
 func minInt(a, b int) int {
 	if a < b {
 		return a
