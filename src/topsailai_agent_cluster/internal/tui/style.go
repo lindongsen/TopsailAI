@@ -31,10 +31,29 @@ func writeStyled(w io.Writer, style, text string, policy ColorPolicy) error {
 }
 
 // RenderPrompt writes a trusted, reset-safe REPL prompt.
-func RenderPrompt(w io.Writer, endpoint, session string, invalidated bool, policy ColorPolicy) error {
+func RenderPrompt(w io.Writer, scope ScopeState, invalidated bool, policy ColorPolicy) error {
 	prompt := "cluster"
-	if endpoint != "" {
-		prompt += "[" + sanitizePromptPart(endpoint) + "/" + sanitizePromptPart(session)
+	switch scope.Kind {
+	case ScopeEndpoint:
+		endpoint := scope.Hostname
+		if endpoint == "" {
+			endpoint = scope.EndpointID
+		}
+		prompt += "[" + sanitizePromptPart(endpoint)
+		if scope.Hostname != "" {
+			prompt += "/" + sanitizePromptPart(scope.EndpointID)
+		}
+		prompt += "]"
+	case ScopeSession:
+		endpoint := scope.Hostname
+		if endpoint == "" {
+			endpoint = scope.EndpointID
+		}
+		prompt += "[" + sanitizePromptPart(endpoint)
+		if scope.Hostname != "" {
+			prompt += "/" + sanitizePromptPart(scope.EndpointID)
+		}
+		prompt += "/" + sanitizePromptPart(scope.SessionID)
 		if invalidated {
 			prompt += "!"
 		}

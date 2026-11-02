@@ -36,6 +36,7 @@ type reportLoad struct {
 
 type interactiveState struct {
 	interactiveSelection
+	Scope     ScopeState
 	commandID string
 }
 
@@ -318,7 +319,7 @@ func readLine(reader *bufio.Reader, limit int) (string, bool, error) {
 }
 
 func writePrompt(out io.Writer, state interactiveState, policy ColorPolicy) error {
-	return RenderPrompt(out, state.EndpointID, state.SessionID, state.Invalidated, policy)
+	return RenderPrompt(out, state.Scope, state.Invalidated, policy)
 }
 
 func printHelp(out io.Writer, target string) error {
@@ -415,7 +416,7 @@ func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveSta
 func interactiveUse(parent context.Context, api InteractiveAPI, state *interactiveState, rest string) error {
 	args := strings.Fields(rest)
 	if len(args) == 1 && args[0] == "clear" {
-		*state = interactiveState{}
+		*state = interactiveState{Scope: ScopeState{Kind: ScopeWorkspace}}
 		return nil
 	}
 	if len(args) == 1 {
@@ -454,6 +455,7 @@ func interactiveUse(parent context.Context, api InteractiveAPI, state *interacti
 				return freshnessErr
 			}
 			state.reset(args[0], args[1], session.Generation)
+			state.syncScopeFromSelection()
 			return nil
 		}
 	}
@@ -485,6 +487,7 @@ func selectInteractiveSession(parent context.Context, api InteractiveAPI, state 
 			return err
 		}
 		state.reset(endpointID, sessionID, session.Generation)
+		state.syncScopeFromSelection()
 		return nil
 	}
 	return fmt.Errorf("session %q was not found on endpoint %q", sessionID, endpointID)

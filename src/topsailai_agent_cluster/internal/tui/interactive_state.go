@@ -2,6 +2,38 @@ package tui
 
 import "fmt"
 
+// ScopeKind identifies the interactive navigation scope.
+type ScopeKind int
+
+const (
+	ScopeWorkspace ScopeKind = iota
+	ScopeEndpoint
+	ScopeSession
+)
+
+// String returns the stable name of the scope.
+func (k ScopeKind) String() string {
+	switch k {
+	case ScopeWorkspace:
+		return "workspace"
+	case ScopeEndpoint:
+		return "endpoint"
+	case ScopeSession:
+		return "session"
+	default:
+		return "unknown"
+	}
+}
+
+// ScopeState stores the current interactive navigation location.
+type ScopeState struct {
+	Kind       ScopeKind
+	EndpointID string
+	Hostname   string
+	SessionID  string
+	Generation string
+}
+
 // interactiveSelection stores the identity pinned by an explicit use command.
 type interactiveSelection struct {
 	EndpointID    string
@@ -55,4 +87,20 @@ func rowNumber(state *interactiveState, endpointID, sessionID string) int {
 		}
 	}
 	return 0
+}
+
+// syncScopeFromSelection mirrors the existing selected-session record into scope state.
+func (s *interactiveState) syncScopeFromSelection() {
+	s.Scope = ScopeState{
+		Kind:       ScopeSession,
+		EndpointID: s.EndpointID,
+		Hostname:   "",
+		SessionID:  s.SessionID,
+		Generation: s.Generation,
+	}
+}
+
+// clearScope resets navigation to workspace while retaining list rows.
+func (s *interactiveState) clearScope() {
+	s.Scope = ScopeState{Kind: ScopeWorkspace}
 }

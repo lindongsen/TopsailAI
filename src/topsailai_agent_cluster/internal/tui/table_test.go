@@ -118,19 +118,21 @@ func TestColorPolicyMatrixAndPrompt(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		endpoint  string
-		session   string
+		scope     ScopeState
 		invalid   bool
 		plainWant string
 	}{
 		{name: "idle", plainWant: "cluster> "},
-		{name: "selected", endpoint: "endpoint", session: "session", plainWant: "cluster[endpoint/session]> "},
-		{name: "invalidated", endpoint: "endpoint", session: "session", invalid: true, plainWant: "cluster[endpoint/session!]> "},
+		{name: "endpoint", scope: ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1", Hostname: "ai-dev"}, plainWant: "cluster[ai-dev/endpoint-1]> "},
+		{name: "endpoint fallback", scope: ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1"}, plainWant: "cluster[endpoint-1]> "},
+		{name: "session fallback", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint-1", SessionID: "session"}, plainWant: "cluster[endpoint-1/session]> "},
+		{name: "selected", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint", Hostname: "endpoint", SessionID: "session"}, plainWant: "cluster[endpoint/endpoint/session]> "},
+		{name: "invalidated", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint", Hostname: "endpoint", SessionID: "session"}, invalid: true, plainWant: "cluster[endpoint/endpoint/session!]> "},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var colored, plain strings.Builder
-			if err := RenderPrompt(&colored, test.endpoint, test.session, test.invalid, ColorPolicy{Enabled: true}); err != nil {
+			if err := RenderPrompt(&colored, test.scope, test.invalid, ColorPolicy{Enabled: true}); err != nil {
 				t.Fatal(err)
 			}
 			got := colored.String()
@@ -144,7 +146,7 @@ func TestColorPolicyMatrixAndPrompt(t *testing.T) {
 			if !strings.HasSuffix(got, ansiReset+" ") {
 				t.Fatalf("prompt does not reset before space: %q", got)
 			}
-			if err := RenderPrompt(&plain, test.endpoint, test.session, test.invalid, ColorPolicy{}); err != nil {
+			if err := RenderPrompt(&plain, test.scope, test.invalid, ColorPolicy{}); err != nil {
 				t.Fatal(err)
 			}
 			if plain.String() != test.plainWant {
@@ -156,7 +158,7 @@ func TestColorPolicyMatrixAndPrompt(t *testing.T) {
 
 func TestPromptEscapesUntrustedControlText(t *testing.T) {
 	var out strings.Builder
-	if err := RenderPrompt(&out, "ep\n\x1b[31m", "session\t1", false, ColorPolicy{Enabled: true}); err != nil {
+	if err := RenderPrompt(&out, ScopeState{Kind: ScopeSession, EndpointID: "ep\n\x1b[31m", Hostname: "ep\n\x1b[31m", SessionID: "session\t1"}, false, ColorPolicy{Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.ContainsAny(out.String(), "\n\t") || strings.Contains(out.String(), "\x1b[31mep") {
