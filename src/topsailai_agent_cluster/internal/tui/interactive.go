@@ -261,9 +261,13 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		}
 		return true, nil
 	case "list":
-		return false, interactiveList(ctx, api, state, strings.TrimSpace(rest), trustedOut, errOut, options.Color)
+		filter, clean, err := parseListArguments(rest)
+		if err != nil {
+			return false, err
+		}
+		return false, interactiveList(ctx, api, state, filter, clean, trustedOut, errOut, options.Color)
 	case "table":
-		return false, interactiveTable(ctx, api, state, strings.TrimSpace(rest), trustedOut, errOut, options.Color)
+		return false, fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "use":
 		return false, interactiveUse(ctx, api, state, rest)
 	case "show":
@@ -345,16 +349,30 @@ func loadReports(ctx context.Context, api InteractiveAPI, endpointFilter string)
 	return loaded, nil
 }
 
-func interactiveTable(parent context.Context, api InteractiveAPI, state *interactiveState, filter string, out, errors io.Writer, color ColorPolicy) error {
+func interactiveList(parent context.Context, api InteractiveAPI, state *interactiveState, filter string, clean bool, out, errors io.Writer, color ColorPolicy) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).Table(ctx, out, errors, filter, false, TableOptions{Color: color, OnRows: func(rows []SessionRow) { state.setRows(rows) }})
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, filter, false, TableOptions{Color: color, Clean: clean, OnRows: func(rows []SessionRow) { state.setRows(rows) }})
 }
 
-func interactiveList(parent context.Context, api InteractiveAPI, state *interactiveState, filter string, out, errors io.Writer, color ColorPolicy) error {
-	ctx, cancel := commandContext(parent)
-	defer cancel()
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, filter, false, TableOptions{Color: color, OnRows: func(rows []SessionRow) { state.setRows(rows) }})
+func parseListArguments(rest string) (string, bool, error) {
+	parts := strings.Fields(rest)
+	filter := ""
+	clean := false
+	for _, part := range parts {
+		if part == "--clean" {
+			if clean {
+				return "", false, fmt.Errorf("usage: list [endpoint] [--clean]")
+			}
+			clean = true
+			continue
+		}
+		if filter != "" {
+			return "", false, fmt.Errorf("usage: list [endpoint] [--clean]")
+		}
+		filter = part
+	}
+	return filter, clean, nil
 }
 
 func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveState) (protocol.Endpoint, protocol.InventoryReport, *protocol.Session, error) {
@@ -499,7 +517,7 @@ func validateAdapterFreshness(report protocol.InventoryReport, adapterID string)
 
 func interactiveRefresh(parent context.Context, api InteractiveAPI, state *interactiveState, out, errors io.Writer, color ColorPolicy) error {
 	if state.EndpointID == "" {
-		return interactiveList(parent, api, state, "", out, errors, color)
+		return interactiveList(parent, api, state, "", false, out, errors, color)
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()

@@ -89,18 +89,18 @@ func TestCommandRunnerListHeadersColorAndJSONIsolation(t *testing.T) {
 		t.Fatalf("plain list contains ANSI bytes: %q", plain.String())
 	}
 
-	var coloredList, coloredTable strings.Builder
+	var coloredList, coloredCleanList strings.Builder
 	options := TableOptions{Color: ColorPolicy{Enabled: true}}
 	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &coloredList, io.Discard, "", false, options); err != nil {
 		t.Fatal(err)
 	}
-	if err := (CommandRunner{API: api}).Table(context.Background(), &coloredTable, io.Discard, "", false, options); err != nil {
+	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &coloredCleanList, io.Discard, "", false, TableOptions{Color: options.Color, Clean: true}); err != nil {
 		t.Fatal(err)
 	}
 	listHeader := strings.SplitN(coloredList.String(), "\n", 2)[0]
-	tableHeader := strings.SplitN(coloredTable.String(), "\n", 2)[0]
-	if listHeader != tableHeader {
-		t.Fatalf("list/table headers differ: list=%q table=%q", listHeader, tableHeader)
+	cleanListHeader := strings.SplitN(coloredCleanList.String(), "\n", 2)[0]
+	if listHeader != cleanListHeader {
+		t.Fatalf("list/list --clean headers differ: list=%q clean=%q", listHeader, cleanListHeader)
 	}
 	for _, header := range []string{"NO", "ENDPOINT", "STATE"} {
 		assertStyledHeaderCell(t, listHeader, header)
@@ -170,6 +170,24 @@ func TestCommandRunnerListEmptyAndPartialFailure(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "ENDPOINT") || !strings.Contains(out.String(), "no sessions") {
 		t.Fatalf("empty list=%q", out.String())
+	}
+}
+
+func TestCommandRunnerListCleanOmitsFailedEndpointsAndKeepsDiagnostics(t *testing.T) {
+	api := &runnerStubAPI{
+		endpoints:       []protocol.Endpoint{{EndpointID: "good"}, {EndpointID: "bad"}},
+		reports:         map[string]protocol.InventoryReport{"good": {CollectionStatus: protocol.CollectionSucceeded}},
+		inventoryErrors: map[string]error{"bad": errors.New("fixture failure")},
+	}
+	var out, diagnostics strings.Builder
+	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &out, &diagnostics, "", false, TableOptions{Clean: true}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "bad") || !strings.Contains(out.String(), "good") {
+		t.Fatalf("clean list=%q", out.String())
+	}
+	if !strings.Contains(diagnostics.String(), "endpoint bad unavailable: fixture failure") {
+		t.Fatalf("diagnostics=%q", diagnostics.String())
 	}
 }
 

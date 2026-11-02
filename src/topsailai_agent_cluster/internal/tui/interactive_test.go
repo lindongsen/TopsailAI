@@ -259,24 +259,50 @@ func TestInvalidatedSelectionRejectsTargetOperationsWithoutAdmission(t *testing.
 	}
 }
 
-func TestInteractiveHelpDescribesListAndTableDifferences(t *testing.T) {
+func TestInteractiveHelpDescribesListCleanBehavior(t *testing.T) {
 	stub := &interactiveStub{}
 	var output, errorsOut strings.Builder
 	if err := RunInteractive(context.Background(), stub, strings.NewReader("help\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, phrase := range []string{"list [endpoint]", "table [endpoint]", "failed to report", "omitting failed endpoints", "stderr"} {
+	for _, phrase := range []string{"list [endpoint] [--clean]", "failed to report", "--clean", "stderr"} {
 		if !strings.Contains(text, phrase) {
 			t.Fatalf("REPL help missing %q: %q", phrase, text)
 		}
 	}
+	if strings.Contains(text, "table [endpoint]") {
+		t.Fatalf("removed table command remains in help: %q", text)
+	}
 }
 
-func TestInteractiveHelpSharesListAndTableDescriptionsWithCLI(t *testing.T) {
+func TestInteractiveHelpSharesListDescriptionWithCLI(t *testing.T) {
 	lines := CommandHelpLines()
-	if len(lines) < 2 || !strings.Contains(lines[0], "list [endpoint]") || !strings.Contains(lines[1], "table [endpoint]") {
-		t.Fatalf("missing list/table help lines: %q", lines)
+	if len(lines) == 0 || !strings.Contains(lines[0], "list [endpoint] [--clean]") {
+		t.Fatalf("missing list help line: %q", lines)
+	}
+	for _, line := range lines {
+		if strings.HasPrefix(line, "table ") {
+			t.Fatalf("removed table command remains: %q", lines)
+		}
+	}
+}
+
+func TestInteractiveTableCommandReportsRemoval(t *testing.T) {
+	_, errorsOut := runInputScenario(t, &interactiveStub{}, "table\nquit\n", 8192)
+	if !strings.Contains(errorsOut, `"table" has been removed; use "list --clean"`) {
+		t.Fatalf("removal error=%q", errorsOut)
+	}
+}
+
+func TestInteractiveHelpTableIsUnknown(t *testing.T) {
+	var output strings.Builder
+	if err := RunInteractive(context.Background(), &interactiveStub{}, strings.NewReader("help table\nquit\n"), &output, &output, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, `unknown help command "table"`) || strings.Contains(text, "available commands: list, table") {
+		t.Fatalf("unexpected help table output: %q", text)
 	}
 }
 
@@ -286,7 +312,7 @@ func TestInteractiveDetailedHelpIncludesFieldSemantics(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, phrase := range []string{"Syntax: list [endpoint]", "GENERATION:", "not a timestamp or restart count", "STALE:", "earlier successful collection", "LAST_SUCCESS_MS:"} {
+	for _, phrase := range []string{"Syntax: list [endpoint] [--clean]", "GENERATION:", "not a timestamp or restart count", "STALE:", "earlier successful collection", "LAST_SUCCESS_MS:"} {
 		if !strings.Contains(text, phrase) {
 			t.Fatalf("detailed help missing %q: %q", phrase, text)
 		}

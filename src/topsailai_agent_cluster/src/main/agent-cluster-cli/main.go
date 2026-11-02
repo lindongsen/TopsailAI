@@ -117,9 +117,13 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		}
 		return tui.PrintCommandHelp(output, target)
 	case "list":
-		return list(ctx, api, output, errors, *filter, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
+		listClean, err := parseListArgs(flags.Args()[1:], false)
+		if err != nil {
+			return err
+		}
+		return list(ctx, api, output, errors, *filter, listClean, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
 	case "table":
-		return table(ctx, api, output, errors, *filter, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
+		return fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "show":
 		if flags.NArg() != 2 {
 			return fmt.Errorf("usage: show <endpoint-id-or-session-id>")
@@ -142,16 +146,25 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	}
 }
 
+func parseListArgs(args []string, clean bool) (bool, error) {
+	for _, arg := range args {
+		if arg != "--clean" {
+			return false, fmt.Errorf("usage: list [endpoint] [--clean]")
+		}
+		if clean {
+			return false, fmt.Errorf("usage: list [endpoint] [--clean]")
+		}
+		clean = true
+	}
+	return clean, nil
+}
+
 func legacyRunner(api tui.CommandAPI) tui.CommandRunner {
 	return tui.CommandRunner{API: api, Policy: tui.LegacyPolicy}
 }
 
-func table(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, jsonMode bool, color tui.ColorPolicy) error {
-	return legacyRunner(api).Table(ctx, output, errors, filter, jsonMode, tui.TableOptions{Color: color})
-}
-
-func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, jsonMode bool, color tui.ColorPolicy) error {
-	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, tui.TableOptions{Color: color})
+func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, jsonMode bool, color tui.ColorPolicy) error {
+	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, tui.TableOptions{Color: color, Clean: clean})
 }
 
 func show(ctx context.Context, api tui.CommandAPI, output io.Writer, id string, jsonMode bool) error {

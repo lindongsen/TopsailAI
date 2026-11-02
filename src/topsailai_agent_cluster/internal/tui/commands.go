@@ -54,6 +54,15 @@ func (r CommandRunner) ListWithOptions(ctx context.Context, out, errors io.Write
 	if jsonMode {
 		return RenderJSON(out, rows)
 	}
+	if options.Clean && len(loaded.errors) > 0 {
+		filtered := rows[:0]
+		for _, row := range rows {
+			if _, failed := loaded.errors[row.EndpointID]; !failed {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
+	}
 	assignRowNumbers(rows)
 	if options.OnRows != nil {
 		options.OnRows(append([]SessionRow(nil), rows...))

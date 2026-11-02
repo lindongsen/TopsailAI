@@ -8,8 +8,7 @@ import (
 )
 
 const (
-	ListHelpDescription  = "complete session table, including endpoints that failed to report"
-	TableHelpDescription = "clean session table, omitting failed endpoints; diagnostics go to stderr"
+	ListHelpDescription = "list all sessions, including endpoints that failed to report; use --clean to omit failed endpoints; diagnostics still go to stderr"
 )
 
 type commandHelp struct {
@@ -33,8 +32,7 @@ var fieldHelp = []string{
 }
 
 var commandHelpCatalog = map[string]commandHelp{
-	"list":    {"list [endpoint]", "list all sessions, including endpoints that failed to report", []string{"endpoint: optional endpoint ID filter"}, []string{"list", "list endpoint-1"}},
-	"table":   {"table [endpoint]", TableHelpDescription, []string{"endpoint: optional endpoint ID filter"}, []string{"table", "table endpoint-1"}},
+	"list":    {"list [endpoint] [--clean]", ListHelpDescription, []string{"endpoint: optional endpoint ID filter", "--clean: omit endpoints that failed to report; diagnostics still go to stderr"}, []string{"list", "list endpoint-1", "list --clean"}},
 	"use":     {"use <number> | use <endpoint> <session>", "select a session for subsequent interactive commands", []string{"number: current display row number", "endpoint: endpoint ID", "session: session or resource ID"}, []string{"use 1", "use endpoint-1 res_abc"}},
 	"show":    {"show <endpoint-or-session>", "show detailed information for an endpoint or session", []string{"endpoint-or-session: endpoint ID or session/resource ID"}, []string{"show endpoint-1"}},
 	"logs":    {"logs <endpoint> <session>", "show bounded output for a session", []string{"endpoint: endpoint ID", "session: session/resource ID"}, []string{"logs endpoint-1 res_abc"}},
@@ -45,7 +43,7 @@ var commandHelpCatalog = map[string]commandHelp{
 	"quit":    {"quit", "leave interactive mode", nil, []string{"quit"}},
 }
 
-var commandHelpOrder = []string{"list", "table", "use", "show", "logs", "send", "status", "refresh", "help", "quit"}
+var commandHelpOrder = []string{"list", "use", "show", "logs", "send", "status", "refresh", "help", "quit"}
 
 // CommandHelpLines returns the shared command descriptions used by CLI and REPL help.
 func CommandHelpLines() []string {
@@ -98,7 +96,7 @@ func PrintCommandHelp(out io.Writer, target string) error {
 			}
 		}
 	}
-	if target == "list" || target == "table" {
+	if target == "list" {
 		if _, err := fmt.Fprintln(out, "Fields:"); err != nil {
 			return err
 		}
@@ -106,10 +104,6 @@ func PrintCommandHelp(out io.Writer, target string) error {
 			if _, err := fmt.Fprintf(out, "  %s\n", field); err != nil {
 				return err
 			}
-		}
-		if target == "table" {
-			_, err := fmt.Fprintln(out, "Note: table omits failed endpoints; list keeps them and reports diagnostics.")
-			return err
 		}
 	}
 	return nil

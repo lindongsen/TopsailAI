@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"sort"
@@ -19,41 +18,12 @@ type EndpointFailure struct {
 // TableOptions controls table presentation without changing query semantics.
 type TableOptions struct {
 	Color  ColorPolicy
+	Clean  bool
 	OnRows func([]SessionRow)
 }
 
 var tableHeaders = []string{"NO", "ENDPOINT", "ADAPTER", "SESSION", "GENERATION", "STATE", "STALE", "UNKNOWN", "COLLECTION", "LAST_SUCCESS_MS"}
 var tableCaps = []int{4, 20, 18, 36, 20, 12, 5, 7, 16, 15}
-
-// Table queries and renders the session table, preserving successful rows on partial failure.
-func (r CommandRunner) Table(ctx context.Context, out, errors io.Writer, filter string, jsonMode bool, options TableOptions) error {
-	loaded, err := loadReports(ctx, r.API, filter)
-	if err != nil {
-		return err
-	}
-	rows := ListRows(loaded.endpoints, loaded.reports, filter)
-	if jsonMode {
-		return RenderJSON(out, rows)
-	}
-	if len(loaded.errors) > 0 {
-		filtered := rows[:0]
-		for _, row := range rows {
-			if _, failed := loaded.errors[row.EndpointID]; !failed {
-				filtered = append(filtered, row)
-			}
-		}
-		rows = filtered
-	}
-	assignRowNumbers(rows)
-	if options.OnRows != nil {
-		options.OnRows(append([]SessionRow(nil), rows...))
-	}
-	failures := make([]EndpointFailure, 0, len(loaded.errors))
-	for id, fetchErr := range loaded.errors {
-		failures = append(failures, EndpointFailure{EndpointID: id, Err: fetchErr})
-	}
-	return RenderTable(out, errors, rows, failures, options)
-}
 
 // RenderTable writes a bounded table and sorted endpoint diagnostics.
 func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFailure, options TableOptions) error {

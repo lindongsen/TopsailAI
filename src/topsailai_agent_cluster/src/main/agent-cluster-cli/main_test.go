@@ -203,16 +203,30 @@ func TestPromptInterruptMapsToExitCode130(t *testing.T) {
 	}
 }
 
-func TestCLIHelpDescribesListAndTableDifferences(t *testing.T) {
+func TestCLIHelpDescribesListCleanBehavior(t *testing.T) {
 	var output, diagnostics strings.Builder
 	err := runWithIO([]string{"-h"}, strings.NewReader(""), &output, &diagnostics, false, nil)
 	if err == nil || err.Error() != "flag: help requested" {
 		t.Fatalf("help error=%v", err)
 	}
 	text := diagnostics.String()
-	for _, phrase := range []string{"list [endpoint]", "table [endpoint]", "failed to report", "omitting failed endpoints", "stderr"} {
+	for _, phrase := range []string{"list [endpoint] [--clean]", "failed to report", "--clean", "stderr"} {
 		if !strings.Contains(text, phrase) {
 			t.Fatalf("CLI help missing %q: %q", phrase, text)
 		}
+	}
+	if strings.Contains(text, "table [endpoint]") {
+		t.Fatalf("removed table command remains in help: %q", text)
+	}
+}
+
+func TestRemovedTableCommandReturnsMigrationError(t *testing.T) {
+	var output, diagnostics strings.Builder
+	code, err := runWithSignals([]string{"table"}, strings.NewReader(""), &output, &diagnostics, func() bool { return false }, nil)
+	if code != 2 || err == nil {
+		t.Fatalf("code=%d err=%v diagnostics=%q", code, err, diagnostics.String())
+	}
+	if !strings.Contains(diagnostics.String(), `"table" has been removed; use "list --clean"`) || strings.Contains(output.String(), "ENDPOINT") {
+		t.Fatalf("unexpected removal output=%q diagnostics=%q", output.String(), diagnostics.String())
 	}
 }
