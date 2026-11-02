@@ -337,3 +337,34 @@ func TestReceiptFromJSONClassifiesFailuresAndUnknowns(t *testing.T) {
 		})
 	}
 }
+
+func TestDiscoverPreservesProviderSessionNameWhileKeepingOpaqueID(t *testing.T) {
+	runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"provider-secret","session_name":"Daily work","process_generation":"g1","status":"running"}]}`)}
+	a := newTestAdapter(t, runner)
+	result, err := a.Discover(context.Background(), adapter.DiscoverRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Sessions) != 1 {
+		t.Fatalf("sessions = %#v", result.Sessions)
+	}
+	session := result.Sessions[0]
+	if session.DisplayName != "Daily work" {
+		t.Fatalf("display name = %q, want Daily work", session.DisplayName)
+	}
+	if session.SessionID != "res_provider-secret" {
+		t.Fatalf("session ID = %q, want opaque resource ID", session.SessionID)
+	}
+}
+
+func TestDiscoverLeavesProviderSessionNameEmptyWhenAbsent(t *testing.T) {
+	runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"provider-secret","process_generation":"g1","status":"running"}]}`)}
+	a := newTestAdapter(t, runner)
+	result, err := a.Discover(context.Background(), adapter.DiscoverRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Sessions[0].DisplayName; got != "" {
+		t.Fatalf("display name = %q, want empty", got)
+	}
+}

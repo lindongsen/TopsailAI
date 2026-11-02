@@ -110,6 +110,7 @@ type workspaceResponse struct {
 
 type workspaceItem struct {
 	SessionID         string          `json:"session_id"`
+	SessionName       string          `json:"session_name"`
 	ProcessGeneration json.RawMessage `json:"process_generation"`
 	Generation        json.RawMessage `json:"generation"`
 	State             string          `json:"state"`
@@ -183,7 +184,7 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 		if state == "" {
 			state = item.Status
 		}
-		result.Sessions = append(result.Sessions, protocol.Session{SessionID: resourceID, AgentID: item.AgentID, Generation: generation, AdapterID: a.config.AdapterID, State: state, ObservedAtMS: time.Now().UnixMilli()})
+		result.Sessions = append(result.Sessions, protocol.Session{SessionID: resourceID, DisplayName: item.SessionName, AgentID: item.AgentID, Generation: generation, AdapterID: a.config.AdapterID, State: state, ObservedAtMS: time.Now().UnixMilli()})
 	}
 	if response.Total != nil && *response.Total > len(response.Items) {
 		result.Complete = false

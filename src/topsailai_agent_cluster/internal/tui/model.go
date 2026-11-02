@@ -15,6 +15,7 @@ type SessionRow struct {
 	EndpointLabel    string `json:"-"`
 	AdapterLabel     string `json:"-"`
 	SessionID        string `json:"session_id"`
+	DisplayName      string `json:"display_name,omitempty"`
 	Generation       string `json:"generation"`
 	State            string `json:"state"`
 	Stale            bool   `json:"stale"`
@@ -45,7 +46,7 @@ func ListRows(endpoints []protocol.Endpoint, reports map[string]protocol.Invento
 		}
 		for _, session := range report.Sessions {
 			adapter := freshness[session.AdapterID]
-			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), AdapterID: session.AdapterID, AdapterLabel: adapterLabel(adapter), SessionID: session.SessionID, Generation: session.Generation, State: session.State, Stale: adapter.Stale, Unknown: !adapter.DataKnown, LastSuccessAtMS: adapter.LastSuccessAtMS, CollectionStatus: adapter.CollectionStatus})
+			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), AdapterID: session.AdapterID, AdapterLabel: adapterLabel(adapter), SessionID: session.SessionID, DisplayName: session.DisplayName, Generation: session.Generation, State: session.State, Stale: adapter.Stale, Unknown: !adapter.DataKnown, LastSuccessAtMS: adapter.LastSuccessAtMS, CollectionStatus: adapter.CollectionStatus})
 		}
 	}
 	return rows

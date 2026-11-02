@@ -14,6 +14,7 @@ type Endpoint struct {
 // Session identifies a provider session without exposing provider routing details.
 type Session struct {
 	SessionID        string `json:"session_id"`
+	DisplayName      string `json:"display_name,omitempty"`
 	AgentID          string `json:"agent_id"`
 	Generation       string `json:"generation"`
 	AdapterID        string `json:"adapter_id"`

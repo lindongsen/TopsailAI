@@ -135,7 +135,11 @@ func tableCells(row SessionRow) []string {
 	if adapter == "" {
 		adapter = row.AdapterID
 	}
-	return []string{strconv.Itoa(row.No), escapeCell(endpoint), escapeCell(adapter), escapeCell(row.SessionID), escapeCell(row.Generation), escapeCell(row.State), strconv.FormatBool(row.Stale), strconv.FormatBool(row.Unknown), escapeCell(row.CollectionStatus), last}
+	session := row.DisplayName
+	if session == "" {
+		session = row.SessionID
+	}
+	return []string{strconv.Itoa(row.No), escapeCell(endpoint), escapeCell(adapter), escapeCell(session), escapeCell(row.Generation), escapeCell(row.State), strconv.FormatBool(row.Stale), strconv.FormatBool(row.Unknown), escapeCell(row.CollectionStatus), last}
 }
 func escapeCell(value string) string {
 	var b strings.Builder

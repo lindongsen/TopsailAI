@@ -110,3 +110,23 @@ func TestTableJSONHasNoPresentationBytes(t *testing.T) {
 		t.Fatalf("json contaminated: %q", out.String())
 	}
 }
+
+func TestTableUsesSessionDisplayNameAndFallsBackToID(t *testing.T) {
+	stamp := int64(1700000000000)
+	rows := []SessionRow{{No: 1, EndpointID: "ep", SessionID: "res_opaque", DisplayName: "Daily work", State: "running", LastSuccessAtMS: &stamp, CollectionStatus: protocol.CollectionSucceeded}}
+	var out, errors strings.Builder
+	if err := RenderTable(&out, &errors, rows, nil, TableOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Daily work") || strings.Contains(out.String(), "res_opaque") {
+		t.Fatalf("display name output = %q", out.String())
+	}
+	out.Reset()
+	rows[0].DisplayName = ""
+	if err := RenderTable(&out, &errors, rows, nil, TableOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "res_opaque") {
+		t.Fatalf("fallback output = %q", out.String())
+	}
+}
