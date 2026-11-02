@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"topsailai_agent_cluster/internal/protocol"
 )
 
 func TestScopeKindString(t *testing.T) {
@@ -39,15 +41,19 @@ func TestScopePromptUsesEndpointFallbackAndSuppressesColor(t *testing.T) {
 	}
 }
 
-func TestUseSynchronizesExplicitSessionScope(t *testing.T) {
+func TestScopeStateFillsHostnameFromEndpoint(t *testing.T) {
+	endpoint := protocol.Endpoint{EndpointID: "endpoint-1", Hostname: "ai-dev"}
 	state := interactiveState{}
-	state.reset("endpoint-1", "session-1", "generation-1")
-	state.syncScopeFromSelection()
-	if state.Scope.Kind != ScopeSession || state.Scope.EndpointID != "endpoint-1" || state.Scope.SessionID != "session-1" || state.Scope.Generation != "generation-1" {
-		t.Fatalf("scope was not synchronized: %+v", state.Scope)
+	state.enterEndpoint(endpoint)
+	if state.Scope.Kind != ScopeEndpoint || state.Scope.EndpointID != "endpoint-1" || state.Scope.Hostname != "ai-dev" {
+		t.Fatalf("endpoint scope was not filled: %+v", state.Scope)
 	}
-	state.clearScope()
-	if state.Scope.Kind != ScopeWorkspace || state.Scope.EndpointID != "" || state.Scope.SessionID != "" {
+	state.enterSession(endpoint, "session-1", "generation-1")
+	if state.Scope.Kind != ScopeSession || state.Scope.EndpointID != "endpoint-1" || state.Scope.Hostname != "ai-dev" || state.Scope.SessionID != "session-1" || state.Scope.Generation != "generation-1" {
+		t.Fatalf("session scope was not filled: %+v", state.Scope)
+	}
+	state.enterWorkspace()
+	if state.Scope.Kind != ScopeWorkspace || state.Scope.EndpointID != "" || state.Scope.SessionID != "" || state.Scope.Hostname != "" {
 		t.Fatalf("scope was not cleared: %+v", state.Scope)
 	}
 }

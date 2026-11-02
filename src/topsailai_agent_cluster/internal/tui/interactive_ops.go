@@ -24,7 +24,7 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 		endpointID, resourceID = args[0], args[1]
 	}
 	if endpointID == "" || resourceID == "" {
-		return fmt.Errorf("no session selected; use <endpoint> <session>")
+		return fmt.Errorf("no session selected; use cd <hostname>/<endpoint-id>/<session>")
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()

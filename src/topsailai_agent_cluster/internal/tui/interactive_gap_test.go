@@ -178,7 +178,7 @@ func TestSafeWriterBoundsUnterminatedSequence(t *testing.T) {
 func TestSendAdmissionUncertainRetainsID(t *testing.T) {
 	stub := &uncertainAdmissionStub{inventory: freshTestInventory()}
 	var output, errorsOut strings.Builder
-	input := "use ep session-1\nsend {\"text\":\"hi\"}\ny\nstatus\nquit\n"
+	input := "cd ep/session-1\nsend {\"text\":\"hi\"}\ny\nstatus\nquit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestSelectedAdapterFreshnessRejectsUse(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			stub := &freshnessStub{inventory: freshTestInventoryWithAdapter(testCase.adapt)}
 			var output, errorsOut strings.Builder
-			if err := RunInteractive(context.Background(), stub, strings.NewReader("use ep session-1\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
+			if err := RunInteractive(context.Background(), stub, strings.NewReader("cd ep/session-1\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
 				t.Fatal(err)
 			}
 			if !strings.Contains(errorsOut.String(), testCase.want) {
@@ -249,7 +249,7 @@ func TestSelectedAdapterFreshnessChangesBeforeSend(t *testing.T) {
 		second:    freshTestInventoryWithAdapter(protocol.AdapterSummary{AdapterID: "adapter-1", DataKnown: true, Stale: true, CollectionStatus: protocol.CollectionSucceeded}),
 	}
 	var output, errorsOut strings.Builder
-	input := "use ep session-1\nsend {\"text\":\"hi\"}\ny\nquit\n"
+	input := "cd ep/session-1\nsend {\"text\":\"hi\"}\ny\nquit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +382,7 @@ func TestSelectedSessionFreshnessRejectsInvalidReports(t *testing.T) {
 			testCase.mutate(&inventory.Sessions[0])
 			stub := &freshnessStub{inventory: inventory}
 			var output, errorsOut strings.Builder
-			if err := RunInteractive(context.Background(), stub, strings.NewReader("use ep session-1\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
+			if err := RunInteractive(context.Background(), stub, strings.NewReader("cd ep/session-1\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
 				t.Fatal(err)
 			}
 			if !strings.Contains(errorsOut.String(), testCase.want) {
@@ -400,7 +400,7 @@ func TestMissingAdapterSummaryDoesNotBlockFreshSession(t *testing.T) {
 	}
 	stub := &freshnessStub{inventory: inventory}
 	var output, errorsOut strings.Builder
-	if err := RunInteractive(context.Background(), stub, strings.NewReader("use ep session-1\nstatus\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
+	if err := RunInteractive(context.Background(), stub, strings.NewReader("cd ep/session-1\nstatus\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if errorsOut.Len() != 0 {
@@ -432,7 +432,7 @@ func TestSessionFreshnessInheritsInventoryCollectionStatus(t *testing.T) {
 			inventory.Sessions[0].CollectionStatus = testCase.explicit
 			stub := &freshnessStub{inventory: inventory}
 			var output, errorsOut strings.Builder
-			if err := RunInteractive(context.Background(), stub, strings.NewReader("use ep session-1\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
+			if err := RunInteractive(context.Background(), stub, strings.NewReader("cd ep/session-1\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
 				t.Fatal(err)
 			}
 			if testCase.wantError != "" {
@@ -442,7 +442,7 @@ func TestSessionFreshnessInheritsInventoryCollectionStatus(t *testing.T) {
 				return
 			}
 			if errorsOut.Len() != 0 || !strings.Contains(output.String(), testCase.wantPrompt) {
-				t.Fatalf("use was not accepted: output=%q errors=%q", output.String(), errorsOut.String())
+				t.Fatalf("navigation was not accepted: output=%q errors=%q", output.String(), errorsOut.String())
 			}
 		})
 	}

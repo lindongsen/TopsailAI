@@ -1,6 +1,10 @@
 package tui
 
-import "fmt"
+import (
+	"fmt"
+
+	"topsailai_agent_cluster/internal/protocol"
+)
 
 // ScopeKind identifies the interactive navigation scope.
 type ScopeKind int
@@ -34,7 +38,7 @@ type ScopeState struct {
 	Generation string
 }
 
-// interactiveSelection stores the identity pinned by an explicit use command.
+// interactiveSelection stores the identity pinned by an explicit navigation command.
 type interactiveSelection struct {
 	EndpointID    string
 	SessionID     string
@@ -44,7 +48,7 @@ type interactiveSelection struct {
 	Rows          map[int]SessionRow
 }
 
-// invalidate marks a selection permanently unusable until use selects it again.
+// invalidate marks a selection permanently unusable until a session is selected again.
 func (s *interactiveSelection) invalidate(reason string) {
 	if s.Invalidated {
 		return
@@ -53,7 +57,7 @@ func (s *interactiveSelection) invalidate(reason string) {
 	s.InvalidReason = reason
 }
 
-// reset replaces the pinned selection after a successful explicit use command.
+// reset replaces the pinned selection after a successful explicit navigation command.
 func (s *interactiveSelection) reset(endpointID, sessionID, generation string) {
 	s.EndpointID = endpointID
 	s.SessionID = sessionID
@@ -65,7 +69,7 @@ func (s *interactiveSelection) reset(endpointID, sessionID, generation string) {
 // requireUsable rejects no-selection and sticky-invalidated states.
 func (s interactiveSelection) requireUsable() error {
 	if s.EndpointID == "" || s.SessionID == "" {
-		return fmt.Errorf("no session selected; use <endpoint> <session>")
+		return fmt.Errorf("no session selected; use cd <endpoint>/<session>")
 	}
 	if s.Invalidated {
 		return fmt.Errorf("selected session invalidated; use the session again")
@@ -80,27 +84,25 @@ func (s *interactiveState) setRows(rows []SessionRow) {
 	}
 }
 
-func rowNumber(state *interactiveState, endpointID, sessionID string) int {
-	for number, row := range state.Rows {
-		if row.EndpointID == endpointID && row.SessionID == sessionID {
-			return number
-		}
-	}
-	return 0
+// enterWorkspace resets navigation and selection to the workspace scope.
+func (s *interactiveState) enterWorkspace() {
+	*s = interactiveState{}
 }
 
-// syncScopeFromSelection mirrors the existing selected-session record into scope state.
-func (s *interactiveState) syncScopeFromSelection() {
+// enterEndpoint keeps endpoint context while clearing session identity.
+func (s *interactiveState) enterEndpoint(endpoint protocol.Endpoint) {
+	s.interactiveSelection = interactiveSelection{EndpointID: endpoint.EndpointID}
+	s.Scope = ScopeState{Kind: ScopeEndpoint, EndpointID: endpoint.EndpointID, Hostname: endpoint.Hostname}
+}
+
+// enterSession pins a validated session and records its endpoint hostname.
+func (s *interactiveState) enterSession(endpoint protocol.Endpoint, sessionID, generation string) {
+	s.reset(endpoint.EndpointID, sessionID, generation)
 	s.Scope = ScopeState{
 		Kind:       ScopeSession,
-		EndpointID: s.EndpointID,
-		Hostname:   "",
-		SessionID:  s.SessionID,
-		Generation: s.Generation,
+		EndpointID: endpoint.EndpointID,
+		Hostname:   endpoint.Hostname,
+		SessionID:  sessionID,
+		Generation: generation,
 	}
-}
-
-// clearScope resets navigation to workspace while retaining list rows.
-func (s *interactiveState) clearScope() {
-	s.Scope = ScopeState{Kind: ScopeWorkspace}
 }

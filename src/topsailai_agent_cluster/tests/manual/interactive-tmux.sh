@@ -70,7 +70,7 @@ wait_for_text 'UNKNOWN'
 wait_for_text 'COLLECTION'
 wait_for_text 'LAST_SUCCESS_MS'
 
-send_line "use $endpoint_id $session_id"
+send_line "cd $endpoint_id/$session_id"
 wait_for_text "cluster[$endpoint_id/$session_id]>"
 send_line 'status'
 wait_for_text 'running'

@@ -83,14 +83,14 @@ func TestInteractiveSendAdmissionCallMatrix(t *testing.T) {
 		capability, admit, wait int
 		wantDiagnostic          string
 	}{
-		{name: "success", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "use ep session-1\nsend {\"text\":\"hi\"}\ny\nquit\n", capability: 3, admit: 1, wait: 1},
-		{name: "declined", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "use ep session-1\nsend {\"text\":\"hi\"}\nn\nquit\n", capability: 1, wantDiagnostic: "send cancelled"},
-		{name: "invalidated", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen"), matrixInventory("new")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "use ep session-1\nrefresh\nsend {\"text\":\"hi\"}\nquit\n", capability: 0, wantDiagnostic: "error: selected session generation changed; use the session again\nerror: selected session invalidated; use the session again"},
-		{name: "freshness", api: &matrixAPI{invs: []protocol.InventoryReport{func() protocol.InventoryReport { r := matrixInventory("gen"); r.Sessions[0].Stale = true; return r }()}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "use ep session-1\nquit\n", wantDiagnostic: "error: session \"session-1\" is not fresh: stale=true unknown=false collection_status=succeeded"},
-		{name: "invalid payload", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "use ep session-1\nsend null\nquit\n", wantDiagnostic: "error: payload must be a JSON object"},
-		{name: "generation race", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen"), matrixInventory("new")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "use ep session-1\nsend {\"text\":\"hi\"}\ny\nquit\n", capability: 1, wantDiagnostic: "error: selected session generation changed; use the session again"},
-		{name: "capability race", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev-1"), matrixCapability("rev-2")}}, input: "use ep session-1\nsend {\"text\":\"hi\"}\ny\nquit\n", capability: 2, wantDiagnostic: "error: capability changed after confirmation; send cancelled"},
-		{name: "uncertain admission", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}, admitErr: errors.New("transport timeout")}, input: "use ep session-1\nsend {\"text\":\"hi\"}\ny\nquit\n", capability: 3, admit: 1, wantDiagnostic: "result unknown"},
+		{name: "success", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "cd ep/session-1\nsend {\"text\":\"hi\"}\ny\nquit\n", capability: 3, admit: 1, wait: 1},
+		{name: "declined", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "cd ep/session-1\nsend {\"text\":\"hi\"}\nn\nquit\n", capability: 1, wantDiagnostic: "send cancelled"},
+		{name: "invalidated", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen"), matrixInventory("new")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "cd ep/session-1\nrefresh\nsend {\"text\":\"hi\"}\nquit\n", capability: 0, wantDiagnostic: "error: selected session generation changed; use the session again\nerror: selected session invalidated; use the session again"},
+		{name: "freshness", api: &matrixAPI{invs: []protocol.InventoryReport{func() protocol.InventoryReport { r := matrixInventory("gen"); r.Sessions[0].Stale = true; return r }()}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "cd ep/session-1\nquit\n", wantDiagnostic: "error: session \"session-1\" is not fresh: stale=true unknown=false collection_status=succeeded"},
+		{name: "invalid payload", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "cd ep/session-1\nsend null\nquit\n", wantDiagnostic: "error: payload must be a JSON object"},
+		{name: "generation race", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen"), matrixInventory("new")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}}, input: "cd ep/session-1\nsend {\"text\":\"hi\"}\ny\nquit\n", capability: 1, wantDiagnostic: "error: selected session generation changed; use the session again"},
+		{name: "capability race", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev-1"), matrixCapability("rev-2")}}, input: "cd ep/session-1\nsend {\"text\":\"hi\"}\ny\nquit\n", capability: 2, wantDiagnostic: "error: capability changed after confirmation; send cancelled"},
+		{name: "uncertain admission", api: &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev")}, admitErr: errors.New("transport timeout")}, input: "cd ep/session-1\nsend {\"text\":\"hi\"}\ny\nquit\n", capability: 3, admit: 1, wantDiagnostic: "result unknown"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -127,7 +127,7 @@ func TestInteractiveSendAdmissionCallMatrix(t *testing.T) {
 
 func TestInteractiveCapabilityDisappearanceAfterConfirmationRejects(t *testing.T) {
 	api := &matrixAPI{invs: []protocol.InventoryReport{matrixInventory("gen")}, caps: []protocol.CapabilityDescriptor{matrixCapability("rev"), matrixCapability("rev"), {Revision: "rev", Capabilities: nil}}}
-	_, diagnostics := runMatrix(t, api, "use ep session-1\nsend {\"text\":\"hi\"}\ny\nquit\n")
+	_, diagnostics := runMatrix(t, api, "cd ep/session-1\nsend {\"text\":\"hi\"}\ny\nquit\n")
 	if api.admit != 0 || api.wait != 0 {
 		t.Fatalf("calls submit=%d wait=%d want 0/0", api.admit, api.wait)
 	}

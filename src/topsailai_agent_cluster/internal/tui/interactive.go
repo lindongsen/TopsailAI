@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -270,7 +269,9 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "table":
 		return false, fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "use":
-		return false, interactiveUse(ctx, api, state, rest)
+		return false, fmt.Errorf(`"use" has been removed; use "cd" to navigate`)
+	case "cd":
+		return false, interactiveCD(ctx, api, state, rest, lineResults, out)
 	case "show":
 		return false, interactiveShow(ctx, api, state, strings.TrimSpace(rest), out)
 	case "logs":
@@ -411,86 +412,6 @@ func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveSta
 		}
 	}
 	return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %q was not found", state.SessionID)
-}
-
-func interactiveUse(parent context.Context, api InteractiveAPI, state *interactiveState, rest string) error {
-	args := strings.Fields(rest)
-	if len(args) == 1 && args[0] == "clear" {
-		*state = interactiveState{Scope: ScopeState{Kind: ScopeWorkspace}}
-		return nil
-	}
-	if len(args) == 1 {
-		index, parseErr := strconv.Atoi(args[0])
-		if parseErr != nil || index < 1 {
-			return fmt.Errorf("usage: use <number> or use <endpoint> <session>")
-		}
-		row, ok := state.Rows[index]
-		if !ok || row.SessionID == "" || row.Generation == "" {
-			return fmt.Errorf("row %d is not a selectable session", index)
-		}
-		return selectInteractiveSession(parent, api, state, row.EndpointID, row.SessionID, row.Generation)
-	}
-	if len(args) != 2 {
-		return fmt.Errorf("usage: use <number> or use <endpoint> <session>")
-	}
-	ctx, cancel := commandContext(parent)
-	defer cancel()
-	loaded, err := loadReports(ctx, api, args[0])
-	if err != nil {
-		return err
-	}
-	for _, endpoint := range loaded.endpoints {
-		report, ok := loaded.reports[endpoint.EndpointID]
-		if endpoint.EndpointID != args[0] || !ok || !report.ReportComplete {
-			continue
-		}
-		for _, session := range report.Sessions {
-			if session.SessionID != args[1] || session.Generation == "" {
-				continue
-			}
-			if freshnessErr := validateSessionFreshness(report, session); freshnessErr != nil {
-				return freshnessErr
-			}
-			if freshnessErr := validateAdapterFreshness(report, session.AdapterID); freshnessErr != nil {
-				return freshnessErr
-			}
-			state.reset(args[0], args[1], session.Generation)
-			state.syncScopeFromSelection()
-			return nil
-		}
-	}
-	return fmt.Errorf("session %q was not found on endpoint %q", args[1], args[0])
-}
-
-func selectInteractiveSession(parent context.Context, api InteractiveAPI, state *interactiveState, endpointID, sessionID, expectedGeneration string) error {
-	ctx, cancel := commandContext(parent)
-	defer cancel()
-	loaded, err := loadReports(ctx, api, endpointID)
-	if err != nil {
-		return err
-	}
-	report, ok := loaded.reports[endpointID]
-	if !ok || !report.ReportComplete {
-		return fmt.Errorf("endpoint %q inventory is unavailable", endpointID)
-	}
-	for _, session := range report.Sessions {
-		if session.SessionID != sessionID || session.Generation == "" {
-			continue
-		}
-		if session.Generation != expectedGeneration {
-			return fmt.Errorf("row %d session generation changed; refresh and use the row again", rowNumber(state, endpointID, sessionID))
-		}
-		if err := validateSessionFreshness(report, session); err != nil {
-			return err
-		}
-		if err := validateAdapterFreshness(report, session.AdapterID); err != nil {
-			return err
-		}
-		state.reset(endpointID, sessionID, session.Generation)
-		state.syncScopeFromSelection()
-		return nil
-	}
-	return fmt.Errorf("session %q was not found on endpoint %q", sessionID, endpointID)
 }
 
 func validateSessionFreshness(report protocol.InventoryReport, session protocol.Session) error {

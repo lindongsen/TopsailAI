@@ -55,7 +55,7 @@ func TestSendPayloadObjectAndBytes(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			stub := inputStub()
-			input := fmt.Sprintf("use endpoint-1 session-1\nsend %s\nquit\n", testCase.payload)
+			input := fmt.Sprintf("cd endpoint-1/session-1\nsend %s\nquit\n", testCase.payload)
 			_, errorsOut := runInputScenario(t, stub, input, 8192)
 			if got := errorsOut; got != testCase.wantErr {
 				t.Fatalf("errors=%q want=%q", got, testCase.wantErr)
@@ -87,7 +87,7 @@ func TestSendPayloadLengthRejectsBeforeAdmission(t *testing.T) {
 
 func TestConfirmationEOFNoAdmission(t *testing.T) {
 	stub := inputStub()
-	_, errorsOut := runInputScenario(t, stub, "use endpoint-1 session-1\nsend {\"text\":\"hi\"}\ny", 8192)
+	_, errorsOut := runInputScenario(t, stub, "cd endpoint-1/session-1\nsend {\"text\":\"hi\"}\ny", 8192)
 	if got, want := errorsOut, "error: confirmation requires a complete line\n"; got != want {
 		t.Fatalf("errors=%q want=%q", got, want)
 	}
@@ -112,7 +112,7 @@ func TestConfirmationAcceptedOnlyByCompleteLine(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			stub := inputStub()
-			input := "use endpoint-1 session-1\nsend {\"text\":\"hi\"}\n" + testCase.answer
+			input := "cd endpoint-1/session-1\nsend {\"text\":\"hi\"}\n" + testCase.answer
 			output, errorsOut := runInputScenario(t, stub, input, 8192)
 			if stub.admit != testCase.admit {
 				t.Fatalf("admissions=%d want=%d output=%q errors=%q", stub.admit, testCase.admit, output, errorsOut)
@@ -127,7 +127,7 @@ func TestConfirmationAcceptedOnlyByCompleteLine(t *testing.T) {
 func TestConfirmationRevalidatesGeneration(t *testing.T) {
 	stub := inputStub()
 	stub.changeAfter = 2
-	_, errorsOut := runInputScenario(t, stub, "use endpoint-1 session-1\nsend {\"text\":\"hi\"}\ny\nquit\n", 8192)
+	_, errorsOut := runInputScenario(t, stub, "cd endpoint-1/session-1\nsend {\"text\":\"hi\"}\ny\nquit\n", 8192)
 	if stub.admit != 0 {
 		t.Fatalf("generation change admitted %d commands", stub.admit)
 	}
@@ -156,7 +156,7 @@ func TestConfirmationRevalidatesCapabilityRevision(t *testing.T) {
 		interactiveStub: *inputStub(),
 		revisions:       []string{"r1", "r2"},
 	}
-	_, errorsOut := runInputScenario(t, stub, "use endpoint-1 session-1\nsend {\"text\":\"hi\"}\ny\nquit\n", 8192)
+	_, errorsOut := runInputScenario(t, stub, "cd endpoint-1/session-1\nsend {\"text\":\"hi\"}\ny\nquit\n", 8192)
 	if stub.admit != 0 {
 		t.Fatalf("capability change admitted %d commands", stub.admit)
 	}

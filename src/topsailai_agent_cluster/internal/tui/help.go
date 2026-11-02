@@ -19,7 +19,7 @@ type commandHelp struct {
 }
 
 var fieldHelp = []string{
-	"NO: display row number; use it with use <number>.",
+	"NO: display row number; use it with cd <hostname>/<endpoint-id>/<session>.",
 	"ENDPOINT: endpoint hostname, falling back to its display name or ID.",
 	"ADAPTER: provider adapter display label.",
 	"SESSION: session display name, falling back to the internal resource ID.",
@@ -33,7 +33,7 @@ var fieldHelp = []string{
 
 var commandHelpCatalog = map[string]commandHelp{
 	"list":    {"list [endpoint] [--clean]", ListHelpDescription, []string{"endpoint: optional endpoint ID filter", "--clean: omit endpoints that failed to report; diagnostics still go to stderr"}, []string{"list", "list endpoint-1", "list --clean"}},
-	"use":     {"use <number> | use <endpoint> <session>", "select a session for subsequent interactive commands", []string{"number: current display row number", "endpoint: endpoint ID", "session: session or resource ID"}, []string{"use 1", "use endpoint-1 res_abc"}},
+	"cd":      {"cd [target]", "navigate between workspace, endpoint, and session scopes; bare cd returns to workspace", []string{"target: hostname, hostname/endpoint-id, session, hostname/endpoint-id/session, .., or /"}, []string{"cd", "cd ai-dev", "cd ai-dev/endpoint-1", "cd .."}},
 	"show":    {"show <endpoint-or-session>", "show detailed information for an endpoint or session", []string{"endpoint-or-session: endpoint ID or session/resource ID"}, []string{"show endpoint-1"}},
 	"logs":    {"logs <endpoint> <session>", "show bounded output for a session", []string{"endpoint: endpoint ID", "session: session/resource ID"}, []string{"logs endpoint-1 res_abc"}},
 	"send":    {"send <json>", "send a JSON message to the selected session", []string{"json: message payload"}, []string{`send {"text":"hello"}`}},
@@ -43,7 +43,7 @@ var commandHelpCatalog = map[string]commandHelp{
 	"quit":    {"quit", "leave interactive mode", nil, []string{"quit"}},
 }
 
-var commandHelpOrder = []string{"list", "use", "show", "logs", "send", "status", "refresh", "help", "quit"}
+var commandHelpOrder = []string{"list", "cd", "show", "logs", "send", "status", "refresh", "help", "quit"}
 
 // CommandHelpLines returns the shared command descriptions used by CLI and REPL help.
 func CommandHelpLines() []string {

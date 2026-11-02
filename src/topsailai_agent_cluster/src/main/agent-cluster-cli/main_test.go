@@ -89,7 +89,7 @@ func TestLegacyActionAndInteractiveSendShareIntentFields(t *testing.T) {
 	}
 	interactive := &actionPathStub{}
 	var interactiveOut, interactiveErr strings.Builder
-	input := "use ep session\nsend {\"text\":\"hi\"}\ny\nquit\n"
+	input := "cd ep/session\nsend {\"text\":\"hi\"}\ny\nquit\n"
 	if err := tui.RunInteractive(context.Background(), interactive, strings.NewReader(input), &interactiveOut, &interactiveErr, tui.InteractiveOptions{WaitTimeoutMS: 100}); err != nil {
 		t.Fatal(err)
 	}
