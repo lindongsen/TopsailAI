@@ -66,6 +66,7 @@ topsailai_launch_agent
 | `--item <name>` | Select a context/environment item defined in `settings.yaml`. |
 | `--no-base-context` | Ignore the shared base context sources configured under `context._` (and the legacy `context._default`). Only the selected item's own context sources are injected. Base environment variables are still merged. |
 | `--driver <command>` | Override the `ai_agent_driver` value. |
+| `--select-driver` | Open the interactive agent-driver menu before launching, even when the context-item page is not shown. The chosen driver overrides `--driver` and every `settings.yaml` source for this run. Ignored with a warning when stdin is not a terminal. |
 | `--dry-run` | Print the resolved command, working directory, and merged environment variables without executing. |
 | `--subprocess` | Use `subprocess.run()` instead of `os.system()` (default). |
 | `--setup` | Force the guided interactive setup to create `.topsailai/settings.yaml` when it is missing. |
@@ -303,6 +304,11 @@ When `--item` is omitted:
 - If exactly one non-base item is configured, that item is used automatically.
 - If multiple non-base items are configured, a numbered list is shown; `default` is pre-selected if it exists.
 
+The numbered list accepts a row number or an exact item name. It also accepts `d` (or `driver`) to open the interactive
+driver menu described in [Interactive Driver Selection](#interactive-driver-selection); after the menu returns, the same
+item page is rendered again so the item can still be chosen. An exact item name or a valid row number always wins over the
+`d` command, so an item literally named `d` remains selectable.
+
 ## Ignoring the Base Context
 
 `context._` (and the legacy `context._default`) is the shared base context that is injected into every launch. Pass
@@ -324,10 +330,53 @@ Behavior:
 
 ## Driver Resolution Priority
 
-1. `--driver` CLI argument
-2. `TOPSAILAI_AGENT_DRIVER` from the selected item or `_` environment section
-3. `ai_agent_driver` field in `settings.yaml`
-4. `TOPSAILAI_AGENT_DRIVER` from the OS environment
+1. Driver chosen from the interactive driver menu (item page `d` command or `--select-driver`)
+2. `--driver` CLI argument
+3. `TOPSAILAI_AGENT_DRIVER` from the selected item or `_` environment section
+4. `ai_agent_driver` field in `settings.yaml`
+5. `TOPSAILAI_AGENT_DRIVER` from the OS environment
+
+A driver chosen from the menu is the user's most recent explicit action, so it outranks every other source for that run.
+It is not persisted; the next launch resolves the driver from the sources above again.
+
+## Interactive Driver Selection
+
+The context-item page offers a `d` command that opens a driver menu and then returns to the same item page, so a driver
+can be chosen before the context item is confirmed:
+
+```text
+Context Items:
+  1. memo
+  2. review
+
+Current driver: topsailai_agent_plan_tasks
+  d. Select the agent driver
+
+Select context item (1-2, default: memo): d
+
+Select the agent driver to launch:
+  1. topsailai_agent_plan_tasks (current)
+  2. topsailai_agent_chats
+  3. ai-team-flow-dev
+  c. Custom driver command
+  b. Back to context item selection
+```
+
+Menu behavior:
+
+- Candidates are the current effective driver followed by the built-in drivers, deduplicated.
+- A number or an exact driver name selects that driver; `c` accepts a custom driver command.
+- The choice is validated with the same lookup used for launching. An unresolvable driver is rejected immediately and the
+  menu is shown again, so a typo never reaches the later degrade-to-default path.
+- `b`, an empty answer, or a prompt timeout keeps the current driver and returns to the item page.
+- After a successful selection the launcher prints `[TopsailAI-Launcher] Driver selected: <driver>` and re-renders the
+  item page with the new driver shown as `Current driver:`.
+- An item literally named `d` or `driver` is never shadowed: an exact item name or a valid row number always wins, and
+  the `d` command is only interpreted when no item matches.
+
+`--select-driver` opens the driver menu before launching even when the item page is not shown, which happens when zero or
+one non-base item is configured or when the built-in default configuration is used. When stdin is not a terminal the flag
+is ignored with a warning and the normally resolved driver is used.
 
 ## Configuration File
 

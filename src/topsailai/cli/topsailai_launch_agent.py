@@ -513,6 +513,16 @@ signal.signal(signal.SIGINT, _signal_handler)
 signal.signal(signal.SIGTERM, _signal_handler)
 
 
+# Built-in agent drivers offered by the interactive driver menu. The launcher
+# stays a standalone script, so this list is duplicated from
+# cli_topsailai.legacy_resume_cli.RESUME_DRIVER_OPTIONS; a unit test asserts the
+# two stay identical so the inventory cannot drift.
+_DRIVER_MENU_OPTIONS = (
+    "topsailai_agent_chats",
+    "topsailai_agent_plan_tasks",
+    "ai-team-flow-dev",
+)
+
 DEFAULT_CONFIG = {
     "ai_agent_driver": "topsailai_agent_plan_tasks",
     "workspace": ".",
@@ -1084,35 +1094,38 @@ def _format_item_config(item_name, context_map, env_map, ignore_base_context=Fal
     return "\n".join(lines)
 
 
-def _select_context_item(context_map, env_map, timeout=10.0, ignore_base_context=False):
-    """Select a context item based on configuration and interactivity.
+@dataclasses.dataclass
+class SelectionState:
+    """Carry the interactive selection results out of the item prompt.
 
-    - 0 non-base items: use the base item name if present, otherwise None.
-    - 1 non-base item: use it automatically.
-    - 2+ non-base items: prompt interactively with a timeout; "default" is
-      the default choice when configured. If the prompt times out, the
-      default item is used. In non-interactive mode, "default" is used if
-      present, otherwise the launcher exits with an error.
-
-    ``ignore_base_context`` is forwarded to the item summary so the prompt
-    never advertises base context sources that ``--no-base-context`` drops.
+    ``_select_context_item`` keeps returning the item name so existing callers
+    and tests are unaffected; the driver chosen from the item page is reported
+    through this carrier instead of changing the return type.
     """
-    items = _get_context_items(context_map)
-    if len(items) <= 1:
-        return items[0] if items else "_"
 
-    if not sys.stdin.isatty():
-        if "default" in items:
-            return "default"
-        print(
-            "Error: Multiple context items are configured but no default is set. "
-            "Use --item to select one of the following:",
-            file=sys.stderr,
-        )
-        for item in items:
-            print(f"  - {item}", file=sys.stderr)
-        sys.exit(1)
+    item: str = ""
+    driver_override: str = ""
 
+
+def _driver_menu_options(current_driver):
+    """Return the driver candidates shown in the menu, current driver first."""
+    options = []
+    if current_driver:
+        options.append(current_driver)
+    for driver in _DRIVER_MENU_OPTIONS:
+        if driver not in options:
+            options.append(driver)
+    return options
+
+
+def _render_item_page(
+    items, context_map, env_map, ignore_base_context=False, current_driver=""
+):
+    """Render the interactive context-item page.
+
+    Called on first entry and again after the driver menu returns, so the user
+    always sees the same page they left.
+    """
     print(
         "\nMultiple context items are configured. Please select one:",
         file=sys.stderr,
@@ -1128,7 +1141,133 @@ def _select_context_item(context_map, env_map, timeout=10.0, ignore_base_context
     for idx, item in enumerate(items, start=1):
         print(f"  {idx}. {item}", file=sys.stderr)
 
+    if current_driver:
+        print(f"\nCurrent driver: {current_driver}", file=sys.stderr)
+    print("  d. Select the agent driver", file=sys.stderr)
     print(flush=True)
+
+
+def _select_driver(current_driver, options, timeout=10.0):
+    """Prompt for a driver; return the chosen command or "" to go back.
+
+    The choice is validated with ``_driver_exists`` immediately so an
+    unresolvable driver is rejected here instead of being silently replaced by
+    the later degrade-to-default path in ``main``. Empty input, ``b``, and a
+    prompt timeout all return "" so the caller keeps the current driver and
+    returns to the context-item page.
+    """
+    options = list(options)
+    print("\nSelect the agent driver to launch:", file=sys.stderr)
+    for idx, driver in enumerate(options, start=1):
+        marker = " (current)" if driver == current_driver else ""
+        print(f"  {idx}. {driver}{marker}", file=sys.stderr)
+    print("  c. Custom driver command", file=sys.stderr)
+    print("  b. Back to context item selection", file=sys.stderr)
+    print(flush=True)
+
+    prompt_text = (
+        f"Select driver (1-{len(options)}, c: custom, b: back)"
+        if options
+        else "Select driver (c: custom, b: back)"
+    )
+    max_attempts = 100
+    for _ in range(max_attempts):
+        answer = _timed_prompt(prompt_text, default="b", timeout=timeout)
+        if not answer or answer.lower() in ("b", "back"):
+            return ""
+        if answer.lower() in ("c", "custom"):
+            custom = _timed_prompt(
+                "Driver command", default="", timeout=timeout
+            ).strip()
+            if not custom:
+                print(
+                    "No driver command entered. Returning to the driver list.",
+                    file=sys.stderr,
+                )
+                continue
+            if not _driver_exists(custom):
+                print(
+                    f"Driver not found: {custom}. Please choose another driver.",
+                    file=sys.stderr,
+                )
+                continue
+            return custom
+        if answer in options:
+            if not _driver_exists(answer):
+                print(
+                    f"Driver not found: {answer}. Please choose another driver.",
+                    file=sys.stderr,
+                )
+                continue
+            return answer
+        try:
+            idx = int(answer)
+        except ValueError:
+            idx = 0
+        if 1 <= idx <= len(options):
+            chosen = options[idx - 1]
+            if not _driver_exists(chosen):
+                print(
+                    f"Driver not found: {chosen}. Please choose another driver.",
+                    file=sys.stderr,
+                )
+                continue
+            return chosen
+        print(
+            f"Invalid selection. Please enter a number 1-{len(options)}, "
+            "'c' for a custom command, or 'b' to go back.",
+            file=sys.stderr,
+        )
+
+    print("Too many invalid selections. Keeping the current driver.", file=sys.stderr)
+    return ""
+
+
+def _select_context_item(
+    context_map,
+    env_map,
+    timeout=10.0,
+    ignore_base_context=False,
+    state=None,
+    current_driver="",
+):
+    """Select a context item based on configuration and interactivity.
+
+    - 0 non-base items: use the base item name if present, otherwise None.
+    - 1 non-base item: use it automatically.
+    - 2+ non-base items: prompt interactively with a timeout; "default" is
+      the default choice when configured. If the prompt times out, the
+      default item is used. In non-interactive mode, "default" is used if
+      present, otherwise the launcher exits with an error.
+
+    ``ignore_base_context`` is forwarded to the item summary so the prompt
+    never advertises base context sources that ``--no-base-context`` drops.
+
+    ``state`` receives the selected item and any driver chosen from the item
+    page. When it is omitted a local instance is used, so the return value
+    stays the item name for every existing caller.
+    """
+    if state is None:
+        state = SelectionState()
+
+    items = _get_context_items(context_map)
+    if len(items) <= 1:
+        state.item = items[0] if items else "_"
+        return state.item
+
+    if not sys.stdin.isatty():
+        if "default" in items:
+            state.item = "default"
+            return state.item
+        print(
+            "Error: Multiple context items are configured but no default is set. "
+            "Use --item to select one of the following:",
+            file=sys.stderr,
+        )
+        for item in items:
+            print(f"  - {item}", file=sys.stderr)
+        sys.exit(1)
+
     default_item = "default" if "default" in items else None
     prompt_text = (
         f"Select context item (1-{len(items)}, default: {default_item})"
@@ -1136,21 +1275,59 @@ def _select_context_item(context_map, env_map, timeout=10.0, ignore_base_context
         else f"Select context item (1-{len(items)})"
     )
 
-    max_attempts = 100
-    for _ in range(max_attempts):
+    _render_item_page(
+        items, context_map, env_map, ignore_base_context, current_driver
+    )
+
+    # Invalid answers are bounded separately from the loop so opening the
+    # driver menu does not consume an attempt; the iteration cap is a hard
+    # guard against an unbounded interactive loop.
+    max_invalid = 100
+    max_iterations = 1000
+    invalid = 0
+    for _ in range(max_iterations):
         answer = _timed_prompt(
             prompt_text, default=default_item or "", timeout=timeout
         )
+        # An exact item name or a valid number always wins, so an item that is
+        # literally named "d" is never shadowed by the driver command.
         if answer in items:
+            state.item = answer
             return answer
         try:
             idx = int(answer)
-            if 1 <= idx <= len(items):
-                return items[idx - 1]
         except ValueError:
-            pass
+            idx = 0
+        if 1 <= idx <= len(items):
+            state.item = items[idx - 1]
+            return state.item
+        if answer in ("d", "driver"):
+            effective_driver = state.driver_override or current_driver
+            chosen = _select_driver(
+                effective_driver,
+                _driver_menu_options(effective_driver),
+                timeout=timeout,
+            )
+            if chosen:
+                state.driver_override = chosen
+                print(
+                    f"[TopsailAI-Launcher] Driver selected: {chosen}",
+                    file=sys.stderr,
+                )
+            _render_item_page(
+                items,
+                context_map,
+                env_map,
+                ignore_base_context,
+                state.driver_override or current_driver,
+            )
+            continue
+        invalid += 1
+        if invalid >= max_invalid:
+            break
         print(
-            f"Invalid selection. Please enter a number 1-{len(items)} or an item name.",
+            f"Invalid selection. Please enter a number 1-{len(items)}, "
+            "an item name, or 'd' to select the agent driver.",
             file=sys.stderr,
         )
 
@@ -1972,6 +2149,16 @@ def main():
         help="Timeout in seconds for interactive context selection prompts (default: 60)",
     )
     parser.add_argument(
+        "--select-driver",
+        action="store_true",
+        dest="select_driver",
+        help=(
+            "Open the interactive agent-driver menu before launching, even when "
+            "the context-item page is not shown. The chosen driver overrides "
+            "--driver and every settings.yaml source for this run."
+        ),
+    )
+    parser.add_argument(
         "--scan",
         default=None,
         metavar="FOLDER",
@@ -2052,6 +2239,12 @@ def main():
     if workspace[0] != "/":
         workspace = os.path.abspath(workspace)
 
+    env_map = settings.get("environment", {}) or {}
+    # Interactive selection results. The driver chosen from the item page or
+    # from --select-driver is carried here so it can take precedence over every
+    # settings.yaml source without changing _select_context_item's return type.
+    selection = SelectionState()
+
     # Resolve the context item to use when --item is not provided.
     if args.item is None:
         context_map = settings.get("context", {}) or {}
@@ -2075,6 +2268,15 @@ def main():
                     file=sys.stderr,
                 )
 
+        # Provisional driver shown on the item page. The item-specific
+        # environment cannot be included yet because the item is not chosen.
+        provisional_driver = (
+            args.driver
+            or _get_base_env(env_map).get("TOPSAILAI_AGENT_DRIVER")
+            or settings.get("ai_agent_driver", "")
+            or os.getenv("TOPSAILAI_AGENT_DRIVER", "")
+        )
+
         if settings_from_default:
             args.item = "_"
         elif len(non_default_items) <= 1:
@@ -2082,30 +2284,59 @@ def main():
         else:
             args.item = _select_context_item(
                 context_map,
-                settings.get("environment", {}) or {},
+                env_map,
                 timeout=args.select_timeout,
                 ignore_base_context=args.no_base_context,
+                state=selection,
+                current_driver=provisional_driver,
             )
-    env_map = settings.get("environment", {}) or {}
+
     # Resolve driver with the following priority:
-    # 1. --driver CLI argument
-    # 2. TOPSAILAI_AGENT_DRIVER from settings.environment (item-specific or base)
-    # 3. ai_agent_driver from settings.yaml
-    # 4. TOPSAILAI_AGENT_DRIVER from the OS environment
+    # 1. Driver chosen from the interactive menu (item page or --select-driver)
+    # 2. --driver CLI argument
+    # 3. TOPSAILAI_AGENT_DRIVER from settings.environment (item-specific or base)
+    # 4. ai_agent_driver from settings.yaml
+    # 5. TOPSAILAI_AGENT_DRIVER from the OS environment
     base_env = _get_base_env(env_map)
     item_env = env_map.get(args.item, {}) if not _is_base_item(args.item) else {}
     settings_env_driver = item_env.get(
         "TOPSAILAI_AGENT_DRIVER"
     ) or base_env.get("TOPSAILAI_AGENT_DRIVER")
 
+    # --select-driver opens the driver menu even when the context-item page was
+    # not shown (zero or one non-base item, or the built-in default settings).
+    if args.select_driver and not selection.driver_override:
+        if sys.stdin.isatty():
+            effective_driver = (
+                args.driver
+                or settings_env_driver
+                or settings.get("ai_agent_driver", "")
+                or os.getenv("TOPSAILAI_AGENT_DRIVER", "")
+            )
+            chosen = _select_driver(
+                effective_driver,
+                _driver_menu_options(effective_driver),
+                timeout=args.select_timeout,
+            )
+            if chosen:
+                selection.driver_override = chosen
+                print(
+                    f"[TopsailAI-Launcher] Driver selected: {chosen}",
+                    file=sys.stderr,
+                )
+        else:
+            print(
+                "[TopsailAI-Launcher] Warning: --select-driver ignored because "
+                "stdin is not a terminal. Using the resolved driver.",
+                file=sys.stderr,
+            )
+
     ai_agent_driver = (
-        args.driver
-        if args.driver
-        else (
-            settings_env_driver
-            or settings.get("ai_agent_driver", "")
-            or os.getenv("TOPSAILAI_AGENT_DRIVER", "")
-        )
+        selection.driver_override
+        or args.driver
+        or settings_env_driver
+        or settings.get("ai_agent_driver", "")
+        or os.getenv("TOPSAILAI_AGENT_DRIVER", "")
     )
 
     # If the resolved driver does not exist, degrade to the default driver so
@@ -2174,6 +2405,11 @@ def main():
     merged_env = os.environ.copy()
     merged_env.update(base_env)
     merged_env.update(item_env)
+    # Keep the child environment consistent with the driver actually launched.
+    # Without this, an interactive override would start the chosen driver while
+    # the child still advertised the overridden TOPSAILAI_AGENT_DRIVER value.
+    if selection.driver_override:
+        merged_env["TOPSAILAI_AGENT_DRIVER"] = selection.driver_override
     session_id = _ensure_session_id(merged_env)
     if args.session_id is not None:
         session_id = args.session_id

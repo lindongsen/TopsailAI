@@ -292,16 +292,20 @@ Supported command source fields:
 - `--item <name>` — Select a context/environment item defined in `settings.yaml`.
 - `--no-base-context` — Ignore the shared base context sources configured under `context._` (and the legacy `context._default`); only the selected item's own context sources are injected. Base environment variables are still merged.
 - `--driver <command>` — Override the `ai_agent_driver` value.
+- `--select-driver` — Open the interactive driver menu before launching, even when the context-item page is not shown. The chosen driver overrides `--driver` and every `settings.yaml` source for this run. Ignored with a warning when stdin is not a terminal.
 - `--dry-run` — Print the resolved command, working directory, and merged environment variables without executing.
 - `--subprocess` — Use `subprocess.run()` instead of `os.system()`.
 - `--setup` — Force the guided interactive setup to create `.topsailai/settings.yaml` when it is missing.
 
 **Driver resolution priority:**
 
-1. `--driver` CLI argument
-2. `TOPSAILAI_AGENT_DRIVER` from the selected item or `_` (基础配置, base configuration; `_default` is still supported for backward compatibility) environment section
-3. `ai_agent_driver` field in `settings.yaml`
-4. `TOPSAILAI_AGENT_DRIVER` from the OS environment
+1. Driver chosen from the interactive driver menu (item page `d` command or `--select-driver`)
+2. `--driver` CLI argument
+3. `TOPSAILAI_AGENT_DRIVER` from the selected item or `_` (基础配置, base configuration; `_default` is still supported for backward compatibility) environment section
+4. `ai_agent_driver` field in `settings.yaml`
+5. `TOPSAILAI_AGENT_DRIVER` from the OS environment
+
+The context-item page accepts `d` (or `driver`) to open a driver menu and then returns to the same page, so a driver can be chosen before the item is confirmed. The choice is validated immediately, so an unresolvable driver is rejected instead of being silently replaced by the default. See `docs/usage/topsailai_launch_agent.md` for the menu behavior.
 
 If `.topsailai/settings.yaml` is missing, the launcher asks how to proceed:
 - In an interactive terminal (TTY), you are prompted to choose:
