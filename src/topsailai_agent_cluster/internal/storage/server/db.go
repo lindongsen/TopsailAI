@@ -54,5 +54,14 @@ func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, string(data)); err != nil {
 		return fmt.Errorf("apply migration: %w", err)
 	}
+	var hostnameColumn string
+	err = s.db.QueryRowContext(ctx, `SELECT name FROM pragma_table_info('endpoints') WHERE name = 'hostname'`).Scan(&hostnameColumn)
+	if err == sql.ErrNoRows {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE endpoints ADD COLUMN hostname TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add endpoint hostname column: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("inspect endpoint schema: %w", err)
+	}
 	return nil
 }

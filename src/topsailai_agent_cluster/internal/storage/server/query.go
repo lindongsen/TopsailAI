@@ -30,7 +30,7 @@ func (s *Store) ListEndpoints(ctx context.Context, options QueryOptions) ([]prot
 	if options.SortKey == "update_at_ms" {
 		sort = "update_at_ms"
 	}
-	query := fmt.Sprintf("SELECT endpoint_id, instance_id, display_name, connection_state, observed_at_ms, capability_revision FROM endpoints ORDER BY %s %s, endpoint_id ASC LIMIT ? OFFSET ?", sort, order)
+	query := fmt.Sprintf("SELECT endpoint_id, instance_id, display_name, hostname, connection_state, observed_at_ms, capability_revision FROM endpoints ORDER BY %s %s, endpoint_id ASC LIMIT ? OFFSET ?", sort, order)
 	rows, err := s.db.QueryContext(ctx, query, options.Limit, options.Offset)
 	if err != nil {
 		return nil, err
@@ -39,7 +39,7 @@ func (s *Store) ListEndpoints(ctx context.Context, options QueryOptions) ([]prot
 	var result []protocol.Endpoint
 	for rows.Next() {
 		var item protocol.Endpoint
-		if err := rows.Scan(&item.EndpointID, &item.InstanceID, &item.DisplayName, &item.ConnectionState, &item.ObservedAtMS, &item.CapabilityRevision); err != nil {
+		if err := rows.Scan(&item.EndpointID, &item.InstanceID, &item.DisplayName, &item.Hostname, &item.ConnectionState, &item.ObservedAtMS, &item.CapabilityRevision); err != nil {
 			return nil, err
 		}
 		result = append(result, item)

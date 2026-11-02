@@ -6,6 +6,7 @@ type Endpoint struct {
 	EndpointID         string `json:"endpoint_id"`
 	InstanceID         string `json:"instance_id"`
 	DisplayName        string `json:"display_name"`
+	Hostname           string `json:"hostname,omitempty"`
 	ConnectionState    string `json:"connection_state"`
 	ObservedAtMS       int64  `json:"observed_at_ms"`
 	CapabilityRevision string `json:"capability_revision"`

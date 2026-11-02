@@ -53,7 +53,11 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	client := &channel.EndpointClient{EndpointID: cfg.EndpointID, InstanceID: cfg.InstanceID, TLSConfig: tlsConfig, Address: cfg.ChannelAddress}
+	hostname, hostnameErr := os.Hostname()
+	if hostnameErr != nil {
+		logger.Warn("resolve endpoint hostname", "error", hostnameErr)
+	}
+	client := &channel.EndpointClient{EndpointID: cfg.EndpointID, InstanceID: cfg.InstanceID, Hostname: hostname, TLSConfig: tlsConfig, Address: cfg.ChannelAddress}
 	if err := client.Dial(ctx, cfg.ChannelAddress); err != nil {
 		logger.Error("connect endpoint channel; reconnecting", "error", err)
 	}

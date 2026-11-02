@@ -2,6 +2,7 @@ package channel
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -22,5 +23,20 @@ func TestEndpointClientRejectsInvalidHeartbeatAndOfflineOperations(t *testing.T)
 	}
 	if err := client.Reconnect(context.Background()); err == nil {
 		t.Fatal("reconnect without address must fail")
+	}
+}
+
+func TestEndpointHelloCarriesHostname(t *testing.T) {
+	frame := Frame{Type: FrameHello, ProtocolVersion: ProtocolVersion, EndpointID: "e1", InstanceID: "i1", Hostname: "host.example"}
+	data, err := json.Marshal(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Frame
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Hostname != "host.example" {
+		t.Fatalf("hostname = %q, want host.example", decoded.Hostname)
 	}
 }

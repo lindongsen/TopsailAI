@@ -119,6 +119,9 @@ func endpointLastSuccess(report protocol.InventoryReport) *int64 {
 }
 
 func endpointLabel(endpoint protocol.Endpoint) string {
+	if endpoint.Hostname != "" {
+		return endpoint.Hostname
+	}
 	if endpoint.DisplayName != "" {
 		return endpoint.DisplayName
 	}

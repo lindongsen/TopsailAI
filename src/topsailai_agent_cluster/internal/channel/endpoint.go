@@ -19,6 +19,7 @@ import (
 type EndpointClient struct {
 	EndpointID string
 	InstanceID string
+	Hostname   string
 	TLSConfig  *tls.Config
 	Address    string
 	Conn       *websocket.Conn
@@ -51,7 +52,7 @@ func (c *EndpointClient) Dial(ctx context.Context, address string) error {
 	if previous != nil && previous != conn {
 		_ = previous.Close(websocket.StatusNormalClosure, "reconnecting")
 	}
-	if err := wsjson.Write(ctx, conn, Frame{Type: FrameHello, ProtocolVersion: ProtocolVersion, EndpointID: c.EndpointID, InstanceID: c.InstanceID}); err != nil {
+	if err := wsjson.Write(ctx, conn, Frame{Type: FrameHello, ProtocolVersion: ProtocolVersion, EndpointID: c.EndpointID, InstanceID: c.InstanceID, Hostname: c.Hostname}); err != nil {
 		_ = conn.Close(websocket.StatusInternalError, "hello failed")
 		return err
 	}

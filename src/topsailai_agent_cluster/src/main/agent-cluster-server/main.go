@@ -54,7 +54,7 @@ func main() {
 		if frame.Type != channel.FrameInventory {
 			return
 		}
-		if err := store.UpsertEndpoint(context.Background(), protocol.Endpoint{EndpointID: peer.EndpointID, InstanceID: peer.InstanceID, DisplayName: peer.EndpointID, ConnectionState: "online", ObservedAtMS: time.Now().UnixMilli(), CapabilityRevision: "unknown"}, time.Now().UnixMilli()); err != nil {
+		if err := store.UpsertEndpoint(context.Background(), protocol.Endpoint{EndpointID: peer.EndpointID, InstanceID: peer.InstanceID, DisplayName: peer.EndpointID, Hostname: peer.Hostname, ConnectionState: "online", ObservedAtMS: time.Now().UnixMilli(), CapabilityRevision: "unknown"}, time.Now().UnixMilli()); err != nil {
 			logger.Error("store endpoint identity", "endpoint_id", peer.EndpointID, "error", err)
 			return
 		}

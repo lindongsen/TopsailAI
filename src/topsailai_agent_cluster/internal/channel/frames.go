@@ -40,6 +40,7 @@ type Frame struct {
 	ConnectionGeneration string                           `json:"connection_generation"`
 	EndpointID           string                           `json:"endpoint_id,omitempty"`
 	InstanceID           string                           `json:"instance_id,omitempty"`
+	Hostname             string                           `json:"hostname,omitempty"`
 	RequestID            string                           `json:"request_id,omitempty"`
 	Reason               string                           `json:"reason,omitempty"`
 	SnapshotRevision     int64                            `json:"snapshot_revision,omitempty"`

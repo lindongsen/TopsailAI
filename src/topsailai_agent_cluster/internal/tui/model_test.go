@@ -145,3 +145,23 @@ func TestWaitReturnsPersistentStateOnTimeout(t *testing.T) {
 		t.Fatalf("state=%#v", state)
 	}
 }
+
+func TestListRowsPrefersHostnameAndFallsBackToDisplayNameAndID(t *testing.T) {
+	cases := []struct {
+		name string
+		item protocol.Endpoint
+		want string
+	}{
+		{name: "hostname", item: protocol.Endpoint{EndpointID: "e1", DisplayName: "display", Hostname: "host.example"}, want: "host.example"},
+		{name: "display name", item: protocol.Endpoint{EndpointID: "e1", DisplayName: "display"}, want: "display"},
+		{name: "endpoint id", item: protocol.Endpoint{EndpointID: "e1"}, want: "e1"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			rows := ListRows([]protocol.Endpoint{testCase.item}, map[string]protocol.InventoryReport{"e1": {CollectionStatus: protocol.CollectionSucceeded}}, "")
+			if len(rows) != 1 || rows[0].EndpointLabel != testCase.want {
+				t.Fatalf("rows = %#v, want endpoint label %q", rows, testCase.want)
+			}
+		})
+	}
+}

@@ -302,3 +302,23 @@ func TestCommandAdmissionValidationAndCancellation(t *testing.T) {
 		t.Fatalf("missing cancellation=%v err=%v", ok, err)
 	}
 }
+
+func TestEndpointHostnameRoundTripsThroughStorage(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	endpoint := protocol.Endpoint{EndpointID: "e-host", InstanceID: "i-host", DisplayName: "endpoint-id", Hostname: "workstation.example", ConnectionState: "online", ObservedAtMS: 1, CapabilityRevision: "c1"}
+	if err := store.UpsertEndpoint(ctx, endpoint, 1); err != nil {
+		t.Fatal(err)
+	}
+	items, err := store.ListEndpoints(ctx, QueryOptions{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Hostname != endpoint.Hostname {
+		t.Fatalf("endpoints = %#v, want hostname %q", items, endpoint.Hostname)
+	}
+}

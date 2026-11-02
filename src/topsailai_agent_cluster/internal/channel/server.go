@@ -45,6 +45,7 @@ const channelReadLimit int64 = 2 << 20
 type Peer struct {
 	EndpointID           string
 	InstanceID           string
+	Hostname             string
 	ConnectionGeneration int64
 	Conn                 *websocket.Conn
 	LastSeen             time.Time
@@ -91,7 +92,7 @@ func (s *Server) Handler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	generation := s.Fence.Acquire(hello.EndpointID)
-	peer := &Peer{EndpointID: hello.EndpointID, InstanceID: hello.InstanceID, ConnectionGeneration: generation, Conn: conn, LastSeen: time.Now()}
+	peer := &Peer{EndpointID: hello.EndpointID, InstanceID: hello.InstanceID, Hostname: hello.Hostname, ConnectionGeneration: generation, Conn: conn, LastSeen: time.Now()}
 	s.Mu.Lock()
 	if old := s.Active[hello.EndpointID]; old != nil {
 		_ = old.Conn.CloseNow()

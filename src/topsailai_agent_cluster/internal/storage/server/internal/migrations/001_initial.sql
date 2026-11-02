@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS endpoints (
     endpoint_id TEXT PRIMARY KEY,
     instance_id TEXT NOT NULL,
     display_name TEXT NOT NULL,
+    hostname TEXT NOT NULL DEFAULT '',
     connection_state TEXT NOT NULL,
     observed_at_ms BIGINT NOT NULL,
     capability_revision TEXT NOT NULL,
