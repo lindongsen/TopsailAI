@@ -44,6 +44,7 @@ func TestTableStateColors(t *testing.T) {
 	}{
 		{"running", ansiGreen},
 		{"failed", ansiRed},
+		{"stopped", ansiDim},
 		{"unknown-state", ansiYellow},
 	}
 	for _, testCase := range cases {

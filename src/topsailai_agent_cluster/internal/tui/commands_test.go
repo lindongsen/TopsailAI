@@ -79,23 +79,52 @@ func TestCommandRunnerListHeadersColorAndJSONIsolation(t *testing.T) {
 	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &plain, io.Discard, "", false, TableOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	plainHeader := strings.SplitN(plain.String(), "\n", 2)[0]
 	for _, header := range tableHeaders {
-		if !strings.Contains(plain.String(), header) {
-			t.Fatalf("plain list missing header %q: %q", header, plain.String())
+		if !strings.Contains(plainHeader, header) {
+			t.Fatalf("plain list missing header %q: %q", header, plainHeader)
 		}
 	}
 	if strings.Contains(plain.String(), "\x1b") {
 		t.Fatalf("plain list contains ANSI bytes: %q", plain.String())
 	}
-	var colored strings.Builder
-	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &colored, io.Discard, "", false, TableOptions{Color: ColorPolicy{Enabled: true}}); err != nil {
+
+	var coloredList, coloredTable strings.Builder
+	options := TableOptions{Color: ColorPolicy{Enabled: true}}
+	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &coloredList, io.Discard, "", false, options); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(colored.String(), ansiBoldCyan) || !strings.Contains(colored.String(), ansiReset) {
-		t.Fatalf("colored list missing header styling: %q", colored.String())
+	if err := (CommandRunner{API: api}).Table(context.Background(), &coloredTable, io.Discard, "", false, options); err != nil {
+		t.Fatal(err)
 	}
+	listHeader := strings.SplitN(coloredList.String(), "\n", 2)[0]
+	tableHeader := strings.SplitN(coloredTable.String(), "\n", 2)[0]
+	if listHeader != tableHeader {
+		t.Fatalf("list/table headers differ: list=%q table=%q", listHeader, tableHeader)
+	}
+	for _, header := range []string{"NO", "ENDPOINT", "STATE"} {
+		assertStyledHeaderCell(t, listHeader, header)
+	}
+	if !strings.Contains(listHeader, ansiBoldCyan) || !strings.Contains(listHeader, ansiReset) {
+		t.Fatalf("colored list missing exact header styling: %q", listHeader)
+	}
+	if !strings.Contains(coloredList.String(), ansiGreen+"running"+ansiReset) {
+		t.Fatalf("colored list missing exact running style: %q", coloredList.String())
+	}
+
+	var noColor strings.Builder
+	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &noColor, io.Discard, "", false, TableOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(noColor.String(), "\x1b[") || !strings.Contains(noColor.String(), " │ ") || !strings.Contains(noColor.String(), "─┼─") {
+		t.Fatalf("no-color list lost required plain table output: %q", noColor.String())
+	}
+	if ResolveColorPolicy(true, true, false, false, true).Enabled {
+		t.Fatal("NO_COLOR presence must disable header color")
+	}
+
 	var encoded strings.Builder
-	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &encoded, io.Discard, "", true, TableOptions{Color: ColorPolicy{Enabled: true}}); err != nil {
+	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &encoded, io.Discard, "", true, options); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(encoded.String(), "ENDPOINT") || strings.Contains(encoded.String(), "\x1b") {
@@ -104,6 +133,19 @@ func TestCommandRunnerListHeadersColorAndJSONIsolation(t *testing.T) {
 	var rows []SessionRow
 	if err := json.Unmarshal([]byte(encoded.String()), &rows); err != nil || len(rows) != 1 {
 		t.Fatalf("JSON list=%q err=%v rows=%d", encoded.String(), err, len(rows))
+	}
+}
+
+func assertStyledHeaderCell(t *testing.T, header, label string) {
+	t.Helper()
+	styled := ansiBoldCyan + label
+	start := strings.Index(header, styled)
+	if start < 0 {
+		t.Fatalf("header cell %q missing style %q: %q", label, ansiBoldCyan, header)
+	}
+	end := strings.Index(header[start+len(styled):], ansiReset)
+	if end < 0 {
+		t.Fatalf("header cell %q missing reset %q: %q", label, ansiReset, header)
 	}
 }
 
