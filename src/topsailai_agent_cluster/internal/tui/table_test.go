@@ -16,14 +16,17 @@ func TestTableColumnsWidthsAndEmptyResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	if !strings.HasPrefix(lines[0], "NO") || !strings.Contains(lines[0], "  ADAPTER") || !strings.Contains(lines[0], "  SESSION") || !strings.HasSuffix(lines[0], "LAST_SUCCESS_MS") {
+	if !strings.HasPrefix(lines[0], "NO") || !strings.Contains(lines[0], " │ ADAPTER") || !strings.Contains(lines[0], " │ SESSION") || !strings.HasSuffix(lines[0], "LAST_SUCCESS_MS") {
 		t.Fatalf("header=%q", lines[0])
 	}
-	if len(lines[1]) > 165 || !strings.Contains(lines[1], "...") {
-		t.Fatalf("bounded row=%q len=%d", lines[1], len(lines[1]))
+	if !strings.Contains(lines[1], "─┼─") {
+		t.Fatalf("missing header separator=%q", lines[1])
 	}
-	if !strings.HasSuffix(lines[1], "1700000000000") {
-		t.Fatalf("timestamp not right aligned: %q", lines[1])
+	if len(lines[2]) > 190 || !strings.Contains(lines[2], "...") {
+		t.Fatalf("bounded row=%q len=%d", lines[2], len(lines[2]))
+	}
+	if !strings.HasSuffix(lines[2], "1700000000000") {
+		t.Fatalf("timestamp not right aligned: %q", lines[2])
 	}
 	out.Reset()
 	if err := RenderTable(&out, &errors, nil, nil, TableOptions{}); err != nil {
@@ -31,6 +34,34 @@ func TestTableColumnsWidthsAndEmptyResult(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "no sessions\n") {
 		t.Fatalf("empty output=%q", out.String())
+	}
+}
+
+func TestTableStateColors(t *testing.T) {
+	cases := []struct {
+		state string
+		style string
+	}{
+		{"running", ansiGreen},
+		{"failed", ansiRed},
+		{"unknown-state", ansiYellow},
+	}
+	for _, testCase := range cases {
+		var out, errors strings.Builder
+		rows := []SessionRow{{EndpointID: "ep", State: testCase.state}}
+		if err := RenderTable(&out, &errors, rows, nil, TableOptions{Color: ColorPolicy{Enabled: true}}); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), testCase.style) {
+			t.Fatalf("state %q missing style %q: %q", testCase.state, testCase.style, out.String())
+		}
+	}
+	var plain, errors strings.Builder
+	if err := RenderTable(&plain, &errors, []SessionRow{{EndpointID: "ep", State: "running"}}, nil, TableOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain.String(), "\x1b[") || !strings.Contains(plain.String(), " │ ") {
+		t.Fatalf("no-color rendering=%q", plain.String())
 	}
 }
 

@@ -55,7 +55,7 @@ func (r CommandRunner) Table(ctx context.Context, out, errors io.Writer, filter 
 	return RenderTable(out, errors, rows, failures, options)
 }
 
-// RenderTable writes a bounded ASCII table and sorted endpoint diagnostics.
+// RenderTable writes a bounded table and sorted endpoint diagnostics.
 func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFailure, options TableOptions) error {
 	assignRowNumbers(rows)
 	widths := append([]int(nil), tableCaps...)
@@ -74,7 +74,7 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 	writeRow := func(values []string, header bool) error {
 		for i, value := range values {
 			if i > 0 {
-				if _, err := io.WriteString(out, "  "); err != nil {
+				if _, err := io.WriteString(out, " │ "); err != nil {
 					return err
 				}
 			}
@@ -95,11 +95,27 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 		_, err := io.WriteString(out, "\n")
 		return err
 	}
+	writeSeparator := func() error {
+		for i, width := range widths {
+			if i > 0 {
+				if _, err := io.WriteString(out, "─┼─"); err != nil {
+					return err
+				}
+			}
+			if _, err := io.WriteString(out, strings.Repeat("─", width)); err != nil {
+				return err
+			}
+		}
+		_, err := io.WriteString(out, "\n")
+		return err
+	}
 	if err := writeRow(tableHeaders, true); err != nil {
 		return err
 	}
-	for i, row := range cells {
-		_ = i
+	if err := writeSeparator(); err != nil {
+		return err
+	}
+	for _, row := range cells {
 		if err := writeRow(row, false); err != nil {
 			return err
 		}
@@ -196,13 +212,13 @@ func minInt(a, b int) int {
 	return b
 }
 func rowState(values []string) string {
-	if len(values) > 4 {
-		return values[4]
+	if len(values) > 5 {
+		return values[5]
 	}
 	return ""
 }
 func writeCellState(w io.Writer, cell string, index int, state string, policy ColorPolicy) error {
-	if policy.Enabled && index == 4 {
+	if policy.Enabled && index == 5 {
 		switch state {
 		case "running":
 			return writeStyled(w, ansiGreen, cell, policy)
