@@ -76,7 +76,7 @@ func TestLegacyAndInteractiveShowUseSharedRunnerMethods(t *testing.T) {
 	if got, want := strings.Join(legacy.calls, ","), "list,inventory,capabilities,history"; got != want {
 		t.Fatalf("legacy calls=%q want=%q", got, want)
 	}
-	if got, want := strings.Join(interactive.calls, ","), "list,inventory,capabilities,history"; got != want {
+	if got, want := strings.Join(interactive.calls, ","), "list,inventory,list,inventory,capabilities,history"; got != want {
 		t.Fatalf("interactive calls=%q want=%q", got, want)
 	}
 }

@@ -87,7 +87,7 @@ func TestInteractiveLoopContinuesAfterErrorAndQuit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunInteractive: %v", err)
 	}
-	if !strings.Contains(errorsOut.String(), `unknown command "bad"`) || !strings.Contains(output.String(), "commands:") {
+	if !strings.Contains(errorsOut.String(), `unknown command "bad"`) || !strings.Contains(output.String(), "Commands by scope:") {
 		t.Fatalf("recovery output missing: out=%q err=%q", output.String(), errorsOut.String())
 	}
 	if !strings.Contains(output.String(), "cluster> ") {
@@ -181,7 +181,7 @@ func TestSafeWriterHandlesShortWrites(t *testing.T) {
 }
 
 func TestInteractiveGenerationChangePreventsAdmission(t *testing.T) {
-	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}, changeAfter: 2}
+	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}, changeAfter: 3}
 	var output, errorsOut strings.Builder
 	if err := RunInteractive(context.Background(), stub, strings.NewReader("cd endpoint-1/session-1\nsend {\"text\":\"hi\"}\ny\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestInteractiveShowRejectsSelectedGenerationChange(t *testing.T) {
 	stub := &interactiveStub{
 		endpoints:   []protocol.Endpoint{{EndpointID: "endpoint-1"}},
 		reports:     map[string]protocol.InventoryReport{"endpoint-1": testInventory()},
-		changeAfter: 2,
+		changeAfter: 3,
 	}
 	var output, errorsOut strings.Builder
 	input := "cd endpoint-1/session-1\nshow\nquit\n"
@@ -210,7 +210,7 @@ func TestInteractiveShowRejectsSelectedGenerationChange(t *testing.T) {
 	if strings.Contains(output.String(), "session: session-1 adapter=") {
 		t.Fatalf("show returned details after generation change: %q", output.String())
 	}
-	if stub.inventoryCalls != 2 {
+	if stub.inventoryCalls != 3 {
 		t.Fatalf("inventory calls=%d want=2", stub.inventoryCalls)
 	}
 }
@@ -219,7 +219,7 @@ func TestReplacementInvalidationIsStickyAndRequiresUse(t *testing.T) {
 	stub := &interactiveStub{
 		endpoints:          []protocol.Endpoint{{EndpointID: "endpoint-1"}},
 		reports:            map[string]protocol.InventoryReport{"endpoint-1": testInventory()},
-		generationSequence: []string{"generation-1", "generation-2", "generation-1", "generation-1", "generation-1"},
+		generationSequence: []string{"generation-1", "generation-1", "generation-2", "generation-1", "generation-1", "generation-1"},
 	}
 	var output, errorsOut strings.Builder
 	input := "cd endpoint-1/session-1\nrefresh\nrefresh\ncd endpoint-1/session-1\nstatus\nquit\n"
@@ -244,7 +244,7 @@ func TestInvalidatedSelectionRejectsTargetOperationsWithoutAdmission(t *testing.
 	stub := &interactiveStub{
 		endpoints:          []protocol.Endpoint{{EndpointID: "endpoint-1"}},
 		reports:            map[string]protocol.InventoryReport{"endpoint-1": testInventory()},
-		generationSequence: []string{"generation-1", "generation-2"},
+		generationSequence: []string{"generation-1", "generation-1", "generation-2"},
 	}
 	var output, errorsOut strings.Builder
 	input := "cd endpoint-1/session-1\nrefresh\nshow\nlogs\nstatus\nsend {\"text\":\"blocked\"}\ny\nquit\n"
@@ -262,7 +262,7 @@ func TestInvalidatedSelectionRejectsTargetOperationsWithoutAdmission(t *testing.
 func TestInteractiveHelpDescribesListCleanBehavior(t *testing.T) {
 	stub := &interactiveStub{}
 	var output, errorsOut strings.Builder
-	if err := RunInteractive(context.Background(), stub, strings.NewReader("help\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
+	if err := RunInteractive(context.Background(), stub, strings.NewReader("help list\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	text := output.String()

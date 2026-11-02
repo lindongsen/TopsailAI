@@ -187,6 +187,10 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		}
 	}()
 	state := interactiveState{}
+	// The workspace inventory is rendered once before the first prompt.
+	if err := runStartupList(parent, api, &state, controller, output, errOut, options.Color); err != nil {
+		return err
+	}
 	for {
 		if controller.promptWasInterrupted() {
 			return ErrInteractiveInterrupt

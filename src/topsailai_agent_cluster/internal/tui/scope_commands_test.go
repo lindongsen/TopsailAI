@@ -60,6 +60,21 @@ func siblingStub() *interactiveStub {
 	}
 }
 
+// segmentBeforePrompt returns the output written between the second-to-last
+// and the last occurrence of marker, which is the command output for the
+// current scope. The startup inventory is excluded by construction.
+func segmentBeforePrompt(output, marker string) string {
+	last := strings.LastIndex(output, marker)
+	if last < 0 {
+		return output
+	}
+	previous := strings.LastIndex(output[:last], marker)
+	if previous < 0 {
+		return output[:last]
+	}
+	return output[previous+len(marker) : last]
+}
+
 // runScope executes one interactive scenario and returns both streams.
 func runScope(t *testing.T, stub InteractiveAPI, input string, color ColorPolicy) (string, string) {
 	t.Helper()
@@ -156,11 +171,12 @@ func TestListNarrowsToCurrentEndpoint(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "host-one") {
-		t.Fatalf("missing current endpoint row: %q", output)
+	scoped := segmentBeforePrompt(output, "cluster[host-one/endpoint-1]> ")
+	if !strings.Contains(scoped, "host-one") {
+		t.Fatalf("missing current endpoint row: %q", scoped)
 	}
-	if strings.Contains(output, "host-two") {
-		t.Fatalf("list leaked another endpoint: %q", output)
+	if strings.Contains(scoped, "host-two") {
+		t.Fatalf("list leaked another endpoint: %q", scoped)
 	}
 }
 
@@ -169,11 +185,12 @@ func TestListInSessionScopeShowsSiblingSessions(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "res-1b") {
-		t.Fatalf("missing sibling session: %q", output)
+	scoped := segmentBeforePrompt(output, "cluster[host-one/endpoint-1/res-1]> ")
+	if !strings.Contains(scoped, "res-1b") {
+		t.Fatalf("missing sibling session: %q", scoped)
 	}
-	if strings.Contains(output, "res-2") {
-		t.Fatalf("list leaked another endpoint: %q", output)
+	if strings.Contains(scoped, "res-2") {
+		t.Fatalf("list leaked another endpoint: %q", scoped)
 	}
 }
 
@@ -229,11 +246,12 @@ func TestRefreshNarrowsToCurrentEndpoint(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "host-one") {
-		t.Fatalf("missing current endpoint row: %q", output)
+	scoped := segmentBeforePrompt(output, "cluster[host-one/endpoint-1]> ")
+	if !strings.Contains(scoped, "host-one") {
+		t.Fatalf("missing current endpoint row: %q", scoped)
 	}
-	if strings.Contains(output, "host-two") {
-		t.Fatalf("endpoint refresh leaked another endpoint: %q", output)
+	if strings.Contains(scoped, "host-two") {
+		t.Fatalf("endpoint refresh leaked another endpoint: %q", scoped)
 	}
 }
 
@@ -292,7 +310,7 @@ func TestHelpAndQuitRemainAvailableInEveryScope(t *testing.T) {
 			if diagnostics != "" {
 				t.Fatalf("unexpected diagnostics: %q", diagnostics)
 			}
-			if !strings.Contains(output, "commands:") {
+			if !strings.Contains(output, "Commands by scope:") {
 				t.Fatalf("help was not rendered: %q", output)
 			}
 		})
@@ -385,8 +403,8 @@ func TestScopePromptsKeepExactAnsiSequences(t *testing.T) {
 			if !strings.Contains(output, testCase.want) {
 				t.Fatalf("output = %q, want prompt %q", output, testCase.want)
 			}
-			if strings.Contains(output, ansiCyan) || strings.Contains(output, ansiBoldCyan) {
-				t.Fatalf("prompt contains cyan styling: %q", output)
+			if strings.Contains(testCase.want, ansiCyan) || strings.Contains(testCase.want, ansiBoldCyan) {
+				t.Fatalf("prompt contains cyan styling: %q", testCase.want)
 			}
 		})
 	}

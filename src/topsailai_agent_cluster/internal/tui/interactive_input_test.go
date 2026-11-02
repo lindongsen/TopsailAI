@@ -32,7 +32,7 @@ func TestReadLineBoundAndRecovery(t *testing.T) {
 	if got, want := errorsOut, "input line exceeds the maximum length\n"; got != want {
 		t.Fatalf("errors=%q want=%q", got, want)
 	}
-	if !strings.Contains(output, "commands:\n") || !strings.Contains(output, "list [endpoint]") {
+	if !strings.Contains(output, "Commands by scope:") || !strings.Contains(output, "list [endpoint]") {
 		t.Fatalf("REPL did not continue after oversized input: %q", output)
 	}
 	if stub.admit != 0 {
@@ -126,7 +126,7 @@ func TestConfirmationAcceptedOnlyByCompleteLine(t *testing.T) {
 
 func TestConfirmationRevalidatesGeneration(t *testing.T) {
 	stub := inputStub()
-	stub.changeAfter = 2
+	stub.changeAfter = 3
 	_, errorsOut := runInputScenario(t, stub, "cd endpoint-1/session-1\nsend {\"text\":\"hi\"}\ny\nquit\n", 8192)
 	if stub.admit != 0 {
 		t.Fatalf("generation change admitted %d commands", stub.admit)

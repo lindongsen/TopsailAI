@@ -32,7 +32,7 @@ func TestInteractiveContinuesAfterRecoveredCommandFailure(t *testing.T) {
 	if !strings.Contains(errorsOut.String(), "temporary list failure") {
 		t.Fatalf("missing recovered failure: %q", errorsOut.String())
 	}
-	if !strings.Contains(output.String(), "commands:") {
+	if !strings.Contains(output.String(), "Commands by scope:") {
 		t.Fatalf("loop did not continue to help: %q", output.String())
 	}
 }
@@ -337,7 +337,7 @@ func (s *freshnessStub) ListEndpoints(context.Context) ([]protocol.Endpoint, err
 }
 func (s *freshnessStub) GetInventory(context.Context, string) (protocol.InventoryReport, error) {
 	s.calls++
-	if s.second.Adapters != nil && s.calls > 1 {
+	if s.second.Adapters != nil && s.calls > 2 {
 		return s.second, nil
 	}
 	return s.inventory, nil

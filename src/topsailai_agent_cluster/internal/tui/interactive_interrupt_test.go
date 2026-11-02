@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +27,34 @@ func (s *interruptAPI) ListEndpoints(ctx context.Context) ([]protocol.Endpoint, 
 	return nil, ctx.Err()
 }
 
+// promptWatcher records output and signals when the first prompt is rendered.
+type promptWatcher struct {
+	mu     sync.Mutex
+	buffer strings.Builder
+	ready  chan struct{}
+	once   sync.Once
+}
+
+func newPromptWatcher() *promptWatcher {
+	return &promptWatcher{ready: make(chan struct{})}
+}
+
+func (w *promptWatcher) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	written, err := w.buffer.Write(data)
+	if strings.Contains(w.buffer.String(), "cluster> ") {
+		w.once.Do(func() { close(w.ready) })
+	}
+	return written, err
+}
+
+func (w *promptWatcher) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buffer.String()
+}
+
 func TestInteractivePromptInterruptReturnsTypedErrorAndJoinsWatcher(t *testing.T) {
 	signals := make(chan os.Signal, 1)
 	input, inputWriter := io.Pipe()
@@ -34,10 +63,11 @@ func TestInteractivePromptInterruptReturnsTypedErrorAndJoinsWatcher(t *testing.T
 	watcherReadyToFinish := make(chan struct{})
 	finishWatcher := make(chan struct{})
 	watcherExitCalled := make(chan bool, 1)
-	var output, diagnostics strings.Builder
+	output := newPromptWatcher()
+	var diagnostics strings.Builder
 	done := make(chan error, 1)
 	go func() {
-		done <- RunInteractive(context.Background(), &interactiveStub{}, input, &output, &diagnostics, InteractiveOptions{
+		done <- RunInteractive(context.Background(), &interactiveStub{}, input, output, &diagnostics, InteractiveOptions{
 			Interrupt:  signals,
 			CloseInput: true,
 			watcherBeforeDone: func() {
@@ -49,6 +79,12 @@ func TestInteractivePromptInterruptReturnsTypedErrorAndJoinsWatcher(t *testing.T
 			watcherExit: func(wasJoined bool) { watcherExitCalled <- wasJoined },
 		})
 	}()
+	// Wait for the startup inventory and the first prompt before interrupting.
+	select {
+	case <-output.ready:
+	case <-time.After(time.Second):
+		t.Fatal("startup prompt was not rendered")
+	}
 	signals <- os.Interrupt
 	select {
 	case <-watcherStarted:
@@ -92,7 +128,7 @@ func TestInteractiveCommandInterruptCancelsOnlyCurrentCommand(t *testing.T) {
 	var output, diagnostics strings.Builder
 	done := make(chan error, 1)
 	go func() {
-		done <- RunInteractive(context.Background(), api, strings.NewReader("list\nhelp\nquit\n"), &output, &diagnostics, InteractiveOptions{Interrupt: signals})
+		done <- RunInteractive(context.Background(), api, strings.NewReader("help\nquit\n"), &output, &diagnostics, InteractiveOptions{Interrupt: signals})
 	}()
 	select {
 	case <-api.started:
@@ -111,7 +147,7 @@ func TestInteractiveCommandInterruptCancelsOnlyCurrentCommand(t *testing.T) {
 	if !strings.Contains(diagnostics.String(), "interrupted\n") {
 		t.Fatalf("diagnostics=%q", diagnostics.String())
 	}
-	if !strings.Contains(output.String(), "commands:") {
+	if !strings.Contains(output.String(), "Commands by scope:") {
 		t.Fatalf("subsequent command did not execute: %q", output.String())
 	}
 }

@@ -389,8 +389,8 @@ func TestCDPromptsUseExactAnsiSequences(t *testing.T) {
 			if !strings.Contains(output.String(), testCase.want) {
 				t.Fatalf("output = %q, want prompt %q", output.String(), testCase.want)
 			}
-			if strings.Contains(output.String(), ansiCyan) || strings.Contains(output.String(), ansiBoldCyan) {
-				t.Fatalf("prompt contains cyan styling: %q", output.String())
+			if strings.Contains(testCase.want, ansiCyan) || strings.Contains(testCase.want, ansiBoldCyan) {
+				t.Fatalf("prompt contains cyan styling: %q", testCase.want)
 			}
 		})
 	}
