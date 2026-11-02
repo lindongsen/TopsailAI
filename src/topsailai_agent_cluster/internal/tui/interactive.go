@@ -17,12 +17,14 @@ import (
 
 // InteractiveOptions controls bounded REPL behavior.
 type InteractiveOptions struct {
-	MaxBytes      int
-	WaitTimeoutMS int64
-	LineLimit     int
-	Color         ColorPolicy
-	Interrupt     <-chan os.Signal
-	CloseInput    bool
+	MaxBytes          int
+	WaitTimeoutMS     int64
+	LineLimit         int
+	Color             ColorPolicy
+	Interrupt         <-chan os.Signal
+	CloseInput        bool
+	watcherExit       func(bool)
+	watcherBeforeDone func()
 }
 
 type reportLoad struct {
@@ -42,6 +44,8 @@ type interruptController struct {
 	promptInterrupted  bool
 	commandInterrupted bool
 	input              io.Closer
+	promptDone         chan struct{}
+	promptOnce         sync.Once
 }
 
 func (c *interruptController) setCancel(cancel context.CancelFunc) {
@@ -65,6 +69,7 @@ func (c *interruptController) interrupt() {
 		return
 	}
 	c.promptInterrupted = true
+	c.promptOnce.Do(func() { close(c.promptDone) })
 	if c.input != nil {
 		_ = c.input.Close()
 	}
@@ -84,6 +89,38 @@ func (c *interruptController) promptWasInterrupted() bool {
 	return c.promptInterrupted
 }
 
+type lineReadResult struct {
+	line     string
+	overflow bool
+	err      error
+}
+
+func startInputReader(input io.Reader, limit int) (<-chan lineReadResult, *sync.WaitGroup, func()) {
+	reader := bufio.NewReaderSize(input, 4096)
+	results := make(chan lineReadResult, 1)
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+	var done sync.WaitGroup
+	done.Add(1)
+	go func() {
+		defer done.Done()
+		defer close(results)
+		for {
+			line, overflow, err := readLine(reader, limit)
+			result := lineReadResult{line: line, overflow: overflow, err: err}
+			select {
+			case results <- result:
+			case <-stop:
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return results, &done, func() { stopOnce.Do(func() { close(stop) }) }
+}
+
 // RunInteractive executes the stream-driven operator REPL.
 func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader, output, errors io.Writer, options InteractiveOptions) error {
 	if api == nil {
@@ -98,7 +135,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 	if options.LineLimit <= 0 {
 		options.LineLimit = 8192
 	}
-	controller := &interruptController{}
+	controller := &interruptController{promptDone: make(chan struct{})}
 	if options.CloseInput {
 		if closer, ok := input.(io.Closer); ok {
 			controller.input = closer
@@ -106,24 +143,48 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 	}
 	stopWatcher := make(chan struct{})
 	var watcher sync.WaitGroup
+	watcherDone := make(chan struct{})
 	if options.Interrupt != nil {
 		watcher.Add(1)
 		go func() {
+			defer close(watcherDone)
 			defer watcher.Done()
 			select {
 			case <-options.Interrupt:
 				controller.interrupt()
 			case <-stopWatcher:
 			}
+			if options.watcherBeforeDone != nil {
+				options.watcherBeforeDone()
+			}
 		}()
 	}
 	defer func() {
 		close(stopWatcher)
 		watcher.Wait()
+		if options.watcherExit != nil {
+			joined := false
+			select {
+			case <-watcherDone:
+				joined = true
+			default:
+			}
+			options.watcherExit(joined)
+		}
 	}()
 	out := newSafeWriter(output)
 	errOut := newSafeWriter(errors)
-	reader := bufio.NewReaderSize(input, 4096)
+	lineResults, inputReaderDone, stopInputReader := startInputReader(input, options.LineLimit)
+	waitForInputReader := input != os.Stdin
+	defer func() {
+		stopInputReader()
+		if options.CloseInput && controller.input != nil {
+			_ = controller.input.Close()
+		}
+		if waitForInputReader {
+			inputReaderDone.Wait()
+		}
+	}()
 	state := interactiveState{}
 	for {
 		if controller.promptWasInterrupted() {
@@ -132,8 +193,16 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		if err := writePrompt(output, state, options.Color); err != nil {
 			return err
 		}
-		line, overflow, err := readLine(reader, options.LineLimit)
-		if controller.promptWasInterrupted() {
+		var line string
+		var overflow bool
+		var err error
+		select {
+		case result, ok := <-lineResults:
+			if !ok {
+				return nil
+			}
+			line, overflow, err = result.line, result.overflow, result.err
+		case <-controller.promptDone:
 			return ErrInteractiveInterrupt
 		}
 		if overflow {
@@ -157,7 +226,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		}
 		commandCtx, cancel := context.WithCancel(parent)
 		controller.setCancel(cancel)
-		exit, execErr := executeInteractiveLine(commandCtx, api, &state, line, reader, out, output, errOut, options)
+		exit, execErr := executeInteractiveLine(commandCtx, api, &state, line, lineResults, out, output, errOut, options)
 		controller.clearCancel()
 		cancel()
 		if controller.takeCommandInterrupted() {
@@ -180,7 +249,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 // ErrInteractiveInterrupt marks an interrupt received while reading the prompt.
 var ErrInteractiveInterrupt = fmt.Errorf("interactive interrupted")
 
-func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *interactiveState, line string, reader *bufio.Reader, out, trustedOut, errOut io.Writer, options InteractiveOptions) (bool, error) {
+func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *interactiveState, line string, lineResults <-chan lineReadResult, out, trustedOut, errOut io.Writer, options InteractiveOptions) (bool, error) {
 	name, rest := splitCommand(line)
 	switch name {
 	case "help", "?":
@@ -205,7 +274,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "refresh":
 		return false, interactiveRefresh(ctx, api, state, out)
 	case "send":
-		return false, interactiveSend(ctx, api, state, rest, reader, out, options)
+		return false, interactiveSend(ctx, api, state, rest, lineResults, out, options)
 	default:
 		return false, fmt.Errorf("unknown command %q (try help)", name)
 	}

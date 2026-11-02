@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -58,7 +57,7 @@ func interactiveStatus(parent context.Context, api InteractiveAPI, state *intera
 	return (CommandRunner{API: api, Policy: InteractivePolicy}).Status(ctx, out, commandID, false)
 }
 
-func interactiveSend(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, reader *bufio.Reader, out io.Writer, options InteractiveOptions) error {
+func interactiveSend(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lineSource <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {
 	if err := state.requireUsable(); err != nil {
 		return err
 	}
@@ -86,7 +85,11 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if _, err := fmt.Fprintf(out, "send %s? Confirm send? [y/N] ", preview); err != nil {
 		return err
 	}
-	answer, overflow, err := readLine(reader, options.LineLimit)
+	confirmation, ok := nextLine(lineSource)
+	if !ok {
+		return fmt.Errorf("confirmation requires a complete line")
+	}
+	answer, overflow, err := confirmation.line, confirmation.overflow, confirmation.err
 	if overflow || err != nil {
 		return fmt.Errorf("confirmation requires a complete line")
 	}
@@ -120,9 +123,14 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if _, err = fmt.Fprintln(out, "command submitted:", state.commandID); err != nil {
 		return err
 	}
-	result, err := runner.WaitAction(ctx, actionResult, intent.Budget)
+	actionResultData, err := runner.WaitAction(ctx, actionResult, intent.Budget)
 	if err != nil {
 		return err
 	}
-	return runner.RenderAction(out, result)
+	return runner.RenderAction(out, actionResultData)
+}
+
+func nextLine(source <-chan lineReadResult) (lineReadResult, bool) {
+	result, ok := <-source
+	return result, ok
 }
