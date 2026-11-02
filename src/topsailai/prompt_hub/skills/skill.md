@@ -1,13 +1,15 @@
 # SKILLS
 
 You must strictly parse the file structure of skill items and prohibit assuming the existence of any runnable scripts.
-The actual executable script file must be identified through clear features such as file name, extension, shebang declaration, or file header metadata, and speculation or fabrication is not allowed.
+Compiled/native executables MUST be located under `bin/`; source-code scripts such as shell or Python MUST be located under `scripts/`. A file being executable does not make it a binary, and binaries MUST NOT be placed in `scripts/`.
+The actual executable file must be identified through clear features such as file name, extension, shebang declaration, or file header metadata, and speculation or fabrication is not allowed.
 
 Common Skill Folder Structure:
 ```
 Skill_Name_As_Folder_Name/
 - SKILL.md    # [core] document
-- scripts/    # [tool] executable scripts
+- bin/        # [tool] compiled/native executable binaries
+- scripts/    # [tool] source-code scripts, such as shell or Python
 - references/ # [knowledge] domain expertise
 - assets/     # [resource] static files
 - config/     # [variable] config file can be updated

@@ -39,7 +39,9 @@ Please think through and construct the Skill following these steps:
     - Instructions should include: Trigger conditions, Execution flow (calling tool or applying knowledge), Result handling, and Next steps.
 
 4. **Auxiliary File Design**
-    - Determine if the `scripts/` directory is needed. If yes (usually for Tool-based Skills), generate pseudocode or core logic for an example script and explain its function.
+    - Determine whether the tool is distributed as a compiled/native executable or as source code. Put compiled/native executable files in `bin/`; put source-code scripts such as shell or Python files in `scripts/`. Never place binaries in `scripts/` or source scripts in `bin/`.
+    - Determine if the `bin/` directory is needed. If yes, document each required binary and its relative path.
+    - Determine if the `scripts/` directory is needed. If yes, document each source script and its relative path.
     - Determine if the `references/` directory is needed. If yes (usually for Doc-based Skills, or complex Tool-based Skills), generate an example reference document to explain complex business rules, knowledge systems, or data formats.
     - Determine if the `assets/` directory is needed. If yes, specify what kind of static resources (e.g., template files) should be included.
 
@@ -59,7 +61,8 @@ description: [Generated Skill Description] # Clearly describe the `ability detai
 [Detailed Markdown instructions here, guiding the AI Agent on how to use the tool or apply knowledge to complete the task.]
 
 ## File Structure Description
-- **scripts/**: [Explain the scripts that should be in this directory and their functions. Fill "None" if not applicable]
+- **bin/**: [Explain the compiled/native executable binaries in this directory and their functions. Fill "None" if not applicable]
+- **scripts/**: [Explain the source-code scripts in this directory and their functions. Fill "None" if not applicable]
 - **references/**: [Explain the reference documents that should be in this directory and their usage. Fill "None" if not applicable]
 - **assets/**: [Explain the static resources that should be in this directory and their usage. Fill "None" if not applicable]
 ```
