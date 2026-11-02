@@ -261,7 +261,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		}
 		return true, nil
 	case "list":
-		return false, interactiveList(ctx, api, state, strings.TrimSpace(rest), out, errOut, options.Color)
+		return false, interactiveList(ctx, api, state, strings.TrimSpace(rest), trustedOut, errOut, options.Color)
 	case "table":
 		return false, interactiveTable(ctx, api, state, strings.TrimSpace(rest), trustedOut, errOut, options.Color)
 	case "use":
