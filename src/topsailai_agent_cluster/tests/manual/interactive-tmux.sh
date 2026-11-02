@@ -46,6 +46,30 @@ wait_for_text() {
   fail "timed out waiting for: $text"
 }
 
+pane_snapshot() {
+  tmux capture-pane -p -t "$session_name" 2>/dev/null || true
+}
+
+new_lines() {
+  local baseline=$1
+  awk 'NR==FNR { seen[$0]++; next } { if (seen[$0] > 0) { seen[$0]-- } else { print } }' \
+    <(printf '%s\n' "$baseline") "$capture_path"
+}
+
+wait_for_new_text() {
+  local text=$1
+  local baseline=$2
+  local deadline=$((SECONDS + timeout_seconds))
+  while (( SECONDS < deadline )); do
+    capture
+    if new_lines "$baseline" | grep -Fq "$text"; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  fail "timed out waiting for new text: $text"
+}
+
 send_line() {
   tmux send-keys -t "$session_name" -l -- "$1"
   tmux send-keys -t "$session_name" Enter
@@ -59,7 +83,7 @@ AGENT_CLUSTER_ARTIFACT_DIR="$artifact_dir" \
 "$start_script"
 
 wait_for_text 'cluster>'
-send_line 'table'
+# The startup inventory renders the table before the first prompt.
 wait_for_text 'ENDPOINT'
 wait_for_text 'ADAPTER'
 wait_for_text 'SESSION'
@@ -70,12 +94,34 @@ wait_for_text 'UNKNOWN'
 wait_for_text 'COLLECTION'
 wait_for_text 'LAST_SUCCESS_MS'
 
-send_line "cd $endpoint_id/$session_id"
-wait_for_text "cluster[$endpoint_id/$session_id]>"
+# Workspace scope rejects send before any payload parsing.
+baseline=$(pane_snapshot)
+send_line 'send {}'
+wait_for_new_text 'command "send" is unavailable in workspace scope' "$baseline"
+
+# Endpoint scope is entered by endpoint id and still rejects send.
+baseline=$(pane_snapshot)
+send_line "cd $endpoint_id"
+wait_for_new_text "/$endpoint_id]>" "$baseline"
+baseline=$(pane_snapshot)
+send_line 'send {}'
+wait_for_new_text 'command "send" is unavailable in endpoint scope' "$baseline"
+
+# Session scope accepts status and the scope-grouped help.
+baseline=$(pane_snapshot)
+send_line "cd $session_id"
+wait_for_new_text "/$session_id]>" "$baseline"
+baseline=$(pane_snapshot)
 send_line 'status'
-wait_for_text 'running'
+wait_for_new_text 'running' "$baseline"
+baseline=$(pane_snapshot)
 send_line 'help'
-wait_for_text 'commands:'
+wait_for_new_text 'Commands by scope:' "$baseline"
+
+# Bare cd returns to workspace scope.
+baseline=$(pane_snapshot)
+send_line 'cd'
+wait_for_new_text 'cluster>' "$baseline"
 send_line 'quit'
 
 deadline=$((SECONDS + timeout_seconds))
@@ -84,7 +130,7 @@ while (( SECONDS < deadline )); do
     exit_code=$(cat "$exit_marker")
     [[ "$exit_code" == 0 ]] || fail "CLI exit code was $exit_code, expected 0"
     capture
-    printf 'PASS: table, selection, status, help and quit assertions\n'
+    printf 'PASS: startup list, scope navigation, matrix restriction, status, help and quit assertions\n'
     printf 'CLI_EXIT=%s\n' "$exit_code"
     exit 0
   fi
