@@ -260,7 +260,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		}
 		return true, nil
 	case "list":
-		return false, interactiveList(ctx, api, strings.TrimSpace(rest), out)
+		return false, interactiveList(ctx, api, strings.TrimSpace(rest), out, errOut, options.Color)
 	case "table":
 		return false, interactiveTable(ctx, api, strings.TrimSpace(rest), trustedOut, errOut, options.Color)
 	case "use":
@@ -272,7 +272,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "status":
 		return false, interactiveStatus(ctx, api, state, strings.TrimSpace(rest), out)
 	case "refresh":
-		return false, interactiveRefresh(ctx, api, state, out)
+		return false, interactiveRefresh(ctx, api, state, out, errOut, options.Color)
 	case "send":
 		return false, interactiveSend(ctx, api, state, rest, lineResults, out, options)
 	default:
@@ -351,10 +351,10 @@ func interactiveTable(parent context.Context, api InteractiveAPI, filter string,
 	return (CommandRunner{API: api, Policy: InteractivePolicy}).Table(ctx, out, errors, filter, false, TableOptions{Color: color})
 }
 
-func interactiveList(parent context.Context, api InteractiveAPI, filter string, out io.Writer) error {
+func interactiveList(parent context.Context, api InteractiveAPI, filter string, out, errors io.Writer, color ColorPolicy) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).List(ctx, out, filter, false)
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, filter, false, TableOptions{Color: color})
 }
 
 func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveState) (protocol.Endpoint, protocol.InventoryReport, *protocol.Session, error) {
@@ -456,9 +456,9 @@ func validateAdapterFreshness(report protocol.InventoryReport, adapterID string)
 	return nil
 }
 
-func interactiveRefresh(parent context.Context, api InteractiveAPI, state *interactiveState, out io.Writer) error {
+func interactiveRefresh(parent context.Context, api InteractiveAPI, state *interactiveState, out, errors io.Writer, color ColorPolicy) error {
 	if state.EndpointID == "" {
-		return interactiveList(parent, api, "", out)
+		return interactiveList(parent, api, "", out, errors, color)
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()

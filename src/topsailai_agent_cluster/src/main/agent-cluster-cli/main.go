@@ -98,7 +98,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	}
 	switch flags.Arg(0) {
 	case "list":
-		return list(ctx, api, output, *filter, *jsonMode)
+		return list(ctx, api, output, errors, *filter, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
 	case "table":
 		return table(ctx, api, output, errors, *filter, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
 	case "show":
@@ -131,8 +131,8 @@ func table(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, fi
 	return legacyRunner(api).Table(ctx, output, errors, filter, jsonMode, tui.TableOptions{Color: color})
 }
 
-func list(ctx context.Context, api tui.CommandAPI, output io.Writer, filter string, jsonMode bool) error {
-	return legacyRunner(api).List(ctx, output, filter, jsonMode)
+func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, jsonMode bool, color tui.ColorPolicy) error {
+	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, tui.TableOptions{Color: color})
 }
 
 func show(ctx context.Context, api tui.CommandAPI, output io.Writer, id string, jsonMode bool) error {

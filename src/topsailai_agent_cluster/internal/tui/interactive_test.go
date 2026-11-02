@@ -67,6 +67,19 @@ func testInventory() protocol.InventoryReport {
 	return protocol.InventoryReport{ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}}, Sessions: []protocol.Session{{SessionID: "session-1", AdapterID: "adapter-1", Generation: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}}}
 }
 
+func TestInteractiveListUsesTableHeaders(t *testing.T) {
+	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+	var output, diagnostics strings.Builder
+	if err := RunInteractive(context.Background(), stub, strings.NewReader("list\nquit\n"), &output, &diagnostics, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, header := range tableHeaders {
+		if !strings.Contains(output.String(), header) {
+			t.Fatalf("interactive list missing header %q: %q", header, output.String())
+		}
+	}
+}
+
 func TestInteractiveLoopContinuesAfterErrorAndQuit(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}, failList: true}
 	var output, errorsOut strings.Builder

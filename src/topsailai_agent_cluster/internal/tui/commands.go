@@ -41,6 +41,11 @@ type CommandRunner struct {
 
 // List executes the shared endpoint inventory query and renderer.
 func (r CommandRunner) List(ctx context.Context, out io.Writer, filter string, jsonMode bool) error {
+	return r.ListWithOptions(ctx, out, io.Discard, filter, jsonMode, TableOptions{})
+}
+
+// ListWithOptions renders text list output through the shared table renderer.
+func (r CommandRunner) ListWithOptions(ctx context.Context, out, errors io.Writer, filter string, jsonMode bool, options TableOptions) error {
 	loaded, err := loadReports(ctx, r.API, filter)
 	if err != nil {
 		return err
@@ -49,15 +54,11 @@ func (r CommandRunner) List(ctx context.Context, out io.Writer, filter string, j
 	if jsonMode {
 		return RenderJSON(out, rows)
 	}
-	RenderRows(out, rows)
-	if r.Policy == InteractivePolicy {
-		for endpointID, fetchErr := range loaded.errors {
-			if _, writeErr := fmt.Fprintf(out, "endpoint %s unavailable: %v\n", endpointID, fetchErr); writeErr != nil {
-				return writeErr
-			}
-		}
+	failures := make([]EndpointFailure, 0, len(loaded.errors))
+	for endpointID, fetchErr := range loaded.errors {
+		failures = append(failures, EndpointFailure{EndpointID: endpointID, Err: fetchErr})
 	}
-	return nil
+	return RenderTable(out, errors, rows, failures, options)
 }
 
 // Show executes the shared endpoint and session detail query.
