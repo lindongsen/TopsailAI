@@ -32,33 +32,16 @@ func writeStyled(w io.Writer, style, text string, policy ColorPolicy) error {
 
 // RenderPrompt writes a trusted, reset-safe REPL prompt.
 func RenderPrompt(w io.Writer, endpoint, session string, invalidated bool, policy ColorPolicy) error {
-	if endpoint == "" {
-		if err := writeStyled(w, ansiBoldCyan, "cluster", policy); err != nil {
-			return err
-		}
-		if err := writeStyled(w, ansiBoldGreen, ">", policy); err != nil {
-			return err
-		}
-		_, err := io.WriteString(w, " ")
-		return err
-	}
-	if err := writeStyled(w, ansiBoldCyan, "cluster", policy); err != nil {
-		return err
-	}
-	if err := writeStyled(w, func() string {
+	prompt := "cluster"
+	if endpoint != "" {
+		prompt += "[" + sanitizePromptPart(endpoint) + "/" + sanitizePromptPart(session)
 		if invalidated {
-			return ansiRed
+			prompt += "!"
 		}
-		return ansiCyan
-	}(), "["+sanitizePromptPart(endpoint)+"/"+sanitizePromptPart(session)+func() string {
-		if invalidated {
-			return "!"
-		}
-		return ""
-	}()+"]", policy); err != nil {
-		return err
+		prompt += "]"
 	}
-	if err := writeStyled(w, ansiBoldGreen, ">", policy); err != nil {
+	prompt += ">"
+	if err := writeStyled(w, ansiBoldGreen, prompt, policy); err != nil {
 		return err
 	}
 	_, err := io.WriteString(w, " ")

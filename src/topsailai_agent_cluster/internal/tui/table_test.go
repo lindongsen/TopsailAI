@@ -115,25 +115,42 @@ func TestColorPolicyMatrixAndPrompt(t *testing.T) {
 	if ResolveColorPolicy(true, false, false, false, true).Enabled == false {
 		t.Fatal("eligible tty must enable color")
 	}
-	var out strings.Builder
-	if err := RenderPrompt(&out, "endpoint", "session", false, ColorPolicy{Enabled: true}); err != nil {
-		t.Fatal(err)
+
+	tests := []struct {
+		name      string
+		endpoint  string
+		session   string
+		invalid   bool
+		plainWant string
+	}{
+		{name: "idle", plainWant: "cluster> "},
+		{name: "selected", endpoint: "endpoint", session: "session", plainWant: "cluster[endpoint/session]> "},
+		{name: "invalidated", endpoint: "endpoint", session: "session", invalid: true, plainWant: "cluster[endpoint/session!]> "},
 	}
-	got := out.String()
-	for _, token := range []string{"\x1b[1;36m", "\x1b[36m", "\x1b[1;32m", "\x1b[0m"} {
-		if !strings.Contains(got, token) {
-			t.Fatalf("prompt missing %q: %q", token, got)
-		}
-	}
-	if !strings.HasSuffix(got, "\x1b[0m ") {
-		t.Fatalf("prompt does not reset before space: %q", got)
-	}
-	out.Reset()
-	if err := RenderPrompt(&out, "endpoint", "session", true, ColorPolicy{Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "\x1b[31m") {
-		t.Fatalf("invalid prompt not red: %q", out.String())
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var colored, plain strings.Builder
+			if err := RenderPrompt(&colored, test.endpoint, test.session, test.invalid, ColorPolicy{Enabled: true}); err != nil {
+				t.Fatal(err)
+			}
+			got := colored.String()
+			want := ansiBoldGreen + test.plainWant[:len(test.plainWant)-1] + ansiReset + " "
+			if got != want {
+				t.Fatalf("colored prompt = %q, want %q", got, want)
+			}
+			if strings.Contains(got, ansiCyan) || strings.Contains(got, ansiBoldCyan) {
+				t.Fatalf("prompt contains cyan styling: %q", got)
+			}
+			if !strings.HasSuffix(got, ansiReset+" ") {
+				t.Fatalf("prompt does not reset before space: %q", got)
+			}
+			if err := RenderPrompt(&plain, test.endpoint, test.session, test.invalid, ColorPolicy{}); err != nil {
+				t.Fatal(err)
+			}
+			if plain.String() != test.plainWant {
+				t.Fatalf("plain prompt = %q, want %q", plain.String(), test.plainWant)
+			}
+		})
 	}
 }
 
