@@ -3,6 +3,7 @@ package bdd
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -20,7 +21,7 @@ func registerU21Steps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the command is rejected$`, u21AssertRejected)
 	ctx.Step(`^a running cluster with one endpoint reporting no sessions$`, u21StartEmptyEndpoint)
 	ctx.Step(`^I run the tui list command in human readable mode$`, u21RunHumanList)
-	ctx.Step(`^the output contains the endpoint id$`, u21AssertEndpointID)
+	ctx.Step(`^the output contains the endpoint hostname$`, u21AssertEndpointHostname)
 }
 
 func u21SubmitHistoryCommand() error {
@@ -144,9 +145,20 @@ func u21RunHumanList() error {
 	return nil
 }
 
-func u21AssertEndpointID() error {
-	if !strings.Contains(string(activeScenario.lastBody), "endpoint-1") {
-		return fmt.Errorf("human list output lacks endpoint id: %s", activeScenario.lastBody)
+func u21AssertEndpointHostname() error {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("read test hostname: %w", err)
+	}
+	if hostname == "" || !strings.Contains(string(activeScenario.lastBody), hostname) {
+		return fmt.Errorf("human list output lacks endpoint hostname %q: %s", hostname, activeScenario.lastBody)
+	}
+	stdout, stderr, code, runErr := activeScenario.realCluster.RunTUI("show", "endpoint-1")
+	if runErr != nil || code != 0 {
+		return fmt.Errorf("internal endpoint ID could not be routed: code=%d err=%v stderr=%s", code, runErr, stderr)
+	}
+	if !strings.Contains(stdout, "endpoint-1") {
+		return fmt.Errorf("endpoint routing output lacks internal endpoint ID: %s", stdout)
 	}
 	return nil
 }

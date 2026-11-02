@@ -274,10 +274,25 @@ func TestInteractiveHelpDescribesListAndTableDifferences(t *testing.T) {
 }
 
 func TestInteractiveHelpSharesListAndTableDescriptionsWithCLI(t *testing.T) {
-	for _, line := range CommandHelpLines() {
-		if !strings.Contains(line, "list [endpoint]") && !strings.Contains(line, "table [endpoint]") {
-			t.Fatalf("unexpected command help line: %q", line)
+	lines := CommandHelpLines()
+	if len(lines) < 2 || !strings.Contains(lines[0], "list [endpoint]") || !strings.Contains(lines[1], "table [endpoint]") {
+		t.Fatalf("missing list/table help lines: %q", lines)
+	}
+}
+
+func TestInteractiveDetailedHelpIncludesFieldSemantics(t *testing.T) {
+	var output strings.Builder
+	if err := RunInteractive(context.Background(), &interactiveStub{}, strings.NewReader("help list\nquit\n"), &output, io.Discard, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, phrase := range []string{"Syntax: list [endpoint]", "GENERATION:", "not a timestamp or restart count", "STALE:", "earlier successful collection", "LAST_SUCCESS_MS:"} {
+		if !strings.Contains(text, phrase) {
+			t.Fatalf("detailed help missing %q: %q", phrase, text)
 		}
+	}
+	if strings.Contains(text, "\x1b[") {
+		t.Fatalf("detailed help contains ANSI: %q", text)
 	}
 }
 

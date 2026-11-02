@@ -32,7 +32,7 @@ func TestReadLineBoundAndRecovery(t *testing.T) {
 	if got, want := errorsOut, "input line exceeds the maximum length\n"; got != want {
 		t.Fatalf("errors=%q want=%q", got, want)
 	}
-	if !strings.Contains(output, "commands: list") {
+	if !strings.Contains(output, "commands:\n") || !strings.Contains(output, "list [endpoint]") {
 		t.Fatalf("REPL did not continue after oversized input: %q", output)
 	}
 	if stub.admit != 0 {

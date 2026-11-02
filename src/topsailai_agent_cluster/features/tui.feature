@@ -59,9 +59,9 @@ Feature: non-interactive TUI
   Scenario: tui list shows endpoint without sessions
     Given a running cluster with one endpoint reporting no sessions
     When I run the tui list command in human readable mode
-    Then the output contains the endpoint id
+    Then the output contains the endpoint hostname
     And the output contains "no sessions"
-    And the output contains "last_success_at_ms"
+    And the output contains "LAST_SUCCESS_MS"
 
 
   Scenario: tui logs returns bounded snapshot

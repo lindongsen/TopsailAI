@@ -107,6 +107,15 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		return tui.RunInteractive(ctx, api, input, output, errors, tui.InteractiveOptions{MaxBytes: *maxBytes, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)})
 	}
 	switch flags.Arg(0) {
+	case "help":
+		if flags.NArg() > 2 {
+			return fmt.Errorf("usage: help [command]")
+		}
+		target := ""
+		if flags.NArg() == 2 {
+			target = flags.Arg(1)
+		}
+		return tui.PrintCommandHelp(output, target)
 	case "list":
 		return list(ctx, api, output, errors, *filter, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
 	case "table":
