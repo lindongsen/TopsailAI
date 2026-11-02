@@ -202,3 +202,17 @@ func TestPromptInterruptMapsToExitCode130(t *testing.T) {
 		t.Fatalf("error=%v want interactive interrupt", err)
 	}
 }
+
+func TestCLIHelpDescribesListAndTableDifferences(t *testing.T) {
+	var output, diagnostics strings.Builder
+	err := runWithIO([]string{"-h"}, strings.NewReader(""), &output, &diagnostics, false, nil)
+	if err == nil || err.Error() != "flag: help requested" {
+		t.Fatalf("help error=%v", err)
+	}
+	text := diagnostics.String()
+	for _, phrase := range []string{"list [endpoint]", "table [endpoint]", "failed to report", "omitting failed endpoints", "stderr"} {
+		if !strings.Contains(text, phrase) {
+			t.Fatalf("CLI help missing %q: %q", phrase, text)
+		}
+	}
+}

@@ -316,9 +316,29 @@ func writePrompt(out io.Writer, state interactiveState, policy ColorPolicy) erro
 	return RenderPrompt(out, state.EndpointID, state.SessionID, state.Invalidated, policy)
 }
 
+const (
+	ListHelpDescription  = "complete session table, including endpoints that failed to report"
+	TableHelpDescription = "clean session table, omitting failed endpoints; diagnostics go to stderr"
+)
+
+// CommandHelpLines returns the shared command descriptions used by CLI and REPL help.
+func CommandHelpLines() []string {
+	return []string{
+		"list [endpoint]   " + ListHelpDescription,
+		"table [endpoint]  " + TableHelpDescription,
+	}
+}
+
 func printHelp(out io.Writer) error {
-	_, err := fmt.Fprintln(out, "commands: list [endpoint], table [endpoint], use <endpoint> <session>, show, logs, send <json>, status, refresh, help, quit")
-	return err
+	if _, err := fmt.Fprintln(out, "commands: list [endpoint], table [endpoint], use <endpoint> <session>, show, logs, send <json>, status, refresh, help, quit"); err != nil {
+		return err
+	}
+	for _, line := range CommandHelpLines() {
+		if _, err := fmt.Fprintln(out, line); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func commandContext(parent context.Context) (context.Context, context.CancelFunc) {

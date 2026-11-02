@@ -66,6 +66,16 @@ func runWithSignals(args []string, input io.Reader, output, errorOutput io.Write
 func runWithIO(args []string, input io.Reader, output, errors io.Writer, terminal bool, interrupts <-chan os.Signal) error {
 	flags := flag.NewFlagSet("agent-cluster-cli", flag.ContinueOnError)
 	flags.SetOutput(errors)
+	flags.Usage = func() {
+		fmt.Fprintln(errors, "Usage: agent-cluster-cli [options] <command>")
+		fmt.Fprintln(errors, "Commands:")
+		for _, line := range tui.CommandHelpLines() {
+			fmt.Fprintln(errors, "  "+line)
+		}
+		fmt.Fprintln(errors, "  interactive        start the interactive REPL")
+		fmt.Fprintln(errors, "Options:")
+		flags.PrintDefaults()
+	}
 	jsonMode := flags.Bool("json", false, "write structured JSON")
 	filter := flags.String("endpoint", "", "filter by endpoint ID")
 	confirmed := flags.Bool("yes", false, "confirm a mutating action")

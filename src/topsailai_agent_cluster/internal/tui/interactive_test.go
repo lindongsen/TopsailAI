@@ -258,3 +258,25 @@ func TestInvalidatedSelectionRejectsTargetOperationsWithoutAdmission(t *testing.
 		t.Fatalf("unexpected invalidation errors: %q", errorsOut.String())
 	}
 }
+
+func TestInteractiveHelpDescribesListAndTableDifferences(t *testing.T) {
+	stub := &interactiveStub{}
+	var output, errorsOut strings.Builder
+	if err := RunInteractive(context.Background(), stub, strings.NewReader("help\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, phrase := range []string{"list [endpoint]", "table [endpoint]", "failed to report", "omitting failed endpoints", "stderr"} {
+		if !strings.Contains(text, phrase) {
+			t.Fatalf("REPL help missing %q: %q", phrase, text)
+		}
+	}
+}
+
+func TestInteractiveHelpSharesListAndTableDescriptionsWithCLI(t *testing.T) {
+	for _, line := range CommandHelpLines() {
+		if !strings.Contains(line, "list [endpoint]") && !strings.Contains(line, "table [endpoint]") {
+			t.Fatalf("unexpected command help line: %q", line)
+		}
+	}
+}
