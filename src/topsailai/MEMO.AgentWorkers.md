@@ -29,9 +29,15 @@ if not env_tool.is_debug_mode() or not env_tool.is_interactive_mode():
 if env_tool.is_interactive_mode() or env_tool.is_debug_mode():
     print()
     print(SPLIT_LINE)
+    print(f" {self.agent_name} Turn Summary ".center(len(SPLIT_LINE)))
+    print(SPLIT_LINE)
     print(f"[{self.agent_name}] have scheduled tasks [{curr_count}] times")
     ...
 ```
+
+The per-turn summary starts with a centered title header between two separator
+lines, and its field rows include `model_name` resolved from the active
+`ai_agent.llm_model.model_name` (empty when unavailable).
 
 ### Note for maintainers
 When adding console output to workspace/agent code, always gate it behind `env_tool.is_interactive_mode() or env_tool.is_debug_mode()`. Prefer the project's logger (`from topsailai.logger import logger` or `logging.getLogger(__name__)`) for diagnostics that should be emitted regardless of mode.

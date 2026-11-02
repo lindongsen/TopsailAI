@@ -983,6 +983,92 @@ class TestCacheHitRate(unittest.TestCase):
         printed = "\n".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
         self.assertIn("cache_hit_rate      : N/A", printed)
 
+
+class TestTurnSummaryHeader(unittest.TestCase):
+    """Test cases for the per-turn summary title header and model name row."""
+
+    def _make_agent_chat(self, mock_env_tool, mock_lock_tool, mock_get_hooks):
+        from topsailai.workspace.agent.agent_shell_base import AgentChat
+
+        mock_get_hooks.return_value = []
+        mock_env_tool.EnvReaderInstance.get.return_value = None
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = lambda key, default: {
+            "TOPSAILAI_INTERACTIVE_MODE": False,
+            "TOPSAILAI_NEED_SYMBOL_FOR_ANSWER": False,
+            "TOPSAILAI_ENABLE_SESSION_LOCK": False,
+        }.get(key, default)
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_env_tool.is_debug_mode.return_value = False
+        mock_env_tool.is_need_print.return_value = True
+
+        mock_lock_tool.ctxm_void.return_value.__enter__ = MagicMock(return_value={})
+        mock_lock_tool.ctxm_void.return_value.__exit__ = MagicMock(return_value=False)
+
+        ctx_rt_aiagent = MagicMock()
+        ctx_rt_aiagent.ai_agent = MagicMock()
+        ctx_rt_aiagent.ai_agent.agent_name = "TopsailAI"
+        ctx_rt_aiagent.ai_agent.llm_model.model_name = "Kimi-K2.5"
+        ctx_rt_aiagent.ctx_runtime_data = MagicMock()
+        ctx_rt_aiagent.ctx_runtime_data.session_id = "session-001"
+
+        return AgentChat(
+            hook_instruction=MagicMock(),
+            ctx_rt_aiagent=ctx_rt_aiagent,
+            ctx_rt_instruction=MagicMock(),
+        )
+
+    @patch("topsailai.workspace.agent.agent_shell_base.input_message")
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
+    @patch("topsailai.workspace.agent.agent_shell_base._get_session_token_totals")
+    @patch("builtins.print")
+    def test_turn_summary_prints_header_and_model_name(
+        self, mock_print, mock_get_totals, mock_get_agent_step_call,
+        mock_task_tool, mock_lock_tool, mock_env_tool, mock_set_ai_agent,
+        mock_get_hooks, mock_input_message
+    ):
+        """The turn summary prints a centered title header and the model name."""
+        from topsailai.workspace.input_tool import SPLIT_LINE
+
+        mock_get_totals.return_value = (1000, 250)
+        mock_input_message.return_value = "continue"
+
+        agent_chat = self._make_agent_chat(mock_env_tool, mock_lock_tool, mock_get_hooks)
+        agent_chat.ai_agent.run.return_value = "Response"
+
+        agent_chat.run(message="Hello", times=2)
+
+        printed = [str(call.args[0]) for call in mock_print.call_args_list if call.args]
+        header = " TopsailAI Turn Summary ".center(len(SPLIT_LINE))
+        self.assertIn(header, printed)
+        self.assertIn("model_name          : Kimi-K2.5", printed)
+        # The header sits between two separator lines, above the field rows.
+        header_index = printed.index(header)
+        self.assertEqual(printed[header_index - 1], SPLIT_LINE)
+        self.assertEqual(printed[header_index + 1], SPLIT_LINE)
+        self.assertLess(header_index, printed.index("model_name          : Kimi-K2.5"))
+
+    def test_get_agent_model_name_without_llm_model(self):
+        """The model name resolver returns an empty string without an LLM model."""
+        from topsailai.workspace.agent.agent_shell_base import _get_agent_model_name
+
+        self.assertEqual(_get_agent_model_name(MagicMock(llm_model=None)), "")
+        self.assertEqual(_get_agent_model_name(object()), "")
+
+    def test_get_agent_model_name_reads_llm_model(self):
+        """The model name resolver reads the active LLM model name."""
+        from topsailai.workspace.agent.agent_shell_base import _get_agent_model_name
+
+        ai_agent = MagicMock()
+        ai_agent.llm_model.model_name = "DeepSeek-V3.2"
+
+        self.assertEqual(_get_agent_model_name(ai_agent), "DeepSeek-V3.2")
+
+
 class TestAgentChatControlServer(unittest.TestCase):
     """Test control channel server startup from AgentChat."""
 

@@ -104,6 +104,22 @@ def _get_session_token_totals(session_id: str, ai_agent) -> tuple[int, int]:
     return 0, 0
 
 
+def _get_agent_model_name(ai_agent) -> str:
+    """
+    Resolve the model name currently used by the agent for the turn summary.
+
+    Args:
+        ai_agent: The AI agent instance whose LLM model name should be read.
+
+    Returns:
+        str: The model name, or an empty string when it is unavailable.
+    """
+    llm_model = getattr(ai_agent, "llm_model", None)
+    if llm_model is None:
+        return ""
+    return getattr(llm_model, "model_name", "") or ""
+
+
 # Warning appended to the final answer when a task completes with tool-stat
 # enabled but zero recorded tool calls. This is a strong, obvious system alert
 # so that users and callers notice potential lazy execution.
@@ -606,12 +622,16 @@ class AgentChat(AgentChatBase):
                     session_data = self.ctx_runtime_data.session_data
                     if session_data is not None:
                         session_name = session_data.session_name or ""
+                    model_name = _get_agent_model_name(self.ai_agent)
 
                     print()
+                    print(SPLIT_LINE)
+                    print(f" {self.agent_name} Turn Summary ".center(len(SPLIT_LINE)))
                     print(SPLIT_LINE)
                     print(f"[{self.agent_name}] have scheduled tasks [{curr_count}] times")
                     print(f"session_id          : {session_id}")
                     print(f"session_name        : {session_name}")
+                    print(f"model_name          : {model_name}")
                     print(f"project_workspace   : {os.environ.get('TOPSAILAI_PROJECT_WORKSPACE', '')}")
                     print(f"pwd                 : {os.environ.get('TOPSAILAI_PWD', '')}")
                     print(f"start_time          : {time_tool.parse_time_seconds(start_time)}")
