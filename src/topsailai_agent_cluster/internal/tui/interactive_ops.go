@@ -11,24 +11,37 @@ import (
 	"topsailai_agent_cluster/internal/protocol"
 )
 
+// interactiveLogs resolves the session inside the current endpoint scope.
 func interactiveLogs(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, maxBytes int, out io.Writer) error {
-	if err := state.requireUsable(); err != nil {
-		return err
+	if state.Invalidated {
+		return state.requireUsable()
 	}
-	endpointID, resourceID := state.EndpointID, state.SessionID
-	if rest != "" {
-		args := strings.Fields(rest)
-		if len(args) != 2 {
-			return fmt.Errorf("usage: logs [endpoint] [session]")
+	endpointID := state.Scope.EndpointID
+	resourceID := state.Scope.SessionID
+	if target := strings.TrimSpace(rest); target != "" {
+		args := strings.Fields(target)
+		if len(args) != 1 {
+			return fmt.Errorf("usage: logs [session]")
 		}
-		endpointID, resourceID = args[0], args[1]
+		resourceID = args[0]
 	}
-	if endpointID == "" || resourceID == "" {
+	if endpointID == "" {
+		return fmt.Errorf("no endpoint selected; use cd <hostname>/<endpoint-id>")
+	}
+	if resourceID == "" {
 		return fmt.Errorf("no session selected; use cd <hostname>/<endpoint-id>/<session>")
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, out, endpointID, resourceID, maxBytes, false)
+	loaded, err := loadReports(ctx, api, endpointID)
+	if err != nil {
+		return err
+	}
+	_, _, session, err := findSessionInEndpoint(loaded, endpointID, resourceID)
+	if err != nil {
+		return err
+	}
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, out, endpointID, session.SessionID, maxBytes, false)
 }
 
 func interactiveValue(values map[string]any, key string) string {
@@ -36,25 +49,29 @@ func interactiveValue(values map[string]any, key string) string {
 	return value
 }
 
+// interactiveStatus answers an explicit command ID in any scope.
 func interactiveStatus(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, out io.Writer) error {
-	if state.Invalidated {
-		return fmt.Errorf("selected session invalidated; use the session again")
-	}
 	commandID := strings.TrimSpace(rest)
 	if commandID == "" {
 		commandID = state.commandID
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	if commandID == "" {
-		_, _, session, err := findSelected(ctx, api, state)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(out, session.State)
+	if commandID != "" {
+		return (CommandRunner{API: api, Policy: InteractivePolicy}).Status(ctx, out, commandID, false)
+	}
+	if state.Scope.Kind != ScopeSession {
+		return fmt.Errorf("status requires a command ID in %s scope; use status <command-id>", state.Scope.Kind)
+	}
+	if state.Invalidated {
+		return fmt.Errorf("selected session invalidated; use the session again")
+	}
+	_, _, session, err := findSelected(ctx, api, state)
+	if err != nil {
 		return err
 	}
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).Status(ctx, out, commandID, false)
+	_, err = fmt.Fprintln(out, session.State)
+	return err
 }
 
 func interactiveSend(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lineSource <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {

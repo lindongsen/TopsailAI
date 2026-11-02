@@ -34,8 +34,8 @@ var fieldHelp = []string{
 var commandHelpCatalog = map[string]commandHelp{
 	"list":    {"list [endpoint] [--clean]", ListHelpDescription, []string{"endpoint: optional endpoint ID filter", "--clean: omit endpoints that failed to report; diagnostics still go to stderr"}, []string{"list", "list endpoint-1", "list --clean"}},
 	"cd":      {"cd [target]", "navigate between workspace, endpoint, and session scopes; bare cd returns to workspace", []string{"target: hostname, hostname/endpoint-id, session, hostname/endpoint-id/session, .., or /"}, []string{"cd", "cd ai-dev", "cd ai-dev/endpoint-1", "cd .."}},
-	"show":    {"show <endpoint-or-session>", "show detailed information for an endpoint or session", []string{"endpoint-or-session: endpoint ID or session/resource ID"}, []string{"show endpoint-1"}},
-	"logs":    {"logs <endpoint> <session>", "show bounded output for a session", []string{"endpoint: endpoint ID", "session: session/resource ID"}, []string{"logs endpoint-1 res_abc"}},
+	"show":    {"show [endpoint-or-session]", "show detailed information for an endpoint or session; defaults to the current scope target", []string{"endpoint-or-session: optional endpoint ID or session/resource ID"}, []string{"show", "show endpoint-1"}},
+	"logs":    {"logs [session]", "show bounded output for a session in the current endpoint", []string{"session: optional session/resource ID; defaults to the current session"}, []string{"logs", "logs res_abc"}},
 	"send":    {"send <json>", "send a JSON message to the selected session", []string{"json: message payload"}, []string{`send {"text":"hello"}`}},
 	"status":  {"status <command-id>", "show the durable result of a command", []string{"command-id: submitted command identifier"}, []string{"status cmd_123"}},
 	"refresh": {"refresh", "refresh endpoint inventories and the interactive session table", nil, []string{"refresh"}},

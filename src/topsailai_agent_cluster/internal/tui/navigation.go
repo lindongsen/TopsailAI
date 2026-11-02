@@ -285,3 +285,30 @@ func endpointReport(loaded reportLoad, endpointID string) (protocol.Endpoint, pr
 	}
 	return endpoint, report, true
 }
+
+// findSessionInEndpoint resolves a session inside one endpoint without changing scope.
+func findSessionInEndpoint(loaded reportLoad, endpointID, target string) (protocol.Endpoint, protocol.InventoryReport, protocol.Session, error) {
+	endpoint, report, ok := endpointReport(loaded, endpointID)
+	if !ok || !report.ReportComplete {
+		return protocol.Endpoint{}, protocol.InventoryReport{}, protocol.Session{}, fmt.Errorf("endpoint %q inventory is unavailable", endpointID)
+	}
+	for _, session := range report.Sessions {
+		if session.SessionID == target {
+			return endpoint, report, session, nil
+		}
+	}
+	byName := make([]protocol.Session, 0, 1)
+	for _, session := range report.Sessions {
+		if session.DisplayName != "" && session.DisplayName == target {
+			byName = append(byName, session)
+		}
+	}
+	switch len(byName) {
+	case 1:
+		return endpoint, report, byName[0], nil
+	case 0:
+		return protocol.Endpoint{}, protocol.InventoryReport{}, protocol.Session{}, fmt.Errorf("session %q was not found on endpoint %q", target, endpointID)
+	default:
+		return protocol.Endpoint{}, protocol.InventoryReport{}, protocol.Session{}, fmt.Errorf("multiple sessions match %q on endpoint %q; use the session ID", target, endpointID)
+	}
+}

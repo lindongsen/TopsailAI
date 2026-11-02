@@ -252,6 +252,10 @@ var ErrInteractiveInterrupt = fmt.Errorf("interactive interrupted")
 
 func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *interactiveState, line string, lineResults <-chan lineReadResult, out, trustedOut, errOut io.Writer, options InteractiveOptions) (bool, error) {
 	name, rest := splitCommand(line)
+	// Scope availability is enforced once, before any command-specific parsing.
+	if err := requireCommandScope(name, state.Scope.Kind); err != nil {
+		return false, err
+	}
 	switch name {
 	case "help", "?":
 		return false, printHelp(out, strings.TrimSpace(rest))
@@ -352,9 +356,13 @@ func loadReports(ctx context.Context, api InteractiveAPI, endpointFilter string)
 }
 
 func interactiveList(parent context.Context, api InteractiveAPI, state *interactiveState, filter string, clean bool, out, errors io.Writer, color ColorPolicy) error {
+	scoped, err := scopedListFilter(state, filter)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, filter, false, TableOptions{Color: color, Clean: clean, OnRows: func(rows []SessionRow) { state.setRows(rows) }})
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, scoped, false, TableOptions{Color: color, Clean: clean, OnRows: func(rows []SessionRow) { state.setRows(rows) }})
 }
 
 func parseListArguments(rest string) (string, bool, error) {
@@ -439,8 +447,10 @@ func validateAdapterFreshness(report protocol.InventoryReport, adapterID string)
 	return nil
 }
 
+// interactiveRefresh narrows the refresh range to the current scope.
 func interactiveRefresh(parent context.Context, api InteractiveAPI, state *interactiveState, out, errors io.Writer, color ColorPolicy) error {
-	if state.EndpointID == "" {
+	if state.Scope.Kind != ScopeSession {
+		// Workspace refreshes everything; endpoint scope is narrowed by scopedListFilter.
 		return interactiveList(parent, api, state, "", false, out, errors, color)
 	}
 	ctx, cancel := commandContext(parent)
@@ -449,10 +459,11 @@ func interactiveRefresh(parent context.Context, api InteractiveAPI, state *inter
 	if err != nil {
 		return err
 	}
-	_ = session
-	return nil
+	_, err = fmt.Fprintln(out, "session refreshed:", session.SessionID)
+	return err
 }
 
+// interactiveShow renders the current scope target or an explicit target.
 func interactiveShow(parent context.Context, api InteractiveAPI, state *interactiveState, id string, out io.Writer) error {
 	if state.Invalidated {
 		return state.requireUsable()
@@ -460,14 +471,18 @@ func interactiveShow(parent context.Context, api InteractiveAPI, state *interact
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	if id == "" {
-		if err := state.requireUsable(); err != nil {
-			return err
+		switch state.Scope.Kind {
+		case ScopeWorkspace:
+			return fmt.Errorf("show requires an endpoint or session in workspace scope; use show <endpoint-or-session>")
+		case ScopeEndpoint:
+			id = state.Scope.EndpointID
+		default:
+			_, _, session, err := findSelected(ctx, api, state)
+			if err != nil {
+				return err
+			}
+			id = session.SessionID
 		}
-		_, _, session, err := findSelected(ctx, api, state)
-		if err != nil {
-			return err
-		}
-		id = session.SessionID
 	}
 	return (CommandRunner{API: api, Policy: InteractivePolicy}).Show(ctx, out, id, false)
 }
