@@ -58,7 +58,7 @@ func TestCommandRunnerListUsesSharedQueryAndLegacyBytes(t *testing.T) {
 	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).List(context.Background(), &out, "", false); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := out.String(), "ENDPOINT  ADAPTER  SESSION  GENERATION  STATE        STALE  UNKNOWN  COLLECTION  LAST_SUCCESS_MS\nep                                      no sessions  false  false    succeeded             never\n"; got != want {
+	if got, want := out.String(), "NO  ENDPOINT  ADAPTER  SESSION  GENERATION  STATE        STALE  UNKNOWN  COLLECTION  LAST_SUCCESS_MS\n1   ep                                      no sessions  false  false    succeeded             never\n"; got != want {
 		t.Fatalf("output=%q want=%q", got, want)
 	}
 	if got, want := strings.Join(api.calls, ","), "list,inventory:ep"; got != want {

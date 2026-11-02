@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -260,9 +261,9 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		}
 		return true, nil
 	case "list":
-		return false, interactiveList(ctx, api, strings.TrimSpace(rest), out, errOut, options.Color)
+		return false, interactiveList(ctx, api, state, strings.TrimSpace(rest), out, errOut, options.Color)
 	case "table":
-		return false, interactiveTable(ctx, api, strings.TrimSpace(rest), trustedOut, errOut, options.Color)
+		return false, interactiveTable(ctx, api, state, strings.TrimSpace(rest), trustedOut, errOut, options.Color)
 	case "use":
 		return false, interactiveUse(ctx, api, state, rest)
 	case "show":
@@ -330,7 +331,7 @@ func CommandHelpLines() []string {
 }
 
 func printHelp(out io.Writer) error {
-	if _, err := fmt.Fprintln(out, "commands: list [endpoint], table [endpoint], use <endpoint> <session>, show, logs, send <json>, status, refresh, help, quit"); err != nil {
+	if _, err := fmt.Fprintln(out, "commands: list [endpoint], table [endpoint], use <number> | use <endpoint> <session>, show, logs, send <json>, status, refresh, help, quit"); err != nil {
 		return err
 	}
 	for _, line := range CommandHelpLines() {
@@ -365,16 +366,16 @@ func loadReports(ctx context.Context, api InteractiveAPI, endpointFilter string)
 	return loaded, nil
 }
 
-func interactiveTable(parent context.Context, api InteractiveAPI, filter string, out, errors io.Writer, color ColorPolicy) error {
+func interactiveTable(parent context.Context, api InteractiveAPI, state *interactiveState, filter string, out, errors io.Writer, color ColorPolicy) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).Table(ctx, out, errors, filter, false, TableOptions{Color: color})
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).Table(ctx, out, errors, filter, false, TableOptions{Color: color, OnRows: func(rows []SessionRow) { state.setRows(rows) }})
 }
 
-func interactiveList(parent context.Context, api InteractiveAPI, filter string, out, errors io.Writer, color ColorPolicy) error {
+func interactiveList(parent context.Context, api InteractiveAPI, state *interactiveState, filter string, out, errors io.Writer, color ColorPolicy) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, filter, false, TableOptions{Color: color})
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, filter, false, TableOptions{Color: color, OnRows: func(rows []SessionRow) { state.setRows(rows) }})
 }
 
 func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveState) (protocol.Endpoint, protocol.InventoryReport, *protocol.Session, error) {
@@ -420,8 +421,19 @@ func interactiveUse(parent context.Context, api InteractiveAPI, state *interacti
 		*state = interactiveState{}
 		return nil
 	}
+	if len(args) == 1 {
+		index, parseErr := strconv.Atoi(args[0])
+		if parseErr != nil || index < 1 {
+			return fmt.Errorf("usage: use <number> or use <endpoint> <session>")
+		}
+		row, ok := state.Rows[index]
+		if !ok || row.SessionID == "" || row.Generation == "" {
+			return fmt.Errorf("row %d is not a selectable session", index)
+		}
+		return selectInteractiveSession(parent, api, state, row.EndpointID, row.SessionID, row.Generation)
+	}
 	if len(args) != 2 {
-		return fmt.Errorf("usage: use <endpoint> <session>")
+		return fmt.Errorf("usage: use <number> or use <endpoint> <session>")
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
@@ -451,6 +463,36 @@ func interactiveUse(parent context.Context, api InteractiveAPI, state *interacti
 	return fmt.Errorf("session %q was not found on endpoint %q", args[1], args[0])
 }
 
+func selectInteractiveSession(parent context.Context, api InteractiveAPI, state *interactiveState, endpointID, sessionID, expectedGeneration string) error {
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	loaded, err := loadReports(ctx, api, endpointID)
+	if err != nil {
+		return err
+	}
+	report, ok := loaded.reports[endpointID]
+	if !ok || !report.ReportComplete {
+		return fmt.Errorf("endpoint %q inventory is unavailable", endpointID)
+	}
+	for _, session := range report.Sessions {
+		if session.SessionID != sessionID || session.Generation == "" {
+			continue
+		}
+		if session.Generation != expectedGeneration {
+			return fmt.Errorf("row %d session generation changed; refresh and use the row again", rowNumber(state, endpointID, sessionID))
+		}
+		if err := validateSessionFreshness(report, session); err != nil {
+			return err
+		}
+		if err := validateAdapterFreshness(report, session.AdapterID); err != nil {
+			return err
+		}
+		state.reset(endpointID, sessionID, session.Generation)
+		return nil
+	}
+	return fmt.Errorf("session %q was not found on endpoint %q", sessionID, endpointID)
+}
+
 func validateSessionFreshness(report protocol.InventoryReport, session protocol.Session) error {
 	collectionStatus := session.CollectionStatus
 	if collectionStatus == "" {
@@ -478,7 +520,7 @@ func validateAdapterFreshness(report protocol.InventoryReport, adapterID string)
 
 func interactiveRefresh(parent context.Context, api InteractiveAPI, state *interactiveState, out, errors io.Writer, color ColorPolicy) error {
 	if state.EndpointID == "" {
-		return interactiveList(parent, api, "", out, errors, color)
+		return interactiveList(parent, api, state, "", out, errors, color)
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()

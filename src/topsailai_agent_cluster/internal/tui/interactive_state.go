@@ -9,6 +9,7 @@ type interactiveSelection struct {
 	Generation    string
 	Invalidated   bool
 	InvalidReason string
+	Rows          map[int]SessionRow
 }
 
 // invalidate marks a selection permanently unusable until use selects it again.
@@ -38,4 +39,20 @@ func (s interactiveSelection) requireUsable() error {
 		return fmt.Errorf("selected session invalidated; use the session again")
 	}
 	return nil
+}
+
+func (s *interactiveState) setRows(rows []SessionRow) {
+	s.Rows = make(map[int]SessionRow, len(rows))
+	for _, row := range rows {
+		s.Rows[row.No] = row
+	}
+}
+
+func rowNumber(state *interactiveState, endpointID, sessionID string) int {
+	for number, row := range state.Rows {
+		if row.EndpointID == endpointID && row.SessionID == sessionID {
+			return number
+		}
+	}
+	return 0
 }

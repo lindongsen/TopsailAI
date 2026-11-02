@@ -9,8 +9,11 @@ import (
 
 // SessionRow is the stable list representation rendered by the TUI.
 type SessionRow struct {
+	No               int    `json:"-"`
 	EndpointID       string `json:"endpoint_id"`
 	AdapterID        string `json:"adapter_id"`
+	EndpointLabel    string `json:"-"`
+	AdapterLabel     string `json:"-"`
 	SessionID        string `json:"session_id"`
 	Generation       string `json:"generation"`
 	State            string `json:"state"`
@@ -29,7 +32,7 @@ func ListRows(endpoints []protocol.Endpoint, reports map[string]protocol.Invento
 		}
 		report, ok := reports[endpoint.EndpointID]
 		if !ok {
-			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, State: "no sessions", CollectionStatus: "unknown"})
+			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), State: "no sessions", CollectionStatus: "unknown"})
 			continue
 		}
 		freshness := make(map[string]protocol.AdapterSummary, len(report.Adapters))
@@ -38,11 +41,11 @@ func ListRows(endpoints []protocol.Endpoint, reports map[string]protocol.Invento
 		}
 		if len(report.Sessions) == 0 {
 			lastSuccess := endpointLastSuccess(report)
-			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, State: "no sessions", CollectionStatus: report.CollectionStatus, LastSuccessAtMS: lastSuccess})
+			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), State: "no sessions", CollectionStatus: report.CollectionStatus, LastSuccessAtMS: lastSuccess})
 		}
 		for _, session := range report.Sessions {
 			adapter := freshness[session.AdapterID]
-			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, AdapterID: session.AdapterID, SessionID: session.SessionID, Generation: session.Generation, State: session.State, Stale: adapter.Stale, Unknown: !adapter.DataKnown, LastSuccessAtMS: adapter.LastSuccessAtMS, CollectionStatus: adapter.CollectionStatus})
+			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), AdapterID: session.AdapterID, AdapterLabel: adapterLabel(adapter), SessionID: session.SessionID, Generation: session.Generation, State: session.State, Stale: adapter.Stale, Unknown: !adapter.DataKnown, LastSuccessAtMS: adapter.LastSuccessAtMS, CollectionStatus: adapter.CollectionStatus})
 		}
 	}
 	return rows
@@ -112,4 +115,18 @@ func endpointLastSuccess(report protocol.InventoryReport) *int64 {
 		}
 	}
 	return latest
+}
+
+func endpointLabel(endpoint protocol.Endpoint) string {
+	if endpoint.DisplayName != "" {
+		return endpoint.DisplayName
+	}
+	return endpoint.EndpointID
+}
+
+func adapterLabel(adapter protocol.AdapterSummary) string {
+	if adapter.ProviderType != "" {
+		return adapter.ProviderType
+	}
+	return adapter.AdapterID
 }

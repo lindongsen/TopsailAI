@@ -17,10 +17,13 @@ type EndpointFailure struct {
 }
 
 // TableOptions controls table presentation without changing query semantics.
-type TableOptions struct{ Color ColorPolicy }
+type TableOptions struct {
+	Color  ColorPolicy
+	OnRows func([]SessionRow)
+}
 
-var tableHeaders = []string{"ENDPOINT", "ADAPTER", "SESSION", "GENERATION", "STATE", "STALE", "UNKNOWN", "COLLECTION", "LAST_SUCCESS_MS"}
-var tableCaps = []int{20, 18, 36, 20, 12, 5, 7, 16, 15}
+var tableHeaders = []string{"NO", "ENDPOINT", "ADAPTER", "SESSION", "GENERATION", "STATE", "STALE", "UNKNOWN", "COLLECTION", "LAST_SUCCESS_MS"}
+var tableCaps = []int{4, 20, 18, 36, 20, 12, 5, 7, 16, 15}
 
 // Table queries and renders the session table, preserving successful rows on partial failure.
 func (r CommandRunner) Table(ctx context.Context, out, errors io.Writer, filter string, jsonMode bool, options TableOptions) error {
@@ -41,6 +44,10 @@ func (r CommandRunner) Table(ctx context.Context, out, errors io.Writer, filter 
 		}
 		rows = filtered
 	}
+	assignRowNumbers(rows)
+	if options.OnRows != nil {
+		options.OnRows(append([]SessionRow(nil), rows...))
+	}
 	failures := make([]EndpointFailure, 0, len(loaded.errors))
 	for id, fetchErr := range loaded.errors {
 		failures = append(failures, EndpointFailure{EndpointID: id, Err: fetchErr})
@@ -50,6 +57,7 @@ func (r CommandRunner) Table(ctx context.Context, out, errors io.Writer, filter 
 
 // RenderTable writes a bounded ASCII table and sorted endpoint diagnostics.
 func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFailure, options TableOptions) error {
+	assignRowNumbers(rows)
 	widths := append([]int(nil), tableCaps...)
 	for i, header := range tableHeaders {
 		widths[i] = len(header)
@@ -71,7 +79,7 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 				}
 			}
 			cell := clipCell(value, widths[i])
-			if i == 8 {
+			if i == 9 {
 				cell = strings.Repeat(" ", widths[i]-displayWidth(cell)) + cell
 			} else {
 				cell += strings.Repeat(" ", widths[i]-displayWidth(cell))
@@ -119,7 +127,15 @@ func tableCells(row SessionRow) []string {
 	if row.LastSuccessAtMS != nil {
 		last = strconv.FormatInt(*row.LastSuccessAtMS, 10)
 	}
-	return []string{escapeCell(row.EndpointID), escapeCell(row.AdapterID), escapeCell(row.SessionID), escapeCell(row.Generation), escapeCell(row.State), strconv.FormatBool(row.Stale), strconv.FormatBool(row.Unknown), escapeCell(row.CollectionStatus), last}
+	endpoint := row.EndpointLabel
+	if endpoint == "" {
+		endpoint = row.EndpointID
+	}
+	adapter := row.AdapterLabel
+	if adapter == "" {
+		adapter = row.AdapterID
+	}
+	return []string{strconv.Itoa(row.No), escapeCell(endpoint), escapeCell(adapter), escapeCell(row.SessionID), escapeCell(row.Generation), escapeCell(row.State), strconv.FormatBool(row.Stale), strconv.FormatBool(row.Unknown), escapeCell(row.CollectionStatus), last}
 }
 func escapeCell(value string) string {
 	var b strings.Builder
@@ -195,4 +211,10 @@ func writeCellState(w io.Writer, cell string, index int, state string, policy Co
 	}
 	_, err := io.WriteString(w, cell)
 	return err
+}
+
+func assignRowNumbers(rows []SessionRow) {
+	for index := range rows {
+		rows[index].No = index + 1
+	}
 }

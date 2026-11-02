@@ -15,7 +15,7 @@ func TestTableColumnsWidthsAndEmptyResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	if !strings.HasPrefix(lines[0], "ENDPOINT") || !strings.Contains(lines[0], "  ADAPTER") || !strings.Contains(lines[0], "  SESSION") || !strings.HasSuffix(lines[0], "LAST_SUCCESS_MS") {
+	if !strings.HasPrefix(lines[0], "NO") || !strings.Contains(lines[0], "  ADAPTER") || !strings.Contains(lines[0], "  SESSION") || !strings.HasSuffix(lines[0], "LAST_SUCCESS_MS") {
 		t.Fatalf("header=%q", lines[0])
 	}
 	if len(lines[1]) > 165 || !strings.Contains(lines[1], "...") {

@@ -280,3 +280,42 @@ func TestInteractiveHelpSharesListAndTableDescriptionsWithCLI(t *testing.T) {
 		}
 	}
 }
+
+func TestInteractiveUseByRowNumberBindsLatestListSnapshot(t *testing.T) {
+	stub := &interactiveStub{
+		endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1", DisplayName: "host-a"}},
+		reports: map[string]protocol.InventoryReport{"endpoint-1": {
+			ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded,
+			Adapters: []protocol.AdapterSummary{{AdapterID: "topsailai-main", ProviderType: "topsailai", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
+			Sessions: []protocol.Session{{SessionID: "res-1", AdapterID: "topsailai-main", Generation: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded}},
+		}},
+	}
+	var output, errorsOut strings.Builder
+	input := "list\nuse 1\nstatus\nquit\n"
+	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "NO") || !strings.Contains(output.String(), "host-a") || !strings.Contains(output.String(), "topsailai") {
+		t.Fatalf("missing readable row presentation: %q", output.String())
+	}
+	if !strings.Contains(output.String(), "cluster[endpoint-1/res-1]>") {
+		t.Fatalf("row selection did not bind session: %q errors=%q", output.String(), errorsOut.String())
+	}
+}
+
+func TestInteractiveUseByRowNumberRejectsInvalidRows(t *testing.T) {
+	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+	var output, errorsOut strings.Builder
+	if err := RunInteractive(context.Background(), stub, strings.NewReader("list\nuse 0\nuse 999\nuse nope\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	text := errorsOut.String()
+	for _, want := range []string{"usage: use <number> or use <endpoint> <session>", "row 999 is not a selectable session"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing invalid-row error %q: %q", want, text)
+		}
+	}
+	if strings.Contains(output.String(), "cluster[endpoint-1/session-1]>") {
+		t.Fatalf("invalid row selected a session: %q", output.String())
+	}
+}
