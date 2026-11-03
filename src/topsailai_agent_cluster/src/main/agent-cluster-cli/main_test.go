@@ -84,7 +84,7 @@ func TestLegacyAndInteractiveShowUseSharedRunnerMethods(t *testing.T) {
 func TestLegacyActionAndInteractiveSendShareIntentFields(t *testing.T) {
 	legacy := &actionPathStub{}
 	var legacyOut strings.Builder
-	if err := action(context.Background(), legacy, &legacyOut, []string{"send", "ep", "session", `{"text":"hi"}`, "gen"}, true, false, 100, "", ""); err != nil {
+	if err := action(context.Background(), legacy, &legacyOut, []string{"send", "ep", "session", `{"text":"hi"}`, "gen"}, true, false, 100, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	interactive := &actionPathStub{}

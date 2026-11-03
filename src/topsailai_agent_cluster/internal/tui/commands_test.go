@@ -33,7 +33,7 @@ func (s *runnerStubAPI) GetInventory(_ context.Context, id string) (protocol.Inv
 }
 func (s *runnerStubAPI) GetCapabilities(context.Context, string) (protocol.CapabilityDescriptor, error) {
 	s.calls = append(s.calls, "capabilities")
-	return protocol.CapabilityDescriptor{Revision: "rev-1", Capabilities: []protocol.Capability{{Name: protocol.OperationMessageSend}}}, nil
+	return protocol.CapabilityDescriptor{Revision: "rev-1", Capabilities: []protocol.Capability{{Name: protocol.OperationMessageSend}, {Name: protocol.OperationAgentStart}}}, nil
 }
 func (s *runnerStubAPI) GetCommand(_ context.Context, id string) (map[string]any, error) {
 	s.calls = append(s.calls, "command:"+id)
@@ -281,5 +281,46 @@ func TestCommandRunnerShowAndLogs(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "log") {
 		t.Fatalf("logs=%q", out.String())
+	}
+}
+
+func TestPrepareActionCarriesOptionalFolder(t *testing.T) {
+	api := &runnerStubAPI{}
+	runner := CommandRunner{API: api, Now: func() time.Time { return time.Unix(100, 0) }, NewID: func() string { return "start-1" }}
+	for _, tc := range []struct {
+		name   string
+		folder string
+	}{
+		{name: "omitted"},
+		{name: "provided", folder: "/tmp/work folder --safe"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			intent, err := runner.PrepareAction(context.Background(), ActionRequest{
+				Operation:       protocol.OperationAgentStart,
+				EndpointID:      "ep",
+				Payload:         json.RawMessage(`{}`),
+				Confirmed:       true,
+				Profile:         "profile",
+				ProfileRevision: "rev-1",
+				Folder:          tc.folder,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if intent.Folder != tc.folder {
+				t.Fatalf("folder = %q, want %q", intent.Folder, tc.folder)
+			}
+		})
+	}
+	if _, err := runner.PrepareAction(context.Background(), ActionRequest{
+		Operation:       protocol.OperationAgentStart,
+		EndpointID:      "ep",
+		Payload:         json.RawMessage(`{}`),
+		Confirmed:       true,
+		Profile:         "profile",
+		ProfileRevision: "rev-1",
+		Folder:          " /tmp/unsafe ",
+	}); err == nil {
+		t.Fatal("whitespace-padded folder was accepted")
 	}
 }

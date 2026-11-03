@@ -264,7 +264,10 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 		if intent.LaunchProfileID == "" {
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "profile_required")}, errors.New("launch profile is required")
 		}
-		args = []string{"workspace", "agent", intent.LaunchProfileID, "--background", "--json"}
+		args = []string{"workspace", "agent", intent.LaunchProfileID, "--background", "--json", "--non-interactive"}
+		if intent.Folder != "" {
+			args = append(args, "--folder", intent.Folder)
+		}
 	case protocol.OperationAgentResume:
 		args = []string{"workspace", "resume", providerKey, "--background", "--json"}
 	case protocol.OperationAgentStop:

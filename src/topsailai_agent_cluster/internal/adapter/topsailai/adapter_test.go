@@ -371,3 +371,39 @@ func TestDiscoverLeavesProviderSessionNameEmptyWhenAbsent(t *testing.T) {
 		t.Fatalf("display name = %q, want empty", got)
 	}
 }
+
+func TestTopsailaiAdapterStartCommandOptionalFolderAndNonInteractive(t *testing.T) {
+	cases := []struct {
+		name   string
+		folder string
+		want   []string
+	}{
+		{
+			name: "without folder",
+			want: []string{"workspace", "agent", "profile", "--background", "--json", "--non-interactive"},
+		},
+		{
+			name:   "with folder containing spaces",
+			folder: "/tmp/work folder --safe",
+			want:   []string{"workspace", "agent", "profile", "--background", "--json", "--non-interactive", "--folder", "/tmp/work folder --safe"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &fakeRunner{out: []byte(`{"status":"started"}`)}
+			a := newTestAdapter(t, runner)
+			_, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
+				CommandID:       "start-1",
+				Operation:       protocol.OperationAgentStart,
+				LaunchProfileID: "profile",
+				Folder:          tc.folder,
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(runner.args, tc.want) {
+				t.Fatalf("argv = %#v, want %#v", runner.args, tc.want)
+			}
+		})
+	}
+}

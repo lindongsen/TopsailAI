@@ -22,6 +22,7 @@ type ActionRequest struct {
 	WaitTimeoutMS   int64
 	Profile         string
 	ProfileRevision string
+	Folder          string
 }
 
 // ActionResult contains the durable result and command identifier.
@@ -43,6 +44,9 @@ func (r CommandRunner) PrepareAction(ctx context.Context, request ActionRequest)
 	if err != nil {
 		return protocol.ImmutableIntent{}, err
 	}
+	if err := protocol.ValidateFolder(request.Folder); err != nil {
+		return protocol.ImmutableIntent{}, err
+	}
 	if !json.Valid(request.Payload) {
 		return protocol.ImmutableIntent{}, fmt.Errorf("payload must be valid JSON")
 	}
@@ -54,7 +58,7 @@ func (r CommandRunner) PrepareAction(ctx context.Context, request ActionRequest)
 	if r.NewID != nil {
 		id = r.NewID()
 	}
-	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: id, IssuerID: "operator", Scope: "operator", EndpointID: request.EndpointID, Operation: request.Operation, OperationVersion: "v1", CapabilityRevision: descriptor.Revision, PayloadSchemaVersion: "v1", Payload: request.Payload, Budget: protocol.Budget{WaitTimeoutMS: request.WaitTimeoutMS}, ExecuteBeforeAtMS: now.UnixMilli() + 5*60*1000}
+	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: id, IssuerID: "operator", Scope: "operator", EndpointID: request.EndpointID, Operation: request.Operation, OperationVersion: "v1", CapabilityRevision: descriptor.Revision, PayloadSchemaVersion: "v1", Folder: request.Folder, Payload: request.Payload, Budget: protocol.Budget{WaitTimeoutMS: request.WaitTimeoutMS}, ExecuteBeforeAtMS: now.UnixMilli() + 5*60*1000}
 	if request.Operation != "agent.start" {
 		intent.Target = &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}
 	}

@@ -86,6 +86,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	noColor := flags.Bool("no-color", false, "disable terminal colors")
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
+	folder := flags.String("folder", "", "working folder for start")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -140,7 +141,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		}
 		return status(ctx, api, output, flags.Arg(1), *jsonMode)
 	case "send", "btw", "control", "start", "resume", "stop":
-		return action(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision)
+		return action(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder)
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
 	}
@@ -180,7 +181,7 @@ func logs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID,
 	return legacyRunner(api).Logs(ctx, output, endpointID, resourceID, maxBytes, jsonMode)
 }
 
-func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision string) error {
+func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision, folder string) error {
 	operation := args[0]
 	if operation == "stop" && len(args) < 4 {
 		return fmt.Errorf("usage: stop <endpoint-id> <resource-id> <generation>")
@@ -211,7 +212,7 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []st
 		}
 	}
 	operationValue := operationName(operation)
-	request := tui.ActionRequest{Operation: operationValue, OperationLabel: operation, EndpointID: endpointID, ResourceID: resourceID, Generation: generation, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS, Profile: profile, ProfileRevision: profileRevision}
+	request := tui.ActionRequest{Operation: operationValue, OperationLabel: operation, EndpointID: endpointID, ResourceID: resourceID, Generation: generation, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS, Profile: profile, ProfileRevision: profileRevision, Folder: folder}
 	runner := legacyRunner(api)
 	intent, err := runner.PrepareAction(ctx, request)
 	if err != nil {

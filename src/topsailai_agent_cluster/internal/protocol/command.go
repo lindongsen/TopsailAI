@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"unicode"
 )
 
 // ImmutableIntent contains the versioned, deduplicated command meaning.
@@ -17,6 +19,7 @@ type ImmutableIntent struct {
 	Target               *CommandTarget  `json:"target,omitempty"`
 	LaunchProfileID      string          `json:"launch_profile_id,omitempty"`
 	ProfileRevision      string          `json:"profile_revision,omitempty"`
+	Folder               string          `json:"folder,omitempty"`
 	Operation            string          `json:"operation"`
 	OperationVersion     string          `json:"operation_version"`
 	CapabilityRevision   string          `json:"capability_revision"`
@@ -32,6 +35,22 @@ type CommandTarget struct {
 	Kind       string `json:"kind"`
 	ResourceID string `json:"resource_id"`
 	Generation string `json:"generation"`
+}
+
+// ValidateFolder accepts an omitted folder and rejects unsafe supplied values.
+func ValidateFolder(folder string) error {
+	if folder == "" {
+		return nil
+	}
+	if strings.TrimSpace(folder) != folder {
+		return fmt.Errorf("folder must not have leading or trailing whitespace")
+	}
+	for _, character := range folder {
+		if unicode.IsControl(character) {
+			return fmt.Errorf("folder must not contain control characters")
+		}
+	}
+	return nil
 }
 
 // TransportEnvelope carries immutable intent over a particular connection.
@@ -138,13 +157,13 @@ func CanonicalHash(intent ImmutableIntent) (string, error) {
 		return "", fmt.Errorf("payload is not valid JSON")
 	}
 	canonical := struct {
-		HashVersion, CommandID, IssuerID, Scope, EndpointID                                                     string
-		Target                                                                                                  *CommandTarget
-		LaunchProfileID, ProfileRevision, Operation, OperationVersion, CapabilityRevision, PayloadSchemaVersion string
-		Payload                                                                                                 json.RawMessage
-		ExecuteBeforeAtMS, ExpectedRevision                                                                     int64
-		Budget                                                                                                  Budget
-	}{intent.HashVersion, intent.CommandID, intent.IssuerID, intent.Scope, intent.EndpointID, intent.Target, intent.LaunchProfileID, intent.ProfileRevision, intent.Operation, intent.OperationVersion, intent.CapabilityRevision, intent.PayloadSchemaVersion, intent.Payload, intent.ExecuteBeforeAtMS, intent.ExpectedRevision, intent.Budget}
+		HashVersion, CommandID, IssuerID, Scope, EndpointID                                                             string
+		Target                                                                                                          *CommandTarget
+		LaunchProfileID, ProfileRevision, Folder, Operation, OperationVersion, CapabilityRevision, PayloadSchemaVersion string
+		Payload                                                                                                         json.RawMessage
+		ExecuteBeforeAtMS, ExpectedRevision                                                                             int64
+		Budget                                                                                                          Budget
+	}{intent.HashVersion, intent.CommandID, intent.IssuerID, intent.Scope, intent.EndpointID, intent.Target, intent.LaunchProfileID, intent.ProfileRevision, intent.Folder, intent.Operation, intent.OperationVersion, intent.CapabilityRevision, intent.PayloadSchemaVersion, intent.Payload, intent.ExecuteBeforeAtMS, intent.ExpectedRevision, intent.Budget}
 	data, err := json.Marshal(canonical)
 	if err != nil {
 		return "", fmt.Errorf("marshal canonical intent: %w", err)
