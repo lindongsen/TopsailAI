@@ -25,6 +25,7 @@ from topsailai.context.chat_history_manager.__base import (
     ChatHistoryMessageData,
 )
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
+from topsailai.workspace.folder_utils import get_session_stdout_path
 from topsailai.workspace.task.cleanup import register_cleanup_func
 logger = logging.getLogger(__name__)
 
@@ -170,11 +171,9 @@ def decorator_tee_output_by_session(
             if not EnvReaderInstance.check_bool("TOPSAILAI_ENABLE_SESSION_TEE_OUT", False):
                 return func(*args, **kwargs)
 
-            pid = os.getpid()
-            file_path = os.path.join(FOLDER_WORKSPACE_TASK, f"topsailai.{pid}.session.stdout")
-            session_id = get_session_id()
-            if session_id:
-                file_path = os.path.join(FOLDER_WORKSPACE_TASK, f"{session_id}.{pid}.session.stdout")
+            file_path = get_session_stdout_path(
+                FOLDER_WORKSPACE_TASK, get_session_id(), os.getpid(),
+            )
             with TeeOutput(
                 file_path, mode, encoding, logrotate_max_file_bytes,
                 need_delete_log_files=need_delete_log_files,

@@ -240,6 +240,7 @@ class TestGetAgentChat(unittest.TestCase):
         self.mock_env_tool.is_debug_mode.return_value = False
         self.mock_env_tool.EnvReaderInstance.read_file_or_content.return_value = ""
         self.mock_env_tool.is_interactive_mode.return_value = True
+        self.mock_env_tool.EnvReaderInstance.check_bool.return_value = False
         self.mock_env_tool.get_session_id.return_value = "test-session-123"
         
         # Mock file_tool
@@ -634,10 +635,11 @@ class TestGetAgentChat(unittest.TestCase):
         """Test get_agent_chat uses env session_id when not provided."""
         from topsailai.workspace.agent_shell import get_agent_chat
         
-        agent_chat = get_agent_chat()
-        
-        # Verify env_tool.get_session_id was called
-        self.mock_env_tool.get_session_id.assert_called_once()
+        with patch("topsailai.workspace.session_identity.get_session_id", return_value="env-session") as lookup:
+            get_agent_chat()
+        lookup.assert_called_once_with()
+        self.assertEqual(os.environ["SESSION_ID"], "env-session")
+        self.assertEqual(os.environ["TOPSAILAI_SESSION_ID"], "env-session")
 
     def test_get_agent_chat_sets_env_variables(self):
         """Test get_agent_chat sets SESSION_ID and TOPSAILAI_SESSION_ID."""
@@ -680,6 +682,7 @@ class TestGetAgentChatProjectWorkspaceLock(unittest.TestCase):
         self.mock_env_tool.is_debug_mode.return_value = False
         self.mock_env_tool.EnvReaderInstance.read_file_or_content.return_value = ""
         self.mock_env_tool.is_interactive_mode.return_value = True
+        self.mock_env_tool.EnvReaderInstance.check_bool.return_value = False
         self.mock_env_tool.get_session_id.return_value = "test-session-123"
 
         # Mock file_tool

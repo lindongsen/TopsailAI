@@ -60,3 +60,10 @@ def get_control_socket_path(task_folder: str, session_id: str, pid: int) -> str:
             f"{session_id}.{pid}.session.sock",
         )
     )
+
+
+def get_session_stdout_path(task_folder: str, session_id: str | None, pid: int) -> str:
+    """Return the absolute stdout path using a file-only fallback for empty IDs."""
+    return os.path.abspath(
+        os.path.join(task_folder, f"{session_id or 'topsailai'}.{pid}.session.stdout")
+    )

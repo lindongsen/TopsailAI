@@ -7,6 +7,8 @@
 
 import logging
 import os
+import sys
+from contextlib import nullcontext
 
 
 from topsailai.utils import (
@@ -41,7 +43,10 @@ from topsailai.workspace.context.instruction import (
     ContextRuntimeInstructions,
 )
 from topsailai.workspace.hook_instruction import HookInstruction
-from topsailai.workspace.print_tool import ContentProgress
+from topsailai.workspace.print_tool import ContentProgress, TeeOutput
+from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
+from topsailai.workspace.folder_utils import get_session_stdout_path
+from topsailai.workspace.session_identity import initialize_session_id
 from topsailai.workspace.lock_tool import ctxm_project_workspace_lock, ctxm_void
 #from topsailai.workspace.context.agent_tool import (
 #    ContextRuntimeAgentTools,
@@ -226,13 +231,10 @@ def _get_agent_chat_impl(
         or os.getenv("TOPSAILAI_AGENT_NAME")
         or get_agent_type(agent_type).AGENT_NAME
     )
-    if session_id is None:
-        session_id = env_tool.get_session_id()
+    session_id = initialize_session_id(session_id)
 
     if session_id:
         thread_local_tool.set_thread_name(session_id)
-        os.environ["SESSION_ID"] = session_id
-        os.environ["TOPSAILAI_SESSION_ID"] = session_id
 
         # basic info
         if need_print_session:
@@ -361,6 +363,7 @@ def get_agent_chat(
     Returns:
         AgentChat: A fully initialized AgentChat instance ready for conversation.
     """
+    session_id = initialize_session_id(session_id)
     startup_state = AgentStartupState()
     resolved_session_category = (
         load_session_category(os.environ, default="agent")
@@ -369,7 +372,12 @@ def get_agent_chat(
     )
     lock_ctx = ctxm_project_workspace_lock if need_project_workspace_lock else ctxm_void
     try:
-        with lock_ctx() as has_lock:
+        startup_tee = nullcontext()
+        if (env_tool.EnvReaderInstance.check_bool("TOPSAILAI_ENABLE_SESSION_TEE_OUT", False)
+                and not isinstance(sys.stdout, TeeOutput)):
+            file_path = get_session_stdout_path(FOLDER_WORKSPACE_TASK, session_id, os.getpid())
+            startup_tee = TeeOutput(file_path, mode="a+")
+        with startup_tee, lock_ctx() as has_lock:
             return _get_agent_chat_impl(
                 system_prompt=system_prompt,
                 to_dump_messages=to_dump_messages,
