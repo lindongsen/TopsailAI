@@ -102,7 +102,7 @@ class TestGetEnvPrompt(unittest.TestCase):
 class TestGetToolPrompt(unittest.TestCase):
     """Test get_tool_prompt() function"""
 
-    @patch("topsailai.workspace.plugin_instruction.agent.get_tools_for_chat")
+    @patch("topsailai.tools.base.common.get_tools_for_chat")
     @patch("topsailai.workspace.plugin_instruction.agent.json_tool")
     @patch("topsailai.workspace.plugin_instruction.agent.env_tool")
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
