@@ -96,12 +96,12 @@ func TestSendIsUnavailableOutsideSessionScope(t *testing.T) {
 		{
 			name:  "workspace",
 			input: "send {\"text\":\"hi\"}\nquit\n",
-			want:  "error: command \"send\" is unavailable in workspace scope; available commands: list, cd, show, status, refresh, help, quit\n",
+			want:  "error: command \"send\" is unavailable in workspace scope; available commands: list, cd, show, start, status, refresh, help, quit\n",
 		},
 		{
 			name:  "endpoint",
 			input: "cd host-one/endpoint-1\nsend {\"text\":\"hi\"}\nquit\n",
-			want:  "error: command \"send\" is unavailable in endpoint scope; available commands: list, cd, show, logs, status, refresh, help, quit\n",
+			want:  "error: command \"send\" is unavailable in endpoint scope; available commands: list, cd, show, start, logs, status, refresh, help, quit\n",
 		},
 	}
 	for _, testCase := range cases {
@@ -134,7 +134,7 @@ func TestSendWorksInSessionScope(t *testing.T) {
 
 func TestLogsIsUnavailableInWorkspaceScope(t *testing.T) {
 	_, diagnostics := runScope(t, scopeStub(), "logs\nquit\n", ColorPolicy{})
-	want := "error: command \"logs\" is unavailable in workspace scope; available commands: list, cd, show, status, refresh, help, quit\n"
+	want := "error: command \"logs\" is unavailable in workspace scope; available commands: list, cd, show, start, status, refresh, help, quit\n"
 	if diagnostics != want {
 		t.Fatalf("diagnostics = %q, want %q", diagnostics, want)
 	}
@@ -324,9 +324,9 @@ func TestAvailableCommandsUseStableOrder(t *testing.T) {
 		kind ScopeKind
 		want string
 	}{
-		{kind: ScopeWorkspace, want: "list, cd, show, status, refresh, help, quit"},
-		{kind: ScopeEndpoint, want: "list, cd, show, logs, status, refresh, help, quit"},
-		{kind: ScopeSession, want: "list, cd, show, logs, send, status, refresh, help, quit"},
+		{kind: ScopeWorkspace, want: "list, cd, show, start, status, refresh, help, quit"},
+		{kind: ScopeEndpoint, want: "list, cd, show, start, logs, status, refresh, help, quit"},
+		{kind: ScopeSession, want: "list, cd, show, resume, stop, inject, btw, interrupt, control, logs, send, status, refresh, help, quit"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.kind.String(), func(t *testing.T) {
@@ -409,5 +409,11 @@ func TestScopePromptsKeepExactAnsiSequences(t *testing.T) {
 				t.Fatalf("prompt contains cyan styling: %q", testCase.want)
 			}
 		})
+	}
+}
+
+func TestStartIsUnavailableInSessionScope(t *testing.T) {
+	if err := requireCommandScope("start", ScopeSession); err == nil {
+		t.Fatal("start unexpectedly allowed in session scope")
 	}
 }

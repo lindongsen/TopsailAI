@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -210,7 +213,7 @@ func TestCLIHelpDescribesListCleanBehavior(t *testing.T) {
 		t.Fatalf("help error=%v", err)
 	}
 	text := diagnostics.String()
-	for _, phrase := range []string{"list [endpoint] [--clean]", "failed to report", "--clean", "stderr"} {
+	for _, phrase := range []string{"[--endpoint <id>] list [--clean]", "failed to report", "--clean", "stderr"} {
 		if !strings.Contains(text, phrase) {
 			t.Fatalf("CLI help missing %q: %q", phrase, text)
 		}
@@ -228,5 +231,217 @@ func TestRemovedTableCommandReturnsMigrationError(t *testing.T) {
 	}
 	if !strings.Contains(diagnostics.String(), `"table" has been removed; use "list --clean"`) || strings.Contains(output.String(), "ENDPOINT") {
 		t.Fatalf("unexpected removal output=%q diagnostics=%q", output.String(), diagnostics.String())
+	}
+}
+
+func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
+	var output, diagnostics strings.Builder
+	if err := runWithIO([]string{"help"}, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, command := range []string{"list", "show", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "help"} {
+		if !strings.Contains(text, " "+command) {
+			t.Fatalf("help missing dispatched command %q: %q", command, text)
+		}
+	}
+	for _, interactiveOnly := range []string{"inject", "interrupt", "cd", "refresh", "quit"} {
+		if strings.Contains(text, "[options] "+interactiveOnly+" ") {
+			t.Fatalf("non-interactive help leaked command %q: %q", interactiveOnly, text)
+		}
+	}
+	if !strings.Contains(text, "agent-cluster-cli [options] start <endpoint> <resource> [payload] [generation]") {
+		t.Fatalf("start syntax does not show flags before command: %q", text)
+	}
+
+	output.Reset()
+	if err := runWithIO([]string{"help", "start"}, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "Syntax: agent-cluster-cli [options] start <endpoint> <resource> [payload] [generation]") || strings.Contains(output.String(), "--payload") {
+		t.Fatalf("standalone start detail is inconsistent: %q", output.String())
+	}
+	if err := runWithIO([]string{"help", "inject"}, strings.NewReader(""), io.Discard, io.Discard, false, nil); err == nil {
+		t.Fatal("non-interactive help accepted undispatched inject command")
+	}
+}
+
+func TestListDispatchMatchesAdvertisedSyntaxAgainstIsolatedServer(t *testing.T) {
+	server := newListBehaviorServer(t)
+	defer server.Close()
+
+	tests := []struct {
+		name       string
+		args       []string
+		wantIDs    []string
+		wantOutput string
+		wantError  string
+		wantDiag   string
+	}{
+		{
+			name:    "global endpoint before list",
+			args:    []string{"--server-url", server.URL, "--token", "test-token", "--endpoint", "endpoint-1", "list"},
+			wantIDs: []string{"A1", "A2"},
+		},
+		{
+			name:       "unclean retains failed endpoint",
+			args:       []string{"--server-url", server.URL, "--token", "test-token", "list"},
+			wantIDs:    []string{"A1", "A2", "B1", "B2"},
+			wantOutput: "endpoint-3",
+			wantDiag:   "endpoint-3 unavailable",
+		},
+		{
+			name:     "clean after list",
+			args:     []string{"--server-url", server.URL, "--token", "test-token", "list", "--clean"},
+			wantIDs:  []string{"A1", "A2", "B1", "B2"},
+			wantDiag: "endpoint-3 unavailable",
+		},
+		{
+			name:    "global endpoint and clean",
+			args:    []string{"--server-url", server.URL, "--token", "test-token", "--endpoint", "endpoint-1", "list", "--clean"},
+			wantIDs: []string{"A1", "A2"},
+		},
+		{
+			name:      "endpoint positional argument rejected",
+			args:      []string{"--server-url", server.URL, "--token", "test-token", "list", "endpoint-1"},
+			wantError: "usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean]",
+		},
+		{
+			name:      "global endpoint after list rejected",
+			args:      []string{"--server-url", server.URL, "--token", "test-token", "list", "--endpoint", "endpoint-1"},
+			wantError: "usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean]",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var output, diagnostics strings.Builder
+			err := runWithIO(tc.args, strings.NewReader(""), &output, &diagnostics, false, nil)
+			if tc.wantError != "" {
+				if err == nil || err.Error() != tc.wantError {
+					t.Fatalf("error=%v want=%q output=%q diagnostics=%q", err, tc.wantError, output.String(), diagnostics.String())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v diagnostics=%q", err, diagnostics.String())
+			}
+			if got := listSessionIDs(output.String()); !sameStringSet(got, tc.wantIDs) {
+				t.Fatalf("session IDs=%v want=%v output=%q", got, tc.wantIDs, output.String())
+			}
+			if tc.wantOutput != "" && !strings.Contains(output.String(), tc.wantOutput) {
+				t.Fatalf("output=%q missing %q", output.String(), tc.wantOutput)
+			}
+			if tc.name == "clean after list" && strings.Contains(output.String(), "endpoint-3") {
+				t.Fatalf("clean output retained failed endpoint: %q", output.String())
+			}
+			if tc.wantDiag != "" && !strings.Contains(diagnostics.String(), tc.wantDiag) {
+				t.Fatalf("diagnostics=%q missing %q", diagnostics.String(), tc.wantDiag)
+			}
+		})
+	}
+}
+
+func listSessionIDs(output string) []string {
+	var ids []string
+	for _, line := range strings.Split(output, "\n") {
+		cells := strings.Split(line, " │ ")
+		if len(cells) < 5 || cells[0] == "NO" || strings.Trim(cells[0], "─") == "" {
+			continue
+		}
+		id := strings.TrimSpace(cells[4])
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func sameStringSet(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	seen := make(map[string]bool, len(got))
+	for _, value := range got {
+		seen[value] = true
+	}
+	for _, value := range want {
+		if !seen[value] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestListBehaviorTestsDoNotUseProductionPortsOrToken(t *testing.T) {
+	server := newListBehaviorServer(t)
+	defer server.Close()
+	var output, diagnostics strings.Builder
+	err := runWithIO([]string{"--server-url", server.URL, "--token", "test-token", "--endpoint", "endpoint-1", "list", "--clean"}, strings.NewReader(""), &output, &diagnostics, false, nil)
+	if err != nil {
+		t.Fatalf("isolated list failed: %v diagnostics=%q", err, diagnostics.String())
+	}
+	if !sameStringSet(listSessionIDs(output.String()), []string{"A1", "A2"}) {
+		t.Fatalf("isolated output=%q", output.String())
+	}
+}
+
+func newListBehaviorServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			writeListTestEnvelope(w, http.StatusUnauthorized, "unauthorized", nil)
+			return
+		}
+		switch r.URL.Path {
+		case "/api/v1/endpoints":
+			writeListTestEnvelope(w, http.StatusOK, "success", []protocol.Endpoint{
+				{EndpointID: "endpoint-1", DisplayName: "endpoint-1", ConnectionState: "online"},
+				{EndpointID: "endpoint-2", DisplayName: "endpoint-2", ConnectionState: "online"},
+				{EndpointID: "endpoint-3", DisplayName: "endpoint-3", ConnectionState: "offline"},
+			})
+		case "/api/v1/endpoints/endpoint-1/session-state":
+			writeListTestEnvelope(w, http.StatusOK, "success", listTestInventory("A1", "A2"))
+		case "/api/v1/endpoints/endpoint-2/session-state":
+			writeListTestEnvelope(w, http.StatusOK, "success", listTestInventory("B1", "B2"))
+		case "/api/v1/endpoints/endpoint-3/session-state":
+			writeListTestEnvelope(w, http.StatusServiceUnavailable, "failed", nil)
+		default:
+			writeListTestEnvelope(w, http.StatusNotFound, "not found", nil)
+		}
+	}))
+}
+
+func listTestInventory(sessionIDs ...string) protocol.InventoryReport {
+	sessions := make([]protocol.Session, 0, len(sessionIDs))
+	for _, id := range sessionIDs {
+		sessions = append(sessions, protocol.Session{SessionID: id, ProviderSessionID: id, AdapterID: "adapter-1", Generation: "generation-1", State: "running", CollectionStatus: protocol.CollectionSucceeded})
+	}
+	return protocol.InventoryReport{ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded, Adapters: []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}}, Sessions: sessions}
+}
+
+func writeListTestEnvelope(w http.ResponseWriter, status int, message string, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"code": status, "message": message, "data": data})
+}
+
+func TestListHelpAndDispatchContract(t *testing.T) {
+	var helpOut, helpDiagnostics strings.Builder
+	if err := runWithIO([]string{"help", "list"}, strings.NewReader(""), &helpOut, &helpDiagnostics, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	const syntax = "agent-cluster-cli [options] [--endpoint <id>] list [--clean]"
+	if !strings.Contains(helpOut.String(), syntax) {
+		t.Fatalf("help=%q missing executable syntax %q", helpOut.String(), syntax)
+	}
+	server := newListBehaviorServer(t)
+	defer server.Close()
+	var output, diagnostics strings.Builder
+	args := []string{"--server-url", server.URL, "--token", "test-token", "--endpoint", "endpoint-1", "list", "--clean"}
+	if err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
+		t.Fatalf("advertised syntax failed: %v diagnostics=%q", err, diagnostics.String())
+	}
+	if !strings.Contains(output.String(), "endpoint-1") {
+		t.Fatalf("dispatch output=%q", output.String())
 	}
 }

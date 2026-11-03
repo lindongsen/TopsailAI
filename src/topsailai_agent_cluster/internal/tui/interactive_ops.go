@@ -13,6 +13,9 @@ import (
 
 // interactiveLogs resolves the session inside the current endpoint scope.
 func interactiveLogs(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, maxBytes int, out io.Writer) error {
+	if err := rejectInteractiveOption("logs", rest); err != nil {
+		return err
+	}
 	if state.Invalidated {
 		return state.requireUsable()
 	}
@@ -51,6 +54,9 @@ func interactiveValue(values map[string]any, key string) string {
 
 // interactiveStatus answers an explicit command ID in any scope.
 func interactiveStatus(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, out io.Writer) error {
+	if err := rejectInteractiveOption("status", rest); err != nil {
+		return err
+	}
 	commandID := strings.TrimSpace(rest)
 	if commandID == "" {
 		commandID = state.commandID
@@ -79,6 +85,9 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 		return err
 	}
 	payloadText := strings.TrimSpace(rest)
+	if !json.Valid([]byte(payloadText)) && strings.Contains(payloadText, "--json") {
+		return fmt.Errorf("interactive send does not support --json")
+	}
 	if payloadText == "" {
 		return fmt.Errorf("payload must be a JSON object")
 	}
@@ -150,4 +159,224 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 func nextLine(source <-chan lineReadResult) (lineReadResult, bool) {
 	result, ok := <-source
 	return result, ok
+}
+
+// interactiveStartRequest contains the parsed arguments for the interactive start command.
+type interactiveStartRequest struct {
+	EndpointID      string
+	ResourceID      string
+	Profile         string
+	ProfileRevision string
+	Folder          string
+	Payload         json.RawMessage
+}
+
+// parseInteractiveStart parses the explicit interactive start grammar.
+func parseInteractiveStart(rest string) (interactiveStartRequest, error) {
+	args, err := splitInteractiveArguments(rest)
+	if err != nil {
+		return interactiveStartRequest{}, err
+	}
+	if len(args) < 2 {
+		return interactiveStartRequest{}, fmt.Errorf("usage: start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>]")
+	}
+	if args[0] == "" || args[1] == "" || strings.HasPrefix(args[0], "-") || strings.HasPrefix(args[1], "-") {
+		return interactiveStartRequest{}, fmt.Errorf("start requires endpoint and resource")
+	}
+	request := interactiveStartRequest{EndpointID: args[0], ResourceID: args[1], Payload: json.RawMessage(`{}`)}
+	for index := 2; index < len(args); index++ {
+		switch args[index] {
+		case "--json":
+			return interactiveStartRequest{}, fmt.Errorf("interactive start does not support --json")
+		case "--profile":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
+				return interactiveStartRequest{}, fmt.Errorf("--profile requires a value")
+			}
+			index++
+			request.Profile = args[index]
+		case "--profile-revision":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
+				return interactiveStartRequest{}, fmt.Errorf("--profile-revision requires a value")
+			}
+			index++
+			request.ProfileRevision = args[index]
+		case "--folder":
+			if index+1 >= len(args) || (strings.HasPrefix(args[index+1], "--") && args[index+1] != "--") {
+				return interactiveStartRequest{}, fmt.Errorf("--folder requires a value")
+			}
+			index++
+			request.Folder = args[index]
+		case "--payload":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
+				return interactiveStartRequest{}, fmt.Errorf("--payload requires a value")
+			}
+			index++
+			if !json.Valid([]byte(args[index])) {
+				return interactiveStartRequest{}, fmt.Errorf("payload must be valid JSON")
+			}
+			request.Payload = json.RawMessage(args[index])
+		default:
+			return interactiveStartRequest{}, fmt.Errorf("unknown start option %q", args[index])
+		}
+	}
+	if request.Profile == "" || request.ProfileRevision == "" {
+		return interactiveStartRequest{}, fmt.Errorf("start requires --profile and --profile-revision")
+	}
+	return request, nil
+}
+
+// interactiveStart submits and renders an agent.start action using shared action logic.
+func interactiveStart(parent context.Context, api InteractiveAPI, state *interactiveState, request interactiveStartRequest, out io.Writer, options InteractiveOptions) error {
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
+	intent, err := runner.PrepareAction(ctx, ActionRequest{
+		Operation:       protocol.OperationAgentStart,
+		OperationLabel:  "start",
+		EndpointID:      request.EndpointID,
+		ResourceID:      request.ResourceID,
+		Payload:         request.Payload,
+		Confirmed:       true,
+		Profile:         request.Profile,
+		ProfileRevision: request.ProfileRevision,
+		Folder:          request.Folder,
+		WaitTimeoutMS:   options.WaitTimeoutMS,
+	})
+	if err != nil {
+		return err
+	}
+	state.commandID = intent.CommandID
+	action, err := runner.SubmitAction(ctx, intent)
+	if err != nil {
+		return fmt.Errorf("command %s result unknown; use status %s to query; %w", intent.CommandID, intent.CommandID, err)
+	}
+	state.commandID = action.CommandID
+	if _, err := fmt.Fprintf(out, "command submitted: %s; use status %s to query\n", state.commandID, state.commandID); err != nil {
+		return err
+	}
+	result, err := runner.WaitAction(ctx, action, intent.Budget)
+	if err != nil {
+		return fmt.Errorf("command %s status unavailable; use status %s to query; %w", state.commandID, state.commandID, err)
+	}
+	return renderInteractiveStartResult(out, action.CommandID, result)
+}
+
+// renderInteractiveStartResult writes the durable start result without JSON formatting.
+func renderInteractiveStartResult(out io.Writer, commandID string, result map[string]any) error {
+	if _, err := fmt.Fprintf(out, "CommandID: %s\nStatus: %s\nDeliveryBoundary: %s\nEffectCertainty: %s\nErrorCode: %s\n", commandID, valueString(result, "status", "Status"), valueString(result, "delivery_boundary", "DeliveryBoundary"), valueString(result, "effect_certainty", "EffectCertainty"), valueString(result, "error_code", "ErrorCode")); err != nil {
+		return err
+	}
+	return nil
+}
+
+// parseInteractivePayload parses an optional JSON payload for lifecycle commands.
+func parseInteractivePayload(name, rest string) (json.RawMessage, error) {
+	args, err := splitInteractiveArguments(rest)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) == 0 {
+		return json.RawMessage(`{}`), nil
+	}
+	if len(args) != 2 || args[0] != "--payload" {
+		if len(args) == 1 && args[0] == "--json" {
+			return nil, fmt.Errorf("interactive %s does not support --json", name)
+		}
+		return nil, fmt.Errorf("usage: %s [--payload <json>]", name)
+	}
+	if !json.Valid([]byte(args[1])) {
+		return nil, fmt.Errorf("payload must be valid JSON")
+	}
+	return json.RawMessage(args[1]), nil
+}
+
+// interactiveSessionLifecycle executes resume or stop against the selected fresh session.
+func interactiveSessionLifecycle(parent context.Context, api InteractiveAPI, state *interactiveState, name, rest string, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {
+	payload := json.RawMessage(`{}`)
+	var err error
+	if name == "resume" {
+		payload, err = parseInteractivePayload(name, rest)
+	} else {
+		err = rejectInteractiveOption(name, rest)
+		if err == nil && strings.TrimSpace(rest) != "" {
+			err = fmt.Errorf("usage: stop")
+		}
+	}
+	if err != nil {
+		return err
+	}
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	if err := state.requireUsable(); err != nil {
+		return err
+	}
+	_, _, session, err := findSelected(ctx, api, state)
+	if err != nil {
+		return err
+	}
+	op := protocol.OperationAgentResume
+	if name == "stop" {
+		op = protocol.OperationAgentStop
+	}
+	return interactiveConfirmedAction(ctx, api, state, op, name, session.SessionID, session.Generation, payload, lines, out, options)
+}
+
+// interactiveSessionPayload executes context injection or interruption with confirmation.
+func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, rest string, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {
+	payloadText := strings.TrimSpace(rest)
+	if payloadText == "" {
+		return fmt.Errorf("usage: %s <json>", name)
+	}
+	if !json.Valid([]byte(payloadText)) && strings.Contains(payloadText, "--json") {
+		return fmt.Errorf("interactive %s does not support --json", name)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(payloadText), &payload); err != nil || payload == nil {
+		return fmt.Errorf("payload must be a JSON object")
+	}
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	if err := state.requireUsable(); err != nil {
+		return err
+	}
+	_, _, session, err := findSelected(ctx, api, state)
+	if err != nil {
+		return err
+	}
+	return interactiveConfirmedAction(ctx, api, state, op, name, session.SessionID, session.Generation, json.RawMessage(payloadText), lines, out, options)
+}
+
+// interactiveConfirmedAction keeps mutating confirmation and shared intent submission in one path.
+func interactiveConfirmedAction(ctx context.Context, api InteractiveAPI, state *interactiveState, op, name, resource, generation string, payload json.RawMessage, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {
+	if _, err := fmt.Fprintf(out, "%s %s? Confirm %s? [y/N] ", name, resource, name); err != nil {
+		return err
+	}
+	answer, ok := nextLine(lines)
+	if !ok || answer.err != nil || answer.overflow {
+		return fmt.Errorf("confirmation requires a complete line")
+	}
+	if value := strings.ToLower(strings.TrimSpace(answer.line)); value != "y" && value != "yes" {
+		_, err := fmt.Fprintln(out, name+" cancelled")
+		return err
+	}
+	// Revalidate the pinned generation after the user confirmation.
+	if _, _, _, err := findSelected(ctx, api, state); err != nil {
+		return err
+	}
+	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
+	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: resource, Generation: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
+	if err != nil {
+		return err
+	}
+	state.commandID = intent.CommandID
+	action, err := runner.SubmitAction(ctx, intent)
+	if err != nil {
+		return fmt.Errorf("command %s result unknown; use status %s to query; %w", intent.CommandID, intent.CommandID, err)
+	}
+	state.commandID = action.CommandID
+	result, err := runner.WaitAction(ctx, action, intent.Budget)
+	if err != nil {
+		return err
+	}
+	return renderInteractiveStartResult(out, action.CommandID, result)
 }

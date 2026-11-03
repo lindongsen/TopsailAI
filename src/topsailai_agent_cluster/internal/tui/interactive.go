@@ -291,6 +291,18 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		return false, interactiveStatus(ctx, api, state, strings.TrimSpace(rest), out)
 	case "refresh":
 		return false, interactiveRefresh(ctx, api, state, out, errOut, options.Color)
+	case "start":
+		request, err := parseInteractiveStart(rest)
+		if err != nil {
+			return false, err
+		}
+		return false, interactiveStart(ctx, api, state, request, out, options)
+	case "resume", "stop":
+		return false, interactiveSessionLifecycle(ctx, api, state, name, rest, lineResults, out, options)
+	case "inject", "btw":
+		return false, interactiveSessionPayload(ctx, api, state, protocol.OperationContextInject, name, rest, lineResults, out, options)
+	case "interrupt", "control":
+		return false, interactiveSessionPayload(ctx, api, state, protocol.OperationExecutionInterrupt, name, rest, lineResults, out, options)
 	case "send":
 		return false, interactiveSend(ctx, api, state, rest, lineResults, out, options)
 	default:

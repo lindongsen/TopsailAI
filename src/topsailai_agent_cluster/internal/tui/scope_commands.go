@@ -33,6 +33,13 @@ var commandScopeMatrix = []commandScopeRule{
 	{Name: "list", Workspace: true, Endpoint: true, Session: true},
 	{Name: "cd", Workspace: true, Endpoint: true, Session: true},
 	{Name: "show", Workspace: true, Endpoint: true, Session: true},
+	{Name: "start", Workspace: true, Endpoint: true, Session: false},
+	{Name: "resume", Workspace: false, Endpoint: false, Session: true},
+	{Name: "stop", Workspace: false, Endpoint: false, Session: true},
+	{Name: "inject", Workspace: false, Endpoint: false, Session: true},
+	{Name: "btw", Workspace: false, Endpoint: false, Session: true},
+	{Name: "interrupt", Workspace: false, Endpoint: false, Session: true},
+	{Name: "control", Workspace: false, Endpoint: false, Session: true},
 	{Name: "logs", Workspace: false, Endpoint: true, Session: true},
 	{Name: "send", Workspace: false, Endpoint: false, Session: true},
 	{Name: "status", Workspace: true, Endpoint: true, Session: true},
@@ -83,6 +90,15 @@ func scopeUnavailableError(name string, kind ScopeKind) error {
 
 // requireCommandScope rejects a command that the current scope does not permit.
 func requireCommandScope(name string, kind ScopeKind) error {
+	if _, known := commandHelpCatalog[name]; known && !alwaysAvailableCommands[name] {
+		registered := false
+		for _, rule := range commandScopeMatrix {
+			registered = registered || rule.Name == name
+		}
+		if !registered {
+			return fmt.Errorf("unknown command %q (try help)", name)
+		}
+	}
 	if commandAllowed(name, kind) {
 		return nil
 	}

@@ -69,7 +69,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	flags.Usage = func() {
 		fmt.Fprintln(errors, "Usage: agent-cluster-cli [options] <command>")
 		fmt.Fprintln(errors, "Commands:")
-		for _, line := range tui.CommandHelpLines() {
+		for _, line := range tui.NonInteractiveCommandHelpLines() {
 			fmt.Fprintln(errors, "  "+line)
 		}
 		fmt.Fprintln(errors, "  interactive        start the interactive REPL")
@@ -116,7 +116,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if flags.NArg() == 2 {
 			target = flags.Arg(1)
 		}
-		return tui.PrintCommandHelp(output, target)
+		return tui.PrintNonInteractiveCommandHelp(output, target)
 	case "list":
 		listClean, err := parseListArgs(flags.Args()[1:], false)
 		if err != nil {
@@ -150,10 +150,10 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 func parseListArgs(args []string, clean bool) (bool, error) {
 	for _, arg := range args {
 		if arg != "--clean" {
-			return false, fmt.Errorf("usage: list [endpoint] [--clean]")
+			return false, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean]")
 		}
 		if clean {
-			return false, fmt.Errorf("usage: list [endpoint] [--clean]")
+			return false, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean]")
 		}
 		clean = true
 	}

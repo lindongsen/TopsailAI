@@ -13,11 +13,15 @@ import (
 type interactiveStub struct {
 	endpoints          []protocol.Endpoint
 	reports            map[string]protocol.InventoryReport
+	intents            []protocol.ImmutableIntent
 	admit              int
 	failList           bool
 	changeAfter        int
 	generationSequence []string
 	inventoryCalls     int
+	getCommandErr      error
+	admitErr           error
+	admittedCommandID  string
 }
 
 func (s *interactiveStub) ListEndpoints(context.Context) ([]protocol.Endpoint, error) {
@@ -47,9 +51,12 @@ func (s *interactiveStub) GetInventory(_ context.Context, id string) (protocol.I
 	return report, nil
 }
 func (s *interactiveStub) GetCapabilities(context.Context, string) (protocol.CapabilityDescriptor, error) {
-	return protocol.CapabilityDescriptor{Revision: "r1", Capabilities: []protocol.Capability{{Name: protocol.OperationMessageSend}}}, nil
+	return protocol.CapabilityDescriptor{Revision: "r1", Capabilities: []protocol.Capability{{Name: protocol.OperationMessageSend}, {Name: protocol.OperationAgentStart}, {Name: protocol.OperationAgentResume}, {Name: protocol.OperationAgentStop}, {Name: protocol.OperationContextInject}, {Name: protocol.OperationExecutionInterrupt}}}, nil
 }
 func (s *interactiveStub) GetCommand(context.Context, string) (map[string]any, error) {
+	if s.getCommandErr != nil {
+		return nil, s.getCommandErr
+	}
 	return map[string]any{"status": string(protocol.StatusFinished)}, nil
 }
 func (s *interactiveStub) ListCommands(context.Context, string, string, int) ([]map[string]any, error) {
@@ -58,9 +65,17 @@ func (s *interactiveStub) ListCommands(context.Context, string, string, int) ([]
 func (s *interactiveStub) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
 	return protocol.OutputSnapshotResponse{Data: "log\x1b[31m"}, nil
 }
-func (s *interactiveStub) AdmitCommand(context.Context, protocol.ImmutableIntent) (map[string]any, error) {
+func (s *interactiveStub) AdmitCommand(_ context.Context, intent protocol.ImmutableIntent) (map[string]any, error) {
 	s.admit++
-	return map[string]any{"command_id": "cmd-1"}, nil
+	s.intents = append(s.intents, intent)
+	if s.admitErr != nil {
+		return nil, s.admitErr
+	}
+	commandID := s.admittedCommandID
+	if commandID == "" {
+		commandID = "cmd-1"
+	}
+	return map[string]any{"command_id": commandID}, nil
 }
 
 func testInventory() protocol.InventoryReport {
@@ -355,5 +370,156 @@ func TestInteractiveUseCommandIsRemovedAndBindsNothing(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "cluster[endpoint-1/-]>") {
 		t.Fatalf("removed use command bound a session: %q", output.String())
+	}
+}
+
+func TestParseInteractiveStartCarriesArgumentsAndRejectsJSON(t *testing.T) {
+	request, err := parseInteractiveStart("endpoint-1 resource-1 --profile topsailai-main --profile-revision topsailai-v1 --folder /tmp/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.EndpointID != "endpoint-1" || request.ResourceID != "resource-1" || request.Profile != "topsailai-main" || request.ProfileRevision != "topsailai-v1" || request.Folder != "/tmp/work" {
+		t.Fatalf("request=%+v", request)
+	}
+	request, err = parseInteractiveStart("endpoint-1 resource-1 --profile p --profile-revision r --folder \"\"")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Folder != "" {
+		t.Fatalf("empty folder=%q", request.Folder)
+	}
+	if _, err := parseInteractiveStart("endpoint-1 resource-1 --json"); err == nil || !strings.Contains(err.Error(), "does not support --json") {
+		t.Fatalf("json error=%v", err)
+	}
+}
+
+func TestInteractiveStartSubmitsAgentStartAndRendersReceipt(t *testing.T) {
+	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+	var output, errorsOut strings.Builder
+	input := "start endpoint-1 resource-1 --profile p --profile-revision r --folder /tmp/work\nquit\n"
+	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if errorsOut.Len() != 0 || stub.admit != 1 {
+		t.Fatalf("output=%q errors=%q admits=%d", output.String(), errorsOut.String(), stub.admit)
+	}
+	for _, expected := range []string{"CommandID: cmd-1", "Status: finished", "DeliveryBoundary:", "EffectCertainty:", "ErrorCode:"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("output missing %q: %q", expected, output.String())
+		}
+	}
+}
+
+func TestInteractiveHelpIncludesStart(t *testing.T) {
+	var output strings.Builder
+	if err := PrintCommandHelp(&output, "start"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "start <endpoint> <resource>") || !strings.Contains(output.String(), "Available in: workspace, endpoint") {
+		t.Fatalf("help=%q", output.String())
+	}
+}
+
+func TestInteractiveSessionLifecycleAndControlCommands(t *testing.T) {
+	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+	var output, errorsOut strings.Builder
+	input := "cd endpoint-1/session-1\nresume\ny\ninject {\"text\":\"context\"}\ny\ninterrupt {\"action\":\"interrupt\"}\ny\nstop\nn\nquit\n"
+	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if errorsOut.Len() != 0 {
+		t.Fatalf("unexpected diagnostics: %q", errorsOut.String())
+	}
+	if stub.admit != 3 {
+		t.Fatalf("admitted %d commands, want 3 after declined stop", stub.admit)
+	}
+	for _, phrase := range []string{"resume session-1?", "inject session-1?", "interrupt session-1?", "stop cancelled"} {
+		if !strings.Contains(output.String(), phrase) {
+			t.Fatalf("output missing %q: %q", phrase, output.String())
+		}
+	}
+}
+
+func TestInteractiveSessionActionsRequireSessionScope(t *testing.T) {
+	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+	_, diagnostics := runScope(t, stub, "resume\nstop\ninject {}\ninterrupt {}\nquit\n", ColorPolicy{})
+	for _, name := range []string{"resume", "stop", "inject", "interrupt"} {
+		if !strings.Contains(diagnostics, `command "`+name+`" is unavailable in workspace scope`) {
+			t.Fatalf("missing scope rejection for %s: %q", name, diagnostics)
+		}
+	}
+	if stub.admit != 0 {
+		t.Fatalf("scope-rejected actions admitted %d commands", stub.admit)
+	}
+}
+
+func TestInteractiveControlAliasesAreDocumented(t *testing.T) {
+	var output strings.Builder
+	if err := PrintCommandHelp(&output, "btw"); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrintCommandHelp(&output, "control"); err != nil {
+		t.Fatal(err)
+	}
+	for _, phrase := range []string{"btw <json>", "control <json>", "Available in: session"} {
+		if !strings.Contains(output.String(), phrase) {
+			t.Fatalf("help missing %q: %q", phrase, output.String())
+		}
+	}
+}
+
+func TestInteractiveSessionActionValidation(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "resume arguments", input: "cd endpoint-1/session-1\nresume extra\nquit\n", want: "usage: resume"},
+		{name: "stop arguments", input: "cd endpoint-1/session-1\nstop extra\nquit\n", want: "usage: stop"},
+		{name: "inject missing payload", input: "cd endpoint-1/session-1\ninject\nquit\n", want: "usage: inject <json>"},
+		{name: "interrupt missing payload", input: "cd endpoint-1/session-1\ninterrupt\nquit\n", want: "usage: interrupt <json>"},
+		{name: "inject json option", input: "cd endpoint-1/session-1\ninject {} --json\nquit\n", want: "does not support --json"},
+		{name: "interrupt invalid payload", input: "cd endpoint-1/session-1\ninterrupt nope\nquit\n", want: "payload must be a JSON object"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+			_, diagnostics := runScope(t, stub, testCase.input, ColorPolicy{})
+			if !strings.Contains(diagnostics, testCase.want) {
+				t.Fatalf("diagnostics=%q want %q", diagnostics, testCase.want)
+			}
+			if stub.admit != 0 {
+				t.Fatalf("invalid action admitted %d commands", stub.admit)
+			}
+		})
+	}
+}
+
+func TestInteractiveControlAliasesExecuteSharedOperations(t *testing.T) {
+	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+	var output, errorsOut strings.Builder
+	input := "cd endpoint-1/session-1\nbtw {\"text\":\"alias context\"}\ny\ncontrol {\"action\":\"interrupt\"}\ny\nquit\n"
+	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if errorsOut.Len() != 0 || stub.admit != 2 {
+		t.Fatalf("output=%q errors=%q admits=%d", output.String(), errorsOut.String(), stub.admit)
+	}
+	for _, phrase := range []string{"btw session-1?", "control session-1?"} {
+		if !strings.Contains(output.String(), phrase) {
+			t.Fatalf("output missing %q: %q", phrase, output.String())
+		}
+	}
+}
+
+func TestHelpCommandNamesReturnsStableSortedNames(t *testing.T) {
+	names := HelpCommandNames()
+	if len(names) == 0 || names[0] != "btw" || names[len(names)-1] != "stop" {
+		t.Fatalf("unexpected help names: %v", names)
+	}
+	for index := 1; index < len(names); index++ {
+		if names[index-1] > names[index] {
+			t.Fatalf("help names are not sorted: %v", names)
+		}
 	}
 }

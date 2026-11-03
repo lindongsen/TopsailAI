@@ -242,7 +242,7 @@ func TestHelpOverviewKeepsScopePrompts(t *testing.T) {
 
 func TestHelpOverviewKeepsScopeRestrictions(t *testing.T) {
 	output, diagnostics := runScope(t, scopeStub(), "send {}\nquit\n", ColorPolicy{})
-	if !strings.Contains(diagnostics, `command "send" is unavailable in workspace scope; available commands: list, cd, show, status, refresh, help, quit`) {
+	if !strings.Contains(diagnostics, `command "send" is unavailable in workspace scope; available commands: list, cd, show, start, status, refresh, help, quit`) {
 		t.Fatalf("scope restriction lost: %q", diagnostics)
 	}
 	if strings.Contains(output, "admitted") {
@@ -307,5 +307,65 @@ func TestStartupInventoryRespectsContextCancellation(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "cluster> ") {
 		t.Fatalf("cancelled startup inventory aborted the repl: %q", output.String())
+	}
+}
+
+// TestNonInteractiveHelpCatalogMatchesStandaloneDispatch pins command selection and syntax.
+func TestNonInteractiveHelpCatalogMatchesStandaloneDispatch(t *testing.T) {
+	lines := NonInteractiveCommandHelpLines()
+	if len(lines) != len(nonInteractiveHelpOrder) {
+		t.Fatalf("got %d lines, want %d", len(lines), len(nonInteractiveHelpOrder))
+	}
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"agent-cluster-cli [options] [--endpoint <id>] list [--clean]",
+		"agent-cluster-cli [options] show <endpoint-or-session>",
+		"agent-cluster-cli [options] logs <endpoint> <session>",
+		"agent-cluster-cli [options] status <command-id>",
+		"agent-cluster-cli [options] send <endpoint> <resource> [payload] [generation]",
+		"agent-cluster-cli [options] btw <endpoint> <resource> [payload] [generation]",
+		"agent-cluster-cli [options] control <endpoint> <resource> [payload] [generation]",
+		"agent-cluster-cli [options] start <endpoint> <resource> [payload] [generation]",
+		"agent-cluster-cli [options] resume <endpoint> <resource> [payload] [generation]",
+		"agent-cluster-cli [options] stop <endpoint> <resource> <generation>",
+		"agent-cluster-cli help [command]",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("standalone help missing %q: %q", want, joined)
+		}
+	}
+	for _, line := range lines {
+		name := strings.Fields(line)[2]
+		for _, forbidden := range []string{"inject", "interrupt", "cd", "refresh", "quit"} {
+			if name == forbidden {
+				t.Fatalf("standalone help leaked interactive command %q: %q", forbidden, joined)
+			}
+		}
+	}
+}
+
+// TestPrintNonInteractiveCommandHelp covers overview, detail, and unknown commands.
+func TestPrintNonInteractiveCommandHelp(t *testing.T) {
+	var out strings.Builder
+	if err := PrintNonInteractiveCommandHelp(&out, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "agent-cluster-cli [options] start") {
+		t.Fatalf("overview=%q", out.String())
+	}
+	for _, command := range nonInteractiveHelpOrder {
+		out.Reset()
+		if err := PrintNonInteractiveCommandHelp(&out, strings.ToUpper(command)); err != nil {
+			t.Fatalf("help %s: %v", command, err)
+		}
+		if !strings.Contains(out.String(), "Syntax: agent-cluster-cli") {
+			t.Fatalf("help %s=%q", command, out.String())
+		}
+	}
+	if err := PrintNonInteractiveCommandHelp(&out, "inject"); err == nil || !strings.Contains(err.Error(), "unknown help command") {
+		t.Fatalf("unknown help error=%v", err)
+	}
+	if !containsCommand(nonInteractiveHelpOrder, "start") || containsCommand(nonInteractiveHelpOrder, "inject") {
+		t.Fatal("standalone command membership is inconsistent")
 	}
 }

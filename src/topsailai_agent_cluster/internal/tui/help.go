@@ -30,18 +30,34 @@ var fieldHelp = []string{
 }
 
 var commandHelpCatalog = map[string]commandHelp{
-	"list":    {"list [endpoint] [--clean]", ListHelpDescription + "; JSON output (--json/-json) is available only in the standalone non-interactive command", []string{"endpoint: optional endpoint ID filter", "--clean: omit endpoints that failed to report; diagnostics still go to stderr"}, []string{"list", "list endpoint-1", "list --clean"}},
-	"cd":      {"cd [target]", "navigate between workspace, endpoint, and session scopes; bare cd returns to workspace", []string{"target: row number from the latest list, hostname, hostname/endpoint-id, session, hostname/endpoint-id/session, .., or /", "a numeric target uses the latest list row; invalid rows report their valid range; session scope rejects row navigation", "a hostname shared by several endpoints prompts for a numbered choice, a hostname/endpoint-id answer, or cancel"}, []string{"cd", "cd 1", "cd /", "cd ..", "cd ai-dev", "cd ai-dev/endpoint-1", "cd res_abc", "cd ai-dev/endpoint-1/res_abc"}},
-	"show":    {"show [endpoint-or-session]", "show detailed information for an endpoint or session; defaults to the current scope target", []string{"endpoint-or-session: optional endpoint ID or session/resource ID"}, []string{"show", "show endpoint-1"}},
-	"logs":    {"logs [session]", "show bounded output for a session in the current endpoint", []string{"session: optional session/resource ID; defaults to the current session"}, []string{"logs", "logs res_abc"}},
-	"send":    {"send <json>", "send a JSON message to the selected session", []string{"json: message payload"}, []string{`send {"text":"hello"}`}},
-	"status":  {"status <command-id>", "show the durable result of a command", []string{"command-id: submitted command identifier"}, []string{"status cmd_123"}},
-	"refresh": {"refresh", "refresh endpoint inventories and the interactive session table", nil, []string{"refresh"}},
-	"help":    {"help [command]", "show the command overview or detailed help for one command", []string{"command: optional command name, or scope for the scope model"}, []string{"help", "help list", "help scope"}},
-	"quit":    {"quit", "leave interactive mode", nil, []string{"quit"}},
+	"list":      {"list [endpoint] [--clean]", ListHelpDescription + "; JSON output (--json/-json) is available only in the standalone non-interactive command", []string{"endpoint: optional endpoint ID filter", "--clean: omit endpoints that failed to report; diagnostics still go to stderr"}, []string{"list", "list endpoint-1", "list --clean"}},
+	"cd":        {"cd [target]", "navigate between workspace, endpoint, and session scopes; bare cd returns to workspace", []string{"target: row number from the latest list, hostname, hostname/endpoint-id, session, hostname/endpoint-id/session, .., or /", "a numeric target uses the latest list row; invalid rows report their valid range; session scope rejects row navigation", "a hostname shared by several endpoints prompts for a numbered choice, a hostname/endpoint-id answer, or cancel"}, []string{"cd", "cd 1", "cd /", "cd ..", "cd ai-dev", "cd ai-dev/endpoint-1", "cd res_abc", "cd ai-dev/endpoint-1/res_abc"}},
+	"show":      {"show [endpoint-or-session]", "show detailed information for an endpoint or session; defaults to the current scope target", []string{"endpoint-or-session: optional endpoint ID or session/resource ID"}, []string{"show", "show endpoint-1"}},
+	"start":     {"start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--payload <json>]", "start an agent through the selected endpoint; interactive mode executes directly and does not support --json", []string{"endpoint: endpoint ID", "resource: compatibility resource identifier", "--profile: launch profile ID (required)", "--profile-revision: launch profile revision (required)", "--folder: optional working folder; empty value is treated as omitted", "--payload: optional JSON payload; defaults to {}", "--json: rejected in interactive mode"}, []string{"start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1", `start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1 --payload '{"note":"example"}'`}},
+	"resume":    {"resume [--payload <json>]", "resume the selected session", []string{"--payload: optional JSON payload; defaults to {}", "--json: rejected in interactive mode"}, []string{"resume", `resume --payload '{"note":"example"}'`}},
+	"stop":      {"stop", "stop the selected session after confirmation", []string{"--json: rejected in interactive mode"}, []string{"stop"}},
+	"inject":    {"inject <json>", "inject context into the selected session", []string{"json: context payload", "--json: rejected in interactive mode"}, []string{`inject {"text":"context"}`}},
+	"btw":       {"btw <json>", "alias for inject; inject context into the selected session", []string{"json: context payload", "--json: rejected in interactive mode"}, []string{`btw {"text":"context"}`}},
+	"interrupt": {"interrupt <json>", "request an execution interrupt for the selected session", []string{"json: control payload", "--json: rejected in interactive mode"}, []string{`interrupt {"action":"interrupt"}`}},
+	"control":   {"control <json>", "alias for interrupt; request execution interruption", []string{"json: control payload"}, []string{`control {"action":"interrupt"}`}},
+	"logs":      {"logs [session]", "show bounded output for a session in the current endpoint", []string{"session: optional session/resource ID; defaults to the current session"}, []string{"logs", "logs res_abc"}},
+	"send":      {"send <json>", "send a JSON message to the selected session", []string{"json: message payload"}, []string{`send {"text":"hello"}`}},
+	"status":    {"status <command-id>", "show the durable result of a command", []string{"command-id: submitted command identifier"}, []string{"status cmd_123"}},
+	"refresh":   {"refresh", "reload the latest Server inventory and the interactive session table; does not force provider discovery", nil, []string{"refresh"}},
+	"help":      {"help [command]", "show the command overview or detailed help for one command", []string{"command: optional command name, or scope for the scope model"}, []string{"help", "help list", "help scope"}},
+	"quit":      {"quit", "leave interactive mode", nil, []string{"quit"}},
 }
 
-var commandHelpOrder = []string{"list", "cd", "show", "logs", "send", "status", "refresh", "help", "quit"}
+var commandHelpOrder = registeredCommandNames()
+
+// registeredCommandNames derives help ordering from the command registration matrix.
+func registeredCommandNames() []string {
+	names := make([]string, 0, len(commandScopeMatrix))
+	for _, rule := range commandScopeMatrix {
+		names = append(names, rule.Name)
+	}
+	return names
+}
 
 // scopeHelpOrder is the fixed group order used by the scope-grouped overview.
 var scopeHelpOrder = []ScopeKind{ScopeWorkspace, ScopeEndpoint, ScopeSession}
@@ -69,19 +85,23 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"quit":    "exit",
 	},
 	ScopeSession: {
-		"list":    "list sibling sessions in the current endpoint",
-		"cd":      "navigate back to endpoint or workspace",
-		"show":    "show endpoint or session details",
-		"logs":    "show session logs",
-		"send":    "send a message to the current session",
-		"status":  "show command result",
-		"refresh": "revalidate the current session",
-		"help":    "show help",
-		"quit":    "exit",
+		"list":      "list sibling sessions in the current endpoint",
+		"cd":        "navigate back to endpoint or workspace",
+		"show":      "show endpoint or session details",
+		"logs":      "show session logs",
+		"send":      "send a message to the current session",
+		"resume":    "resume the current session",
+		"stop":      "stop the current session",
+		"inject":    "inject context into the current session",
+		"interrupt": "interrupt the current session",
+		"status":    "show command result",
+		"refresh":   "revalidate the current session",
+		"help":      "show help",
+		"quit":      "exit",
 	},
 }
 
-// CommandHelpLines returns the shared command descriptions used by CLI and REPL help.
+// CommandHelpLines returns the interactive command descriptions in registration order.
 func CommandHelpLines() []string {
 	lines := make([]string, 0, len(commandHelpOrder))
 	for _, name := range commandHelpOrder {
@@ -89,6 +109,69 @@ func CommandHelpLines() []string {
 		lines = append(lines, entry.syntax+"   "+entry.description)
 	}
 	return lines
+}
+
+var nonInteractiveHelpOrder = []string{"list", "show", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "help"}
+
+// NonInteractiveCommandHelpLines returns only commands dispatched by the standalone CLI.
+func NonInteractiveCommandHelpLines() []string {
+	lines := make([]string, 0, len(nonInteractiveHelpOrder))
+	for _, name := range nonInteractiveHelpOrder {
+		entry := nonInteractiveHelpEntry(name)
+		lines = append(lines, entry.syntax+"   "+entry.description)
+	}
+	return lines
+}
+
+// PrintNonInteractiveCommandHelp renders help matching standalone CLI dispatch and flag placement.
+func PrintNonInteractiveCommandHelp(out io.Writer, target string) error {
+	target = strings.ToLower(strings.TrimSpace(target))
+	if target == "" {
+		for _, line := range NonInteractiveCommandHelpLines() {
+			if _, err := fmt.Fprintln(out, line); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if !containsCommand(nonInteractiveHelpOrder, target) {
+		return fmt.Errorf("unknown help command %q; available commands: %s", target, strings.Join(nonInteractiveHelpOrder, ", "))
+	}
+	entry := nonInteractiveHelpEntry(target)
+	_, err := fmt.Fprintf(out, "%s\n\nSyntax: %s\nDescription: %s\n", target, entry.syntax, entry.description)
+	return err
+}
+
+func containsCommand(names []string, target string) bool {
+	for _, name := range names {
+		if name == target {
+			return true
+		}
+	}
+	return false
+}
+
+func nonInteractiveHelpEntry(name string) commandHelp {
+	entry := commandHelpCatalog[name]
+	switch name {
+	case "start", "resume":
+		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [payload] [generation]"
+	case "stop":
+		entry.syntax = "agent-cluster-cli [options] stop <endpoint> <resource> <generation>"
+	case "logs":
+		entry.syntax = "agent-cluster-cli [options] logs <endpoint> <session>"
+	case "show":
+		entry.syntax = "agent-cluster-cli [options] show <endpoint-or-session>"
+	case "status":
+		entry.syntax = "agent-cluster-cli [options] status <command-id>"
+	case "list":
+		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] list [--clean]"
+	case "send", "btw", "control":
+		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [payload] [generation]"
+	case "help":
+		entry.syntax = "agent-cluster-cli help [command]"
+	}
+	return entry
 }
 
 // scopeCommandLines derives one scope group from the availability matrix.
