@@ -34,6 +34,13 @@ class SessionData(object):
         total_cached_tokens: int = 0,
         total_completion_tokens: int = 0,
         category: str = "",
+        turn_count: int = 0,
+        tool_call_count: int = 0,
+        tool_error_count: int = 0,
+        llm_request_count: int = 0,
+        llm_request_failure_count: int = 0,
+        tool_duration_ms_sum: int = 0,
+        llm_request_duration_ms_sum: int = 0,
     ):
         """
         Initialize a SessionData instance.
@@ -53,6 +60,17 @@ class SessionData(object):
             total_completion_tokens (int, optional): Accumulated completion tokens.
                 Defaults to 0.
             category (str, optional): Session category. Defaults to an empty string.
+            turn_count (int, optional): Settled User2Agent turns. Defaults to 0.
+            tool_call_count (int, optional): Measured tool calls. Defaults to 0.
+            tool_error_count (int, optional): Tool calls that reported an error.
+                Defaults to 0.
+            llm_request_count (int, optional): LLM requests attempted. Defaults to 0.
+            llm_request_failure_count (int, optional): Failed LLM requests.
+                Defaults to 0.
+            tool_duration_ms_sum (int, optional): Total tool duration in
+                milliseconds. Defaults to 0.
+            llm_request_duration_ms_sum (int, optional): Total LLM request duration
+                in milliseconds. Defaults to 0.
 
         Note:
             Additional attributes like session_name and create_time are
@@ -72,6 +90,13 @@ class SessionData(object):
         self.total_cached_tokens = total_cached_tokens
         self.total_completion_tokens = total_completion_tokens
         self.category = category
+        self.turn_count = turn_count
+        self.tool_call_count = tool_call_count
+        self.tool_error_count = tool_error_count
+        self.llm_request_count = llm_request_count
+        self.llm_request_failure_count = llm_request_failure_count
+        self.tool_duration_ms_sum = tool_duration_ms_sum
+        self.llm_request_duration_ms_sum = llm_request_duration_ms_sum
 
     @property
     def total_prompt_tokens(self):
@@ -212,6 +237,41 @@ class SessionStorageBase(object):
             current_tokens (int): Prompt tokens to add to legacy ``total_tokens``.
             current_cached_tokens (int): Cached prompt tokens to add.
             current_completion_tokens (int): Completion tokens to add.
+
+        Returns:
+            bool: True if the session existed and was updated, False otherwise.
+
+        Raises:
+            NotImplementedError: Concrete storage classes must implement this API.
+        """
+        raise NotImplementedError
+
+    def accumulate_session_metrics(
+        self,
+        session_id: str,
+        turn_count: int = 0,
+        tool_call_count: int = 0,
+        tool_error_count: int = 0,
+        llm_request_count: int = 0,
+        llm_request_failure_count: int = 0,
+        tool_duration_ms_sum: int = 0,
+        llm_request_duration_ms_sum: int = 0,
+    ) -> bool:
+        """Atomically add one settled attempt's execution metric deltas.
+
+        Callers must pass per-attempt deltas rather than agent-level totals so
+        multiple agents can safely contribute to the same session. Negative
+        values are normalized to zero so misreported deltas cannot subtract.
+
+        Args:
+            session_id (str): The session identifier whose metrics should be updated.
+            turn_count (int): Settled turns to add.
+            tool_call_count (int): Measured tool calls to add.
+            tool_error_count (int): Tool calls that reported an error to add.
+            llm_request_count (int): LLM requests attempted to add.
+            llm_request_failure_count (int): Failed LLM requests to add.
+            tool_duration_ms_sum (int): Tool duration milliseconds to add.
+            llm_request_duration_ms_sum (int): LLM request duration milliseconds to add.
 
         Returns:
             bool: True if the session existed and was updated, False otherwise.

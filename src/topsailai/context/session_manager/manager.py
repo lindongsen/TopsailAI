@@ -65,6 +65,15 @@ class DefaultSessionManager(SessionManager):
         return self.storage.accumulate_session_tokens(
             session_id, current_tokens, current_cached_tokens, current_completion_tokens)
 
+    def accumulate_session_metrics(self, session_id: str, turn_count: int = 0, tool_call_count: int = 0,
+                                   tool_error_count: int = 0, llm_request_count: int = 0,
+                                   llm_request_failure_count: int = 0, tool_duration_ms_sum: int = 0,
+                                   llm_request_duration_ms_sum: int = 0) -> bool:
+        """Accumulate settled attempt execution metric deltas."""
+        return self.storage.accumulate_session_metrics(
+            session_id, turn_count, tool_call_count, tool_error_count, llm_request_count,
+            llm_request_failure_count, tool_duration_ms_sum, llm_request_duration_ms_sum)
+
     def get_session_token_totals(self, session_id: str) -> tuple[int, int] | None:
         """Retrieve legacy prompt and cache totals."""
         return self.storage.get_session_token_totals(session_id)

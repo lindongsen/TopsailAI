@@ -66,6 +66,7 @@ class ToolStat:
         self.consecutive_duplicate_count = 0
         self._execution_duration_count = 0
         self._execution_duration_sum_sec = 0.0
+        self._error_count = 0  # O(1) error counter, independent of record pruning
         self._execution_duration_by_tool = defaultdict(
             lambda: {"count": 0, "sum_sec": 0.0}
         )
@@ -325,6 +326,9 @@ class ToolStat:
                 "sequence": self._call_sequence,
             }
 
+            if error:
+                self._error_count += 1
+
             valid_duration_sec = self._validate_duration_sec(duration_sec)
             if valid_duration_sec is not None:
                 record["duration_sec"] = valid_duration_sec
@@ -520,11 +524,17 @@ class ToolStat:
                 self.consecutive_duplicate_count = 0
                 self._execution_duration_count = 0
                 self._execution_duration_sum_sec = 0.0
+                self._error_count = 0
                 self._execution_duration_by_tool.clear()
             else:
+                removed_errors = sum(
+                    1 for c in self._tool_calls
+                    if c["tool_call"] == tool_call and c.get("error")
+                )
                 self._tool_calls = [
                     c for c in self._tool_calls if c["tool_call"] != tool_call
                 ]
+                self._error_count = max(0, self._error_count - removed_errors)
                 duration_state = self._execution_duration_by_tool.pop(tool_call, None)
                 if duration_state:
                     self._execution_duration_count -= duration_state["count"]
@@ -539,6 +549,7 @@ class ToolStat:
             self.consecutive_duplicate_count = 0
             self._execution_duration_count = 0
             self._execution_duration_sum_sec = 0.0
+            self._error_count = 0
             self._execution_duration_by_tool.clear()
 
     def export(self) -> Dict[str, Any]:

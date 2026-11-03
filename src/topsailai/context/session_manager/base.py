@@ -64,6 +64,14 @@ class SessionManager(ABC):
         ...
 
     @abstractmethod
+    def accumulate_session_metrics(self, session_id: str, turn_count: int = 0, tool_call_count: int = 0,
+                                   tool_error_count: int = 0, llm_request_count: int = 0,
+                                   llm_request_failure_count: int = 0, tool_duration_ms_sum: int = 0,
+                                   llm_request_duration_ms_sum: int = 0) -> bool:
+        """Accumulate settled attempt execution metric deltas."""
+        ...
+
+    @abstractmethod
     def get_session_token_totals(self, session_id: str) -> tuple[int, int] | None:
         """Retrieve legacy prompt and cache totals."""
         ...

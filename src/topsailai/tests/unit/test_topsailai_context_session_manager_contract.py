@@ -19,6 +19,7 @@ OPERATIONS = [
     ("retrieve_messages", ("s",), {}),
     ("get_messages_by_session", ("s",), {}),
     ("accumulate_session_tokens", ("s", 7, 3, 2), {}),
+    ("accumulate_session_metrics", ("s", 1, 2, 0, 0, 0, 0, 0), {}),
     ("get_session_token_totals", ("s",), {}),
     ("get_session_token_usage", ("s",), {}),
 ]
