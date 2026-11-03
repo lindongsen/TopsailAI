@@ -83,7 +83,7 @@ func TestStartupFailureKeepsReplAlive(t *testing.T) {
 	if !strings.Contains(diagnostics, "error: temporary list failure") {
 		t.Fatalf("startup failure not reported: %q", diagnostics)
 	}
-	if !strings.Contains(output, "Commands by scope:") {
+	if !strings.Contains(output, "Current scope:") {
 		t.Fatalf("repl did not accept a command after startup failure: %q", output)
 	}
 }

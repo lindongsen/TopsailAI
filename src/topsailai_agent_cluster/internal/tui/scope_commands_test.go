@@ -108,9 +108,7 @@ func TestSendIsUnavailableOutsideSessionScope(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			stub := scopeStub()
 			_, diagnostics := runScope(t, stub, testCase.input, ColorPolicy{})
-			if diagnostics != testCase.want {
-				t.Fatalf("diagnostics = %q, want %q", diagnostics, testCase.want)
-			}
+			assertActionableError(t, diagnostics, strings.TrimSuffix(testCase.want, "\n"))
 			if stub.admit != 0 {
 				t.Fatalf("rejected send admitted %d commands", stub.admit)
 			}
@@ -135,17 +133,13 @@ func TestSendWorksInSessionScope(t *testing.T) {
 func TestLogsIsUnavailableInWorkspaceScope(t *testing.T) {
 	_, diagnostics := runScope(t, scopeStub(), "logs\nquit\n", ColorPolicy{})
 	want := "error: command \"logs\" is unavailable in workspace scope; available commands: list, cd, show, start, status, refresh, help, quit\n"
-	if diagnostics != want {
-		t.Fatalf("diagnostics = %q, want %q", diagnostics, want)
-	}
+	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 }
 
 func TestLogsRequiresSessionInEndpointScope(t *testing.T) {
 	_, diagnostics := runScope(t, scopeStub(), "cd host-one/endpoint-1\nlogs\nquit\n", ColorPolicy{})
 	want := "error: no session selected; use cd <hostname>/<endpoint-id>/<session>\n"
-	if diagnostics != want {
-		t.Fatalf("diagnostics = %q, want %q", diagnostics, want)
-	}
+	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 }
 
 func TestLogsAcceptsSessionArgumentInEndpointScope(t *testing.T) {
@@ -199,17 +193,13 @@ func TestListInSessionScopeShowsSiblingSessions(t *testing.T) {
 func TestListRejectsMismatchingFilterOutsideWorkspace(t *testing.T) {
 	_, diagnostics := runScope(t, scopeStub(), "cd host-one/endpoint-1\nlist endpoint-2\nquit\n", ColorPolicy{})
 	want := "error: list filter \"endpoint-2\" does not match the current endpoint \"endpoint-1\"\n"
-	if diagnostics != want {
-		t.Fatalf("diagnostics = %q, want %q", diagnostics, want)
-	}
+	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 }
 
 func TestShowRequiresTargetInWorkspaceScope(t *testing.T) {
 	_, diagnostics := runScope(t, scopeStub(), "show\nquit\n", ColorPolicy{})
 	want := "error: show requires an endpoint or session in workspace scope; use show <endpoint-or-session>\n"
-	if diagnostics != want {
-		t.Fatalf("diagnostics = %q, want %q", diagnostics, want)
-	}
+	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 }
 
 func TestShowDefaultsToCurrentEndpoint(t *testing.T) {
@@ -292,9 +282,7 @@ func TestStatusAcceptsExplicitCommandIDInEveryScope(t *testing.T) {
 func TestStatusRequiresCommandIDOutsideSessionScope(t *testing.T) {
 	_, diagnostics := runScope(t, scopeStub(), "status\nquit\n", ColorPolicy{})
 	want := "error: status requires a command ID in workspace scope; use status <command-id>\n"
-	if diagnostics != want {
-		t.Fatalf("diagnostics = %q, want %q", diagnostics, want)
-	}
+	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 }
 
 func TestHelpAndQuitRemainAvailableInEveryScope(t *testing.T) {
@@ -312,7 +300,7 @@ func TestHelpAndQuitRemainAvailableInEveryScope(t *testing.T) {
 			if diagnostics != "" {
 				t.Fatalf("unexpected diagnostics: %q", diagnostics)
 			}
-			if !strings.Contains(output, "Commands by scope:") {
+			if !strings.Contains(output, "Current scope:") {
 				t.Fatalf("help was not rendered: %q", output)
 			}
 		})
@@ -326,7 +314,7 @@ func TestAvailableCommandsUseStableOrder(t *testing.T) {
 	}{
 		{kind: ScopeWorkspace, want: "list, cd, show, start, status, refresh, help, quit"},
 		{kind: ScopeEndpoint, want: "list, cd, show, start, logs, status, refresh, help, quit"},
-		{kind: ScopeSession, want: "list, cd, show, resume, stop, inject, btw, interrupt, control, logs, send, status, refresh, help, quit"},
+		{kind: ScopeSession, want: "list, cd, show, resume, stop, inject, interrupt, logs, send, status, refresh, help, quit"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.kind.String(), func(t *testing.T) {
@@ -352,9 +340,7 @@ func TestCommandAllowedKeepsUnknownNamesPassThrough(t *testing.T) {
 func TestUnknownCommandDiagnosticIsPreserved(t *testing.T) {
 	_, diagnostics := runScope(t, scopeStub(), "bogus\nquit\n", ColorPolicy{})
 	want := "error: unknown command \"bogus\" (try help)\n"
-	if diagnostics != want {
-		t.Fatalf("diagnostics = %q, want %q", diagnostics, want)
-	}
+	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 }
 
 func TestRemovedCommandsKeepTheirDiagnostics(t *testing.T) {
@@ -369,9 +355,7 @@ func TestRemovedCommandsKeepTheirDiagnostics(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			_, diagnostics := runScope(t, scopeStub(), testCase.input, ColorPolicy{})
-			if diagnostics != testCase.want {
-				t.Fatalf("diagnostics = %q, want %q", diagnostics, testCase.want)
-			}
+			assertActionableError(t, diagnostics, strings.TrimSuffix(testCase.want, "\n"))
 		})
 	}
 }

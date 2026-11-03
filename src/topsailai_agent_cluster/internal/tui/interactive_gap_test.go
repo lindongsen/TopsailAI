@@ -32,7 +32,7 @@ func TestInteractiveContinuesAfterRecoveredCommandFailure(t *testing.T) {
 	if !strings.Contains(errorsOut.String(), "temporary list failure") {
 		t.Fatalf("missing recovered failure: %q", errorsOut.String())
 	}
-	if !strings.Contains(output.String(), "Commands by scope:") {
+	if !strings.Contains(output.String(), "Current scope:") {
 		t.Fatalf("loop did not continue to help: %q", output.String())
 	}
 }
@@ -202,21 +202,38 @@ func TestSendAdmissionUncertainRetainsID(t *testing.T) {
 }
 
 func TestSendWaitBudgetIndependentFromAdmissionContext(t *testing.T) {
-	reader := &deadlineWaitReader{}
-	runner := CommandRunner{API: reader}
-	parent, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	const marker = "admission-marker"
+	parent := context.WithValue(context.Background(), waitContextMarkerKey{}, marker)
+	parent, cancel := context.WithDeadline(parent, time.Now().Add(-time.Second))
 	defer cancel()
-	<-parent.Done()
-	started := time.Now()
+	if err := parent.Err(); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("parent error=%v, want deadline exceeded", err)
+	}
+
+	reader := &deadlineWaitReader{parentDone: parent.Done()}
+	runner := CommandRunner{API: reader}
+	before := time.Now()
 	result, err := runner.WaitAction(parent, ActionResult{CommandID: "cmd-1"}, protocol.Budget{WaitTimeoutMS: 100})
+	after := time.Now()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result["status"] != string(protocol.StatusFinished) {
 		t.Fatalf("result=%#v", result)
 	}
-	if reader.calls != 2 || time.Since(started) < time.Millisecond {
-		t.Fatalf("calls=%d elapsed=%s", reader.calls, time.Since(started))
+	if reader.calls != 1 || reader.commandID != "cmd-1" {
+		t.Fatalf("calls=%d commandID=%q", reader.calls, reader.commandID)
+	}
+	if reader.marker != marker {
+		t.Fatalf("marker=%v, want %q", reader.marker, marker)
+	}
+	if reader.parentDone == nil || reader.childDone == nil || reader.childDone == reader.parentDone {
+		t.Fatalf("parentDone=%v childDone=%v", reader.parentDone, reader.childDone)
+	}
+	wantMin := before.Add(100 * time.Millisecond)
+	wantMax := after.Add(100 * time.Millisecond)
+	if !reader.hasDeadline || reader.deadline.Before(wantMin) || reader.deadline.After(wantMax) {
+		t.Fatalf("deadline=%v, want between %v and %v", reader.deadline, wantMin, wantMax)
 	}
 }
 
@@ -295,8 +312,16 @@ func (s *uncertainAdmissionStub) GetOutput(context.Context, string, string, stri
 	return protocol.OutputSnapshotResponse{}, nil
 }
 
+type waitContextMarkerKey struct{}
+
 type deadlineWaitReader struct {
-	calls int
+	calls       int
+	commandID   string
+	marker      any
+	parentDone  <-chan struct{}
+	childDone   <-chan struct{}
+	deadline    time.Time
+	hasDeadline bool
 }
 
 func (r *deadlineWaitReader) ListEndpoints(context.Context) ([]protocol.Endpoint, error) {
@@ -317,11 +342,12 @@ func (r *deadlineWaitReader) GetOutput(context.Context, string, string, string, 
 func (r *deadlineWaitReader) AdmitCommand(context.Context, protocol.ImmutableIntent) (map[string]any, error) {
 	return nil, nil
 }
-func (r *deadlineWaitReader) GetCommand(context.Context, string) (map[string]any, error) {
+func (r *deadlineWaitReader) GetCommand(ctx context.Context, commandID string) (map[string]any, error) {
 	r.calls++
-	if r.calls == 1 {
-		return map[string]any{"status": string(protocol.StatusExecuting)}, nil
-	}
+	r.commandID = commandID
+	r.marker = ctx.Value(waitContextMarkerKey{})
+	r.childDone = ctx.Done()
+	r.deadline, r.hasDeadline = ctx.Deadline()
 	return map[string]any{"status": string(protocol.StatusFinished)}, nil
 }
 

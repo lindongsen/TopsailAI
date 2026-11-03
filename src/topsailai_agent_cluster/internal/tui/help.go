@@ -37,9 +37,7 @@ var commandHelpCatalog = map[string]commandHelp{
 	"resume":    {"resume [--payload <json>]", "resume the selected session", []string{"--payload: optional JSON payload; defaults to {}", "--json: rejected in interactive mode"}, []string{"resume", `resume --payload '{"note":"example"}'`}},
 	"stop":      {"stop", "stop the selected session after confirmation", []string{"--json: rejected in interactive mode"}, []string{"stop"}},
 	"inject":    {"inject <json>", "inject context into the selected session", []string{"json: context payload", "--json: rejected in interactive mode"}, []string{`inject {"text":"context"}`}},
-	"btw":       {"btw <json>", "alias for inject; inject context into the selected session", []string{"json: context payload", "--json: rejected in interactive mode"}, []string{`btw {"text":"context"}`}},
 	"interrupt": {"interrupt <json>", "request an execution interrupt for the selected session", []string{"json: control payload", "--json: rejected in interactive mode"}, []string{`interrupt {"action":"interrupt"}`}},
-	"control":   {"control <json>", "alias for interrupt; request execution interruption", []string{"json: control payload"}, []string{`control {"action":"interrupt"}`}},
 	"logs":      {"logs [session]", "show bounded output for a session in the current endpoint", []string{"session: optional session/resource ID; defaults to the current session"}, []string{"logs", "logs res_abc"}},
 	"send":      {"send <json>", "send a JSON message to the selected session", []string{"json: message payload"}, []string{`send {"text":"hello"}`}},
 	"status":    {"status <command-id>", "show the durable result of a command", []string{"command-id: submitted command identifier"}, []string{"status cmd_123"}},
@@ -152,7 +150,8 @@ func containsCommand(names []string, target string) bool {
 }
 
 func nonInteractiveHelpEntry(name string) commandHelp {
-	entry := commandHelpCatalog[name]
+	canonical := canonicalCommandName(name)
+	entry := commandHelpCatalog[canonical]
 	switch name {
 	case "start", "resume":
 		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [payload] [generation]"
@@ -202,7 +201,7 @@ func commandScopes(name string) []string {
 
 // PrintCommandHelp renders overview or detailed help without ANSI styling.
 func PrintCommandHelp(out io.Writer, target string) error {
-	target = strings.ToLower(strings.TrimSpace(target))
+	target = canonicalCommandName(strings.ToLower(strings.TrimSpace(target)))
 	if target == "" {
 		return printScopeHelpOverview(out)
 	}
@@ -213,6 +212,30 @@ func PrintCommandHelp(out io.Writer, target string) error {
 	if !ok {
 		return fmt.Errorf("unknown help command %q; available commands: %s", target, strings.Join(commandHelpOrder, ", "))
 	}
+	return printCommandDetail(out, target, entry)
+}
+
+// PrintScopedCommandHelp renders context help or complete canonical help.
+func PrintScopedCommandHelp(out io.Writer, target string, kind ScopeKind) error {
+	target = canonicalCommandName(strings.ToLower(strings.TrimSpace(target)))
+	if target == "" {
+		return printContextHelp(out, kind)
+	}
+	if target == "all" {
+		return printAllCommandHelp(out)
+	}
+	if target == "scope" || target == "scopes" {
+		return printScopeModelHelp(out)
+	}
+	entry, ok := commandHelpCatalog[target]
+	if !ok {
+		return fmt.Errorf("unknown help command %q; next: run help all", target)
+	}
+	return printCommandDetail(out, target, entry)
+}
+
+// printCommandDetail renders one canonical command without changing non-interactive help.
+func printCommandDetail(out io.Writer, target string, entry commandHelp) error {
 	if _, err := fmt.Fprintf(out, "%s\n\nSyntax: %s\nAvailable in: %s\nDescription: %s\n", target, entry.syntax, strings.Join(commandScopes(target), ", "), entry.description); err != nil {
 		return err
 	}
@@ -247,6 +270,56 @@ func PrintCommandHelp(out io.Writer, target string) error {
 		}
 	}
 	return nil
+}
+
+// printContextHelp renders only canonical commands executable in the current scope.
+func printContextHelp(out io.Writer, kind ScopeKind) error {
+	if _, err := fmt.Fprintf(out, "Current scope: %s\n\nCommands:\n", kind); err != nil {
+		return err
+	}
+	for _, name := range availableCommands(kind) {
+		entry := commandHelpCatalog[name]
+		description := scopeCommandDescriptions[kind][name]
+		if description == "" {
+			description = entry.description
+		}
+		if _, err := fmt.Fprintf(out, "  %s   %s\n", entry.syntax, description); err != nil {
+			return err
+		}
+	}
+	for _, line := range []string{"", "Workflow: list -> cd <number> -> show/logs; run help <command> for syntax.", "Start example: start <endpoint> <resource> --profile <id> --profile-revision <revision>", "Run help all for every command and scope."} {
+		if _, err := fmt.Fprintln(out, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printAllCommandHelp renders all canonical commands and their scope restrictions.
+func printAllCommandHelp(out io.Writer) error {
+	if _, err := fmt.Fprintln(out, "All commands:"); err != nil {
+		return err
+	}
+	for _, name := range commandHelpOrder {
+		entry := commandHelpCatalog[name]
+		if _, err := fmt.Fprintf(out, "  %s   scopes: %s   %s\n", entry.syntax, strings.Join(commandScopes(name), ", "), entry.description); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(out, "\nAliases: "+commandAliasHelp()); err != nil {
+		return err
+	}
+	return nil
+}
+
+// commandAliasHelp renders accepted aliases from the canonical alias registry.
+func commandAliasHelp() string {
+	aliases := make([]string, 0, len(commandAliases))
+	for alias, canonical := range commandAliases {
+		aliases = append(aliases, alias+"="+canonical)
+	}
+	sort.Strings(aliases)
+	return strings.Join(aliases, ", ")
 }
 
 // printScopeHelpOverview renders one command group per scope.

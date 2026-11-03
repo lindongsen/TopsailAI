@@ -109,16 +109,28 @@ func TestInteractiveSendAdmissionCallMatrix(t *testing.T) {
 					t.Fatalf("output=%q diagnostics=%q want cancellation line and no diagnostic", output, diagnostics)
 				}
 			} else if tc.wantDiagnostic == "result unknown" {
-				if !strings.HasPrefix(diagnostics, "error: command cli-") || !strings.Contains(diagnostics, " result unknown; use status cli-") || !strings.HasSuffix(diagnostics, "; transport timeout\n") {
+				lines := strings.Split(strings.TrimSuffix(diagnostics, "\n"), "\n")
+				if len(lines) != 3 || !strings.HasPrefix(lines[0], "error: command cli-") || !strings.Contains(lines[0], " result unknown; use status ") || !strings.HasSuffix(lines[0], "; transport timeout") || lines[1] != "usage: send <json>" || !strings.HasPrefix(lines[2], "next: Run status ") || !strings.HasSuffix(lines[2], " to query the existing command.") {
 					t.Fatalf("diagnostics=%q want exact uncertain-admission form", diagnostics)
+				}
+				statusID := strings.TrimSuffix(strings.TrimPrefix(lines[2], "next: Run status "), " to query the existing command.")
+				if statusID == "" || !strings.Contains(lines[0], "use status "+statusID+" to query") {
+					t.Fatalf("diagnostics=%q uses a different CommandID in next", diagnostics)
+				}
+				first := strings.TrimPrefix(lines[0], "error: command ")
+				commandID := strings.TrimSuffix(strings.SplitN(first, " result unknown;", 2)[0], "")
+				if commandID != statusID {
+					t.Fatalf("diagnostics=%q has inconsistent CommandID: error=%q status=%q next=%q", diagnostics, commandID, statusID, statusID)
 				}
 			} else if tc.wantDiagnostic != "" {
 				want := tc.wantDiagnostic
 				if !strings.HasSuffix(want, "\n") {
 					want += "\n"
 				}
-				if diagnostics != want {
-					t.Fatalf("diagnostics=%q want %q", diagnostics, want)
+				if tc.name == "invalidated" {
+					assertActionableErrors(t, diagnostics, "error: selected session generation changed; use the session again", "error: selected session invalidated; use the session again")
+				} else {
+					assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 				}
 			}
 		})

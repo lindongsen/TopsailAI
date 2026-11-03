@@ -29,10 +29,11 @@ func TestReadLineBoundAndRecovery(t *testing.T) {
 	stub := inputStub()
 	input := strings.Repeat("x", 1<<20) + "\nhelp\nquit\n"
 	output, errorsOut := runInputScenario(t, stub, input, 8192)
-	if got, want := errorsOut, "input line exceeds the maximum length\n"; got != want {
+	wantError := "error: input line exceeds the maximum length\nusage: interactive command\nnext: Shorten the input line and retry.\n"
+	if got, want := errorsOut, wantError; got != want {
 		t.Fatalf("errors=%q want=%q", got, want)
 	}
-	if !strings.Contains(output, "Commands by scope:") || !strings.Contains(output, "list [endpoint]") {
+	if !strings.Contains(output, "Current scope:") || !strings.Contains(output, "list [endpoint]") {
 		t.Fatalf("REPL did not continue after oversized input: %q", output)
 	}
 	if stub.admit != 0 {
@@ -57,8 +58,10 @@ func TestSendPayloadObjectAndBytes(t *testing.T) {
 			stub := inputStub()
 			input := fmt.Sprintf("cd endpoint-1/session-1\nsend %s\nquit\n", testCase.payload)
 			_, errorsOut := runInputScenario(t, stub, input, 8192)
-			if got := errorsOut; got != testCase.wantErr {
-				t.Fatalf("errors=%q want=%q", got, testCase.wantErr)
+			assertActionableError(t, errorsOut, strings.TrimSuffix(testCase.wantErr, "\n"))
+			lines := strings.Split(strings.TrimSuffix(errorsOut, "\n"), "\n")
+			if lines[1] != "usage: send <json>" {
+				t.Fatalf("errors=%q want send usage", errorsOut)
 			}
 			if stub.admit != 0 {
 				t.Fatalf("payload %q admitted %d commands", testCase.payload, stub.admit)
@@ -88,9 +91,7 @@ func TestSendPayloadLengthRejectsBeforeAdmission(t *testing.T) {
 func TestConfirmationEOFNoAdmission(t *testing.T) {
 	stub := inputStub()
 	_, errorsOut := runInputScenario(t, stub, "cd endpoint-1/session-1\nsend {\"text\":\"hi\"}\ny", 8192)
-	if got, want := errorsOut, "error: confirmation requires a complete line\n"; got != want {
-		t.Fatalf("errors=%q want=%q", got, want)
-	}
+	assertActionableError(t, errorsOut, "error: confirmation requires a complete line")
 	if stub.admit != 0 {
 		t.Fatalf("partial confirmation admitted %d commands", stub.admit)
 	}
@@ -117,8 +118,10 @@ func TestConfirmationAcceptedOnlyByCompleteLine(t *testing.T) {
 			if stub.admit != testCase.admit {
 				t.Fatalf("admissions=%d want=%d output=%q errors=%q", stub.admit, testCase.admit, output, errorsOut)
 			}
-			if errorsOut != testCase.wantErr {
-				t.Fatalf("errors=%q want=%q", errorsOut, testCase.wantErr)
+			if testCase.wantErr != "" {
+				assertActionableError(t, errorsOut, strings.TrimSuffix(testCase.wantErr, "\n"))
+			} else if errorsOut != "" {
+				t.Fatalf("unexpected diagnostics=%q", errorsOut)
 			}
 		})
 	}
@@ -160,9 +163,7 @@ func TestConfirmationRevalidatesCapabilityRevision(t *testing.T) {
 	if stub.admit != 0 {
 		t.Fatalf("capability change admitted %d commands", stub.admit)
 	}
-	if got, want := errorsOut, "error: capability changed after confirmation; send cancelled\n"; got != want {
-		t.Fatalf("errors=%q want=%q", got, want)
-	}
+	assertActionableError(t, errorsOut, "error: capability changed after confirmation; send cancelled")
 }
 
 func TestInteractiveRejectsJSONOptions(t *testing.T) {

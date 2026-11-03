@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// commandScopeRule declares which scopes may execute one command.
+// commandScopeRule declares which scopes may execute one canonical command.
 type commandScopeRule struct {
 	Name      string
 	Workspace bool
@@ -27,52 +27,63 @@ func (r commandScopeRule) allows(kind ScopeKind) bool {
 	}
 }
 
-// commandScopeMatrix is the single source of truth for scope command availability.
-// Order is the stable order used by every availability message.
+// commandScopeMatrix is the single source of truth for canonical command availability.
 var commandScopeMatrix = []commandScopeRule{
 	{Name: "list", Workspace: true, Endpoint: true, Session: true},
 	{Name: "cd", Workspace: true, Endpoint: true, Session: true},
 	{Name: "show", Workspace: true, Endpoint: true, Session: true},
-	{Name: "start", Workspace: true, Endpoint: true, Session: false},
-	{Name: "resume", Workspace: false, Endpoint: false, Session: true},
-	{Name: "stop", Workspace: false, Endpoint: false, Session: true},
-	{Name: "inject", Workspace: false, Endpoint: false, Session: true},
-	{Name: "btw", Workspace: false, Endpoint: false, Session: true},
-	{Name: "interrupt", Workspace: false, Endpoint: false, Session: true},
-	{Name: "control", Workspace: false, Endpoint: false, Session: true},
-	{Name: "logs", Workspace: false, Endpoint: true, Session: true},
-	{Name: "send", Workspace: false, Endpoint: false, Session: true},
+	{Name: "start", Workspace: true, Endpoint: true},
+	{Name: "resume", Session: true},
+	{Name: "stop", Session: true},
+	{Name: "inject", Session: true},
+	{Name: "interrupt", Session: true},
+	{Name: "logs", Endpoint: true, Session: true},
+	{Name: "send", Session: true},
 	{Name: "status", Workspace: true, Endpoint: true, Session: true},
 	{Name: "refresh", Workspace: true, Endpoint: true, Session: true},
 	{Name: "help", Workspace: true, Endpoint: true, Session: true},
 	{Name: "quit", Workspace: true, Endpoint: true, Session: true},
 }
 
+// commandAliases maps accepted short or compatibility names to canonical commands.
+var commandAliases = map[string]string{
+	"?":       "help",
+	"exit":    "quit",
+	"q":       "quit",
+	"r":       "refresh",
+	"btw":     "inject",
+	"control": "interrupt",
+}
+
+// canonicalCommandName returns the registered command for an accepted spelling.
+func canonicalCommandName(name string) string {
+	if canonical, ok := commandAliases[name]; ok {
+		return canonical
+	}
+	return name
+}
+
 // alwaysAvailableCommands must stay usable even if the matrix is misconfigured.
 var alwaysAvailableCommands = map[string]bool{
 	"help": true,
-	"?":    true,
 	"quit": true,
-	"exit": true,
 }
 
-// commandAllowed reports whether the command may run in the given scope.
-// Names outside the matrix are allowed so unknown-command and removal
-// diagnostics keep their original wording.
+// commandAllowed reports whether a canonical or aliased command may run in a scope.
 func commandAllowed(name string, kind ScopeKind) bool {
+	name = canonicalCommandName(name)
 	if alwaysAvailableCommands[name] {
 		return true
 	}
 	for _, rule := range commandScopeMatrix {
-		if rule.Name != name {
-			continue
+		if rule.Name == name {
+			return rule.allows(kind)
 		}
-		return rule.allows(kind)
 	}
 	return true
 }
 
-// availableCommands returns the permitted command names in stable order.
+// availableCommands returns canonical permitted command names in stable order.
 func availableCommands(kind ScopeKind) []string {
 	names := make([]string, 0, len(commandScopeMatrix))
 	for _, rule := range commandScopeMatrix {
@@ -90,19 +101,24 @@ func scopeUnavailableError(name string, kind ScopeKind) error {
 
 // requireCommandScope rejects a command that the current scope does not permit.
 func requireCommandScope(name string, kind ScopeKind) error {
-	if _, known := commandHelpCatalog[name]; known && !alwaysAvailableCommands[name] {
-		registered := false
-		for _, rule := range commandScopeMatrix {
-			registered = registered || rule.Name == name
-		}
-		if !registered {
-			return fmt.Errorf("unknown command %q (try help)", name)
-		}
+	canonical := canonicalCommandName(name)
+	if _, known := commandHelpCatalog[canonical]; known && !containsCanonicalCommand(canonical) {
+		return fmt.Errorf("unknown command %q (try help)", name)
 	}
-	if commandAllowed(name, kind) {
+	if commandAllowed(canonical, kind) {
 		return nil
 	}
-	return scopeUnavailableError(name, kind)
+	return scopeUnavailableError(canonical, kind)
+}
+
+// containsCanonicalCommand reports whether a name is registered in the matrix.
+func containsCanonicalCommand(name string) bool {
+	for _, rule := range commandScopeMatrix {
+		if rule.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // scopedListFilter narrows a list filter to the current endpoint outside workspace scope.

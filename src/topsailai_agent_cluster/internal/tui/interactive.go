@@ -211,7 +211,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			return ErrInteractiveInterrupt
 		}
 		if overflow {
-			if _, writeErr := fmt.Fprintln(errOut, "input line exceeds the maximum length"); writeErr != nil {
+			if writeErr := writeInteractiveError(errOut, "", fmt.Errorf("input line exceeds the maximum length")); writeErr != nil {
 				return writeErr
 			}
 			if err == io.EOF {
@@ -241,7 +241,8 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			continue
 		}
 		if execErr != nil {
-			if _, writeErr := fmt.Fprintln(errOut, "error:", execErr); writeErr != nil {
+			commandName, _ := splitCommand(line)
+			if writeErr := writeInteractiveError(errOut, commandName, execErr); writeErr != nil {
 				return writeErr
 			}
 		}
@@ -255,15 +256,16 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 var ErrInteractiveInterrupt = fmt.Errorf("interactive interrupted")
 
 func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *interactiveState, line string, lineResults <-chan lineReadResult, out, trustedOut, errOut io.Writer, options InteractiveOptions) (bool, error) {
-	name, rest := splitCommand(line)
+	rawName, rest := splitCommand(line)
+	name := canonicalCommandName(rawName)
 	// Scope availability is enforced once, before any command-specific parsing.
-	if err := requireCommandScope(name, state.Scope.Kind); err != nil {
+	if err := requireCommandScope(rawName, state.Scope.Kind); err != nil {
 		return false, err
 	}
 	switch name {
-	case "help", "?":
-		return false, printHelp(out, strings.TrimSpace(rest))
-	case "quit", "exit":
+	case "help":
+		return false, printHelp(out, strings.TrimSpace(rest), state.Scope.Kind)
+	case "quit":
 		if strings.TrimSpace(rest) != "" {
 			return false, fmt.Errorf("usage: %s", name)
 		}
@@ -346,8 +348,47 @@ func writePrompt(out io.Writer, state interactiveState, policy ColorPolicy) erro
 	return RenderPrompt(out, state.Scope, state.Invalidated, policy)
 }
 
-func printHelp(out io.Writer, target string) error {
-	return PrintCommandHelp(out, target)
+func printHelp(out io.Writer, target string, kind ScopeKind) error {
+	return PrintScopedCommandHelp(out, target, kind)
+}
+
+// writeInteractiveError renders one actionable three-line diagnostic.
+func writeInteractiveError(out io.Writer, command string, err error) error {
+	canonical := canonicalCommandName(command)
+	cause := err.Error()
+	usage := ""
+	if strings.HasPrefix(cause, "usage: ") {
+		usage = strings.TrimPrefix(cause, "usage: ")
+		cause = "invalid arguments"
+	}
+	if usage == "" {
+		if entry, ok := commandHelpCatalog[canonical]; ok {
+			usage = entry.syntax
+		} else {
+			usage = "help"
+		}
+	}
+	next := "Run help " + canonical + " for valid syntax."
+	if _, known := commandHelpCatalog[canonical]; !known {
+		next = "Run help or help all to see valid commands."
+	}
+	if marker := "use status "; strings.Contains(cause, marker) {
+		statusPart := strings.SplitN(strings.SplitN(cause, marker, 2)[1], ";", 2)[0]
+		commandID := strings.Fields(statusPart)[0]
+		next = "Run status " + commandID + " to query the existing command."
+	}
+	if strings.HasPrefix(cause, "input line exceeds") {
+		usage = "interactive command"
+		next = "Shorten the input line and retry."
+	}
+	if _, writeErr := fmt.Fprintln(out, "error:", cause); writeErr != nil {
+		return writeErr
+	}
+	if _, writeErr := fmt.Fprintln(out, "usage:", usage); writeErr != nil {
+		return writeErr
+	}
+	_, writeErr := fmt.Fprintln(out, "next:", next)
+	return writeErr
 }
 
 func commandContext(parent context.Context) (context.Context, context.CancelFunc) {

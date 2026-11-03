@@ -102,7 +102,7 @@ func TestInteractiveLoopContinuesAfterErrorAndQuit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunInteractive: %v", err)
 	}
-	if !strings.Contains(errorsOut.String(), `unknown command "bad"`) || !strings.Contains(output.String(), "Commands by scope:") {
+	if !strings.Contains(errorsOut.String(), `unknown command "bad"`) || !strings.Contains(output.String(), "Current scope:") {
 		t.Fatalf("recovery output missing: out=%q err=%q", output.String(), errorsOut.String())
 	}
 	if !strings.Contains(output.String(), "cluster> ") {
@@ -365,9 +365,10 @@ func TestInteractiveUseCommandIsRemovedAndBindsNothing(t *testing.T) {
 	if err := RunInteractive(context.Background(), stub, strings.NewReader("list\nuse 1\nuse endpoint-1 session-1\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := errorsOut.String(), strings.Repeat("error: \"use\" has been removed; use \"cd\" to navigate\n", 2); got != want {
-		t.Fatalf("errors=%q want=%q", got, want)
-	}
+	assertActionableErrors(t, errorsOut.String(),
+		`error: "use" has been removed; use "cd" to navigate`,
+		`error: "use" has been removed; use "cd" to navigate`,
+	)
 	if strings.Contains(output.String(), "cluster[endpoint-1/-]>") {
 		t.Fatalf("removed use command bound a session: %q", output.String())
 	}
@@ -454,17 +455,22 @@ func TestInteractiveSessionActionsRequireSessionScope(t *testing.T) {
 }
 
 func TestInteractiveControlAliasesAreDocumented(t *testing.T) {
-	var output strings.Builder
-	if err := PrintCommandHelp(&output, "btw"); err != nil {
-		t.Fatal(err)
-	}
-	if err := PrintCommandHelp(&output, "control"); err != nil {
-		t.Fatal(err)
-	}
-	for _, phrase := range []string{"btw <json>", "control <json>", "Available in: session"} {
-		if !strings.Contains(output.String(), phrase) {
-			t.Fatalf("help missing %q: %q", phrase, output.String())
+	var aliasOutput, canonicalOutput strings.Builder
+	for _, name := range []string{"btw", "control"} {
+		if err := PrintCommandHelp(&aliasOutput, name); err != nil {
+			t.Fatal(err)
 		}
+	}
+	for _, name := range []string{"inject", "interrupt"} {
+		if err := PrintCommandHelp(&canonicalOutput, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if aliasOutput.String() != canonicalOutput.String() {
+		t.Fatalf("alias help differs from canonical help: alias=%q canonical=%q", aliasOutput.String(), canonicalOutput.String())
+	}
+	if !strings.Contains(aliasOutput.String(), "Available in: session") {
+		t.Fatalf("alias help missing scope: %q", aliasOutput.String())
 	}
 }
 
@@ -505,7 +511,7 @@ func TestInteractiveControlAliasesExecuteSharedOperations(t *testing.T) {
 	if errorsOut.Len() != 0 || stub.admit != 2 {
 		t.Fatalf("output=%q errors=%q admits=%d", output.String(), errorsOut.String(), stub.admit)
 	}
-	for _, phrase := range []string{"btw session-1?", "control session-1?"} {
+	for _, phrase := range []string{"inject session-1?", "interrupt session-1?"} {
 		if !strings.Contains(output.String(), phrase) {
 			t.Fatalf("output missing %q: %q", phrase, output.String())
 		}
@@ -514,7 +520,7 @@ func TestInteractiveControlAliasesExecuteSharedOperations(t *testing.T) {
 
 func TestHelpCommandNamesReturnsStableSortedNames(t *testing.T) {
 	names := HelpCommandNames()
-	if len(names) == 0 || names[0] != "btw" || names[len(names)-1] != "stop" {
+	if len(names) == 0 || names[0] != "cd" || names[len(names)-1] != "stop" {
 		t.Fatalf("unexpected help names: %v", names)
 	}
 	for index := 1; index < len(names); index++ {

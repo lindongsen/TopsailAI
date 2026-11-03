@@ -117,9 +117,7 @@ func TestCDRowNumberRejectsInvalidAndSessionScope(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			_, diagnostics := runNav(t, scopeStub(), testCase.input)
-			if diagnostics != testCase.want {
-				t.Fatalf("diagnostics = %q, want %q", diagnostics, testCase.want)
-			}
+			assertActionableError(t, diagnostics, strings.TrimSuffix(testCase.want, "\n"))
 		})
 	}
 }
@@ -329,9 +327,7 @@ func TestCDUnknownTargetsReportExactErrors(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			_, diagnostics := runNav(t, singleHostStub(), testCase.input)
-			if diagnostics != testCase.want {
-				t.Fatalf("diagnostics = %q, want %q", diagnostics, testCase.want)
-			}
+			assertActionableError(t, diagnostics, strings.TrimSuffix(testCase.want, "\n"))
 		})
 	}
 }
@@ -358,9 +354,7 @@ func TestCDFailureKeepsSessionScope(t *testing.T) {
 
 func TestUseCommandReportsRemoval(t *testing.T) {
 	output, diagnostics := runNav(t, singleHostStub(), "use 1\nquit\n")
-	if diagnostics != "error: \"use\" has been removed; use \"cd\" to navigate\n" {
-		t.Fatalf("diagnostics = %q", diagnostics)
-	}
+	assertActionableError(t, diagnostics, `error: "use" has been removed; use "cd" to navigate`)
 	if got := lastPrompt(output); got != "cluster>" {
 		t.Fatalf("final prompt = %q, want unchanged workspace prompt", got)
 	}

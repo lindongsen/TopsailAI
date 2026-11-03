@@ -147,7 +147,7 @@ func TestInteractiveCommandInterruptCancelsOnlyCurrentCommand(t *testing.T) {
 	if !strings.Contains(diagnostics.String(), "interrupted\n") {
 		t.Fatalf("diagnostics=%q", diagnostics.String())
 	}
-	if !strings.Contains(output.String(), "Commands by scope:") {
+	if !strings.Contains(output.String(), "Current scope:") {
 		t.Fatalf("subsequent command did not execute: %q", output.String())
 	}
 }
