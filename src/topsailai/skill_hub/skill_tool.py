@@ -42,6 +42,11 @@ class SkillHubToolError(ValueError):
     pass
 
 
+class SkillParseError(SkillHubToolError):
+    """Raised when a skill file cannot be read or its front matter is invalid."""
+    pass
+
+
 logger = logging.getLogger(__name__)
 g_skills = {}  # key is folder, value is SkillInfo
 
@@ -288,7 +293,7 @@ def is_disabled_skill_by_name(skill_name: str) -> bool:
     return skill_name in disabled_list
 
 
-def parse_skill_folder(folder_path: str) -> SkillInfo:
+def parse_skill_folder(folder_path: str, raise_on_error: bool = False) -> SkillInfo:
     """Parse a skill folder to extract skill information.
 
     Looks for SKILL.md or skill.md in the folder and parses the YAML frontmatter
@@ -320,7 +325,11 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
     try:
         with open(skill_file, encoding="utf-8") as fd:
             content = fd.read()
-    except Exception:
+    except Exception as exc:
+        message = f"failed to read SKILL.md: {skill_file}: {exc}"
+        print_tool.print_error(message, exception=True)
+        if raise_on_error:
+            raise SkillParseError(message) from exc
         return skill_info
 
     skill_info.skill_md_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -337,8 +346,11 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
                 skill_info.description = data.get("description", "")
                 if "flag_overview" in data and data["flag_overview"] != "":
                     skill_info.flag_overview = True if to_int(data.get("flag_overview", 0)) else False
-        except yaml.YAMLError as e:
-            logger.exception(e)
+        except yaml.YAMLError as exc:
+            message = f"failed to parse SKILL.md front matter: {skill_file}: {exc}"
+            print_tool.print_error(message, exception=True)
+            if raise_on_error:
+                raise SkillParseError(message) from exc
 
     if is_disabled_skill_by_name(skill_info.name):
         skill_info.name = ""
@@ -364,12 +376,15 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
                 skill_basename, folder_path, existing_folder
             )
             return existing_info
-        logger.error(
-            "Conflicting skill folder name detected: basename '%s' of '%s' "
-            "matches already loaded skill '%s' but SKILL.md content differs. "
-            "Rejecting '%s'.",
-            skill_basename, folder_path, existing_folder, folder_path
+        message = (
+            "Conflicting skill folder name detected: basename "
+            f"'{skill_basename}' of '{folder_path}' matches already loaded skill "
+            f"'{existing_folder}' but SKILL.md content differs. "
+            f"Rejecting '{folder_path}'."
         )
+        print_tool.print_error(message)
+        if raise_on_error:
+            raise SkillParseError(message)
         skill_info.name = ""
         return skill_info
 

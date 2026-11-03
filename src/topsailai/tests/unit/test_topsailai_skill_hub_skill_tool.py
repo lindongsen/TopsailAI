@@ -11,6 +11,7 @@ import os
 import unittest
 from unittest.mock import patch, MagicMock, mock_open
 import tempfile
+from pathlib import Path
 import yaml
 
 from topsailai.skill_hub.skill_tool import (
@@ -356,6 +357,37 @@ class TestParseSkillFolder(unittest.TestCase):
         self.assertEqual(result.name, "")
         self.assertEqual(result.description, "")
 
+    @patch('topsailai.skill_hub.skill_tool.print_tool')
+    def test_invalid_yaml_reports_frontmatter_error(self, mock_print_tool):
+        """Invalid front matter is reported while preserving the empty result contract."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "SKILL.md")
+            with open(skill_file, "w", encoding="utf-8") as file_obj:
+                file_obj.write("---\nname: broken\ndescription: has: colon\n---\n")
+
+            result = parse_skill_folder(tmpdir)
+
+            self.assertEqual(result.name, "")
+            message = mock_print_tool.print_error.call_args.args[0]
+            self.assertIn(skill_file, message)
+            self.assertIn("failed to parse SKILL.md front matter", message)
+            self.assertIn("mapping values are not allowed", message)
+
+    @patch('topsailai.skill_hub.skill_tool.print_tool')
+    @patch('builtins.open', side_effect=PermissionError("permission denied"))
+    def test_skill_file_read_failure_reports_error(self, mock_open, mock_print_tool):
+        """Unreadable SKILL.md is reported while preserving the empty result contract."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "SKILL.md")
+            Path(skill_file).touch()
+
+            result = parse_skill_folder(tmpdir)
+
+            self.assertEqual(result.name, "")
+            message = mock_print_tool.print_error.call_args.args[0]
+            self.assertIn(skill_file, message)
+            self.assertIn("permission denied", message)
+
     def test_parses_yaml_frontmatter(self):
         """Test parsing YAML frontmatter from SKILL.md."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -543,7 +575,8 @@ class TestDuplicateSkillFolderBlocking(unittest.TestCase):
                 any("identical SKILL.md" in msg for msg in cm.output)
             )
 
-    def test_duplicate_basename_different_skill_md_is_rejected(self):
+    @patch('topsailai.skill_hub.skill_tool.print_tool')
+    def test_duplicate_basename_different_skill_md_is_rejected(self, mock_print_tool):
         """Same basename but different SKILL.md should be rejected with error log."""
         content1 = "---\nname: hello\ndescription: first\n---\n"
         content2 = "---\nname: hello\ndescription: second\n---\n"
@@ -566,6 +599,8 @@ class TestDuplicateSkillFolderBlocking(unittest.TestCase):
             self.assertTrue(
                 any("SKILL.md content differs" in msg for msg in cm.output)
             )
+            mock_print_tool.print_error.assert_called_once()
+            self.assertIn("SKILL.md content differs", mock_print_tool.print_error.call_args.args[0])
 
     def test_different_basenames_load_normally(self):
         """Different basenames should not interfere with each other."""
@@ -1006,8 +1041,9 @@ class TestDuplicateSkillFolderBlocking(unittest.TestCase):
                 self.assertIn("identical SKILL.md", logged_message)
                 mock_logger.error.assert_not_called()
 
+    @patch('topsailai.skill_hub.skill_tool.print_tool')
     @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
-    def test_duplicate_basename_different_skill_md_is_rejected(self, mock_env):
+    def test_duplicate_basename_different_skill_md_is_rejected(self, mock_env, mock_print_tool):
         """Same basename but different SKILL.md should be rejected with error log."""
         mock_env.get_list_str.return_value = []
 
@@ -1030,8 +1066,9 @@ class TestDuplicateSkillFolderBlocking(unittest.TestCase):
                 second_info = parse_skill_folder(second_dir)
                 self.assertEqual(second_info.name, "")
                 self.assertNotIn(second_dir, g_skills)
-                mock_logger.error.assert_called_once()
-                logged_message = mock_logger.error.call_args[0][0]
+                mock_logger.error.assert_not_called()
+                mock_print_tool.print_error.assert_called_once()
+                logged_message = mock_print_tool.print_error.call_args[0][0]
                 self.assertIn("SKILL.md content differs", logged_message)
 
     @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')

@@ -601,6 +601,23 @@ class TestLoadSkill(unittest.TestCase):
             self.assertIn("LoadedSkill", result)
             self.assertIn(tmpdir, result)
 
+    @patch('topsailai.tools.skill_tool.print_tool')
+    def test_load_skill_invalid_yaml_reports_and_exposes_diagnostic(self, mock_print_tool):
+        """Invalid front matter is visible in both the tool output and exception."""
+        from topsailai.tools.skill_tool import load_skill, SkillToolError
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "SKILL.md"), "w", encoding="utf-8") as file_obj:
+                file_obj.write("---\nname: broken\ndescription: has: colon\n---\n")
+
+            with self.assertRaises(SkillToolError) as context:
+                load_skill(tmpdir)
+
+            self.assertIn("failed to parse SKILL.md front matter", str(context.exception))
+            self.assertIn("mapping values are not allowed", str(context.exception))
+            mock_print_tool.print_error.assert_called_once()
+            self.assertIn("mapping values are not allowed", mock_print_tool.print_error.call_args.args[0])
+
     def test_load_skill_missing_name_raises_skill_tool_error(self):
         """Test load_skill raises SkillToolError when SKILL.md has no name."""
         from topsailai.tools.skill_tool import load_skill, SkillToolError

@@ -33,6 +33,7 @@ from topsailai.utils import (
     env_tool,
     format_tool,
     file_tool,
+    print_tool,
 )
 from topsailai.utils.cmd_tool import exec_cmd
 from topsailai.prompt_hub import prompt_tool
@@ -506,17 +507,19 @@ def load_skill(skill_folder:str):
             could be resolved.
     """
     try:
-        s = parse_skill_folder(skill_folder)
+        s = parse_skill_folder(skill_folder, raise_on_error=True)
     except Exception as exc:
-        raise SkillToolError(
-            f"load skill failed for folder {skill_folder!r}: {exc}"
-        ) from exc
+        message = f"load skill failed for folder {skill_folder!r}: {exc}"
+        print_tool.print_error(message, exception=True)
+        raise SkillToolError(message) from exc
 
     if not s.name:
-        raise SkillToolError(
+        message = (
             f"load skill failed: {skill_folder} "
             "(no valid SKILL.md, skill disabled, or duplicate basename already loaded)"
         )
+        print_tool.print_error(message)
+        raise SkillToolError(message)
     return s.markdown
 
 
