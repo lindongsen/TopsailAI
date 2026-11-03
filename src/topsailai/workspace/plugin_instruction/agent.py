@@ -12,7 +12,6 @@ from topsailai.utils import (
     json_tool,
 )
 from topsailai.utils.print_tool import print_info, print_warning
-from topsailai.tools.base.common import get_tools_for_chat
 from topsailai.prompt_hub.prompt_tool import get_observation_by_tools
 from topsailai.workspace.folder_constants import FOLDER_ROOT
 from topsailai.workspace.plugin_instruction.base.cache import get_ai_agent
@@ -173,6 +172,7 @@ def get_tool_prompt() -> str:
     agent = get_ai_agent()
     if agent:
         if env_tool.is_use_tool_calls():
+            from topsailai.tools.base.common import get_tools_for_chat
             content = get_tools_for_chat(agent.available_tools)
             content = json_tool.safe_json_dump(content, indent=2)
             print(content)

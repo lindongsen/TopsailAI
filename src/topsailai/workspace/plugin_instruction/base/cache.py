@@ -5,10 +5,14 @@
   Purpose:
 '''
 
+from __future__ import annotations
+
 from contextvars import ContextVar
 from functools import wraps
+from typing import TYPE_CHECKING
 
-from topsailai.ai_base.agent_base import AgentBase
+if TYPE_CHECKING:
+    from topsailai.ai_base.agent_base import AgentBase
 
 # ai agent object
 g_ai_agent = None
