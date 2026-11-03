@@ -70,6 +70,7 @@ topsailai_launch_agent
 | `--dry-run` | Print the resolved command, working directory, and merged environment variables without executing. |
 | `--subprocess` | Use `subprocess.run()` instead of `os.system()` (default). |
 | `--setup` | Force the guided interactive setup to create `.topsailai/settings.yaml` when it is missing. |
+| `--non-interactive` | Never prompt. A missing `.topsailai/settings.yaml` uses the built-in default configuration, an existing configuration uses the `default` context item when present, and any remaining ambiguity falls back to the base item `_` so an agent is always launched. Cannot be combined with `--setup` or `--select-driver`. |
 | `--scan <folder>` | Scan the specified folder and print its tree structure, then exit. Reuses the same ignore rules and formatting as the workspace scan. Only folders are listed unless files are explicitly requested. |
 | `--include-files` | Also list files in the scanned tree (both `--scan` output and the folder tree appended to `TOPSAILAI_CONTEXT_USER_MESSAGE`). Overrides `TOPSAILAI_SCAN_INCLUDE_FILES`. |
 | `--folders-only` | List folders only, suppressing files. This is the default behavior; the flag is provided to override `TOPSAILAI_SCAN_INCLUDE_FILES`. Mutually exclusive with `--include-files`. |
@@ -309,6 +310,40 @@ driver menu described in [Interactive Driver Selection](#interactive-driver-sele
 item page is rendered again so the item can still be chosen. An exact item name or a valid row number always wins over the
 `d` command, so an item literally named `d` remains selectable.
 
+## Non-Interactive Mode
+
+`--non-interactive` guarantees that the launcher itself performs no interactive action. It always proceeds to launch an
+agent, and it never reads from stdin.
+
+| Situation | Result |
+|---|---|
+| `.topsailai/settings.yaml` is missing | The built-in default configuration is used and no settings file is created. |
+| Settings exist and `default` is configured | `default` is used. |
+| Settings exist with exactly one non-base item | That item is used. |
+| Settings exist with multiple items and no `default` | A warning is printed and the base item `_` is used. |
+| Settings exist with an empty `context` section | `_` is used and the context-setup prompt is skipped. |
+| `--item <name>` is given | That item is used unchanged. |
+
+Behavior details:
+
+- The flag governs only this CLI's own prompting. It does not change the launched agent's `TOPSAILAI_INTERACTIVE_MODE`,
+  which keeps whatever the configuration and OS environment provide.
+- `--setup` and `--select-driver` exist only to open an interactive flow, so combining either of them with
+  `--non-interactive` is rejected with a usage error (exit code 2) instead of silently ignoring one of the two requests.
+- When several items exist and none is `default`, the fallback is reported on stderr so the arbitrary choice is visible:
+  `[TopsailAI-Launcher] Warning: multiple context items are configured (...) and none is 'default'. Using the base item '_' (--non-interactive).`
+  Pass `--item` to choose one explicitly.
+- The flag is independent of terminal type: it behaves the same on a TTY and on a pipe, which makes it suitable for
+  scripts, cron jobs, and other unattended callers.
+
+```bash
+# Unattended launch: never prompt, always start an agent
+topsailai_launch_agent --non-interactive
+
+# Unattended launch with an explicit context item
+topsailai_launch_agent --non-interactive --item memo
+```
+
 ## Ignoring the Base Context
 
 `context._` (and the legacy `context._default`) is the shared base context that is injected into every launch. Pass
@@ -464,6 +499,9 @@ topsailai_launch_agent --subprocess
 
 # Force interactive setup
 topsailai_launch_agent --setup
+
+# Unattended launch that never prompts
+topsailai_launch_agent --non-interactive
 
 # Scan a folder and print its tree structure
 topsailai_launch_agent --scan ./src/topsailai/cli

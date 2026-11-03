@@ -61,3 +61,7 @@ The CLI now provides `/agent.<instruction> [args...]` in runtime scope as a shor
 ## Environment Variable Search
 
 The workspace CLI provides `/env.search <term> [term...]` to fuzzy-search configurable environment variables with case-insensitive OR matching, display layered `NAME=VALUE` results from `.env.local`, `.env`, and `env_template` while suppressing lower-priority duplicate names, and retain displayed names for TAB completion.
+
+## Non-Interactive Mode for `topsailai_launch_agent`
+
+`topsailai_launch_agent` now accepts `--non-interactive`, which guarantees the launcher itself performs no interactive action and always proceeds to launch an agent. A missing `.topsailai/settings.yaml` uses the built-in default configuration without creating a file, an existing configuration uses the `default` context item when present, a single non-base item is used directly, and multiple items without `default` fall back to the base item `_` with a warning on stderr. The empty-context setup prompt and the item-selection page are skipped, `--setup` and `--select-driver` are rejected as contradictory (exit code 2), and the flag is independent of terminal type. It affects only the launcher's own prompting and does not change the launched agent's `TOPSAILAI_INTERACTIVE_MODE`.

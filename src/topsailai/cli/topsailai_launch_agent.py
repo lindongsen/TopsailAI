@@ -19,6 +19,13 @@ via os.system (default) or subprocess.run (with --subprocess).
 Pass --no-base-context to ignore the shared base context sources configured
 under context._ (and the legacy context._default), so only the selected item's
 own sources are injected. Base environment variables are still merged.
+
+Pass --non-interactive to run the launcher itself without any prompt: a missing
+settings file uses the built-in default configuration, an existing configuration
+uses the "default" context item when present, and any remaining ambiguity falls
+back to the base item "_" so an agent is always launched. The flag affects only
+this CLI's own prompting; it does not change the launched agent's
+TOPSAILAI_INTERACTIVE_MODE.
 """
 
 import argparse
@@ -950,6 +957,8 @@ def _handle_missing_settings(settings_path, args):
 
     - If --setup is passed, run the guided interactive setup and load the
       newly created configuration.
+    - With --non-interactive, fall back to the built-in default configuration
+      without creating a file and without prompting, even on a TTY.
     - In an interactive terminal, prompt the user to choose between running
       with the default driver or entering the guided setup.
     - In a non-interactive terminal, fall back to the built-in default
@@ -968,6 +977,20 @@ def _handle_missing_settings(settings_path, args):
         )
         _run_interactive_setup(settings_path)
         return load_yaml(settings_path), False
+
+    # --non-interactive must win over the TTY branch below: the caller asked
+    # for a prompt-free run, so the default configuration is used directly.
+    if getattr(args, "non_interactive", False):
+        print(
+            f"[TopsailAI-Launcher] Settings file not found: {settings_path}",
+            file=sys.stderr,
+        )
+        print(
+            "[TopsailAI-Launcher] --non-interactive requested, using the "
+            "built-in default configuration without creating a settings file.",
+            file=sys.stderr,
+        )
+        return copy.deepcopy(DEFAULT_CONFIG), True
 
     if sys.stdin.isatty():
         print(
@@ -1043,6 +1066,28 @@ def print_available_items(context_map):
 def _get_context_items(context_map):
     """Return non-base context item names in their configured order."""
     return [k for k in context_map.keys() if not _is_base_item(k)]
+
+
+def _resolve_non_interactive_item(items):
+    """Choose a context item without prompting.
+
+    Preference order:
+      1. ``default`` when it is configured, because it is the documented
+         pre-selected choice of the interactive item page.
+      2. The only configured non-base item, which the interactive flow also
+         selects automatically.
+      3. The base item ``_``, so an agent is still launched when several items
+         exist and none of them is ``default``.
+
+    Returns a tuple of (item_name, used_fallback). ``used_fallback`` is True
+    only for case 3, where the caller should warn that the choice was
+    arbitrary.
+    """
+    if "default" in items:
+        return "default", False
+    if len(items) == 1:
+        return items[0], False
+    return "_", True
 
 
 def _format_item_config(item_name, context_map, env_map, ignore_base_context=False):
@@ -2142,6 +2187,18 @@ def main():
         help="Force the guided interactive setup to create .topsailai/settings.yaml when it is missing",
     )
     parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        dest="non_interactive",
+        help=(
+            "Never prompt. A missing .topsailai/settings.yaml uses the built-in "
+            "default configuration, an existing configuration uses the 'default' "
+            "context item when present, and any remaining ambiguity falls back to "
+            "the base item '_' so an agent is always launched. Cannot be combined "
+            "with --setup or --select-driver."
+        ),
+    )
+    parser.add_argument(
         "--select-timeout",
         type=float,
         default=60.0,
@@ -2202,6 +2259,13 @@ def main():
     args = parser.parse_args()
     if args.session_id is not None and not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", args.session_id):
         parser.error("--session-id must be a safe session identifier")
+    # --non-interactive promises that no prompt is ever shown, so reject the
+    # flags that exist only to open an interactive flow instead of silently
+    # ignoring one of the two contradictory requests.
+    if args.non_interactive and args.setup:
+        parser.error("--non-interactive cannot be combined with --setup")
+    if args.non_interactive and args.select_driver:
+        parser.error("--non-interactive cannot be combined with --select-driver")
     # Resolve the scan content mode after self_environs are applied, so a value
     # seeded from settings.yaml is honored by both --scan and the context tree.
     if args.scan is not None:
@@ -2251,7 +2315,15 @@ def main():
         non_default_items = _get_context_items(context_map)
 
         if not context_map:
-            if sys.stdin.isatty():
+            # --non-interactive never offers the context-setup prompt; the
+            # launch continues with the base item and no context sources.
+            if args.non_interactive:
+                print(
+                    "[TopsailAI-Launcher] Warning: context is empty. "
+                    "Continuing without context files (--non-interactive).",
+                    file=sys.stderr,
+                )
+            elif sys.stdin.isatty():
                 if _timed_prompt_yn(
                     "No context is configured. Would you like to configure context now?",
                     default=True,
@@ -2279,6 +2351,20 @@ def main():
 
         if settings_from_default:
             args.item = "_"
+        elif args.non_interactive:
+            # No prompt is allowed, so resolve the item deterministically and
+            # warn when the choice had to fall back to the base item.
+            args.item, used_fallback = _resolve_non_interactive_item(
+                non_default_items
+            )
+            if used_fallback:
+                print(
+                    "[TopsailAI-Launcher] Warning: multiple context items are "
+                    f"configured ({', '.join(non_default_items)}) and none is "
+                    "'default'. Using the base item '_' (--non-interactive). "
+                    "Pass --item to choose one explicitly.",
+                    file=sys.stderr,
+                )
         elif len(non_default_items) <= 1:
             args.item = non_default_items[0] if non_default_items else "_"
         else:

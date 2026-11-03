@@ -296,6 +296,7 @@ Supported command source fields:
 - `--dry-run` — Print the resolved command, working directory, and merged environment variables without executing.
 - `--subprocess` — Use `subprocess.run()` instead of `os.system()`.
 - `--setup` — Force the guided interactive setup to create `.topsailai/settings.yaml` when it is missing.
+- `--non-interactive` — Never prompt. A missing `.topsailai/settings.yaml` uses the built-in default configuration, an existing configuration uses the `default` context item when present, and any remaining ambiguity falls back to the base item `_` so an agent is always launched. Cannot be combined with `--setup` or `--select-driver`. It affects only the launcher's own prompting and does not change the launched agent's `TOPSAILAI_INTERACTIVE_MODE`.
 
 **Driver resolution priority:**
 
@@ -318,6 +319,10 @@ If `.topsailai/settings.yaml` is missing, the launcher asks how to proceed:
 - In a non-interactive terminal, the launcher automatically runs with the
   built-in default configuration and does not create a settings file.
 - Pass `--setup` to force the guided setup regardless of terminal type.
+- Pass `--non-interactive` to skip every prompt regardless of terminal type: a
+  missing settings file uses the built-in default configuration, an existing
+  configuration uses the `default` context item when present, and multiple items
+  without `default` fall back to the base item `_` with a warning.
 
 You can still override the driver with `--driver` or the
 `TOPSAILAI_AGENT_DRIVER` environment variable when running with the default
