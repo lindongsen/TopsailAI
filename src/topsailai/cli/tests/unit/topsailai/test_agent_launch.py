@@ -557,3 +557,46 @@ def test_resume_keeps_persisted_identity_without_minting(tmp_path):
         ) == 0
 
     assert calls == [["topsailai_launch_agent", "--subprocess", "--session-id", "persisted-id"]]
+
+
+def test_non_interactive_flag_reaches_background_submission(tmp_path):
+    """The launch boundary forwards the flag to the detached supervisor."""
+    with patch("cli_topsailai.agent_launch._session_id", return_value="fixed"), \
+         patch("cli_topsailai.agent_launch._apply_selected_model_environment",
+               return_value=({}, set())), \
+         patch("cli_topsailai.agent_launch_background.launch_background", return_value={
+             "launcher_pid": 1, "log_path": str(tmp_path / "x.agent-launch.log"),
+         }) as launch:
+        assert launch_configured_agent(
+            str(tmp_path), mode="raw", background=True, non_interactive=True) == 0
+    assert launch.call_args.kwargs["non_interactive"] is True
+
+
+def test_non_interactive_flag_reaches_terminal_submission(tmp_path):
+    """The launch boundary forwards the flag to the terminal supervisor."""
+    from cli_topsailai import agent_launch_terminal as terminal
+
+    with patch("cli_topsailai.agent_launch._session_id", return_value="fixed"), \
+         patch("cli_topsailai.agent_launch._apply_selected_model_environment",
+               return_value=({}, set())), \
+         patch.object(terminal.shutil, "which", return_value="/usr/bin/tool"), \
+         patch("cli_topsailai.project_scope._tmux_supports_environment_option",
+               return_value=True), \
+         patch("cli_topsailai.agent_launch_terminal.submit_terminal", return_value={
+             "launcher_pid": 1, "log_path": str(tmp_path / "x.agent-launch.log"),
+         }) as submit:
+        assert launch_configured_agent(
+            str(tmp_path), mode="tmux", background=True, non_interactive=True) == 0
+    assert submit.call_args.kwargs["non_interactive"] is True
+
+
+def test_background_submission_omits_non_interactive_when_not_requested(tmp_path):
+    """An ordinary background launch keeps the historical submission shape."""
+    with patch("cli_topsailai.agent_launch._session_id", return_value="fixed"), \
+         patch("cli_topsailai.agent_launch._apply_selected_model_environment",
+               return_value=({}, set())), \
+         patch("cli_topsailai.agent_launch_background.launch_background", return_value={
+             "launcher_pid": 1, "log_path": str(tmp_path / "x.agent-launch.log"),
+         }) as launch:
+        assert launch_configured_agent(str(tmp_path), mode="raw", background=True) == 0
+    assert launch.call_args.kwargs["non_interactive"] is False

@@ -2936,3 +2936,94 @@ def test_lease_owner_alive_missing_start_and_tuple_identity(tmp_path):
     lease.write_text('{"pid": 5, "start": 9}')
     assert bg._lease_owner_alive(lease, identity_probe=lambda pid: (pid, 9)) is True
     assert bg._lease_owner_alive(lease, identity_probe=lambda pid: (pid, 8)) is False
+
+
+# Non-interactive launch flag: the request is the only channel between the
+# foreground caller and the detached supervisor, so the flag must survive it.
+def _capture_requests(monkeypatch, tmp_path):
+    """Record every private request the public launcher writes."""
+    requests = []
+    request_path = Path(tmp_path) / "request.json"
+
+    def request_file(folder, request):
+        requests.append(dict(request))
+        return request_path, 0
+
+    monkeypatch.setattr(bg, "_request_file", request_file)
+    return requests
+
+
+def test_non_interactive_flag_is_persisted_in_the_supervisor_request(monkeypatch, tmp_path):
+    """A requested non-interactive launch is recorded for the supervisor."""
+    log_path = str(tmp_path / "workspace" / "task" / "s.agent-launch.log")
+    frames = [[{"kind": "started", "launcher_pid": 77}],
+              [{"kind": "submitted", "session": "s", "launcher_pid": 77,
+                "log_path": log_path}]]
+    clock, supervisor = _patch_launch_background_common(monkeypatch, tmp_path, frames)
+    requests = _capture_requests(monkeypatch, tmp_path)
+    bg.launch_background(str(tmp_path), "s", spawn=lambda *a, **k: supervisor,
+                         clock=clock, sleeper=clock.sleep, non_interactive=True)
+    assert requests
+    assert all(request.get("non_interactive") is True for request in requests)
+
+
+def test_supervisor_request_omits_non_interactive_when_not_requested(monkeypatch, tmp_path):
+    """An ordinary launch keeps the historical request shape exactly."""
+    log_path = str(tmp_path / "workspace" / "task" / "s.agent-launch.log")
+    frames = [[{"kind": "started", "launcher_pid": 77}],
+              [{"kind": "submitted", "session": "s", "launcher_pid": 77,
+                "log_path": log_path}]]
+    clock, supervisor = _patch_launch_background_common(monkeypatch, tmp_path, frames)
+    requests = _capture_requests(monkeypatch, tmp_path)
+    bg.launch_background(str(tmp_path), "s", spawn=lambda *a, **k: supervisor,
+                         clock=clock, sleeper=clock.sleep)
+    assert requests
+    assert all("non_interactive" not in request for request in requests)
+
+
+def test_supervisor_spawns_launcher_with_non_interactive_flag(monkeypatch, tmp_path):
+    """The detached supervisor forwards the flag to the launcher it spawns."""
+    child = FakeChild(pid=7124, polls=[None, 0])
+    child.stdout = FakeStream(11, [])
+    child.stderr = FakeStream(12, [])
+    calls = []
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
+    monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: None)
+    monkeypatch.setattr(bg._selectors, "DefaultSelector",
+                        lambda: FakeSelector({11: child.stdout, 12: child.stderr}))
+    monkeypatch.setattr(bg._os, "set_blocking", lambda *a: None)
+    monkeypatch.setattr(bg._os, "close", lambda fd: None)
+    monkeypatch.setattr(bg._os, "read", lambda fd, size: b"")
+    original_log = bg._RotatingLog
+    monkeypatch.setattr(bg, "_RotatingLog",
+                        lambda path: original_log(path, max_bytes=2, backups=2))
+    request = {"folder": str(tmp_path), "session_id": "s",
+               "log_path": str(tmp_path / "s.log"), "non_interactive": True}
+    bg._supervise(request, 9, popen=lambda *a, **k: calls.append((a, k)) or child,
+                  clock=FakeClock(), sleeper=lambda seconds: None)
+    assert calls[0][0][0] == ["topsailai_launch_agent", "--subprocess",
+                              "--session-id", "s", "--non-interactive"]
+
+
+def test_supervisor_launcher_argv_is_unchanged_without_the_flag(monkeypatch, tmp_path):
+    """A request without the flag spawns the historical launcher argv."""
+    child = FakeChild(pid=7125, polls=[None, 0])
+    child.stdout = FakeStream(11, [])
+    child.stderr = FakeStream(12, [])
+    calls = []
+    monkeypatch.setattr(bg, "_write_lease", lambda *a, **k: None)
+    monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: None)
+    monkeypatch.setattr(bg._selectors, "DefaultSelector",
+                        lambda: FakeSelector({11: child.stdout, 12: child.stderr}))
+    monkeypatch.setattr(bg._os, "set_blocking", lambda *a: None)
+    monkeypatch.setattr(bg._os, "close", lambda fd: None)
+    monkeypatch.setattr(bg._os, "read", lambda fd, size: b"")
+    original_log = bg._RotatingLog
+    monkeypatch.setattr(bg, "_RotatingLog",
+                        lambda path: original_log(path, max_bytes=2, backups=2))
+    request = {"folder": str(tmp_path), "session_id": "s",
+               "log_path": str(tmp_path / "s.log")}
+    bg._supervise(request, 9, popen=lambda *a, **k: calls.append((a, k)) or child,
+                  clock=FakeClock(), sleeper=lambda seconds: None)
+    assert calls[0][0][0] == ["topsailai_launch_agent", "--subprocess",
+                              "--session-id", "s"]

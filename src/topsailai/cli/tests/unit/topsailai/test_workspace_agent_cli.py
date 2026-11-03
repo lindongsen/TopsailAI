@@ -15,7 +15,8 @@ def test_relative_folder_uses_startup_cwd(tmp_path):
     with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=7) as launch:
         assert run_workspace_agent_cli(["project", "-m", "raw"], startup_cwd=str(tmp_path)) == 7
     launch.assert_called_once_with(
-        str(folder), mode="raw", background=False, entrypoint_base=str(tmp_path)
+        str(folder), mode="raw", background=False, entrypoint_base=str(tmp_path),
+        non_interactive=False,
     )
 
 
@@ -33,7 +34,8 @@ def test_background_forwards_each_selected_mechanism(tmp_path, mechanism):
     with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
         assert run_workspace_agent_cli([str(folder), "-b", "-m", mechanism]) == 0
     launch.assert_called_once_with(
-        str(folder), mode=mechanism, background=True, entrypoint_base=os.getcwd()
+        str(folder), mode=mechanism, background=True, entrypoint_base=os.getcwd(),
+        non_interactive=False,
     )
 
 
@@ -114,7 +116,8 @@ def test_default_mode_is_forwarded_without_auto(tmp_path):
     with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
         assert run_workspace_agent_cli(["project"], startup_cwd=str(tmp_path)) == 0
     launch.assert_called_once_with(
-        str(folder), mode=None, background=False, entrypoint_base=str(tmp_path)
+        str(folder), mode=None, background=False, entrypoint_base=str(tmp_path),
+        non_interactive=False,
     )
 
 
@@ -145,7 +148,8 @@ def test_omitted_folder_defaults_to_startup_cwd(tmp_path):
     with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
         assert run_workspace_agent_cli([], startup_cwd=str(tmp_path)) == 0
     launch.assert_called_once_with(
-        str(tmp_path), mode=None, background=False, entrypoint_base=str(tmp_path)
+        str(tmp_path), mode=None, background=False, entrypoint_base=str(tmp_path),
+        non_interactive=False,
     )
 
 
@@ -155,7 +159,8 @@ def test_omitted_folder_without_startup_cwd_uses_process_cwd(tmp_path, monkeypat
     with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
         assert run_workspace_agent_cli([]) == 0
     launch.assert_called_once_with(
-        str(tmp_path), mode=None, background=False, entrypoint_base=str(tmp_path)
+        str(tmp_path), mode=None, background=False, entrypoint_base=str(tmp_path),
+        non_interactive=False,
     )
 
 
@@ -172,6 +177,7 @@ def test_options_only_invocation_uses_default_folder(
     launch.assert_called_once_with(
         str(tmp_path), mode=expected_mode, background=expected_background,
         entrypoint_base=str(tmp_path),
+        non_interactive=False,
     )
 
 
@@ -233,7 +239,8 @@ def test_real_core_parser_resolves_relative_folder_against_startup_cwd(tmp_path,
             core.main(["workspace", "agent", "project", "-m", "raw"])
     assert error.value.code == 0
     launch.assert_called_once_with(
-        str(target), mode="raw", background=False, entrypoint_base=str(tmp_path)
+        str(target), mode="raw", background=False, entrypoint_base=str(tmp_path),
+        non_interactive=False,
     )
 
 
@@ -294,3 +301,123 @@ def test_wrapper_exit_does_not_terminate_server_or_claim_completion(tmp_path, ca
     output = capsys.readouterr()
     assert "completed" not in output.out.lower() + output.err.lower()
     wrap.assert_called_once()
+
+
+def test_non_interactive_flag_is_forwarded_to_the_launch(tmp_path):
+    """The flag reaches the launch boundary instead of being parsed and dropped."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli(
+            [str(folder), "--non-interactive"], startup_cwd=str(tmp_path)
+        ) == 0
+    launch.assert_called_once_with(
+        str(folder), mode=None, background=False, entrypoint_base=str(tmp_path),
+        non_interactive=True,
+    )
+
+
+def test_non_interactive_flag_is_forwarded_in_json_mode(tmp_path):
+    """JSON mode forwards the flag through the same boundary."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+
+    def launch(folder_arg, **kwargs):
+        kwargs["receipt"].update(session_id="s", launcher_pid=1, child_exit_code=0)
+        return 0
+
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", side_effect=launch) as boundary:
+        assert run_workspace_agent_cli(
+            [str(folder), "--non-interactive", "--json"], startup_cwd=str(tmp_path)
+        ) == 0
+    assert boundary.call_args.kwargs["non_interactive"] is True
+
+
+def test_non_interactive_flag_is_forwarded_in_background_mode(tmp_path):
+    """Background submission carries the flag to the detached supervisor."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli(
+            [str(folder), "-b", "--non-interactive"], startup_cwd=str(tmp_path)
+        ) == 0
+    assert launch.call_args.kwargs["non_interactive"] is True
+    assert launch.call_args.kwargs["background"] is True
+
+
+def test_non_interactive_flag_is_optional_and_defaults_to_off(tmp_path):
+    """Omitting the flag keeps the previous launch request unchanged."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli([str(folder)], startup_cwd=str(tmp_path)) == 0
+    assert launch.call_args.kwargs["non_interactive"] is False
+
+
+def test_non_interactive_flag_does_not_change_the_agent_interactive_mode(tmp_path):
+    """The flag governs the launch only and never touches the agent's own mode.
+
+    The agent's internal interactive mode is an environment concern, so the
+    proof is that the launched environment is identical with and without the
+    flag rather than that the variable is absent from the ambient environment.
+    """
+    folder = tmp_path / "project"
+    folder.mkdir()
+
+    def launch(non_interactive):
+        child = _StatusChild(returncode=0)
+        calls = []
+
+        def spawn(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return child
+
+        with patch("cli_topsailai.agent_launch._apply_selected_model_environment",
+                   side_effect=lambda _: ({}, set())), \
+             patch("cli_topsailai.agent_launch._session_id", return_value="fixed"):
+            from cli_topsailai.agent_launch import launch_configured_agent
+            assert launch_configured_agent(
+                str(folder), mode="raw", spawn=spawn,
+                non_interactive=non_interactive,
+            ) == 0
+        return calls[0]
+
+    plain_argv, plain_kwargs = launch(False)
+    flagged_argv, flagged_kwargs = launch(True)
+
+    assert flagged_argv == plain_argv + ["--non-interactive"]
+    # Only the argv differs; the environment the agent receives is untouched.
+    assert flagged_kwargs["env"] == plain_kwargs["env"]
+
+
+def test_non_interactive_flag_is_absent_from_argv_when_not_requested(tmp_path):
+    """A launch without the flag produces the historical argv exactly."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    child = _StatusChild(returncode=0)
+    calls = []
+
+    def spawn(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return child
+
+    with patch("cli_topsailai.agent_launch._apply_selected_model_environment",
+               side_effect=lambda _: ({}, set())), \
+         patch("cli_topsailai.agent_launch._session_id", return_value="fixed"):
+        from cli_topsailai.agent_launch import launch_configured_agent
+        assert launch_configured_agent(str(folder), mode="raw", spawn=spawn) == 0
+    assert calls[0][0] == [
+        "topsailai_launch_agent", "--subprocess", "--session-id", "fixed",
+    ]
+
+
+def test_resume_driver_never_receives_launcher_flags():
+    """A resume driver is a different executable, so launcher flags are omitted."""
+    from cli_topsailai.agent_launch_command import launcher_command
+
+    assert launcher_command("s", driver="topsailai_agent_chats",
+                            non_interactive=True) == ["topsailai_agent_chats"]
+    assert launcher_command("s", non_interactive=True) == [
+        "topsailai_launch_agent", "--subprocess", "--session-id", "s",
+        "--non-interactive",
+    ]

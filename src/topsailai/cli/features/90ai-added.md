@@ -69,3 +69,7 @@ The workspace CLI provides `/env.search <term> [term...]` to fuzzy-search config
 ## Optional Folder for `topsailai workspace agent`
 
 `topsailai workspace agent` now accepts an omitted `folder` positional and launches in the caller's working directory, so `topsailai workspace agent`, `topsailai workspace agent -b`, and `topsailai workspace agent -m raw` all work without a path. An explicit folder keeps the previous behaviour: relative paths resolve against the caller's startup directory, absolute and `~` paths stay literal, and a missing folder still exits `3` with an `invalid_folder` receipt. Help text, `README.md`, `topsailai.md`, and `docs/usage/topsailai.md` advertise the optional `[<folder>]` form and state the default.
+
+## Non-Interactive Flag for `topsailai workspace agent`
+
+`topsailai workspace agent` now accepts `--non-interactive`, which is forwarded to the launcher in every mechanism: foreground, detached raw background, and the tmux/dtach terminal supervisors. A launch that would otherwise prompt for a missing `.topsailai/settings.yaml` or for a context-item choice therefore proceeds without asking, so an automated caller cannot block on a prompt. The flag governs the launch only; the launched agent's own interactive mode remains controlled by `TOPSAILAI_INTERACTIVE_MODE` and is not modified. The launcher argv is built in one place (`cli_topsailai/agent_launch_command.py`) so the foreground and detached paths cannot diverge, and a resume driver never receives launcher flags.

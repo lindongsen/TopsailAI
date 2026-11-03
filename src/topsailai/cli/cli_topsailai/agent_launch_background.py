@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 from dataclasses import dataclass
 
+from cli_topsailai.agent_launch_command import launcher_command
 from cli_topsailai.paths import get_topsailai_home
 
 _MAX_LOG_BYTES = 10 * 1024 * 1024
@@ -543,8 +544,10 @@ def _supervise(request: Mapping[str, Any], ack_fd: int, *, popen: Optional[Calla
             raise KeyboardInterrupt()
         _write_lease(lease, pid=_os.getpid(), identity=_authoritative_child_identity(_os.getpid()))
         log.open()
-        command = ([str(request["driver"])] if request.get("driver") else
-                   ["topsailai_launch_agent", "--subprocess", "--session-id", str(request["session_id"])])
+        command = launcher_command(
+            str(request["session_id"]), driver=request.get("driver"),
+            non_interactive=bool(request.get("non_interactive")),
+        )
         child_environment = dict(request.get("environment") or _os.environ)
         child = popen(command, cwd=str(request["folder"]), env=child_environment,
                        stdin=_subprocess.DEVNULL, stdout=_subprocess.PIPE, stderr=_subprocess.PIPE,
@@ -813,12 +816,15 @@ def launch_background(folder: str, session_id: str, *, environment: Optional[Map
                       cancel_requested: Optional[Callable[[], bool]] = None,
                       cancel_write: Optional[Callable[[int, bytes], int]] = None,
                       log_identity: Optional[str] = None,
-                      driver: Optional[str] = None) -> dict[str, Any]:
+                      driver: Optional[str] = None,
+                      non_interactive: bool = False) -> dict[str, Any]:
     """Submit a detached supervisor and return its acknowledged launch record.
 
     *log_identity* selects the per-attempt log name while *session_id* remains
     the persisted identity reported to the caller. *driver* selects the resume
-    driver argv executed by the supervisor.
+    driver argv executed by the supervisor. *non_interactive* is forwarded to
+    the supervisor so the launcher it spawns never prompts; it does not change
+    the agent's own ``TOPSAILAI_INTERACTIVE_MODE``.
     """
     _validate_resume_driver(driver)
     task_dir = Path(get_topsailai_home()) / "workspace" / "task"
@@ -840,6 +846,8 @@ def launch_background(folder: str, session_id: str, *, environment: Optional[Map
                    "session_id": session_id, "log_path": str(log_path)}
         if driver:
             request["driver"] = driver
+        if non_interactive:
+            request["non_interactive"] = True
         request_path, _ = _request_file(Path(folder), request)
         read_fd, write_fd = _os.pipe()
         cancel_read_fd, cancel_write_fd = _os.pipe()

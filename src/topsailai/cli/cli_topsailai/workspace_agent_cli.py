@@ -42,7 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Launch a configured agent in a folder.",
         epilog=("The folder is optional and defaults to the caller's working directory. "
                 "Foreground mode attaches to the launcher. Background mode is headless and "
-                "reports submission rather than readiness. --json emits one receipt on "
+                "reports submission rather than readiness. --non-interactive suppresses "
+                "launcher prompts for this launch only. --json emits one receipt on "
                 "stdout and redirects all other output to stderr."),
     )
     parser.add_argument(
@@ -61,6 +62,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--json", action="store_true",
         help="emit one JSON receipt on stdout, including failures",
+    )
+    parser.add_argument(
+        "--non-interactive", action="store_true", dest="non_interactive",
+        help="never prompt while the launcher resolves its configuration; "
+             "this affects the launch only and does not change the agent's "
+             "own interactive mode",
     )
     return parser
 
@@ -128,6 +135,7 @@ def run_workspace_agent_cli(argv, *, startup_cwd: Optional[str] = None) -> int:
             mode=mode,
             background=args.background,
             entrypoint_base=startup_cwd or os.getcwd(),
+            non_interactive=args.non_interactive,
         )
 
     facts: dict = {}
@@ -141,6 +149,7 @@ def run_workspace_agent_cli(argv, *, startup_cwd: Optional[str] = None) -> int:
             entrypoint_base=startup_cwd or os.getcwd(),
             receipt=facts,
             child_stdout=sys.stderr,
+            non_interactive=args.non_interactive,
         )
     receipt = new_receipt(
         "agent", session_id=facts.get("session_id"),

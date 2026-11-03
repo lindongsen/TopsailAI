@@ -49,7 +49,7 @@ references:
 - `runtime send|btw [-s SESSION] [-p PID] -m MESSAGE|--stdin`
 - `runtime control ACTION [-s SESSION] [-p PID] [-a JSON]`
 - `runtime logs [-s SESSION] [-p PID] [-n N] [--json]` — finite recent session log query
-- `workspace agent [<folder>] [-m MODE] [-b|--background] [--json]`
+- `workspace agent [<folder>] [-m MODE] [-b|--background] [--non-interactive] [--json]`
 - `workspace kill SESSION -g GENERATION [--json]` — requires the verified `process_generation` from `workspace -f json` and fails closed when process-instance evidence changes or is unavailable
 - `workspace driver start|status|stop -s SESSION [-p PID] [--json]`
 - `project add|del|list|launch|resume`
@@ -63,7 +63,7 @@ references:
 
 ## Non-interactive workspace agent
 
-Canonical usage: `topsailai workspace agent [<folder>] [-m raw|dtach|tmux] [-b|--background] [--json]`. See [the canonical workspace-agent usage contract](docs/usage/topsailai.md#workspace-agent). It launches in the foreground; the folder is optional and defaults to the caller's working directory, and an explicit folder is resolved against the caller's original working directory. Exit codes are 2 for usage/background rejection, 3 for invalid folder, 4 for preparation, 5 for spawn/wait, 6 for unresolved custody, and 130 for cancellation; observed child statuses are preserved and signals map to `128 + signal`. A wrapper exit is not agent completion. Background `submitted` means not-ready. With `--json`, stdout contains one receipt and ordinary output is redirected to stderr.
+Canonical usage: `topsailai workspace agent [<folder>] [-m raw|dtach|tmux] [-b|--background] [--non-interactive] [--json]`. See [the canonical workspace-agent usage contract](docs/usage/topsailai.md#workspace-agent). It launches in the foreground; the folder is optional and defaults to the caller's working directory, and an explicit folder is resolved against the caller's original working directory. `--non-interactive` suppresses launcher prompts for this launch only and does not change the agent's own interactive mode. Exit codes are 2 for usage/background rejection, 3 for invalid folder, 4 for preparation, 5 for spawn/wait, 6 for unresolved custody, and 130 for cancellation; observed child statuses are preserved and signals map to `128 + signal`. A wrapper exit is not agent completion. Background `submitted` means not-ready. With `--json`, stdout contains one receipt and ordinary output is redirected to stderr.
 
 ## Resume commands
 

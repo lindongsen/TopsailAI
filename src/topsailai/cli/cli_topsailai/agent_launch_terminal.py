@@ -535,7 +535,8 @@ def submit_terminal(folder: str, session_id: str, *, mechanism: str,
                     sleeper: Callable[[float], None] = time.sleep,
                     cancel_requested: Optional[Callable[[], bool]] = None,
                     log_identity: Optional[str] = None,
-                    driver: Optional[str] = None) -> dict[str, Any]:
+                    driver: Optional[str] = None,
+                    non_interactive: bool = False) -> dict[str, Any]:
     """Submit one detached terminal-container supervisor and await its record."""
     from cli_topsailai import agent_launch_background as bg
 
@@ -560,6 +561,8 @@ def submit_terminal(folder: str, session_id: str, *, mechanism: str,
         }
         if driver:
             request["driver"] = driver
+        if non_interactive:
+            request["non_interactive"] = True
         if environment is not None:
             request["environment"] = dict(environment)
         write_request(attempt.request_path, request)

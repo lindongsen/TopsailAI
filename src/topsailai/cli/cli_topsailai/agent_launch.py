@@ -7,6 +7,7 @@ import subprocess
 import sys
 import uuid
 
+from cli_topsailai.agent_launch_command import launcher_command
 from cli_topsailai.core import _detect_agent_mode
 from cli_topsailai.project_scope import (
     _apply_selected_model_environment,
@@ -78,11 +79,16 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
                             driver: str | None = None,
                             prelaunch_check=None,
                             receipt: dict | None = None,
-                            child_stdout=None) -> int:
+                            child_stdout=None,
+                            non_interactive: bool = False) -> int:
     """Launch an agent and make restoration failure observable.
 
     When *session_id* is supplied the launch resumes that persisted identity
     instead of minting a fresh one, and *driver* selects the resume driver.
+
+    *non_interactive* asks the launcher never to prompt while it resolves its
+    configuration. It governs the launch only: the agent's own interactive mode
+    remains controlled by ``TOPSAILAI_INTERACTIVE_MODE`` and is not modified.
 
     *prelaunch_check* is an optional late revalidation invoked after
     preparation and immediately before the child is spawned or the supervisor
@@ -112,6 +118,8 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
             launch_kwargs["receipt"] = receipt
         if child_stdout is not None:
             launch_kwargs["child_stdout"] = child_stdout
+        if non_interactive:
+            launch_kwargs["non_interactive"] = True
         result = _launch_configured_agent_impl(folder, **launch_kwargs)
     finally:
         try:
@@ -140,6 +148,7 @@ def _launch_configured_agent_impl(
     prelaunch_check=None,
     receipt: dict | None = None,
     child_stdout=None,
+    non_interactive: bool = False,
 ) -> int:
     """Launch one configured agent and return its boundary status."""
     if spawn is None:
@@ -217,6 +226,7 @@ def _launch_configured_agent_impl(
                 "log_identity": (launch_log_identity(session_id, uuid.uuid4().hex)
                                  if resumed_session else None),
                 "driver": driver,
+                "non_interactive": non_interactive,
             }
             record(submission_attempted=True)
             try:
@@ -259,10 +269,8 @@ def _launch_configured_agent_impl(
             f"[INFO] Launching agent: workspace={folder} mode={effective_mode} "
             f"background=no session={session_id}"
         )
-        command = (
-            [driver] if driver
-            else ["topsailai_launch_agent", "--subprocess", "--session-id", session_id]
-        )
+        command = launcher_command(session_id, driver=driver,
+                                   non_interactive=non_interactive)
         try:
             forwarded = _prepare_environment(folder, session_id)[3]
             if effective_mode == "raw":

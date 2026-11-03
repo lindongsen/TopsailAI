@@ -209,3 +209,44 @@ def test_background_selected_mechanism_reaches_terminal_transport(tmp_path, mech
             str(tmp_path), mode=mechanism, background=True) == 0
     launch.assert_not_called()
     assert submit.call_args.kwargs["mechanism"] == mechanism
+
+
+def _capture_terminal_request(monkeypatch, transport, *, protocol_error):
+    """Install the submit doubles and record the private request they write."""
+    written = []
+    attempt = _install_submit_doubles(monkeypatch, transport,
+                                      protocol_error=protocol_error)
+    monkeypatch.setattr(terminal, "write_request",
+                        lambda path, request: written.append(dict(request)))
+    return attempt, written
+
+
+@pytest.mark.parametrize("mechanism", ["tmux", "dtach"])
+def test_terminal_request_records_non_interactive_flag(monkeypatch, mechanism):
+    """A non-interactive launch is recorded for the terminal supervisor."""
+    order = []
+    transport = _FakeTransport(order)
+    attempt, written = _capture_terminal_request(
+        monkeypatch, transport, protocol_error=KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        terminal.submit_terminal("/work/proj", "session-1", mechanism=mechanism,
+                                 non_interactive=True)
+
+    assert written
+    assert all(request.get("non_interactive") is True for request in written)
+
+
+@pytest.mark.parametrize("mechanism", ["tmux", "dtach"])
+def test_terminal_request_omits_non_interactive_when_not_requested(monkeypatch, mechanism):
+    """An ordinary terminal launch keeps the historical request shape."""
+    order = []
+    transport = _FakeTransport(order)
+    attempt, written = _capture_terminal_request(
+        monkeypatch, transport, protocol_error=KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        terminal.submit_terminal("/work/proj", "session-1", mechanism=mechanism)
+
+    assert written
+    assert all("non_interactive" not in request for request in written)
