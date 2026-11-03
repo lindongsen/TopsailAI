@@ -227,7 +227,7 @@ func TestHelpOverviewKeepsScopePrompts(t *testing.T) {
 	}{
 		{"workspace", ScopeState{Kind: ScopeWorkspace}, ansiBoldGreen + "cluster>" + ansiReset + " "},
 		{"endpoint", ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1", Hostname: "ai-dev"}, ansiBoldGreen + "cluster[ai-dev/endpoint-1]>" + ansiReset + " "},
-		{"session", ScopeState{Kind: ScopeSession, EndpointID: "endpoint-1", Hostname: "ai-dev", SessionID: "res-1"}, ansiBoldGreen + "cluster[ai-dev/endpoint-1/res-1]>" + ansiReset + " "},
+		{"session", ScopeState{Kind: ScopeSession, EndpointID: "endpoint-1", Hostname: "ai-dev", ProviderSessionID: "20261027152208", SessionID: "res-1"}, ansiBoldGreen + "cluster[ai-dev/20261027152208]>" + ansiReset + " "},
 	}
 	for _, testCase := range cases {
 		var out strings.Builder

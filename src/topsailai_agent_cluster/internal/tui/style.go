@@ -48,22 +48,15 @@ func RenderPrompt(w io.Writer, scope ScopeState, invalidated bool, policy ColorP
 		}
 		prompt += "]"
 	case ScopeSession:
-		endpoint := scope.Hostname
-		if endpoint == "" {
-			endpoint = scope.EndpointID
+		hostname := scope.Hostname
+		if hostname == "" {
+			hostname = scope.EndpointID
 		}
-		prompt += "[" + sanitizePromptPart(endpoint)
-		if scope.Hostname != "" {
-			prompt += "/" + sanitizePromptPart(scope.EndpointID)
+		sessionID := scope.ProviderSessionID
+		if sessionID == "" {
+			sessionID = "-"
 		}
-		label := scope.SessionName
-		if label == "" {
-			label = scope.ProviderSessionID
-		}
-		if label == "" {
-			label = shortResourceID(scope.SessionID)
-		}
-		prompt += "/" + sanitizePromptPart(label)
+		prompt += "[" + sanitizePromptPart(hostname) + "/" + sanitizePromptPart(sessionID)
 		if invalidated {
 			prompt += "!"
 		}

@@ -171,9 +171,9 @@ func TestColorPolicyMatrixAndPrompt(t *testing.T) {
 		{name: "idle", plainWant: "cluster> "},
 		{name: "endpoint", scope: ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1", Hostname: "ai-dev"}, plainWant: "cluster[ai-dev/endpoint-1]> "},
 		{name: "endpoint fallback", scope: ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1"}, plainWant: "cluster[endpoint-1]> "},
-		{name: "session fallback", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint-1", SessionID: "session"}, plainWant: "cluster[endpoint-1/session]> "},
-		{name: "selected", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint", Hostname: "endpoint", SessionID: "session"}, plainWant: "cluster[endpoint/endpoint/session]> "},
-		{name: "invalidated", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint", Hostname: "endpoint", SessionID: "session"}, invalid: true, plainWant: "cluster[endpoint/endpoint/session!]> "},
+		{name: "session fallback", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint-1", SessionID: "session"}, plainWant: "cluster[endpoint-1/-]> "},
+		{name: "selected", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint", Hostname: "endpoint", SessionID: "session"}, plainWant: "cluster[endpoint/-]> "},
+		{name: "invalidated", scope: ScopeState{Kind: ScopeSession, EndpointID: "endpoint", Hostname: "endpoint", SessionID: "session"}, invalid: true, plainWant: "cluster[endpoint/-!]> "},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

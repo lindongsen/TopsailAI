@@ -419,10 +419,10 @@ func TestSessionFreshnessInheritsInventoryCollectionStatus(t *testing.T) {
 		wantError  string
 		wantPrompt string
 	}{
-		{name: "top level succeeded", inventory: protocol.CollectionSucceeded, wantPrompt: "cluster[ep/session-1]> "},
+		{name: "top level succeeded", inventory: protocol.CollectionSucceeded, wantPrompt: "cluster[ep/-]> "},
 		{name: "top level failed", inventory: protocol.CollectionFailed, wantError: "collection_status=failed"},
 		{name: "top level missing", inventory: "", wantError: "collection_status="},
-		{name: "explicit session succeeds", inventory: protocol.CollectionFailed, explicit: protocol.CollectionSucceeded, wantPrompt: "cluster[ep/session-1]> "},
+		{name: "explicit session succeeds", inventory: protocol.CollectionFailed, explicit: protocol.CollectionSucceeded, wantPrompt: "cluster[ep/-]> "},
 		{name: "explicit session fails", inventory: protocol.CollectionSucceeded, explicit: protocol.CollectionFailed, wantError: "collection_status=failed"},
 	}
 	for _, testCase := range cases {

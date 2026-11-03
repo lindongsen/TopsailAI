@@ -58,7 +58,7 @@ func TestStartupRowsBindSessionThroughCD(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "cluster[ai-dev/endpoint-1/") {
+	if !strings.Contains(output, "cluster[ai-dev/provider-session-1]") {
 		t.Fatalf("startup row navigation did not enter session: %q", output)
 	}
 	if !strings.Contains(output, "session: res_session-1") {
