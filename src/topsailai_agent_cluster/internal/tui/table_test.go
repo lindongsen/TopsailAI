@@ -229,3 +229,31 @@ func TestTableUsesSessionDisplayNameAndFallsBackToProviderID(t *testing.T) {
 		t.Fatalf("unknown session output = %q", out.String())
 	}
 }
+
+func TestTableNilLastSuccessDisplaysDash(t *testing.T) {
+	var out, errors strings.Builder
+	rows := []SessionRow{{EndpointID: "ep", AdapterID: "adapter", ProviderSessionID: "provider", State: "running", CollectionStatus: protocol.CollectionSucceeded}}
+	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.FixedZone("CST", 8*3600)}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	cells := strings.Split(lines[2], " │ ")
+	if got := strings.TrimSpace(cells[columnLastSuccess]); got != "-" {
+		t.Fatalf("LAST_SUCCESS cell = %q, want %q; row=%q", got, "-", lines[2])
+	}
+}
+
+func TestTableLastSuccessUsesNonUTCOffset(t *testing.T) {
+	stamp := int64(1700000000000)
+	rows := []SessionRow{{EndpointID: "ep", ProviderSessionID: "provider", LastSuccessAtMS: &stamp}}
+	var out, errors strings.Builder
+	location := time.FixedZone("CST", 8*3600)
+	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: location}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	cells := strings.Split(lines[2], " │ ")
+	if got := cells[columnLastSuccess]; got != "2023-11-15 06:13:20" {
+		t.Fatalf("LAST_SUCCESS cell = %q, want %q; row=%q", got, "2023-11-15 06:13:20", lines[2])
+	}
+}

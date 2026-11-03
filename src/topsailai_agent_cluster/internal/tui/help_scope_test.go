@@ -272,6 +272,19 @@ func TestStartupInventoryUsesSharedListPath(t *testing.T) {
 	}
 }
 
+func TestHelpListOmitsRemovedTimestampColumns(t *testing.T) {
+	text := helpText(t, "list")
+	if !strings.Contains(text, "LAST_SUCCESS") {
+		t.Fatalf("help list missing LAST_SUCCESS: %q", text)
+	}
+	if strings.Contains(text, "GENERATION") {
+		t.Fatalf("help list still contains GENERATION: %q", text)
+	}
+	if strings.Contains(text, "LAST_SUCCESS_MS") {
+		t.Fatalf("help list still contains LAST_SUCCESS_MS: %q", text)
+	}
+}
+
 // cancelledStub reports the caller context error from ListEndpoints.
 type cancelledStub struct {
 	interactiveStub
