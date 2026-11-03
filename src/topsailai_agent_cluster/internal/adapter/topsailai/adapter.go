@@ -184,7 +184,7 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 		if state == "" {
 			state = item.Status
 		}
-		result.Sessions = append(result.Sessions, protocol.Session{SessionID: resourceID, DisplayName: item.SessionName, AgentID: item.AgentID, Generation: generation, AdapterID: a.config.AdapterID, State: state, ObservedAtMS: time.Now().UnixMilli()})
+		result.Sessions = append(result.Sessions, protocol.Session{SessionID: resourceID, ProviderSessionID: item.SessionID, DisplayName: item.SessionName, AgentID: item.AgentID, Generation: generation, AdapterID: a.config.AdapterID, State: state, ObservedAtMS: time.Now().UnixMilli()})
 	}
 	if response.Total != nil && *response.Total > len(response.Items) {
 		result.Complete = false

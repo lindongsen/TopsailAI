@@ -352,6 +352,9 @@ func TestDiscoverPreservesProviderSessionNameWhileKeepingOpaqueID(t *testing.T) 
 	if session.DisplayName != "Daily work" {
 		t.Fatalf("display name = %q, want Daily work", session.DisplayName)
 	}
+	if session.ProviderSessionID != "provider-secret" {
+		t.Fatalf("provider session ID = %q, want provider-secret", session.ProviderSessionID)
+	}
 	if session.SessionID != "res_provider-secret" {
 		t.Fatalf("session ID = %q, want opaque resource ID", session.SessionID)
 	}

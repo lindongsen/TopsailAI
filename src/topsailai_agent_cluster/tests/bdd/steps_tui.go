@@ -68,8 +68,8 @@ func assertTUIList() error {
 			return fmt.Errorf("TUI list missing %q: %s", value, text)
 		}
 	}
-	if !strings.Contains(text, "res_") || strings.Contains(text, "fixture-session") {
-		return fmt.Errorf("TUI list does not expose an opaque resource ID: %s", text)
+	if !strings.Contains(text, "res_") || !strings.Contains(text, "fixture-session") {
+		return fmt.Errorf("TUI list does not preserve both opaque resource ID and provider session ID: %s", text)
 	}
 	return nil
 }
@@ -102,8 +102,8 @@ func assertTUIShow() error {
 			return fmt.Errorf("TUI show missing %q: %s", field, text)
 		}
 	}
-	if !strings.Contains(text, "res_") || strings.Contains(text, "fixture-session") {
-		return fmt.Errorf("TUI show does not preserve the opaque resource ID: %s", text)
+	if !strings.Contains(text, "res_") || !strings.Contains(text, "fixture-session") {
+		return fmt.Errorf("TUI show does not preserve both opaque resource ID and provider session ID: %s", text)
 	}
 	if _, ok := value["capabilities"]; !ok {
 		return fmt.Errorf("TUI show has no capabilities field")

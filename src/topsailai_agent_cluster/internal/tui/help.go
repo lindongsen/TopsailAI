@@ -22,13 +22,12 @@ var fieldHelp = []string{
 	"NO: display row number; use it with cd <hostname>/<endpoint-id>/<session>.",
 	"ENDPOINT: endpoint hostname, falling back to its display name or ID.",
 	"ADAPTER: provider adapter display label.",
-	"SESSION: session display name, falling back to the internal resource ID.",
-	"GENERATION: exact provider process-instance identity used to fence commands; it is not a timestamp or restart count.",
+	"SESSION: session display name, falling back to the provider session ID, then to - when neither is known.",
 	"STATE: provider-reported lifecycle state, such as running, stopped, or failed.",
 	"STALE: displayed data was retained from an earlier successful collection because the latest collection was failed or incomplete.",
 	"UNKNOWN: no trustworthy adapter data is available for the row.",
 	"COLLECTION: result of the latest collection attempt: succeeded, partial, failed, or unknown.",
-	"LAST_SUCCESS_MS: Unix epoch timestamp in milliseconds of the latest successful collection; never means no success has been recorded.",
+	"LAST_SUCCESS: local-time timestamp of the latest successful collection; - means no success has been recorded.",
 }
 
 var commandHelpCatalog = map[string]commandHelp{

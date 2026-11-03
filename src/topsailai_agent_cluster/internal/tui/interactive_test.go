@@ -312,7 +312,7 @@ func TestInteractiveDetailedHelpIncludesFieldSemantics(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, phrase := range []string{"Syntax: list [endpoint] [--clean]", "GENERATION:", "not a timestamp or restart count", "STALE:", "earlier successful collection", "LAST_SUCCESS_MS:"} {
+	for _, phrase := range []string{"Syntax: list [endpoint] [--clean]", "STALE:", "earlier successful collection", "LAST_SUCCESS:"} {
 		if !strings.Contains(text, phrase) {
 			t.Fatalf("detailed help missing %q: %q", phrase, text)
 		}

@@ -9,19 +9,20 @@ import (
 
 // SessionRow is the stable list representation rendered by the TUI.
 type SessionRow struct {
-	No               int    `json:"-"`
-	EndpointID       string `json:"endpoint_id"`
-	AdapterID        string `json:"adapter_id"`
-	EndpointLabel    string `json:"-"`
-	AdapterLabel     string `json:"-"`
-	SessionID        string `json:"session_id"`
-	DisplayName      string `json:"display_name,omitempty"`
-	Generation       string `json:"generation"`
-	State            string `json:"state"`
-	Stale            bool   `json:"stale"`
-	Unknown          bool   `json:"unknown"`
-	LastSuccessAtMS  *int64 `json:"last_success_at_ms,omitempty"`
-	CollectionStatus string `json:"collection_status"`
+	No                int    `json:"-"`
+	EndpointID        string `json:"endpoint_id"`
+	AdapterID         string `json:"adapter_id"`
+	EndpointLabel     string `json:"-"`
+	AdapterLabel      string `json:"-"`
+	SessionID         string `json:"session_id"`
+	ProviderSessionID string `json:"provider_session_id,omitempty"`
+	DisplayName       string `json:"display_name,omitempty"`
+	Generation        string `json:"generation"`
+	State             string `json:"state"`
+	Stale             bool   `json:"stale"`
+	Unknown           bool   `json:"unknown"`
+	LastSuccessAtMS   *int64 `json:"last_success_at_ms,omitempty"`
+	CollectionStatus  string `json:"collection_status"`
 }
 
 // ListRows converts endpoint reports into a deterministic session list.
@@ -46,7 +47,7 @@ func ListRows(endpoints []protocol.Endpoint, reports map[string]protocol.Invento
 		}
 		for _, session := range report.Sessions {
 			adapter := freshness[session.AdapterID]
-			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), AdapterID: session.AdapterID, AdapterLabel: adapterLabel(adapter), SessionID: session.SessionID, DisplayName: session.DisplayName, Generation: session.Generation, State: session.State, Stale: adapter.Stale, Unknown: !adapter.DataKnown, LastSuccessAtMS: adapter.LastSuccessAtMS, CollectionStatus: adapter.CollectionStatus})
+			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), AdapterID: session.AdapterID, AdapterLabel: adapterLabel(adapter), SessionID: session.SessionID, ProviderSessionID: session.ProviderSessionID, DisplayName: session.DisplayName, Generation: session.Generation, State: session.State, Stale: adapter.Stale, Unknown: !adapter.DataKnown, LastSuccessAtMS: adapter.LastSuccessAtMS, CollectionStatus: adapter.CollectionStatus})
 		}
 	}
 	return rows

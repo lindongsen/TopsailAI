@@ -12,8 +12,15 @@ import (
 func startupStub() *interactiveStub {
 	return &interactiveStub{
 		endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1", Hostname: "ai-dev"}},
-		reports:   map[string]protocol.InventoryReport{"endpoint-1": testInventory()},
+		reports:   map[string]protocol.InventoryReport{"endpoint-1": startupInventory()},
 	}
+}
+
+func startupInventory() protocol.InventoryReport {
+	report := testInventory()
+	report.Sessions[0].SessionID = "res_session-1"
+	report.Sessions[0].ProviderSessionID = "provider-session-1"
+	return report
 }
 
 // runStartup executes one interactive scenario and returns both streams.
@@ -33,10 +40,10 @@ func TestStartupRendersInventoryBeforeFirstPrompt(t *testing.T) {
 			t.Fatalf("startup inventory missing header %q: %q", header, output)
 		}
 	}
-	if !strings.Contains(output, "session-1") {
+	if !strings.Contains(output, "provider-session-1") {
 		t.Fatalf("startup inventory missing session row: %q", output)
 	}
-	headerIndex := strings.Index(output, "LAST_SUCCESS_MS")
+	headerIndex := strings.Index(output, "LAST_SUCCESS")
 	promptIndex := strings.Index(output, "cluster> ")
 	if headerIndex < 0 || promptIndex < 0 {
 		t.Fatalf("startup output incomplete: %q", output)
@@ -133,7 +140,7 @@ func TestNonInteractiveListDoesNotRunStartupInventory(t *testing.T) {
 	if err := (CommandRunner{API: stub}).List(context.Background(), &output, "", false); err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if got := strings.Count(output.String(), "LAST_SUCCESS_MS"); got != 1 {
+	if got := strings.Count(output.String(), "LAST_SUCCESS"); got != 1 {
 		t.Fatalf("non-interactive list rendered %d tables, want 1: %q", got, output.String())
 	}
 	if stub.inventoryCalls != 1 {

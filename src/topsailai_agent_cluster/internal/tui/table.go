@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -20,10 +21,18 @@ type TableOptions struct {
 	Color  ColorPolicy
 	Clean  bool
 	OnRows func([]SessionRow)
+	// Location formats LAST_SUCCESS; nil means the local timezone.
+	Location *time.Location
 }
 
-var tableHeaders = []string{"NO", "ENDPOINT", "ADAPTER", "SESSION", "GENERATION", "STATE", "STALE", "UNKNOWN", "COLLECTION", "LAST_SUCCESS_MS"}
-var tableCaps = []int{4, 20, 18, 36, 20, 12, 5, 7, 16, 15}
+// Column indices are named so a column change cannot silently shift colors or alignment.
+const (
+	columnState       = 4
+	columnLastSuccess = 8
+)
+
+var tableHeaders = []string{"NO", "ENDPOINT", "ADAPTER", "SESSION", "STATE", "STALE", "UNKNOWN", "COLLECTION", "LAST_SUCCESS"}
+var tableCaps = []int{4, 20, 18, 36, 12, 5, 7, 16, 19}
 
 // RenderTable writes a bounded table and sorted endpoint diagnostics.
 func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFailure, options TableOptions) error {
@@ -34,7 +43,7 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 	}
 	cells := make([][]string, len(rows))
 	for i, row := range rows {
-		cells[i] = tableCells(row)
+		cells[i] = tableCells(row, options.Location)
 		for j, cell := range cells[i] {
 			if n := displayWidth(cell); n > widths[j] {
 				widths[j] = minInt(n, tableCaps[j])
@@ -49,7 +58,7 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 				}
 			}
 			cell := clipCell(value, widths[i])
-			if i == 9 {
+			if i == columnLastSuccess {
 				cell = strings.Repeat(" ", widths[i]-displayWidth(cell)) + cell
 			} else {
 				cell += strings.Repeat(" ", widths[i]-displayWidth(cell))
@@ -108,11 +117,7 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 	return nil
 }
 
-func tableCells(row SessionRow) []string {
-	last := "never"
-	if row.LastSuccessAtMS != nil {
-		last = strconv.FormatInt(*row.LastSuccessAtMS, 10)
-	}
+func tableCells(row SessionRow, location *time.Location) []string {
 	endpoint := row.EndpointLabel
 	if endpoint == "" {
 		endpoint = row.EndpointID
@@ -121,11 +126,27 @@ func tableCells(row SessionRow) []string {
 	if adapter == "" {
 		adapter = row.AdapterID
 	}
+	// The provider session id is the human-meaningful fallback; the opaque
+	// resource id is never shown in the table.
 	session := row.DisplayName
 	if session == "" {
-		session = row.SessionID
+		session = row.ProviderSessionID
 	}
-	return []string{strconv.Itoa(row.No), escapeCell(endpoint), escapeCell(adapter), escapeCell(session), escapeCell(row.Generation), escapeCell(row.State), strconv.FormatBool(row.Stale), strconv.FormatBool(row.Unknown), escapeCell(row.CollectionStatus), last}
+	if session == "" {
+		session = "-"
+	}
+	return []string{strconv.Itoa(row.No), escapeCell(endpoint), escapeCell(adapter), escapeCell(session), escapeCell(row.State), strconv.FormatBool(row.Stale), strconv.FormatBool(row.Unknown), escapeCell(row.CollectionStatus), formatLastSuccess(row.LastSuccessAtMS, location)}
+}
+
+// formatLastSuccess renders a millisecond timestamp in the given location.
+func formatLastSuccess(value *int64, location *time.Location) string {
+	if value == nil {
+		return "-"
+	}
+	if location == nil {
+		location = time.Local
+	}
+	return time.UnixMilli(*value).In(location).Format("2006-01-02 15:04:05")
 }
 func escapeCell(value string) string {
 	clean := sanitizeTerminal([]byte(value))
@@ -182,13 +203,13 @@ func minInt(a, b int) int {
 	return b
 }
 func rowState(values []string) string {
-	if len(values) > 5 {
-		return values[5]
+	if len(values) > columnState {
+		return values[columnState]
 	}
 	return ""
 }
 func writeCellState(w io.Writer, cell string, index int, state string, policy ColorPolicy) error {
-	if policy.Enabled && index == 5 {
+	if policy.Enabled && index == columnState {
 		switch state {
 		case "running":
 			return writeStyled(w, ansiGreen, cell, policy)

@@ -72,11 +72,17 @@ func (a *commandAdapter) Discover(parent context.Context, _ DiscoverRequest) (Di
 	if a.config.ResourceMapper != nil {
 		for index := range response.Sessions {
 			session := &response.Sessions[index]
+			// Keep the provider-native identifier before replacing it with the
+			// opaque cluster resource ID used for routing.
+			providerSessionID := session.SessionID
 			mapping, err := a.config.ResourceMapper.GetOrCreateResourceID(ctx, a.config.AdapterID, session.SessionID, time.Now().UnixMilli())
 			if err != nil {
 				return DiscoverResult{}, fmt.Errorf("map adapter %q resource: %w", a.config.AdapterID, err)
 			}
 			session.SessionID = mapping.ResourceID
+			if session.ProviderSessionID == "" {
+				session.ProviderSessionID = providerSessionID
+			}
 			if session.AdapterID == "" {
 				session.AdapterID = a.config.AdapterID
 			}

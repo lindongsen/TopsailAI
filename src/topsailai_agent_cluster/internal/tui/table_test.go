@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"topsailai_agent_cluster/internal/protocol"
@@ -11,13 +13,16 @@ import (
 func TestTableColumnsWidthsAndEmptyResult(t *testing.T) {
 	var out, errors strings.Builder
 	stamp := int64(1700000000000)
-	rows := []SessionRow{{EndpointID: "endpoint-1", AdapterID: "adapter", SessionID: strings.Repeat("s", 60), Generation: "generation", State: "running", LastSuccessAtMS: &stamp, CollectionStatus: protocol.CollectionSucceeded}}
-	if err := RenderTable(&out, &errors, rows, nil, TableOptions{}); err != nil {
+	rows := []SessionRow{{EndpointID: "endpoint-1", AdapterID: "adapter", SessionID: "res_opaque", ProviderSessionID: strings.Repeat("p", 60), Generation: "generation", State: "running", LastSuccessAtMS: &stamp, CollectionStatus: protocol.CollectionSucceeded}}
+	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	if !strings.HasPrefix(lines[0], "NO") || !strings.Contains(lines[0], " │ ADAPTER") || !strings.Contains(lines[0], " │ SESSION") || !strings.HasSuffix(lines[0], "LAST_SUCCESS_MS") {
+	if !strings.HasPrefix(lines[0], "NO") || !strings.Contains(lines[0], " │ ADAPTER") || !strings.Contains(lines[0], " │ SESSION") || !strings.HasSuffix(lines[0], "LAST_SUCCESS") {
 		t.Fatalf("header=%q", lines[0])
+	}
+	if strings.Contains(lines[0], "GENERATION") || strings.Contains(lines[0], "LAST_SUCCESS_MS") {
+		t.Fatalf("header still has removed columns: %q", lines[0])
 	}
 	if !strings.Contains(lines[1], "─┼─") {
 		t.Fatalf("missing header separator=%q", lines[1])
@@ -25,7 +30,7 @@ func TestTableColumnsWidthsAndEmptyResult(t *testing.T) {
 	if len(lines[2]) > 190 || !strings.Contains(lines[2], "...") {
 		t.Fatalf("bounded row=%q len=%d", lines[2], len(lines[2]))
 	}
-	if !strings.HasSuffix(lines[2], "1700000000000") {
+	if !strings.HasSuffix(lines[2], "2023-11-14 22:13:20") {
 		t.Fatalf("timestamp not right aligned: %q", lines[2])
 	}
 	out.Reset()
@@ -178,11 +183,30 @@ func TestTableJSONHasNoPresentationBytes(t *testing.T) {
 	}
 }
 
-func TestTableUsesSessionDisplayNameAndFallsBackToID(t *testing.T) {
+func TestTableJSONPreservesMachineFields(t *testing.T) {
 	stamp := int64(1700000000000)
-	rows := []SessionRow{{No: 1, EndpointID: "ep", SessionID: "res_opaque", DisplayName: "Daily work", State: "running", LastSuccessAtMS: &stamp, CollectionStatus: protocol.CollectionSucceeded}}
+	rows := []SessionRow{{EndpointID: "ep", SessionID: "res_opaque", ProviderSessionID: "provider-42", Generation: "gen-7", LastSuccessAtMS: &stamp}}
+	var out strings.Builder
+	if err := RenderJSON(&out, rows); err != nil {
+		t.Fatal(err)
+	}
+	var decoded []map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded[0]["generation"] != "gen-7" {
+		t.Fatalf("generation = %#v", decoded[0]["generation"])
+	}
+	if got, ok := decoded[0]["last_success_at_ms"].(float64); !ok || got != float64(stamp) {
+		t.Fatalf("last_success_at_ms = %#v", decoded[0]["last_success_at_ms"])
+	}
+}
+
+func TestTableUsesSessionDisplayNameAndFallsBackToProviderID(t *testing.T) {
+	stamp := int64(1700000000000)
+	rows := []SessionRow{{No: 1, EndpointID: "ep", SessionID: "res_opaque", ProviderSessionID: "provider-42", DisplayName: "Daily work", State: "running", LastSuccessAtMS: &stamp, CollectionStatus: protocol.CollectionSucceeded}}
 	var out, errors strings.Builder
-	if err := RenderTable(&out, &errors, rows, nil, TableOptions{}); err != nil {
+	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "Daily work") || strings.Contains(out.String(), "res_opaque") {
@@ -190,10 +214,18 @@ func TestTableUsesSessionDisplayNameAndFallsBackToID(t *testing.T) {
 	}
 	out.Reset()
 	rows[0].DisplayName = ""
-	if err := RenderTable(&out, &errors, rows, nil, TableOptions{}); err != nil {
+	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "res_opaque") {
-		t.Fatalf("fallback output = %q", out.String())
+	if !strings.Contains(out.String(), "provider-42") || strings.Contains(out.String(), "res_opaque") {
+		t.Fatalf("provider fallback output = %q", out.String())
+	}
+	out.Reset()
+	rows[0].ProviderSessionID = ""
+	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "res_opaque") || !strings.Contains(out.String(), " │ - ") {
+		t.Fatalf("unknown session output = %q", out.String())
 	}
 }

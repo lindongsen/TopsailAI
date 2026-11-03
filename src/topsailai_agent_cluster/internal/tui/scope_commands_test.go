@@ -15,11 +15,12 @@ func scopeInventory(sessionID, generation string) protocol.InventoryReport {
 		CollectionStatus: protocol.CollectionSucceeded,
 		Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
 		Sessions: []protocol.Session{{
-			SessionID:        sessionID,
-			AdapterID:        "adapter-1",
-			Generation:       generation,
-			State:            "running",
-			CollectionStatus: protocol.CollectionSucceeded,
+			SessionID:         sessionID,
+			ProviderSessionID: "provider-" + sessionID,
+			AdapterID:         "adapter-1",
+			Generation:        generation,
+			State:             "running",
+			CollectionStatus:  protocol.CollectionSucceeded,
 		}},
 	}
 }
@@ -42,11 +43,12 @@ func scopeStub() *interactiveStub {
 func siblingStub() *interactiveStub {
 	report := scopeInventory("res-1", "generation-1")
 	report.Sessions = append(report.Sessions, protocol.Session{
-		SessionID:        "res-1b",
-		AdapterID:        "adapter-1",
-		Generation:       "generation-1b",
-		State:            "stopped",
-		CollectionStatus: protocol.CollectionSucceeded,
+		SessionID:         "res-1b",
+		ProviderSessionID: "provider-1b",
+		AdapterID:         "adapter-1",
+		Generation:        "generation-1b",
+		State:             "stopped",
+		CollectionStatus:  protocol.CollectionSucceeded,
 	})
 	return &interactiveStub{
 		endpoints: []protocol.Endpoint{
@@ -186,7 +188,7 @@ func TestListInSessionScopeShowsSiblingSessions(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
 	scoped := segmentBeforePrompt(output, "cluster[host-one/endpoint-1/res-1]> ")
-	if !strings.Contains(scoped, "res-1b") {
+	if !strings.Contains(scoped, "provider-1b") {
 		t.Fatalf("missing sibling session: %q", scoped)
 	}
 	if strings.Contains(scoped, "res-2") {

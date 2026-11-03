@@ -61,7 +61,7 @@ Feature: non-interactive TUI
     When I run the tui list command in human readable mode
     Then the output contains the endpoint hostname
     And the output contains "no sessions"
-    And the output contains "LAST_SUCCESS_MS"
+    And the output contains "LAST_SUCCESS"
 
 
   Scenario: tui logs returns bounded snapshot

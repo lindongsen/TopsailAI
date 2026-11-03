@@ -14,17 +14,20 @@ type Endpoint struct {
 
 // Session identifies a provider session without exposing provider routing details.
 type Session struct {
-	SessionID        string `json:"session_id"`
-	DisplayName      string `json:"display_name,omitempty"`
-	AgentID          string `json:"agent_id"`
-	Generation       string `json:"generation"`
-	AdapterID        string `json:"adapter_id"`
-	State            string `json:"state"`
-	StateReason      string `json:"state_reason,omitempty"`
-	Stale            bool   `json:"stale,omitempty"`
-	Unknown          bool   `json:"unknown,omitempty"`
-	CollectionStatus string `json:"collection_status,omitempty"`
-	ObservedAtMS     int64  `json:"observed_at_ms"`
+	SessionID string `json:"session_id"`
+	// ProviderSessionID is the provider-native session identifier reported by the
+	// adapter. SessionID stays the opaque cluster resource ID used for routing.
+	ProviderSessionID string `json:"provider_session_id,omitempty"`
+	DisplayName       string `json:"display_name,omitempty"`
+	AgentID           string `json:"agent_id"`
+	Generation        string `json:"generation"`
+	AdapterID         string `json:"adapter_id"`
+	State             string `json:"state"`
+	StateReason       string `json:"state_reason,omitempty"`
+	Stale             bool   `json:"stale,omitempty"`
+	Unknown           bool   `json:"unknown,omitempty"`
+	CollectionStatus  string `json:"collection_status,omitempty"`
+	ObservedAtMS      int64  `json:"observed_at_ms"`
 }
 
 // AdapterSummary describes an adapter as report data, not an execution selector.
