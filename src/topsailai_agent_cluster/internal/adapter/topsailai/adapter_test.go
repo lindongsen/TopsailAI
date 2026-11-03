@@ -380,12 +380,12 @@ func TestTopsailaiAdapterStartCommandOptionalFolderAndNonInteractive(t *testing.
 	}{
 		{
 			name: "without folder",
-			want: []string{"workspace", "agent", "profile", "--background", "--json", "--non-interactive"},
+			want: []string{"workspace", "agent", "--background", "--json", "--non-interactive"},
 		},
 		{
 			name:   "with folder containing spaces",
 			folder: "/tmp/work folder --safe",
-			want:   []string{"workspace", "agent", "profile", "--background", "--json", "--non-interactive", "--folder", "/tmp/work folder --safe"},
+			want:   []string{"workspace", "agent", "/tmp/work folder --safe", "--background", "--json", "--non-interactive"},
 		},
 	}
 	for _, tc := range cases {
@@ -403,6 +403,11 @@ func TestTopsailaiAdapterStartCommandOptionalFolderAndNonInteractive(t *testing.
 			}
 			if !reflect.DeepEqual(runner.args, tc.want) {
 				t.Fatalf("argv = %#v, want %#v", runner.args, tc.want)
+			}
+			for _, arg := range runner.args {
+				if arg == "profile" || arg == "--folder" {
+					t.Fatalf("argv contains forbidden provider argument %q: %#v", arg, runner.args)
+				}
 			}
 		})
 	}
