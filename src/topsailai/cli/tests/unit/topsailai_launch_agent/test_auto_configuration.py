@@ -264,5 +264,20 @@ class TestAutoConfiguration(unittest.TestCase):
             self.assertEqual(settings["ai_agent_driver"], "existing-driver")
 
 
+class TestDefaultDriver(unittest.TestCase):
+    """Pin the built-in default driver and its generated template."""
+
+    def test_default_config_driver_is_chats(self):
+        """The built-in default driver must be topsailai_agent_chats."""
+        self.assertEqual(
+            launcher.DEFAULT_CONFIG["ai_agent_driver"], "topsailai_agent_chats"
+        )
+
+    def test_config_template_matches_default_config_driver(self):
+        """The generated settings template must not drift from the default."""
+        expected = 'ai_agent_driver: "%s"' % launcher.DEFAULT_CONFIG["ai_agent_driver"]
+        self.assertIn(expected, launcher.CONFIG_TEMPLATE)
+
+
 if __name__ == "__main__":
     unittest.main()

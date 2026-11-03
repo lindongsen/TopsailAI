@@ -531,7 +531,7 @@ _DRIVER_MENU_OPTIONS = (
 )
 
 DEFAULT_CONFIG = {
-    "ai_agent_driver": "topsailai_agent_plan_tasks",
+    "ai_agent_driver": "topsailai_agent_chats",
     "workspace": ".",
     "scan": {
         "include_files": False,
@@ -564,7 +564,7 @@ CONFIG_TEMPLATE = """# AI Agent TopsailAI-Launcher Configuration
 #   2. TOPSAILAI_AGENT_DRIVER environment variable from this file (item-specific or _)
 #   3. ai_agent_driver field below
 #   4. TOPSAILAI_AGENT_DRIVER from the OS environment
-ai_agent_driver: "topsailai_agent_plan_tasks"
+ai_agent_driver: "topsailai_agent_chats"
 
 # Working directory for the launched driver.
 workspace: "."

@@ -384,14 +384,14 @@ Context Items:
   1. memo
   2. review
 
-Current driver: topsailai_agent_plan_tasks
+Current driver: topsailai_agent_chats
   d. Select the agent driver
 
 Select context item (1-2, default: memo): d
 
 Select the agent driver to launch:
-  1. topsailai_agent_plan_tasks (current)
-  2. topsailai_agent_chats
+  1. topsailai_agent_chats (current)
+  2. topsailai_agent_plan_tasks
   3. ai-team-flow-dev
   c. Custom driver command
   b. Back to context item selection
@@ -418,7 +418,7 @@ is ignored with a warning and the normally resolved driver is used.
 The settings file is `.topsailai/settings.yaml` in the current working directory. Example structure:
 
 ```yaml
-ai_agent_driver: "topsailai_agent_plan_tasks"
+ai_agent_driver: "topsailai_agent_chats"
 workspace: "."
 scan:
   include_files: false

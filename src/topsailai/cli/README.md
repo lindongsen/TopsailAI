@@ -311,7 +311,7 @@ The context-item page accepts `d` (or `driver`) to open a driver menu and then r
 If `.topsailai/settings.yaml` is missing, the launcher asks how to proceed:
 - In an interactive terminal (TTY), you are prompted to choose:
   - `[r] Run with the default agent driver` — uses the built-in default
-    configuration (`ai_agent_driver: topsailai_agent_plan_tasks`) and launches the
+    configuration (`ai_agent_driver: topsailai_agent_chats`) and launches the
     driver without creating a settings file. This is the default choice.
   - `[s] Run guided setup` — runs the interactive setup to create
     `.topsailai/settings.yaml`, then continues launching with the new
