@@ -257,9 +257,9 @@ def print_help(
             "scopes": ["workspace"],
         },
         {
-            "cmd": "topsailai workspace agent <folder> [-m MODE] [-b|--background] [--json]",
-            "desc": "Workspace-agent launch in foreground or detached headless background mode. See docs/usage/topsailai.md#workspace-agent. The folder is resolved against the caller's startup directory; omit -m for automatic foreground mode selection. Background defaults to raw mode and honors an explicit -m raw|tmux|dtach, failing closed when that mechanism is unavailable; it closes stdin, reports the actual launcher PID and rotating launch-log path, and submission is not readiness. Exit codes: 0..255 observed child status, 128+signal, 2 usage failure, 3 invalid folder, 4 preparation failure including an unavailable background mechanism, 5 spawn/wait failure, 6 unresolved custody, 130 cancellation. A wrapper exit is not agent completion. Background logs and backups participate in expiry cleanup while active launch leases protect live logs. There is no terminal reattachment. --json emits one machine-readable receipt on stdout while ordinary output goes to stderr.",
-            "example": "Example: topsailai workspace agent /path/to/project -m raw",
+            "cmd": "topsailai workspace agent [<folder>] [-m MODE] [-b|--background] [--json]",
+            "desc": "Workspace-agent launch in foreground or detached headless background mode. See docs/usage/topsailai.md#workspace-agent. The folder is optional and defaults to the caller's working directory; an explicit folder is resolved against the caller's startup directory. Omit -m for automatic foreground mode selection. Background defaults to raw mode and honors an explicit -m raw|tmux|dtach, failing closed when that mechanism is unavailable; it closes stdin, reports the actual launcher PID and rotating launch-log path, and submission is not readiness. Exit codes: 0..255 observed child status, 128+signal, 2 usage failure, 3 invalid folder, 4 preparation failure including an unavailable background mechanism, 5 spawn/wait failure, 6 unresolved custody, 130 cancellation. A wrapper exit is not agent completion. Background logs and backups participate in expiry cleanup while active launch leases protect live logs. There is no terminal reattachment. --json emits one machine-readable receipt on stdout while ordinary output goes to stderr.",
+            "example": "Example: topsailai workspace agent  or  topsailai workspace agent /path/to/project -m raw",
             "scopes": ["workspace"],
         },
         {

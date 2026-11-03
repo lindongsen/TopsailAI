@@ -266,7 +266,8 @@ def test_workspace_agent_help_contract(capsys):
     """Workspace-agent help exposes the complete foreground/background contract."""
     print_help([], "workspace", keyword="workspace agent")
     output = capsys.readouterr().out
-    assert "topsailai workspace agent <folder> [-m MODE] [-b|--background] [--json]" in output
+    assert "topsailai workspace agent [<folder>] [-m MODE] [-b|--background] [--json]" in output
+    assert "The folder is optional and defaults to the caller's working directory" in output
     for text in (
         "2 usage failure",
         "3 invalid folder",
@@ -291,7 +292,7 @@ def test_b24_background_contract_snapshot_and_scale(capsys, tmp_path):
     output = capsys.readouterr().out
     # Syntax, exit codes, retention, no-attach and JSON receipts are documented.
     for text in (
-        "topsailai workspace agent <folder> [-m MODE] [-b|--background] [--json]",
+        "topsailai workspace agent [<folder>] [-m MODE] [-b|--background] [--json]",
         "Background defaults to raw mode",
         "honors an explicit -m raw|tmux|dtach",
         "failing closed when that mechanism is unavailable",

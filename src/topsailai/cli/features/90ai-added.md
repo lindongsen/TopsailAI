@@ -65,3 +65,7 @@ The workspace CLI provides `/env.search <term> [term...]` to fuzzy-search config
 ## Non-Interactive Mode for `topsailai_launch_agent`
 
 `topsailai_launch_agent` now accepts `--non-interactive`, which guarantees the launcher itself performs no interactive action and always proceeds to launch an agent. A missing `.topsailai/settings.yaml` uses the built-in default configuration without creating a file, an existing configuration uses the `default` context item when present, a single non-base item is used directly, and multiple items without `default` fall back to the base item `_` with a warning on stderr. The empty-context setup prompt and the item-selection page are skipped, `--setup` and `--select-driver` are rejected as contradictory (exit code 2), and the flag is independent of terminal type. It affects only the launcher's own prompting and does not change the launched agent's `TOPSAILAI_INTERACTIVE_MODE`.
+
+## Optional Folder for `topsailai workspace agent`
+
+`topsailai workspace agent` now accepts an omitted `folder` positional and launches in the caller's working directory, so `topsailai workspace agent`, `topsailai workspace agent -b`, and `topsailai workspace agent -m raw` all work without a path. An explicit folder keeps the previous behaviour: relative paths resolve against the caller's startup directory, absolute and `~` paths stay literal, and a missing folder still exits `3` with an `invalid_folder` receipt. Help text, `README.md`, `topsailai.md`, and `docs/usage/topsailai.md` advertise the optional `[<folder>]` form and state the default.

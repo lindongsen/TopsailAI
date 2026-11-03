@@ -40,11 +40,15 @@ def build_parser() -> argparse.ArgumentParser:
         prog="topsailai workspace agent",
         allow_abbrev=False,
         description="Launch a configured agent in a folder.",
-        epilog=("Foreground mode attaches to the launcher. Background mode is headless and "
+        epilog=("The folder is optional and defaults to the caller's working directory. "
+                "Foreground mode attaches to the launcher. Background mode is headless and "
                 "reports submission rather than readiness. --json emits one receipt on "
                 "stdout and redirects all other output to stderr."),
     )
-    parser.add_argument("folder", help="agent workspace folder")
+    parser.add_argument(
+        "folder", nargs="?", default=None,
+        help="agent workspace folder (default: the caller's working directory)",
+    )
     parser.add_argument(
         "-m", "--agent-mode", choices=("raw", "dtach", "tmux"),
         action=_ModeAction, default=None,
@@ -61,12 +65,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve_folder(folder: str, startup_cwd: Optional[str]) -> str:
-    """Resolve and validate a folder against the caller's startup directory."""
+def _resolve_folder(folder: Optional[str], startup_cwd: Optional[str]) -> str:
+    """Resolve and validate a folder against the caller's startup directory.
+
+    An omitted folder means the caller's working directory: the startup
+    directory when the dispatcher recorded one, otherwise the current
+    process working directory.
+    """
     base = startup_cwd or os.getcwd()
-    expanded = os.path.expanduser(folder)
-    target = expanded if os.path.isabs(expanded) else os.path.join(base, expanded)
-    target = os.path.abspath(target)
+    if folder is None:
+        target = os.path.abspath(base)
+    else:
+        expanded = os.path.expanduser(folder)
+        target = expanded if os.path.isabs(expanded) else os.path.join(base, expanded)
+        target = os.path.abspath(target)
     if not os.path.isdir(target):
         raise WorkspaceAgentError(f"Folder is not a directory: {target}")
     return target

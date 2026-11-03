@@ -1493,7 +1493,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     workspace_parser.set_defaults(func=_handle_workspace_subcommand)
     workspace_subparsers = workspace_parser.add_subparsers(dest="workspace_command")
     workspace_subparsers.add_parser(
-        "agent", help="launch an agent in a folder", add_help=False,
+        "agent", help="launch an agent in a folder (default: current directory)",
+        add_help=False,
     ).add_argument("agent_args", nargs=argparse.REMAINDER)
     workspace_kill_parser = workspace_subparsers.add_parser(
         "kill", help="send SIGTERM to one exact session", add_help=False,

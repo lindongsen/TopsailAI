@@ -140,11 +140,39 @@ def test_core_main_propagates_startup_cwd_to_workspace_agent(tmp_path, monkeypat
     assert seen == {"argv": ["project", "-m", "raw"], "startup_cwd": str(tmp_path)}
 
 
-def test_missing_folder_argument_is_usage_error(capsys):
-    with patch("cli_topsailai.agent_launch.launch_configured_agent") as launch:
-        assert run_workspace_agent_cli([]) == 2
-    assert launch.call_count == 0
-    assert "required" in capsys.readouterr().err
+def test_omitted_folder_defaults_to_startup_cwd(tmp_path):
+    """An omitted folder launches in the caller's working directory."""
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli([], startup_cwd=str(tmp_path)) == 0
+    launch.assert_called_once_with(
+        str(tmp_path), mode=None, background=False, entrypoint_base=str(tmp_path)
+    )
+
+
+def test_omitted_folder_without_startup_cwd_uses_process_cwd(tmp_path, monkeypatch):
+    """Without a recorded startup directory the process working directory is used."""
+    monkeypatch.chdir(tmp_path)
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli([]) == 0
+    launch.assert_called_once_with(
+        str(tmp_path), mode=None, background=False, entrypoint_base=str(tmp_path)
+    )
+
+
+@pytest.mark.parametrize(
+    "argv, expected_mode, expected_background",
+    [(["-m", "raw"], "raw", False), (["-b"], None, True), (["-b", "-m", "tmux"], "tmux", True)],
+)
+def test_options_only_invocation_uses_default_folder(
+    tmp_path, argv, expected_mode, expected_background
+):
+    """Options without a folder still launch in the caller's working directory."""
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli(argv, startup_cwd=str(tmp_path)) == 0
+    launch.assert_called_once_with(
+        str(tmp_path), mode=expected_mode, background=expected_background,
+        entrypoint_base=str(tmp_path),
+    )
 
 
 @pytest.mark.parametrize("argv", [["folder", "extra"], ["folder", "--agent"], ["folder", "--session", "x"], ["folder", "--pid", "1"]])
