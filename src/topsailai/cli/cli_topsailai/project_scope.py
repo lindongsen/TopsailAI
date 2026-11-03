@@ -974,7 +974,8 @@ def _prompt_for_driver() -> str:
     """Prompt the user to select an agent driver for resuming a session.
 
     Presents a numbered list of built-in drivers plus a custom-input option.
-    The default selection is ``topsailai_agent_plan_tasks`` (option 2).
+    The default selection is ``_RESUME_DEFAULT_DRIVER``, so pressing Enter
+    always agrees with the non-interactive resume default.
 
     Returns:
         The selected driver command string.
@@ -984,7 +985,7 @@ def _prompt_for_driver() -> str:
         print(f"  {idx}. {driver}")
     print(f"  {len(_RESUME_DRIVER_OPTIONS) + 1}. (custom input)")
 
-    default_option = 2
+    default_option = _RESUME_DRIVER_OPTIONS.index(_RESUME_DEFAULT_DRIVER) + 1
     total_options = len(_RESUME_DRIVER_OPTIONS) + 1
     prompt_text = f"Select driver (1-{total_options}, default: {default_option}): "
 

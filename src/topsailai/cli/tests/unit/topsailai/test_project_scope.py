@@ -1070,7 +1070,13 @@ class TestPromptForDriver(unittest.TestCase):
     @patch("builtins.input", side_effect=[""])
     def test_default_selection(self, mock_input):
         driver = project_scope._prompt_for_driver()
-        self.assertEqual(driver, "topsailai_agent_plan_tasks")
+        self.assertEqual(driver, "topsailai_agent_chats")
+
+    def test_default_selection_matches_resume_default(self):
+        """Pressing Enter must agree with the non-interactive resume default."""
+        with patch("builtins.input", side_effect=[""]):
+            driver = project_scope._prompt_for_driver()
+        self.assertEqual(driver, project_scope._RESUME_DEFAULT_DRIVER)
 
     @patch("builtins.input", side_effect=["1"])
     def test_select_first_option(self, mock_input):
