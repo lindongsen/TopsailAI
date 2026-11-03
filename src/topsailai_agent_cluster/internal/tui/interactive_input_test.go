@@ -164,3 +164,13 @@ func TestConfirmationRevalidatesCapabilityRevision(t *testing.T) {
 		t.Fatalf("errors=%q want=%q", got, want)
 	}
 }
+
+func TestInteractiveRejectsJSONOptions(t *testing.T) {
+	for _, command := range []string{"list --json", "list -json", "show --json", "show -unknown"} {
+		stub := inputStub()
+		_, errorsOut := runInputScenario(t, stub, command+"\nquit\n", 8192)
+		if !strings.Contains(errorsOut, "available only in non-interactive mode") || !strings.Contains(errorsOut, "JSON output is available only with the standalone command") {
+			t.Fatalf("command %q errors=%q", command, errorsOut)
+		}
+	}
+}

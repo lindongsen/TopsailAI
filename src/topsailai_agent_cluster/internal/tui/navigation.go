@@ -21,18 +21,26 @@ const (
 )
 
 // interactiveCD navigates between workspace, endpoint, and session scopes.
-func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lineSource <-chan lineReadResult, out io.Writer) error {
+func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lineSource <-chan lineReadResult, out io.Writer, color ColorPolicy) error {
 	target := strings.TrimSpace(rest)
 	switch target {
 	case "", "/":
 		state.enterWorkspace()
-		return nil
+		return rerenderNavigatedList(parent, api, state, out, color)
 	case "..":
-		return cdParent(state, out)
+		if err := cdParent(state, out); err != nil {
+			return err
+		}
+		return rerenderNavigatedList(parent, api, state, out, color)
 	}
 	parts := strings.Split(target, "/")
 	if len(parts) > 3 {
 		return fmt.Errorf("usage: cd [target]")
+	}
+	if len(parts) == 1 {
+		if index, numeric := parseRowNumber(parts[0]); numeric {
+			return cdRowNumber(state, api, parent, index)
+		}
 	}
 	for _, part := range parts {
 		if strings.TrimSpace(part) == "" {
@@ -45,14 +53,81 @@ func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiv
 	if err != nil {
 		return err
 	}
+	var resolveErr error
 	switch len(parts) {
 	case 1:
-		return cdSingle(state, loaded, parts[0], lineSource, out)
+		resolveErr = cdSingle(state, loaded, parts[0], lineSource, out)
 	case 2:
-		return cdPair(state, loaded, parts[0], parts[1])
+		resolveErr = cdPair(state, loaded, parts[0], parts[1])
 	default:
-		return cdTriple(state, loaded, parts[0], parts[1], parts[2])
+		resolveErr = cdTriple(state, loaded, parts[0], parts[1], parts[2])
 	}
+	if resolveErr != nil {
+		return resolveErr
+	}
+	return rerenderNavigatedList(parent, api, state, out, color)
+}
+
+// rerenderNavigatedList refreshes the visible list for workspace and endpoint scopes.
+func rerenderNavigatedList(parent context.Context, api InteractiveAPI, state *interactiveState, out io.Writer, color ColorPolicy) error {
+	if state.Scope.Kind == ScopeSession {
+		return nil
+	}
+	return interactiveList(parent, api, state, "", false, out, io.Discard, color)
+}
+
+// parseRowNumber recognizes the display row syntax without accepting signs or whitespace.
+func parseRowNumber(value string) (int, bool) {
+	if value == "" {
+		return 0, false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+	}
+	number, err := strconv.Atoi(value)
+	return number, err == nil
+}
+
+// cdRowNumber resolves against the most recently rendered table, preserving the user's visible numbering.
+func cdRowNumber(state *interactiveState, api InteractiveAPI, parent context.Context, number int) error {
+	if state.Scope.Kind == ScopeSession {
+		return fmt.Errorf("row-number navigation is unavailable in session scope; use cd .. or cd <session>")
+	}
+	if len(state.Rows) == 0 {
+		return fmt.Errorf("no list is available for row navigation; run list first")
+	}
+	row, ok := state.Rows[number]
+	if !ok {
+		return fmt.Errorf("row %d is out of range; valid rows are 1-%d", number, len(state.Rows))
+	}
+	if row.SessionID == "" {
+		return fmt.Errorf("row %d does not identify a session; choose a session row", number)
+	}
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	loaded, err := loadReports(ctx, api, row.EndpointID)
+	if err != nil {
+		return err
+	}
+	endpoint, report, ok := endpointReport(loaded, row.EndpointID)
+	if !ok || !report.ReportComplete {
+		return fmt.Errorf("endpoint %q inventory is unavailable; run list again", row.EndpointID)
+	}
+	for _, session := range report.Sessions {
+		if session.SessionID != row.SessionID {
+			continue
+		}
+		outcome, enterErr := enterValidatedSession(state, endpoint, report, session)
+		if enterErr != nil {
+			return enterErr
+		}
+		if outcome == outcomeResolved {
+			return nil
+		}
+	}
+	return fmt.Errorf("row %d no longer identifies a session; run list again", number)
 }
 
 // cdParent moves one level up the scope hierarchy.
@@ -249,7 +324,7 @@ func enterValidatedSession(state *interactiveState, endpoint protocol.Endpoint, 
 	if err := validateAdapterFreshness(report, session.AdapterID); err != nil {
 		return outcomeCancelled, err
 	}
-	state.enterSession(endpoint, session.SessionID, session.Generation)
+	state.enterSessionDetails(endpoint, session.SessionID, session.ProviderSessionID, session.DisplayName, session.Generation)
 	return outcomeResolved, nil
 }
 

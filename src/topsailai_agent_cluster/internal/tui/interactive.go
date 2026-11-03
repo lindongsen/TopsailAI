@@ -279,8 +279,11 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "use":
 		return false, fmt.Errorf(`"use" has been removed; use "cd" to navigate`)
 	case "cd":
-		return false, interactiveCD(ctx, api, state, rest, lineResults, out)
+		return false, interactiveCD(ctx, api, state, rest, lineResults, out, options.Color)
 	case "show":
+		if err := rejectInteractiveOption("show", rest); err != nil {
+			return false, err
+		}
 		return false, interactiveShow(ctx, api, state, strings.TrimSpace(rest), out)
 	case "logs":
 		return false, interactiveLogs(ctx, api, state, strings.TrimSpace(rest), options.MaxBytes, out)
@@ -381,12 +384,24 @@ func parseListArguments(rest string) (string, bool, error) {
 			clean = true
 			continue
 		}
+		if strings.HasPrefix(part, "-") {
+			return "", false, fmt.Errorf("option %q is available only in non-interactive mode; JSON output is available only with the standalone command", part)
+		}
 		if filter != "" {
 			return "", false, fmt.Errorf("usage: list [endpoint] [--clean]")
 		}
 		filter = part
 	}
 	return filter, clean, nil
+}
+
+func rejectInteractiveOption(command, rest string) error {
+	for _, part := range strings.Fields(rest) {
+		if strings.HasPrefix(part, "-") {
+			return fmt.Errorf("option %q is available only in non-interactive mode; JSON output is available only with the standalone command", part)
+		}
+	}
+	return nil
 }
 
 func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveState) (protocol.Endpoint, protocol.InventoryReport, *protocol.Session, error) {

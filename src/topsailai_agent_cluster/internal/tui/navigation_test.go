@@ -92,6 +92,37 @@ func lastPrompt(output string) string {
 	return trimmed[index:]
 }
 
+func TestCDRowNumberUsesMostRecentList(t *testing.T) {
+	stub := scopeStub()
+	output, diagnostics := runNav(t, stub, "list\ncd 1\nquit\n")
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if got := lastPrompt(output); got != "cluster[host-one/endpoint-1/provider-res-1]>" {
+		t.Fatalf("final prompt = %q, want first session", got)
+	}
+}
+
+func TestCDRowNumberRejectsInvalidAndSessionScope(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "zero", input: "list\ncd 0\nquit\n", want: "error: row 0 is out of range; valid rows are 1-2\n"},
+		{name: "out of range", input: "list\ncd 99\nquit\n", want: "error: row 99 is out of range; valid rows are 1-2\n"},
+		{name: "session scope", input: "list\ncd 1\ncd 1\nquit\n", want: "error: row-number navigation is unavailable in session scope; use cd .. or cd <session>\n"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, diagnostics := runNav(t, scopeStub(), testCase.input)
+			if diagnostics != testCase.want {
+				t.Fatalf("diagnostics = %q, want %q", diagnostics, testCase.want)
+			}
+		})
+	}
+}
+
 func TestCDWithoutArgumentsReturnsToWorkspace(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -420,5 +451,38 @@ func TestListTableKeepsHeaderAndStateColors(t *testing.T) {
 	}
 	if !strings.Contains(text, ansiGreen+"running") {
 		t.Fatalf("running state lost green styling: %q", text)
+	}
+}
+
+func TestSessionPromptUsesReadableSanitizedName(t *testing.T) {
+	var output strings.Builder
+	scope := ScopeState{Kind: ScopeSession, Hostname: "ai-dev", EndpointID: "endpoint-1", SessionID: "res_1234567890abcdef", SessionName: "统一/Agent\n管理方案"}
+	if err := RenderPrompt(&output, scope, false, ColorPolicy{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := output.String(), "cluster[ai-dev/endpoint-1/统一∕Agent�管理方案]> "; got != want {
+		t.Fatalf("prompt = %q, want %q", got, want)
+	}
+}
+
+func TestSessionPromptFallsBackToProviderThenShortResourceID(t *testing.T) {
+	cases := []struct {
+		name  string
+		scope ScopeState
+		want  string
+	}{
+		{name: "provider", scope: ScopeState{Kind: ScopeSession, EndpointID: "ep", SessionID: "res_1234567890abcdef", ProviderSessionID: "provider-42"}, want: "cluster[ep/provider-42]> "},
+		{name: "resource", scope: ScopeState{Kind: ScopeSession, EndpointID: "ep", SessionID: "res_1234567890abcdef"}, want: "cluster[ep/res_12345678]> "},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var output strings.Builder
+			if err := RenderPrompt(&output, testCase.scope, false, ColorPolicy{}); err != nil {
+				t.Fatal(err)
+			}
+			if output.String() != testCase.want {
+				t.Fatalf("prompt = %q, want %q", output.String(), testCase.want)
+			}
+		})
 	}
 }

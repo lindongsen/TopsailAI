@@ -53,6 +53,19 @@ func TestStartupRendersInventoryBeforeFirstPrompt(t *testing.T) {
 	}
 }
 
+func TestStartupRowsBindSessionThroughCD(t *testing.T) {
+	output, diagnostics := runStartup(t, startupStub(), "cd 1\nshow\nquit\n", InteractiveOptions{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if !strings.Contains(output, "cluster[ai-dev/endpoint-1/") {
+		t.Fatalf("startup row navigation did not enter session: %q", output)
+	}
+	if !strings.Contains(output, "session: res_session-1") {
+		t.Fatalf("startup row navigation selected the wrong session: %q", output)
+	}
+}
+
 func TestStartupLeavesWorkspaceScope(t *testing.T) {
 	output, _ := runStartup(t, startupStub(), "quit\n", InteractiveOptions{})
 	if !strings.Contains(output, "cluster> ") {

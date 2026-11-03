@@ -1,6 +1,9 @@
 package tui
 
-import "io"
+import (
+	"io"
+	"strings"
+)
 
 const (
 	ansiBoldCyan  = "\x1b[1;36m"
@@ -53,7 +56,14 @@ func RenderPrompt(w io.Writer, scope ScopeState, invalidated bool, policy ColorP
 		if scope.Hostname != "" {
 			prompt += "/" + sanitizePromptPart(scope.EndpointID)
 		}
-		prompt += "/" + sanitizePromptPart(scope.SessionID)
+		label := scope.SessionName
+		if label == "" {
+			label = scope.ProviderSessionID
+		}
+		if label == "" {
+			label = shortResourceID(scope.SessionID)
+		}
+		prompt += "/" + sanitizePromptPart(label)
 		if invalidated {
 			prompt += "!"
 		}
@@ -67,4 +77,15 @@ func RenderPrompt(w io.Writer, scope ScopeState, invalidated bool, policy ColorP
 	return err
 }
 
-func sanitizePromptPart(value string) string { return escapeCell(value) }
+func sanitizePromptPart(value string) string {
+	value = escapeCell(value)
+	value = strings.ReplaceAll(value, "/", "∕")
+	return clipCell(value, 36)
+}
+
+func shortResourceID(value string) string {
+	if len(value) <= 12 {
+		return value
+	}
+	return value[:12]
+}

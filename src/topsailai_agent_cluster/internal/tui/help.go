@@ -19,19 +19,19 @@ type commandHelp struct {
 }
 
 var fieldHelp = []string{
-	"NO: display row number; use it with cd <hostname>/<endpoint-id>/<session>.",
+	"NO: display row number from the most recently rendered list; use cd <no> to enter that session.",
 	"ENDPOINT: endpoint hostname, falling back to its display name or ID.",
 	"ADAPTER: provider adapter display label.",
 	"SESSION_NAME: session display name; empty when the provider did not report one.",
 	"SESSION_ID: provider-native session ID; empty when the provider did not report one.",
 	"SESSION_STATUS: provider-reported lifecycle state, such as running, stopped, or failed.",
-	"DATA_STATUS: collection result with stale/unknown data qualifiers; ok means succeeded, while failed/stale means collection failed and retained earlier data.",
-	"LAST_SUCCESS: local-time timestamp of the latest successful collection; - means no success has been recorded.",
+	"DATA_STATUS: collection result plus freshness qualifiers; base values are ok, failed, partial, unknown, or unrecognized, optionally followed by /stale, /unknown, or /unknown+stale.",
+	"LAST_SUCCESS: local-time timestamp of the latest successful collection, not the failure start time; - means no success has been recorded.",
 }
 
 var commandHelpCatalog = map[string]commandHelp{
-	"list":    {"list [endpoint] [--clean]", ListHelpDescription, []string{"endpoint: optional endpoint ID filter", "--clean: omit endpoints that failed to report; diagnostics still go to stderr"}, []string{"list", "list endpoint-1", "list --clean"}},
-	"cd":      {"cd [target]", "navigate between workspace, endpoint, and session scopes; bare cd returns to workspace", []string{"target: hostname, hostname/endpoint-id, session, hostname/endpoint-id/session, .., or /", "a hostname shared by several endpoints prompts for a numbered choice, a hostname/endpoint-id answer, or cancel"}, []string{"cd", "cd /", "cd ..", "cd ai-dev", "cd ai-dev/endpoint-1", "cd res_abc", "cd ai-dev/endpoint-1/res_abc"}},
+	"list":    {"list [endpoint] [--clean]", ListHelpDescription + "; JSON output (--json/-json) is available only in the standalone non-interactive command", []string{"endpoint: optional endpoint ID filter", "--clean: omit endpoints that failed to report; diagnostics still go to stderr"}, []string{"list", "list endpoint-1", "list --clean"}},
+	"cd":      {"cd [target]", "navigate between workspace, endpoint, and session scopes; bare cd returns to workspace", []string{"target: row number from the latest list, hostname, hostname/endpoint-id, session, hostname/endpoint-id/session, .., or /", "a numeric target uses the latest list row; invalid rows report their valid range; session scope rejects row navigation", "a hostname shared by several endpoints prompts for a numbered choice, a hostname/endpoint-id answer, or cancel"}, []string{"cd", "cd 1", "cd /", "cd ..", "cd ai-dev", "cd ai-dev/endpoint-1", "cd res_abc", "cd ai-dev/endpoint-1/res_abc"}},
 	"show":    {"show [endpoint-or-session]", "show detailed information for an endpoint or session; defaults to the current scope target", []string{"endpoint-or-session: optional endpoint ID or session/resource ID"}, []string{"show", "show endpoint-1"}},
 	"logs":    {"logs [session]", "show bounded output for a session in the current endpoint", []string{"session: optional session/resource ID; defaults to the current session"}, []string{"logs", "logs res_abc"}},
 	"send":    {"send <json>", "send a JSON message to the selected session", []string{"json: message payload"}, []string{`send {"text":"hello"}`}},

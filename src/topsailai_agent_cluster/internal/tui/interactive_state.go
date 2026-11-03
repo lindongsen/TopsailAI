@@ -31,11 +31,13 @@ func (k ScopeKind) String() string {
 
 // ScopeState stores the current interactive navigation location.
 type ScopeState struct {
-	Kind       ScopeKind
-	EndpointID string
-	Hostname   string
-	SessionID  string
-	Generation string
+	Kind              ScopeKind
+	EndpointID        string
+	Hostname          string
+	SessionID         string
+	ProviderSessionID string
+	SessionName       string
+	Generation        string
 }
 
 // interactiveSelection stores the identity pinned by an explicit navigation command.
@@ -89,20 +91,28 @@ func (s *interactiveState) enterWorkspace() {
 	*s = interactiveState{}
 }
 
-// enterEndpoint keeps endpoint context while clearing session identity.
+// enterEndpoint keeps endpoint context while clearing session identity and stale row mappings.
 func (s *interactiveState) enterEndpoint(endpoint protocol.Endpoint) {
 	s.interactiveSelection = interactiveSelection{EndpointID: endpoint.EndpointID}
+	s.Rows = nil
 	s.Scope = ScopeState{Kind: ScopeEndpoint, EndpointID: endpoint.EndpointID, Hostname: endpoint.Hostname}
 }
 
 // enterSession pins a validated session and records its endpoint hostname.
 func (s *interactiveState) enterSession(endpoint protocol.Endpoint, sessionID, generation string) {
+	s.enterSessionDetails(endpoint, sessionID, "", "", generation)
+}
+
+// enterSessionDetails pins a session and its user-facing identity in the prompt.
+func (s *interactiveState) enterSessionDetails(endpoint protocol.Endpoint, sessionID, providerSessionID, sessionName, generation string) {
 	s.reset(endpoint.EndpointID, sessionID, generation)
 	s.Scope = ScopeState{
-		Kind:       ScopeSession,
-		EndpointID: endpoint.EndpointID,
-		Hostname:   endpoint.Hostname,
-		SessionID:  sessionID,
-		Generation: generation,
+		Kind:              ScopeSession,
+		EndpointID:        endpoint.EndpointID,
+		Hostname:          endpoint.Hostname,
+		SessionID:         sessionID,
+		ProviderSessionID: providerSessionID,
+		SessionName:       sessionName,
+		Generation:        generation,
 	}
 }
