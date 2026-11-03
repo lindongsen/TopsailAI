@@ -2,11 +2,14 @@
 
 import os
 import sys
+import subprocess
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
 from topsailai.workspace import agent_shell, print_tool
+from topsailai.utils.env_tool import resolve_python_interpreter
 
 
 @pytest.fixture
@@ -17,6 +20,7 @@ def capture_folder(monkeypatch, tmp_path):
     monkeypatch.delenv("TOPSAILAI_SESSION_ID", raising=False)
     monkeypatch.setattr(agent_shell, "FOLDER_WORKSPACE_TASK", str(tmp_path))
     monkeypatch.setattr(print_tool, "FOLDER_WORKSPACE_TASK", str(tmp_path))
+    monkeypatch.setattr(print_tool, "register_cleanup_func", Mock())
     return tmp_path
 
 
@@ -108,7 +112,7 @@ def test_failed_startup_restores_and_retains(monkeypatch, capture_folder, error_
     assert sys.stdout is terminal
     assert owners[0].log_file.closed
     state.cancel.assert_called_once_with()
-    cleanup.assert_not_called()
+    cleanup.assert_called_once_with(owners[0].delete_log_files)
     path = capture_folder / f"failed.{os.getpid()}.session.stdout"
     assert path.read_text(encoding="utf-8") == "startup diagnostic\n"
 
@@ -168,3 +172,76 @@ def test_new_session_input_is_captured_before_agent_creation(monkeypatch, captur
     assert chat.first_message == "first task"
     create_agent.assert_called_once()
     assert create_session.call_args.kwargs["task"] == "first task"
+
+
+@pytest.mark.parametrize("outcome", ["normal", "failure", "interrupt", "run"])
+def test_startup_files_removed_on_process_exit(tmp_path, outcome):
+    """Run real exit callbacks without requiring AgentChat.run to be reached."""
+    script = r"""
+import os
+import sys
+from pathlib import Path
+from topsailai.workspace import agent_shell, print_tool
+from topsailai.workspace.folder_utils import get_session_stdout_path
+
+folder = Path(sys.argv[1])
+outcome = sys.argv[2]
+agent_shell.FOLDER_WORKSPACE_TASK = str(folder)
+print_tool.FOLDER_WORKSPACE_TASK = str(folder)
+path = Path(get_session_stdout_path(str(folder), "owned", os.getpid()))
+rotation = Path(str(path) + ".1")
+unrelated = folder / "unrelated.session.stdout"
+unrelated.write_text("keep", encoding="utf-8")
+
+@print_tool.decorator_tee_output_by_session(need_delete_log_files=True)
+def run():
+    # Retain the existing runtime owner and verify sequential append.
+    print("running")
+
+def initialize(**kwargs):
+    # Verify startup output is flushed before initialization completes.
+    print("startup diagnostic")
+    assert path.read_text(encoding="utf-8") == "startup diagnostic\n"
+    rotation.write_text("rotation", encoding="utf-8")
+    if outcome == "failure":
+        raise RuntimeError("startup failed")
+    if outcome == "interrupt":
+        raise KeyboardInterrupt("startup interrupted")
+    return run
+
+agent_shell._get_agent_chat_impl = initialize
+terminal = sys.stdout
+try:
+    chat_run = agent_shell.get_agent_chat(session_id="owned", need_project_workspace_lock=False)
+except (RuntimeError, KeyboardInterrupt):
+    if outcome not in ("failure", "interrupt"):
+        raise
+else:
+    if outcome == "run":
+        chat_run()
+assert sys.stdout is terminal
+assert path.exists() and rotation.exists()
+if outcome == "run":
+    assert path.read_text(encoding="utf-8") == "startup diagnostic\nrunning\n"
+print("exit cleanup armed")
+"""
+    env = dict(os.environ)
+    env.update({
+        "TOPSAILAI_HOME": str(tmp_path / "home"),
+        "TOPSAILAI_ENABLE_SESSION_TEE_OUT": "1",
+        "TOPSAILAI_INTERACTIVE_MODE": "0",
+        "TOPSAILAI_EVENTS_ENABLED": "0",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPATH": os.pathsep.join([
+            str(Path(agent_shell.__file__).resolve().parents[2]),
+            str(Path(agent_shell.__file__).resolve().parents[1]),
+        ]),
+    })
+    result = subprocess.run(
+        [resolve_python_interpreter(), "-c", script, str(tmp_path), outcome],
+        env=env, cwd=str(tmp_path), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "exit cleanup armed" in result.stdout
+    assert not list(tmp_path.glob("owned.*.session.stdout*"))
+    assert (tmp_path / "unrelated.session.stdout").read_text(encoding="utf-8") == "keep"

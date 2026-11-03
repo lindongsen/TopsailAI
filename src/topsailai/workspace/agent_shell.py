@@ -376,7 +376,7 @@ def get_agent_chat(
         if (env_tool.EnvReaderInstance.check_bool("TOPSAILAI_ENABLE_SESSION_TEE_OUT", False)
                 and not isinstance(sys.stdout, TeeOutput)):
             file_path = get_session_stdout_path(FOLDER_WORKSPACE_TASK, session_id, os.getpid())
-            startup_tee = TeeOutput(file_path, mode="a+")
+            startup_tee = TeeOutput(file_path, mode="a+", need_delete_log_files=True)
         with startup_tee, lock_ctx() as has_lock:
             return _get_agent_chat_impl(
                 system_prompt=system_prompt,
