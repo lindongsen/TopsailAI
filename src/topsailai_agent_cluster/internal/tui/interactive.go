@@ -241,7 +241,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			continue
 		}
 		if execErr != nil {
-			commandName, _ := splitCommand(line)
+			commandName := diagnosticCommandName(line)
 			if writeErr := writeInteractiveError(errOut, commandName, execErr); writeErr != nil {
 				return writeErr
 			}
@@ -257,6 +257,12 @@ var ErrInteractiveInterrupt = fmt.Errorf("interactive interrupted")
 
 func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *interactiveState, line string, lineResults <-chan lineReadResult, out, trustedOut, errOut io.Writer, options InteractiveOptions) (bool, error) {
 	rawName, rest := splitCommand(line)
+	if candidate, token, surplus := numericInput(line); candidate {
+		if surplus {
+			return false, fmt.Errorf("usage: cd [target]")
+		}
+		rawName, rest = "cd", token
+	}
 	name := canonicalCommandName(rawName)
 	// Scope availability is enforced once, before any command-specific parsing.
 	if err := requireCommandScope(rawName, state.Scope.Kind); err != nil {
@@ -310,6 +316,24 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	default:
 		return false, fmt.Errorf("unknown command %q (try help)", name)
 	}
+}
+
+// numericInput classifies only a whole-line ASCII decimal first token.
+func numericInput(line string) (candidate bool, token string, surplus bool) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 || !isASCIIDecimal(fields[0]) {
+		return false, "", false
+	}
+	return true, fields[0], len(fields) > 1
+}
+
+// diagnosticCommandName keeps numeric shorthand errors on the cd help path.
+func diagnosticCommandName(line string) string {
+	if candidate, _, _ := numericInput(line); candidate {
+		return "cd"
+	}
+	name, _ := splitCommand(line)
+	return name
 }
 
 func splitCommand(line string) (string, string) {
@@ -420,9 +444,17 @@ func interactiveList(parent context.Context, api InteractiveAPI, state *interact
 	if err != nil {
 		return err
 	}
+	state.Rows = nil
+	staged := make([]SessionRow, 0)
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, scoped, false, TableOptions{Color: color, Clean: clean, OnRows: func(rows []SessionRow) { state.setRows(rows) }})
+	err = (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, scoped, false, TableOptions{Color: color, Clean: clean, OnRows: func(rows []SessionRow) { staged = append(staged, rows...) }})
+	if err != nil {
+		state.Rows = nil
+		return err
+	}
+	state.setRows(staged)
+	return nil
 }
 
 func parseListArguments(rest string) (string, bool, error) {

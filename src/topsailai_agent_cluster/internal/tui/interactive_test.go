@@ -19,12 +19,19 @@ type interactiveStub struct {
 	changeAfter        int
 	generationSequence []string
 	inventoryCalls     int
+	listCalls          int
+	inventoryByID      map[string]int
+	outputCalls        int
+	outputRequests     []outputRequest
 	getCommandErr      error
+	inventoryErr       error
+	inventoryErrors    map[string]error
 	admitErr           error
 	admittedCommandID  string
 }
 
 func (s *interactiveStub) ListEndpoints(context.Context) ([]protocol.Endpoint, error) {
+	s.listCalls++
 	if s.failList {
 		s.failList = false
 		return nil, errors.New("temporary list failure")
@@ -33,6 +40,16 @@ func (s *interactiveStub) ListEndpoints(context.Context) ([]protocol.Endpoint, e
 }
 func (s *interactiveStub) GetInventory(_ context.Context, id string) (protocol.InventoryReport, error) {
 	s.inventoryCalls++
+	if s.inventoryErr != nil {
+		return protocol.InventoryReport{}, s.inventoryErr
+	}
+	if err := s.inventoryErrors[id]; err != nil {
+		return protocol.InventoryReport{}, err
+	}
+	if s.inventoryByID == nil {
+		s.inventoryByID = make(map[string]int)
+	}
+	s.inventoryByID[id]++
 	report, ok := s.reports[id]
 	if !ok {
 		return protocol.InventoryReport{}, errors.New("missing inventory")
@@ -62,7 +79,17 @@ func (s *interactiveStub) GetCommand(context.Context, string) (map[string]any, e
 func (s *interactiveStub) ListCommands(context.Context, string, string, int) ([]map[string]any, error) {
 	return nil, nil
 }
-func (s *interactiveStub) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+
+type outputRequest struct {
+	endpointID string
+	resourceID string
+	generation string
+	maxBytes   int
+}
+
+func (s *interactiveStub) GetOutput(_ context.Context, endpointID, resourceID, generation string, maxBytes int) (protocol.OutputSnapshotResponse, error) {
+	s.outputCalls++
+	s.outputRequests = append(s.outputRequests, outputRequest{endpointID: endpointID, resourceID: resourceID, generation: generation, maxBytes: maxBytes})
 	return protocol.OutputSnapshotResponse{Data: "log\x1b[31m"}, nil
 }
 func (s *interactiveStub) AdmitCommand(_ context.Context, intent protocol.ImmutableIntent) (map[string]any, error) {

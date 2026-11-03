@@ -8,7 +8,7 @@ import (
 
 // startupListHint tells the operator how to retry a failed startup inventory.
 const startupListHint = `hint: run "refresh" to retry the inventory`
-const startupGuide = "list: view sessions | cd <n>: select | start: launch agent | help: commands | q: quit"
+const startupGuide = "list: view sessions | <n> or cd <n>: select | start: launch agent | help: commands | q: quit"
 
 // runStartupList renders the initial workspace inventory before the first prompt.
 // It reuses the manual list path, honors the color policy, and never aborts the

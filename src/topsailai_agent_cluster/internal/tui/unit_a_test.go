@@ -70,7 +70,7 @@ func TestUnitAStartupGuide(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "list: view sessions | cd <n>: select | start: launch agent | help: commands | q: quit") {
+	if !strings.Contains(output, "list: view sessions | <n> or cd <n>: select | start: launch agent | help: commands | q: quit") {
 		t.Fatalf("startup guide missing: %q", output)
 	}
 }

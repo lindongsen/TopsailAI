@@ -37,10 +37,12 @@ func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiv
 	if len(parts) > 3 {
 		return fmt.Errorf("usage: cd [target]")
 	}
-	if len(parts) == 1 {
-		if index, numeric := parseRowNumber(parts[0]); numeric {
-			return cdRowNumber(state, api, parent, index)
+	if len(parts) == 1 && isASCIIDecimal(parts[0]) {
+		index, numeric := parseRowNumber(parts[0])
+		if !numeric {
+			return fmt.Errorf("row number exceeds the supported integer range")
 		}
+		return cdRowNumber(state, api, parent, index)
 	}
 	for _, part := range parts {
 		if strings.TrimSpace(part) == "" {
@@ -76,15 +78,23 @@ func rerenderNavigatedList(parent context.Context, api InteractiveAPI, state *in
 	return interactiveList(parent, api, state, "", false, out, io.Discard, color)
 }
 
-// parseRowNumber recognizes the display row syntax without accepting signs or whitespace.
-func parseRowNumber(value string) (int, bool) {
+// isASCIIDecimal recognizes unsigned ASCII decimal syntax without accepting signs or whitespace.
+func isASCIIDecimal(value string) bool {
 	if value == "" {
-		return 0, false
+		return false
 	}
 	for _, r := range value {
 		if r < '0' || r > '9' {
-			return 0, false
+			return false
 		}
+	}
+	return true
+}
+
+// parseRowNumber converts an already classified ASCII decimal token.
+func parseRowNumber(value string) (int, bool) {
+	if !isASCIIDecimal(value) {
+		return 0, false
 	}
 	number, err := strconv.Atoi(value)
 	return number, err == nil
@@ -105,6 +115,9 @@ func cdRowNumber(state *interactiveState, api InteractiveAPI, parent context.Con
 	if row.SessionID == "" {
 		return fmt.Errorf("row %d does not identify a session; choose a session row", number)
 	}
+	if row.Generation == "" {
+		return fmt.Errorf("row %d has no generation; run list again", number)
+	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	loaded, err := loadReports(ctx, api, row.EndpointID)
@@ -115,17 +128,28 @@ func cdRowNumber(state *interactiveState, api InteractiveAPI, parent context.Con
 	if !ok || !report.ReportComplete {
 		return fmt.Errorf("endpoint %q inventory is unavailable; run list again", row.EndpointID)
 	}
-	for _, session := range report.Sessions {
-		if session.SessionID != row.SessionID {
+	var match *protocol.Session
+	for i := range report.Sessions {
+		if report.Sessions[i].SessionID != row.SessionID {
 			continue
 		}
-		outcome, enterErr := enterValidatedSession(state, endpoint, report, session)
-		if enterErr != nil {
-			return enterErr
+		if match != nil {
+			return fmt.Errorf("row %d identifies multiple sessions; run list again", number)
 		}
-		if outcome == outcomeResolved {
-			return nil
-		}
+		match = &report.Sessions[i]
+	}
+	if match == nil {
+		return fmt.Errorf("row %d no longer identifies a session; run list again", number)
+	}
+	if match.Generation == "" || match.Generation != row.Generation {
+		return fmt.Errorf("row %d generation changed; run list again", number)
+	}
+	outcome, enterErr := enterValidatedSession(state, endpoint, report, *match)
+	if enterErr != nil {
+		return enterErr
+	}
+	if outcome == outcomeResolved {
+		return nil
 	}
 	return fmt.Errorf("row %d no longer identifies a session; run list again", number)
 }

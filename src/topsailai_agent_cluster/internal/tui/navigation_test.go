@@ -20,6 +20,9 @@ func (s *navStub) ListEndpoints(context.Context) ([]protocol.Endpoint, error) {
 }
 
 func (s *navStub) GetInventory(_ context.Context, id string) (protocol.InventoryReport, error) {
+	if s.inventoryErr != nil {
+		return protocol.InventoryReport{}, s.inventoryErr
+	}
 	report, ok := s.reports[id]
 	if !ok {
 		return protocol.InventoryReport{}, errNavMissingInventory

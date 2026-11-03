@@ -267,7 +267,7 @@ func TestStartupInventoryUsesSharedListPath(t *testing.T) {
 	manual, _ := runScope(t, startupStub(), "list\nquit\n", ColorPolicy{})
 	startupTable := segmentBeforePrompt(output, "cluster> ")
 	manualTable := segmentBeforePrompt(manual, "cluster> ")
-	startupTable = strings.TrimSuffix(startupTable, "list: view sessions | cd <n>: select | start: launch agent | help: commands | q: quit\n")
+	startupTable = strings.TrimSuffix(startupTable, "list: view sessions | <n> or cd <n>: select | start: launch agent | help: commands | q: quit\n")
 	if startupTable != manualTable {
 		t.Fatalf("startup table %q differs from manual list %q", startupTable, manualTable)
 	}

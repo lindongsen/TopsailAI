@@ -31,7 +31,7 @@ var fieldHelp = []string{
 
 var commandHelpCatalog = map[string]commandHelp{
 	"list":      {"list [endpoint] [--clean]", ListHelpDescription + "; JSON output (--json/-json) is available only in the standalone non-interactive command", []string{"endpoint: optional endpoint ID filter", "--clean: omit endpoints that failed to report; diagnostics still go to stderr"}, []string{"list", "list endpoint-1", "list --clean"}},
-	"cd":        {"cd [target]", "navigate between workspace, endpoint, and session scopes; bare cd returns to workspace", []string{"target: row number from the latest list, hostname, hostname/endpoint-id, session, hostname/endpoint-id/session, .., or /", "a numeric target uses the latest list row; invalid rows report their valid range; session scope rejects row navigation", "a hostname shared by several endpoints prompts for a numbered choice, a hostname/endpoint-id answer, or cancel"}, []string{"cd", "cd 1", "cd /", "cd ..", "cd ai-dev", "cd ai-dev/endpoint-1", "cd res_abc", "cd ai-dev/endpoint-1/res_abc"}},
+	"cd":        {"cd [target]", "navigate between workspace, endpoint, and session scopes; bare cd returns to workspace", []string{"target: latest displayed row number, hostname, hostname/endpoint-id, session, hostname/endpoint-id/session, .., or /", "a bare ASCII number is shorthand for cd <number>; leading zeros are accepted and the number is temporary; a valid replacement list that fails during loading, rendering, or diagnostics invalidates the previous row numbers; invalid syntax or an invalid scoped filter preserves them", "failed-endpoint placeholders are displayed but cannot be selected; session scope rejects numeric row navigation", "after a valid replacement begins, a load, render, or diagnostic failure leaves no selectable row bindings; invalid syntax or an invalid scoped filter is rejected before replacement begins and preserves the previous bindings", "a hostname shared by several endpoints prompts for a numbered choice, a hostname/endpoint-id answer, or cancel"}, []string{"cd", "cd 1", "cd /", "cd ..", "cd ai-dev", "cd ai-dev/endpoint-1", "cd res_abc", "cd ai-dev/endpoint-1/res_abc"}},
 	"show":      {"show [endpoint-or-session]", "show detailed information for an endpoint or session; defaults to the current scope target", []string{"endpoint-or-session: optional endpoint ID or session/resource ID"}, []string{"show", "show endpoint-1"}},
 	"start":     {"start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--payload <json>]", "start an agent through the selected endpoint; interactive mode executes directly and does not support --json", []string{"endpoint: endpoint ID", "resource: compatibility resource identifier", "--profile: launch profile ID (required)", "--profile-revision: launch profile revision (required)", "--folder: optional working folder; empty value is treated as omitted", "--payload: optional JSON payload; defaults to {}", "--json: rejected in interactive mode"}, []string{"start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1", `start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1 --payload '{"note":"example"}'`}},
 	"resume":    {"resume [--payload <json>]", "resume the selected session", []string{"--payload: optional JSON payload; defaults to {}", "--json: rejected in interactive mode"}, []string{"resume", `resume --payload '{"note":"example"}'`}},
@@ -287,7 +287,11 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 			return err
 		}
 	}
-	for _, line := range []string{"", "Workflow: list -> cd <number> -> show/logs; run help <command> for syntax.", "Start example: start <endpoint> <resource> --profile <id> --profile-revision <revision>", "Run help all for every command and scope."} {
+	workflow := "list -> <number> or cd <number> -> show/logs; invalid syntax or an invalid scoped filter preserves row bindings, while a valid replacement that fails during loading, rendering, or diagnostics invalidates them; run help <command> for syntax."
+	if kind == ScopeSession {
+		workflow = "use cd .. or cd / to leave session scope; numeric row navigation is unavailable here; run help <command> for syntax."
+	}
+	for _, line := range []string{"", workflow, "Start example: start <endpoint> <resource> --profile <id> --profile-revision <revision>", "Run help all for every command and scope."} {
 		if _, err := fmt.Fprintln(out, line); err != nil {
 			return err
 		}
@@ -298,6 +302,9 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 // printAllCommandHelp renders all canonical commands and their scope restrictions.
 func printAllCommandHelp(out io.Writer) error {
 	if _, err := fmt.Fprintln(out, "All commands:"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(out, "Bare ASCII numbers are shorthand for cd <number> in workspace and endpoint scopes; session scope does not support numeric row navigation."); err != nil {
 		return err
 	}
 	for _, name := range commandHelpOrder {
