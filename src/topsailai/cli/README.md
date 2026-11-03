@@ -285,7 +285,7 @@ Supported command source fields:
 | `label` | string | command string | Title shown in dry-run and context block headers. |
 | `cwd` | string | workspace | Working directory for the command. |
 | `environ` | mapping | `{}` | Extra environment variables for this command only. |
-| `on_error` | string | `include` | What to do on failure: `include`, `skip`, or `abort`. |
+| `on_error` | string | `abort` | Behavior when the command fails or times out: `include` (include error message), `skip` (skip the block), or `abort` (raise an error). |
 
 **Common options:**
 
