@@ -71,8 +71,8 @@ FOLDER_MEMORY_STORY = FOLDER_MEMORY + "/story"
 # Task files
 FOLDER_WORKSPACE_TASK = FOLDER_WORKSPACE + "/task"
 
-
-
+# Per-model cumulative statistics documents
+FOLDER_WORKSPACE_STATS = FOLDER_WORKSPACE + "/stats"
 
 # Input history files - Stores readline history for interactive input
 FILE_INPUT_HISTORY = FOLDER_ROOT + "/.input_history"
