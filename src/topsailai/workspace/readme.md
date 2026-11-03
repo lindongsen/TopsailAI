@@ -175,6 +175,8 @@ Loaded by `plugin_instruction/base/init.py` via `get_function_map()`; supports e
 | `print_tool.py` | `TeeOutput` (screen + file), `ContentDots` (stream indicator), message formatting |
 | `task/task_tool.py` | Task lifecycle management for one-shot executions |
 | `agent/hooks/` | Pre-run and post-final-answer hook discovery and execution |
+| `session_stats_service.py`, `session_stats_writer.py`, `session_stats_projection.py` | Process-owned serialized statistics worker, per-session JSONL storage, and detached snapshot projection |
+| `model_stats_writer.py` | Per-model cumulative statistics document (`{TOPSAILAI_HOME}/workspace/stats/*.model.stats.json`); field reference in [docs/Model_Stats_Document.md](../docs/Model_Stats_Document.md) |
 
 ### Thread-Local Agent Object
 

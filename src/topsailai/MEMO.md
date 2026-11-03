@@ -111,3 +111,9 @@ Summary: the LLM mock server supports opt-in native `tool_calls` SSE deltas whil
 ## MEMO: SQL Manager Methods Must Stay Pure
 
 [MEMO.AgentCore.md](MEMO.AgentCore.md#memo-sql-manager-methods-must-stay-pure) — SQL managers contain only database-related logic; running-state detection and cleanup policy belong to context/session management, consumed by CLIs without duplication.
+
+## MEMO: Per-Model Statistics Document
+
+The field reference for `{TOPSAILAI_HOME}/workspace/stats/*.model.stats.json` lives in [docs/Model_Stats_Document.md](./docs/Model_Stats_Document.md).
+
+Summary: one cumulative document per model name records turn, tool, request, token and first-byte totals merged under an advisory lock, and the document explains every field, its source tracker, the derived values and the retention rules.

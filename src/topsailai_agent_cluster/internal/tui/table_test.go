@@ -18,8 +18,14 @@ func TestTableColumnsWidthsAndEmptyResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	if !strings.HasPrefix(lines[0], "NO") || !strings.Contains(lines[0], " │ ADAPTER") || !strings.Contains(lines[0], " │ SESSION") || !strings.HasSuffix(lines[0], "LAST_SUCCESS") {
-		t.Fatalf("header=%q", lines[0])
+	headerCells := strings.Split(lines[0], " │ ")
+	if len(headerCells) != 8 {
+		t.Fatalf("header cell count=%d header=%q", len(headerCells), lines[0])
+	}
+	for index, want := range []string{"NO", "ENDPOINT", "ADAPTER", "SESSION_NAME", "SESSION_ID", "SESSION_STATUS", "DATA_STATUS", "LAST_SUCCESS"} {
+		if strings.TrimSpace(headerCells[index]) != want {
+			t.Fatalf("header cell %d=%q want=%q", index, headerCells[index], want)
+		}
 	}
 	if strings.Contains(lines[0], "GENERATION") || strings.Contains(lines[0], "LAST_SUCCESS_MS") {
 		t.Fatalf("header still has removed columns: %q", lines[0])
@@ -105,6 +111,41 @@ func TestTableUsesCJKDisplayWidthAndRuneSafeClip(t *testing.T) {
 		t.Fatalf("clipped=%q", clipped)
 	}
 
+}
+
+func TestDataStatusCoversCollectionAndFreshnessCombinations(t *testing.T) {
+	collections := []struct {
+		collection string
+		base       string
+	}{
+		{protocol.CollectionSucceeded, "ok"},
+		{protocol.CollectionFailed, "failed"},
+		{protocol.CollectionPartial, "partial"},
+		{protocol.CollectionUnknown, "unknown"},
+	}
+	for _, testCase := range collections {
+		for _, flags := range []struct {
+			stale, unknown bool
+			suffix         string
+		}{
+			{false, false, ""},
+			{true, false, "/stale"},
+			{false, true, "/unknown"},
+			{true, true, "/unknown+stale"},
+		} {
+			row := SessionRow{CollectionStatus: testCase.collection, Stale: flags.stale, Unknown: flags.unknown}
+			want := testCase.base + flags.suffix
+			if got := dataStatus(row); got != want {
+				t.Fatalf("collection=%q stale=%t unknown=%t: got %q want %q", testCase.collection, flags.stale, flags.unknown, got, want)
+			}
+		}
+	}
+	if got := dataStatus(SessionRow{CollectionStatus: ""}); got != "unrecognized" {
+		t.Fatalf("empty collection status = %q", got)
+	}
+	if got := dataStatus(SessionRow{CollectionStatus: "unexpected", Stale: true, Unknown: true}); got != "unrecognized/unknown+stale" {
+		t.Fatalf("unexpected collection status = %q", got)
+	}
 }
 
 var errTableFixture = tableFixtureError{}
@@ -202,7 +243,7 @@ func TestTableJSONPreservesMachineFields(t *testing.T) {
 	}
 }
 
-func TestTableUsesSessionDisplayNameAndFallsBackToProviderID(t *testing.T) {
+func TestTableUsesSeparateSessionNameAndProviderIDColumns(t *testing.T) {
 	stamp := int64(1700000000000)
 	rows := []SessionRow{{No: 1, EndpointID: "ep", SessionID: "res_opaque", ProviderSessionID: "provider-42", DisplayName: "Daily work", State: "running", LastSuccessAtMS: &stamp, CollectionStatus: protocol.CollectionSucceeded}}
 	var out, errors strings.Builder
@@ -217,16 +258,19 @@ func TestTableUsesSessionDisplayNameAndFallsBackToProviderID(t *testing.T) {
 	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "provider-42") || strings.Contains(out.String(), "res_opaque") {
-		t.Fatalf("provider fallback output = %q", out.String())
+	if strings.Contains(out.String(), "res_opaque") || !strings.Contains(out.String(), "provider-42") {
+		t.Fatalf("separate provider ID output = %q", out.String())
+	}
+	if strings.Contains(out.String(), "Daily work") {
+		t.Fatalf("session name fallback output = %q", out.String())
 	}
 	out.Reset()
 	rows[0].ProviderSessionID = ""
 	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out.String(), "res_opaque") || !strings.Contains(out.String(), " │ - ") {
-		t.Fatalf("unknown session output = %q", out.String())
+	if strings.Contains(out.String(), "res_opaque") || strings.Contains(out.String(), "provider-42") {
+		t.Fatalf("empty session fields output = %q", out.String())
 	}
 }
 

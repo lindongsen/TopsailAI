@@ -61,6 +61,10 @@ Feature: non-interactive TUI
     When I run the tui list command in human readable mode
     Then the output contains the endpoint hostname
     And the output contains "no sessions"
+    And the output contains "SESSION_NAME"
+    And the output contains "SESSION_ID"
+    And the output contains "SESSION_STATUS"
+    And the output contains "DATA_STATUS"
     And the output contains "LAST_SUCCESS"
 
 

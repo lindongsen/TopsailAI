@@ -102,13 +102,13 @@ func TestCommandRunnerListHeadersColorAndJSONIsolation(t *testing.T) {
 	if listHeader != cleanListHeader {
 		t.Fatalf("list/list --clean headers differ: list=%q clean=%q", listHeader, cleanListHeader)
 	}
-	for _, header := range []string{"NO", "ENDPOINT", "STATE"} {
+	for _, header := range []string{"NO", "ENDPOINT", "SESSION_NAME", "SESSION_ID", "SESSION_STATUS", "DATA_STATUS"} {
 		assertStyledHeaderCell(t, listHeader, header)
 	}
 	if !strings.Contains(listHeader, ansiBoldCyan) || !strings.Contains(listHeader, ansiReset) {
 		t.Fatalf("colored list missing exact header styling: %q", listHeader)
 	}
-	if !strings.Contains(coloredList.String(), ansiGreen+"running"+ansiReset) {
+	if !strings.Contains(coloredList.String(), ansiGreen+"running") || !strings.Contains(coloredList.String(), ansiReset) {
 		t.Fatalf("colored list missing exact running style: %q", coloredList.String())
 	}
 

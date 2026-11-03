@@ -86,11 +86,10 @@ wait_for_text 'cluster>'
 # The startup inventory renders the table before the first prompt.
 wait_for_text 'ENDPOINT'
 wait_for_text 'ADAPTER'
-wait_for_text 'SESSION'
-wait_for_text 'STATE'
-wait_for_text 'STALE'
-wait_for_text 'UNKNOWN'
-wait_for_text 'COLLECTION'
+wait_for_text 'SESSION_NAME'
+wait_for_text 'SESSION_ID'
+wait_for_text 'SESSION_STATUS'
+wait_for_text 'DATA_STATUS'
 wait_for_text 'LAST_SUCCESS'
 
 # Workspace scope rejects send before any payload parsing.

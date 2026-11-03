@@ -22,11 +22,10 @@ var fieldHelp = []string{
 	"NO: display row number; use it with cd <hostname>/<endpoint-id>/<session>.",
 	"ENDPOINT: endpoint hostname, falling back to its display name or ID.",
 	"ADAPTER: provider adapter display label.",
-	"SESSION: session display name, falling back to the provider session ID, then to - when neither is known.",
-	"STATE: provider-reported lifecycle state, such as running, stopped, or failed.",
-	"STALE: displayed data was retained from an earlier successful collection because the latest collection was failed or incomplete.",
-	"UNKNOWN: no trustworthy adapter data is available for the row.",
-	"COLLECTION: result of the latest collection attempt: succeeded, partial, failed, or unknown.",
+	"SESSION_NAME: session display name; empty when the provider did not report one.",
+	"SESSION_ID: provider-native session ID; empty when the provider did not report one.",
+	"SESSION_STATUS: provider-reported lifecycle state, such as running, stopped, or failed.",
+	"DATA_STATUS: collection result with stale/unknown data qualifiers; ok means succeeded, while failed/stale means collection failed and retained earlier data.",
 	"LAST_SUCCESS: local-time timestamp of the latest successful collection; - means no success has been recorded.",
 }
 

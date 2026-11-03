@@ -27,12 +27,13 @@ type TableOptions struct {
 
 // Column indices are named so a column change cannot silently shift colors or alignment.
 const (
-	columnState       = 4
-	columnLastSuccess = 8
+	columnState       = 5
+	columnDataStatus  = 6
+	columnLastSuccess = 7
 )
 
-var tableHeaders = []string{"NO", "ENDPOINT", "ADAPTER", "SESSION", "STATE", "STALE", "UNKNOWN", "COLLECTION", "LAST_SUCCESS"}
-var tableCaps = []int{4, 20, 18, 36, 12, 5, 7, 16, 19}
+var tableHeaders = []string{"NO", "ENDPOINT", "ADAPTER", "SESSION_NAME", "SESSION_ID", "SESSION_STATUS", "DATA_STATUS", "LAST_SUCCESS"}
+var tableCaps = []int{4, 20, 18, 36, 36, 14, 19, 19}
 
 // RenderTable writes a bounded table and sorted endpoint diagnostics.
 func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFailure, options TableOptions) error {
@@ -67,8 +68,14 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 				if err := writeStyled(out, ansiBoldCyan, cell, options.Color); err != nil {
 					return err
 				}
-			} else if err := writeCellState(out, cell, i, rowState(values), options.Color); err != nil {
-				return err
+			} else {
+				state := rowState(values)
+				if i == columnDataStatus {
+					state = value
+				}
+				if err := writeCellState(out, cell, i, state, options.Color); err != nil {
+					return err
+				}
 			}
 		}
 		_, err := io.WriteString(out, "\n")
@@ -126,16 +133,7 @@ func tableCells(row SessionRow, location *time.Location) []string {
 	if adapter == "" {
 		adapter = row.AdapterID
 	}
-	// The provider session id is the human-meaningful fallback; the opaque
-	// resource id is never shown in the table.
-	session := row.DisplayName
-	if session == "" {
-		session = row.ProviderSessionID
-	}
-	if session == "" {
-		session = "-"
-	}
-	return []string{strconv.Itoa(row.No), escapeCell(endpoint), escapeCell(adapter), escapeCell(session), escapeCell(row.State), strconv.FormatBool(row.Stale), strconv.FormatBool(row.Unknown), escapeCell(row.CollectionStatus), formatLastSuccess(row.LastSuccessAtMS, location)}
+	return []string{strconv.Itoa(row.No), escapeCell(endpoint), escapeCell(adapter), escapeCell(row.DisplayName), escapeCell(row.ProviderSessionID), escapeCell(row.State), escapeCell(dataStatus(row)), formatLastSuccess(row.LastSuccessAtMS, location)}
 }
 
 // formatLastSuccess renders a millisecond timestamp in the given location.
@@ -208,7 +206,40 @@ func rowState(values []string) string {
 	}
 	return ""
 }
+
+// dataStatus combines collection outcome and data freshness for table display.
+func dataStatus(row SessionRow) string {
+	base := "unrecognized"
+	switch row.CollectionStatus {
+	case "succeeded":
+		base = "ok"
+	case "failed", "partial", "unknown":
+		base = row.CollectionStatus
+	}
+	if row.Unknown && row.Stale {
+		return base + "/unknown+stale"
+	}
+	if row.Unknown {
+		return base + "/unknown"
+	}
+	if row.Stale {
+		return base + "/stale"
+	}
+	return base
+}
+
 func writeCellState(w io.Writer, cell string, index int, state string, policy ColorPolicy) error {
+	if policy.Enabled && index == columnDataStatus {
+		switch {
+		case state == "ok":
+			_, err := io.WriteString(w, cell)
+			return err
+		case strings.HasPrefix(state, "failed"):
+			return writeStyled(w, ansiRed, cell, policy)
+		default:
+			return writeStyled(w, ansiYellow, cell, policy)
+		}
+	}
 	if policy.Enabled && index == columnState {
 		switch state {
 		case "running":
