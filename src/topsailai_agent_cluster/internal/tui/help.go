@@ -303,7 +303,11 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 	if kind == ScopeSession {
 		workflow = "use cd .. or cd / to leave session scope; numeric row navigation is unavailable here; run help <command> for syntax."
 	}
-	for _, line := range []string{"", workflow, "Start example: start <endpoint> <resource> --profile <id> --profile-revision <revision>", "Run help all for every command and scope."} {
+	example := "Start example: start <endpoint> <resource> --profile <id> --profile-revision <revision>"
+	if kind == ScopeSession {
+		example = "Session example: show or logs; use cd .. before starting another agent."
+	}
+	for _, line := range []string{"", workflow, example, "Run help all for every command and scope."} {
 		if _, err := fmt.Fprintln(out, line); err != nil {
 			return err
 		}

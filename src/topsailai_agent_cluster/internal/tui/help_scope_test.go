@@ -374,3 +374,41 @@ func TestPrintNonInteractiveCommandHelp(t *testing.T) {
 		t.Fatal("standalone command membership is inconsistent")
 	}
 }
+
+// TestContextHelpExampleMatchesScope keeps examples executable in the current scope.
+func TestContextHelpExampleMatchesScope(t *testing.T) {
+	for _, kind := range []ScopeKind{ScopeWorkspace, ScopeEndpoint, ScopeSession} {
+		t.Run(kind.String(), func(t *testing.T) {
+			var out strings.Builder
+			if err := PrintScopedCommandHelp(&out, "", kind); err != nil {
+				t.Fatal(err)
+			}
+			start := strings.Contains(out.String(), "Start example:")
+			session := strings.Contains(out.String(), "Session example: show or logs;")
+			if start != (kind != ScopeSession) || session != (kind == ScopeSession) {
+				t.Fatalf("scope=%s startExample=%t sessionExample=%t output=%q", kind, start, session, out.String())
+			}
+		})
+	}
+}
+
+// exampleFailureWriter fails only on the contextual example, after the command list.
+type exampleFailureWriter struct{ err error }
+
+// Write preserves the injected error identity at the changed footer boundary.
+func (w exampleFailureWriter) Write(data []byte) (int, error) {
+	if strings.Contains(string(data), "example:") {
+		return 0, w.err
+	}
+	return len(data), nil
+}
+
+// TestContextHelpExampleWriteFailure propagates a failed footer in every scope.
+func TestContextHelpExampleWriteFailure(t *testing.T) {
+	sentinel := errors.New("context help example write failed")
+	for _, kind := range []ScopeKind{ScopeWorkspace, ScopeEndpoint, ScopeSession} {
+		if err := PrintScopedCommandHelp(exampleFailureWriter{err: sentinel}, "", kind); err != sentinel {
+			t.Fatalf("scope=%s error=%v, want original sentinel", kind, err)
+		}
+	}
+}
