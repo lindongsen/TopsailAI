@@ -28,7 +28,7 @@ When `--socket-path` is provided, discovery is skipped and only that socket is t
 | `-h`, `--help` | Show the help message and exit. |
 | `-s SESSION_ID`, `--session_id SESSION_ID` | Target only stdout files whose session ID matches this value. |
 | `-p PID`, `--pid PID` | Target only stdout files whose PID matches this value. |
-| `-c COMMAND`, `--command COMMAND` | Control action to send. Supported actions: `call_instruction`, `hard_interrupt`, `soft_interrupt`, `clear_interrupt`, `get_runtime_messages`, `get_session_messages`, `llm_control`. |
+| `-c COMMAND`, `--command COMMAND` | Control action to send. Supported actions: `call_instruction`, `clear_interrupt`, `get_runtime_messages`, `get_session_messages`, `hard_interrupt`, `heartbeat`, `llm_control`, `soft_interrupt`. See [Control handlers](#control-handlers) for payloads, results and errors. |
 | `-a ARGS`, `--args ARGS` | JSON object with action-specific arguments. Defaults to `{}`. |
 | `--socket-path SOCKET_PATH` | Send the request directly to this socket path. |
 | `--timeout TIMEOUT` | Set the socket connection timeout in seconds. Defaults to `5.0`. |
@@ -70,12 +70,96 @@ topsailai_send_control --session_id my-session --command call_instruction --args
 Send a supported command with extra arguments:
 
 ```bash
-topsailai_send_control --session_id my-session --command soft_interrupt --args '{"reason":"timeout"}'
+topsailai_send_control --session_id my-session --command soft_interrupt --args '{"message":"timeout"}'
 ```
+
+## Control handlers
+
+Handlers are discovered from the live registry, so the accepted action names can grow through plugins. The table below documents the handlers registered by the current implementation.
+
+| Action | Payload | Result on success | Typical errors |
+|--------|---------|-------------------|----------------|
+| `call_instruction` | `instruction` (required string), `args` (optional list), `kwargs` (optional object) | The instruction's own return value | `missing or invalid instruction`, `args must be a list`, `kwargs must be an object`, `unknown instruction: NAME`, `instruction failed: ...` |
+| `clear_interrupt` | none | `action`, `session_id`, `pid`, `flag_path`, `removed`, `message` | `missing session_id`, `missing pid`, `failed to clear interrupt flag: ...` |
+| `get_runtime_messages` | none | `count`, `messages` | `no active agent in control context or current thread`, `active agent has no messages attribute` |
+| `get_session_messages` | `session_id` (required string) | `count`, `messages` | `missing or empty session_id`, `session manager is not available`, `session not found: ID`, `failed to retrieve session messages: ...` |
+| `hard_interrupt` | none | `action`, `session_id`, `pid`, `flag_path`, `message` | `missing session_id`, `missing pid`, `failed to write interrupt flag: ...` |
+| `heartbeat` | must be empty | `alive`, `pid`, `hostname`, `session_id` (nullable) | `invalid_payload` when any payload field is supplied |
+| `llm_control` | `operation` (must be `force_retry`) | `state: "flag_written"` | `unavailable`, `invalid_operation`, `unsupported_target`, `flag_write_failed`, `not_waiting` |
+| `soft_interrupt` | `message` (optional string) | `action`, `session_id`, `pid`, `file_path`, `message` | `missing session_id`, `missing pid`, `failed to append inject message: ...` |
+
+A handler that rejects a request returns top-level `status: "error"` with an `error` string; the CLI then exits non-zero. A successful response means the handler accepted and performed its own local step, not that the agent has already reacted to it.
+
+### `call_instruction`
+
+Invokes a registered `/` instruction inside the target agent and returns its result. `instruction` may be written with or without the leading `/`. `args` must be a list and `kwargs` must be an object; both default to empty.
+
+```bash
+topsailai_send_control --session_id SESSION_ID --pid PID \
+  --command call_instruction \
+  --args '{"instruction":"ctx.history","args":["arg1"],"kwargs":{"key":"value"}}'
+```
+
+The handler requires a live agent chat context; a request sent to a process without one fails with `hook instruction is not available in control context`.
+
+### `hard_interrupt` and `clear_interrupt`
+
+`hard_interrupt` atomically writes the session's interrupt flag file, which the agent observes on its next check. `clear_interrupt` removes that flag and reports `removed: false` when no flag existed, so clearing is idempotent.
+
+```bash
+topsailai_send_control --session_id SESSION_ID --pid PID --command hard_interrupt
+topsailai_send_control --session_id SESSION_ID --pid PID --command clear_interrupt
+```
+
+Both handlers resolve `session_id`, `pid` and the task folder from the request context, falling back to the responding process identity. Writing the flag does not prove the agent has stopped.
+
+### `soft_interrupt`
+
+Appends a user message to the session's `agent2llm` inject JSONL file, asking the agent to stop calling tools, summarize progress and end the task. Supplying `message` replaces the default instruction text.
+
+```bash
+topsailai_send_control --session_id SESSION_ID --pid PID --command soft_interrupt
+topsailai_send_control --session_id SESSION_ID --pid PID \
+  --command soft_interrupt --args '{"message":"Stop and summarize now."}'
+```
+
+The message is queued for the next LLM call; appending it does not prove the agent has consumed it.
+
+### `get_runtime_messages` and `get_session_messages`
+
+`get_runtime_messages` returns the target process's current `agent2llm` messages. `get_session_messages` returns the persisted `user2agent` messages for a session ID; when `-s/--session_id` is given and the payload omits `session_id`, the CLI fills it in automatically.
+
+```bash
+topsailai_send_control --session_id SESSION_ID --pid PID --command get_runtime_messages
+topsailai_send_control --session_id SESSION_ID --command get_session_messages
+```
+
+Both results contain `count` and `messages`, with each message serialized to JSON-compatible primitives. Message bodies can contain sensitive conversation content.
+
+### `heartbeat`
+
+Confirms that the target process is answering on its control channel. The payload must be empty; any supplied field is rejected with `invalid_payload`.
+
+```bash
+topsailai_send_control --session_id SESSION_ID --pid PID --command heartbeat
+```
+
+The result reports `alive`, the responding `pid`, `hostname` and a nullable `session_id`. It proves control-channel reachability only, not agent or LLM progress.
+
+### `llm_control`
+
+Stages a first-byte retry flag for the current LLM wait of the responding process. The only accepted operation is `force_retry`; a `target` field is rejected with `unsupported_target`, and the handler refuses to act unless the request reached the process that owns the wait.
+
+```bash
+topsailai_send_control --session_id SESSION_ID --pid PID \
+  --command llm_control --args '{"operation":"force_retry"}'
+```
+
+A successful result is `{"state":"flag_written"}`. `not_waiting` means no first-byte wait marker existed, so nothing was staged; `unavailable` means the request reached a process without an active agent chat. Staging a flag is not proof that a retry happened.
 
 ## First-byte request control (`llm_control`)
 
-This additive action controls an explicitly routed AgentChat LLM request while waiting for request creation or the first decoded streaming record. It does not replace the legacy `--command hard_interrupt` action or `/control.hard_interrupt` shortcut, which set the existing interrupt flag.
+This section describes the routed first-byte control contract. The handler registered by the current implementation accepts only `operation: "force_retry"` with no `target` field, as documented in [Control handlers](#control-handlers); the `status` and `hard_interrupt` operations below require a routing-capable handler that this build does not register, so they are rejected with `invalid_operation`. This action does not replace the legacy `--command hard_interrupt` action or `/control.hard_interrupt` shortcut, which set the existing interrupt flag.
 
 | `operation` | Effect |
 |-------------|--------|
@@ -195,12 +279,12 @@ Fixed actions can be invoked without writing JSON using the `/control.<subcomman
 
 ```text
 [runtime:my-session]> /control.hard_interrupt
-[runtime:my-session]> /control.soft_interrupt timeout
+[runtime:my-session]> /control.soft_interrupt {"message":"timeout"}
 [runtime:my-session]> /control.clear_interrupt
 [runtime:my-session]> /control.get_runtime_messages
 ```
 
-`/control.soft_interrupt` accepts an optional free-text reason; the other three take no arguments.
+`/control.soft_interrupt` accepts an optional JSON object whose `message` field replaces the default instruction text; the other three take no arguments. The payload must be a JSON object, so a bare word such as `timeout` is rejected as invalid JSON.
 
 ### Interactive wizard for `call_instruction`
 

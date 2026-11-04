@@ -83,7 +83,10 @@ def build_parser(control_actions=None):
             "  topsailai runtime -s SESSION -i '/send hello'\n\n"
             f"Supported control handlers: {handler_list}\n"
             "The list is queried from the live registry when help is requested; "
-            "if unavailable, this help uses the built-in handler list."
+            "if unavailable, this help uses the built-in handler list.\n"
+            "Handler payloads, results and errors: "
+            "topsailai docs read topsailai_send_control.md\n"
+            "List every usage document with: topsailai docs list"
         ),
     )
     for flags, dest, kind in [

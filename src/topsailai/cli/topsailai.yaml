@@ -137,7 +137,7 @@ instructions:
       - session
       - runtime
     desc: "Send a control request to the current session through its UDS control socket. Supported commands: heartbeat, call_instruction, hard_interrupt, soft_interrupt, clear_interrupt, get_runtime_messages. args_json is an optional JSON object; defaults to {}. For fixed actions use the convenient /control.<subcommand> forms."
-    example: "/control hard_interrupt  or  /control soft_interrupt {\"reason\":\"timeout\"}  or  /control call_instruction {\"instruction\":\"ctx.history\",\"args\":[\"arg1\"],\"kwargs\":{\"key\":\"value\"}}"
+    example: "/control hard_interrupt  or  /control soft_interrupt {\"message\":\"timeout\"}  or  /control call_instruction {\"instruction\":\"ctx.history\",\"args\":[\"arg1\"],\"kwargs\":{\"key\":\"value\"}}"
     shell: "topsailai_send_control -s '{session_id}' -c '{command}' -a '{args}'"
 
   - cmd: "/control.heartbeat"
@@ -168,8 +168,8 @@ instructions:
     scopes:
       - session
       - runtime
-    desc: "Send a soft interrupt to the current session through its UDS control socket. Optionally pass a JSON payload as an argument."
-    example: "/control.soft_interrupt  or  /control.soft_interrupt {\"reason\":\"timeout\"}"
+    desc: "Send a soft interrupt to the current session through its UDS control socket. Optionally pass a JSON object whose message field replaces the default stop-and-summarize instruction text."
+    example: "/control.soft_interrupt  or  /control.soft_interrupt {\"message\":\"timeout\"}"
     shell: "topsailai_send_control -s '{session_id}' -c 'soft_interrupt' -a '{args}'"
 
   - cmd: "/control.clear_interrupt"

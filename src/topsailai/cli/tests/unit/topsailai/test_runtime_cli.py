@@ -208,6 +208,21 @@ def test_help_displays_dynamic_control_handlers(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "get_session_messages, plugin.action" in output
     assert "call_instruction" not in output
+    assert "topsailai docs read topsailai_send_control.md" in output
+
+
+def test_help_points_to_documented_handlers(capsys):
+    """Help names the usage document that describes every built-in handler."""
+    with pytest.raises(SystemExit) as exc:
+        cli.run_runtime_cli(["control", "--help"])
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "topsailai docs read topsailai_send_control.md" in output
+    assert "topsailai docs list" in output
+    document = (Path(__file__).resolve().parents[3]
+                / "docs/usage/topsailai_send_control.md").read_text(encoding="utf-8")
+    for action in cli._FALLBACK_CONTROL_ACTIONS:
+        assert f"`{action}`" in document
 
 
 @pytest.mark.parametrize("code,error,state", [
