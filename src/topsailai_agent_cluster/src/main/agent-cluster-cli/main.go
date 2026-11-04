@@ -19,6 +19,10 @@ import (
 )
 
 func main() {
+	if err := prepareExecutableEnv(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	os.Exit(runExitCode(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, defaultTerminalDetector))
 }
 
