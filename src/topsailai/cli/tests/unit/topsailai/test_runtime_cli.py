@@ -176,18 +176,38 @@ def test_option_literal_json_detection(argv, expected, capsys):
 
 
 @pytest.mark.parametrize("action", [None, "send", "btw", "control"])
-def test_offline_help(action, monkeypatch, capsys):
-    """Each help path bypasses home, stdin, registry, writer and execution."""
+def test_help_registry_lookup_falls_back_safely(action, monkeypatch, capsys):
+    """Help attempts registry discovery but remains usable if it fails."""
     from cli_topsailai import runtime_operations as operations
-    fail = Mock(side_effect=AssertionError("must remain offline"))
-    monkeypatch.setattr(operations.runtime_control, "get_control_actions", fail)
+    fail = Mock(side_effect=AssertionError("must remain untouched"))
+    registry = Mock(side_effect=RuntimeError("registry unavailable"))
+    monkeypatch.setattr(operations.runtime_control, "get_control_actions", registry)
     monkeypatch.setattr(operations, "write_injection", fail)
     with pytest.raises(SystemExit) as exc:
         cli.run_runtime_cli(([action] if action else []) + ["--help"],
                             executor=fail, home_resolver=fail, stdin=fail)
     assert exc.value.code == 0
+    registry.assert_called_once()
     fail.assert_not_called()
-    assert "topsailai runtime" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Supported control handlers:" in output
+    assert "get_session_messages" in output
+    assert "built-in handler list" in output
+
+
+def test_help_displays_dynamic_control_handlers(monkeypatch, capsys):
+    """Help displays the live registry list when discovery succeeds."""
+    from cli_topsailai import runtime_operations as operations
+    actions = ["plugin.action", "get_session_messages"]
+    registry = Mock(return_value=actions)
+    monkeypatch.setattr(operations.runtime_control, "get_control_actions", registry)
+    with pytest.raises(SystemExit) as exc:
+        cli.run_runtime_cli(["control", "--help"])
+    assert exc.value.code == 0
+    registry.assert_called_once()
+    output = capsys.readouterr().out
+    assert "get_session_messages, plugin.action" in output
+    assert "call_instruction" not in output
 
 
 @pytest.mark.parametrize("code,error,state", [
