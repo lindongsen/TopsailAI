@@ -36,11 +36,12 @@ context:
   _:
     - "README.md"
     - "LEARN.md"
+    - docs/README.md
+    - docs/usage/README.md
   # Default item: no extra context sources.
   default: []
   # Item used when launching the topsailai CLI agent.
   topsailai:
-    - docs/README.md
     - "topsailai.md"
 
 # Environment variable configuration: each item can define its own environment variables.
