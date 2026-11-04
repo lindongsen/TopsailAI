@@ -4,6 +4,8 @@ go 1.25.0
 
 require gopkg.in/natefinch/lumberjack.v2 v2.2.1
 
+require golang.org/x/term v0.35.0
+
 require (
 	github.com/coder/websocket v1.8.14 // indirect
 	github.com/cucumber/gherkin/go/v42 v42.0.0 // indirect

@@ -64,6 +64,7 @@ func runWithSignals(args []string, input io.Reader, output, errorOutput io.Write
 }
 
 func runWithIO(args []string, input io.Reader, output, errors io.Writer, terminal bool, interrupts <-chan os.Signal) error {
+	output = terminalOutput{Writer: output}
 	flags := flag.NewFlagSet("agent-cluster-cli", flag.ContinueOnError)
 	flags.SetOutput(errors)
 	flags.Usage = func() {
@@ -165,7 +166,7 @@ func legacyRunner(api tui.CommandAPI) tui.CommandRunner {
 }
 
 func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, jsonMode bool, color tui.ColorPolicy) error {
-	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, tui.TableOptions{Color: color, Clean: clean})
+	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, tui.TableOptions{Width: tui.OutputWidth(output), Color: color, Clean: clean})
 }
 
 func show(ctx context.Context, api tui.CommandAPI, output io.Writer, id string, jsonMode bool) error {

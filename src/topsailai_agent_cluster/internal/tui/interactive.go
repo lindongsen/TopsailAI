@@ -497,7 +497,7 @@ func interactiveList(parent context.Context, api InteractiveAPI, state *interact
 	staged := make([]SessionRow, 0)
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	err = (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, scoped, false, TableOptions{Color: color, Clean: clean, OnRows: func(rows []SessionRow) { staged = append(staged, rows...) }})
+	err = (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, scoped, false, TableOptions{Width: OutputWidth(out), Color: color, Clean: clean, OnRows: func(rows []SessionRow) { staged = append(staged, rows...) }})
 	if err != nil {
 		state.Rows = nil
 		return err

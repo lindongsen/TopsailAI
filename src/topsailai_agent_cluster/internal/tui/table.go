@@ -18,6 +18,8 @@ type EndpointFailure struct {
 
 // TableOptions controls table presentation without changing query semantics.
 type TableOptions struct {
+	// Width bounds terminal columns; zero preserves the full table.
+	Width  int
 	Color  ColorPolicy
 	Clean  bool
 	OnRows func([]SessionRow)
@@ -51,6 +53,7 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 			}
 		}
 	}
+	fitTableWidths(widths, options.Width)
 	writeRow := func(values []string, header bool) error {
 		for i, value := range values {
 			if i > 0 {
@@ -95,15 +98,21 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 		_, err := io.WriteString(out, "\n")
 		return err
 	}
-	if err := writeRow(tableHeaders, true); err != nil {
-		return err
-	}
-	if err := writeSeparator(); err != nil {
-		return err
-	}
-	for _, row := range cells {
-		if err := writeRow(row, false); err != nil {
+	if options.Width > 0 && options.Width < 60 {
+		if err := writeNarrowTable(out, cells, options.Width); err != nil {
 			return err
+		}
+	} else {
+		if err := writeRow(tableHeaders, true); err != nil {
+			return err
+		}
+		if err := writeSeparator(); err != nil {
+			return err
+		}
+		for _, row := range cells {
+			if err := writeRow(row, false); err != nil {
+				return err
+			}
 		}
 	}
 	if len(rows) == 0 {
