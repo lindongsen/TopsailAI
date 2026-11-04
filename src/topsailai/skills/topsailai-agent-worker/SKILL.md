@@ -16,6 +16,7 @@ description: |
   - "resume / watch / send a message to a running session"
   - "interrupt or control a running agent"
   - "inspect logs, sessions, or runtime state under ~/.topsailai"
+  - "add, update, or remove a model in the model registry" (`topsailai models`)
 ---
 
 # TopsailAI Agent Worker
@@ -373,9 +374,10 @@ flag_overview: 1
 
 ## Model registry
 
-- The available model configuration file is `${HOME}/.topsailai/.models.jsonl`.
-- To add a new model, update this file. For example, to add a `gpt-6.1-sol`
-  model, add an entry with the same format as `gpt-5.6-sol`.
+- The model registry is `{TOPSAILAI_HOME}/.models.jsonl` (default
+  `~/.topsailai/.models.jsonl`).
+- Use the `topsailai models` command to manage it instead of editing the file
+  by hand.
 
 ## Log files
 
