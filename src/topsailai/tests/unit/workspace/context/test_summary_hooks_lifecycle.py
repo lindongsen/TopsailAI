@@ -48,7 +48,9 @@ def setup_runtime(monkeypatch):
     """Build real layer methods with deterministic generation and feasibility seams."""
     timeline = []
     executor = Executor(timeline)
+    from topsailai.workspace.context.summary_recovery import RecoveryConfig
     runtime = ContextRuntimeData()
+    runtime.summary_recovery_config = RecoveryConfig(enabled=False)
     for points in _CHECKPOINTS.values():
         for selected in points.values():
             def direct(*, operation_id, _selected=selected, **classification):
