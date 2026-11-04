@@ -183,46 +183,92 @@ func parseInteractiveStart(rest string) (interactiveStartRequest, error) {
 	if args[0] == "" || args[1] == "" || strings.HasPrefix(args[0], "-") || strings.HasPrefix(args[1], "-") {
 		return interactiveStartRequest{}, fmt.Errorf("start requires endpoint and resource")
 	}
-	request := interactiveStartRequest{EndpointID: args[0], ResourceID: args[1], Payload: json.RawMessage(`{}`)}
-	for index := 2; index < len(args); index++ {
-		switch args[index] {
-		case "--json":
-			return interactiveStartRequest{}, fmt.Errorf("interactive start does not support --json")
-		case "--profile":
-			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
-				return interactiveStartRequest{}, fmt.Errorf("--profile requires a value")
-			}
-			index++
-			request.Profile = args[index]
-		case "--profile-revision":
-			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
-				return interactiveStartRequest{}, fmt.Errorf("--profile-revision requires a value")
-			}
-			index++
-			request.ProfileRevision = args[index]
-		case "--folder":
-			if index+1 >= len(args) || (strings.HasPrefix(args[index+1], "--") && args[index+1] != "--") {
-				return interactiveStartRequest{}, fmt.Errorf("--folder requires a value")
-			}
-			index++
-			request.Folder = args[index]
-		case "--payload":
-			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
-				return interactiveStartRequest{}, fmt.Errorf("--payload requires a value")
-			}
-			index++
-			if !json.Valid([]byte(args[index])) {
-				return interactiveStartRequest{}, fmt.Errorf("payload must be valid JSON")
-			}
-			request.Payload = json.RawMessage(args[index])
-		default:
-			return interactiveStartRequest{}, fmt.Errorf("unknown start option %q", args[index])
-		}
+	request, missing, err := parseInteractiveStartTokens(args, false)
+	if err != nil {
+		return interactiveStartRequest{}, err
 	}
-	if request.Profile == "" || request.ProfileRevision == "" {
+	if missing != 0 {
 		return interactiveStartRequest{}, fmt.Errorf("start requires --profile and --profile-revision")
 	}
 	return request, nil
+}
+
+// parseInteractiveStartTokens decodes shared start positions and options for strict and draft paths.
+func parseInteractiveStartTokens(args []string, allowMissing bool) (interactiveStartRequest, uint8, error) {
+	request := interactiveStartRequest{Payload: json.RawMessage(`{}`)}
+	position := 0
+	for position < len(args) && position < 2 && !strings.HasPrefix(args[position], "--") {
+		if position == 0 {
+			request.EndpointID = args[position]
+		} else {
+			request.ResourceID = args[position]
+		}
+		position++
+	}
+	if position < 2 && position < len(args) && !strings.HasPrefix(args[position], "--") {
+		return interactiveStartRequest{}, 0, fmt.Errorf("start requires endpoint and resource")
+	}
+	var missing uint8
+	for position < len(args) {
+		name := args[position]
+		switch name {
+		case "--json":
+			return interactiveStartRequest{}, 0, fmt.Errorf("interactive start does not support --json")
+		case "--profile", "--profile-revision":
+			bit := uint8(1 << 2)
+			label := "--profile"
+			if name == "--profile-revision" {
+				bit = 1 << 3
+				label = "--profile-revision"
+			}
+			if position+1 >= len(args) || strings.HasPrefix(args[position+1], "--") {
+				if !allowMissing {
+					return interactiveStartRequest{}, 0, fmt.Errorf("%s requires a value", label)
+				}
+				missing |= bit
+				position++
+				continue
+			}
+			position++
+			if name == "--profile" {
+				request.Profile = args[position]
+			} else {
+				request.ProfileRevision = args[position]
+			}
+			missing &^= bit
+		case "--folder":
+			if position+1 >= len(args) || (strings.HasPrefix(args[position+1], "--") && args[position+1] != "--") {
+				return interactiveStartRequest{}, 0, fmt.Errorf("--folder requires a value")
+			}
+			position++
+			request.Folder = args[position]
+		case "--payload":
+			if position+1 >= len(args) || strings.HasPrefix(args[position+1], "--") {
+				return interactiveStartRequest{}, 0, fmt.Errorf("--payload requires a value")
+			}
+			position++
+			if !json.Valid([]byte(args[position])) {
+				return interactiveStartRequest{}, 0, fmt.Errorf("payload must be valid JSON")
+			}
+			request.Payload = json.RawMessage(args[position])
+		default:
+			return interactiveStartRequest{}, 0, fmt.Errorf("unknown start option %q", name)
+		}
+		position++
+	}
+	if request.EndpointID == "" {
+		missing |= 1
+	}
+	if request.ResourceID == "" {
+		missing |= 1 << 1
+	}
+	if request.Profile == "" {
+		missing |= 1 << 2
+	}
+	if request.ProfileRevision == "" {
+		missing |= 1 << 3
+	}
+	return request, missing, nil
 }
 
 // interactiveStart submits and renders an agent.start action using shared action logic.

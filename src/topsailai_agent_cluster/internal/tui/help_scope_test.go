@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -286,28 +287,31 @@ func TestHelpListOmitsRemovedTimestampColumns(t *testing.T) {
 	}
 }
 
-// cancelledStub reports the caller context error from ListEndpoints.
+// cancelledStub counts inventory calls so pre-cancelled parents can prove no API access.
 type cancelledStub struct {
 	interactiveStub
+	inventoryCalls int
 }
 
-func (s *cancelledStub) ListEndpoints(ctx context.Context) ([]protocol.Endpoint, error) {
-	return nil, ctx.Err()
+func (s *cancelledStub) ListEndpoints(context.Context) ([]protocol.Endpoint, error) {
+	s.inventoryCalls++
+	return nil, errors.New("inventory must not be called")
 }
 
-func TestStartupInventoryRespectsContextCancellation(t *testing.T) {
+func TestPreCancelledParentStopsBeforeStartupInventory(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	stub := &cancelledStub{}
 	var output, diagnostics strings.Builder
-	err := RunInteractive(ctx, &cancelledStub{}, strings.NewReader("quit\n"), &output, &diagnostics, InteractiveOptions{})
-	if err != nil {
-		t.Fatalf("RunInteractive: %v", err)
+	err := RunInteractive(ctx, stub, strings.NewReader("quit\n"), &output, &diagnostics, InteractiveOptions{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunInteractive error=%v, want context.Canceled", err)
 	}
-	if !strings.Contains(diagnostics.String(), "error:") {
-		t.Fatalf("cancelled startup inventory was not reported: %q", diagnostics.String())
+	if stub.inventoryCalls != 0 {
+		t.Fatalf("pre-cancelled parent made %d inventory calls", stub.inventoryCalls)
 	}
-	if !strings.Contains(output.String(), "cluster> ") {
-		t.Fatalf("cancelled startup inventory aborted the repl: %q", output.String())
+	if output.Len() != 0 || diagnostics.Len() != 0 {
+		t.Fatalf("pre-cancelled parent wrote output=%q diagnostics=%q", output.String(), diagnostics.String())
 	}
 }
 

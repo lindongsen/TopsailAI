@@ -142,6 +142,9 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			controller.input = closer
 		}
 	}
+	if err := parent.Err(); err != nil {
+		return err
+	}
 	stopWatcher := make(chan struct{})
 	var watcher sync.WaitGroup
 	watcherDone := make(chan struct{})
@@ -191,7 +194,13 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 	if err := runStartupList(parent, api, &state, controller, output, errOut, options.Color); err != nil {
 		return err
 	}
+	if err := parent.Err(); err != nil {
+		return err
+	}
 	for {
+		if err := parent.Err(); err != nil {
+			return err
+		}
 		if controller.promptWasInterrupted() {
 			return ErrInteractiveInterrupt
 		}
@@ -202,6 +211,8 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		var overflow bool
 		var err error
 		select {
+		case <-parent.Done():
+			return parent.Err()
 		case result, ok := <-lineResults:
 			if !ok {
 				return nil
@@ -222,6 +233,9 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		if err != nil && err != io.EOF {
 			return err
 		}
+		if parentErr := parent.Err(); parentErr != nil {
+			return parentErr
+		}
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
 		if line == "" {
 			if err == io.EOF {
@@ -234,11 +248,20 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		exit, execErr := executeInteractiveLine(commandCtx, api, &state, line, lineResults, out, output, errOut, options)
 		controller.clearCancel()
 		cancel()
+		if fatal := unwrapStartTermination(execErr); fatal != nil {
+			return fatal
+		}
+		if parentErr := parent.Err(); parentErr != nil {
+			return parentErr
+		}
 		if controller.takeCommandInterrupted() {
 			if _, writeErr := fmt.Fprintln(errOut, "interrupted"); writeErr != nil {
 				return writeErr
 			}
 			continue
+		}
+		if isStartPromptEOF(execErr) {
+			return nil
 		}
 		if execErr != nil {
 			commandName := diagnosticCommandName(line)
@@ -300,11 +323,37 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "refresh":
 		return false, interactiveRefresh(ctx, api, state, out, errOut, options.Color)
 	case "start":
-		request, err := parseInteractiveStart(rest)
+		draft, err := parseInteractiveStartDraft(rest)
 		if err != nil {
 			return false, err
 		}
-		return false, interactiveStart(ctx, api, state, request, out, options)
+		recorder := &startOutputRecorder{}
+		startOut := newRecordingWriter(out, recorder)
+		startTrustedOut := newRecordingWriter(trustedOut, recorder)
+		startErrOut := newRecordingWriter(errOut, recorder)
+		outcome, request, promptErr := runStartPrompt(ctx, *state, draft, lineResults, startOut, startErrOut, options.Color)
+		if promptErr != nil {
+			return false, startOutputError(promptErr, recorder, startOut, startTrustedOut, startErrOut)
+		}
+		var commandErr error
+		switch outcome {
+		case startPromptQuit:
+			return true, startOutputError(nil, recorder, startOut, startTrustedOut, startErrOut)
+		case startPromptRefresh:
+			if _, writeErr := fmt.Fprintln(startOut, "start cancelled"); writeErr != nil {
+				commandErr = writeErr
+				break
+			}
+			commandErr = interactiveRefresh(ctx, api, state, startTrustedOut, startErrOut, options.Color)
+		case startPromptCancel:
+			commandErr = nil
+		default:
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			commandErr = interactiveStart(ctx, api, state, request, startOut, options)
+		}
+		return false, startOutputError(commandErr, recorder, startOut, startTrustedOut, startErrOut)
 	case "resume", "stop":
 		return false, interactiveSessionLifecycle(ctx, api, state, name, rest, lineResults, out, options)
 	case "inject", "btw":

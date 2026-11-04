@@ -231,7 +231,19 @@ func PrintScopedCommandHelp(out io.Writer, target string, kind ScopeKind) error 
 	if !ok {
 		return fmt.Errorf("unknown help command %q; next: run help all", target)
 	}
+	if target == "start" {
+		return printInteractiveStartHelp(out, entry)
+	}
 	return printCommandDetail(out, target, entry)
+}
+
+// printInteractiveStartHelp adds wizard guidance only to scoped interactive help.
+func printInteractiveStartHelp(out io.Writer, entry commandHelp) error {
+	if err := printCommandDetail(out, "start", entry); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(out, "Interactive missing arguments: start without all required values asks for endpoint, resource, profile, and profile-revision in that order; answers are literal values, numeric-looking values remain literal IDs, and completion starts immediately. Empty/cancel cancels, q quits, r refreshes, and help repeats this guidance.")
+	return err
 }
 
 // printCommandDetail renders one canonical command without changing non-interactive help.
