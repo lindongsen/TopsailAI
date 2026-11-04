@@ -41,6 +41,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 # DONOT REMOVE THIS
@@ -49,8 +50,9 @@ import readline
 PWD = os.getenv("TOPSAILAI_PWD")
 if PWD:
     os.chdir(PWD)
-# Global reference to the temporary context message file, used for cleanup on exit.
+# Global references to temporary startup-message files used for cleanup on exit.
 _CONTEXT_MESSAGE_FILE = None
+_TASK_MESSAGE_FILE = None
 # Names treated as the shared base configuration (基础配置). "_" is the preferred alias;
 # "_default" is kept for backward compatibility.
 BASE_ITEM_NAMES = ("_", "_default")
@@ -485,37 +487,42 @@ def _read_context_blocks(sources, workspace):
     return "\n\n".join(blocks)
 
 
-def _cleanup_context_file():
-    """Remove the temporary context message file if it exists."""
-    global _CONTEXT_MESSAGE_FILE
-    path = _CONTEXT_MESSAGE_FILE
-    if path and os.path.isfile(path):
-        try:
-            os.remove(path)
-            print(
-                f"[TopsailAI-Launcher] Removed temporary context file: {path}"
-            )
-        except OSError as exc:
-            print(
-                f"[TopsailAI-Launcher] Warning: Failed to remove temporary context file '{path}': {exc}",
-                file=sys.stderr,
-            )
+def _cleanup_message_file(path, label):
+    """Remove one launcher-owned temporary message file if it exists."""
+    if not path or not os.path.isfile(path):
+        return
+    try:
+        os.remove(path)
+        print(f"[TopsailAI-Launcher] Removed temporary {label} file: {path}")
+    except OSError as exc:
+        print(
+            f"[TopsailAI-Launcher] Warning: Failed to remove temporary {label} file '{path}': {exc}",
+            file=sys.stderr,
+        )
+
+
+def _cleanup_message_files():
+    """Remove temporary context and task message files owned by this launch."""
+    global _CONTEXT_MESSAGE_FILE, _TASK_MESSAGE_FILE
+    _cleanup_message_file(_CONTEXT_MESSAGE_FILE, "context")
+    _cleanup_message_file(_TASK_MESSAGE_FILE, "task")
     _CONTEXT_MESSAGE_FILE = None
+    _TASK_MESSAGE_FILE = None
 
 
 def _signal_handler(signum, frame):
-    """Handle SIGINT/SIGTERM by cleaning up the temporary file and exiting."""
+    """Handle SIGINT/SIGTERM by cleaning up temporary files and exiting."""
     print(
         f"\n[TopsailAI-Launcher] Received signal {signum}, cleaning up and exiting...",
         file=sys.stderr,
     )
-    _cleanup_context_file()
+    _cleanup_message_files()
     sys.exit(128 + signum)
 
 
-# Register cleanup hooks so the temporary file is removed on normal exit,
+# Register cleanup hooks so temporary files are removed on normal exit,
 # uncaught exceptions, and common termination signals.
-atexit.register(_cleanup_context_file)
+atexit.register(_cleanup_message_files)
 signal.signal(signal.SIGINT, _signal_handler)
 signal.signal(signal.SIGTERM, _signal_handler)
 
@@ -2135,6 +2142,25 @@ def _ensure_session_id(environ):
     return session_id
 
 
+def _write_task_message_file(workspace, session_id, task):
+    """Write an initial task to a unique workspace temporary file."""
+    tmp_dir = os.path.join(workspace, ".tmp")
+    safe_session_id = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id or "session")
+    descriptor, path = tempfile.mkstemp(
+        prefix=f"TOPSAILAI_TASK.{safe_session_id}.",
+        suffix=".data",
+        dir=tmp_dir,
+        text=True,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as task_file:
+            task_file.write(task)
+    except BaseException:
+        _cleanup_message_file(path, "task")
+        raise
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Launch AI Agent Driver based on .topsailai/settings.yaml"
@@ -2143,6 +2169,15 @@ def main():
         "--session-id",
         default=None,
         help="Use this validated session identifier for the launched agent.",
+    )
+    parser.add_argument(
+        "--task",
+        default=None,
+        metavar="MESSAGE",
+        help=(
+            "Provide the initial user task to the launched agent so execution "
+            "starts without waiting for manual input."
+        ),
     )
     parser.add_argument(
         "--item",
@@ -2259,6 +2294,8 @@ def main():
     args = parser.parse_args()
     if args.session_id is not None and not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", args.session_id):
         parser.error("--session-id must be a safe session identifier")
+    if args.task is not None and not args.task.strip():
+        parser.error("--task must contain a non-whitespace message")
     # --non-interactive promises that no prompt is ever shown, so reject the
     # flags that exist only to open an interactive flow instead of silently
     # ignoring one of the two contradictory requests.
@@ -2552,9 +2589,10 @@ def main():
     # Reset the workspace temporary directory so each launch starts with a clean .tmp/ folder.
     _reset_tmp_dir(workspace)
 
-    # Write large context message to a file to avoid exceeding environment variable size limits.
-    global _CONTEXT_MESSAGE_FILE
+    # Write large context messages to files to avoid environment-size limits.
+    global _CONTEXT_MESSAGE_FILE, _TASK_MESSAGE_FILE
     _CONTEXT_MESSAGE_FILE = None
+    _TASK_MESSAGE_FILE = None
     if context_message:
         tmp_dir = os.path.join(workspace, ".tmp")
         timestamp = time.strftime("%Y%m%d%H%M%S", time.localtime())
@@ -2567,6 +2605,15 @@ def main():
     else:
         merged_env["TOPSAILAI_CONTEXT_USER_MESSAGE"] = ""
 
+    if args.task is not None:
+        if args.dry_run:
+            merged_env["TOPSAILAI_TASK"] = "<configured by --task>"
+        else:
+            _TASK_MESSAGE_FILE = _write_task_message_file(
+                workspace, session_id, args.task
+            )
+            merged_env["TOPSAILAI_TASK"] = _TASK_MESSAGE_FILE
+
     # 4. Assemble command line: ai_agent_driver only (context is passed via env)
     driver_parts = shlex.split(ai_agent_driver)
     cmd = driver_parts
@@ -2575,6 +2622,11 @@ def main():
     print(f"[TopsailAI-Launcher] Command: {' '.join(cmd)}")
     print(f"[TopsailAI-Launcher] Workspace: {workspace}")
     print(f"[TopsailAI-Launcher] Session ID: {session_id}")
+    if args.task is not None:
+        print(
+            "[TopsailAI-Launcher] Initial task: configured "
+            f"({len(args.task)} characters)"
+        )
     print(
         f"[TopsailAI-Launcher] Merged env keys: {sorted(set(list(base_env.keys()) + list(item_env.keys())))}"
     )
@@ -2622,9 +2674,12 @@ def main():
         else:
             print("  (none)")
         print("\nEnvironment variables (merged from base and item):")
-        config_env_keys = sorted(set(list(base_env.keys()) + list(item_env.keys())))
-        for key in config_env_keys:
-            print(f"  {key}={merged_env.get(key, '')}")
+        config_env_keys = set(base_env) | set(item_env)
+        if args.task is not None:
+            config_env_keys.add("TOPSAILAI_TASK")
+        for key in sorted(config_env_keys):
+            value = "<configured>" if key == "TOPSAILAI_TASK" else merged_env.get(key, "")
+            print(f"  {key}={value}")
         sys.exit(0)
 
     try:
@@ -2664,8 +2719,8 @@ def main():
         else:
             print(f"[TopsailAI-Launcher] Task failed, exit code: {exit_code}")
     finally:
-        # Clean up the temporary context message file after the driver exits.
-        _cleanup_context_file()
+        # Clean up launcher-owned startup message files after the driver exits.
+        _cleanup_message_files()
 
     sys.exit(exit_code)
 

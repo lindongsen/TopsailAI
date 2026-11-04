@@ -64,6 +64,7 @@ topsailai_launch_agent
 | Option | Description |
 |--------|-------------|
 | `--item <name>` | Select a context/environment item defined in `settings.yaml`. |
+| `--task <message>` | Supply the initial user task through the existing `TOPSAILAI_TASK` startup channel so the agent starts without waiting for manual task input. The selected driver still determines whether the process runs one turn or continues interactively. |
 | `--no-base-context` | Ignore the shared base context sources configured under `context._` (and the legacy `context._default`). Only the selected item's own context sources are injected. Base environment variables are still merged. |
 | `--driver <command>` | Override the `ai_agent_driver` value. |
 | `--select-driver` | Open the interactive agent-driver menu before launching, even when the context-item page is not shown. The chosen driver overrides `--driver` and every `settings.yaml` source for this run. Ignored with a warning when stdin is not a terminal. |
@@ -345,6 +346,26 @@ The numbered list accepts a row number or an exact item name. It also accepts `d
 driver menu described in [Interactive Driver Selection](#interactive-driver-selection); after the menu returns, the same
 item page is rendered again so the item can still be chosen. An exact item name or a valid row number always wins over the
 `d` command, so an item literally named `d` remains selectable.
+
+## Initial Task
+
+Pass `--task <message>` to provide the launched agent's first user task without waiting for manual task input:
+
+```bash
+topsailai_launch_agent --item default --task "Run the focused unit tests and summarize failures"
+```
+
+The launcher writes the exact UTF-8 task text to a unique file under `{workspace}/.tmp/` and passes that file path through `TOPSAILAI_TASK`. The task is not appended to `TOPSAILAI_CONTEXT_USER_MESSAGE`; startup context and the active user task remain separate. The temporary task file is removed after the driver exits, including failure paths and handled `SIGINT` or `SIGTERM` termination.
+
+An explicit `--task` takes precedence over `TOPSAILAI_TASK` inherited from the OS environment or merged settings. When `--task` is omitted, an existing `TOPSAILAI_TASK` is preserved unchanged. Empty or whitespace-only `--task` values are rejected with a usage error.
+
+The selected driver controls what happens after consuming the task: a single-turn driver exits after its normal turn, while a multi-turn driver may continue interactively. `--task` does not change the selected driver or `TOPSAILAI_INTERACTIVE_MODE`. It can be combined with `--non-interactive` to suppress launcher prompts as well:
+
+```bash
+topsailai_launch_agent --non-interactive --item default --task "Review the current workspace"
+```
+
+With `--dry-run`, the launcher does not create a task file or execute the driver. It reports that the initial task is configured and prints only its character count and a redacted `TOPSAILAI_TASK=<configured>` environment value; the task body is not printed.
 
 ## Non-Interactive Mode
 

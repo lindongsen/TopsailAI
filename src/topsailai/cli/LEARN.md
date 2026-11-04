@@ -147,3 +147,17 @@ Reused the interactive project scope's session query and session-table renderer,
 ### Why this prevents recurrence
 
 Treating a reused list as a three-part contract—query, record schema, and renderer/output mode—prevents valid records from being passed to an incompatible table and prevents parser flags from being accepted without changing downstream output.
+
+## Launcher-provided tasks must preserve channel semantics and observable precedence
+
+### Trigger
+
+Adding `--task` initially covered live child delivery, but final review found that dry-run did not represent the explicit option as overriding an inherited `TOPSAILAI_TASK`, and the Unicode regression fixture had been stored as mojibake while still passing an exact round-trip assertion.
+
+### Action taken
+
+Made explicit task precedence visible in dry-run through a redacted placeholder, asserted that neither explicit nor inherited task bodies appear in output, replaced the damaged fixture with real Chinese and emoji text, and made partial task-file writes remove their file before re-raising the original failure.
+
+### Why this prevents recurrence
+
+Testing both semantic precedence and the actual character classes promised by the interface prevents a passing byte-for-byte test from validating corrupted input, while exercising privacy and cleanup at non-execution boundaries keeps dry-run and failed setup behavior consistent with a real launch.
