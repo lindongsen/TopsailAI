@@ -1,5 +1,5 @@
 """
-Unit tests for topsailai.tools.bigfile_tool module.
+Unit tests for topsailai.plugins.tools.bigfile_tool module.
 
 Test coverage:
 - TOOLS dictionary contains read_file
@@ -15,8 +15,8 @@ import os
 import tempfile
 import pytest
 
-from topsailai.tools import bigfile_tool
-from topsailai.tools.bigfile_tool import TOOLS
+from topsailai.plugins.tools import bigfile_tool
+from topsailai.plugins.tools.bigfile_tool import TOOLS
 
 
 class TestBigfileToolModule:
