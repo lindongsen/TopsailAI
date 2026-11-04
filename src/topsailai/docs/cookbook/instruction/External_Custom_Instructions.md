@@ -27,43 +27,54 @@ The mechanism is already implemented; no source change is required.
 | Loader entry | `tools/base/common.py` `expand_plugin_tools()` | `workspace/plugin_instruction/base/init.py` `expand_plugin_instructions()` |
 | Shared implementation | `utils/module_tool.py` `get_external_function_map()` | same function |
 | Registry variable | `TOOLS` | `INSTRUCTIONS` |
-| Name separator | `-` (`cmd_tool-exec_cmd`) | `.` (`deploy.status`) |
+| Name separator | `-` (`cmd_tool-exec_cmd`) | `.` (`session_audit.stats`) |
 
 ## Quick Start
 
 ```bash
 export PYTHONPATH=/TopsailAI/src/topsailai
 export TOPSAILAI_PLUGIN_INSTRUCTIONS=/TopsailAI/src/topsailai/docs/cookbook/instruction/examples/my_ops
-export MY_OPS_ENV=prod
 
-uv run python cli/topsailai_agent_call_instruction.py -i '/deploy.status' -p 'checkout'
+uv run python cli/topsailai_agent_call_instruction.py -i '/session_audit.stats' -p '3'
 ```
 
-Output:
+Output on a host with recorded sessions:
 
 ```text
-checkout: running (env=prod)
+sessions: 914
+status: completed=786, interrupted=118, running=9, error=1
+model: gpt-5.6-luna=457, gpt-6.1-sol=209, DeepSeek-V4-Flash-Preview=183, gpt-6-luna=64, topsailai-team-values=1
+recent (limit=3):
+   status=running name=- model=DeepSeek-V4-Flash-Preview
+  20261027152208 status=running name=统一Agent管理方案 model=gpt-6.1-sol
+  wa-440a09e9fb4a status=running name=Codex Gateway 400 Error model=gpt-6-luna
 ```
 
 The same instructions are available inside an interactive agent session, and `/help`
-lists them:
+lists them with their docstrings:
 
 ```text
-  /deploy.status
-    - status,
-        Report the deployment status of one service.
+  /session_audit.stats
+    - stats,
+        Summarize the sessions recorded on this host.
 
-  /deploy.rollback
-    - rollback,
-        Roll one service back to a revision.
+        Args:
+            limit: How many recent sessions to list, as a decimal string. Capped at 20.
+
+        Returns:
+            Status and model counts, then the most recent sessions, or an error message.
+
+  /session_audit.events
+    - events,
+        Count the recorded events of one session.
 ```
 
 ## Folder Layout
 
 ```text
 docs/cookbook/instruction/examples/my_ops/
-├── deploy.py     # dict form  -> /deploy.status, /deploy.rollback
-└── notes.py      # list form  -> /notes.add, /notes.list_notes
+├── session_audit.py   # dict form  -> /session_audit.stats, /session_audit.events
+└── env_audit.py       # list form  -> /env_audit.dump, /env_audit.check
 ```
 
 Rules that matter:
@@ -81,20 +92,20 @@ Every module exports a variable named `INSTRUCTIONS`. Two shapes are accepted.
 
 ```python
 INSTRUCTIONS = {
-    "status": status,
-    "rollback": rollback,
+    "stats": stats,
+    "events": events,
 }
 ```
 
-Registered names: `/deploy.status`, `/deploy.rollback`.
+Registered names: `/session_audit.stats`, `/session_audit.events`.
 
 ### List form — the function name is the action name
 
 ```python
-INSTRUCTIONS = [add, list_notes]
+INSTRUCTIONS = [dump, check]
 ```
 
-Registered names: `/notes.add`, `/notes.list_notes`.
+Registered names: `/env_audit.dump`, `/env_audit.check`.
 
 A module without `INSTRUCTIONS` is skipped silently. Any other type prints
 `BUG? module=..., values=...` and is skipped.
@@ -105,82 +116,316 @@ The registered command is always `{module_file_name}.{action_name}`:
 
 | File | `INSTRUCTIONS` | Command |
 |---|---|---|
-| `deploy.py` | `{"status": status}` | `/deploy.status` |
-| `deploy.py` | `{"deploy": deploy}` | `/deploy.deploy` |
-| `notes.py` | `[add]` | `/notes.add` |
+| `session_audit.py` | `{"stats": stats}` | `/session_audit.stats` |
+| `session_audit.py` | `{"audit": audit}` | `/session_audit.audit` |
+| `env_audit.py` | `[dump]` | `/env_audit.dump` |
 
 There is no automatic short alias. The only built-in alias in the codebase is
 `git.git` → `/git`, hardcoded in `workspace/plugin_instruction/base/init.py`.
 To get a short command, name the module and the action identically, or register an
 alias yourself.
 
-## Example: `deploy.py`
+## Example: `session_audit.py`
+
+This is the dict form. It reads the real session metadata files under
+`FOLDER_WORKSPACE_TASK` and prints a bounded summary, which is exactly the kind of
+output you want on screen but do not want to spend LLM context on.
 
 ```python
-"""Deployment helpers exposed as /deploy.* slash instructions."""
+"""Session audit helpers exposed as /session_audit.* slash instructions."""
 
 # Dict form: the key is the action name, so this module registers
-# /deploy.status and /deploy.rollback.
+# /session_audit.stats and /session_audit.events.
+#
+# Scenario: a session misbehaved and you want to know what ran on this host.
+# Dumping the raw metadata and event files into the LLM context is expensive and
+# usually truncated, so both actions read the real files under
+# FOLDER_WORKSPACE_TASK and print a bounded summary for you instead.
 
-import os
+import json
+from collections import Counter
+from pathlib import Path
+
+from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
+
+MAX_ITEMS = 20
 
 
-def status(service: str = "") -> str:
-    """Report the deployment status of one service."""
-    if not service:
-        return "Usage: /deploy.status <service>"
-    env = os.getenv("MY_OPS_ENV", "dev")
-    return f"{service}: running (env={env})"
+def _meta_files() -> list[Path]:
+    """Return the session metadata files, newest first.
+
+    Returns:
+        The metadata paths sorted by modification time, newest first. A file
+        that disappears between listing and stat is skipped.
+    """
+    folder = Path(FOLDER_WORKSPACE_TASK)
+    if not folder.is_dir():
+        return []
+
+    found = []
+    for path in folder.glob("*.session.meta"):
+        try:
+            found.append((path.stat().st_mtime, path))
+        except OSError:
+            continue
+    found.sort(key=lambda item: item[0], reverse=True)
+    return [path for _, path in found]
 
 
-def rollback(service: str = "", revision: str = "") -> str:
-    """Roll one service back to a revision."""
-    if not service or not revision:
-        return "Usage: /deploy.rollback <service> <revision>"
-    return f"{service}: rolled back to {revision}"
+def _load_meta(path: Path) -> dict:
+    """Load one metadata file, tolerating a partially written record.
+
+    Args:
+        path: The metadata file path.
+
+    Returns:
+        The decoded record, or an empty mapping when it cannot be read.
+    """
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _parse_limit(limit: str) -> int | None:
+    """Convert the limit argument, which always arrives as a string.
+
+    Args:
+        limit: A decimal string.
+
+    Returns:
+        The bounded positive limit, or None when the value is invalid.
+    """
+    try:
+        value = int(limit)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return min(value, MAX_ITEMS)
+
+
+def stats(limit: str = "10") -> str:
+    """Summarize the sessions recorded on this host.
+
+    Args:
+        limit: How many recent sessions to list, as a decimal string. Capped at 20.
+
+    Returns:
+        Status and model counts, then the most recent sessions, or an error message.
+    """
+    shown = _parse_limit(limit)
+    if shown is None:
+        return "error: limit must be a positive integer"
+
+    files = _meta_files()
+    if not files:
+        return f"no session metadata under {FOLDER_WORKSPACE_TASK}"
+
+    records = [(path, _load_meta(path)) for path in files]
+    statuses = Counter(rec.get("status", "unknown") for _, rec in records)
+    models = Counter(rec.get("model_name", "unknown") for _, rec in records)
+
+    lines = [f"sessions: {len(records)}"]
+    lines.append("status: " + ", ".join(f"{k}={v}" for k, v in statuses.most_common()))
+    lines.append("model: " + ", ".join(f"{k}={v}" for k, v in models.most_common()))
+    lines.append(f"recent (limit={shown}):")
+    for path, rec in records[:shown]:
+        lines.append(
+            f"  {rec.get('session_id', path.stem)}"
+            f" status={rec.get('status', 'unknown')}"
+            f" name={rec.get('session_name') or '-'}"
+            f" model={rec.get('model_name', 'unknown')}"
+        )
+    return "\n".join(lines)
+
+
+def events(session_id: str = "", limit: str = "10") -> str:
+    """Count the recorded events of one session.
+
+    Args:
+        session_id: The session id to inspect. Empty means the newest session.
+        limit: How many event types to list, as a decimal string. Capped at 20.
+
+    Returns:
+        The event type counts, or an error message.
+    """
+    shown = _parse_limit(limit)
+    if shown is None:
+        return "error: limit must be a positive integer"
+
+    files = _meta_files()
+    if not files:
+        return f"no session metadata under {FOLDER_WORKSPACE_TASK}"
+
+    target = None
+    for path in files:
+        record = _load_meta(path)
+        if not session_id or record.get("session_id") == session_id:
+            target = (path, record)
+            break
+    if target is None:
+        return f"no session found for id={session_id}"
+
+    path, record = target
+    events_name = (record.get("files") or {}).get("events", "")
+    if not events_name:
+        return f"session {record.get('session_id', path.stem)} has no events file recorded"
+
+    events_path = Path(FOLDER_WORKSPACE_TASK) / events_name
+    if not events_path.is_file():
+        return f"events file missing: {events_path}"
+
+    counts = Counter()
+    total = 0
+    try:
+        with events_path.open(encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                total += 1
+                try:
+                    counts[json.loads(line).get("event_type", "unknown")] += 1
+                except json.JSONDecodeError:
+                    counts["<unparsed>"] += 1
+    except OSError as exc:
+        return f"error: {exc}"
+
+    lines = [f"session: {record.get('session_id', path.stem)} events={total}"]
+    for name, count in counts.most_common(shown):
+        lines.append(f"  {name}={count}")
+    return "\n".join(lines)
 
 
 INSTRUCTIONS = {
-    "status": status,
-    "rollback": rollback,
+    "stats": stats,
+    "events": events,
 }
+```
+
+Real output of `/session_audit.events 20261020173453 3`:
+
+```text
+session: 20261020173453 events=23
+  llm.response.raw=8
+  tool_call.start=8
+  tool_call.end=7
 ```
 
 Every function **must have a docstring**. The docstring becomes the `/help` text; a
 function without one raises `ValueError: HookFunc requires a docstring on '...'` while
 the registry is built, which aborts agent startup.
 
-## Example: `notes.py`
+## Example: `env_audit.py`
+
+This is the list form. It reads the real process environment, masks values whose names
+match the project's own `PRINT_STEP_SENSITIVE_ARG_KEYS` list, and prints the result.
 
 ```python
-"""Note helpers exposed as /notes.* slash instructions."""
+"""Environment audit helpers exposed as /env_audit.* slash instructions."""
 
 # List form: the action name is the function name, so this module registers
-# /notes.add and /notes.list_notes.
+# /env_audit.dump and /env_audit.check.
+#
+# Scenario: the agent behaves differently than expected and you suspect a stray
+# TOPSAILAI_* variable. Printing the whole environment into the LLM context would
+# leak credentials, so these actions read the real process environment, mask
+# values whose names match the project's own sensitive-key list, and print the
+# result for you instead.
 
-_NOTES: list[str] = []
+import os
 
+from topsailai.utils.print_tool import PRINT_STEP_SENSITIVE_ARG_KEYS
 
-def add(text: str = "") -> str:
-    """Append one note and report the new total."""
-    if not text:
-        return "Usage: /notes.add <text>"
-    _NOTES.append(text)
-    return f"added: {text} (total={len(_NOTES)})"
-
-
-def list_notes() -> str:
-    """List every note added in this process."""
-    if not _NOTES:
-        return "no notes yet"
-    return "\n".join(f"{i}. {n}" for i, n in enumerate(_NOTES, 1))
+PREFIX = "TOPSAILAI_"
+MASK = "***"
 
 
-INSTRUCTIONS = [add, list_notes]
+def _is_sensitive(name: str) -> bool:
+    """Report whether a variable name looks like it carries a credential.
+
+    Args:
+        name: The environment variable name.
+
+    Returns:
+        True when the lowered name contains any sensitive keyword.
+    """
+    lowered = name.lower()
+    return any(word in lowered for word in PRINT_STEP_SENSITIVE_ARG_KEYS)
+
+
+def _topsailai_vars() -> list[tuple[str, str]]:
+    """Collect the TOPSAILAI_* variables of this process.
+
+    Returns:
+        Sorted name/value pairs, with sensitive values already masked.
+    """
+    pairs = []
+    for name in sorted(os.environ):
+        if not name.startswith(PREFIX):
+            continue
+        value = os.environ[name]
+        pairs.append((name, MASK if _is_sensitive(name) else value))
+    return pairs
+
+
+def dump(prefix: str = "") -> str:
+    """Print the TOPSAILAI_* variables of this process with secrets masked.
+
+    Args:
+        prefix: Optional extra name filter applied after the TOPSAILAI_ prefix.
+
+    Returns:
+        One name=value line per variable, or a message when nothing matches.
+    """
+    pairs = _topsailai_vars()
+    if prefix:
+        pairs = [(name, value) for name, value in pairs if prefix in name]
+    if not pairs:
+        return f"no {PREFIX}* variable matches prefix={prefix!r}"
+
+    lines = [f"{PREFIX}* variables: {len(pairs)}"]
+    lines.extend(f"  {name}={value}" for name, value in pairs)
+    return "\n".join(lines)
+
+
+def check(name: str = "") -> str:
+    """Report whether one variable is set, without revealing its value.
+
+    Args:
+        name: The exact variable name to inspect.
+
+    Returns:
+        The set/unset state, the value length, and whether it is masked.
+    """
+    if not name:
+        return "Usage: /env_audit.check <NAME>"
+
+    if name not in os.environ:
+        return f"{name}: unset"
+
+    value = os.environ[name]
+    sensitive = _is_sensitive(name)
+    shown = MASK if sensitive else (value if value else "<empty>")
+    return f"{name}: set len={len(value)} sensitive={sensitive} value={shown}"
+
+
+INSTRUCTIONS = [dump, check]
 ```
 
-Module state lives for the process lifetime, so `/notes.add` followed by
-`/notes.list_notes` in the same session sees the accumulated notes.
+Real output with `MY_OPS_TOKEN=supersecret123` exported:
+
+```text
+MY_OPS_TOKEN: set len=14 sensitive=True value=***
+TOPSAILAI_AGENT_NAME: set len=9 sensitive=False value=TopsailAI
+NOPE_XYZ: unset
+```
+
+The masking is substring-based, so it also hides harmless names that merely contain a
+keyword: `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` is printed as `***` because
+its name contains `token`. That is the project's own convention, not a bug in this
+example, and it is the safe direction to err in.
 
 ## Passing Arguments
 
@@ -188,14 +433,23 @@ Module state lives for the process lifetime, so `/notes.add` followed by
 
 | Form | Example | Result |
 |---|---|---|
-| JSON object | `-p '{"service":"api","revision":"9"}'` | keyword arguments |
-| `key=value` pairs | `-p 'service=api;revision=9'` | keyword arguments |
-| Space-separated | `-p 'api 9'` | positional arguments |
-| Single token | `-p 'api'` | one positional argument |
+| JSON object | `-p '{"session_id":"20261020173453","limit":"3"}'` | keyword arguments |
+| `key=value` pairs | `-p 'session_id=20261020173453;limit=3'` | keyword arguments |
+| Space-separated | `-p '20261020173453 3'` | positional arguments |
+| Single token | `-p '3'` | one positional argument |
 
-`key=value` pairs are split on `;` (not on spaces), so `'service=api revision=9'` is
-parsed as one key `service` with value `api revision=9` and will not match a
+`key=value` pairs are split on `;` (not on spaces), so `'session_id=x limit=3'` is
+parsed as one key `session_id` with value `x limit=3` and will not match a
 two-parameter signature.
+
+Positional order follows the function signature, which is easy to get wrong.
+`/session_audit.events` takes `session_id` first and `limit` second, so `-p '5'` is
+read as `session_id="5"` and answers `no session found for id=5` rather than listing
+five event types. Use the `key=value` form when you mean the second parameter:
+
+```bash
+uv run python cli/topsailai_agent_call_instruction.py -i '/session_audit.events' -p 'limit=2'
+```
 
 ## Multiple Folders
 
@@ -215,8 +469,9 @@ If two folders define the same module name, the **last** folder wins.
 `topsailai_agent_call_instruction` runs one instruction and prints its real output:
 
 ```bash
-uv run python cli/topsailai_agent_call_instruction.py -i '/deploy.status' -p 'checkout'
-uv run python cli/topsailai_agent_call_instruction.py -i '/help deploy'
+uv run python cli/topsailai_agent_call_instruction.py -i '/session_audit.stats' -p '3'
+uv run python cli/topsailai_agent_call_instruction.py -i '/env_audit.check' -p 'TOPSAILAI_AGENT_NAME'
+uv run python cli/topsailai_agent_call_instruction.py -i '/help session_audit'
 ```
 
 ## Requirements and Limitations
