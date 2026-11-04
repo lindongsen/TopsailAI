@@ -20,18 +20,20 @@ CLI_PYTHONPATH := $(CLI_ROOT)
 
 PYTEST_FLAGS := -q --color=no --tb=line --disable-warnings
 
-.PHONY: help test test-unit test-bdd test-bdd-slow core-unit-test core-bdd-test core-bdd-slow cli-unit-test cli-bdd-test
+.PHONY: help test test-unit test-bdd test-bdd-slow test-bdd-packaged test-release core-unit-test core-bdd-test core-bdd-slow cli-unit-test cli-bdd-test
 
 help:
 	@printf '%s\n' \
 		'Available targets:' \
 		'  help            Show this help message' \
-		'  test            Run all tests (core + CLI + plugins, unit + BDD)' \
+		'  test            Run source tests (core + CLI + plugins, unit + BDD)' \
 		'  test-unit       Run core CLI and plugin unit tests' \
 		'  test-bdd        Run core CLI and plugin BDD tests' \
 		'  test-bdd-slow   Run core and CLI slow BDD acceptance tests' \
 		'  core-unit-test  Run core unit tests' \
-		'  core-bdd-test   Run core BDD tests' \
+		'  test-bdd-packaged Run compiled package BDD acceptance tests' \
+		'  test-release    Require source slow and packaged test gates' \
+		'  core-bdd-test   Run core source BDD tests' \
 		'  core-bdd-slow   Run core slow BDD acceptance tests' \
 		'  cli-unit-test   Run CLI unit tests' \
 		'  cli-bdd-test    Run CLI BDD tests' \
@@ -47,11 +49,16 @@ test-bdd: core-bdd-test cli-bdd-test plugins-bdd-test
 
 test-bdd-slow: core-bdd-slow
 
+test-release: test test-bdd-slow test-bdd-packaged
+
+test-bdd-packaged:
+	cd $(PROJECT_ROOT) && PYTHONPATH=$(CORE_PYTHONPATH) $(PYTHON) -B -m pytest $(PYTEST_FLAGS) -m "packaged" tests/bdd
+
 core-unit-test:
 	cd $(PROJECT_ROOT) && PYTHONPATH=$(CORE_PYTHONPATH) $(PYTHON) tests/run_tests.py
 
 core-bdd-test:
-	cd $(PROJECT_ROOT) && PYTHONPATH=$(CORE_PYTHONPATH) $(PYTHON) -B -m pytest $(PYTEST_FLAGS) -m "not slow" tests/bdd
+	cd $(PROJECT_ROOT) && PYTHONPATH=$(CORE_PYTHONPATH) $(PYTHON) -B -m pytest $(PYTEST_FLAGS) -m "not slow and not packaged" tests/bdd
 
 core-bdd-slow:
 	cd $(PROJECT_ROOT) && PYTHONPATH=$(CORE_PYTHONPATH) $(PYTHON) -B -m pytest $(PYTEST_FLAGS) -m "slow" tests/bdd

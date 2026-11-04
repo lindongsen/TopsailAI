@@ -365,7 +365,7 @@ def then_source_discovery_contract(compiled_discovery_ctx: CompiledDiscoveryCont
     "a packaged TopsailAI tree containing compiled control-handler modules without sibling source modules"
 )
 def given_compiled_control_handlers(compiled_discovery_ctx: CompiledDiscoveryContext) -> None:
-    """Require current compiled handlers; skip absent or outdated build inputs."""
+    """Require current compiled handlers; reject absent or outdated build inputs."""
     directory = _package_directory(
         compiled_discovery_ctx.packaged_root,
         "topsailai.workspace.control_handlers",
@@ -375,7 +375,7 @@ def given_compiled_control_handlers(compiled_discovery_ctx: CompiledDiscoveryCon
         if not _extension_artifacts(directory, name)
     ]
     if missing:
-        pytest.skip(
+        pytest.fail(
             f"packaged control-handler prerequisite absent or stale at "
             f"{compiled_discovery_ctx.packaged_root}: missing compiled modules "
             f"{missing}; rebuild with make build-deb at the repository root and "
