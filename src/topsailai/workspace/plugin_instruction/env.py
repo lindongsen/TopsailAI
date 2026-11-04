@@ -37,7 +37,6 @@ def set_env(k:str=None, v:str=None) -> str:
         os.environ[k] = v
     sensitive = any(word in k.lower() for word in (*PRINT_STEP_SENSITIVE_ARG_KEYS, "key"))
     result = f"set environment ok: {k} old={'***' if sensitive else old_v} new={'***' if sensitive else v}"
-    print(result)
     return result
 
 def get_env(k:str) -> str|None:

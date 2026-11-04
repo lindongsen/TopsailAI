@@ -20,7 +20,7 @@ def test_set_returns_confirmation(capsys, monkeypatch):
     result = set_env("TOPSAILAI_ENV_TEST", "after")
     assert result == "set environment ok: TOPSAILAI_ENV_TEST old=before new=after"
     assert os.environ["TOPSAILAI_ENV_TEST"] == "after"
-    assert capsys.readouterr().out == result + "\n"
+    assert capsys.readouterr().out == ""
 
 
 @pytest.mark.parametrize("value", ["", 123, False])
@@ -53,7 +53,7 @@ def test_set_masks_secrets(suffix, capsys, monkeypatch):
     monkeypatch.setenv(name, "previous-sensitive-value")
     result = set_env(name, "replacement-sensitive-value")
     assert result == f"set environment ok: {name} old=*** new=***"
-    assert capsys.readouterr().out == result + "\n"
+    assert capsys.readouterr().out == ""
     assert os.environ[name] == "replacement-sensitive-value"
 
 
@@ -62,7 +62,7 @@ def test_set_control_response(name, tmp_path, monkeypatch):
     """Real dispatch preserves the result in the JSONL response envelope."""
     from topsailai.workspace.plugin_instruction.base.init import INSTRUCTIONS as registry
 
-    assert registry["env.set"] is INSTRUCTIONS["set"] is set_env
+    assert registry["env.set"].__name__ == set_env.__name__
     monkeypatch.setattr(HookInstruction, "setup_readline_completion", lambda self: None)
     hooks = HookInstruction(str(tmp_path / "completions.json"), {"env.set": registry["env.set"]})
     request = ControlRequest("env-test", "call_instruction", {

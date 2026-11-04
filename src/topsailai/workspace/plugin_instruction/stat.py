@@ -24,7 +24,7 @@ def _get_current_tool_stat():
     return tool_stat.get_agent_tool_stat(get_ai_agent())
 
 
-def show_tool_call_stat(tool_name: str = None) -> None:
+def show_tool_call_stat(tool_name: str = None) -> str | None:
     """
     Display tool call statistics from the current agent's ToolStat instance.
 
@@ -54,20 +54,12 @@ def show_tool_call_stat(tool_name: str = None) -> None:
         if tool_name not in stat_info:
             return
 
-        # Print statistics for the specific tool
-        print(
-            json_tool.safe_json_dump(
-                stat_info.get(tool_name),
-                indent=2,
-            )
-        )
-        return
+        return json_tool.safe_json_dump(stat_info.get(tool_name), indent=2)
 
-    # Print statistics for all tools
-    print(json_tool.safe_json_dump(stat_info, indent=2))
+    return json_tool.safe_json_dump(stat_info, indent=2)
 
 
-def show_tool_call_errors(tool_name: str = None) -> None:
+def show_tool_call_errors(tool_name: str = None) -> str | None:
     """
     Display tool call errors from the current agent's ToolStat instance.
 
@@ -96,26 +88,17 @@ def show_tool_call_errors(tool_name: str = None) -> None:
         if tool_name not in error_info:
             return
 
-        # Print errors for the specific tool
-        print(
-            json_tool.safe_json_dump(
-                error_info.get(tool_name),
-                indent=2
-            )
-        )
-        return
+        return json_tool.safe_json_dump(error_info.get(tool_name), indent=2)
 
-    # Print errors for all tools
-    print(json_tool.safe_json_dump(error_info, indent=2))
+    return json_tool.safe_json_dump(error_info, indent=2)
 
 
-def log_tool_call():
-    """ Export tool_call info to log file """
+def log_tool_call() -> str:
+    """Export tool-call information and return a completion status."""
     stat = _get_current_tool_stat()
     content = stat.export_json()
     logger.info("ToolStat of tool_calls:\n [%s]", content)
-    print("DONE")
-    return
+    return "DONE"
 
 
 def _reset_current_tool_stat():

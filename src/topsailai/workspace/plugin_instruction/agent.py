@@ -153,8 +153,8 @@ def get_system_prompt() -> str:
     """
     agent = get_ai_agent()
     if agent:
-        print(agent.messages[0]["content"])
-    return
+        return agent.messages[0]["content"]
+    return None
 
 def get_env_prompt() -> str:
     """
@@ -162,24 +162,24 @@ def get_env_prompt() -> str:
     """
     agent = get_ai_agent()
     if agent:
-        print(agent.messages[1]["content"])
-    return
+        return agent.messages[1]["content"]
+    return None
 
 def get_tool_prompt() -> str:
     """
     Print tool prompt
     """
     agent = get_ai_agent()
-    if agent:
-        if env_tool.is_use_tool_calls():
-            from topsailai.tools.base.common import get_tools_for_chat
-            content = get_tools_for_chat(agent.available_tools)
-            content = json_tool.safe_json_dump(content, indent=2)
-            print(content)
-            print("\n---\n")
-        print(agent.messages[2]["content"])
+    if not agent:
+        return None
 
-    return
+    sections = []
+    if env_tool.is_use_tool_calls():
+        from topsailai.tools.base.common import get_tools_for_chat
+        content = get_tools_for_chat(agent.available_tools)
+        sections.append(json_tool.safe_json_dump(content, indent=2))
+    sections.append(agent.messages[2]["content"])
+    return "\n\n---\n\n".join(sections)
 
 def get_messages() -> str:
     """
@@ -190,14 +190,12 @@ def get_messages() -> str:
         return json_tool.json_dump(agent.messages) + f"\n\n---\n\nTotalCount: {len(agent.messages)}\n"
     return
 
-def get_tools() -> list[str]:
-    """
-    Print tools
-    """
+def get_tools() -> str | None:
+    """Return the sorted names of tools available to the active agent."""
     agent = get_ai_agent()
     if agent:
-        print(sorted(list(agent.available_tools.keys())))
-    return
+        return str(sorted(agent.available_tools.keys()))
+    return None
 
 
 def get_tools_observation() -> str:

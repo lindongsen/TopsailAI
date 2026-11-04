@@ -26,8 +26,8 @@ class TestGetSystemPrompt(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.agent import get_system_prompt
         result = get_system_prompt()
         
-        mock_print.assert_called_once_with("You are a helpful assistant")
-        self.assertIsNone(result)
+        mock_print.assert_not_called()
+        self.assertEqual(result, "You are a helpful assistant")
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     @patch("builtins.print")
@@ -71,8 +71,8 @@ class TestGetEnvPrompt(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.agent import get_env_prompt
         result = get_env_prompt()
         
-        mock_print.assert_called_once_with("ENV_VAR=value")
-        self.assertIsNone(result)
+        mock_print.assert_not_called()
+        self.assertEqual(result, "ENV_VAR=value")
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     @patch("builtins.print")
@@ -123,10 +123,11 @@ class TestGetToolPrompt(unittest.TestCase):
         mock_json_tool.safe_json_dump.return_value = '{"tools": []}'
         
         from topsailai.workspace.plugin_instruction.agent import get_tool_prompt
+        mock_print.reset_mock()
         result = get_tool_prompt()
         
-        self.assertGreaterEqual(mock_print.call_count, 2)
-        self.assertIsNone(result)
+        mock_print.assert_not_called()
+        self.assertEqual(result, '{"tools": []}\n\n---\n\nAvailable tools: tool1, tool2')
 
     @patch("topsailai.workspace.plugin_instruction.agent.env_tool")
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
@@ -145,8 +146,8 @@ class TestGetToolPrompt(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.agent import get_tool_prompt
         result = get_tool_prompt()
         
-        mock_print.assert_called_once_with("Available tools: tool1, tool2")
-        self.assertIsNone(result)
+        mock_print.assert_not_called()
+        self.assertEqual(result, "Available tools: tool1, tool2")
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     @patch("builtins.print")
@@ -187,8 +188,8 @@ class TestGetTools(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.agent import get_tools
         result = get_tools()
         
-        mock_print.assert_called_once_with(["tool1", "tool2", "tool3"])
-        self.assertIsNone(result)
+        mock_print.assert_not_called()
+        self.assertEqual(result, "['tool1', 'tool2', 'tool3']")
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     @patch("builtins.print")
@@ -213,8 +214,8 @@ class TestGetTools(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.agent import get_tools
         result = get_tools()
         
-        mock_print.assert_called_once_with([])
-        self.assertIsNone(result)
+        mock_print.assert_not_called()
+        self.assertEqual(result, "[]")
 
 
 class TestGetToolsObservation(unittest.TestCase):

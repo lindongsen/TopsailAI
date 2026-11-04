@@ -258,7 +258,7 @@ class TestPluginInstructionAgent(unittest.TestCase):
 
         # Should not raise exception
         result = get_system_prompt()
-        self.assertIsNone(result)
+        self.assertEqual(result, "You are a helpful assistant")
 
         # Cleanup
         cache_module.g_ai_agent = None

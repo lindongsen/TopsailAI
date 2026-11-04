@@ -53,9 +53,10 @@ class TestShowSkills(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.skill import show_skills
         
         with patch('builtins.print') as mock_print:
-            show_skills()
-            # Should print header and 2 skills
-            self.assertGreater(mock_print.call_count, 0)
+            result = show_skills()
+            mock_print.assert_not_called()
+            self.assertIn("Skill1: description", result)
+            self.assertIn("Skill2: description", result)
 
     def test_show_skills_with_filter_match(self):
         """Test show_skills with matching filter word."""
@@ -68,8 +69,10 @@ class TestShowSkills(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.skill import show_skills
         
         with patch('builtins.print') as mock_print:
-            show_skills(word="python")
+            result = show_skills(word="python")
+            mock_print.assert_not_called()
             mock_skill.__str__.assert_called()
+            self.assertIn("PythonSkill: description", result)
 
     def test_show_skills_with_filter_no_match(self):
         """Test show_skills with non-matching filter word."""
@@ -82,9 +85,10 @@ class TestShowSkills(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.skill import show_skills
         
         with patch('builtins.print') as mock_print:
-            show_skills(word="java")
-            # Should not print skill since name doesn't contain "java"
+            result = show_skills(word="java")
+            mock_print.assert_not_called()
             mock_skill.__str__.assert_not_called()
+            self.assertIn("ALL OF SKILL FOLDERS (0)", result)
 
 
 class TestUnloadSkill(unittest.TestCase):
@@ -116,12 +120,13 @@ class TestUnloadSkill(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.skill import unload_skill
         
         with patch('builtins.print') as mock_print:
-            unload_skill("/path/to/skill")
+            result = unload_skill("/path/to/skill")
             
             self.mock_skill_tool.unload_skill.assert_called_once_with("/path/to/skill")
             mock_agent.remove_tools.assert_not_called()
             mock_agent.reload_tool_prompt.assert_called_once()
-            mock_print.assert_called_with("OK")
+            mock_print.assert_not_called()
+            self.assertEqual(result, "OK")
 
     def test_unload_skill_last_skill_removes_tool(self):
         """Test that removing last skill removes skill_tool from agent."""
@@ -132,7 +137,7 @@ class TestUnloadSkill(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.skill import unload_skill
         
         with patch('builtins.print'):
-            unload_skill("/path/to/skill")
+            result = unload_skill("/path/to/skill")
             
             mock_agent.remove_tools.assert_called_once_with("skill_tool")
             mock_agent.reload_tool_prompt.assert_called_once()
@@ -145,10 +150,11 @@ class TestUnloadSkill(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.skill import unload_skill
         
         with patch('builtins.print') as mock_print:
-            unload_skill("/path/to/skill")
+            result = unload_skill("/path/to/skill")
             
             self.mock_skill_tool.unload_skill.assert_called_once()
-            mock_print.assert_called_with("OK")
+            mock_print.assert_not_called()
+            self.assertEqual(result, "OK")
 
 
 class TestLoadSkill(unittest.TestCase):
@@ -180,12 +186,13 @@ class TestLoadSkill(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.skill import load_skill
         
         with patch('builtins.print') as mock_print:
-            load_skill("/path/to/skill")
+            result = load_skill("/path/to/skill")
             
             self.mock_skill_tool.load_skill.assert_called_once_with("/path/to/skill")
             mock_agent.add_tools_by_module.assert_called_once_with("topsailai.tools.skill_tool")
             mock_agent.reload_tool_prompt.assert_called_once()
-            mock_print.assert_called_with("OK")
+            mock_print.assert_not_called()
+            self.assertEqual(result, "OK")
 
     def test_load_skill_failure(self):
         """Test skill load failure."""
@@ -196,9 +203,10 @@ class TestLoadSkill(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.skill import load_skill
         
         with patch('builtins.print') as mock_print:
-            load_skill("/path/to/skill")
+            result = load_skill("/path/to/skill")
             
-            mock_print.assert_called_with("Failed")
+            mock_print.assert_not_called()
+            self.assertEqual(result, "Failed")
 
     def test_load_skill_no_agent(self):
         """Test load when no agent is available."""
@@ -208,10 +216,11 @@ class TestLoadSkill(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.skill import load_skill
         
         with patch('builtins.print') as mock_print:
-            load_skill("/path/to/skill")
+            result = load_skill("/path/to/skill")
             
             self.mock_skill_tool.load_skill.assert_called_once()
-            mock_print.assert_called_with("OK")
+            mock_print.assert_not_called()
+            self.assertEqual(result, "OK")
 
 
 class TestShowHooks(unittest.TestCase):
@@ -239,10 +248,11 @@ class TestShowHooks(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.skill import show_hooks
         
         with patch('builtins.print') as mock_print:
-            show_hooks()
+            result = show_hooks()
             
             self.mock_skill_hook.get_hooks.assert_called_once()
-            mock_print.assert_called_once()
+            mock_print.assert_not_called()
+            self.assertEqual(result, "['hook1', 'hook2', 'hook3']")
 
     def test_show_hooks_empty(self):
         """Test show_hooks with no hooks available."""
@@ -251,9 +261,10 @@ class TestShowHooks(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.skill import show_hooks
         
         with patch('builtins.print') as mock_print:
-            show_hooks()
+            result = show_hooks()
             
-            mock_print.assert_called_once_with([])
+            mock_print.assert_not_called()
+            self.assertEqual(result, "[]")
 
 
 class TestInstructions(unittest.TestCase):

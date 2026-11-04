@@ -36,9 +36,10 @@ class TestShowToolCallStat(unittest.TestCase):
         mock_get_ai_agent.return_value = mock_agent
         mock_tool_stat.get_agent_tool_stat.return_value = self.mock_stat
 
-        show_tool_call_stat()
+        result = show_tool_call_stat()
 
-        mock_print.assert_called_once()
+        mock_print.assert_not_called()
+        self.assertEqual(json.loads(result), self.mock_stat.stat)
         mock_tool_stat.get_agent_tool_stat.assert_called_once_with(mock_agent)
 
     @patch("topsailai.workspace.plugin_instruction.stat.get_ai_agent")
@@ -54,9 +55,10 @@ class TestShowToolCallStat(unittest.TestCase):
         mock_agent.runtime.tool_stat = stat
         mock_get_ai_agent.return_value = mock_agent
 
-        show_tool_call_stat("api_call")
+        result = show_tool_call_stat("api_call")
 
-        payload = json.loads(mock_print.call_args.args[0])
+        mock_print.assert_not_called()
+        payload = json.loads(result)
         self.assertEqual(payload["execution_duration_count"], 1)
         self.assertEqual(payload["execution_duration_sum_sec"], 12.5)
         self.assertEqual(payload["execution_duration_avg_sec"], 12.5)
@@ -74,9 +76,10 @@ class TestShowToolCallStat(unittest.TestCase):
         mock_get_ai_agent.return_value = mock_agent
         mock_tool_stat.get_agent_tool_stat.return_value = self.mock_stat
 
-        show_tool_call_stat("api_call")
+        result = show_tool_call_stat("api_call")
 
-        mock_print.assert_called_once()
+        mock_print.assert_not_called()
+        self.assertEqual(json.loads(result), self.mock_stat.stat["api_call"])
         mock_tool_stat.get_agent_tool_stat.assert_called_once_with(mock_agent)
 
     @patch("topsailai.workspace.plugin_instruction.stat.get_ai_agent")
@@ -121,9 +124,10 @@ class TestShowToolCallStat(unittest.TestCase):
         mock_get_ai_agent.return_value = None
         mock_tool_stat.get_agent_tool_stat.return_value = self.mock_stat
 
-        show_tool_call_stat()
+        result = show_tool_call_stat()
 
-        mock_print.assert_called_once()
+        mock_print.assert_not_called()
+        self.assertEqual(json.loads(result), self.mock_stat.stat)
         mock_tool_stat.get_agent_tool_stat.assert_called_once_with(None)
 
 
@@ -149,9 +153,10 @@ class TestShowToolCallErrors(unittest.TestCase):
         mock_get_ai_agent.return_value = mock_agent
         mock_tool_stat.get_agent_tool_stat.return_value = self.mock_stat
 
-        show_tool_call_errors()
+        result = show_tool_call_errors()
 
-        mock_print.assert_called_once()
+        mock_print.assert_not_called()
+        self.assertEqual(json.loads(result), self.mock_stat.errors)
         mock_tool_stat.get_agent_tool_stat.assert_called_once_with(mock_agent)
 
     @patch("topsailai.workspace.plugin_instruction.stat.get_ai_agent")
@@ -165,9 +170,10 @@ class TestShowToolCallErrors(unittest.TestCase):
         mock_get_ai_agent.return_value = mock_agent
         mock_tool_stat.get_agent_tool_stat.return_value = self.mock_stat
 
-        show_tool_call_errors("api_call")
+        result = show_tool_call_errors("api_call")
 
-        mock_print.assert_called_once()
+        mock_print.assert_not_called()
+        self.assertEqual(json.loads(result), self.mock_stat.errors["api_call"])
 
     @patch("topsailai.workspace.plugin_instruction.stat.get_ai_agent")
     @patch("topsailai.workspace.plugin_instruction.stat.tool_stat")
@@ -218,10 +224,11 @@ class TestLogToolCall(unittest.TestCase):
         mock_stat.export_json.return_value = '{"api_call": {"count": 10}}'
         mock_tool_stat.get_agent_tool_stat.return_value = mock_stat
 
-        log_tool_call()
+        result = log_tool_call()
 
         mock_stat.export_json.assert_called_once()
-        mock_print.assert_called_once_with("DONE")
+        mock_print.assert_not_called()
+        self.assertEqual(result, "DONE")
         mock_tool_stat.get_agent_tool_stat.assert_called_once_with(mock_agent)
 
     @patch("topsailai.workspace.plugin_instruction.stat.get_ai_agent")
@@ -237,9 +244,10 @@ class TestLogToolCall(unittest.TestCase):
         mock_stat.export_json.return_value = "{}"
         mock_tool_stat.get_agent_tool_stat.return_value = mock_stat
 
-        log_tool_call()
+        result = log_tool_call()
 
-        mock_print.assert_called_once_with("DONE")
+        mock_print.assert_not_called()
+        self.assertEqual(result, "DONE")
 
 
 class TestInstructions(unittest.TestCase):

@@ -9,75 +9,46 @@ from topsailai.workspace.plugin_instruction.base.cache import get_ai_agent
 from topsailai.skill_hub import skill_tool, skill_hook
 
 
-def show_skills(word:str=None):
-    """Print skills
-
-    Args:
-        word (str, optional): Simple fuzzy matching
-    """
+def show_skills(word: str = None) -> str | None:
+    """Return cached skills, optionally filtered by name."""
     skills = skill_tool.get_skills_from_cache()
     if not skills:
-        return
-    print()
-    print("# SKILLS")
-    skill_list = []
-    for skill in skills:
-        if word:
-            if word in skill.name:
-                print(str(skill))
-                skill_list.append(str(skill.folder))
-        else:
-            print(str(skill))
-            skill_list.append(str(skill.folder))
-    print(
-f"""
----
+        return None
 
-## ALL OF SKILL FOLDERS ({len(skill_list)})
-{"\n".join(skill_list)}
-""")
-    return
+    selected = [skill for skill in skills if not word or word in skill.name]
+    skill_folders = [str(skill.folder) for skill in selected]
+    sections = ["# SKILLS", *(str(skill) for skill in selected)]
+    sections.append(
+        f"---\n\n## ALL OF SKILL FOLDERS ({len(skill_folders)})\n"
+        + "\n".join(skill_folders)
+    )
+    return "\n\n".join(sections)
 
-def unload_skill(folder:str):
-    """
-    unload a skill
 
-    Args:
-        folder (str): folder path
-    """
+def unload_skill(folder: str) -> str:
+    """Unload a skill and return its completion status."""
     skill_tool.unload_skill(folder)
     agent = get_ai_agent()
     if agent:
         if not skill_tool.get_skills_from_cache():
             agent.remove_tools("skill_tool")
         agent.reload_tool_prompt()
-    print("OK")
-    return
+    return "OK"
 
-def load_skill(folder:str):
-    """
-    Load a skill
 
-    Args:
-        folder (str): folder path
-    """
+def load_skill(folder: str) -> str:
+    """Load a skill and return its completion status."""
     skill_tool.load_skill(folder)
     agent = get_ai_agent()
     if agent:
         agent.add_tools_by_module("topsailai.tools.skill_tool")
         agent.reload_tool_prompt()
-    if skill_tool.exists_skill(folder):
-        print("OK")
-    else:
-        print("Failed")
-    return
+    return "OK" if skill_tool.exists_skill(folder) else "Failed"
 
-def show_hooks():
-    """
-    Show skill hooks
-    """
-    print(sorted(skill_hook.get_hooks().keys()))
-    return
+
+def show_hooks() -> str:
+    """Return the sorted skill hook names."""
+    return str(sorted(skill_hook.get_hooks().keys()))
 
 INSTRUCTIONS = dict(
     show=show_skills,
