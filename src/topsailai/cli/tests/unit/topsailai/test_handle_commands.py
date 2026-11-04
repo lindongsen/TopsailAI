@@ -1712,6 +1712,39 @@ class TestWorkspaceFormat(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         mock_print_json.assert_called_once_with(include_completed=False)
 
+    @patch("cli_topsailai.core._print_workspace_json")
+    def test_list_json_selects_json_over_default_table(self, mock_print_json: MagicMock) -> None:
+        """An explicit list JSON selection overrides the default table format."""
+        from cli_topsailai.core import main
+
+        with self.assertRaises(SystemExit) as raised:
+            main(["workspace", "list", "--json"])
+
+        self.assertEqual(raised.exception.code, 0)
+        mock_print_json.assert_called_once_with(include_completed=False)
+
+    @patch("cli_topsailai.core._print_workspace_json")
+    def test_list_inherits_workspace_json_format(self, mock_print_json: MagicMock) -> None:
+        """The list command inherits the workspace-scope JSON format."""
+        from cli_topsailai.core import main
+
+        with self.assertRaises(SystemExit) as raised:
+            main(["workspace", "--format", "json", "list"])
+
+        self.assertEqual(raised.exception.code, 0)
+        mock_print_json.assert_called_once_with(include_completed=False)
+
+    @patch("cli_topsailai.core._print_workspace_table")
+    def test_list_defaults_to_table(self, mock_table: MagicMock) -> None:
+        """The list command defaults to the human-readable table."""
+        from cli_topsailai.core import main
+
+        with self.assertRaises(SystemExit) as raised:
+            main(["workspace", "list"])
+
+        self.assertEqual(raised.exception.code, 0)
+        mock_table.assert_called_once_with(include_completed=False)
+
     @patch("cli_topsailai.core._print_workspace_table")
     def test_workspace_without_format_preserves_table(self, mock_table: MagicMock) -> None:
         """The workspace command keeps the existing table output by default."""

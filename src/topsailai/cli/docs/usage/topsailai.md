@@ -239,8 +239,8 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | Command | Description |
 |---------|-------------|
 | `runtime` | Execute one exact send, btw, control or logs operation; see the contract above. |
-| `workspace [-f json]` | Display the workspace task list and exit. The default is the human-readable table; `-f json` or `--format json` emits one JSON document. |
-| `workspace kill <session_id> -g GENERATION [--json]` | Send SIGTERM without confirmation only when the exact session process generation is still verified. Obtain `GENERATION` from `workspace -f json`; success means the OS accepted the signal, not that process exit was confirmed. |
+| `workspace [-f json] [list [--json]]` | Display the workspace task list and exit. The default is the human-readable table; `-f/--format json` sets the workspace-scope format, while `list --json` explicitly selects JSON and takes precedence. |
+| `workspace kill <session_id> -g GENERATION [--json]` | Send SIGTERM without confirmation only when the exact session process generation is still verified. Obtain `GENERATION` from `workspace list --json` or `workspace -f json`; success means the OS accepted the signal, not that process exit was confirmed. |
 | `workspace agent [<folder>] [-m MODE] [-b/--background] [--non-interactive] [--json]` | Launch a configured agent in the foreground; the folder defaults to the caller's working directory. Background defaults to raw and honors an explicit `-m raw|tmux|dtach`, failing closed with exit code 4 when that mechanism is unavailable. `--non-interactive` suppresses launcher prompts for this launch only. |
 | `workspace resume -s SESSION [-d DRIVER] [-m MODE] [-b/--background] [--json]` | Resume one exact persisted idle session; background success means submission rather than readiness. |
 | `workspace driver <start/status/stop> -s SESSION [-p PID] [--json]` | Start, inspect or stop one exact session driver; see below. |
@@ -280,7 +280,7 @@ The folder is optional and defaults to the caller's working directory, so `topsa
 ./topsailai_cli.py workspace
 
 # Display the workspace task list as JSON
-topsailai workspace -f json
+topsailai workspace list --json
 
 # List all usage documentation files
 ./topsailai_cli.py docs list
@@ -346,7 +346,7 @@ topsailai workspace driver status -s SESSION -p PID --json
 topsailai workspace driver stop -s SESSION -p PID --json
 ```
 
-Replace SESSION/PID with the intended session. All three commands exit without entering the interactive watcher. `-s/--session` is required and exact (no wildcards); optional `-p/--pid` is a positive integer and intersects the session selector. Conflicting repeated selectors are rejected. Help performs no discovery or launch. Existing `topsailai workspace [-f json]` list behavior is unchanged.
+Replace SESSION/PID with the intended session. All three commands exit without entering the interactive watcher. `-s/--session` is required and exact (no wildcards); optional `-p/--pid` is a positive integer and intersects the session selector. Conflicting repeated selectors are rejected. Help performs no discovery or launch. Existing `topsailai workspace [-f json]` list behavior is unchanged; `workspace list --json` overrides the scope-level format.
 
 Start requires a live RUN/INPUT authoritative session stdout row. Task, temporary, legacy, changed and ambiguous identities are rejected. Multiple live PIDs for the session remain rejected even with `-p`. Status can inspect exited rows; multiple historical rows require PID rather than choosing newest. All three commands reuse default authority resolution and driver identity observations. Invalid configuration fails closed. Start reuses the interactive launcher's fresh target checks and driver-owned duplicate exclusion; a verified existing owner returns `already_running` without spawning another driver. Status is read-only and never retries or repairs evidence.
 

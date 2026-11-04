@@ -45,12 +45,13 @@ references:
 
 ## Non-interactive subcommands
 
+- `workspace [-f|--format json] [list [--json]]` — displays the task list. Scope-level `-f/--format` sets the output format; `list --json` overrides it. The default is the table.
 - `runtime [-s SESSION] [-p PID] -i INSTRUCTION`
 - `runtime send|btw [-s SESSION] [-p PID] -m MESSAGE|--stdin`
 - `runtime control ACTION [-s SESSION] [-p PID] [-a JSON]`
 - `runtime logs [-s SESSION] [-p PID] [-n N] [--json]` — finite recent session log query
 - `workspace agent [<folder>] [-m MODE] [-b|--background] [--non-interactive] [--json]`
-- `workspace kill SESSION -g GENERATION [--json]` — requires the verified `process_generation` from `workspace -f json` and fails closed when process-instance evidence changes or is unavailable
+- `workspace kill SESSION -g GENERATION [--json]` — requires the verified `process_generation` from `workspace list --json` or `workspace -f json` and fails closed when process-instance evidence changes or is unavailable
 - `workspace driver start|status|stop -s SESSION [-p PID] [--json]`
 - `project add|del|list|launch|resume`
 - `models list|add|get|update|delete`

@@ -419,6 +419,8 @@ You can also run the CLI in non-interactive documentation mode:
 
 The prompt `[workspace]>` indicates that the CLI is in workspace scope (the task list). Choosing a session switches to `[session:<session_id>]>` scope.
 
+For non-interactive task-list output, `topsailai workspace list` defaults to the human-readable table. Scope-level `-f json` / `--format json` selects JSON, and `topsailai workspace list --json` explicitly selects JSON, overriding the scope format.
+
 ## Non-interactive Runtime Operations
 
 Use `topsailai runtime` to send input, queue a by-the-way message, or request control without entering the interactive log viewer:

@@ -322,6 +322,8 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
             resume_args, startup_cwd=getattr(args, "startup_cwd", None),
         )
     output_format = getattr(args, "format", None)
+    if workspace_command == "list" and getattr(args, "json", False):
+        output_format = "json"
     include_completed = bool(getattr(args, "all", False))
     if output_format == "json":
         _print_workspace_json(include_completed=include_completed)
@@ -1336,10 +1338,14 @@ def main(argv: Optional[List[str]] = None) -> None:
             help="agent launch mode: raw, dtach, tmux, or auto (default: auto; auto prefers tmux, then dtach, then raw)",
         )
         subparsers = help_parser.add_subparsers(dest="subcommand", help="non-interactive commands")
-        subparsers.add_parser(
+        workspace_help_parser = subparsers.add_parser(
             "workspace",
             help="display the workspace task list and exit",
             add_help=False,
+        )
+        workspace_help_subparsers = workspace_help_parser.add_subparsers(dest="workspace_command")
+        workspace_help_subparsers.add_parser(
+            "list", help="display the workspace task list and exit", add_help=False,
         )
         docs_parser = subparsers.add_parser(
             "docs",
@@ -1492,6 +1498,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     workspace_parser.set_defaults(func=_handle_workspace_subcommand)
     workspace_subparsers = workspace_parser.add_subparsers(dest="workspace_command")
+    workspace_list_parser = workspace_subparsers.add_parser(
+        "list", help="display the workspace task list and exit",
+    )
+    workspace_list_parser.add_argument(
+        "--json", action="store_true", help="output the list as JSON, overriding the workspace format",
+    )
+    workspace_list_parser.set_defaults(func=_handle_workspace_subcommand)
     workspace_subparsers.add_parser(
         "agent", help="launch an agent in a folder (default: current directory)",
         add_help=False,
