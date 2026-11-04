@@ -45,7 +45,6 @@ SHARED_MODULE_ALLOWLISTS = {
         "ctx_tool",
         "file_readonly_tool",
         "file_tool",
-        "git_tool",
         "human_tool",
         "jev_tool",
         "multimodal_readonly_tool",

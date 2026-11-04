@@ -24,7 +24,6 @@ from pytest_bdd import given, parsers, then, when
 
 from tests.bdd.temp_storage import BDDTempStorage
 from tests.bdd.tool_param_harness import (
-    PROJECT_WORKSPACE,
     call_tool,
     read_text,
     resolve_value,
@@ -148,18 +147,6 @@ def call_exec_cmd_with_parameter(ctx, command, param, value):
         "exec_cmd",
         cmd=_expand(ctx, command),
         cwd=_tmp_folder(ctx),
-        **{param: _expand(ctx, value)},
-    )
-
-
-@when(parsers.parse('the tool exec_readonly is called with command {command} and parameter {param} set to {value}'))
-def call_exec_readonly_with_parameter(ctx, command, param, value):
-    """A read-only git command plus one stringified control argument."""
-    _invoke(
-        ctx,
-        "exec_readonly",
-        cmd=_expand(ctx, command),
-        cwd=PROJECT_WORKSPACE,
         **{param: _expand(ctx, value)},
     )
 

@@ -1,0 +1,76 @@
+[
+  {
+    "name": "read-only-inspection",
+    "match": "cmd_tool-exec_cmd",
+    "mode": "bypass",
+    "priority": 10,
+    "logic": "or",
+    "params": [
+      { "param": "cmd", "op": "starts_with", "value": "git status" },
+      { "param": "cmd", "op": "starts_with", "value": "git log" },
+      { "param": "cmd", "op": "starts_with", "value": "git diff" },
+      { "param": "cmd", "op": "starts_with", "value": "ls " },
+      { "param": "cmd", "op": "starts_with", "value": "cat " },
+      { "param": "cmd", "op": "starts_with", "value": "grep " }
+    ]
+  },
+  {
+    "name": "scratch-file-write",
+    "match": "file_tool-write_file",
+    "mode": "bypass",
+    "priority": 20,
+    "params": [
+      { "param": "file_path", "op": "regex", "value": "^/tmp/\\.tmp/" }
+    ]
+  },
+  {
+    "name": "destructive-command",
+    "match": "cmd_tool-exec_cmd",
+    "mode": "require",
+    "priority": 30,
+    "timeout": 30,
+    "policy": "deny",
+    "logic": "or",
+    "params": [
+      { "param": "cmd", "op": "regex", "value": "(^|\\s)(rm|rmdir|shred|dd|mkfs)\\s" },
+      { "param": "cmd", "op": "contains", "value": "git reset --hard" },
+      { "param": "cmd", "op": "contains", "value": "git push --force" },
+      { "param": "cmd", "op": "starts_with", "value": "sudo " }
+    ]
+  },
+  {
+    "name": "production-file-write",
+    "match": "file_tool-write_file",
+    "mode": "require",
+    "priority": 40,
+    "timeout": 60,
+    "policy": "deny",
+    "params": [
+      { "param": "file_path", "op": "regex", "value": "^/(etc|srv|opt|var)/" }
+    ]
+  },
+  {
+    "name": "network-egress",
+    "match": "cmd_tool-exec_cmd",
+    "mode": "require",
+    "priority": 50,
+    "timeout": 20,
+    "policy": "ask_again",
+    "params": [
+      { "param": "cmd", "op": "regex", "value": "(^|\\s)(curl|wget|ssh|scp)\\s" }
+    ]
+  },
+  {
+    "name": "long-running-build",
+    "match": "cmd_tool-exec_cmd",
+    "mode": "require",
+    "priority": 60,
+    "timeout": 15,
+    "policy": "allow",
+    "logic": "and",
+    "params": [
+      { "param": "cmd", "op": "starts_with", "value": "make " },
+      { "param": "cmd", "op": "contains", "value": "test" }
+    ]
+  }
+]

@@ -24,14 +24,12 @@ import json
 import os
 from typing import Any, Callable
 
-import topsailai
-from topsailai.tools import cmd_tool, git_tool, file_tool
+from topsailai.tools import cmd_tool, file_tool
 from topsailai.tools.file_tool_utils import file_read_line, file_write_code_block
 
 # ``exec_cmd`` resolves its default working directory from the environment, which is
 # empty under a bare pytest run; command scenarios therefore always pass an explicit
-# cwd. The repository workspace is used for read-only git commands.
-PROJECT_WORKSPACE = os.path.dirname(os.path.abspath(topsailai.__file__))
+# cwd.
 
 SAMPLE_LINE_COUNT = 20
 SHORT_FILE_LINE_COUNT = 10
@@ -42,7 +40,6 @@ SHORT_FILE_LINE_COUNT = 10
 # ``write_file_simple``, which does not expose ``seek``/``to_insert`` at all.
 TOOL_FUNCS: dict[str, Callable[..., Any]] = {
     "exec_cmd": cmd_tool.exec_cmd,
-    "exec_readonly": git_tool.exec_readonly,
     "read_file": file_tool.read_file,
     "write_file": file_tool.write_file,
     "insert_content_to_file": file_tool.insert_content_to_file,

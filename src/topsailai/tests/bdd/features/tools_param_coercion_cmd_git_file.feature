@@ -90,36 +90,6 @@ Feature: Tools accept string-typed parameters from the LLM
     Then the tool returns a machine-readable parameter error
     And the parameter error names the cmd parameter
 
-  # ---------------------------------------------------------- exec_readonly
-  Scenario Outline: exec_readonly understands a timeout that arrives as text
-    When the tool exec_readonly is called with command git rev-parse --is-inside-work-tree and parameter timeout set to <timeout>
-    Then the command succeeds and prints true
-
-    Examples: coercible timeouts
-      | timeout     |
-      | 30          |
-      | <sp>15<sp>  |
-      | 1e1         |
-      | int:20      |
-
-  Scenario Outline: exec_readonly rejects a timeout that is not a finite number
-    When the tool exec_readonly is called with command git rev-parse --is-inside-work-tree and parameter timeout set to <timeout>
-    Then the tool returns a machine-readable parameter error
-    And the parameter error names the timeout parameter
-
-    Examples: unusable timeouts
-      | timeout |
-      | abc     |
-      | NaN     |
-      | inf     |
-      | empty   |
-      | null    |
-
-  Scenario: exec_readonly keeps its own timeout outcome as a business answer
-    When the tool exec_readonly is called with command git rev-parse --is-inside-work-tree and parameter timeout set to 0
-    Then the tool reports a business problem instead of a parameter error
-    And the tool response carries no raw conversion exception
-
   # -------------------------------------------------------------- read_file
   Scenario Outline: read_file slices the file with text byte offsets
     When the tool read_file is called on the test file with parameter <param> set to <value>
