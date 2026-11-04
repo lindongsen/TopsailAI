@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.bdd.agent_plugin_harness import inspect_plugin
+from plugin_harness import inspect_plugin
 
 
 @pytest.mark.parametrize("configured,enabled,disabled,present", [
@@ -21,8 +21,9 @@ def test_explicit_loading(tmp_path, configured, enabled, disabled, present):
                       ("WritingAssistant", "ProgrammingAssistant", "WritingAssistantMultiTasks"))
     assert result["names"] == (expected if present else [])
     assert result["story_callable"]
+    assert result["bigfile_present"] == (configured and enabled == "*")
     if present:
-        assert result["source"] == "topsailai.plugins.tools.agent_tool"
+        assert result["source"] == "plugins.tools.agent_tool"
         assert "Unless the user explicitly" in result["prompt"]
     else:
         assert not result["prompt"]
@@ -54,3 +55,12 @@ def test_registration_source_prompt_observation_reload(monkeypatch):
     prompt_tool.reload_prompt_on_module("agent_tool")
     assert calls == [1]
     assert prompt_tool._get_tool_module_path("cmd_tool") == "topsailai.tools.cmd_tool"
+
+
+def test_workspace_has_no_package_initializers():
+    """Keep plugin discovery independent of package marker files."""
+    from pathlib import Path
+
+    workspace = Path(__file__).resolve().parents[1]
+    assert not (workspace / "__init__.py").exists()
+    assert not (workspace / "tools" / "__init__.py").exists()

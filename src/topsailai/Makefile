@@ -26,23 +26,24 @@ help:
 	@printf '%s\n' \
 		'Available targets:' \
 		'  help            Show this help message' \
-		'  test            Run all tests (core + CLI, unit + BDD)' \
-		'  test-unit       Run core and CLI unit tests' \
-		'  test-bdd        Run core and CLI BDD tests' \
+		'  test            Run all tests (core + CLI + plugins, unit + BDD)' \
+		'  test-unit       Run core CLI and plugin unit tests' \
+		'  test-bdd        Run core CLI and plugin BDD tests' \
 		'  test-bdd-slow   Run core and CLI slow BDD acceptance tests' \
 		'  core-unit-test  Run core unit tests' \
 		'  core-bdd-test   Run core BDD tests' \
 		'  core-bdd-slow   Run core slow BDD acceptance tests' \
 		'  cli-unit-test   Run CLI unit tests' \
 		'  cli-bdd-test    Run CLI BDD tests' \
+		'  plugins-test    Run independent plugin unit and BDD tests' \
 		'' \
 		'All test targets run through uv with an explicit PYTHONPATH.'
 
 test: test-unit test-bdd
 
-test-unit: core-unit-test cli-unit-test
+test-unit: core-unit-test cli-unit-test plugins-unit-test
 
-test-bdd: core-bdd-test cli-bdd-test
+test-bdd: core-bdd-test cli-bdd-test plugins-bdd-test
 
 test-bdd-slow: core-bdd-slow
 
@@ -60,3 +61,13 @@ cli-unit-test:
 
 cli-bdd-test:
 	cd $(CLI_ROOT) && PYTHONPATH=$(CLI_PYTHONPATH) $(PYTHON) -B -m pytest $(PYTEST_FLAGS) tests/bdd
+
+.PHONY: plugins-test plugins-unit-test plugins-bdd-test
+plugins-test:
+	$(MAKE) -C $(PROJECT_ROOT)/plugins test
+
+plugins-unit-test:
+	$(MAKE) -C $(PROJECT_ROOT)/plugins test-unit
+
+plugins-bdd-test:
+	$(MAKE) -C $(PROJECT_ROOT)/plugins test-bdd

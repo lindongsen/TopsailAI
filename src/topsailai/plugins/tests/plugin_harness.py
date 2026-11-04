@@ -20,7 +20,7 @@ def inspect_plugin(storage, configured, enabled="*", disabled=""):
                TOPSAILAI_EVENTS_ENABLED="0",
                TOPSAILAI_DISABLED_TOOLS=disabled,
                TOPSAILAI_ENABLED_TOOLS=enabled,
-               TOPSAILAI_PLUGIN_TOOLS="topsailai.plugins.tools" if configured else "")
+               TOPSAILAI_PLUGIN_TOOLS=str(root / "plugins" / "tools") if configured else "")
     code = """
 import json
 from topsailai.tools.base.init import TOOLS
@@ -30,6 +30,7 @@ from topsailai.tools.agent_tool_utils.story import agent_memory_as_story
 names = sorted(name for name in TOOLS if name.startswith('agent_tool-'))
 print('RESULT:' + json.dumps(dict(names=names,
     source=TOOL_MODULES.get('agent_tool'),
+    bigfile_present='bigfile_tool-read_file' in TOOLS,
     prompt=get_prompt_by_tools(names), story_callable=callable(agent_memory_as_story))))
 """
     result = subprocess.run([resolve_python_interpreter(), "-B", "-c", code],

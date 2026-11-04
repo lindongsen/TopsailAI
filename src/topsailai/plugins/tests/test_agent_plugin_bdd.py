@@ -2,7 +2,7 @@
 
 from pytest_bdd import given, when, then, parsers, scenarios
 
-from tests.bdd.agent_plugin_harness import inspect_plugin
+from plugin_harness import inspect_plugin
 
 scenarios("features/agent_plugin.feature")
 
@@ -14,9 +14,9 @@ def plugin_configuration(configuration):
 
 
 @when("the tool registry starts in a fresh process", target_fixture="registry")
-def start_registry(configuration, bdd_tmp_path):
+def start_registry(configuration, tmp_path):
     """Discover actual tools without calling an external model."""
-    return inspect_plugin(bdd_tmp_path, configuration != "absent",
+    return inspect_plugin(tmp_path, configuration != "absent",
                           enabled="" if configuration == "default-flag" else "*",
                           disabled="agent_tool" if configuration == "disabled" else "")
 
@@ -29,5 +29,5 @@ def assert_availability(registry, availability):
                       ("WritingAssistant", "ProgrammingAssistant", "WritingAssistantMultiTasks"))
     assert registry["names"] == (expected if availability == "present" else [])
     if availability == "present":
-        assert registry["source"] == "topsailai.plugins.tools.agent_tool"
+        assert registry["source"] == "plugins.tools.agent_tool"
         assert "Unless the user explicitly" in registry["prompt"]
