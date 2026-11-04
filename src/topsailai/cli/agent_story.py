@@ -32,7 +32,7 @@ import argparse
 
 import _import_topsailai
 
-from topsailai.tools.agent_tool import agent_memory_as_story
+from topsailai.tools.agent_tool_utils.story import agent_memory_as_story
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
 
 

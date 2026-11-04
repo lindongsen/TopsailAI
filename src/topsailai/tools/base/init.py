@@ -79,9 +79,13 @@ def is_tool_enabled(tool_mod):
     logger.debug("tool is disabled: [%s], unmatched", tool_name)
     return False
 
+# Registration modules own prompts even when their functions are imported.
+TOOL_MODULES = {}
+
 # key is tool_name, value is function
 TOOLS = module_tool.get_function_map(
     "topsailai.tools", "TOOLS",
+    module_sources=TOOL_MODULES,
     conn_char=CONN_CHAR,
     hook_check=is_tool_enabled,
     need_module_log=False,

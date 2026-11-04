@@ -87,6 +87,7 @@ def expand_plugin_tools(tools=None, tools_info=None):
     for plugin_path in env_plugin_tools:
         _new_tools = module_tool.get_external_function_map(
             plugin_path, "TOOLS",
+            module_sources=base_init.TOOL_MODULES,
             conn_char=CONN_CHAR,
             hook_check=is_tool_enabled,
             need_module_log=False,

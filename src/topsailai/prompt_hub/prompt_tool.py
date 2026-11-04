@@ -219,6 +219,13 @@ def get_tools_by_env(raw_tools:list[str]):
 
     return tools
 
+def _get_tool_module_path(module_name):
+    """Resolve the registration module, not an imported function's owner."""
+    from topsailai.tools.base.init import TOOL_MODULES
+
+    return TOOL_MODULES.get(module_name, f"topsailai.tools.{module_name}")
+
+
 def get_prompt_from_module(module_name:str, key:str="PROMPT") -> str:
     """
     Args:
@@ -229,7 +236,7 @@ def get_prompt_from_module(module_name:str, key:str="PROMPT") -> str:
         str: prompt content.
     """
     try:
-        m = __import__(f"topsailai.tools.{module_name}", None, None, [module_name])
+        m = __import__(_get_tool_module_path(module_name), None, None, [module_name])
         return getattr(m, key)
     except ModuleNotFoundError:
         pass
@@ -242,7 +249,7 @@ def get_prompt_from_module(module_name:str, key:str="PROMPT") -> str:
 def reload_prompt_on_module(module_name:str, key:str="reload"):
     """ call reload function """
     try:
-        m = __import__(f"topsailai.tools.{module_name}", None, None, [module_name])
+        m = __import__(_get_tool_module_path(module_name), None, None, [module_name])
         getattr(m, key)()
         logger.info("reload prompt ok: [%s]", module_name)
     except ModuleNotFoundError:

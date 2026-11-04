@@ -19,7 +19,7 @@ from topsailai.ai_base.constants import (
     MSG_KEY_RAW_TEXT,
 )
 from topsailai.context import ctx_manager
-from topsailai.tools.agent_tool import (
+from topsailai.tools.agent_tool_utils.story import (
     subprocess_agent_memory_as_story,
 )
 from topsailai.workspace.input_tool import (

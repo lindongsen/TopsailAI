@@ -40,7 +40,6 @@ EXPECTED_CORRECTION = [
 CONTROL_MODULES = ("heartbeat", "instruction", "interrupt", "llm_control", "message")
 SHARED_MODULE_ALLOWLISTS = {
     "topsailai.tools": {
-        "agent_tool",
         "bigfile_tool",
         "cmd_tool",
         "collaboration_tool",

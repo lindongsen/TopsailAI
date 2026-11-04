@@ -169,7 +169,7 @@ class TestGetPromptFromModule(unittest.TestCase):
         from topsailai.prompt_hub.prompt_tool import get_prompt_from_module
         mock_module = MagicMock()
         mock_module.PROMPT = "test prompt content"
-        with patch('builtins.__import__', return_value=mock_module):
+        with patch('topsailai.prompt_hub.prompt_tool._get_tool_module_path', return_value='topsailai.tools.agent_tool'), patch('builtins.__import__', return_value=mock_module):
             result = get_prompt_from_module("agent_tool")
             self.assertEqual(result, "test prompt content")
 
@@ -179,7 +179,7 @@ class TestGetPromptFromModule(unittest.TestCase):
         from topsailai.prompt_hub.prompt_tool import get_prompt_from_module
         mock_module = MagicMock()
         mock_module.CUSTOM_KEY = "custom prompt"
-        with patch('builtins.__import__', return_value=mock_module):
+        with patch('topsailai.prompt_hub.prompt_tool._get_tool_module_path', return_value='topsailai.tools.agent_tool'), patch('builtins.__import__', return_value=mock_module):
             result = get_prompt_from_module("agent_tool", key="CUSTOM_KEY")
             self.assertEqual(result, "custom prompt")
 
@@ -187,7 +187,7 @@ class TestGetPromptFromModule(unittest.TestCase):
     def test_get_prompt_from_module_not_found(self, mock_logger):
         """Verify get_prompt_from_module returns empty string when module not found."""
         from topsailai.prompt_hub.prompt_tool import get_prompt_from_module
-        with patch('builtins.__import__', side_effect=ModuleNotFoundError("No module named 'topsailai.tools.agent_tool'")):
+        with patch('topsailai.prompt_hub.prompt_tool._get_tool_module_path', return_value='topsailai.tools.agent_tool'), patch('builtins.__import__', side_effect=ModuleNotFoundError("No module named 'topsailai.tools.agent_tool'")):
             result = get_prompt_from_module("nonexistent_module")
             self.assertEqual(result, "")
 
@@ -197,7 +197,7 @@ class TestGetPromptFromModule(unittest.TestCase):
         from topsailai.prompt_hub.prompt_tool import get_prompt_from_module
         mock_module = MagicMock()
         del mock_module.PROMPT
-        with patch('builtins.__import__', return_value=mock_module):
+        with patch('topsailai.prompt_hub.prompt_tool._get_tool_module_path', return_value='topsailai.tools.agent_tool'), patch('builtins.__import__', return_value=mock_module):
             result = get_prompt_from_module("agent_tool")
             self.assertEqual(result, "")
 
@@ -210,7 +210,7 @@ class TestReloadPromptOnModule(unittest.TestCase):
         """Verify reload_prompt_on_module calls reload function."""
         from topsailai.prompt_hub.prompt_tool import reload_prompt_on_module
         mock_module = MagicMock()
-        with patch('builtins.__import__', return_value=mock_module):
+        with patch('topsailai.prompt_hub.prompt_tool._get_tool_module_path', return_value='topsailai.tools.agent_tool'), patch('builtins.__import__', return_value=mock_module):
             reload_prompt_on_module("agent_tool")
             mock_module.reload.assert_called_once()
             mock_logger.info.assert_called()
@@ -219,7 +219,7 @@ class TestReloadPromptOnModule(unittest.TestCase):
     def test_reload_prompt_on_module_not_found(self, mock_logger):
         """Verify reload_prompt_on_module handles module not found."""
         from topsailai.prompt_hub.prompt_tool import reload_prompt_on_module
-        with patch('builtins.__import__', side_effect=ModuleNotFoundError("No module named 'topsailai.tools.agent_tool'")):
+        with patch('topsailai.prompt_hub.prompt_tool._get_tool_module_path', return_value='topsailai.tools.agent_tool'), patch('builtins.__import__', side_effect=ModuleNotFoundError("No module named 'topsailai.tools.agent_tool'")):
             reload_prompt_on_module("nonexistent_module")
             mock_logger.info.assert_not_called()
 
@@ -229,7 +229,7 @@ class TestReloadPromptOnModule(unittest.TestCase):
         from topsailai.prompt_hub.prompt_tool import reload_prompt_on_module
         mock_module = MagicMock()
         del mock_module.reload
-        with patch('builtins.__import__', return_value=mock_module):
+        with patch('topsailai.prompt_hub.prompt_tool._get_tool_module_path', return_value='topsailai.tools.agent_tool'), patch('builtins.__import__', return_value=mock_module):
             reload_prompt_on_module("agent_tool")
             mock_logger.info.assert_not_called()
 

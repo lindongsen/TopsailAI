@@ -96,6 +96,7 @@ def get_function_map(
         conn_char=DEFAULT_CONN_CHAR,
         hook_check=None,
         need_module_log=True,
+        module_sources=None,
     ):
     """Create a mapping of function names to functions from modules.
 
@@ -110,6 +111,7 @@ def get_function_map(
             - If "": uses module name as prefix
             - Otherwise: uses the specified prefix
         hook_check: func(module) -> bool.
+        module_sources: Optional output mapping from module basename to registration path.
 
     Returns:
         dict: Mapping of function names (with prefixes) to function objects
@@ -156,6 +158,8 @@ def get_function_map(
             if prefix_name:
                 m_key = f"{prefix_name}{conn_char}{m_key}"
             modules_map[m_key] = v_func
+            if module_sources is not None:
+                module_sources[sub_modname] = mod_path
     return modules_map
 
 def is_valid_module_name(name):
@@ -247,6 +251,7 @@ def get_external_function_map(
         conn_char=DEFAULT_CONN_CHAR,
         hook_check=None,
         need_module_log=True,
+        module_sources=None,
     ):
     """Create a mapping of function names to functions from modules.
 
@@ -283,9 +288,11 @@ def get_external_function_map(
         sys.path.append(sys_path)
 
     assert pkg_path, f"no found pkg_path for this path: [{path}]"
+    source_options = {} if module_sources is None else {"module_sources": module_sources}
     return get_function_map(
         pkg_path, key, prefix_name,
         conn_char=conn_char,
         hook_check=hook_check,
         need_module_log=need_module_log,
+        **source_options,
     )
