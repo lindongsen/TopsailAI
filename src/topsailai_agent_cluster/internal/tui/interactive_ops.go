@@ -111,7 +111,7 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if _, err := fmt.Fprintf(out, "send %s? Confirm send? [y/N] ", preview); err != nil {
 		return err
 	}
-	confirmation, ok := nextLine(lineSource)
+	confirmation, ok := nextPromptLine(parent, lineSource)
 	if !ok {
 		return fmt.Errorf("confirmation requires a complete line")
 	}
@@ -397,7 +397,7 @@ func interactiveConfirmedAction(ctx context.Context, api InteractiveAPI, state *
 	if _, err := fmt.Fprintf(out, "%s %s? Confirm %s? [y/N] ", name, resource, name); err != nil {
 		return err
 	}
-	answer, ok := nextLine(lines)
+	answer, ok := nextPromptLine(ctx, lines)
 	if !ok || answer.err != nil || answer.overflow {
 		return fmt.Errorf("confirmation requires a complete line")
 	}

@@ -199,9 +199,22 @@ func writeStartHelp(out io.Writer, field startDraftField, state interactiveState
 
 var errStartPromptOverflow = errors.New("start prompt input overflow")
 
-func readStartAnswer(ctx context.Context, lines <-chan lineReadResult) (string, error) {
-	if lines == nil {
+func readStartAnswer(ctx context.Context, lines <-chan lineReadResult, prompts ...string) (string, error) {
+	if lines == nil && promptReader(ctx) == nil {
 		return "", &startPromptTermination{kind: startPromptFatal, cause: errors.New("start input is unavailable")}
+	}
+	if read := promptReader(ctx); read != nil {
+		line, overflow, err := readPromptLine(ctx, prompts...)
+		if err == io.EOF {
+			return "", &startPromptTermination{kind: startPromptEOF, cause: err}
+		}
+		if err != nil {
+			return "", &startPromptTermination{kind: startPromptFatal, cause: err}
+		}
+		if overflow {
+			return "", errStartPromptOverflow
+		}
+		return line, nil
 	}
 	select {
 	case <-ctx.Done():
@@ -221,7 +234,7 @@ func readStartAnswer(ctx context.Context, lines <-chan lineReadResult) (string, 
 }
 
 func runStartPrompt(ctx context.Context, state interactiveState, draft startDraft, lines <-chan lineReadResult, out, errOut io.Writer, color ColorPolicy) (startPromptOutcome, interactiveStartRequest, error) {
-	if lines == nil {
+	if lines == nil && promptReader(ctx) == nil {
 		return startPromptCancel, interactiveStartRequest{}, &startPromptTermination{kind: startPromptFatal, cause: errors.New("start input is unavailable")}
 	}
 	for {
@@ -238,7 +251,7 @@ func runStartPrompt(ctx context.Context, state interactiveState, draft startDraf
 		if err := writeStartHelp(out, field, state, color); err != nil {
 			return startPromptCancel, interactiveStartRequest{}, &startPromptTermination{kind: startPromptFatal, cause: err}
 		}
-		line, err := readStartAnswer(ctx, lines)
+		line, err := readStartAnswer(ctx, lines, "start."+startFieldName(field)+"> ")
 		var termination *startPromptTermination
 		if errors.As(err, &termination) && termination.kind == startPromptFatal {
 			return startPromptCancel, interactiveStartRequest{}, err

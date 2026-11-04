@@ -3,6 +3,7 @@ package tui
 import (
 	"bufio"
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,7 @@ import (
 
 // InteractiveOptions controls bounded REPL behavior.
 type InteractiveOptions struct {
+	ReadLine          InteractiveLineReader
 	MaxBytes          int
 	WaitTimeoutMS     int64
 	LineLimit         int
@@ -178,14 +180,19 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 	}()
 	out := newSafeWriter(output)
 	errOut := newSafeWriter(errors)
-	lineResults, inputReaderDone, stopInputReader := startInputReader(input, options.LineLimit)
+	var lineResults <-chan lineReadResult
+	var inputReaderDone *sync.WaitGroup
+	stopInputReader := func() {}
+	if options.ReadLine == nil {
+		lineResults, inputReaderDone, stopInputReader = startInputReader(input, options.LineLimit)
+	}
 	waitForInputReader := input != os.Stdin
 	defer func() {
 		stopInputReader()
 		if options.CloseInput && controller.input != nil {
 			_ = controller.input.Close()
 		}
-		if waitForInputReader {
+		if waitForInputReader && inputReaderDone != nil {
 			inputReaderDone.Wait()
 		}
 	}()
@@ -210,16 +217,31 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		var line string
 		var overflow bool
 		var err error
-		select {
-		case <-parent.Done():
-			return parent.Err()
-		case result, ok := <-lineResults:
-			if !ok {
-				return nil
+		if options.ReadLine != nil {
+			var prompt strings.Builder
+			if promptErr := writePrompt(&prompt, state, ColorPolicy{}); promptErr != nil {
+				return promptErr
 			}
-			line, overflow, err = result.line, result.overflow, result.err
-		case <-controller.promptDone:
-			return ErrInteractiveInterrupt
+			readCtx, cancelRead := context.WithCancel(parent)
+			stopPrompt := context.AfterFunc(promptContext(controller.promptDone), cancelRead)
+			line, overflow, err = options.ReadLine(readCtx, prompt.String(), true, options.LineLimit)
+			stopPrompt()
+			cancelRead()
+			if controller.promptWasInterrupted() {
+				return ErrInteractiveInterrupt
+			}
+		} else {
+			select {
+			case <-parent.Done():
+				return parent.Err()
+			case result, ok := <-lineResults:
+				if !ok {
+					return nil
+				}
+				line, overflow, err = result.line, result.overflow, result.err
+			case <-controller.promptDone:
+				return ErrInteractiveInterrupt
+			}
 		}
 		if overflow {
 			if writeErr := writeInteractiveError(errOut, "", fmt.Errorf("input line exceeds the maximum length")); writeErr != nil {
@@ -243,11 +265,39 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			}
 			continue
 		}
+		var promptFailure error
 		commandCtx, cancel := context.WithCancel(parent)
+		if options.ReadLine != nil {
+			commandCtx = context.WithValue(commandCtx, promptReaderKey{}, promptReaderConfig{read: options.ReadLine, limit: options.LineLimit, failure: &promptFailure})
+		}
 		controller.setCancel(cancel)
 		exit, execErr := executeInteractiveLine(commandCtx, api, &state, line, lineResults, out, output, errOut, options)
 		controller.clearCancel()
 		cancel()
+		if parentErr := parent.Err(); options.ReadLine != nil && parentErr != nil {
+			return parentErr
+		}
+		if options.ReadLine != nil && controller.takeCommandInterrupted() {
+			if _, writeErr := fmt.Fprintln(errOut, "interrupted"); writeErr != nil {
+				return writeErr
+			}
+			continue
+		}
+		if promptFailure != nil {
+			if stderrors.Is(promptFailure, ErrInteractiveInterrupt) {
+				execErr = promptFailure
+			} else if promptFailure == io.EOF {
+				return nil
+			} else {
+				return promptFailure
+			}
+		}
+		if stderrors.Is(execErr, ErrInteractiveInterrupt) {
+			if _, writeErr := fmt.Fprintln(errOut, "interrupted"); writeErr != nil {
+				return writeErr
+			}
+			continue
+		}
 		if fatal := unwrapStartTermination(execErr); fatal != nil {
 			return fatal
 		}

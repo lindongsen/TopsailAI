@@ -1,0 +1,76 @@
+package tui
+
+import (
+	"context"
+	"time"
+)
+
+// InteractiveLineReader reads only after a prompt is written; answers are not history.
+// Implementations must honor cancellation and reject partial text on errors.
+type InteractiveLineReader func(context.Context, string, bool, int) (string, bool, error)
+
+type promptReaderKey struct{}
+type promptReaderConfig struct {
+	read    InteractiveLineReader
+	limit   int
+	failure *error
+}
+
+// promptReader obtains the explicitly injected reader without global state.
+func promptReader(ctx context.Context) InteractiveLineReader {
+	config, _ := ctx.Value(promptReaderKey{}).(promptReaderConfig)
+	return config.read
+}
+
+// readPromptLine requests a history-free child answer after its question is written.
+func readPromptLine(ctx context.Context, prompts ...string) (string, bool, error) {
+	config := ctx.Value(promptReaderKey{}).(promptReaderConfig)
+	prompt := "answer> "
+	if len(prompts) > 0 {
+		prompt = prompts[0]
+	}
+	line, overflow, err := config.read(ctx, prompt, false, config.limit)
+	if err != nil && config.failure != nil {
+		*config.failure = err
+	}
+	return line, overflow, err
+}
+
+// nextPromptLine preserves the stream fallback and makes confirmation cancellation observable.
+func nextPromptLine(ctx context.Context, source <-chan lineReadResult) (lineReadResult, bool) {
+	if promptReader(ctx) != nil {
+		line, overflow, err := readPromptLine(ctx)
+		return lineReadResult{line: line, overflow: overflow, err: err}, true
+	}
+	select {
+	case <-ctx.Done():
+		return lineReadResult{err: ctx.Err()}, true
+	case result, ok := <-source:
+		return result, ok
+	}
+}
+
+// promptSignalContext lets AfterFunc observe the existing prompt cancellation channel.
+type promptSignalContext struct{ done <-chan struct{} }
+
+// Deadline leaves deadline authority with the parent read context.
+func (c promptSignalContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+
+// Done exposes the controller-owned signal without creating another watcher.
+func (c promptSignalContext) Done() <-chan struct{} { return c.done }
+
+// Err reports cancellation only after the controller signal closes.
+func (c promptSignalContext) Err() error {
+	select {
+	case <-c.done:
+		return context.Canceled
+	default:
+		return nil
+	}
+}
+
+// Value carries no configuration or authority.
+func (c promptSignalContext) Value(any) any { return nil }
+
+// promptContext adapts the existing signal to the standard cancellation API.
+func promptContext(done <-chan struct{}) context.Context { return promptSignalContext{done} }

@@ -58,7 +58,7 @@ func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiv
 	var resolveErr error
 	switch len(parts) {
 	case 1:
-		resolveErr = cdSingle(state, loaded, parts[0], lineSource, out)
+		resolveErr = cdSingle(ctx, state, loaded, parts[0], lineSource, out)
 	case 2:
 		resolveErr = cdPair(state, loaded, parts[0], parts[1])
 	default:
@@ -170,7 +170,7 @@ func cdParent(state *interactiveState, out io.Writer) error {
 }
 
 // cdSingle resolves a bare target, preferring the current endpoint for sessions.
-func cdSingle(state *interactiveState, loaded reportLoad, target string, lineSource <-chan lineReadResult, out io.Writer) error {
+func cdSingle(ctx context.Context, state *interactiveState, loaded reportLoad, target string, lineSource <-chan lineReadResult, out io.Writer) error {
 	var sessionErr error
 	if state.Scope.Kind != ScopeWorkspace {
 		outcome, err := resolveSessionInEndpoint(state, loaded, state.Scope.EndpointID, target)
@@ -179,7 +179,7 @@ func cdSingle(state *interactiveState, loaded reportLoad, target string, lineSou
 		}
 		sessionErr = fmt.Errorf("session %q was not found on endpoint %q", target, state.Scope.EndpointID)
 	}
-	outcome, err := resolveEndpoint(state, loaded, target, lineSource, out)
+	outcome, err := resolveEndpoint(ctx, state, loaded, target, lineSource, out)
 	if outcome == outcomeResolved || err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ func cdTriple(state *interactiveState, loaded reportLoad, hostname, endpointID, 
 }
 
 // resolveEndpoint enters an endpoint by exact ID or by unique hostname.
-func resolveEndpoint(state *interactiveState, loaded reportLoad, target string, lineSource <-chan lineReadResult, out io.Writer) (resolveOutcome, error) {
+func resolveEndpoint(ctx context.Context, state *interactiveState, loaded reportLoad, target string, lineSource <-chan lineReadResult, out io.Writer) (resolveOutcome, error) {
 	if endpoint, ok := endpointByID(loaded, target); ok {
 		state.enterEndpoint(endpoint)
 		return outcomeResolved, nil
@@ -241,12 +241,12 @@ func resolveEndpoint(state *interactiveState, loaded reportLoad, target string, 
 		return outcomeResolved, nil
 	default:
 		sort.Slice(matches, func(i, j int) bool { return matches[i].EndpointID < matches[j].EndpointID })
-		return chooseEndpoint(state, matches, target, lineSource, out)
+		return chooseEndpoint(ctx, state, matches, target, lineSource, out)
 	}
 }
 
 // chooseEndpoint asks the operator to disambiguate a hostname conflict.
-func chooseEndpoint(state *interactiveState, matches []protocol.Endpoint, hostname string, lineSource <-chan lineReadResult, out io.Writer) (resolveOutcome, error) {
+func chooseEndpoint(ctx context.Context, state *interactiveState, matches []protocol.Endpoint, hostname string, lineSource <-chan lineReadResult, out io.Writer) (resolveOutcome, error) {
 	if _, err := fmt.Fprintf(out, "multiple endpoints match hostname %q:\n", hostname); err != nil {
 		return outcomeCancelled, err
 	}
@@ -262,7 +262,7 @@ func chooseEndpoint(state *interactiveState, matches []protocol.Endpoint, hostna
 	if _, err := fmt.Fprintf(out, "select endpoint [1-%d] or 'cancel': ", len(matches)); err != nil {
 		return outcomeCancelled, err
 	}
-	answer, ok := nextLine(lineSource)
+	answer, ok := nextPromptLine(ctx, lineSource)
 	if !ok || answer.overflow || answer.err != nil {
 		return cancelTransition(out)
 	}
