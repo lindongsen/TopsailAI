@@ -22,6 +22,10 @@ class TestContextRuntimeAgent2LLM(unittest.TestCase):
             "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD": "0",
         })
         self.summary_guard_patcher.start()
+        metrics_patcher = patch("topsailai.context.ctx_manager.get_session_manager")
+        self.metrics_manager = metrics_patcher.start().return_value
+        self.metrics_manager.accumulate_session_metrics.return_value = True
+        self.addCleanup(metrics_patcher.stop)
 
         from topsailai.workspace.context.agent2llm import ContextRuntimeAgent2LLM
 
@@ -30,6 +34,7 @@ class TestContextRuntimeAgent2LLM(unittest.TestCase):
                 from topsailai.workspace.context.summary_recovery import RecoveryConfig
                 self.summary_recovery_config = RecoveryConfig(False)
                 self._summary_recovery_last_state = None
+                self.summary_count = 0
                 self._ai_agent = MagicMock()
                 self._ai_agent.runtime.token_stat.current_tokens = 0
                 self._messages = []
@@ -155,6 +160,15 @@ class TestDelAgentMessages(TestContextRuntimeAgent2LLM):
 
 class TestGetCurrentTokens(TestContextRuntimeAgent2LLM):
     """Test suite for _get_current_tokens method in Agent2LLM."""
+
+    def test_summary_count_initialized_and_recorded(self):
+        """Record one summary locally and persist only its delta through the mock."""
+        self.assertEqual(self.test_instance.summary_count, 0)
+        self.test_instance._record_summary_applied()
+        self.assertEqual(self.test_instance.summary_count, 1)
+        self.metrics_manager.accumulate_session_metrics.assert_called_once_with(
+            "test-session-123", summary_count=1,
+        )
 
     def test_get_current_tokens_default_cached(self):
         """Test default behavior returns cached tokenStat.current_tokens."""
