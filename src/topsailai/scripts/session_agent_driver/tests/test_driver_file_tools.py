@@ -48,9 +48,14 @@ def test_fresh_process_registers_readonly_and_other_tools(plugin_tools, selector
     else:
         environment["TOPSAILAI_PLUGIN_TOOLS"] = plugin_tools
     code = """
+from pathlib import Path
 import sys
 import session_agent_driver
+import plugins.tools
 assert session_agent_driver.os.environ["TOPSAILAI_PLUGIN_TOOLS"] == "plugins.tools"
+assert Path(plugins.tools.__file__).resolve().is_relative_to(
+    Path(session_agent_driver.__file__).resolve().parent
+)
 from topsailai.tools.base.common import TOOLS, get_tools_for_chat
 names = set(TOOLS)
 assert any(name.startswith('file_readonly_tool-') for name in names)
