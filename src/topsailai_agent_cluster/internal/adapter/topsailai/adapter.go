@@ -270,7 +270,7 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 		}
 		args = append(args, "--background", "--json", "--non-interactive")
 	case protocol.OperationAgentResume:
-		args = []string{"workspace", "resume", providerKey, "--background", "--json"}
+		args = []string{"workspace", "resume", "-s", providerKey, "--background", "--json"}
 	case protocol.OperationAgentStop:
 		if intent.Target.Generation == "" {
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "generation_required")}, errors.New("generation is required for stop")

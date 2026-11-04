@@ -412,3 +412,25 @@ func TestTopsailaiAdapterStartCommandOptionalFolderAndNonInteractive(t *testing.
 		})
 	}
 }
+
+// TestResumeUsesExplicitProviderSessionSelector pins the public provider CLI contract.
+func TestResumeUsesExplicitProviderSessionSelector(t *testing.T) {
+	runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"provider-session","process_generation":"g1","status":"running"}]}`)}
+	a := newTestAdapter(t, runner)
+	discovered, err := a.Discover(context.Background(), adapter.DiscoverRequest{})
+	if err != nil || len(discovered.Sessions) != 1 {
+		t.Fatalf("discover=%+v err=%v", discovered, err)
+	}
+	runner.out = []byte(`{"status":"submitted"}`)
+	_, err = a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
+		CommandID: "resume-contract", Operation: protocol.OperationAgentResume,
+		Target: &protocol.CommandTarget{ResourceID: discovered.Sessions[0].SessionID, Generation: "g1"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"workspace", "resume", "-s", "provider-session", "--background", "--json"}
+	if !reflect.DeepEqual(runner.args, want) {
+		t.Fatalf("argv=%q want=%q", runner.args, want)
+	}
+}
