@@ -104,6 +104,29 @@ def _get_session_token_totals(session_id: str, ai_agent) -> tuple[int, int]:
     return 0, 0
 
 
+def _summary_count(runtime) -> int:
+    """Read a non-negative runtime count without interpreting mock-like values."""
+    value = getattr(runtime, "summary_count", 0)
+    return value if type(value) is int and value >= 0 else 0
+
+
+def _get_session_summary_count(session_id: str, runtime) -> int:
+    """Prefer the persisted session total, falling back to this runtime's count."""
+    if session_id:
+        try:
+            from topsailai.context import ctx_manager
+
+            manager = ctx_manager.get_session_manager()
+            session = manager.get_session(session_id) if manager is not None else None
+            value = getattr(session, "summary_count", None)
+            if type(value) is int and value >= 0:
+                return value
+        except Exception:
+            logger.warning("Cannot read session summary count: session_id=%s", session_id,
+                           exc_info=True)
+    return _summary_count(runtime)
+
+
 def _get_agent_model_name(ai_agent) -> str:
     """
     Resolve the model name currently used by the agent for the turn summary.
@@ -418,6 +441,7 @@ class AgentChat(AgentChatBase):
                 continue
             flag_abort = False
             back_to_chat_requested = False
+            summary_count_before = _summary_count(self.ctx_runtime_data)
             # reset answer to null string
             answer = ""
 
@@ -639,6 +663,8 @@ class AgentChat(AgentChatBase):
                     print(f"total_prompt_tokens : {total_tokens}")
                     print(f"total_cached_tokens : {total_cached_tokens}")
                     print(f"cache_hit_rate      : {cache_hit_rate}")
+                    print(f"summary_count       : {max(0, _summary_count(self.ctx_runtime_data) - summary_count_before)}")
+                    print(f"total_summary_count : {_get_session_summary_count(session_id, self.ctx_runtime_data)}")
                     sys.stdout.flush()
 
                 if env_tool.is_debug_mode() or env_tool.EnvReaderInstance.check_bool("TOPSAILAI_PRINT_TOOL_STAT", True):

@@ -348,6 +348,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                     )
                     raise
                 if applied:
+                    self._record_summary_applied()
                     hook__emit_summary_checkpoint("after_summary_apply")
                     return answer
                 return None
@@ -514,6 +515,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 partial_apply_possible=partial_apply_possible,
             )
             raise
+        self._record_summary_applied()
         hook__emit_summary_checkpoint("after_summary_apply")
         return answer
 

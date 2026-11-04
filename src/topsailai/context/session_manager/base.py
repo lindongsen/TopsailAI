@@ -67,7 +67,7 @@ class SessionManager(ABC):
     def accumulate_session_metrics(self, session_id: str, turn_count: int = 0, tool_call_count: int = 0,
                                    tool_error_count: int = 0, llm_request_count: int = 0,
                                    llm_request_failure_count: int = 0, tool_duration_ms_sum: int = 0,
-                                   llm_request_duration_ms_sum: int = 0) -> bool:
+                                   llm_request_duration_ms_sum: int = 0, summary_count: int = 0) -> bool:
         """Accumulate settled attempt execution metric deltas."""
         ...
 

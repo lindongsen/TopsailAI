@@ -1038,14 +1038,29 @@ class TestTurnSummaryHeader(unittest.TestCase):
         mock_input_message.return_value = "continue"
 
         agent_chat = self._make_agent_chat(mock_env_tool, mock_lock_tool, mock_get_hooks)
-        agent_chat.ai_agent.run.return_value = "Response"
+        agent_chat.ctx_runtime_data.summary_count = 0
+        agent_chat.ctx_runtime_data.session_id = ""
 
+        def run_with_summary(*args, **kwargs):
+            """Count two runtime summaries during each turn."""
+            agent_chat.ctx_runtime_data.summary_count += 2
+            return "Response"
+
+        def final_summary():
+            """Include the summary performed after ordinary metrics settlement."""
+            agent_chat.ctx_runtime_data.summary_count += 1
+
+        agent_chat.ai_agent.run.side_effect = run_with_summary
+        agent_chat.call_hook_for_final_answer = final_summary
         agent_chat.run(message="Hello", times=2)
 
         printed = [str(call.args[0]) for call in mock_print.call_args_list if call.args]
         header = " TopsailAI Turn Summary ".center(len(SPLIT_LINE))
         self.assertIn(header, printed)
         self.assertIn("model_name          : Kimi-K2.5", printed)
+        self.assertEqual(printed.count("summary_count       : 3"), 2)
+        self.assertIn("total_summary_count : 3", printed)
+        self.assertIn("total_summary_count : 6", printed)
         # The header sits between two separator lines, above the field rows.
         header_index = printed.index(header)
         self.assertEqual(printed[header_index - 1], SPLIT_LINE)

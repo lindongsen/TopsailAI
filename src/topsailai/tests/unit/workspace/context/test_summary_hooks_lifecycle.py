@@ -115,6 +115,7 @@ def test_success_order_routing_and_one_operation(setup_runtime, layer, mode):
     runtime, executor, timeline, _, reader = setup_runtime
     reader.get = lambda name, *args, **kwargs: mode if name == 'TOPSAILAI_CONTEXT_SUMMARY_MODE' else None
     assert summarize(runtime, layer) == 'summary'
+    assert runtime.summary_count == 1
     assert timeline.index('build') < timeline.index('before') < timeline.index('request')
     assert timeline.index('checked') < timeline.index('after')
     assert [call[0] for call in executor.calls] == [
@@ -133,6 +134,7 @@ def test_default_activation_without_executor(setup_runtime, layer):
     runtime, executor, _, _, _ = setup_runtime
     assert not hasattr(runtime, 'summary_hooks_executor')
     assert summarize(runtime, layer) == 'summary'
+    assert runtime.summary_count == 1
     assert len(executor.calls) == 2
     assert current_summary_operation() is None
 
@@ -151,6 +153,7 @@ def test_skips_never_emit_success_or_error(setup_runtime, monkeypatch, layer, ki
     else:
         monkeypatch.setattr(runtime, '_chat_for_summary', lambda *args, **kwargs: '')
     assert summarize(runtime, layer) is None
+    assert runtime.summary_count == 0
     assert len(executor.calls) == (1 if kind == 'empty_answer' else 0)
     assert all('__before__' in call[0] for call in executor.calls)
 
@@ -162,6 +165,7 @@ def test_human_rejection_generated_is_not_applied(setup_runtime, monkeypatch):
     monkeypatch.setattr(ctx_runtime, 'input_yes', lambda *args: False)
     assert summarize(runtime, 'user2agent', need_interactive=True) == 'summary'
     assert runtime.messages == original
+    assert runtime.summary_count == 0
     assert len(executor.calls) == 1
 
 
@@ -186,6 +190,7 @@ def test_generation_primary_exception_preserved(setup_runtime, monkeypatch, laye
     with pytest.raises(type(error)) as caught:
         summarize(runtime, layer)
     assert caught.value is error
+    assert runtime.summary_count == 0
     frames = []
     tb = caught.value.__traceback__
     while tb:
@@ -221,6 +226,7 @@ def test_user_application_failures(setup_runtime, monkeypatch, stage):
     with pytest.raises(RuntimeError) as caught:
         summarize(runtime, 'user2agent', messages=list(runtime.messages))
     assert caught.value is error
+    assert runtime.summary_count == 0
     payload = executor.calls[-1][1]
     assert payload['failed_stage'] == stage
     assert payload['partial_apply_possible'] is True
@@ -262,6 +268,7 @@ def test_agent_application_failures(setup_runtime, monkeypatch, stage, partial):
     with pytest.raises(RuntimeError) as caught:
         summarize(runtime, 'agent2llm')
     assert caught.value is error
+    assert runtime.summary_count == 0
     payload = executor.calls[-1][1]
     assert payload['failed_stage'] == stage
     assert payload['partial_apply_possible'] is partial
@@ -286,8 +293,10 @@ def test_observer_failures_never_recurse_or_replace_primary(setup_runtime, monke
         with pytest.raises(ValueError) as caught:
             summarize(runtime, layer)
         assert caught.value is error
+        assert runtime.summary_count == 0
     else:
         assert summarize(runtime, layer) == 'summary'
+        assert runtime.summary_count == 1
     assert len(executor.calls) == 2
     assert ('__error__' in executor.calls[-1][0]) is business_failure
 
@@ -316,6 +325,7 @@ def test_control_signals_propagate_without_error_points(setup_runtime, monkeypat
     with pytest.raises(type(error)) as caught:
         summarize(runtime, layer)
     assert caught.value is error
+    assert runtime.summary_count == 0
     assert len(executor.calls) == 1
     assert '__before__' in executor.calls[0][0]
 
@@ -369,6 +379,7 @@ def test_human_confirmation_control_signal_is_not_rejection(setup_runtime, monke
     with pytest.raises(type(error)) as caught:
         summarize(runtime, 'user2agent', need_interactive=True)
     assert caught.value is error
+    assert runtime.summary_count == 0
     assert len(executor.calls) == 1
 
 
@@ -386,6 +397,7 @@ def test_post_application_check_failure_is_not_success(setup_runtime, monkeypatc
     with pytest.raises(RuntimeError) as caught:
         summarize(runtime, layer)
     assert caught.value is error
+    assert runtime.summary_count == 0
     assert executor.calls[-1][1]['partial_apply_possible'] is True
     assert '__error__summary_apply_' in executor.calls[-1][0]
 
@@ -402,6 +414,7 @@ def test_injected_summary_preserves_atomic_tool_tail(setup_runtime, monkeypatch,
     runtime.ai_agent.messages = list(messages)
     monkeypatch.setattr(runtime, '_get_tail_offset_to_keep_in_summary', lambda: 1)
     assert summarize(runtime, layer) == 'summary'
+    assert runtime.summary_count == 1
     applied = runtime.messages if layer == 'user2agent' else runtime.ai_agent.messages
     assert assistant in applied and tool in applied
     assert applied.index(assistant) < applied.index(tool)
@@ -422,6 +435,7 @@ def test_pre_mutation_failure_is_explicitly_nonpartial(setup_runtime, monkeypatc
     with pytest.raises(OSError) as caught:
         summarize(runtime, 'user2agent', messages=list(runtime.messages))
     assert caught.value is error
+    assert runtime.summary_count == 0
     assert executor.calls[-1][1]['partial_apply_possible'] is False
 
 
@@ -446,6 +460,7 @@ def test_same_operation_checkpoint_retry_is_not_redispatched(setup_runtime, monk
 
     monkeypatch.setattr(runtime, '_chat_for_summary', generate)
     assert summarize(runtime, layer) == 'summary'
+    assert runtime.summary_count == 1
     assert len(executor.calls) == 2
 
 
@@ -490,6 +505,7 @@ def test_business_wiring_reaches_real_workers(setup_runtime, monkeypatch, layer,
             runtime.ai_agent.runtime.token_stat.add_msgs = fail
     if outcome == 'success':
         assert summarize(runtime, layer) == 'summary'
+        assert runtime.summary_count == 1
     else:
         with pytest.raises(ValueError) as caught:
             summarize(runtime, layer)

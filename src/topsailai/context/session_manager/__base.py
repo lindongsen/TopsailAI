@@ -41,6 +41,7 @@ class SessionData(object):
         llm_request_failure_count: int = 0,
         tool_duration_ms_sum: int = 0,
         llm_request_duration_ms_sum: int = 0,
+        summary_count: int = 0,
     ):
         """
         Initialize a SessionData instance.
@@ -60,6 +61,7 @@ class SessionData(object):
             total_completion_tokens (int, optional): Accumulated completion tokens.
                 Defaults to 0.
             category (str, optional): Session category. Defaults to an empty string.
+            summary_count (int, optional): Successfully applied summaries. Defaults to 0.
             turn_count (int, optional): Settled User2Agent turns. Defaults to 0.
             tool_call_count (int, optional): Measured tool calls. Defaults to 0.
             tool_error_count (int, optional): Tool calls that reported an error.
@@ -90,6 +92,7 @@ class SessionData(object):
         self.total_cached_tokens = total_cached_tokens
         self.total_completion_tokens = total_completion_tokens
         self.category = category
+        self.summary_count = summary_count
         self.turn_count = turn_count
         self.tool_call_count = tool_call_count
         self.tool_error_count = tool_error_count
@@ -256,6 +259,7 @@ class SessionStorageBase(object):
         llm_request_failure_count: int = 0,
         tool_duration_ms_sum: int = 0,
         llm_request_duration_ms_sum: int = 0,
+        summary_count: int = 0,
     ) -> bool:
         """Atomically add one settled attempt's execution metric deltas.
 
@@ -265,6 +269,7 @@ class SessionStorageBase(object):
 
         Args:
             session_id (str): The session identifier whose metrics should be updated.
+            summary_count (int): Successfully applied summaries to add.
             turn_count (int): Settled turns to add.
             tool_call_count (int): Measured tool calls to add.
             tool_error_count (int): Tool calls that reported an error to add.

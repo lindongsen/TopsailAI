@@ -45,6 +45,7 @@ class Session(Base):
         total_tokens (int): Accumulated prompt tokens (legacy prompt-only column).
         total_cached_tokens (int): Accumulated cached prompt tokens.
         total_completion_tokens (int): Accumulated completion tokens.
+        summary_count (int): Successfully applied summaries.
         turn_count (int): Settled User2Agent turns.
         tool_call_count (int): Measured tool calls.
         tool_error_count (int): Tool calls that reported an error.
@@ -65,6 +66,7 @@ class Session(Base):
     total_tokens = Column(Integer, default=0)
     total_cached_tokens = Column(Integer, default=0)
     total_completion_tokens = Column(Integer, default=0)
+    summary_count = Column(Integer, default=0)
     turn_count = Column(Integer, default=0)
     tool_call_count = Column(Integer, default=0)
     tool_error_count = Column(Integer, default=0)
@@ -132,13 +134,13 @@ class SessionSQLAlchemy(SessionStorageBase):
             columns = (
                 "project_workspace", "pwd", "topsailai_home", "total_tokens",
                 "total_cached_tokens", "total_completion_tokens", "category",
-                "turn_count", "tool_call_count", "tool_error_count",
+                "summary_count", "turn_count", "tool_call_count", "tool_error_count",
                 "llm_request_count", "llm_request_failure_count",
                 "tool_duration_ms_sum", "llm_request_duration_ms_sum",
             )
             numeric_columns = {
                 "total_tokens", "total_cached_tokens", "total_completion_tokens",
-                "turn_count", "tool_call_count", "tool_error_count",
+                "summary_count", "turn_count", "tool_call_count", "tool_error_count",
                 "llm_request_count", "llm_request_failure_count",
                 "tool_duration_ms_sum", "llm_request_duration_ms_sum",
             }
@@ -464,6 +466,7 @@ class SessionSQLAlchemy(SessionStorageBase):
                     total_cached_tokens=session.total_cached_tokens or 0,
                     total_completion_tokens=session.total_completion_tokens or 0,
                     category=session.category or "",
+                    summary_count=session.summary_count or 0,
                     turn_count=session.turn_count or 0,
                     tool_call_count=session.tool_call_count or 0,
                     tool_error_count=session.tool_error_count or 0,
@@ -563,6 +566,7 @@ class SessionSQLAlchemy(SessionStorageBase):
                 total_cached_tokens=session.total_cached_tokens or 0,
                 total_completion_tokens=session.total_completion_tokens or 0,
                 category=session.category or "",
+                summary_count=session.summary_count or 0,
                 turn_count=session.turn_count or 0,
                 tool_call_count=session.tool_call_count or 0,
                 tool_error_count=session.tool_error_count or 0,
@@ -796,6 +800,7 @@ class SessionSQLAlchemy(SessionStorageBase):
         llm_request_failure_count: int = 0,
         tool_duration_ms_sum: int = 0,
         llm_request_duration_ms_sum: int = 0,
+        summary_count: int = 0,
     ) -> bool:
         """Atomically add one settled attempt's execution metric deltas."""
         if not session_id:
@@ -804,6 +809,7 @@ class SessionSQLAlchemy(SessionStorageBase):
         # Normalize negative deltas to zero so misreported values cannot subtract
         # from the session totals.
         deltas = {
+            "summary_count": max(0, int(summary_count)),
             "turn_count": max(0, int(turn_count)),
             "tool_call_count": max(0, int(tool_call_count)),
             "tool_error_count": max(0, int(tool_error_count)),
@@ -819,6 +825,7 @@ class SessionSQLAlchemy(SessionStorageBase):
             result = db_session.execute(
                 text(
                     "UPDATE session SET "
+                    "summary_count = COALESCE(summary_count, 0) + :summary_count, "
                     "turn_count = turn_count + :turn_count, "
                     "tool_call_count = tool_call_count + :tool_call_count, "
                     "tool_error_count = tool_error_count + :tool_error_count, "
@@ -840,6 +847,7 @@ class SessionSQLAlchemy(SessionStorageBase):
             if result.rowcount == 1:
                 logger.info(
                     f"accumulate_session_metrics: session_id={session_id}, "
+                    f"+summaries={deltas['summary_count']}, "
                     f"+turns={deltas['turn_count']}, "
                     f"+tool_calls={deltas['tool_call_count']}, "
                     f"+tool_errors={deltas['tool_error_count']}, "

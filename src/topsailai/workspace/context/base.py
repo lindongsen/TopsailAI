@@ -99,9 +99,26 @@ class ContextRuntimeBase(object):
             if summary_recovery_config is None else summary_recovery_config
         )
         self._summary_recovery_last_state = None
+        self.summary_count = 0
         self.session_id = ""
         self.messages = []
         self.ai_agent: AgentBase = None
+
+    def _record_summary_applied(self):
+        """Count an applied summary locally and best-effort persist its exact delta."""
+        self.summary_count += 1
+        if not self.session_id:
+            return
+        try:
+            from topsailai.context import ctx_manager
+
+            manager = ctx_manager.get_session_manager()
+            if manager is None or not manager.accumulate_session_metrics(
+                    self.session_id, summary_count=1):
+                logger.warning("Summary count persistence failed: session_id=%s", self.session_id)
+        except Exception:
+            logger.warning("Summary count persistence failed: session_id=%s", self.session_id,
+                           exc_info=True)
 
     @property
     def last_user_message(self):
