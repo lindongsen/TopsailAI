@@ -23,6 +23,8 @@ from scripts.packaged_discovery_smoke import (
     HOOK_PROBE,
 )
 from topsailai.utils.env_tool import resolve_python_interpreter
+from tests.bdd.compiled_package_builder import build_compiled_package
+from tests.bdd.temp_storage import BDDTempStorage
 
 
 WORKSPACE = Path(__file__).resolve().parents[3]
@@ -302,16 +304,42 @@ def _require_packaged_root(context: CompiledDiscoveryContext) -> None:
     )
 
 
-@pytest.fixture
-def compiled_discovery_ctx() -> CompiledDiscoveryContext:
-    """Provide scenario state and clean any owned compiled fixture afterward."""
+@pytest.fixture(scope="session")
+def compiled_package_root():
+    """Lazily build once for packaged scenarios and always clean owned artifacts."""
     configured = os.environ.get("TOPSAILAI_PACKAGED_ROOT", "").strip()
-    packaged_root = Path(configured) if configured else DEFAULT_PACKAGED_ROOT
+    if configured:
+        yield Path(configured).resolve()
+        return
+    storage = BDDTempStorage()
+    root = storage.create_directory("compiled-package-")
+    packages = [
+        "topsailai.workspace.control_handlers",
+        "topsailai.ai_base.llm_control.llm_mistakes.deepseek_hook_scripts",
+        *SHARED_MODULE_ALLOWLISTS,
+    ]
+    try:
+        yield build_compiled_package(
+            WORKSPACE, root, packages,
+            WORKSPACE / ".tmp" / "packaged-auto-build" / f"{root.name}.log",
+        )
+    finally:
+        storage.cleanup()
+
+
+@pytest.fixture
+def compiled_discovery_ctx(request) -> CompiledDiscoveryContext:
+    """Only packaged scenarios request the session build; source checks stay cheap."""
+    packaged_root = DEFAULT_PACKAGED_ROOT
+    if request.node.get_closest_marker("packaged") is not None:
+        packaged_root = request.getfixturevalue("compiled_package_root")
     context = CompiledDiscoveryContext(packaged_root=packaged_root.resolve())
-    yield context
-    if context.external_fixture_root is not None:
-        print(f"deleting compiled fixture: {context.external_fixture_root}")
-        shutil.rmtree(context.external_fixture_root)
+    try:
+        yield context
+    finally:
+        if context.external_fixture_root is not None:
+            print(f"deleting compiled fixture: {context.external_fixture_root}")
+            shutil.rmtree(context.external_fixture_root)
 
 
 @given("a source TopsailAI tree using import-system module discovery")
@@ -515,8 +543,13 @@ def then_shared_origins_are_packaged(
     _assert_packaged_origin(compiled_discovery_ctx.packaged_root, result["package_origin"])
     for origin in result["origins"].values():
         _assert_packaged_origin(compiled_discovery_ctx.packaged_root, origin)
-    forbidden = str(WORKSPACE.resolve())
-    assert all(forbidden not in entry for entry in result["sys_path"])
+    for entry in result["sys_path"]:
+        if not entry:
+            continue
+        path = Path(entry).resolve()
+        assert not path.is_relative_to(WORKSPACE.resolve()) or path.is_relative_to(
+            compiled_discovery_ctx.packaged_root
+        ), f"source path leaked into compiled probe: {path}"
 
 
 @given(
