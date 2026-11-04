@@ -275,32 +275,62 @@ class HookInstruction(HookBaseUtils):
             self.add_hook(key, func, "")
         return
 
-    def __print_hook(self, hook_name:str):
-        hook_set = self.hook_map[hook_name]
-        print(f"\n  {hook_name}")
-        for hook_func in hook_set:
-            print(f"    - {hook_func.func.__name__}, {hook_func.description}")
-        return
+    def _format_hook(self, hook_name:str) -> str:
+        """Return the formatted help block for one registered hook name.
 
-    def show_help(self, hook_name:str=None):
-        """
-        Display help information for all registered hooks.
-
-        Prints a formatted list of all available hook commands and their
-        descriptions in a user-friendly format.
+        Args:
+            hook_name (str): The registered hook name to describe.
 
         Returns:
-            None
+            str: A leading blank line followed by the hook name and one
+                indented line per registered function.
         """
-        print(SPLIT_LINE)
-        print("Instructions:")
-        # all
+        hook_set = self.hook_map[hook_name]
+        lines = [f"\n  {hook_name}"]
+        for hook_func in hook_set:
+            lines.append(f"    - {hook_func.func.__name__}, {hook_func.description}")
+        return "\n".join(lines)
+
+    def build_help_text(self, hook_name:str=None) -> str:
+        """
+        Build the help text for all registered hooks.
+
+        This is the pure formatter behind show_help. It never writes to
+        stdout, so programmatic callers such as call_instruction and the
+        control channel can obtain the same content the terminal shows.
+
+        Args:
+            hook_name (str, optional): Only include hook names containing this
+                substring. Defaults to None, which includes every hook.
+
+        Returns:
+            str: The formatted help text.
+        """
+        lines = [SPLIT_LINE, "Instructions:"]
         for _hook_name in self.hook_map:
             if hook_name and hook_name not in _hook_name:
                 continue
-            self.__print_hook(_hook_name)
-        print(SPLIT_LINE)
-        return
+            lines.append(self._format_hook(_hook_name))
+        lines.append(SPLIT_LINE)
+        return "\n".join(lines)
+
+    def show_help(self, hook_name:str=None) -> str:
+        """
+        Return help information for all registered hooks.
+
+        The returned text lists every available hook command and its
+        descriptions in a user-friendly format. Printing is the caller's
+        responsibility: call_hook prints it for interactive use, while
+        call_instruction returns it without touching stdout.
+
+        Args:
+            hook_name (str, optional): Only include hook names containing this
+                substring. Defaults to None, which includes every hook.
+
+        Returns:
+            str: The formatted help text.
+        """
+        return self.build_help_text(hook_name)
 
     def _hook_completer(self, text, state):
         """
@@ -437,7 +467,7 @@ class HookInstruction(HookBaseUtils):
             None
         """
         if self.__is_help(kwargs):
-            self.show_help(hook_name)
+            print(self.show_help(hook_name))
             return
 
         # case: /xxx kwargs
@@ -447,14 +477,14 @@ class HookInstruction(HookBaseUtils):
         hook_name = hook_name.strip()
 
         if self.__is_help(kwargs):
-            self.show_help(hook_name)
+            print(self.show_help(hook_name))
             return
 
         if not hook_name:
             return
 
         if hook_name not in self.hook_map:
-            self.show_help(hook_name)
+            print(self.show_help(hook_name))
             return
 
         args = []

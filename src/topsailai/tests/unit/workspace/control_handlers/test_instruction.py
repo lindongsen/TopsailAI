@@ -10,6 +10,7 @@ with HookInstruction.call_instruction.
 
 from unittest.mock import MagicMock, patch
 
+import json
 import pytest
 
 import topsailai.workspace.control_handlers as control_handlers
@@ -223,3 +224,68 @@ class TestAutoDiscovery:
         iter_modules.assert_any_call(control_handlers.__path__)
         assert registry.is_registered("call_instruction")
         assert isinstance(registry.get("call_instruction"), CallInstructionHandler)
+
+
+class TestCallInstructionHelpResult:
+    """Verify /help content reaches the control-channel response."""
+
+    @pytest.fixture
+    def hook_instruction(self, tmp_path):
+        from topsailai.utils.instruction_tool import HookInstruction
+
+        def alpha():
+            """Alpha command."""
+            pass
+
+        return HookInstruction(
+            file_input_completions=str(tmp_path / "completions.json"),
+            instructions={"/alpha": alpha},
+        )
+
+    def _context(self, hook_instruction):
+        class FakeAgentChat:
+            pass
+
+        agent_chat = FakeAgentChat()
+        agent_chat.hook_instruction = hook_instruction
+        return ControlContext(agent_chat=agent_chat)
+
+    def test_help_result_is_non_empty_text(self, hook_instruction):
+        handler = CallInstructionHandler()
+        request = ControlRequest(
+            request_id="h1",
+            action="call_instruction",
+            payload={"instruction": "/help"},
+        )
+        response = handler.handle(request, self._context(hook_instruction))
+
+        assert response.status == "ok"
+        assert isinstance(response.result, str)
+        assert "Instructions:" in response.result
+        assert "/alpha" in response.result
+
+    def test_help_result_is_encoded_on_the_wire(self, hook_instruction):
+        from topsailai.workspace.control_channel.protocol import encode_response
+
+        handler = CallInstructionHandler()
+        request = ControlRequest(
+            request_id="h2",
+            action="call_instruction",
+            payload={"instruction": "/help"},
+        )
+        response = handler.handle(request, self._context(hook_instruction))
+        decoded = json.loads(encode_response(response).decode("utf-8"))
+
+        assert decoded["status"] == "ok"
+        assert "Instructions:" in decoded["result"]
+
+    def test_help_does_not_write_to_stdout(self, hook_instruction, capsys):
+        handler = CallInstructionHandler()
+        request = ControlRequest(
+            request_id="h3",
+            action="call_instruction",
+            payload={"instruction": "/help"},
+        )
+        handler.handle(request, self._context(hook_instruction))
+
+        assert capsys.readouterr().out == ""

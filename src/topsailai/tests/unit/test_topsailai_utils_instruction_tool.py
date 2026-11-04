@@ -478,6 +478,78 @@ class TestHookInstructionBase(unittest.TestCase):
         result = hook_inst.call_instruction('  test  ')
         self.assertEqual(result, "ok")
 
+    def test_build_help_text_returns_formatted_text_without_printing(self):
+        """Test build_help_text formats help without writing to stdout."""
+        hook_inst = self._make_hook_instruction()
+        hook_inst.add_hook('/alpha', _make_dummy_func("Alpha command."))
+        with patch('builtins.print') as mock_print:
+            text = hook_inst.build_help_text()
+        mock_print.assert_not_called()
+        self.assertIn(SPLIT_LINE, text)
+        self.assertIn("Instructions:", text)
+        self.assertIn("/alpha", text)
+        self.assertIn("Alpha command.", text)
+
+    def test_build_help_text_filters_by_substring(self):
+        """Test build_help_text keeps only hook names containing the filter."""
+        hook_inst = self._make_hook_instruction()
+        hook_inst.add_hook('/alpha', _make_dummy_func("Alpha command."))
+        hook_inst.add_hook('/beta', _make_dummy_func("Beta command."))
+        text = hook_inst.build_help_text("alpha")
+        self.assertIn("/alpha", text)
+        self.assertNotIn("/beta", text)
+
+    def test_show_help_returns_text_without_printing(self):
+        """Test show_help returns the help text and prints nothing."""
+        hook_inst = self._make_hook_instruction()
+        hook_inst.add_hook('/alpha', _make_dummy_func("Alpha command."))
+        with patch('builtins.print') as mock_print:
+            text = hook_inst.show_help()
+        mock_print.assert_not_called()
+        self.assertEqual(text, hook_inst.build_help_text())
+
+    def test_call_instruction_help_returns_text_without_printing(self):
+        """Test call_instruction('/help') returns help text and prints nothing."""
+        hook_inst = self._make_hook_instruction()
+        hook_inst.add_hook('/help', hook_inst.show_help, "show help info")
+        hook_inst.add_hook('/alpha', _make_dummy_func("Alpha command."))
+        with patch('builtins.print') as mock_print:
+            result = hook_inst.call_instruction('/help')
+        mock_print.assert_not_called()
+        self.assertIsInstance(result, str)
+        self.assertIn("Instructions:", result)
+        self.assertIn("/alpha", result)
+
+    def test_call_instruction_help_accepts_filter_argument(self):
+        """Test call_instruction('/help', filter) forwards the filter."""
+        hook_inst = self._make_hook_instruction()
+        hook_inst.add_hook('/help', hook_inst.show_help, "show help info")
+        hook_inst.add_hook('/alpha', _make_dummy_func("Alpha command."))
+        hook_inst.add_hook('/beta', _make_dummy_func("Beta command."))
+        result = hook_inst.call_instruction('/help', 'beta')
+        self.assertIn("/beta", result)
+        self.assertNotIn("/alpha", result)
+
+    def test_call_hook_help_prints_text_exactly_once(self):
+        """Test call_hook('/help') prints the help text exactly once."""
+        hook_inst = self._make_hook_instruction()
+        hook_inst.add_hook('/help', hook_inst.show_help, "show help info")
+        hook_inst.add_hook('/alpha', _make_dummy_func("Alpha command."))
+        with patch('builtins.print') as mock_print:
+            hook_inst.call_hook('/help')
+        mock_print.assert_called_once()
+        printed = mock_print.call_args.args[0]
+        self.assertEqual(printed, hook_inst.build_help_text())
+
+    def test_call_hook_unknown_command_prints_help_exactly_once(self):
+        """Test call_hook prints help once for an unknown command."""
+        hook_inst = self._make_hook_instruction()
+        hook_inst.add_hook('/alpha', _make_dummy_func("Alpha command."))
+        with patch('builtins.print') as mock_print:
+            hook_inst.call_hook('/nonexistent')
+        mock_print.assert_called_once()
+        self.assertIn("Instructions:", mock_print.call_args.args[0])
+
     def test_load_existing_completions_file_exists(self):
         """Test _load_existing_completions loads valid file."""
         hook_inst = self._make_hook_instruction()
