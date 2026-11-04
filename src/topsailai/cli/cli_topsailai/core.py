@@ -159,7 +159,16 @@ def _try_handle_project_subcommand(
         return None
     subcmd = argv[1].lower() if len(argv) > 1 else ""
     if subcmd == "list":
+        json_output = len(argv) > 2 and argv[2:] == ["--json"]
+        if len(argv) > 2 and not json_output:
+            print(
+                f"{Colors.RED}[ERROR] Usage: topsailai project list [--json]{Colors.RESET}"
+            )
+            return 2
         projects = build_managed_project_list()
+        if json_output:
+            print(json.dumps(projects, ensure_ascii=False))
+            return 0
         if not projects:
             print(
                 f"{Colors.YELLOW}[WARN] No managed projects found.{Colors.RESET}"
@@ -1588,6 +1597,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     project_list_parser = project_subparsers.add_parser(
         "list",
         help="list managed projects",
+    )
+    project_list_parser.add_argument(
+        "--json", action="store_true", dest="json_output",
+        help="output the managed project list as JSON",
     )
     project_list_parser.set_defaults(func=_handle_project_subcommand)
     project_sessions_parser = project_subparsers.add_parser(

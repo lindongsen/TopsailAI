@@ -398,7 +398,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `docs read <name>` | Read a specific usage documentation file and exit. |
 | `project add <path> [name]` | Add a project to the managed project list. |
 | `project del <path>` | Remove a project from the managed project list. |
-| `project list` | Display all managed projects. |
+| `project list [--json]` | Display all managed projects; `--json` outputs a JSON array instead of a table. |
 | `project list_sessions [--json]` | Display recent sessions with project workspaces (default limit: 30); `--json` outputs JSON instead of a table. |
 | `project launch <folder>` | Launch an agent in `<folder>` using the same behavior as the project-scope `/agent <folder>` command. |
 | `project resume <session> [-d DRIVER]` | Resume an idle session; the default driver is `topsailai_agent_chats`. |
@@ -412,6 +412,8 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `models clear` | Clear the workspace model selection. |
 
 The JSON workspace document contains `host`, `pwd`, `home`, `task_dir`, `items`, and `total`. Each item contains `no`, `filename`, `session_name`, `session_id`, `is_task`, `pid`, `process_generation`, `status`, `completed`, `driver`, `created_at`, and `project_workspace`. `process_generation` is the positive operating-system process generation required by non-interactive `workspace kill`; it is present only when an ordinary session process is currently verified to hold that exact session stdout file, and otherwise is `null`. Callers must not substitute a PID, timestamp, row number, or older generation. `created_at` is the local creation time in ISO 8601 format with a timezone offset (`YYYY-MM-DDTHH:MM:SS+/-HHMM`), or `null` when the creation time is unavailable. Items retain the default oldest-first order. An empty workspace returns `"items": []` and `"total": 0`.
+
+The `project list --json` document is a JSON array of managed project records, ordered oldest-first by `created_at`. Each record contains the stored fields `name`, `path`, `created_at`, and `updated_at`, plus the 1-based `no` row number that matches the table row. An empty registry returns `[]` and exit code `0`, so callers never have to parse a warning message. The public parser tolerates unknown arguments, so an unrecognized option is ignored and the default table is printed; the usage error with exit code `2` applies only when the internal handler receives an option other than `--json`.
 
 ## Workspace agent
 
@@ -446,6 +448,9 @@ topsailai workspace list --json
 
 # List managed projects
 ./topsailai_cli.py project list
+
+# List managed projects as JSON
+./topsailai_cli.py project list --json
 
 # List model registry entries
 ./topsailai_cli.py models list

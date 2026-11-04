@@ -2043,6 +2043,101 @@ class TestProjectSubcommand(unittest.TestCase):
         self.assertIn("Listed", output)
         self.assertIn(project_dir, output)
 
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_list_json_empty_registry_is_array(self, mock_stdout):
+        """``project list --json`` on an empty registry prints ``[]``."""
+        with self._patch_path():
+            code = _try_handle_project_subcommand(["project", "list", "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(mock_stdout.getvalue()), [])
+
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_list_json_emits_records_with_row_numbers(self, mock_stdout):
+        """``project list --json`` emits stored fields plus the 1-based row number."""
+        project_dir = os.path.join(self.tmp.name, "json-project")
+        os.makedirs(project_dir)
+        with self._patch_path():
+            with patch("sys.stdout", new_callable=io.StringIO):
+                _try_handle_project_subcommand(
+                    ["project", "add", project_dir, "JsonProject"]
+                )
+            code = _try_handle_project_subcommand(["project", "list", "--json"])
+        self.assertEqual(code, 0)
+        payload = json.loads(mock_stdout.getvalue())
+        self.assertEqual(len(payload), 1)
+        record = payload[0]
+        self.assertEqual(record["no"], 1)
+        self.assertEqual(record["name"], "JsonProject")
+        self.assertEqual(record["path"], project_dir)
+        self.assertIn("created_at", record)
+        self.assertIn("updated_at", record)
+
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_list_json_has_no_table_or_warning(self, mock_stdout):
+        """JSON output must not mix in table decoration or warning text."""
+        project_dir = os.path.join(self.tmp.name, "clean-json-project")
+        os.makedirs(project_dir)
+        with self._patch_path():
+            with patch("sys.stdout", new_callable=io.StringIO):
+                _try_handle_project_subcommand(["project", "add", project_dir])
+            _try_handle_project_subcommand(["project", "list", "--json"])
+        output = mock_stdout.getvalue()
+        self.assertNotIn("No managed projects", output)
+        self.assertNotIn("Total:", output)
+        self.assertNotIn(Colors.RED, output)
+        self.assertNotIn(Colors.YELLOW, output)
+
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_list_rejects_unknown_option(self, mock_stdout):
+        """An option other than ``--json`` is a usage error with exit code 2."""
+        with self._patch_path():
+            code = _try_handle_project_subcommand(
+                ["project", "list", "--table"]
+            )
+        self.assertEqual(code, 2)
+        self.assertIn("Usage: topsailai project list [--json]", mock_stdout.getvalue())
+
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_main_parses_list_json(self, mock_stdout):
+        """The public CLI parser dispatches ``project list --json``."""
+        from cli_topsailai.core import main
+
+        project_dir = os.path.join(self.tmp.name, "main-json-project")
+        os.makedirs(project_dir)
+        with self._patch_path():
+            with patch("sys.stdout", new_callable=io.StringIO):
+                _try_handle_project_subcommand(
+                    ["project", "add", project_dir, "MainJson"]
+                )
+            with self.assertRaises(SystemExit) as exit_info:
+                main(["project", "list", "--json"])
+
+        self.assertEqual(exit_info.exception.code, 0)
+        payload = json.loads(mock_stdout.getvalue())
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["name"], "MainJson")
+
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_main_ignores_unknown_list_option(self, mock_stdout):
+        """The public parser tolerates unknown options and prints the table."""
+        from cli_topsailai.core import main
+
+        project_dir = os.path.join(self.tmp.name, "main-table-project")
+        os.makedirs(project_dir)
+        with self._patch_path():
+            with patch("sys.stdout", new_callable=io.StringIO):
+                _try_handle_project_subcommand(
+                    ["project", "add", project_dir, "MainTable"]
+                )
+            with self.assertRaises(SystemExit) as exit_info:
+                main(["project", "list", "--table"])
+
+        self.assertEqual(exit_info.exception.code, 0)
+        output = mock_stdout.getvalue()
+        self.assertIn("MainTable", output)
+        self.assertIn("Total:", output)
+        self.assertNotIn("[ERROR]", output)
+
     @patch("cli_topsailai.project_scope.print_project_table")
     @patch("cli_topsailai.project_scope.build_project_list")
     def test_list_sessions_uses_project_scope_default_limit(

@@ -317,9 +317,9 @@ def print_help(
             "scopes": ["cli"],
         },
         {
-            "cmd": "project list",
-            "desc": "Non-interactive: list all managed projects stored in .projects.jsonl under TOPSAILAI_HOME. Output includes row number, name, path, and creation time.",
-            "example": "Example: topsailai project list",
+            "cmd": "project list [--json]",
+            "desc": "Non-interactive: list all managed projects stored in .projects.jsonl under TOPSAILAI_HOME. Output includes row number, name, path, and creation time; --json outputs the entries as a JSON array.",
+            "example": "Example: topsailai project list --json",
             "scopes": ["cli"],
         },
         {
