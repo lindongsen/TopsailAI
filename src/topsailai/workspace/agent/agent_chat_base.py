@@ -293,7 +293,9 @@ class AgentChatBase(object):
                     )
                     raise ContextWindowLimitError(
                         "Context remains above the model send limit after forced summarization: "
-                        f"current_tokens={current_tokens}, send_limit={watermark.send_limit}"
+                        f"current_tokens={current_tokens}, "
+                        f"safe_tokens={updated_watermark.safe_tokens if updated_watermark else watermark.safe_tokens}, "
+                        f"send_limit={watermark.send_limit}"
                     )
 
             if _answer:

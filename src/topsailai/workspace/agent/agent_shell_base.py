@@ -156,6 +156,7 @@ class AgentChat(AgentChatBase):
             str: The final answer from the AI agent.
         """
         completed = False
+        self._terminal_failure = False
         self._stats_binding = None
         self._stats_prepare_failed = False
         try:
@@ -182,7 +183,7 @@ class AgentChat(AgentChatBase):
         finally:
             if completed:
                 update_session_meta_status(
-                    "completed",
+                    "error" if self._terminal_failure else "completed",
                     getattr(self.ctx_runtime_data, "session_id", None),
                 )
             try:
@@ -542,16 +543,14 @@ class AgentChat(AgentChatBase):
             except agent_exception.AgentEndProcess:
                 self.last_message = self.messages[-1]
                 self.call_hooks_post_fail_run(agent_exception.AgentEndProcess())
-            except ContextWindowLimitError as e:
-                logger.warning("ContextWindowLimitError caught in agent chat loop: %s", e)
+            except (ContextWindowLimitError, HeavyTaskError) as e:
+                logger.warning("%s caught in agent chat loop: %s", type(e).__name__, e)
+                self._terminal_failure = True
                 answer = f"Task terminated: {e}"
                 self.last_message = answer
-                self.call_hooks_post_fail_run(e)
-                break
-            except HeavyTaskError as e:
-                logger.warning("HeavyTaskError caught in agent chat loop: %s", e)
-                answer = f"Task terminated: {e}"
-                self.last_message = answer
+                print(answer)
+                if need_save_answer:
+                    self.ctx_runtime_data.add_session_message(ROLE_ASSISTANT, answer)
                 self.call_hooks_post_fail_run(e)
                 break
             except (KeyboardInterrupt, EOFError):

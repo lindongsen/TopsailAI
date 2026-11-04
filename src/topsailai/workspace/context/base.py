@@ -746,6 +746,11 @@ class ContextRuntimeBase(object):
         if safe_input_tokens > model_max_context:
             return False, "summary_input_exceeds_model_context", input_tokens, summary_safe_limit
         if safe_input_tokens > summary_safe_limit:
+            logger.warning(
+                "Summary input exceeds safe limit: summary_input_tokens=%s, "
+                "safe_input_tokens=%s, summary_safe_limit=%s, session_id=%s",
+                input_tokens, safe_input_tokens, summary_safe_limit, self.session_id or "",
+            )
             return False, "summary_input_exceeds_safe_limit", input_tokens, summary_safe_limit
         if safe_preserved_tokens + summary_token_reserve > summary_safe_limit:
             return False, "preserved_budget_exceeds_safe_limit", input_tokens, summary_safe_limit
