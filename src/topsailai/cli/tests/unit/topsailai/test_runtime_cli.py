@@ -423,3 +423,58 @@ def test_logs_json_value_not_output_switch(capsys):
     executor.assert_not_called()
     output = capsys.readouterr()
     assert output.out == "" and "usage_error" in output.err
+
+
+def test_bare_invocation_prints_help_offline(capsys):
+    """A bare runtime command shows guidance without touching any seam."""
+    home, executor, stream = Mock(), Mock(), Input(b"do not consume")
+    code = cli.run_runtime_cli([], stdin=stream, executor=executor,
+                               home_resolver=home)
+    output = capsys.readouterr()
+    assert code == 0
+    assert "topsailai runtime" in output.out and not output.err
+    home.assert_not_called()
+    executor.assert_not_called()
+    assert not stream.calls
+
+
+def test_bare_invocation_matches_explicit_help(capsys):
+    """Default guidance is byte-identical to the explicit help path."""
+    assert cli.run_runtime_cli([]) == 0
+    default_output = capsys.readouterr().out
+    with pytest.raises(SystemExit) as error:
+        cli.run_runtime_cli(["--help"])
+    assert error.value.code == 0
+    assert capsys.readouterr().out == default_output
+
+
+@pytest.mark.parametrize("argv", [
+    ["-s", "s"], ["-p", "123"], ["-s", "s", "--json"],
+    ["send", "-m", "x"], ["--json"], ["--timeout", "3"],
+])
+def test_incomplete_operation_stays_usage_error(argv, capsys):
+    """Selectors or options without an action remain invalid, not help."""
+    code, executor = invoke(argv)
+    executor.assert_not_called()
+    output = capsys.readouterr()
+    assert code == 2
+    assert "topsailai runtime" not in output.out
+    if "--json" in argv:
+        assert json.loads(output.out)["error_code"] == "usage_error"
+        assert not output.err
+    else:
+        assert not output.out and "usage_error" in output.err
+
+
+def test_bare_invocation_real_entry(tmp_path):
+    """The real entry point prints help and exits zero without a target."""
+    import os
+    root = Path(__file__).resolve().parents[3]
+    env = dict(os.environ, TOPSAILAI_HOME=str(tmp_path), HOME=str(tmp_path))
+    completed = subprocess.run(
+        [sys.executable, str(root / "topsailai_cli.py"), "runtime"],
+        capture_output=True, text=True, env=env, timeout=120,
+    )
+    assert completed.returncode == 0
+    assert "topsailai runtime" in completed.stdout
+    assert completed.stderr == ""

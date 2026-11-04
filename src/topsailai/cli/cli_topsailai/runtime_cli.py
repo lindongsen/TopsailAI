@@ -27,6 +27,11 @@ class RuntimeInputError(Exception):
 class RuntimeParser(argparse.ArgumentParser):
     """Keep parser failures within the same structured output contract."""
 
+    def __init__(self, *args, **kwargs):
+        """Keep epilog examples readable rather than filling terminal width."""
+        kwargs.setdefault("formatter_class", argparse.RawDescriptionHelpFormatter)
+        super().__init__(*args, **kwargs)
+
     def error(self, message):
         """Avoid argparse diagnostics that could echo message or JSON values."""
         raise RuntimeUsageError("Invalid runtime arguments")
@@ -47,12 +52,16 @@ def build_parser():
     parser = RuntimeParser(
         prog="topsailai runtime", allow_abbrev=False,
         description="Execute one exact send, btw, control or logs operation",
-        epilog=("Use logs -n N (default 20, maximum 10000); "
-                "send/btw -m TEXT or --stdin; control ACTION -a JSON; "
-                "or -i '/send TEXT', '/ctx.btw TEXT', '/control ACTION JSON', "
-                "'/control.ACTION JSON'. A single whitespace delimiter is consumed; "
-                "remaining message whitespace is preserved. Timeout excludes stdin "
-                "and blocking injection append. Delivery is not final consumption."),
+        epilog=(
+            "Examples:\n"
+            "  topsailai runtime send -s SESSION -p PID -m 'hello'\n"
+            "  topsailai runtime btw -s SESSION --stdin < message.txt\n"
+            "  topsailai runtime control get_session_messages -s SESSION -a '{}' --json\n"
+            "  topsailai runtime logs -s SESSION -p PID -n 100 --json\n"
+            "  topsailai runtime -s SESSION -i '/send hello'\n\n"
+            "control ACTION names come from the live control-handler registry. "
+            "Use --help with send, btw, control or logs for this offline help."
+        ),
     )
     for flags, dest, kind in [
         (("-s", "--session-id", "--session_id"), "session_id", str),
@@ -67,7 +76,10 @@ def build_parser():
                             default=argparse.SUPPRESS)
     parser.add_argument("--json", action="store_true", help="emit one public JSON result")
     parser.add_argument("--stdin", action="store_true", help="read bounded non-TTY UTF-8 input")
-    parser.add_argument("positionals", nargs="*", metavar="ACTION")
+    parser.add_argument(
+        "positionals", nargs="*", metavar="ACTION",
+        help="send, btw, control ACTION_NAME, or logs; control action names are registered dynamically",
+    )
     return parser
 
 
@@ -207,6 +219,11 @@ def public_result(result):
 
 def run_runtime_cli(argv, *, stdin=None, executor=None, home_resolver=None):
     """Normalize once, execute once and emit one result; help stays offline."""
+    if not argv:
+        # A bare invocation is a request for guidance, not an incomplete
+        # operation: show the same offline help as --help and succeed.
+        build_parser().print_help()
+        return 0
     json_mode = _json_requested(argv)
     try:
         args = build_parser().parse_intermixed_args(argv)
