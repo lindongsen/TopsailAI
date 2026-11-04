@@ -48,3 +48,14 @@ topsailai_session_add_message -s "" -m "follow up tomorrow"
 
 - This command targets the `user2agent` conversation layer.
 - For immediate delivery to a running agent, use `topsailai_session_add_agent2llm_message` instead.
+
+## Choosing Between the Two Message Commands
+
+These two commands append messages to a session, but they target different conversation layers and have different lifecycles.
+
+| Command | Conversation layer | When it takes effect | Use case |
+|---|---|---|---|
+| `topsailai_session_add_message` | `user2agent` — user and agent conversation | Only after the agent restarts; not visible to a running agent | Record a user message or context for the next agent run |
+| `topsailai_session_add_agent2llm_message` | `agent2llm` — agent and LLM conversation | Immediately; the running agent reads it on the fly | Leave a "by the way" note for the currently running agent |
+
+In short: use `topsailai_session_add_message` for persistent user-to-agent context, and `topsailai_session_add_agent2llm_message` when you want a running agent to pick up extra instruction right now.

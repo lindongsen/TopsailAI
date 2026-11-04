@@ -8,71 +8,55 @@ references:
 
 # CLI: topsailai
 
-## Scope: workspace
+Design notes, rules, caveats and references for the main `topsailai` CLI. Usage (commands, options, syntax, examples, exit codes) is documented in [docs/usage/topsailai.md](docs/usage/topsailai.md).
 
-- task list
+## Scope Index
 
-## Scope: runtime
+The CLI is organized as five scopes. Each scope is a navigation and action context, not a separate process.
 
-- steam log of one session
-- `/ctx.btw [message]` queues an agent2llm message for the watched PID.
-- `/ctx.btw-all [message]` queues the message for all discoverable live PIDs in the current session; temporary session id `topsailai` is rejected, partial success is allowed, failures are not automatically retried, and success means queued rather than consumed.
+| Scope | Design intent |
+|---|---|
+| `workspace` | Default scope. Discovers session and task logs and acts as the entry point to every other scope. |
+| `runtime` | Streams one session log and carries the live process-level messaging and control channel. |
+| `project` | Navigates recent sessions by recorded project workspace and hosts the managed project registry. |
+| `session` | Focuses on one session and its configured commands. |
+| `doc` | Browses the Markdown documentation grouped under `docs/`. |
 
-## Scope: project
+## Design Rules
 
-- project workspace
-- shows recent records, default limit 30, use `r [limit]` to adjust
-
-## Scope: session
-
-- enter one session
-
-## Scope: doc
-
-- usage documentation list
-- read usage documentation
-
-## Commands Available in All Scopes
-
-- `!<command>` executes a command line in the CLI process working directory using the `/git` parsing and execution mechanism, then remains in the current scope; for example, `!git status`.
-
-## Workspace commands
-
-- `/env.search <term> [term...]` fuzzy-searches configurable environment variables with case-insensitive OR matching, checking `.env.local`, `.env`, then `env_template`; it displays matching `NAME=VALUE` assignments from every source, suppresses names already found in a higher-priority source, and retains displayed names for TAB completion.
-- `/driver log <number>` reads the bounded active driver log in workspace scope.
-- `/driver meta <number>` reads validated active driver metadata in workspace scope and differs from `/meta`.
-- `r all` or `/refresh all` includes rows whose exact session metadata records `status: completed`; they render `DONE`. A plain `r` or `/refresh` restores the default hidden view.
-
-## Non-interactive subcommands
-
-- `workspace [-f|--format json] [list [--json]]` — displays the task list. Scope-level `-f/--format` sets the output format; `list --json` overrides it. The default is the table.
-- `runtime [-s SESSION] [-p PID] -i INSTRUCTION`
-- `runtime send|btw [-s SESSION] [-p PID] -m MESSAGE|--stdin`
-- `runtime control ACTION [-s SESSION] [-p PID] [-a JSON]`
-- `runtime logs [-s SESSION] [-p PID] [-n N] [--json]` — finite recent session log query
-- `workspace agent [<folder>] [-m MODE] [-b|--background] [--non-interactive] [--json]`
-- `workspace kill SESSION -g GENERATION [--json]` — requires the verified `process_generation` from `workspace list --json` or `workspace -f json` and fails closed when process-instance evidence changes or is unavailable
-- `workspace driver start|status|stop -s SESSION [-p PID] [--json]`
-- `project add|del|list|launch|resume`; `project list_sessions [--json]`
-- `models list|add|get|update|delete`
-
-## Command Design Convention
-
-- Interactive parameters use option flags and may provide a short alias for frequently used options.
-- Main interactive aliases are `-t` / `--tui`, `-n` / `--tail-lines`, and `-m` / `--agent-mode`.
+- Interactive parameters use option flags and may provide a short alias for frequently used options. Main interactive aliases are `-t` / `--tui`, `-n` / `--tail-lines`, and `-m` / `--agent-mode`.
 - Non-interactive parameters use subcommands, for example `project list`.
+- `!<command>` executes a command line in the CLI process working directory using the `/git` parsing and execution mechanism, then remains in the current scope. `/git` instead resolves the active session's project workspace.
+- Completion evidence requires the row PID to equal the session PID, so task rows are never marked `DONE`.
+- Session-info display caching must not bypass the completion check, so cached names and project workspaces cannot make completed sessions reappear after a refresh.
+- Metadata admission is absent-only, while successful session-info queries retain their existing updates.
+- Driver commands are restricted to the ordinary workspace task list; project, session, runtime, doc and managed-project views reject them.
+- The external driver alone owns duplicate-start exclusion, its lock, metadata and log cleanup. The CLI never writes, acquires or deletes these records.
+- The CLI retains live child handles in memory and reaps exits on later interactions without terminating resident drivers when leaving the CLI.
+- Resume driver selection does not use `ai_agent_driver` or `TOPSAILAI_AGENT_DRIVER`; only the built-in driver choices apply.
+- The selected model configuration is resolved immediately before an agent launch or resume and applies only to the launched child process, never to the parent shell.
+- The CLI validates driver entry files once at its configuration boundary. An invalid explicit override is rejected rather than silently replaced with a default, and configuration changes require restarting the CLI.
 
-## Non-interactive workspace agent
+## Caveats
 
-Canonical usage: `topsailai workspace agent [<folder>] [-m raw|dtach|tmux] [-b|--background] [--non-interactive] [--json]`. See [the canonical workspace-agent usage contract](docs/usage/topsailai.md#workspace-agent). It launches in the foreground; the folder is optional and defaults to the caller's working directory, and an explicit folder is resolved against the caller's original working directory. `--non-interactive` suppresses launcher prompts for this launch only and does not change the agent's own interactive mode. Exit codes are 2 for usage/background rejection, 3 for invalid folder, 4 for preparation, 5 for spawn/wait, 6 for unresolved custody, and 130 for cancellation; observed child statuses are preserved and signals map to `128 + signal`. A wrapper exit is not agent completion. Background `submitted` means not-ready. With `--json`, stdout contains one receipt and ordinary output is redirected to stderr.
+- Delivery states are boundary facts, not business completion: `pipe_written` means FIFO bytes were written, `injection_queued` means the writer queued the message, and `control_acknowledged` means a correlated response reported `status=ok`.
+- Failed or uncertain delivery may carry partial evidence or `delivery_unknown=true`. Never blindly retry, because a duplicate operation can have real effects; the CLI never automatically retries a whole operation.
+- The task directory is assumed to be trusted local per-user storage. Endpoint, type and path checks plus PID liveness are not authenticated receiver identity, so PID reuse and filesystem replacement races remain possible. This interface is not a security boundary against a hostile task directory or other local users.
+- Process identity checks are conservative and cannot prove complete PID-reuse protection without an authoritative stored birth baseline. Target checks occur before launch, and the external driver selects by session ID rather than a strictly bound target PID, so a preflight/spawn race is possible.
+- Interactive `/kill` does not verify process-instance identity, so stale lists must be refreshed before use. Non-interactive termination requires the verified process generation instead.
+- Publication proves driver liveness, not model readiness or analysis completion. An unconfirmed child may still run.
+- Clean driver finalization normally removes metadata and logs, so `EXIT` and `FAIL` are residual observations rather than durable exit history.
+- Log and metadata reads are bounded snapshots, not transactions; incomplete concurrent writes report an error without automatic retries.
+- Log content may contain secrets or terminal escape sequences, and `/env.search` intentionally displays values that may contain secrets.
+- FIFO messaging requires platform FIFO support and control uses Unix-domain sockets; no cross-platform fallback transport is silently selected.
+- The dual-pane UI relies on the Python `curses` module and falls back to a single-pane mode when it is unavailable or stdout is not a TTY.
 
-## Resume commands
+## References
 
-- `/resume <number> [-d DRIVER]` and `project resume SESSION [-d DRIVER]` default to `topsailai_agent_chats`. The override accepts `topsailai_agent_chats`, `topsailai_agent_plan_tasks`, or `ai-team-flow-dev`; settings and environment driver values do not select a resume executable.
-
-## Workspace resume
-
-- `workspace resume -s SESSION [-d DRIVER] [-m raw|dtach|tmux] [-b|--background] [--json]` resumes an exact persisted idle session.
-- Resume defaults to `topsailai_agent_chats`; `-d/--driver` accepts `topsailai_agent_chats`, `topsailai_agent_plan_tasks`, or `ai-team-flow-dev`.
-- Foreground defaults to dtach; background defaults to raw and reports submission, not readiness.
-- See [the resume contract](docs/usage/topsailai.md#workspace-resume) for validation, logs, exit codes and concurrency limitations.
+- [docs/usage/topsailai.md](docs/usage/topsailai.md) — usage contract for this CLI.
+- [docs/usage/README.md](docs/usage/README.md) — usage index and `TOPSAILAI_HOME` layout.
+- [docs/usage/topsailai_models.md](docs/usage/topsailai_models.md) — model registry usage.
+- [docs/usage/topsailai_launch_agent.md](docs/usage/topsailai_launch_agent.md) — launcher usage.
+- [docs/usage/topsailai_session_add_message.md](docs/usage/topsailai_session_add_message.md) — persistent user-to-agent messages.
+- [docs/usage/topsailai_session_add_agent2llm_message.md](docs/usage/topsailai_session_add_agent2llm_message.md) — runtime agent2llm injection.
+- [docs/usage/topsailai_project_history.md](docs/usage/topsailai_project_history.md) — project history listing.

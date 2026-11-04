@@ -85,39 +85,10 @@ keeps `ai_base/` free of `workspace/` imports. Future sources (e.g. Redis, socke
 
 ---
 
-## Usage Examples
+## Usage
 
-### Specific session and PID
-
-```bash
-python ./topsailai_session_add_agent2llm_message.py \
-  -s abc-001 -p 12345 -m "Please also check the database logs"
-```
-
-### Interactive multi-line input
-
-```bash
-python ./topsailai_session_add_agent2llm_message.py \
-  -s abc-001 -p 12345
-[INFO] Enter message (type EOF on its own line to finish):
-Check the database logs
-Then summarize the recent errors
-EOF
-```
-
-### Auto-discover all active sessions (broadcast)
-
-```bash
-python ./topsailai_session_add_agent2llm_message.py \
-  -m "Broadcast: system maintenance in 5 minutes"
-```
-
-### Direct JSONL file override
-
-```bash
-python ./topsailai_session_add_agent2llm_message.py \
-  --file-path /path/to/messages.jsonl -m "direct write"
-```
+Invocation, options, target discovery, and examples are documented in
+[docs/usage/topsailai_session_add_agent2llm_message.md](docs/usage/topsailai_session_add_agent2llm_message.md).
 
 ---
 

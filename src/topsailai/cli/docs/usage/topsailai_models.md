@@ -179,3 +179,13 @@ Pretty-printed JSON is used by default. Pass `--json` to emit compact JSON suita
 
 - `{TOPSAILAI_HOME}/.models.jsonl` — model registry.
 - `{TOPSAILAI_HOME}/.model_selection.json` — workspace and project model selections.
+
+## Model Selection
+
+Create `{TOPSAILAI_HOME}/.models.jsonl` with one model configuration object per line. Use `/models` in workspace scope to set the default model or in project scope to set an override for the active project. `/models current` shows the effective model and `/models clear` removes the selection for the current scope.
+
+You can also manage the registry from the shell with the `topsailai models` subcommand described above.
+
+Selections are stored in `.model_selection.json` with project overrides taking precedence over the workspace default. When a model is selected, any `environment` entries defined in its registry record are applied to the current process environment (each variable is printed as an `[INFO] Set environment variable: name=value` message). The selected OpenAI-compatible configuration is otherwise applied only to subsequently launched or resumed agent processes.
+
+Registry entries must reference credentials by environment-variable name through `api_key_env`, `organization_env`, or `project_env`. Do not store credentials directly in `.models.jsonl`.

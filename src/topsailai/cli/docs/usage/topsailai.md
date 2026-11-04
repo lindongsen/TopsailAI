@@ -63,6 +63,44 @@ The CLI has five scopes, derived from the original design notes in `../../topsai
 - **`[session:<id>]`** — a focused scope for one session. It provides context retrieval and streaming, runtime messaging, agent2llm and persistent context injection, configured session commands, and return to workspace scope.
 - **`[doc]`** — a browser for Markdown documentation grouped under `docs/`. It provides numbered document reading, list refresh, help, and return to workspace scope.
 
+## Session Output Files
+
+The stream watcher discovers session and task stdout/stderr files in the task directory (`{TOPSAILAI_HOME}/workspace/task/`).
+
+- **Session stdout** is produced by a session's main process.
+  - Filename format: `{session_id}.{pid}.session.stdout`
+  - `{pid}` is the session (parent) process PID.
+  - Example: `my-session.1234.session.stdout`
+
+- **Task stdout** is produced by task processes or threads launched by the session.
+  - Filename format: `{session_id}.{pid}.{extra}.task.stdout`
+  - `{pid}` is the task (child) process PID.
+  - `{extra}` is an optional extra identifier (task name, timestamp, etc.) and may itself contain dots, e.g., `abc.123`.
+  - Example: `my-session.1235.step-1.task.stdout`
+
+- **Temporary sessions**: when `{session_id}` is `topsailai`, the session id is undefined and is displayed as `(temp)` in the UI.
+  - Example: `topsailai.1234.session.stdout` → displayed as `(temp)`.
+
+- **Agent2LLM inject messages**: runtime messages consumed by a running agent before its next LLM call.
+  - Filename format: `{session_id}.{pid}.session.agent2llm_inject_messages.jsonl`
+  - Written by `topsailai_session_add_agent2llm_message.py` and the `/ctx.btw` command.
+- **Named pipes**: used for process-level messaging (`/send`).
+  - Filename format: `{session_id}.{pid}.session.pipe`
+
+Legacy filename formats are still accepted for backward compatibility:
+
+- Generic `{name}.{pid}.stdout` / `{name}.{pid}.stderr`
+
+### Sending messages to a running session
+
+When you use `/send` in the stream watcher, the target session PID is resolved in this order:
+
+1. **Task-list PID** — if the selected entry in the discovered file list already records a session PID, use it directly.
+2. **Filename PID** — parse the PID from the stdout filename (works for `session.stdout`; for `task.stdout` the filename PID is the task child PID, so it is only used when it already points to a valid session pipe).
+3. **`lsof` / `fuser` fallback** — scan the filesystem to find the process currently holding the stdout file and derive the session PID from there.
+
+This prioritizes the authoritative PID recorded by the watcher and only falls back to heuristic methods when necessary.
+
 ## Commands Available in All Scopes
 
 | Command | Description |
@@ -99,6 +137,118 @@ Workspace discovery reads exact session metadata for each parent session row and
 | `scopes` | Display detailed introductions and available actions for each scope. |
 | `/help` | Show available commands. |
 | `q` | Quit the CLI. |
+
+### Workspace task list columns
+
+When the CLI starts, it prints the workspace task list built by scanning `{TOPSAILAI_HOME}/workspace/task/` for `.stdout` and `.stderr` log files produced by running sessions and their tasks. Each row represents a discovered log file and shows:
+
+| Column | Description |
+|---|---|
+| `No` | Row number used to select the file |
+| `Session` | Session ID, or `(temp)` for temporary sessions |
+| `PID` | Process ID embedded in the filename |
+| `Modified` | Last modification time |
+| `Created` | Creation time |
+
+The prompt `[workspace]>` indicates workspace scope (the task list). Choosing a session switches to `[session:<session_id>]>` scope.
+
+For non-interactive task-list output, `topsailai workspace list` defaults to the human-readable table. Scope-level `-f json` / `--format json` selects JSON, and `topsailai workspace list --json` explicitly selects JSON, overriding the scope format.
+
+The legacy `--list-docs` and `--read-doc` options are deprecated and print a warning; use `topsailai docs list` and `topsailai docs read <name>` instead.
+
+### Doc scope commands
+
+When the CLI is showing the documentation list (`[doc]>`), the following commands are available:
+
+| Command | Description |
+|---|---|
+| `<number>` | Read the selected usage documentation file. |
+| `/refresh` | Re-scan the `docs/usage/` directory and refresh the list. |
+| `/help` | Show available commands. |
+| `q`, `quit`, or `cd` | Return to workspace scope. |
+
+### Project scope commands
+
+When the CLI is showing the project scope (`[project]>`), the following commands are available:
+
+| Command | Description |
+|---|---|
+| `<number>` | Watch the selected session log file. |
+| `/session <number>` | Retrieve the full session context for the selected entry. |
+| `/refresh` | Reload the project session list. |
+| `/agent <number\|folder>` | Launch an agent in the selected project workspace. |
+| `/resume <number> [-d DRIVER]` | Resume the selected idle session; chats is the default driver. |
+| `r [limit]` or `recent [limit]` | Refresh the recent project session list. If `[limit]` is provided, update the maximum number of records shown (default 30). |
+| `p` or `projects` | Switch to the managed project list. |
+| `p add [path] [name]` | Add a project to the managed project list. |
+| `p del <number>` | Delete the managed project at the displayed row number. |
+| `/help` | Show available commands. |
+| `q`, `quit`, or `cd` | Return to workspace scope. |
+
+### Managed project list
+
+The managed project list is stored independently from session history in `{TOPSAILAI_HOME}/.projects.jsonl`. Each line is a JSON object:
+
+```json
+{"name": "my-project", "path": "/work/my-project", "created_at": "2026-07-25T08:09:58", "updated_at": "2026-07-25T08:09:58"}
+```
+
+- `r` / `recent` displays the recent session/project list, which is the default view when entering project scope.
+- `p` / `projects` displays the managed list sorted oldest-first by creation time.
+- `p add` resolves the path to an absolute path and rejects non-existent directories or duplicate paths.
+- `p del <number>` asks for `y/N` confirmation and only removes the registry entry; it does not delete the project folder on disk.
+- When the managed project list is active, `agent <number>` launches an agent in the selected project's folder.
+
+### Interactive message commands
+
+When watching a session, you can inject messages through three different paths. They differ in target layer, delivery mechanism, and when they take effect.
+
+| Command | Target layer | Mechanism | When it takes effect |
+|---|---|---|---|
+| `/send` | Running agent process | Writes to the session's named pipe | Immediately; the running process receives it right now |
+| `/ctx.btw` | `agent2llm` context | Calls `topsailai_session_add_agent2llm_message` to append to `*.session.agent2llm_inject_messages.jsonl` | Immediately; the running agent reads the JSONL before its next LLM call |
+| `/ctx.add_msg` | `user2agent` context | Calls `topsailai_session_add_message` to append to the session message store | Only after the agent restarts; not visible to a running agent |
+
+Use `/send` for urgent process-level messages, `/ctx.btw` for extra instructions you want the current agent to pick up on the fly, and `/ctx.add_msg` for context that should persist until the next agent run.
+
+### Runtime scope dual-pane UI
+
+When you choose to watch a session, the CLI enters **runtime scope** and streams the selected log file. If the terminal supports it, a two-pane curses UI is used:
+
+```text
+┌─────────────────────────────────────────────┐
+│  Log pane                                   │
+│  - streams the session/task stdout          │
+│  - scrolls automatically to the latest line │
+├─────────────────────────────────────────────┤
+│  [runtime:<session_id>]> /send hello        │
+│  Input pane (fixed at the bottom)           │
+└─────────────────────────────────────────────┘
+```
+
+The top pane shows the streaming log. The bottom pane is a fixed input bar where you can type commands without the log output pushing your input off-screen.
+
+#### Multi-line input
+
+When `/send`, `/ctx.btw`, or `/ctx.btw-all` is used without a message argument, the input pane temporarily expands to about one third of the terminal height so you can type or paste multiple lines. Finish with `Ctrl+D` (EOF). Cancel with `Esc`.
+
+#### Resizing the terminal
+
+The UI handles terminal resizes automatically. If the terminal becomes too small to render both panes, drawing is skipped until the window is large enough again.
+
+#### Fallback mode
+
+If `curses` is unavailable or stdout is not a TTY (for example in a pipe or CI environment), the CLI automatically falls back to the legacy single-pane mode. In that mode the log and input share the same screen area and you press `q` then `Enter` to quit.
+
+#### Windows support
+
+The dual-pane UI relies on the Python `curses` module. On Windows install the `windows-curses` package to enable it:
+
+```bash
+pip install windows-curses
+```
+
+Without `windows-curses` the CLI still works, but it uses the legacy single-pane fallback.
 
 ## Model Registry and Selection
 
@@ -250,6 +400,8 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `project del <path>` | Remove a project from the managed project list. |
 | `project list` | Display all managed projects. |
 | `project list_sessions [--json]` | Display recent sessions with project workspaces (default limit: 30); `--json` outputs JSON instead of a table. |
+| `project launch <folder>` | Launch an agent in `<folder>` using the same behavior as the project-scope `/agent <folder>` command. |
+| `project resume <session> [-d DRIVER]` | Resume an idle session; the default driver is `topsailai_agent_chats`. |
 | `models list` | Display all model registry entries. |
 | `models add <json-or-key=value...>` | Add a model entry to `.models.jsonl`. |
 | `models update <number-or-name> <json-or-key=value...>` | Update an existing model entry. |
@@ -317,9 +469,11 @@ topsailai workspace list --json
 ./topsailai_cli.py models clear
 ```
 
-## Historical Reference
+## Design Reference
 
-The original high-level scope outline is preserved in `../../topsailai.md`:
+The design notes, rules, caveats and index for this CLI live in `../../topsailai.md`. That file records no usage; this document is the single source of truth for usage.
+
+The original high-level scope outline is preserved there as a scope index:
 
 - workspace — task list
 - runtime — stream log of one session

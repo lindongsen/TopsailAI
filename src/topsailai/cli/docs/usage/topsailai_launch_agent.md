@@ -296,6 +296,42 @@ Example:
 [TopsailAI-Launcher] Removed stale temporary entries: cache/ (3 removed)
 ```
 
+## Missing Settings File
+
+If `.topsailai/settings.yaml` is missing, the launcher asks how to proceed:
+
+- In an interactive terminal (TTY), you are prompted to choose:
+  - `[r] Run with the default agent driver` — uses the built-in default configuration (`ai_agent_driver: topsailai_agent_chats`) and launches the driver without creating a settings file. This is the default choice.
+  - `[s] Run guided setup` — runs the interactive setup to create `.topsailai/settings.yaml`, then continues launching with the new configuration.
+- In a non-interactive terminal, the launcher automatically runs with the built-in default configuration and does not create a settings file.
+- Pass `--setup` to force the guided setup regardless of terminal type.
+- Pass `--non-interactive` to skip every prompt regardless of terminal type: a missing settings file uses the built-in default configuration, an existing configuration uses the `default` context item when present, and multiple items without `default` fall back to the base item `_` with a warning.
+
+You can still override the driver with `--driver` or the `TOPSAILAI_AGENT_DRIVER` environment variable when running with the default configuration.
+
+## Environment Merge Order
+
+Environment variables are merged in this order, with later sources taking precedence:
+
+1. The system (OS) environment.
+2. `_` — the base configuration shared by all items.
+3. `_default` — legacy backward compatibility.
+4. Item-specific values.
+
+Context sources are read in the same order: `_` first, then `_default` for legacy compatibility, then item-specific sources.
+
+## Launch Pipeline
+
+- Reads `.topsailai/settings.yaml` from the current working directory.
+- Selects a configured context item via `--item`, or automatically chooses one based on the `context` section.
+- Merges environment variables in the order described above.
+- Reads the configured context sources. Each source is either a file path or a command whose stdout is captured.
+- Appends a workspace folder tree to `TOPSAILAI_CONTEXT_USER_MESSAGE`.
+- Writes the assembled context message to a temporary file under `{workspace}/.tmp/` to avoid exceeding environment-variable size limits.
+- Launches the configured `ai_agent_driver` using `os.system` by default, or `subprocess.run` when `--subprocess` is passed.
+- Cleans up the temporary context file on exit, uncaught exceptions, and `SIGINT`/`SIGTERM`.
+- Loads the optional top-level `self_environs` section into the launcher's own process environment (`os.environ`) at startup as initial settings. These variables are NOT merged into the launched driver's environment.
+
 ## Context Item Selection
 
 When `--item` is omitted:
