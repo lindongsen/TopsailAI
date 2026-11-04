@@ -412,3 +412,46 @@ func TestContextHelpExampleWriteFailure(t *testing.T) {
 		}
 	}
 }
+
+// TestContextHelpDefersRowBindingDetails keeps the first-use overview concise.
+func TestContextHelpDefersRowBindingDetails(t *testing.T) {
+	for _, kind := range []ScopeKind{ScopeWorkspace, ScopeEndpoint, ScopeSession} {
+		var out strings.Builder
+		if err := PrintScopedCommandHelp(&out, "", kind); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out.String(), "invalid scoped filter") || strings.Contains(out.String(), "diagnostics invalidates") {
+			t.Fatalf("verbose overview: %q", out.String())
+		}
+		if kind != ScopeSession && !strings.Contains(out.String(), "Run help list for row selection rules.") {
+			t.Fatalf("missing detail pointer: %q", out.String())
+		}
+	}
+	var detail strings.Builder
+	if err := PrintScopedCommandHelp(&detail, "list", ScopeWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range []string{"invalid scoped filter preserves row bindings", "loading, rendering, or diagnostics invalidates them", "Run list or refresh"} {
+		if !strings.Contains(detail.String(), rule) {
+			t.Fatalf("missing %q: %q", rule, detail.String())
+		}
+	}
+}
+
+// rowRuleFailureWriter isolates the interactive-only list footer boundary.
+type rowRuleFailureWriter struct{}
+
+// Write preserves the original failure after all canonical details succeeded.
+func (rowRuleFailureWriter) Write(data []byte) (int, error) {
+	if strings.HasPrefix(string(data), "Row selection:") {
+		return 0, errTableFixture
+	}
+	return len(data), nil
+}
+
+// TestInteractiveRowRuleWriteFailure preserves footer error identity.
+func TestInteractiveRowRuleWriteFailure(t *testing.T) {
+	if err := PrintScopedCommandHelp(rowRuleFailureWriter{}, "list", ScopeWorkspace); err != errTableFixture {
+		t.Fatalf("error=%v", err)
+	}
+}

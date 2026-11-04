@@ -234,7 +234,14 @@ func PrintScopedCommandHelp(out io.Writer, target string, kind ScopeKind) error 
 	if target == "start" {
 		return printInteractiveStartHelp(out, entry)
 	}
-	return printCommandDetail(out, target, entry)
+	if err := printCommandDetail(out, target, entry); err != nil {
+		return err
+	}
+	if target == "list" {
+		_, err := fmt.Fprintln(out, "Row selection: invalid syntax or an invalid scoped filter preserves row bindings; a valid replacement that fails during loading, rendering, or diagnostics invalidates them. Run list or refresh before selecting a new row number.")
+		return err
+	}
+	return nil
 }
 
 // printInteractiveStartHelp adds wizard guidance only to scoped interactive help.
@@ -299,7 +306,7 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 			return err
 		}
 	}
-	workflow := "list -> <number> or cd <number> -> show/logs; invalid syntax or an invalid scoped filter preserves row bindings, while a valid replacement that fails during loading, rendering, or diagnostics invalidates them; run help <command> for syntax."
+	workflow := "Next: list -> <number> or cd <number> -> show/logs. Run help list for row selection rules."
 	if kind == ScopeSession {
 		workflow = "use cd .. or cd / to leave session scope; numeric row navigation is unavailable here; run help <command> for syntax."
 	}
