@@ -29,7 +29,12 @@ def test_source_gate_excludes_only_packaged_and_slow_scenarios():
 
 def test_packaged_gate_is_explicit():
     """Select packaged acceptance rather than silently omitting it everywhere."""
-    assert '-m "packaged" tests/bdd' in dry_run("test-bdd-packaged")
+    output = dry_run("test-bdd-packaged")
+    assert '-m "packaged" tests/bdd' in output
+    assert output.index("dev-tools deb-build-cython-py3") < output.index('-m "packaged"')
+    assert f'TOPSAILAI_PACKAGED_ROOT="{ROOT.parents[1]}/build/output/.deb/topsailai/TopsailAI/src"' in output
+    assert "--basetemp=" in output
+    assert "cache_dir=" in output
 
 
 def test_release_gate_requires_source_slow_and_packaged_verification():

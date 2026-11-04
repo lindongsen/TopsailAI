@@ -9,6 +9,9 @@ MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 PROJECT_ROOT := $(patsubst %/,%,$(MAKEFILE_DIR))
 SRC_ROOT := $(abspath $(PROJECT_ROOT)/..)
 CLI_ROOT := $(PROJECT_ROOT)/cli
+REPOSITORY_ROOT := $(abspath $(SRC_ROOT)/..)
+DEB_OUTPUT_DIR := $(REPOSITORY_ROOT)/build/output
+PACKAGED_TEST_TMP := $(PROJECT_ROOT)/.tmp/packaged-bdd
 
 # Core tests import both the project package and the CLI package, so the CLI
 # root is required. Order matters: the project root must precede the CLI root
@@ -31,7 +34,7 @@ help:
 		'  test-bdd        Run core CLI and plugin BDD tests' \
 		'  test-bdd-slow   Run core and CLI slow BDD acceptance tests' \
 		'  core-unit-test  Run core unit tests' \
-		'  test-bdd-packaged Run compiled package BDD acceptance tests' \
+		'  test-bdd-packaged Build standard DEBs then test their staging tree' \
 		'  test-release    Require source slow and packaged test gates' \
 		'  core-bdd-test   Run core source BDD tests' \
 		'  core-bdd-slow   Run core slow BDD acceptance tests' \
@@ -52,7 +55,9 @@ test-bdd-slow: core-bdd-slow
 test-release: test test-bdd-slow test-bdd-packaged
 
 test-bdd-packaged:
-	cd $(PROJECT_ROOT) && PYTHONPATH=$(CORE_PYTHONPATH) $(PYTHON) -B -m pytest $(PYTEST_FLAGS) -m "packaged" tests/bdd
+	$(MAKE) -C "$(REPOSITORY_ROOT)" build-deb
+	mkdir -p "$(PACKAGED_TEST_TMP)"
+	cd "$(PROJECT_ROOT)" && TOPSAILAI_PACKAGED_ROOT="$(DEB_OUTPUT_DIR)/.deb/topsailai/TopsailAI/src" PYTHONDONTWRITEBYTECODE=1 TMPDIR="$(PACKAGED_TEST_TMP)" PYTHONPATH=$(CORE_PYTHONPATH) $(PYTHON) -B -m pytest $(PYTEST_FLAGS) --basetemp="$(PACKAGED_TEST_TMP)/pytest" -o cache_dir="$(PACKAGED_TEST_TMP)/cache" -m "packaged" tests/bdd
 
 core-unit-test:
 	cd $(PROJECT_ROOT) && PYTHONPATH=$(CORE_PYTHONPATH) $(PYTHON) tests/run_tests.py

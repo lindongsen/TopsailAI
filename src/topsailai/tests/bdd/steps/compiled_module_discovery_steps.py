@@ -23,8 +23,6 @@ from scripts.packaged_discovery_smoke import (
     HOOK_PROBE,
 )
 from topsailai.utils.env_tool import resolve_python_interpreter
-from tests.bdd.compiled_package_builder import build_compiled_package
-from tests.bdd.temp_storage import BDDTempStorage
 
 
 WORKSPACE = Path(__file__).resolve().parents[3]
@@ -306,30 +304,14 @@ def _require_packaged_root(context: CompiledDiscoveryContext) -> None:
 
 @pytest.fixture(scope="session")
 def compiled_package_root():
-    """Lazily build once for packaged scenarios and always clean owned artifacts."""
+    """Use standard DEB staging without rebuilding or deleting its artifacts."""
     configured = os.environ.get("TOPSAILAI_PACKAGED_ROOT", "").strip()
-    if configured:
-        yield Path(configured).resolve()
-        return
-    storage = BDDTempStorage()
-    root = storage.create_directory("compiled-package-")
-    packages = [
-        "topsailai.workspace.control_handlers",
-        "topsailai.ai_base.llm_control.llm_mistakes.deepseek_hook_scripts",
-        *SHARED_MODULE_ALLOWLISTS,
-    ]
-    try:
-        yield build_compiled_package(
-            WORKSPACE, root, packages,
-            WORKSPACE / ".tmp" / "packaged-auto-build" / f"{root.name}.log",
-        )
-    finally:
-        storage.cleanup()
+    return (Path(configured) if configured else DEFAULT_PACKAGED_ROOT).resolve()
 
 
 @pytest.fixture
 def compiled_discovery_ctx(request) -> CompiledDiscoveryContext:
-    """Only packaged scenarios request the session build; source checks stay cheap."""
+    """Select standard packaged artifacts only for packaged scenarios."""
     packaged_root = DEFAULT_PACKAGED_ROOT
     if request.node.get_closest_marker("packaged") is not None:
         packaged_root = request.getfixturevalue("compiled_package_root")
