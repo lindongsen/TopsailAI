@@ -127,10 +127,10 @@ func (w *unitCStageWriter) String() string {
 // unitCFieldToken returns the independently pinned readiness token for a field.
 func unitCFieldToken(field startDraftField) string {
 	tokens := [...]string{
-		"start: endpoint ID required (endpoint ID). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\ncluster> ",
-		"start: compatibility resource identifier required (compatibility resource identifier). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\ncluster> ",
-		"start: launch profile ID required (launch profile ID). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\ncluster> ",
-		"start: launch profile revision required (launch profile revision). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\ncluster> ",
+		"start: endpoint ID required (endpoint ID). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\nstart.endpoint> ",
+		"start: compatibility resource identifier required (compatibility resource identifier). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\nstart.resource> ",
+		"start: launch profile ID required (launch profile ID). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\nstart.profile> ",
+		"start: launch profile revision required (launch profile revision). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\nstart.profile-revision> ",
 	}
 	return tokens[field]
 }

@@ -328,3 +328,34 @@ func (s *unitCScriptSink) Write(p []byte) (int, error) {
 	}
 	return step.count, step.err
 }
+
+// TestStartFieldPromptsDistinguishWizardFromREPL identifies every draft field.
+func TestStartFieldPromptsDistinguishWizardFromREPL(t *testing.T) {
+	for _, field := range []startDraftField{startFieldEndpoint, startFieldResource, startFieldProfile, startFieldRevision} {
+		var out strings.Builder
+		if err := writeStartHelp(&out, field, interactiveState{}, ColorPolicy{}); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(out.String(), "start."+startFieldName(field)+"> ") || strings.Contains(out.String(), "cluster>") {
+			t.Fatalf("field=%d output=%q", field, out.String())
+		}
+	}
+}
+
+// fieldPromptFailureWriter isolates the changed prompt write boundary.
+type fieldPromptFailureWriter struct{}
+
+// Write fails only on the explicit field prompt, preserving the original error.
+func (fieldPromptFailureWriter) Write(data []byte) (int, error) {
+	if strings.HasPrefix(string(data), "start.endpoint>") {
+		return 0, errTableFixture
+	}
+	return len(data), nil
+}
+
+// TestStartFieldPromptFailure propagates a failure after the field description.
+func TestStartFieldPromptFailure(t *testing.T) {
+	if err := writeStartHelp(fieldPromptFailureWriter{}, startFieldEndpoint, interactiveState{}, ColorPolicy{}); err != errTableFixture {
+		t.Fatalf("error=%v", err)
+	}
+}

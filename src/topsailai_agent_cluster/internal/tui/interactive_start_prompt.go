@@ -190,10 +190,11 @@ func writeStartHelp(out io.Writer, field startDraftField, state interactiveState
 	if _, err := fmt.Fprintln(out, startFieldDescription(field)); err != nil {
 		return err
 	}
-	if err := writePrompt(out, state, color); err != nil {
+	if err := writeStyled(out, ansiBoldGreen, "start."+startFieldName(field)+">", color); err != nil {
 		return err
 	}
-	return nil
+	_, err := io.WriteString(out, " ")
+	return err
 }
 
 var errStartPromptOverflow = errors.New("start prompt input overflow")

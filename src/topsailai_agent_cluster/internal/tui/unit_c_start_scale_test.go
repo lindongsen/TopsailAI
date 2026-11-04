@@ -72,7 +72,7 @@ type unitCScaleWriter struct {
 // Write records only exact complete prompt writes; inventory bytes are discarded.
 func (w *unitCScaleWriter) Write(p []byte) (int, error) {
 	w.pending += string(p)
-	if strings.HasSuffix(w.pending, "cluster> ") {
+	if strings.HasSuffix(w.pending, "cluster> ") || strings.HasSuffix(w.pending, "start.endpoint> ") || strings.HasSuffix(w.pending, "start.resource> ") || strings.HasSuffix(w.pending, "start.profile> ") || strings.HasSuffix(w.pending, "start.profile-revision> ") {
 		w.prompts <- time.Now()
 		w.pending = ""
 	}

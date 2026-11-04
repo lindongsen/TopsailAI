@@ -47,13 +47,9 @@ func TestUnitCBatch3CancelState(t *testing.T) {
 						lines <- lineReadResult{line: answer}
 						var out, diag strings.Builder
 						exit, err := executeInteractiveLine(context.Background(), api, &state, "start", lines, &out, &out, &diag, InteractiveOptions{})
-						var prompt strings.Builder
-						if err := RenderPrompt(&prompt, before.Scope, before.Invalidated, ColorPolicy{}); err != nil {
-							t.Fatal(err)
-						}
 						want := ""
 						for i := startFieldEndpoint; i <= field; i++ {
-							want += startFieldDescription(i) + "\n" + prompt.String()
+							want += startFieldDescription(i) + "\nstart." + startFieldName(i) + "> "
 						}
 						want += "start cancelled\n"
 						if exit || err != nil || !reflect.DeepEqual(state, before) || out.String() != want || diag.String() != "" {

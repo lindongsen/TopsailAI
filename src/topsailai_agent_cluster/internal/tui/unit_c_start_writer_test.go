@@ -336,10 +336,10 @@ func c10ExpectedWrite(phase string) (string, string) {
 // c10Transcript returns the complete successful output expected after a staged fault.
 func c10Transcript(start, phase string) string {
 	const p = "NO │ ENDPOINT │ ADAPTER   │ SESSION_NAME │ SESSION_ID         │ SESSION_STATUS │ DATA_STATUS │ LAST_SUCCESS\n───┼──────────┼───────────┼──────────────┼────────────────────┼────────────────┼─────────────┼─────────────\n1  │ host-1   │ adapter-1 │              │ provider-session-1 │ running        │ ok          │            -\nlist: view sessions | <n> or cd <n>: select | start: launch agent | help: commands | q: quit\ncluster> "
-	const e = "start: endpoint ID required (endpoint ID). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\ncluster> "
-	const r = "start: compatibility resource identifier required (compatibility resource identifier). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\ncluster> "
-	const l = "start: launch profile ID required (launch profile ID). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\ncluster> "
-	const v = "start: launch profile revision required (launch profile revision). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\ncluster> "
+	const e = "start: endpoint ID required (endpoint ID). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\nstart.endpoint> "
+	const r = "start: compatibility resource identifier required (compatibility resource identifier). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\nstart.resource> "
+	const l = "start: launch profile ID required (launch profile ID). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\nstart.profile> "
+	const v = "start: launch profile revision required (launch profile revision). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\nstart.profile-revision> "
 	switch phase {
 	case "prompt":
 		return p

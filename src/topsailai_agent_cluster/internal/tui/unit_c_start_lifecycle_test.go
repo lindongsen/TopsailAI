@@ -139,9 +139,15 @@ func (w *terminalHarnessReadyWriter) Write(data []byte) (int, error) {
 		return n, io.ErrShortWrite
 	}
 	w.pending = append(w.pending, data...)
-	marker := []byte("cluster> ")
 	for {
+		marker := []byte("cluster> ")
 		index := bytes.Index(w.pending, marker)
+		for f := startFieldEndpoint; f <= startFieldRevision; f++ {
+			candidate := []byte("start." + startFieldName(f) + "> ")
+			if pos := bytes.Index(w.pending, candidate); pos >= 0 && (index < 0 || pos < index) {
+				index, marker = pos, candidate
+			}
+		}
 		if index < 0 {
 			return n, nil
 		}
