@@ -13,7 +13,7 @@ from topsailai.utils import json_tool, message_tool
 class RecoveryConfig:
     """Immutable per-runtime policy; explicit construction overrides environment."""
 
-    enabled: bool = False
+    enabled: bool = True
     ratio: float = 0.7
 
     def __post_init__(self):
@@ -26,9 +26,9 @@ class RecoveryConfig:
 
 def load_recovery_config(values: Mapping, log) -> RecoveryConfig:
     """Parse external configuration once at the runtime construction boundary."""
-    enabled = str(values.get("TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RECOVERY_ENABLED", "0")).lower().strip()
+    enabled = str(values.get("TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RECOVERY_ENABLED", "1")).lower().strip()
     if enabled not in ("1", "true", "yes", "on", "enabled"):
-        return RecoveryConfig()
+        return RecoveryConfig(False)
     raw = values.get("TOPSAILAI_CONTEXT_SUMMARY_RECOVERY_RATIO", "0.7")
     try:
         return RecoveryConfig(True, float(raw))

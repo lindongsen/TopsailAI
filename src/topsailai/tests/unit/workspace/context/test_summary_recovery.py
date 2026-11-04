@@ -44,12 +44,22 @@ def fixture_owner(enabled=True):
     return owner
 
 
+def test_recovery_enabled_by_default():
+    """Absent configuration and the shipped template must enable recovery."""
+    from pathlib import Path
+
+    assert RecoveryConfig().enabled is True
+    assert load_recovery_config({}, Mock()) == RecoveryConfig(True, 0.7)
+    template = Path(__file__).resolve().parents[4] / "env_template"
+    assert "TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RECOVERY_ENABLED=1" in template.read_text()
+
+
 @pytest.mark.parametrize("raw", ["0", "false", "invalid", "", None])
 def test_disabled_config(raw):
     """Disabled configuration must never inspect a malformed ratio."""
     config = load_recovery_config({"TOPSAILAI_CONTEXT_SUMMARY_OBSERVATION_RECOVERY_ENABLED": raw,
                                   "TOPSAILAI_CONTEXT_SUMMARY_RECOVERY_RATIO": object()}, Mock())
-    assert config == RecoveryConfig()
+    assert config == RecoveryConfig(False)
 
 
 @pytest.mark.parametrize("raw", ["nan", "inf", "0", "1", "oops", None])
@@ -81,7 +91,7 @@ def test_budget_edges_and_no_token_budget():
     assert select_recovery(**(kwargs | {"reserve": 11})) is None
     assert select_recovery(**(kwargs | {"threshold": 0, "safe_limit": 200})) is None
     assert select_recovery(**(kwargs | {"normal": [session[-1]]})) is None
-    assert select_recovery(**(kwargs | {"config": RecoveryConfig()})) is None
+    assert select_recovery(**(kwargs | {"config": RecoveryConfig(False)})) is None
 
 
 def test_requirements_and_later_observations_are_protected():
@@ -111,7 +121,7 @@ def test_prepare_apply_and_session_isolation(monkeypatch, layer):
     owner.ai_agent.messages.append(message("assistant", "new work"))
     assert not unchanged_recovery(owner)
     assert not unchanged_recovery(fixture_owner())
-    owner.summary_recovery_config = RecoveryConfig()
+    owner.summary_recovery_config = RecoveryConfig(False)
     assert not unchanged_recovery(owner)
 
 
@@ -240,7 +250,7 @@ def test_constructor_explicit_priority(monkeypatch):
     monkeypatch.setenv("TOPSAILAI_CONTEXT_SUMMARY_RECOVERY_RATIO", "0.6")
     owner = ContextRuntimeData()
     assert owner.summary_recovery_config == RecoveryConfig(True, .6)
-    assert ContextRuntimeData(RecoveryConfig()).summary_recovery_config == RecoveryConfig()
+    assert ContextRuntimeData(RecoveryConfig(False)).summary_recovery_config == RecoveryConfig(False)
     monkeypatch.setenv("TOPSAILAI_CONTEXT_SUMMARY_RECOVERY_RATIO", "0.8")
     assert owner.summary_recovery_config.ratio == .6
 
