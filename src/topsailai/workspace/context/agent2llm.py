@@ -14,6 +14,9 @@ import math
 import random
 
 from topsailai.logger import logger
+from topsailai.workspace.context.summary_recovery_runtime import (
+    prepare_recovery, apply_recovery, unchanged_recovery, recovery_prompt,
+)
 from topsailai.hooks.points.context.summary_adapter import (
     SUMMARY_CONTROL_EXCEPTIONS as HOOK__SUMMARY_CONTROL_EXCEPTIONS,
     emit_summary_checkpoint as hook__emit_summary_checkpoint,
@@ -318,6 +321,36 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             if session_msg_len >= int(ctx_quantity_threshold * session_max_ratio):
                 need_session_messages = False
                 logger.warning("summary step cannot keep session messages due to it is too long: [%s]", session_msg_len)
+
+        if self.summary_recovery_config.enabled:
+            head_offset_to_keep = self._get_head_offset_to_keep_in_summary(head_offset_to_keep)
+            tail_offset_to_keep = self._get_tail_offset_to_keep_in_summary()
+            if unchanged_recovery(self):
+                return None
+            recovery = prepare_recovery(
+                self, "agent2llm", messages, head_offset_to_keep, tail_offset_to_keep, need_session_messages,
+            )
+            if recovery is not None:
+                llm_chat, answer = self._summarize_messages(
+                    list(self.ai_agent.messages), extra_prompt=recovery_prompt(),
+                )
+                if not answer:
+                    return None
+                try:
+                    applied = apply_recovery(self, recovery, llm_chat.prompt_ctl.messages[-1])
+                except HOOK__SUMMARY_CONTROL_EXCEPTIONS:
+                    raise
+                except Exception:
+                    logger.exception("Summary recovery application failed; session_id=%s", self.session_id)
+                    hook__emit_summary_checkpoint(
+                        "error_summary_apply", error_category="state_update",
+                        failed_stage="recovery_apply", partial_apply_possible=True,
+                    )
+                    raise
+                if applied:
+                    hook__emit_summary_checkpoint("after_summary_apply")
+                    return answer
+                return None
 
         # When session messages are kept, count them toward the "too short" guard
         # so that the MIN_EXTRA_MESSAGES check can decide whether summarizing is worthwhile.
