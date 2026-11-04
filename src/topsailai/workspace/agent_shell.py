@@ -139,6 +139,8 @@ def get_ai_agent(
     if to_dump_messages:
         agent.flag_dump_messages = True
 
+    # print detail of agent2llm
+    print()
     print_tool.print_info(f"Got Agent2LLM: {agent}")
     return agent
 
