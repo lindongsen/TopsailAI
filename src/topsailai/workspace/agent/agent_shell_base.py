@@ -350,7 +350,7 @@ class AgentChat(AgentChatBase):
 
         if message is None:
             if interactive_enabled:
-                self.ctx_rt_instruction.ctx_history()
+                print(self.ctx_rt_instruction.ctx_history())
 
             func_print_pre_input_message()
             message = get_message(
@@ -601,7 +601,7 @@ class AgentChat(AgentChatBase):
                 if not reached_times_limit:
                     self.ctx_runtime_data.reset_messages()
                     if interactive_enabled:
-                        self.ctx_rt_instruction.ctx_history()
+                        print(self.ctx_rt_instruction.ctx_history())
 
                 # end time
                 end_time = int(time.time())

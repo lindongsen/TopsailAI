@@ -32,12 +32,14 @@ class TestContextRuntimeInstructions(unittest.TestCase):
         self.mock_subprocess = self.subprocess_patcher.start()
 
         self.print_ctx_patcher = patch(
-            'topsailai.workspace.context.instruction.print_context_messages'
+            'topsailai.workspace.context.instruction.format_context_messages',
+            return_value='FORMATTED_CONTEXT\n',
         )
         self.mock_print_ctx = self.print_ctx_patcher.start()
 
         self.print_raw_patcher = patch(
-            'topsailai.workspace.context.instruction.print_raw_messages'
+            'topsailai.workspace.context.instruction.format_raw_messages',
+            return_value='FORMATTED_RAW\n',
         )
         self.mock_print_raw = self.print_raw_patcher.start()
 
@@ -107,16 +109,20 @@ class TestContextRuntimeInstructions(unittest.TestCase):
         self.mock_ctx_runtime_data.session_id = None
         self.mock_ctx_runtime_data.messages = ["msg1", "msg2", "msg3"]
 
-        self.instruction.ctx_clear()
+        result = self.instruction.ctx_clear()
 
         self.mock_ctx_runtime_data.clear_messages.assert_called_once()
+        self.assertEqual(result, "Context already is clear")
 
     def test_ctx_clear_with_session(self):
         """Test ctx_clear when session exists - should not clear."""
         self.mock_ctx_runtime_data.session_id = "active_session"
         self.mock_ctx_runtime_data.messages = ["msg1", "msg2"]
 
+        result = self.instruction.ctx_clear()
+
         self.mock_ctx_runtime_data.clear_messages.assert_not_called()
+        self.assertIn("active_session", result)
 
     ##############################################################################
     # TestCtxStory
@@ -126,9 +132,10 @@ class TestContextRuntimeInstructions(unittest.TestCase):
         self.mock_ctx_runtime_data.messages = ["msg1", "msg2"]
         self.mock_subprocess.return_value = "pid_123"
 
-        self.instruction.ctx_story()
+        result = self.instruction.ctx_story()
 
         self.mock_subprocess.assert_called_once_with(self.mock_ctx_runtime_data.messages)
+        self.assertIn("pid_123", result)
 
     def test_ctx_story_without_messages(self):
         """Test ctx_story when no messages - should skip."""
@@ -146,32 +153,33 @@ class TestContextRuntimeInstructions(unittest.TestCase):
         self.mock_ctx_runtime_data.session_id = "test_session"
         self.mock_ctx_runtime_data.messages = ["msg1", "msg2", "msg3"]
 
-        self.instruction.ctx_history()
+        result = self.instruction.ctx_history()
 
         self.mock_ctx_runtime_data.reset_messages.assert_called_once()
         self.mock_print_ctx.assert_called_once_with(self.mock_ctx_runtime_data.messages)
+        self.assertIn("FORMATTED_CONTEXT", result)
 
     def test_ctx_history_with_offset_single(self):
         """Test ctx_history with single offset value."""
         self.mock_ctx_runtime_data.session_id = "test_session"
         self.mock_ctx_runtime_data.messages = ["msg0", "msg1", "msg2", "msg3", "msg4"]
 
-        self.instruction.ctx_history(offset="2")
+        result = self.instruction.ctx_history(offset="2")
 
-        # Single offset "2" should become [2:-2]
         expected_msgs = self.mock_ctx_runtime_data.messages[2:-2]
         self.mock_print_ctx.assert_called_with(expected_msgs)
+        self.assertIn("FORMATTED_CONTEXT", result)
 
     def test_ctx_history_with_offset_range(self):
         """Test ctx_history with range offset like '1:3'."""
         self.mock_ctx_runtime_data.session_id = "test_session"
         self.mock_ctx_runtime_data.messages = ["msg0", "msg1", "msg2", "msg3", "msg4"]
 
-        self.instruction.ctx_history(offset="1:3")
+        result = self.instruction.ctx_history(offset="1:3")
 
-        # Range "1:3" should slice [1:3]
         expected_msgs = self.mock_ctx_runtime_data.messages[1:3]
         self.mock_print_ctx.assert_called_with(expected_msgs)
+        self.assertIn("FORMATTED_CONTEXT", result)
 
     ##############################################################################
     # TestCtxHistory2
@@ -182,12 +190,13 @@ class TestContextRuntimeInstructions(unittest.TestCase):
         raw_msgs = ["raw1", "raw2"]
         self.mock_ctx_manager.get_messages_by_session.return_value = raw_msgs
 
-        self.instruction.ctx_history2()
+        result = self.instruction.ctx_history2()
 
         self.mock_ctx_manager.get_messages_by_session.assert_called_once_with(
             "test_session", for_raw=True
         )
         self.mock_print_raw.assert_called_once_with(raw_msgs)
+        self.assertIn("FORMATTED_RAW", result)
 
     ##############################################################################
     # TestCtxDeleteMessage

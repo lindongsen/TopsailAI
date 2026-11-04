@@ -26,8 +26,8 @@ from topsailai.workspace.input_tool import (
     SPLIT_LINE,
 )
 from topsailai.workspace.print_tool import (
-    print_context_messages,
-    print_raw_messages,
+    format_context_messages,
+    format_raw_messages,
 )
 from topsailai.workspace.context.agent import ContextRuntimeUtils
 from topsailai.workspace.plugin_instruction.agent import get_tokens
@@ -103,12 +103,10 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         session_id = self.session_id
 
         if session_id:
-            print(f"Context cannot be clear due to exist session_id({session_id})")
-        else:
-            # clear context messages
-            self.ctx_runtime_data.clear_messages()
-            print("Context already is clear")
-        return
+            return f"Context cannot be clear due to exist session_id({session_id})"
+
+        self.ctx_runtime_data.clear_messages()
+        return "Context already is clear"
 
     def ctx_story(self):
         """
@@ -124,69 +122,45 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         if not self.messages:
             return
         pid = subprocess_agent_memory_as_story(self.messages)
-        print(f"The history messages will be save to a new story, pid=[{pid}], msg_len=[{len(self.messages)}]")
-        return
+        return (
+            "The history messages will be save to a new story, "
+            f"pid=[{pid}], msg_len=[{len(self.messages)}]"
+        )
 
-    def ctx_history(self, offset:str=""):
-        """
-        Display the history of messages for the current session.
-
-        Shows all context messages with an optional offset to display
-        a subset of messages. A separator line is printed before
-        the messages.
-
-        Args:
-            offset (str, optional): Offset specification for message range.
-                - Usage 1: Single number, e.g., "7" displays 7:-7
-                - Usage 2: Range format "head_num:tail_num", e.g., "5:-3"
-                Defaults to empty string, which displays all messages.
-
-        Returns:
-            None
-        """
+    def ctx_history(self, offset: str = "") -> str:
+        """Return the current session history with an optional slice."""
         self.ctx_refresh()
         session_id = self.session_id
-
-        print(f"\n\n{SPLIT_LINE}")
-        print(f"Show history messages {session_id}")
-        if self.messages:
+        messages = self.messages
+        if messages and offset:
             head_offset = None
             tail_offset = None
-            if offset:
-                try:
-                    if ':' in offset:
-                        head_offset, tail_offset = offset.split(':', 1)
-                        head_offset = int(head_offset)
-                        tail_offset = int(tail_offset)
-                    else:
-                        head_offset = tail_offset = int(offset)
-                        tail_offset = -tail_offset
-                except Exception:
-                    pass
+            try:
+                if ":" in offset:
+                    head_offset, tail_offset = offset.split(":", 1)
+                    head_offset = int(head_offset)
+                    tail_offset = int(tail_offset)
+                else:
+                    head_offset = tail_offset = int(offset)
+                    tail_offset = -tail_offset
+            except Exception:
+                pass
+            if head_offset is not None:
+                messages = messages[head_offset:tail_offset]
 
-            _msgs = self.messages if head_offset is None else self.messages[head_offset:tail_offset]
-            print_context_messages(_msgs)
+        header = f"{SPLIT_LINE}\nShow history messages {session_id}"
+        if not messages:
+            return header
+        return f"{header}\n{format_context_messages(messages).rstrip()}"
 
-        return
-
-    def ctx_history2(self):
-        """
-        Display raw history messages for the current session.
-
-        Prints the raw (unprocessed) context messages for the
-        current session, useful for debugging or detailed inspection.
-
-        Returns:
-            None
-        """
+    def ctx_history2(self) -> str:
+        """Return raw history messages for the current session."""
         session_id = self.session_id
-
-        print(f"\n\n{SPLIT_LINE}")
-        print(f"Show raw history messages {session_id}")
         raw_msgs = ctx_manager.get_messages_by_session(session_id, for_raw=True)
-        if raw_msgs:
-            print_raw_messages(raw_msgs)
-        return
+        header = f"{SPLIT_LINE}\nShow raw history messages {session_id}"
+        if not raw_msgs:
+            return header
+        return f"{header}\n{format_raw_messages(raw_msgs).rstrip()}"
 
     def ctx_btw(self, *args):
         """
@@ -252,9 +226,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         index -= 1
 
         self.ctx_runtime_data.del_session_message(index)
-
-        self.ctx_history()
-        return
+        return self.ctx_history()
 
     def ctx_delete_messages(self, *indexes:list[int]):
         """
@@ -279,9 +251,8 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         # Convert back to 1-based for display
         for i, value in enumerate(result):
             result[i] = value + 1
-        print(f"deleted: {result}")
-        self.ctx_history()
-        return
+        history = self.ctx_history()
+        return f"deleted: {result}\n{history}"
 
     def ctx_summarize(self, head_offset_to_keep:int=1, need_interactive:int=1, to_force:int=0):
         """
@@ -307,18 +278,16 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         to_force = True if int(to_force) else False
 
         if not to_force and not self.ctx_runtime_data.is_need_summarize_for_processed():
-            print("no need summarize")
-            return
+            return "no need summarize"
 
         self.ctx_runtime_data.summarize_messages_for_processed(
             head_offset_to_keep=head_offset_to_keep,
             need_interactive=need_interactive,
             force=to_force,
         )
-        self.ctx_history()
-        return
+        return self.ctx_history()
 
-    def ctx_search(self, keyword: str) -> list:
+    def ctx_search(self, keyword: str) -> str | None:
         """
         Search context messages by keyword
 
@@ -336,5 +305,5 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             if keyword in msg.message:
                 matched_msgs.append(msg)
         if matched_msgs:
-            print_raw_messages(matched_msgs)
-        return
+            return format_raw_messages(matched_msgs).rstrip()
+        return None

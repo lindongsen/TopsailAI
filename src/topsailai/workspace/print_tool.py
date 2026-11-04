@@ -476,65 +476,70 @@ def _truncate_content(content, max_length):
     return content[:max_length] + "..."
 
 
-def print_context_messages(messages, content_max_length=None):
-    """
-    Format and print conversation messages for human-readable output
+def format_context_messages(messages, content_max_length=None):
+    """Format conversation messages for human-readable output.
 
     Args:
-        messages: List of message dictionaries containing 'role' and 'content' fields
+        messages: List of message dictionaries containing role and content fields.
         content_max_length: Optional maximum number of characters to display
-            for each message's content. Does not affect word/token counts.
-    """
-    for i, msg in enumerate(messages):
-        # Get role and content, with default values in case fields are missing
-        role = msg.get('role', 'unknown')
-        content = msg.get('content', '')
-        create_time = msg.get('create_time', '')
+            for each message content. Does not affect word/token counts.
 
+    Returns:
+        str: Formatted message text, including the trailing newline.
+    """
+    lines = []
+    for i, msg in enumerate(messages):
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        create_time = msg.get("create_time", "")
         word_count = _count_words(content)
         token_count = _count_tokens(content)
 
-        # Format the output with visual separators
-        print(f"\n{'='*80}")
-        print(
-            f"#{i+1} - Role: {role.upper()}"
+        lines.append(f"\n{'=' * 80}")
+        lines.append(
+            f"#{i + 1} - Role: {role.upper()}"
             f" - Words: {word_count}"
             f" - Tokens: {token_count}"
             + (f" - {create_time}" if create_time else "")
         )
-        print(f"{'='*80}")
+        lines.append("=" * 80)
 
-        # Format the content first, then truncate the formatted result for display.
-        # Counts still use the original content so truncation does not affect them.
         display_content = content
         try:
             display_content = format_tool.to_topsailai_format(
-                display_content, key_name="step_name", value_name="raw_text",
+                display_content,
+                key_name="step_name",
+                value_name="raw_text",
                 for_print=True,
             ).strip()
         except Exception:
             if not isinstance(display_content, str):
                 display_content = str(display_content)
         display_content = _truncate_content(display_content, content_max_length)
-
         if display_content:
-            print(json_tool.safe_json_dump(display_content))
+            lines.append(json_tool.safe_json_dump(display_content))
         else:
-            print("  [No content]")
+            lines.append("  [No content]")
 
-    #print(f"\n{'='*50}")
-    print()
+    return "\n".join(lines) + ("\n\n" if lines else "\n")
 
 
-def print_raw_messages(messages: list[ChatHistoryMessageData]):
-    """
-    Format and print raw chat history messages for human-readable output.
+def print_context_messages(messages, content_max_length=None):
+    """Format and print conversation messages for human-readable output."""
+    print(format_context_messages(messages, content_max_length), end="")
+
+
+def format_raw_messages(messages: list[ChatHistoryMessageData]):
+    """Format raw chat history messages for human-readable output.
 
     Args:
-        messages: List of ChatHistoryMessageData objects containing message metadata and content
+        messages: List of raw chat history message records.
+
+    Returns:
+        str: Formatted raw-message text, including the trailing newline.
     """
+    lines = []
     for i, msg in enumerate(messages):
-        # Parse the message content to get role
         message = msg.message
         content = message
         role = "unknown"
@@ -547,27 +552,30 @@ def print_raw_messages(messages: list[ChatHistoryMessageData]):
         except Exception:
             pass
 
-        # Format the output with visual separators and message_id
-        print(f"\n{'='*50}")
-        print(
-            f"#{i+1} - Role: {role.upper()} - ID: {msg.msg_id}"
+        lines.append(f"\n{'=' * 50}")
+        lines.append(
+            f"#{i + 1} - Role: {role.upper()} - ID: {msg.msg_id}"
             + (f" - ({create_time})" if create_time else "")
         )
-        print(f"{'='*50}")
+        lines.append("=" * 50)
 
-        # Handle multiline content while preserving formatting
         try:
             content = format_tool.to_topsailai_format(
-                content, key_name="step_name", value_name="raw_text",
+                content,
+                key_name="step_name",
+                value_name="raw_text",
                 for_print=True,
             ).strip()
         except Exception:
             pass
         if content:
-            lines = content.split('\n')
-            for line in lines:
-                print(f"{line}")
+            lines.extend(content.split("\n"))
         else:
-            print("  [No content]")
+            lines.append("  [No content]")
 
-    print()
+    return "\n".join(lines) + ("\n\n" if lines else "\n")
+
+
+def print_raw_messages(messages: list[ChatHistoryMessageData]):
+    """Format and print raw chat history messages for human-readable output."""
+    print(format_raw_messages(messages), end="")

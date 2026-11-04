@@ -298,7 +298,7 @@ def _get_agent_chat_impl(
 
     # print sth.
     if need_print_session and session_id:
-        ctx_rt_instruction.ctx_history()
+        print(ctx_rt_instruction.ctx_history())
 
     # agent chat
     agent_chat = AgentChat(
