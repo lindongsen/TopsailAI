@@ -3027,3 +3027,74 @@ def test_supervisor_launcher_argv_is_unchanged_without_the_flag(monkeypatch, tmp
                   clock=FakeClock(), sleeper=lambda seconds: None)
     assert calls[0][0][0] == ["topsailai_launch_agent", "--subprocess",
                               "--session-id", "s"]
+
+
+# Initial task forwarding through the detached raw supervisor.
+def test_initial_task_is_persisted_in_private_supervisor_request(monkeypatch, tmp_path):
+    """The raw background boundary records the exact task for its supervisor."""
+    log_path = str(tmp_path / "workspace" / "task" / "s.agent-launch.log")
+    frames = [[{"kind": "started", "launcher_pid": 77}],
+              [{"kind": "submitted", "session": "s", "launcher_pid": 77,
+                "log_path": log_path}]]
+    clock, supervisor = _patch_launch_background_common(monkeypatch, tmp_path, frames)
+    requests = _capture_requests(monkeypatch, tmp_path)
+    task = "检查后台任务\n第二行"
+    bg.launch_background(
+        str(tmp_path), "s", task=task,
+        spawn=lambda *args, **kwargs: supervisor,
+        clock=clock, sleeper=clock.sleep,
+    )
+    assert requests
+    assert all(request.get("task") == task for request in requests)
+
+
+def test_supervisor_request_omits_task_when_not_requested(monkeypatch, tmp_path):
+    """An ordinary raw background launch keeps its historical request shape."""
+    log_path = str(tmp_path / "workspace" / "task" / "s.agent-launch.log")
+    frames = [[{"kind": "started", "launcher_pid": 77}],
+              [{"kind": "submitted", "session": "s", "launcher_pid": 77,
+                "log_path": log_path}]]
+    clock, supervisor = _patch_launch_background_common(monkeypatch, tmp_path, frames)
+    requests = _capture_requests(monkeypatch, tmp_path)
+    bg.launch_background(
+        str(tmp_path), "s", spawn=lambda *args, **kwargs: supervisor,
+        clock=clock, sleeper=clock.sleep,
+    )
+    assert requests
+    assert all("task" not in request for request in requests)
+
+
+def test_supervisor_spawns_launcher_with_exact_initial_task(monkeypatch, tmp_path):
+    """The raw supervisor restores the task as one launcher argv value."""
+    child = FakeChild(pid=7126, polls=[None, 0])
+    child.stdout = FakeStream(11, [])
+    child.stderr = FakeStream(12, [])
+    calls = []
+    monkeypatch.setattr(bg, "_write_lease", lambda *args, **kwargs: None)
+    monkeypatch.setattr(bg, "_send_frame", lambda fd, payload: None)
+    monkeypatch.setattr(
+        bg._selectors, "DefaultSelector",
+        lambda: FakeSelector({11: child.stdout, 12: child.stderr}),
+    )
+    monkeypatch.setattr(bg._os, "set_blocking", lambda *args: None)
+    monkeypatch.setattr(bg._os, "close", lambda fd: None)
+    monkeypatch.setattr(bg._os, "read", lambda fd, size: b"")
+    original_log = bg._RotatingLog
+    monkeypatch.setattr(
+        bg, "_RotatingLog",
+        lambda path: original_log(path, max_bytes=2, backups=2),
+    )
+    task = "background task\n第二行"
+    request = {
+        "folder": str(tmp_path), "session_id": "s",
+        "log_path": str(tmp_path / "s.log"), "task": task,
+    }
+    bg._supervise(
+        request, 9,
+        popen=lambda *args, **kwargs: calls.append((args, kwargs)) or child,
+        clock=FakeClock(), sleeper=lambda seconds: None,
+    )
+    assert calls[0][0][0] == [
+        "topsailai_launch_agent", "--subprocess", "--session-id", "s",
+        "--task", task,
+    ]

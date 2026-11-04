@@ -250,3 +250,34 @@ def test_terminal_request_omits_non_interactive_when_not_requested(monkeypatch, 
 
     assert written
     assert all("non_interactive" not in request for request in written)
+
+
+@pytest.mark.parametrize("mechanism", ["tmux", "dtach"])
+def test_terminal_request_records_exact_initial_task(monkeypatch, mechanism):
+    """Each detached terminal mechanism preserves the exact first-task text."""
+    transport = _FakeTransport([])
+    _attempt, written = _capture_terminal_request(
+        monkeypatch, transport, protocol_error=KeyboardInterrupt())
+    task = "terminal task\n第二行"
+
+    with pytest.raises(KeyboardInterrupt):
+        terminal.submit_terminal(
+            "/work/proj", "session-1", mechanism=mechanism, task=task,
+        )
+
+    assert written
+    assert all(request.get("task") == task for request in written)
+
+
+@pytest.mark.parametrize("mechanism", ["tmux", "dtach"])
+def test_terminal_request_omits_task_when_not_requested(monkeypatch, mechanism):
+    """An ordinary terminal launch keeps its historical request shape."""
+    transport = _FakeTransport([])
+    _attempt, written = _capture_terminal_request(
+        monkeypatch, transport, protocol_error=KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        terminal.submit_terminal("/work/proj", "session-1", mechanism=mechanism)
+
+    assert written
+    assert all("task" not in request for request in written)

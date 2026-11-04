@@ -64,6 +64,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="emit one JSON receipt on stdout, including failures",
     )
     parser.add_argument(
+        "--task", metavar="MESSAGE", default=None,
+        help="provide the initial user task so the launched agent starts without prompting",
+    )
+    parser.add_argument(
         "--non-interactive", action="store_true", dest="non_interactive",
         help="never prompt while the launcher resolves its configuration; "
              "this affects the launch only and does not change the agent's "
@@ -109,8 +113,11 @@ def run_workspace_agent_cli(argv, *, startup_cwd: Optional[str] = None) -> int:
     """Parse and launch one configured agent without entering the watcher."""
     json_mode = json_requested(argv)
     try:
-        args = build_parser().parse_args(list(argv))
+        parser = build_parser()
+        args = parser.parse_args(list(argv))
         json_mode = args.json
+        if args.task is not None and not args.task.strip():
+            parser.error("--task must contain a non-whitespace message")
         modes = args.agent_mode or []
         mode = modes[0] if modes else None
         target = _resolve_folder(args.folder, startup_cwd)
@@ -129,6 +136,7 @@ def run_workspace_agent_cli(argv, *, startup_cwd: Optional[str] = None) -> int:
 
     from cli_topsailai.agent_launch import launch_configured_agent
 
+    task_kwargs = {"task": args.task} if args.task is not None else {}
     if not json_mode:
         return launch_configured_agent(
             target,
@@ -136,6 +144,7 @@ def run_workspace_agent_cli(argv, *, startup_cwd: Optional[str] = None) -> int:
             background=args.background,
             entrypoint_base=startup_cwd or os.getcwd(),
             non_interactive=args.non_interactive,
+            **task_kwargs,
         )
 
     facts: dict = {}
@@ -150,6 +159,7 @@ def run_workspace_agent_cli(argv, *, startup_cwd: Optional[str] = None) -> int:
             receipt=facts,
             child_stdout=sys.stderr,
             non_interactive=args.non_interactive,
+            **task_kwargs,
         )
     receipt = new_receipt(
         "agent", session_id=facts.get("session_id"),

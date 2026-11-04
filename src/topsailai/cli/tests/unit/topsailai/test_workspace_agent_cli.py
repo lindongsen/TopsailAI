@@ -421,3 +421,83 @@ def test_resume_driver_never_receives_launcher_flags():
         "topsailai_launch_agent", "--subprocess", "--session-id", "s",
         "--non-interactive",
     ]
+
+
+# Initial task forwarding: keep the task on the fresh-launch command contract.
+def test_task_is_forwarded_without_normalizing_multiline_unicode(tmp_path):
+    """The public parser preserves the exact first-task text."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    task = "检查项目\n修复失败测试 🚀"
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli(
+            [str(folder), "--task", task], startup_cwd=str(tmp_path)
+        ) == 0
+    launch.assert_called_once_with(
+        str(folder), mode=None, background=False, entrypoint_base=str(tmp_path),
+        non_interactive=False, task=task,
+    )
+
+
+@pytest.mark.parametrize("task", ["", " ", "\n\t"])
+def test_blank_task_is_a_usage_error_before_launch(tmp_path, capsys, task):
+    """An explicit task must contain at least one non-whitespace character."""
+    with patch("cli_topsailai.agent_launch.launch_configured_agent") as launch:
+        assert run_workspace_agent_cli(
+            [str(tmp_path), "--task", task], startup_cwd=str(tmp_path)
+        ) == 2
+    launch.assert_not_called()
+    assert "--task must contain a non-whitespace message" in capsys.readouterr().err
+
+
+def test_json_task_is_forwarded_but_never_copied_into_receipt(tmp_path, capsys):
+    """Structured launch output does not disclose the first-task text."""
+    task = "private task marker 9d6e"
+
+    def launch(_folder, **kwargs):
+        assert kwargs["task"] == task
+        kwargs["receipt"].update(
+            session_id="s", workspace=str(tmp_path), mode="raw",
+            background=False, child_exit_code=0, launcher_exit_observed=True,
+        )
+        return 0
+
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", side_effect=launch):
+        assert run_workspace_agent_cli(
+            [str(tmp_path), "--task", task, "--json"], startup_cwd=str(tmp_path)
+        ) == 0
+    captured = capsys.readouterr()
+    assert task not in captured.out
+    assert task not in captured.err
+    assert json.loads(captured.out)["ok"] is True
+
+
+def test_foreground_launcher_argv_contains_exact_task(tmp_path):
+    """The fresh launcher receives the task as one exact argv value."""
+    from cli_topsailai.agent_launch import launch_configured_agent
+
+    task = "first line\n第二行"
+    child = _StatusChild(returncode=0)
+    calls = []
+    with patch("cli_topsailai.agent_launch._apply_selected_model_environment",
+               side_effect=lambda _: ({}, set())), \
+         patch("cli_topsailai.agent_launch._session_id", return_value="fixed"):
+        assert launch_configured_agent(
+            str(tmp_path), mode="raw", task=task,
+            spawn=lambda argv, **kwargs: calls.append((argv, kwargs)) or child,
+        ) == 0
+    assert calls[0][0] == [
+        "topsailai_launch_agent", "--subprocess", "--session-id", "fixed",
+        "--task", task,
+    ]
+    assert task not in calls[0][1]["env"].values()
+
+
+def test_resume_driver_never_receives_initial_task():
+    """A resume executable is not a fresh launcher and receives no task flag."""
+    from cli_topsailai.agent_launch_command import launcher_command
+
+    assert launcher_command(
+        "s", driver="topsailai_agent_chats", task="new task",
+        non_interactive=True,
+    ) == ["topsailai_agent_chats"]

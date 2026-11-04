@@ -80,7 +80,8 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
                             prelaunch_check=None,
                             receipt: dict | None = None,
                             child_stdout=None,
-                            non_interactive: bool = False) -> int:
+                            non_interactive: bool = False,
+                            task: str | None = None) -> int:
     """Launch an agent and make restoration failure observable.
 
     When *session_id* is supplied the launch resumes that persisted identity
@@ -89,6 +90,8 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
     *non_interactive* asks the launcher never to prompt while it resolves its
     configuration. It governs the launch only: the agent's own interactive mode
     remains controlled by ``TOPSAILAI_INTERACTIVE_MODE`` and is not modified.
+    *task* supplies the first user task to a fresh launcher without adding it to
+    receipts or status output.
 
     *prelaunch_check* is an optional late revalidation invoked after
     preparation and immediately before the child is spawned or the supervisor
@@ -120,6 +123,8 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
             launch_kwargs["child_stdout"] = child_stdout
         if non_interactive:
             launch_kwargs["non_interactive"] = True
+        if task is not None:
+            launch_kwargs["task"] = task
         result = _launch_configured_agent_impl(folder, **launch_kwargs)
     finally:
         try:
@@ -149,6 +154,7 @@ def _launch_configured_agent_impl(
     receipt: dict | None = None,
     child_stdout=None,
     non_interactive: bool = False,
+    task: str | None = None,
 ) -> int:
     """Launch one configured agent and return its boundary status."""
     if spawn is None:
@@ -228,6 +234,8 @@ def _launch_configured_agent_impl(
                 "driver": driver,
                 "non_interactive": non_interactive,
             }
+            if task is not None:
+                submit_kwargs["task"] = task
             record(submission_attempted=True)
             try:
                 if effective_mode == "raw":
@@ -270,7 +278,7 @@ def _launch_configured_agent_impl(
             f"background=no session={session_id}"
         )
         command = launcher_command(session_id, driver=driver,
-                                   non_interactive=non_interactive)
+                                   non_interactive=non_interactive, task=task)
         try:
             forwarded = _prepare_environment(folder, session_id)[3]
             if effective_mode == "raw":

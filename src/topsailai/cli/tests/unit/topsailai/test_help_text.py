@@ -267,8 +267,10 @@ def test_workspace_agent_help_contract(capsys):
     print_help([], "workspace", keyword="workspace agent")
     output = capsys.readouterr().out
     assert ("topsailai workspace agent [<folder>] [-m MODE] [-b|--background] "
-            "[--non-interactive] [--json]") in output
+            "[--task MESSAGE] [--non-interactive] [--json]") in output
     assert "The folder is optional and defaults to the caller's working directory" in output
+    assert "--task supplies the initial user task" in output
+    assert "task is not included in JSON receipts or status output" in output
     assert "--non-interactive suppresses launcher prompts for this launch only" in output
     assert "does not change the agent's own interactive mode" in output
     for text in (
@@ -296,7 +298,7 @@ def test_b24_background_contract_snapshot_and_scale(capsys, tmp_path):
     # Syntax, exit codes, retention, no-attach and JSON receipts are documented.
     for text in (
         ("topsailai workspace agent [<folder>] [-m MODE] [-b|--background] "
-         "[--non-interactive] [--json]"),
+         "[--task MESSAGE] [--non-interactive] [--json]"),
         "Background defaults to raw mode",
         "honors an explicit -m raw|tmux|dtach",
         "failing closed when that mechanism is unavailable",
