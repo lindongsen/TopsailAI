@@ -167,12 +167,34 @@ def _try_handle_project_subcommand(
             return 0
         print_project_table(projects)
         return 0
+    if subcmd == "list_sessions":
+        from cli_topsailai.project_scope import (
+            build_project_list,
+            print_project_table as print_project_session_table,
+        )
+
+        json_output = len(argv) > 2 and argv[2:] == ["--json"]
+        if len(argv) > 2 and not json_output:
+            print(
+                f"{Colors.RED}[ERROR] Usage: topsailai project list_sessions [--json]{Colors.RESET}"
+            )
+            return 2
+        entries = build_project_list(limit=30)
+        if json_output:
+            print(json.dumps(entries, ensure_ascii=False))
+        elif not entries:
+            print(
+                f"\n{Colors.YELLOW}[WARN] No sessions with project_workspace found.{Colors.RESET}"
+            )
+        else:
+            print_project_session_table(entries)
+        return 0
     if subcmd not in ("add", "del", "launch", "resume"):
         print(
             f"{Colors.RED}[ERROR] Unknown project subcommand: {subcmd!r}. "
             f"Use: topsailai project add <path> [name], "
             f"topsailai project del <path>, topsailai project list, "
-            f"topsailai project launch <folder>, or "
+            f"topsailai project list_sessions, topsailai project launch <folder>, or "
             f"topsailai project resume <session>{Colors.RESET}"
         )
         return 1
@@ -372,6 +394,8 @@ def _handle_models_subcommand(args: argparse.Namespace) -> int:
 def _handle_project_subcommand(args: argparse.Namespace) -> int:
     """Delegate project subcommands to the existing handler."""
     argv = ["project", args.project_subcommand]
+    if getattr(args, "json_output", False):
+        argv.append("--json")
     project_path = getattr(args, "project_path", None)
     project_name = getattr(args, "project_name", None)
     session_id = getattr(args, "session_id", None)
@@ -1374,6 +1398,14 @@ def main(argv: Optional[List[str]] = None) -> None:
             help="list managed projects",
             add_help=False,
         )
+        list_sessions_parser = project_subparsers.add_parser(
+            "list_sessions",
+            help="list recent project sessions",
+            add_help=False,
+        )
+        list_sessions_parser.add_argument(
+            "--json", action="store_true", help="output the session list as JSON"
+        )
         project_subparsers.add_parser(
             "add",
             help="add a project to the managed list",
@@ -1558,6 +1590,15 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="list managed projects",
     )
     project_list_parser.set_defaults(func=_handle_project_subcommand)
+    project_sessions_parser = project_subparsers.add_parser(
+        "list_sessions",
+        help="list recent project sessions",
+    )
+    project_sessions_parser.add_argument(
+        "--json", action="store_true", dest="json_output",
+        help="output the session list as JSON",
+    )
+    project_sessions_parser.set_defaults(func=_handle_project_subcommand)
     project_add_parser = project_subparsers.add_parser(
         "add",
         help="add a project to the managed list",

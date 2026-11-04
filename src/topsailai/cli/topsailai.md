@@ -53,7 +53,7 @@ references:
 - `workspace agent [<folder>] [-m MODE] [-b|--background] [--non-interactive] [--json]`
 - `workspace kill SESSION -g GENERATION [--json]` — requires the verified `process_generation` from `workspace list --json` or `workspace -f json` and fails closed when process-instance evidence changes or is unavailable
 - `workspace driver start|status|stop -s SESSION [-p PID] [--json]`
-- `project add|del|list|launch|resume`
+- `project add|del|list|launch|resume`; `project list_sessions [--json]`
 - `models list|add|get|update|delete`
 
 ## Command Design Convention

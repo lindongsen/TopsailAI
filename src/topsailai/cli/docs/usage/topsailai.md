@@ -249,6 +249,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `project add <path> [name]` | Add a project to the managed project list. |
 | `project del <path>` | Remove a project from the managed project list. |
 | `project list` | Display all managed projects. |
+| `project list_sessions [--json]` | Display recent sessions with project workspaces (default limit: 30); `--json` outputs JSON instead of a table. |
 | `models list` | Display all model registry entries. |
 | `models add <json-or-key=value...>` | Add a model entry to `.models.jsonl`. |
 | `models update <number-or-name> <json-or-key=value...>` | Update an existing model entry. |

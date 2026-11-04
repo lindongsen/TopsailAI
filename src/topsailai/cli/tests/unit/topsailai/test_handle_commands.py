@@ -2043,6 +2043,78 @@ class TestProjectSubcommand(unittest.TestCase):
         self.assertIn("Listed", output)
         self.assertIn(project_dir, output)
 
+    @patch("cli_topsailai.project_scope.print_project_table")
+    @patch("cli_topsailai.project_scope.build_project_list")
+    def test_list_sessions_uses_project_scope_default_limit(
+        self, mock_build, mock_print
+    ):
+        """``project list_sessions`` reuses the interactive project session list."""
+        entries = [{"session_id": "session-a", "project_workspace": "/work/a"}]
+        mock_build.return_value = entries
+
+        code = _try_handle_project_subcommand(["project", "list_sessions"])
+
+        self.assertEqual(code, 0)
+        mock_build.assert_called_once_with(limit=30)
+        mock_print.assert_called_once_with(entries)
+
+    @patch("cli_topsailai.project_scope.print_project_table")
+    @patch("cli_topsailai.project_scope.build_project_list")
+    def test_list_sessions_empty_results_are_successful_warning(
+        self, mock_build, mock_print
+    ):
+        """An empty session list warns and exits successfully."""
+        mock_build.return_value = []
+        with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+            code = _try_handle_project_subcommand(["project", "list_sessions"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("No sessions with project_workspace found", mock_stdout.getvalue())
+        mock_print.assert_not_called()
+
+    @patch("cli_topsailai.project_scope.print_project_table")
+    @patch("cli_topsailai.project_scope.build_project_list")
+    def test_main_parses_list_sessions_subcommand(self, mock_build, mock_print):
+        """The public CLI parser dispatches ``project list_sessions``."""
+        from cli_topsailai.core import main
+
+        mock_build.return_value = [{"session_id": "session-a"}]
+        with self.assertRaises(SystemExit) as exit_info:
+            main(["project", "list_sessions"])
+
+        self.assertEqual(exit_info.exception.code, 0)
+        mock_build.assert_called_once_with(limit=30)
+        mock_print.assert_called_once_with(mock_build.return_value)
+
+    @patch("cli_topsailai.project_scope.print_project_table")
+    @patch("cli_topsailai.project_scope.build_project_list")
+    def test_main_parses_list_sessions_json(self, mock_build, mock_print):
+        """The public parser accepts ``--json`` and prints JSON output."""
+        from cli_topsailai.core import main
+
+        mock_build.return_value = [{"session_id": "session-a"}]
+        with patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            with self.assertRaises(SystemExit) as exit_info:
+                main(["project", "list_sessions", "--json"])
+
+        self.assertEqual(exit_info.exception.code, 0)
+        self.assertEqual(json.loads(stdout.getvalue()), mock_build.return_value)
+        mock_build.assert_called_once_with(limit=30)
+        mock_print.assert_not_called()
+
+    @patch("cli_topsailai.project_scope.build_project_list", return_value=[])
+    def test_list_sessions_empty_json_is_array(self, _mock_build):
+        """Empty JSON output stays machine-readable as an empty array."""
+        from cli_topsailai.core import _try_handle_project_subcommand
+
+        with patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            code = _try_handle_project_subcommand(
+                ["project", "list_sessions", "--json"]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout.getvalue()), [])
+
     @patch("sys.stdout", new_callable=io.StringIO)
     def test_unknown_subcommand_prints_error(self, mock_stdout):
         """Unknown project subcommands report an error and exit 1."""

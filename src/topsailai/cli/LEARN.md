@@ -133,3 +133,17 @@ Required callers to use the verified process generation published only for a liv
 ### Why this prevents recurrence
 
 Binding termination to the current process instance prevents stale logs and PID reuse from authorizing a signal to an unrelated process, while evidence-based receipt states prevent automation from blindly retrying an operation whose side effects may already have occurred or treating PID presence as proof that a launcher exited.
+
+## Non-interactive list commands must share both data and renderer contracts
+
+### Trigger
+
+`topsailai project list_sessions` loaded valid project-session records but displayed blank cells, and its public parser did not propagate `--json` to the command handler.
+
+### Action taken
+
+Reused the interactive project scope's session query and session-table renderer, explicitly forwarded the parsed JSON option, and verified both the installed command entry point and strict JSON parsing with real data.
+
+### Why this prevents recurrence
+
+Treating a reused list as a three-part contract—query, record schema, and renderer/output mode—prevents valid records from being passed to an incompatible table and prevents parser flags from being accepted without changing downstream output.

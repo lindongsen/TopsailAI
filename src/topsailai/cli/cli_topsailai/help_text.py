@@ -323,6 +323,12 @@ def print_help(
             "scopes": ["cli"],
         },
         {
+            "cmd": "project list_sessions [--json]",
+            "desc": "Non-interactive: list recent sessions with project workspaces using the same default 30-entry limit as interactive project scope; --json outputs the entries as JSON.",
+            "example": "Example: topsailai project list_sessions --json",
+            "scopes": ["cli"],
+        },
+        {
             "cmd": "/send [session_id_or_index] [message...]",
             "desc": "Send a message to a running session through its named pipe. In session scope, omit the session id. If no message is provided, enter multi-line input mode (finish with EOF). While streaming a log, /send defaults to the watched session.",
             "example": "Example: /send 1 hello  or  /send my-session hello  or  while streaming: /send hello",

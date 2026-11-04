@@ -585,6 +585,7 @@ You can also manage projects and project sessions directly from the shell withou
 | `topsailai project add <path> [name]` | Add `<path>` to `.projects.jsonl`. The path is expanded (`~`) and resolved to an absolute path. Duplicate paths are rejected. |
 | `topsailai project del <path>` | Remove `<path>` from `.projects.jsonl`. The path is expanded and resolved before matching. Only the registry entry is removed. |
 | `topsailai project list` | Display all managed projects with row number, name, path, and creation time. |
+| `topsailai project list_sessions [--json]` | Display the same recent project-session list shown in interactive project scope (default limit: 30); `--json` outputs JSON instead of a table. |
 | `topsailai project launch <folder>` | Launch an agent in `<folder>` using the same behavior as the project-scope `/agent <folder>` command. |
 | `topsailai project resume <session> [-d DRIVER]` | Resume an idle session; the default driver is `topsailai_agent_chats`. |
 
