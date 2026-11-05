@@ -339,12 +339,11 @@ operations include `call_instruction`, `hard_interrupt`, `soft_interrupt`,
 
 - Agent environment variables are stored in `~/.topsailai/.env.local` and
   `~/.topsailai/.env`. `.env.local` is loaded first and takes precedence.
-- `.env` is a symlink to the project's `env_template`
-  (`/TopsailAI/src/topsailai/env_template`), which documents every supported
-  variable and its default.
+- `.env` is the reference list of every supported variable and its default
+  value. Treat it as read-only documentation.
 - `.env.local` holds user-specific overrides and secrets.
-- To change agent behavior: look up the variable in `env_template`, add the
-  override to `.env.local`, then restart the agent.
+- To change agent behavior: find the variable in `.env`, add the override to
+  `.env.local`, then restart the agent.
 
 ## Skill overview preloading (`flag_overview`)
 
@@ -359,22 +358,19 @@ name: my-skill
 description: Demonstrates skill configuration items.
 preload_docs:
   - references/
-  - docs/guide.md
+  - references/guide.md
 flag_overview: 1
 ---
 ```
 
 - `flag_overview: 1` / `flag_overview: true` — the skill's full overview
   (SKILL.md body, `preload_docs` documents, and folder listing) is injected
-  into the Skill Registry prompt instead of only the description.
+  into the skill registry instead of only the description.
 - `flag_overview: 0` / `flag_overview: false` — preloading is disabled; an
-  explicit frontmatter value overrides the environment variable because the
-  parsed flag is no longer `None`.
-- When `flag_overview` is absent from the frontmatter, the skill hub falls
-  back to `TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS` (a `;`-separated list
-  of skill names, or `*` for all skills).
-- The marker is parsed in `parse_skill_folder()` and honored in
-  `SkillInfo.markdown` (`/TopsailAI/src/topsailai/skill_hub/skill_tool.py`).
+  explicit frontmatter value takes precedence over the environment variable.
+- When `flag_overview` is absent from the frontmatter, the runtime falls back
+  to `TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS` (a `;`-separated list of
+  skill names, or `*` for all skills).
 
 ## Model registry
 

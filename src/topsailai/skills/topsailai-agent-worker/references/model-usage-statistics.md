@@ -37,9 +37,9 @@ The file name is:
 | suffix | The fixed suffix `.model.stats.json`. |
 
 The name contains no PID segment, because one model owns one document
-regardless of which process writes it. A sibling `{document}.lock` file is
-created by the advisory lock and is intentionally retained so every contender
-always locks the same inode; it is empty and is not a statistics document.
+regardless of which process writes it. A sibling `{document}.lock` file may
+appear next to a document; it is empty, it is not a statistics document, and it
+must be ignored when you list or aggregate the directory.
 
 ### Field reference
 
@@ -74,21 +74,21 @@ Accumulated totals:
 | `first_byte_sum_ms` | milliseconds | Summed time from request start to the first decoded stream chunk. |
 | `first_byte_count` | count | Number of streaming responses that contributed a first-byte measurement. |
 
-### Write path
+### How the totals are maintained
 
-Each settled User2Agent attempt produces one framed delta. The delta is handed
-to a process-owned statistics worker that runs on a daemon thread, so the
-execution thread performs no storage I/O.
+Each settled User2Agent attempt adds one delta to the document of the model
+that was active during it. You do not need to write these documents yourself;
+the runtime maintains them.
 
-- **Merge, not append.** The writer reads the current document, adds the delta
-  to every total, and republishes the whole document. The file always contains
-  one single-line JSON object, never one line per attempt.
-- **Atomic publication.** The merged document is written to `{document}.tmp`,
-  flushed, `os.fsync()`-ed, then published with `os.replace()`.
-- **Cross-process serialization.** The read-merge-write cycle runs under an
-  exclusive advisory `flock` on `{document}.lock`.
-- **Best effort.** Any storage failure is reported through a bounded diagnostic
-  category and never interrupts the Agent flow. A failed write is not requeued.
+- **Merge, not append.** Every update adds the delta to the existing totals and
+  rewrites the whole document. The file always contains one single-line JSON
+  object, never one line per attempt.
+- **Safe to read at any time.** An update is published atomically, so a reader
+  never observes a half-written document.
+- **Concurrent writers are serialized.** Several processes may update the same
+  model document; the totals stay consistent.
+- **Best effort.** A storage failure never interrupts the Agent flow, and a
+  failed update is not retried. A missing delta is therefore possible.
 
 ### Derived values
 
