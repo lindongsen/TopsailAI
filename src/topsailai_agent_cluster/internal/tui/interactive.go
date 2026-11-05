@@ -606,6 +606,9 @@ func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveSta
 		if endpoint.EndpointID != state.EndpointID {
 			continue
 		}
+		if endpoint.ConnectionState != "" && endpoint.ConnectionState != "online" {
+			return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("endpoint %q is not online: connection_state=%s", endpoint.EndpointID, endpoint.ConnectionState)
+		}
 		report, ok := loaded.reports[endpoint.EndpointID]
 		if !ok || !report.ReportComplete {
 			return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("endpoint %q inventory is unavailable", state.EndpointID)

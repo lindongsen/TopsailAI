@@ -49,6 +49,16 @@ func main() {
 		os.Exit(1)
 	}
 	channelService := channel.NewServer(tlsConfig)
+	channelService.OnDisconnect = func(peer channel.Peer, observedAtMS int64) {
+		applied, err := store.MarkEndpointOffline(context.Background(), peer.EndpointID, peer.InstanceID, observedAtMS)
+		if err != nil {
+			logger.Error("store endpoint disconnect", "endpoint_id", peer.EndpointID, "instance_id", peer.InstanceID, "connection_generation", peer.ConnectionGeneration, "error", err)
+			return
+		}
+		if !applied {
+			logger.Info("skip stale endpoint disconnect", "endpoint_id", peer.EndpointID, "instance_id", peer.InstanceID, "connection_generation", peer.ConnectionGeneration, "observed_at_ms", observedAtMS)
+		}
+	}
 	broker := serverapi.NewEventBroker(128)
 	onFrame := func(peer channel.Peer, frame channel.Frame) {
 		if frame.Type != channel.FrameInventory {

@@ -26,6 +26,7 @@ type Server struct {
 	HeartbeatTimeout time.Duration
 	OnFrame          func(Peer, Frame)
 	OnReceipt        func(Peer, protocol.ExecutionReceipt)
+	OnDisconnect     func(Peer, int64)
 	OnReject         func(error)
 	OnRejectReason   func(endpointID, certificateIdentity, reason, requestID string)
 	RevokedSerials   map[string]bool
@@ -256,10 +257,20 @@ func (s *Server) currentPeer(endpointID string) (*Peer, error) {
 
 func (s *Server) remove(peer *Peer) {
 	s.Mu.Lock()
-	defer s.Mu.Unlock()
-	if current := s.Active[peer.EndpointID]; current == peer {
+	current := s.Active[peer.EndpointID]
+	authoritative := current == peer
+	if authoritative {
 		delete(s.Active, peer.EndpointID)
 	}
+	// Capture the observation time under the lock so a later reconnect cannot be
+	// overwritten by this disconnect.
+	observedAtMS := time.Now().UnixMilli()
+	s.Mu.Unlock()
+	if !authoritative || s.OnDisconnect == nil {
+		return
+	}
+	// Notify outside the channel lock so persistence latency cannot block other peers.
+	s.OnDisconnect(*peer, observedAtMS)
 }
 
 // Close closes all active Endpoint connections.

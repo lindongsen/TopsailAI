@@ -32,9 +32,11 @@ func ListRows(endpoints []protocol.Endpoint, reports map[string]protocol.Invento
 		if filter != "" && endpoint.EndpointID != filter {
 			continue
 		}
+		// Retained inventory from a disconnected Endpoint is historical, not current.
+		endpointStale := endpoint.ConnectionState != "" && endpoint.ConnectionState != "online"
 		report, ok := reports[endpoint.EndpointID]
 		if !ok {
-			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), State: "no sessions", CollectionStatus: "unknown"})
+			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), State: "no sessions", Stale: endpointStale, CollectionStatus: "unknown"})
 			continue
 		}
 		freshness := make(map[string]protocol.AdapterSummary, len(report.Adapters))
@@ -43,11 +45,11 @@ func ListRows(endpoints []protocol.Endpoint, reports map[string]protocol.Invento
 		}
 		if len(report.Sessions) == 0 {
 			lastSuccess := endpointLastSuccess(report)
-			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), State: "no sessions", CollectionStatus: report.CollectionStatus, LastSuccessAtMS: lastSuccess})
+			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), State: "no sessions", Stale: endpointStale, CollectionStatus: report.CollectionStatus, LastSuccessAtMS: lastSuccess})
 		}
 		for _, session := range report.Sessions {
 			adapter := freshness[session.AdapterID]
-			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), AdapterID: session.AdapterID, AdapterLabel: adapterLabel(adapter), SessionID: session.SessionID, ProviderSessionID: session.ProviderSessionID, DisplayName: session.DisplayName, Generation: session.Generation, State: session.State, Stale: adapter.Stale, Unknown: !adapter.DataKnown, LastSuccessAtMS: adapter.LastSuccessAtMS, CollectionStatus: adapter.CollectionStatus})
+			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), AdapterID: session.AdapterID, AdapterLabel: adapterLabel(adapter), SessionID: session.SessionID, ProviderSessionID: session.ProviderSessionID, DisplayName: session.DisplayName, Generation: session.Generation, State: session.State, Stale: adapter.Stale || endpointStale, Unknown: !adapter.DataKnown, LastSuccessAtMS: adapter.LastSuccessAtMS, CollectionStatus: adapter.CollectionStatus})
 		}
 	}
 	return rows
