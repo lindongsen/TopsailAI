@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -54,9 +55,12 @@ func (t *TerminalEditor) ReadLine(ctx context.Context, prompt string, history bo
 	}
 	t.editor.reset()
 	defer t.editor.reset()
-	// Start the edit on its own bounded row even when a long confirmation was printed.
-	if _, err = io.WriteString(t.output, "\r\n"); err != nil {
-		return
+	// Only question-style prompts request a new row; named prompts are already printed.
+	if strings.HasPrefix(prompt, "\n") {
+		prompt = strings.TrimPrefix(prompt, "\n")
+		if _, err = io.WriteString(t.output, "\r\n"); err != nil {
+			return
+		}
 	}
 	byteReader := &terminalByteReader{ctx: ctx, input: t.input}
 	reader := bufio.NewReaderSize(byteReader, 16)

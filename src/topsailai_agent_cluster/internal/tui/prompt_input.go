@@ -25,7 +25,7 @@ func promptReader(ctx context.Context) InteractiveLineReader {
 // readPromptLine requests a history-free child answer after its question is written.
 func readPromptLine(ctx context.Context, prompts ...string) (string, bool, error) {
 	config := ctx.Value(promptReaderKey{}).(promptReaderConfig)
-	prompt := "answer> "
+	prompt := "\nanswer> "
 	if len(prompts) > 0 {
 		prompt = prompts[0]
 	}

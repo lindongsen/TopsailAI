@@ -122,3 +122,26 @@ func TestTerminalByteReaderCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestTerminalPromptRowOwnership prevents stranded prompts while preserving question rows.
+func TestTerminalPromptRowOwnership(t *testing.T) {
+	for _, prompt := range []string{"cluster> ", "cluster[host/session]> ", "start.folder> ", "start.task> ", "\nanswer> "} {
+		for _, width := range []int{12, 80} {
+			var out strings.Builder
+			editor := NewTerminalEditor(&editorTestInput{Reader: strings.NewReader("\r")}, &out, func() int { return width }, func() (func() error, error) { return func() error { return nil }, nil })
+			if _, _, err := editor.ReadLine(context.Background(), prompt, false, 32); err != nil {
+				t.Fatal(err)
+			}
+			wantRows := 1
+			if strings.HasPrefix(prompt, "\n") {
+				wantRows = 2
+			}
+			if got := strings.Count(out.String(), "\r\n"); got != wantRows {
+				t.Fatalf("prompt=%q width=%d rows=%d output=%q", prompt, width, got, out.String())
+			}
+			if !strings.HasPrefix(prompt, "\n") && !strings.HasPrefix(out.String(), "\r\x1b[2K") {
+				t.Fatalf("named prompt moved rows: %q", out.String())
+			}
+		}
+	}
+}
