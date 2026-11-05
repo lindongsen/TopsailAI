@@ -34,10 +34,17 @@ func TestInteractiveSessionExactIntents(t *testing.T) {
 	for command, op := range map[string]string{"resume": protocol.OperationAgentResume, "stop": protocol.OperationAgentStop, "inject": protocol.OperationContextInject, "btw": protocol.OperationContextInject, "interrupt": protocol.OperationExecutionInterrupt, "control": protocol.OperationExecutionInterrupt} {
 		t.Run(command, func(t *testing.T) {
 			stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+			if op == protocol.OperationAgentResume {
+				stub.sessionPresenceSequence = []bool{true, true, false, false}
+			}
 			payload := `{}`
 			line := command
-			if op == protocol.OperationContextInject || op == protocol.OperationExecutionInterrupt {
+			if op == protocol.OperationContextInject {
 				payload = `{"text":"literal --json is data"}`
+				line += " " + payload
+			}
+			if op == protocol.OperationExecutionInterrupt {
+				payload = `{"action":"soft_interrupt","message":"literal --json is data"}`
 				line += " " + payload
 			}
 			var out, diagnostics strings.Builder
@@ -81,6 +88,24 @@ func TestInteractiveLifecycleRejectsChangedGeneration(t *testing.T) {
 	if stub.admit != 0 || !strings.Contains(diagnostics, "generation changed") {
 		t.Fatalf("admit=%d diagnostics=%q calls=%d", stub.admit, diagnostics, stub.inventoryCalls)
 	}
+}
+
+// TestInteractiveResumeRequiresAuthoritativeAbsence rejects both a live target and a target that reappears during confirmation.
+func TestInteractiveResumeRequiresAuthoritativeAbsence(t *testing.T) {
+	t.Run("live before confirmation", func(t *testing.T) {
+		stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+		_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\nresume\nquit\n", ColorPolicy{})
+		if stub.admit != 0 || !strings.Contains(diagnostics, "is still live; stop it before resume") {
+			t.Fatalf("admit=%d diagnostics=%q", stub.admit, diagnostics)
+		}
+	})
+	t.Run("reappears after confirmation", func(t *testing.T) {
+		stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}, sessionPresenceSequence: []bool{true, true, false, true}}
+		_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\nresume\ny\nquit\n", ColorPolicy{})
+		if stub.admit != 0 || !strings.Contains(diagnostics, "is still live; stop it before resume") {
+			t.Fatalf("admit=%d diagnostics=%q", stub.admit, diagnostics)
+		}
+	})
 }
 
 // TestInteractiveNewCommandHelpAndScope covers every newly exposed session command.
@@ -134,7 +159,7 @@ func TestInteractiveStartAndResumePayloads(t *testing.T) {
 		{name: "resume custom", command: `resume --payload '{"note":"literal --json data"}'`, want: `{"note":"literal --json data"}`},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+			stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}, sessionPresenceSequence: []bool{true, true, false, false}}
 			var out, diagnostics strings.Builder
 			input := "cd endpoint-1/session-1\n" + testCase.command + "\ny\nquit\n"
 			if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &out, &diagnostics, InteractiveOptions{}); err != nil {

@@ -356,15 +356,50 @@ func interactiveSessionLifecycle(parent context.Context, api InteractiveAPI, sta
 	if err := state.requireUsable(); err != nil {
 		return err
 	}
+	if name == "resume" {
+		if err := validateResumeSelectionAbsent(ctx, api, state); err != nil {
+			return err
+		}
+		revalidate := func() error { return validateResumeSelectionAbsent(ctx, api, state) }
+		return interactiveConfirmedAction(ctx, api, state, protocol.OperationAgentResume, name, state.SessionID, state.Generation, payload, lines, out, options, revalidate)
+	}
 	_, _, session, err := findSelected(ctx, api, state)
 	if err != nil {
 		return err
 	}
-	op := protocol.OperationAgentResume
-	if name == "stop" {
-		op = protocol.OperationAgentStop
+	return interactiveConfirmedAction(ctx, api, state, protocol.OperationAgentStop, name, session.SessionID, session.Generation, payload, lines, out, options, nil)
+}
+
+// validateResumeSelectionAbsent proves from a complete fresh adapter inventory that the selected historical session has no live generation.
+func validateResumeSelectionAbsent(ctx context.Context, api InteractiveAPI, state *interactiveState) error {
+	if err := state.requireUsable(); err != nil {
+		return err
 	}
-	return interactiveConfirmedAction(ctx, api, state, op, name, session.SessionID, session.Generation, payload, lines, out, options)
+	loaded, err := loadReports(ctx, api, state.EndpointID)
+	if err != nil {
+		return err
+	}
+	report, ok := loaded.reports[state.EndpointID]
+	if !ok || !report.ReportComplete || report.CollectionStatus != protocol.CollectionSucceeded {
+		return fmt.Errorf("endpoint %q inventory cannot prove the selected session is stopped", state.EndpointID)
+	}
+	if state.Scope.AdapterID == "" {
+		return fmt.Errorf("selected session adapter is unknown; use the session again")
+	}
+	if err := validateAdapterFreshness(report, state.Scope.AdapterID); err != nil {
+		return err
+	}
+	for _, session := range report.Sessions {
+		if session.SessionID != state.SessionID {
+			continue
+		}
+		if session.Generation != state.Generation {
+			state.invalidate("selected session generation changed")
+			return fmt.Errorf("selected session generation changed; use the session again")
+		}
+		return fmt.Errorf("selected session %q is still live; stop it before resume", state.SessionID)
+	}
+	return nil
 }
 
 // interactiveSessionPayload executes context injection or interruption with confirmation.
@@ -389,11 +424,11 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	if err != nil {
 		return err
 	}
-	return interactiveConfirmedAction(ctx, api, state, op, name, session.SessionID, session.Generation, json.RawMessage(payloadText), lines, out, options)
+	return interactiveConfirmedAction(ctx, api, state, op, name, session.SessionID, session.Generation, json.RawMessage(payloadText), lines, out, options, nil)
 }
 
 // interactiveConfirmedAction keeps mutating confirmation and shared intent submission in one path.
-func interactiveConfirmedAction(ctx context.Context, api InteractiveAPI, state *interactiveState, op, name, resource, generation string, payload json.RawMessage, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {
+func interactiveConfirmedAction(ctx context.Context, api InteractiveAPI, state *interactiveState, op, name, resource, generation string, payload json.RawMessage, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions, revalidate func() error) error {
 	if _, err := fmt.Fprintf(out, "%s %s? Confirm %s? [y/N] ", name, resource, name); err != nil {
 		return err
 	}
@@ -405,8 +440,12 @@ func interactiveConfirmedAction(ctx context.Context, api InteractiveAPI, state *
 		_, err := fmt.Fprintln(out, name+" cancelled")
 		return err
 	}
-	// Revalidate the pinned generation after the user confirmation.
-	if _, _, _, err := findSelected(ctx, api, state); err != nil {
+	// Revalidate the operation-specific authority after the user confirmation.
+	if revalidate != nil {
+		if err := revalidate(); err != nil {
+			return err
+		}
+	} else if _, _, _, err := findSelected(ctx, api, state); err != nil {
 		return err
 	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}

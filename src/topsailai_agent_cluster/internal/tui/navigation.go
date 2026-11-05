@@ -348,7 +348,7 @@ func enterValidatedSession(state *interactiveState, endpoint protocol.Endpoint, 
 	if err := validateAdapterFreshness(report, session.AdapterID); err != nil {
 		return outcomeCancelled, err
 	}
-	state.enterSessionDetails(endpoint, session.SessionID, session.ProviderSessionID, session.DisplayName, session.Generation)
+	state.enterSessionDetails(endpoint, session.SessionID, session.ProviderSessionID, session.DisplayName, session.AdapterID, session.Generation)
 	return outcomeResolved, nil
 }
 

@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -262,5 +263,74 @@ func TestExecutorAdmissionHookRunsAfterDurableAdmission(t *testing.T) {
 	_, _ = e.Execute(context.Background(), intent, "admission-order-hash")
 	if !hookCalled {
 		t.Fatal("admission hook was not called")
+	}
+}
+
+type resumePreflightAdapter struct {
+	adapter.Adapter
+	inspection   adapter.InspectResult
+	inspectErr   error
+	executeCalls *int
+}
+
+func (a resumePreflightAdapter) Describe(context.Context) (adapter.Descriptor, error) {
+	return adapter.Descriptor{AdapterID: "a1", Capabilities: protocol.CapabilityDescriptor{Revision: "v1", Capabilities: []protocol.Capability{{Name: protocol.OperationAgentResume, Version: "v1"}}}}, nil
+}
+
+func (a resumePreflightAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
+	return a.inspection, a.inspectErr
+}
+
+func (a resumePreflightAdapter) Execute(_ context.Context, request adapter.ExecuteRequest) (adapter.ExecuteResult, error) {
+	*a.executeCalls++
+	return adapter.ExecuteResult{Receipt: protocol.ExecutionReceipt{CommandID: request.Intent.CommandID, Outcome: "submitted", DeliveryBoundary: protocol.DeliverySubmitted, EffectCertainty: protocol.EffectAcknowledged}}, nil
+}
+
+func TestResumePreflightRequiresAuthoritativeAbsence(t *testing.T) {
+	tests := []struct {
+		name       string
+		inspection adapter.InspectResult
+		inspectErr error
+		wantCalls  int
+		wantCode   string
+	}{
+		{name: "absent executes", inspection: adapter.InspectResult{Found: false}, wantCalls: 1},
+		{name: "live rejects", inspection: adapter.InspectResult{Found: true, Generation: "g1"}, wantCode: "target_still_active"},
+		{name: "observation failure rejects", inspectErr: errors.New("provider unavailable"), wantCode: "target_observation_failed"},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.db")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider-session", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			registry := adapter.NewRegistry()
+			if err := registry.RegisterType("fixture", func(context.Context, adapter.Config) (adapter.Adapter, error) {
+				return resumePreflightAdapter{inspection: testCase.inspection, inspectErr: testCase.inspectErr, executeCalls: &calls}, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
+				t.Fatal(err)
+			}
+			executor, err := NewExecutor(store, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "resume-" + testCase.name, EndpointID: "e1", Operation: protocol.OperationAgentResume, OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, Generation: "g1"}, Payload: []byte(`{}`), ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
+			receipt, err := executor.Execute(context.Background(), intent, "hash-"+testCase.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if calls != testCase.wantCalls || receipt.ErrorCode != testCase.wantCode {
+				t.Fatalf("calls=%d receipt=%#v", calls, receipt)
+			}
+		})
 	}
 }

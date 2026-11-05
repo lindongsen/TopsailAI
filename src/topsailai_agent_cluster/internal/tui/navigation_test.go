@@ -394,7 +394,7 @@ func TestCDPromptFillsHostnameFromListRows(t *testing.T) {
 	if row.EndpointID != "endpoint-1" || row.SessionID != "res-1" || row.Generation != "generation-1" {
 		t.Fatalf("row identity = %+v", row)
 	}
-	state.enterSessionDetails(stub.endpoints[0], row.SessionID, row.ProviderSessionID, row.DisplayName, row.Generation)
+	state.enterSessionDetails(stub.endpoints[0], row.SessionID, row.ProviderSessionID, row.DisplayName, row.AdapterID, row.Generation)
 	var prompt strings.Builder
 	if err := RenderPrompt(&prompt, state.Scope, false, ColorPolicy{}); err != nil {
 		t.Fatal(err)

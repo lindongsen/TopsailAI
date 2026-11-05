@@ -37,6 +37,7 @@ type ScopeState struct {
 	SessionID         string
 	ProviderSessionID string
 	SessionName       string
+	AdapterID         string
 	Generation        string
 }
 
@@ -100,11 +101,11 @@ func (s *interactiveState) enterEndpoint(endpoint protocol.Endpoint) {
 
 // enterSession pins a validated session and records its endpoint hostname.
 func (s *interactiveState) enterSession(endpoint protocol.Endpoint, sessionID, generation string) {
-	s.enterSessionDetails(endpoint, sessionID, "", "", generation)
+	s.enterSessionDetails(endpoint, sessionID, "", "", "", generation)
 }
 
 // enterSessionDetails pins a session and its user-facing identity in the prompt.
-func (s *interactiveState) enterSessionDetails(endpoint protocol.Endpoint, sessionID, providerSessionID, sessionName, generation string) {
+func (s *interactiveState) enterSessionDetails(endpoint protocol.Endpoint, sessionID, providerSessionID, sessionName, adapterID, generation string) {
 	s.reset(endpoint.EndpointID, sessionID, generation)
 	s.Scope = ScopeState{
 		Kind:              ScopeSession,
@@ -113,6 +114,7 @@ func (s *interactiveState) enterSessionDetails(endpoint protocol.Endpoint, sessi
 		SessionID:         sessionID,
 		ProviderSessionID: providerSessionID,
 		SessionName:       sessionName,
+		AdapterID:         adapterID,
 		Generation:        generation,
 	}
 }

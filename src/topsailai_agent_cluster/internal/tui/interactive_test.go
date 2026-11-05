@@ -11,23 +11,24 @@ import (
 )
 
 type interactiveStub struct {
-	endpoints          []protocol.Endpoint
-	reports            map[string]protocol.InventoryReport
-	intents            []protocol.ImmutableIntent
-	admit              int
-	failList           bool
-	changeAfter        int
-	generationSequence []string
-	inventoryCalls     int
-	listCalls          int
-	inventoryByID      map[string]int
-	outputCalls        int
-	outputRequests     []outputRequest
-	getCommandErr      error
-	inventoryErr       error
-	inventoryErrors    map[string]error
-	admitErr           error
-	admittedCommandID  string
+	endpoints               []protocol.Endpoint
+	reports                 map[string]protocol.InventoryReport
+	intents                 []protocol.ImmutableIntent
+	admit                   int
+	failList                bool
+	changeAfter             int
+	generationSequence      []string
+	sessionPresenceSequence []bool
+	inventoryCalls          int
+	listCalls               int
+	inventoryByID           map[string]int
+	outputCalls             int
+	outputRequests          []outputRequest
+	getCommandErr           error
+	inventoryErr            error
+	inventoryErrors         map[string]error
+	admitErr                error
+	admittedCommandID       string
 }
 
 func (s *interactiveStub) ListEndpoints(context.Context) ([]protocol.Endpoint, error) {
@@ -54,14 +55,23 @@ func (s *interactiveStub) GetInventory(_ context.Context, id string) (protocol.I
 	if !ok {
 		return protocol.InventoryReport{}, errors.New("missing inventory")
 	}
-	if len(s.generationSequence) > 0 {
+	if len(s.sessionPresenceSequence) > 0 {
+		index := s.inventoryCalls - 1
+		if index >= len(s.sessionPresenceSequence) {
+			index = len(s.sessionPresenceSequence) - 1
+		}
+		if !s.sessionPresenceSequence[index] {
+			report.Sessions = nil
+		}
+	}
+	if len(report.Sessions) > 0 && len(s.generationSequence) > 0 {
 		index := s.inventoryCalls - 1
 		if index >= len(s.generationSequence) {
 			index = len(s.generationSequence) - 1
 		}
 		report.Sessions = append([]protocol.Session(nil), report.Sessions...)
 		report.Sessions[0].Generation = s.generationSequence[index]
-	} else if s.changeAfter > 0 && s.inventoryCalls >= s.changeAfter {
+	} else if len(report.Sessions) > 0 && s.changeAfter > 0 && s.inventoryCalls >= s.changeAfter {
 		report.Sessions = append([]protocol.Session(nil), report.Sessions...)
 		report.Sessions[0].Generation = "generation-2"
 	}
@@ -451,17 +461,17 @@ func TestInteractiveHelpIncludesStart(t *testing.T) {
 func TestInteractiveSessionLifecycleAndControlCommands(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	input := "cd endpoint-1/session-1\nresume\ny\ninject {\"text\":\"context\"}\ny\ninterrupt {\"action\":\"interrupt\"}\ny\nstop\nn\nquit\n"
+	input := "cd endpoint-1/session-1\nresume\ninject {\"text\":\"context\"}\ny\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nstop\nn\nquit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if errorsOut.Len() != 0 {
-		t.Fatalf("unexpected diagnostics: %q", errorsOut.String())
+	if !strings.Contains(errorsOut.String(), "is still live; stop it before resume") {
+		t.Fatalf("live resume rejection missing: %q", errorsOut.String())
 	}
-	if stub.admit != 3 {
-		t.Fatalf("admitted %d commands, want 3 after declined stop", stub.admit)
+	if stub.admit != 2 {
+		t.Fatalf("admitted %d commands, want 2 after rejected live resume and declined stop", stub.admit)
 	}
-	for _, phrase := range []string{"resume session-1?", "inject session-1?", "interrupt session-1?", "stop cancelled"} {
+	for _, phrase := range []string{"inject session-1?", "interrupt session-1?", "stop cancelled"} {
 		if !strings.Contains(output.String(), phrase) {
 			t.Fatalf("output missing %q: %q", phrase, output.String())
 		}
@@ -531,7 +541,7 @@ func TestInteractiveSessionActionValidation(t *testing.T) {
 func TestInteractiveControlAliasesExecuteSharedOperations(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	input := "cd endpoint-1/session-1\nbtw {\"text\":\"alias context\"}\ny\ncontrol {\"action\":\"interrupt\"}\ny\nquit\n"
+	input := "cd endpoint-1/session-1\nbtw {\"text\":\"alias context\"}\ny\ncontrol {\"action\":\"soft_interrupt\"}\ny\nquit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}

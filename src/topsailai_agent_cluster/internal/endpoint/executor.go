@@ -89,7 +89,14 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 	}
 	if intent.Target != nil {
 		inspection, inspectErr := instance.Inspect(ctx, adapter.InspectRequest{Target: *intent.Target})
-		if inspectErr != nil || !inspection.Found || inspection.Generation != intent.Target.Generation {
+		if intent.Operation == protocol.OperationAgentResume {
+			if inspectErr != nil {
+				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_observation_failed"))
+			}
+			if inspection.Found {
+				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_still_active"))
+			}
+		} else if inspectErr != nil || !inspection.Found || inspection.Generation != intent.Target.Generation {
 			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_generation_mismatch"))
 		}
 	}
