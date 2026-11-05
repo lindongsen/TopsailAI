@@ -7,7 +7,6 @@ workspace: /TopsailAI/src/topsailai
 # Context Informations, key is item name, value is list for files
 context:
   _default:
-    - project.yaml
     - workspace/readme.md
     - docs/Environment_Variables.md # env_template
     - MEMO.md
