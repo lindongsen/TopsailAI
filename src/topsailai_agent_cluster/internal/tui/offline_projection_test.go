@@ -122,3 +122,47 @@ func TestFindSelectedAcceptsOnlineEndpoint(t *testing.T) {
 		t.Fatalf("endpoint=%#v session=%#v", endpoint, session)
 	}
 }
+
+// TestCDRowNumberRejectsDisconnectedEndpoint verifies that row navigation cannot
+// enter a session scope from retained inventory of a disconnected endpoint.
+func TestCDRowNumberRejectsDisconnectedEndpoint(t *testing.T) {
+	api := &offlineAPI{state: "offline", report: offlineReport(), caps: matrixCapability("rev-1")}
+	state := interactiveState{}
+	rows := ListRows([]protocol.Endpoint{{EndpointID: "ep", ConnectionState: "offline"}}, map[string]protocol.InventoryReport{"ep": offlineReport()}, "")
+	assignRowNumbers(rows)
+	state.setRows(rows)
+	before := state
+	err := cdRowNumber(&state, api, context.Background(), 1)
+	if err == nil {
+		t.Fatal("row navigation into a disconnected endpoint unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "not online") || !strings.Contains(err.Error(), "offline") {
+		t.Fatalf("error=%q, want an offline diagnostic", err)
+	}
+	if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.SessionID != before.SessionID {
+		t.Fatalf("state changed after offline rejection: before=%+v after=%+v", before, state)
+	}
+}
+
+// TestResolveSessionInEndpointRejectsDisconnectedEndpoint verifies that named
+// session navigation also refuses stale retained inventory.
+func TestResolveSessionInEndpointRejectsDisconnectedEndpoint(t *testing.T) {
+	state := interactiveState{}
+	loaded := reportLoad{
+		endpoints: []protocol.Endpoint{{EndpointID: "ep", ConnectionState: "offline"}},
+		reports:   map[string]protocol.InventoryReport{"ep": offlineReport()},
+	}
+	outcome, err := resolveSessionInEndpoint(&state, loaded, "ep", "session-1")
+	if err == nil {
+		t.Fatal("session navigation into a disconnected endpoint unexpectedly succeeded")
+	}
+	if outcome != outcomeCancelled {
+		t.Fatalf("outcome=%v, want outcomeCancelled", outcome)
+	}
+	if !strings.Contains(err.Error(), "not online") {
+		t.Fatalf("error=%q, want an offline diagnostic", err)
+	}
+	if state.Scope.Kind != ScopeWorkspace {
+		t.Fatalf("scope=%+v, want workspace scope", state.Scope)
+	}
+}

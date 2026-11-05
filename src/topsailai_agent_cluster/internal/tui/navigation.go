@@ -342,6 +342,9 @@ func enterValidatedSession(state *interactiveState, endpoint protocol.Endpoint, 
 	if session.Generation == "" {
 		return outcomeNotFound, nil
 	}
+	if err := validateEndpointOnline(endpoint); err != nil {
+		return outcomeCancelled, err
+	}
 	if err := validateSessionFreshness(report, session); err != nil {
 		return outcomeCancelled, err
 	}
@@ -350,6 +353,15 @@ func enterValidatedSession(state *interactiveState, endpoint protocol.Endpoint, 
 	}
 	state.enterSessionDetails(endpoint, session.SessionID, session.ProviderSessionID, session.DisplayName, session.AdapterID, session.Generation)
 	return outcomeResolved, nil
+}
+
+// validateEndpointOnline rejects retained inventory from a disconnected endpoint,
+// because stale data must never authorize a session-scoped transition.
+func validateEndpointOnline(endpoint protocol.Endpoint) error {
+	if endpoint.ConnectionState != "" && endpoint.ConnectionState != "online" {
+		return fmt.Errorf("endpoint %q is not online: connection_state=%s", endpoint.EndpointID, endpoint.ConnectionState)
+	}
+	return nil
 }
 
 // endpointByID returns the endpoint with the exact identifier.
