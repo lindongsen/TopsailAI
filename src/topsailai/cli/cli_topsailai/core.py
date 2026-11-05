@@ -882,6 +882,9 @@ def prompt_selection(
                     continue
 
             if lower_input.startswith("/send") or lower_input.startswith("send"):
+                if state.current_scope == "workspace":
+                    print("[ERROR] /send is not available in workspace scope. Select a log to enter runtime scope first.")
+                    continue
                 return ("send", user_input)
 
             if lower_input in ("/retrieve", "retrieve"):
@@ -1124,7 +1127,7 @@ def prompt_selection(
                         f"Please enter a number, /refresh, r all, /session {{number}}, "
                         f"/agent {{number|folder}}, /resume {{number}}, "
                         f"{'/kill <number>, /meta <number>, /driver <number>, /driver status <number>, /driver stop <number>, /driver log <number>, /driver meta <number>, ' if state.current_scope == 'workspace' else ''}"
-                        f"/clean, /send, /help, or 'q'.{Colors.RESET}"
+                        f"/clean, {'/send, ' if state.current_scope != 'workspace' else ''}/help, or 'q'.{Colors.RESET}"
                     )
                 _consecutive_unrecognized += 1
                 if _consecutive_unrecognized >= _MAX_CONSECUTIVE_UNRECOGNIZED:
@@ -2008,6 +2011,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                 continue
 
             if action == "send":
+                if state.current_scope == "workspace":
+                    print("[ERROR] /send is not available in workspace scope. Select a log to enter runtime scope first.")
+                    continue
                 # /send operates on discovered log files. In project scope refresh
                 # workspace files first so numeric targets resolve correctly.
                 if state.current_scope == "project":

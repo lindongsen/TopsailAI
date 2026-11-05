@@ -71,8 +71,10 @@ def get_available_completions() -> List[str]:
     completions: List[str] = []
 
     # Built-in commands (always available)
-    builtins = ["/refresh", "/refresh all", "/clean", "/help", "/session", "/send", "/ctx.btw", "q", "quit"]
+    builtins = ["/refresh", "/refresh all", "/clean", "/help", "/session", "/ctx.btw", "q", "quit"]
     completions.extend(builtins)
+    if cli_state.current_scope != "workspace":
+        completions.append("/send")
     if cli_state.current_scope == "runtime":
         completions.append("/ctx.btw-all")
     if cli_state.current_scope == "workspace" and not cli_state.workspace_showing_managed_projects:

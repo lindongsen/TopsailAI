@@ -86,7 +86,10 @@ def test_dispatch_actions(harness, scope):
                ("add_managed_project", "/folder name"), ("delete_managed_project", "1")]
     run(actions, scope)
     mocks["print_help"].assert_called_once()
-    mocks["handle_send_command"].assert_called_once()
+    if scope == "workspace":
+        mocks["handle_send_command"].assert_not_called()
+    else:
+        mocks["handle_send_command"].assert_called_once()
     mocks["launch_agent_in_folder"].assert_called()
     mocks["retrieve_session"].assert_any_call("sample", max_chars=1000)
     mocks["add_project"].assert_called_once_with("/folder", name="name")

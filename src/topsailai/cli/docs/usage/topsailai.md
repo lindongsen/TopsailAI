@@ -57,7 +57,7 @@ These options apply only to the default interactive mode (no subcommand). They c
 
 The CLI has five scopes, derived from the original design notes in `../../topsailai.md`. Run `scopes` from workspace scope to display these introductions and each scope's available actions:
 
-- **`[workspace]`** — the default task-watcher scope. It lists discovered session and task logs and provides actions to watch logs, retrieve context, clean or refresh files, send messages, launch agents, and enter other scopes.
+- **`[workspace]`** — the default task-watcher scope. It lists discovered session and task logs and provides actions to watch logs, retrieve context, clean or refresh files, launch agents, and enter other scopes.
 - **`[runtime:<id>]`** — the live log-streaming scope entered after selecting a workspace log. It provides `/send`, `/ctx.btw` for the watched PID, `/ctx.btw-all` for all discoverable live PIDs in a named session, `/control`, `/agent.<instruction>`, `/meta`, help, and commands for leaving the stream.
 - **`[project]`** — a navigation scope listing recent sessions with recorded project workspaces and running status. It provides session selection, context retrieval, refresh, agent launch and resume actions, and return to workspace scope.
 - **`[session:<id>]`** — a focused scope for one session. It provides context retrieval and streaming, runtime messaging, agent2llm and persistent context injection, configured session commands, and return to workspace scope.
@@ -131,12 +131,14 @@ Workspace discovery reads exact session metadata for each parent session row and
 | `/models current` | Show the effective model and whether it comes from project or workspace selection. |
 | `/models clear` | Clear the model selection for the current workspace or project scope. |
 | `/env.search <term> [term...]` | Fuzzy-search configurable environment variables case-insensitively. Multiple terms use OR semantics. The command checks `{TOPSAILAI_HOME}/.env.local`, then `{TOPSAILAI_HOME}/.env`, then the TopsailAI project `env_template`. It displays matching `NAME=VALUE` assignments from every source while suppressing names already found in a higher-priority source. Within one source, an uncommented assignment takes precedence over a commented assignment of the same name regardless of line order; equal-status duplicates retain the first assignment. Each group starts with `> Source: PATH`, and groups are separated by a blank line. Displayed names become TAB-completion candidates for subsequent `/env.get`, `/env.set`, and `/env.search` input in the current CLI process. Values can contain secrets and are intentionally shown by this command. |
-| `/send <number> [message]` | Send a message to the running session associated with the selected entry. |
+| `/send <number> [message]` | Project scope only: send a message to the running session associated with the selected entry. Not available in workspace scope. |
 | `/clean` | Remove expired files from the task directory. |
 | `cd doc` | Enter doc scope and list usage documentation files under `docs/usage/`. |
 | `scopes` | Display detailed introductions and available actions for each scope. |
 | `/help` | Show available commands. |
 | `q` | Quit the CLI. |
+
+Workspace scope rejects `/send` and its `send` alias. Select a numbered log to enter runtime scope, then use `/send [message]` for the watched session. Session-scope messaging remains available.
 
 ### Workspace task list columns
 
