@@ -144,6 +144,10 @@ def select_recovery(
         if isinstance(json_tool.safe_json_load(message), dict)
         and json_tool.safe_json_load(message).get("role") == "system"]
     protected_keys = {message_key(message) for message in protected}
+    # Keys identify normalized content, not message positions. A later identical
+    # runtime-only message may also be filtered out, even if normal summary
+    # retention would keep it; a matching protected key instead prevents removal.
+    # The user accepts this content-based behavior for now; no positional fix.
     removed = frozenset(message_key(message) for message in eligible) - protected_keys
     if not removed:
         return None
