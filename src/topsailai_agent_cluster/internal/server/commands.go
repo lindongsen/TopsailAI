@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ type CommandService struct {
 	HoldPhase     string
 	HoldDir       string
 	Hold          func(string, string, string) error
+	Logger        *slog.Logger
 }
 
 // ChannelTransport dispatches immutable intents through the current channel peer.
@@ -108,6 +110,19 @@ func (s *CommandService) now() time.Time {
 	return time.Now()
 }
 
+// ReconcileExpired converges commands that are still executing past their immutable
+// deadline into the terminal unconfirmed state. Delivery already happened for those
+// rows, so the effect stays unknown instead of being reported as not applied. A
+// convergence failure is logged and never fails the read that triggered it.
+func (s *CommandService) ReconcileExpired(ctx context.Context) {
+	if s.Store == nil {
+		return
+	}
+	if _, err := s.Store.ReconcileExpiredCommands(ctx, s.now().UnixMilli()); err != nil && s.Logger != nil {
+		s.Logger.Error("reconcile expired commands", "error", err)
+	}
+}
+
 func (h *Handler) commands(w http.ResponseWriter, r *http.Request) {
 	if h.CommandService == nil {
 		h.writeError(w, http.StatusServiceUnavailable, "unavailable", "command service is unavailable")
@@ -119,6 +134,7 @@ func (h *Handler) commands(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet {
 		limit := parseCommandLimit(r.URL.Query().Get("limit"))
+		h.reconcileExpiredCommands(r.Context())
 		records, err := h.CommandService.Store.ListCommands(r.Context(), r.URL.Query().Get("endpoint_id"), r.URL.Query().Get("resource_id"), limit)
 		if err != nil {
 			h.writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
@@ -129,6 +145,17 @@ func (h *Handler) commands(w http.ResponseWriter, r *http.Request) {
 	}
 	h.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported")
 }
+
+// reconcileExpiredCommands converges commands that are still executing past their
+// deadline before any read projects them. Convergence is idempotent, so a read never
+// reports a permanently non-terminal command and never rewrites a terminal one.
+func (h *Handler) reconcileExpiredCommands(ctx context.Context) {
+	if h.CommandService == nil {
+		return
+	}
+	h.CommandService.ReconcileExpired(ctx)
+}
+
 func (h *Handler) commandResource(w http.ResponseWriter, r *http.Request) {
 	if h.CommandService == nil {
 		h.writeError(w, http.StatusServiceUnavailable, "unavailable", "command service is unavailable")
@@ -140,6 +167,7 @@ func (h *Handler) commandResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
+		h.reconcileExpiredCommands(r.Context())
 		record, err := h.CommandService.Store.GetCommand(r.Context(), id)
 		if err != nil {
 			h.writeError(w, http.StatusNotFound, "not_found", err.Error())

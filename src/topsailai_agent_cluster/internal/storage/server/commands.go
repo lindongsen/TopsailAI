@@ -91,6 +91,20 @@ func (s *Store) ExpireCommand(ctx context.Context, commandID string, nowMS int64
 	return affected == 1, err
 }
 
+// ReconcileExpiredCommands converges commands that are still executing past their
+// immutable deadline into the terminal unconfirmed state. Delivery already happened
+// for these rows, so the effect certainty becomes unknown instead of not_applied: the
+// operator must not be told that a signal which was sent had no effect. The update is
+// conditional and idempotent, so repeated reconciliation cannot overwrite a later
+// authoritative receipt that already reached finished, rejected or failed.
+func (s *Store) ReconcileExpiredCommands(ctx context.Context, nowMS int64) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE commands SET status = ?, effect_certainty = ?, update_at_ms = ? WHERE status = ? AND deadline_at_ms > 0 AND deadline_at_ms <= ?`, protocol.StatusUnconfirmed, protocol.EffectUnknown, nowMS, protocol.StatusExecuting, nowMS)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 // CancelCommand atomically cancels a command only before dispatch.
 func (s *Store) CancelCommand(ctx context.Context, commandID string, nowMS int64) (bool, error) {
 	for attempt := 0; attempt < 20; attempt++ {

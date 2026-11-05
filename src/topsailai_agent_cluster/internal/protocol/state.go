@@ -15,7 +15,7 @@ func CanTransition(from, to CommandStatus) bool {
 	case StatusEndpointAdmitted:
 		return to == StatusExecuting || to == StatusFinished || to == StatusRejected || to == StatusFailed
 	case StatusExecuting:
-		return to == StatusFinished || to == StatusFailed
+		return to == StatusFinished || to == StatusFailed || to == StatusUnconfirmed
 	default:
 		return false
 	}

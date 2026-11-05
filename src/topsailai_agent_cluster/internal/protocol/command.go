@@ -105,6 +105,9 @@ const (
 	StatusFailed           CommandStatus = "failed"
 	StatusExpired          CommandStatus = "expired"
 	StatusCancelled        CommandStatus = "cancelled_before_execution"
+	// StatusUnconfirmed is terminal: delivery happened but the exit was never confirmed
+	// before the immutable deadline, so the external effect stays unknown.
+	StatusUnconfirmed CommandStatus = "unconfirmed"
 )
 
 // ExecutionReceipt records bounded evidence without claiming provider success.

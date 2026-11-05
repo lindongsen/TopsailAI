@@ -85,7 +85,7 @@ func main() {
 		broker.Publish(peer.EndpointID, report.SnapshotRevision)
 	}
 	runtime := newRuntimeHooks(logger)
-	commandService := &serverapi.CommandService{Store: store, Transport: serverapi.ChannelTransport{Channel: channelService}, DispatchDelay: runtime.DispatchDelay, HoldPhase: runtime.HoldPhase, HoldDir: runtime.HoldDir, Hold: func(_ string, phase, _ string) error {
+	commandService := &serverapi.CommandService{Store: store, Transport: serverapi.ChannelTransport{Channel: channelService}, DispatchDelay: runtime.DispatchDelay, HoldPhase: runtime.HoldPhase, HoldDir: runtime.HoldDir, Logger: logger, Hold: func(_ string, phase, _ string) error {
 		return runtime.waitForHold(logger, phase)
 	}}
 	onReceipt := func(peer channel.Peer, receipt protocol.ExecutionReceipt) {
