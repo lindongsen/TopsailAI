@@ -684,6 +684,72 @@ def _reap_driver_children(children):
             children.remove(child)
 
 
+def _show_selected_session_history(row: dict, task_dir: str) -> None:
+    """Show one selected row's history, using its control channel when needed.
+
+    A row with a real session id keeps the database retrieval path unchanged.
+    A row without one (a temporary session displayed as ``(temp)``) is served
+    through its existing control socket by invoking ``ctx.history``. When no
+    control channel exists the previous message is kept, because the absence of
+    a channel is not a transport failure.
+    """
+    from cli_topsailai.constants import TEMP_SESSION_ID, TEMP_SESSION_MARKER
+    from cli_topsailai.retrieve import (
+        ControlHistoryError,
+        resolve_control_history_target,
+        retrieve_session,
+        retrieve_session_history_via_control,
+    )
+
+    session_id = row.get("session_id")
+    if session_id and session_id not in (TEMP_SESSION_ID, TEMP_SESSION_MARKER):
+        retrieve_session(session_id, max_chars=1000)
+        return
+    try:
+        target = resolve_control_history_target(task_dir, row=row)
+    except ControlHistoryError as error:
+        print(f"{Colors.RED}[ERROR] {error.error_code}: {error}{Colors.RESET}")
+        return
+    if target is None:
+        print(
+            f"{Colors.RED}[ERROR] No session ID available for this file.{Colors.RESET}"
+        )
+        return
+    retrieve_session_history_via_control(target)
+
+
+def _show_literal_session_history(session_id: str, task_dir: str) -> None:
+    """Show history for a literal session argument, including ``(temp)``.
+
+    The literal temporary identity has no session id, so it is resolved to the
+    single control socket that belongs to it. Several matching sockets are
+    reported as ambiguous instead of being guessed.
+    """
+    from cli_topsailai.constants import TEMP_SESSION_ID, TEMP_SESSION_MARKER
+    from cli_topsailai.retrieve import (
+        ControlHistoryError,
+        resolve_control_history_target,
+        retrieve_session,
+        retrieve_session_history_via_control,
+    )
+
+    if session_id and session_id not in (TEMP_SESSION_ID, TEMP_SESSION_MARKER):
+        retrieve_session(session_id, max_chars=1000)
+        return
+    try:
+        target = resolve_control_history_target(task_dir, session_id=session_id)
+    except ControlHistoryError as error:
+        print(f"{Colors.RED}[ERROR] {error.error_code}: {error}{Colors.RESET}")
+        return
+    if target is None:
+        print(
+            f"{Colors.RED}[ERROR] No session ID available for session "
+            f"'{TEMP_SESSION_MARKER}'.{Colors.RESET}"
+        )
+        return
+    retrieve_session_history_via_control(target)
+
+
 def prompt_selection(
     files: List[dict], task_dir: str
 ) -> Tuple[str, Optional[Any]]:
@@ -1735,7 +1801,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         resolve_agent_folder,
         resume_session,
     )
-    from cli_topsailai.retrieve import retrieve_session
     from cli_topsailai.session_info import (
         enrich_files_with_session_names,
         enrich_running_unnamed_sessions,
@@ -2090,17 +2155,11 @@ def main(argv: Optional[List[str]] = None) -> None:
                     else log_files
                 )
                 selected_file = active_entries[value]
-                session_id = selected_file.get("session_id")
-                if not session_id or session_id == "(temp)":
-                    print(
-                        f"{Colors.RED}[ERROR] No session ID available for this file.{Colors.RESET}"
-                    )
-                    continue
-                retrieve_session(session_id, max_chars=1000)
+                _show_selected_session_history(selected_file, task_dir)
                 continue
 
             if action == "session_id":
-                retrieve_session(value, max_chars=1000)
+                _show_literal_session_history(value, task_dir)
                 continue
 
             if action == "enter_session":

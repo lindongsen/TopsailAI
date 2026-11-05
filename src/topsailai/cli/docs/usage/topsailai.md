@@ -124,7 +124,7 @@ Workspace discovery reads exact session metadata for each parent session row and
 | `/driver meta <number>` | Read the driver metadata snapshot; distinct from `/meta`. |
 | `/kill <number>` | Send SIGTERM to exactly the displayed row PID after y/N confirmation (ordinary workspace only). |
 | `/refresh` | Re-scan the task directory and refresh the list. `r all` or `/refresh all` also includes rows whose metadata status is `completed`; a plain `r` or `/refresh` restores the default hidden view. |
-| `/session <number\|session_id>` | Retrieve full context messages for a session. |
+| `/session <number\|session_id>` | Retrieve full context messages for a session. A row without a session id (a temporary session displayed as `(temp)`) is served through its control channel when one exists; see [Workspace session history](#workspace-session-history). |
 | `/agent [<number\|folder>]` | Launch an agent. With no argument, run the YAML-configured agent command. With an argument, change to the selected folder and run `topsailai_launch_agent`. The effective model selection is applied to the child process. |
 | `/resume <number>` | Resume the selected running session with the effective model selection. |
 | `/models` | List registry entries and select the workspace default or active-project override. |
@@ -583,6 +583,24 @@ The fixed target is `{TOPSAILAI_HOME}/workspace/task/{session_id}.{pid}.session.
 Reads are limited to 65,536 bytes and 64 nesting levels. Missing, unreadable, oversized, malformed, excessively nested or identity-mismatched metadata produces an `[ERROR]` category without its body or a traceback. Path traversal, nonregular files and symlinks beneath the trusted home are rejected. Platforms without safe no-follow directory reads fail closed. On those platforms, the workspace list also cannot apply the metadata-based completed-to-idle override and retains its original derived process status. Reads are bounded snapshots, not transactions; incomplete concurrent writes report an error without automatic retries.
 
 Runtime `/meta` remains unchanged: it reads the watched parent session metadata without a row argument. This increment adds no non-interactive workspace meta subcommand.
+
+## Workspace session history
+
+`/session <number>` in the ordinary workspace task list prints the selected row's context messages. A row with a real session id keeps the database retrieval path (`topsailai_retrieve_messages <session_id> --max-chars 1000`).
+
+A row without a session id — a temporary session displayed as `(temp)` and stored under the reserved `topsailai` prefix — cannot be served by that database lookup. When such a row's control channel exists, the CLI instead sends exactly one `call_instruction` request with the payload `{"instruction": "ctx.history"}` over the row's Unix-domain control socket and prints the returned history text. The display marker is translated to the reserved `topsailai` file prefix before the socket path is composed, so the socket is `{TOPSAILAI_HOME}/workspace/task/topsailai.{pid}.session.sock`.
+
+Preconditions and limits:
+
+- The socket must already exist as a socket inode. A missing path, a regular file or a symlink at that path is not a channel.
+- A socket file outlives its owner process, so a socket whose owner PID is not provably alive is not a channel either. A stale socket therefore never hides the single live owner of the same identity.
+- A task row is served only through its parent session PID. A task row whose parent session PID is ambiguous is rejected instead of guessed.
+- A literal `/session (temp)` argument resolves the single live `topsailai.{pid}.session.sock` in the task directory. Several live matching sockets are reported as ambiguous rather than guessed.
+- An identifier that could escape the task directory (containing `/`, `\`, a NUL byte, `..`, or equal to `.`/`..`) is rejected before any path is composed.
+- The control path returns the instruction's own formatted text, so `--max-chars` truncation does not apply to it.
+- Returned text is printed with ANSI escape sequences and control characters stripped, so a remote process cannot recolor or clear the local terminal. Real newlines, tabs and indentation are preserved.
+
+When no control channel exists, the previous message is kept unchanged: `[ERROR] No session ID available for this file.` for a selected row, and `[ERROR] No session ID available for session '(temp)'.` for the literal form. A rejected request, an invalid response and a transport failure each print one `[ERROR]` line carrying the classified error code. The request is never retried, because a duplicate instruction call can have real effects.
 
 ## Workspace process termination
 

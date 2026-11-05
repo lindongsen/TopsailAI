@@ -2,6 +2,7 @@
 
 import io
 import os
+import re
 import sys
 import unicodedata
 from contextlib import redirect_stdout as contextlib_redirect_stdout
@@ -10,6 +11,25 @@ from typing import List
 
 from cli_topsailai.colors import Colors
 from cli_topsailai.log_files import _display_session_id, is_session_pipe_open
+
+# Match CSI/OSC escape sequences so remote text cannot recolor or clear the
+# terminal, and match control characters other than newline and tab.
+_ANSI_ESCAPE_RE = re.compile(
+    r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
+)
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def sanitize_terminal_text(text: str) -> str:
+    """Strip ANSI escapes and control characters except newline and tab.
+
+    Text returned by a remote process may carry terminal escape sequences, so
+    it is sanitized before being printed into the local terminal. Real
+    newlines, tabs and indentation are preserved.
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    return _CONTROL_CHAR_RE.sub("", _ANSI_ESCAPE_RE.sub("", text))
 
 
 def _driver_display(observation) -> str:
