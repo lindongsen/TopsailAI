@@ -410,6 +410,13 @@ func findSessionInEndpoint(loaded reportLoad, endpointID, target string) (protoc
 			return endpoint, report, session, nil
 		}
 	}
+	// The list displays the provider session identifier, so it must also be
+	// accepted as input; the cluster resource ID keeps precedence above.
+	for _, session := range report.Sessions {
+		if session.ProviderSessionID != "" && session.ProviderSessionID == target {
+			return endpoint, report, session, nil
+		}
+	}
 	byName := make([]protocol.Session, 0, 1)
 	for _, session := range report.Sessions {
 		if session.DisplayName != "" && session.DisplayName == target {

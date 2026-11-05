@@ -91,13 +91,15 @@ func runLine(t *testing.T, stub InteractiveAPI, state *interactiveState, line st
 
 // TestLogsRowNumberWithoutListExplainsTheShortForm proves the failure names the fix.
 // The endpoint scope is entered directly because navigation renders a fresh list,
-// so only an explicit state can prove the no-list branch.
+// so only an explicit state can prove the no-list branch. A numeric token is also a
+// valid provider session identifier, so the failure keeps the identifier wording and
+// appends the row-selection remedy instead of claiming the token was a row number.
 func TestLogsRowNumberWithoutListExplainsTheShortForm(t *testing.T) {
 	stub := scopeStub()
 	state := &interactiveState{}
 	state.enterEndpoint(protocol.Endpoint{EndpointID: "endpoint-1", Hostname: "host-one"})
 	_, diagnostics := runLine(t, stub, state, "logs 1")
-	assertActionableError(t, diagnostics, "error: no list is available for row selection; run list first")
+	assertActionableError(t, diagnostics, `error: session "1" was not found on endpoint "endpoint-1"; run list to select a session by row number`)
 	if len(stub.outputRequests) != 0 {
 		t.Fatalf("rejected row selection reached the API: %+v", stub.outputRequests)
 	}
@@ -119,7 +121,7 @@ func TestShowAcceptsRowNumberInWorkspaceScope(t *testing.T) {
 // because the REPL renders the workspace inventory before the first prompt.
 func TestShowRowNumberWithoutListExplainsTheShortForm(t *testing.T) {
 	_, diagnostics := runLine(t, scopeStub(), &interactiveState{}, "show 1")
-	assertActionableError(t, diagnostics, "error: no list is available for row selection; run list first")
+	assertActionableError(t, diagnostics, `error: endpoint or session "1" was not found; run list to select a session by row number`)
 }
 
 // TestShowRowNumberOutOfRangeReportsTheValidRange proves the range is actionable.

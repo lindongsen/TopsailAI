@@ -66,6 +66,9 @@ type Detail struct {
 }
 
 // FindSession locates a session by ID and returns its endpoint report.
+// The cluster resource ID is matched first across every endpoint, then the
+// provider session ID, so the identifier an operator reads in the list is
+// usable as input without changing the precedence of the existing form.
 func FindSession(id string, endpoints []protocol.Endpoint, reports map[string]protocol.InventoryReport) (protocol.Endpoint, protocol.InventoryReport, *protocol.Session, error) {
 	for _, endpoint := range endpoints {
 		report, ok := reports[endpoint.EndpointID]
@@ -77,6 +80,17 @@ func FindSession(id string, endpoints []protocol.Endpoint, reports map[string]pr
 		}
 		for index := range report.Sessions {
 			if report.Sessions[index].SessionID == id {
+				return endpoint, report, &report.Sessions[index], nil
+			}
+		}
+	}
+	for _, endpoint := range endpoints {
+		report, ok := reports[endpoint.EndpointID]
+		if !ok {
+			continue
+		}
+		for index := range report.Sessions {
+			if report.Sessions[index].ProviderSessionID != "" && report.Sessions[index].ProviderSessionID == id {
 				return endpoint, report, &report.Sessions[index], nil
 			}
 		}

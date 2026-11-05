@@ -39,3 +39,62 @@ func resolveRowSelectionInEndpoint(state *interactiveState, token, endpointID st
 	}
 	return row, nil
 }
+
+// rowByProviderSessionID finds the row whose displayed provider session ID matches
+// the token. Provider identifiers are numeric strings, so a token that is not a
+// valid row number may still name a session the operator copied from the list.
+func rowByProviderSessionID(state *interactiveState, token string) (SessionRow, bool) {
+	for _, row := range state.Rows {
+		if row.ProviderSessionID != "" && row.ProviderSessionID == token {
+			return row, true
+		}
+	}
+	return SessionRow{}, false
+}
+
+// resolveSessionToken maps an operator token to a session row. A bare row number
+// wins because it is the documented shorthand. A numeric token that is not a row
+// number is retried as a provider session identifier, because the list displays
+// provider identifiers and they are numeric strings. When no list has been
+// rendered the token is left to the identifier path, which resolves it against
+// the live inventory.
+func resolveSessionToken(state *interactiveState, token string) (SessionRow, bool, error) {
+	if !isASCIIDecimal(token) {
+		return SessionRow{}, false, nil
+	}
+	if len(state.Rows) == 0 {
+		return SessionRow{}, false, nil
+	}
+	row, err := resolveRowSelection(state, token)
+	if err == nil {
+		return row, true, nil
+	}
+	if match, ok := rowByProviderSessionID(state, token); ok {
+		return match, true, nil
+	}
+	return SessionRow{}, false, err
+}
+
+// resolveSessionTokenInEndpoint applies resolveSessionToken and then enforces that
+// the resolved row belongs to the current endpoint.
+func resolveSessionTokenInEndpoint(state *interactiveState, token, endpointID string) (SessionRow, bool, error) {
+	row, resolved, err := resolveSessionToken(state, token)
+	if err != nil || !resolved {
+		return SessionRow{}, resolved, err
+	}
+	if row.EndpointID != endpointID {
+		return SessionRow{}, false, fmt.Errorf("row %d belongs to endpoint %q, not the current endpoint %q; run list in that endpoint first", row.No, row.EndpointID, endpointID)
+	}
+	return row, true, nil
+}
+
+// numericTokenHint appends the row-selection remedy when a numeric token failed to
+// resolve as an identifier. A numeric token may be a provider session identifier
+// or a row number from a list that has not been rendered yet, so the failure must
+// name both remedies instead of only reporting a missing session.
+func numericTokenHint(token string, err error) error {
+	if err == nil || !isASCIIDecimal(token) {
+		return err
+	}
+	return fmt.Errorf("%w; run list to select a session by row number", err)
+}

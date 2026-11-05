@@ -32,11 +32,11 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 			return fmt.Errorf("usage: logs [session]")
 		}
 		resourceID = args[0]
-		if isASCIIDecimal(args[0]) {
-			row, err := resolveRowSelectionInEndpoint(state, args[0], endpointID)
-			if err != nil {
-				return err
-			}
+		row, resolved, err := resolveSessionTokenInEndpoint(state, args[0], endpointID)
+		if err != nil {
+			return err
+		}
+		if resolved {
 			resourceID = row.SessionID
 		}
 	}
@@ -51,7 +51,7 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 	}
 	_, _, session, err := findSessionInEndpoint(loaded, endpointID, resourceID)
 	if err != nil {
-		return err
+		return numericTokenHint(strings.TrimSpace(rest), err)
 	}
 	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, out, endpointID, session.SessionID, maxBytes, false)
 }

@@ -728,12 +728,17 @@ func interactiveShow(parent context.Context, api InteractiveAPI, state *interact
 			}
 			id = session.SessionID
 		}
-	} else if isASCIIDecimal(id) {
-		row, err := resolveRowSelection(state, id)
+	} else {
+		row, resolved, err := resolveSessionToken(state, id)
 		if err != nil {
 			return err
 		}
-		id = row.SessionID
+		if resolved {
+			id = row.SessionID
+		}
 	}
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).Show(ctx, out, id, false)
+	if err := (CommandRunner{API: api, Policy: InteractivePolicy}).Show(ctx, out, id, false); err != nil {
+		return numericTokenHint(id, err)
+	}
+	return nil
 }
