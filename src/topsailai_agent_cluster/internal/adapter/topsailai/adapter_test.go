@@ -218,7 +218,7 @@ func TestReadOutputMarksProviderTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner.out = []byte(`{"lines":["one"],"scan_limited":true}`)
+	runner.out = []byte(`{"ok":true,"response":{"lines":["one"],"scan_limited":true}}`)
 	output, err := a.ReadOutput(context.Background(), adapter.OutputRequest{Target: protocol.CommandTarget{ResourceID: result.Sessions[0].SessionID}, Limit: 10})
 	if err != nil || !output.Truncated || !output.ScanLimited {
 		t.Fatalf("truncation not reported: %#v %v", output, err)

@@ -351,14 +351,25 @@ func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest)
 	if err != nil {
 		return adapter.OutputResult{}, err
 	}
-	var response struct {
-		Lines       []string `json:"lines"`
-		Truncated   bool     `json:"truncated"`
-		ScanLimited bool     `json:"scan_limited"`
+	var envelope struct {
+		OK        bool   `json:"ok"`
+		ErrorCode string `json:"error_code"`
+		Response  *struct {
+			Lines       []string `json:"lines"`
+			Truncated   bool     `json:"truncated"`
+			ScanLimited bool     `json:"scan_limited"`
+		} `json:"response"`
 	}
-	if err := json.Unmarshal(output, &response); err != nil {
-		return adapter.OutputResult{}, fmt.Errorf("decode runtime logs: %w", err)
+	if err := json.Unmarshal(output, &envelope); err != nil {
+		return adapter.OutputResult{}, fmt.Errorf("decode runtime logs for %q: %w", key, err)
 	}
+	if !envelope.OK || envelope.ErrorCode != "" {
+		return adapter.OutputResult{}, fmt.Errorf("runtime logs for %q failed (ok=%t, error_code=%q)", key, envelope.OK, envelope.ErrorCode)
+	}
+	if envelope.Response == nil || envelope.Response.Lines == nil {
+		return adapter.OutputResult{}, fmt.Errorf("runtime logs for %q: missing response.lines", key)
+	}
+	response := envelope.Response
 	return adapter.OutputResult{Lines: response.Lines, Truncated: response.Truncated || response.ScanLimited, ScanLimited: response.ScanLimited, ObservedAtMS: time.Now().UnixMilli()}, nil
 }
 
