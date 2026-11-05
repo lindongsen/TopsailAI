@@ -98,9 +98,9 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if err := json.Unmarshal([]byte(payloadText), &payload); err != nil || payload == nil {
 		return fmt.Errorf("payload must be a JSON object")
 	}
-	ctx, cancel := commandContext(parent)
-	defer cancel()
-	beforeCapability, err := PreflightCapability(ctx, api, state.EndpointID, protocol.OperationMessageSend)
+	preflightCtx, cancelPreflight := commandContext(parent)
+	beforeCapability, err := PreflightCapability(preflightCtx, api, state.EndpointID, protocol.OperationMessageSend)
+	cancelPreflight()
 	if err != nil {
 		return err
 	}
@@ -111,12 +111,19 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if _, err := fmt.Fprintf(out, "send %s? Confirm send? [y/N] ", preview); err != nil {
 		return err
 	}
+	markRecoverablePromptFailure(parent)
 	confirmation, ok := nextPromptLine(parent, lineSource)
 	if !ok {
 		return fmt.Errorf("confirmation requires a complete line")
 	}
 	answer, overflow, err := confirmation.line, confirmation.overflow, confirmation.err
-	if overflow || err != nil {
+	if err == io.EOF {
+		return fmt.Errorf("confirmation requires a complete line")
+	}
+	if err != nil {
+		return fmt.Errorf("confirmation failed: %w", err)
+	}
+	if overflow {
 		return fmt.Errorf("confirmation requires a complete line")
 	}
 	answer = strings.ToLower(strings.TrimSpace(answer))
@@ -124,6 +131,8 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 		_, writeErr := fmt.Fprintln(out, "send cancelled")
 		return writeErr
 	}
+	ctx, cancel := commandContext(parent)
+	defer cancel()
 	_, _, session, err := findSelected(ctx, api, state)
 	if err != nil {
 		return err
@@ -337,6 +346,8 @@ func parseInteractivePayload(name, rest string) (json.RawMessage, error) {
 }
 
 // interactiveSessionLifecycle executes resume or stop against the selected fresh session.
+// Preflight authority checks run under the command deadline; the human confirmation is
+// read afterwards with the cancel-only parent context.
 func interactiveSessionLifecycle(parent context.Context, api InteractiveAPI, state *interactiveState, name, rest string, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {
 	payload := json.RawMessage(`{}`)
 	var err error
@@ -352,22 +363,27 @@ func interactiveSessionLifecycle(parent context.Context, api InteractiveAPI, sta
 		return err
 	}
 	ctx, cancel := commandContext(parent)
-	defer cancel()
 	if err := state.requireUsable(); err != nil {
+		cancel()
 		return err
 	}
 	if name == "resume" {
 		if err := validateResumeSelectionAbsent(ctx, api, state); err != nil {
+			cancel()
 			return err
 		}
-		revalidate := func() error { return validateResumeSelectionAbsent(ctx, api, state) }
-		return interactiveConfirmedAction(ctx, api, state, protocol.OperationAgentResume, name, state.SessionID, state.Generation, payload, lines, out, options, revalidate)
+		cancel()
+		revalidate := func(revalidateCtx context.Context) error {
+			return validateResumeSelectionAbsent(revalidateCtx, api, state)
+		}
+		return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentResume, name, state.SessionID, state.Generation, payload, lines, out, options, revalidate)
 	}
 	_, _, session, err := findSelected(ctx, api, state)
+	cancel()
 	if err != nil {
 		return err
 	}
-	return interactiveConfirmedAction(ctx, api, state, protocol.OperationAgentStop, name, session.SessionID, session.Generation, payload, lines, out, options, nil)
+	return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentStop, name, session.SessionID, session.Generation, payload, lines, out, options, nil)
 }
 
 // validateResumeSelectionAbsent proves from a complete fresh adapter inventory that the selected historical session has no live generation.
@@ -403,6 +419,8 @@ func validateResumeSelectionAbsent(ctx context.Context, api InteractiveAPI, stat
 }
 
 // interactiveSessionPayload executes context injection or interruption with confirmation.
+// Selection authority is resolved under the command deadline; the confirmation itself is
+// read with the cancel-only parent context.
 func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, rest string, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {
 	payloadText := strings.TrimSpace(rest)
 	if payloadText == "" {
@@ -416,33 +434,49 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 		return fmt.Errorf("payload must be a JSON object")
 	}
 	ctx, cancel := commandContext(parent)
-	defer cancel()
 	if err := state.requireUsable(); err != nil {
+		cancel()
 		return err
 	}
 	_, _, session, err := findSelected(ctx, api, state)
+	cancel()
 	if err != nil {
 		return err
 	}
-	return interactiveConfirmedAction(ctx, api, state, op, name, session.SessionID, session.Generation, json.RawMessage(payloadText), lines, out, options, nil)
+	return interactiveConfirmedAction(parent, api, state, op, name, session.SessionID, session.Generation, json.RawMessage(payloadText), lines, out, options, nil)
 }
 
 // interactiveConfirmedAction keeps mutating confirmation and shared intent submission in one path.
-func interactiveConfirmedAction(ctx context.Context, api InteractiveAPI, state *interactiveState, op, name, resource, generation string, payload json.RawMessage, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions, revalidate func() error) error {
+// The human confirmation is read with the cancel-only parent context so that a slow
+// operator answer is never truncated by the command deadline; the command deadline
+// starts only after the answer has been accepted.
+func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, resource, generation string, payload json.RawMessage, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions, revalidate func(context.Context) error) error {
 	if _, err := fmt.Fprintf(out, "%s %s? Confirm %s? [y/N] ", name, resource, name); err != nil {
 		return err
 	}
-	answer, ok := nextPromptLine(ctx, lines)
-	if !ok || answer.err != nil || answer.overflow {
+	markRecoverablePromptFailure(parent)
+	answer, ok := nextPromptLine(parent, lines)
+	if !ok {
+		return fmt.Errorf("confirmation requires a complete line")
+	}
+	if answer.err == io.EOF {
+		return fmt.Errorf("confirmation requires a complete line")
+	}
+	if answer.err != nil {
+		return fmt.Errorf("confirmation failed: %w", answer.err)
+	}
+	if answer.overflow {
 		return fmt.Errorf("confirmation requires a complete line")
 	}
 	if value := strings.ToLower(strings.TrimSpace(answer.line)); value != "y" && value != "yes" {
 		_, err := fmt.Fprintln(out, name+" cancelled")
 		return err
 	}
+	ctx, cancel := commandContext(parent)
+	defer cancel()
 	// Revalidate the operation-specific authority after the user confirmation.
 	if revalidate != nil {
-		if err := revalidate(); err != nil {
+		if err := revalidate(ctx); err != nil {
 			return err
 		}
 	} else if _, _, _, err := findSelected(ctx, api, state); err != nil {

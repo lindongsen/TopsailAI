@@ -14,12 +14,24 @@ type promptReaderConfig struct {
 	read    InteractiveLineReader
 	limit   int
 	failure *error
+	// recoverable is set by a caller whose prompt read failure only cancels the
+	// current operation instead of ending the session.
+	recoverable *bool
 }
 
 // promptReader obtains the explicitly injected reader without global state.
 func promptReader(ctx context.Context) InteractiveLineReader {
 	config, _ := ctx.Value(promptReaderKey{}).(promptReaderConfig)
 	return config.read
+}
+
+// markRecoverablePromptFailure declares that a failure of the next prompt read cancels
+// only the current operation. Wizard prompts keep the default fatal classification.
+func markRecoverablePromptFailure(ctx context.Context) {
+	config, ok := ctx.Value(promptReaderKey{}).(promptReaderConfig)
+	if ok && config.recoverable != nil {
+		*config.recoverable = true
+	}
 }
 
 // readPromptLine requests a history-free child answer after its question is written.

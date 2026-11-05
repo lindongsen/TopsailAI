@@ -58,7 +58,9 @@ func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiv
 	var resolveErr error
 	switch len(parts) {
 	case 1:
-		resolveErr = cdSingle(ctx, state, loaded, parts[0], lineSource, out)
+		// The disambiguation prompt is a human answer, so it must not inherit the
+		// command deadline; only the inventory load above is bounded.
+		resolveErr = cdSingle(parent, state, loaded, parts[0], lineSource, out)
 	case 2:
 		resolveErr = cdPair(state, loaded, parts[0], parts[1])
 	default:

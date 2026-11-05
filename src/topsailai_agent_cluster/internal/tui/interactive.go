@@ -204,6 +204,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 	if err := parent.Err(); err != nil {
 		return err
 	}
+	consecutivePromptFailures := 0
 	for {
 		if err := parent.Err(); err != nil {
 			return err
@@ -266,9 +267,10 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			continue
 		}
 		var promptFailure error
+		var promptRecoverable bool
 		commandCtx, cancel := context.WithCancel(parent)
 		if options.ReadLine != nil {
-			commandCtx = context.WithValue(commandCtx, promptReaderKey{}, promptReaderConfig{read: options.ReadLine, limit: options.LineLimit, failure: &promptFailure})
+			commandCtx = context.WithValue(commandCtx, promptReaderKey{}, promptReaderConfig{read: options.ReadLine, limit: options.LineLimit, failure: &promptFailure, recoverable: &promptRecoverable})
 		}
 		controller.setCancel(cancel)
 		exit, execErr := executeInteractiveLine(commandCtx, api, &state, line, lineResults, out, output, errOut, options)
@@ -288,10 +290,25 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 				execErr = promptFailure
 			} else if promptFailure == io.EOF {
 				return nil
+			} else if promptRecoverable {
+				// A failed human answer cancels only the current operation; the REPL
+				// stays alive so the operator can retry. Repeated failures mean the
+				// input source is unusable, so the third one terminates the session.
+				consecutivePromptFailures++
+				if consecutivePromptFailures >= maxConsecutivePromptFailures {
+					return promptFailure
+				}
+				if writeErr := writeInteractiveError(errOut, diagnosticCommandName(line), promptFailure); writeErr != nil {
+					return writeErr
+				}
+				continue
 			} else {
+				// Wizard prompts are not recoverable: an unusable answer stream must
+				// abort the command instead of silently continuing.
 				return promptFailure
 			}
 		}
+		consecutivePromptFailures = 0
 		if stderrors.Is(execErr, ErrInteractiveInterrupt) {
 			if _, writeErr := fmt.Fprintln(errOut, "interrupted"); writeErr != nil {
 				return writeErr
@@ -327,6 +344,9 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 
 // ErrInteractiveInterrupt marks an interrupt received while reading the prompt.
 var ErrInteractiveInterrupt = fmt.Errorf("interactive interrupted")
+
+// maxConsecutivePromptFailures bounds tolerated prompt read failures before the REPL exits.
+const maxConsecutivePromptFailures = 3
 
 func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *interactiveState, line string, lineResults <-chan lineReadResult, out, trustedOut, errOut io.Writer, options InteractiveOptions) (bool, error) {
 	rawName, rest := splitCommand(line)
