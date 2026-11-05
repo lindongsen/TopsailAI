@@ -1,6 +1,7 @@
 """Conditional observation recovery contracts. Author: DawsonLin."""
 
 import copy
+import logging
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -298,3 +299,75 @@ def test_cross_layer_lower_trigger_limits_recovery(monkeypatch):
     assert plan is not None and plan.budget == 350
     assert not apply_recovery(owner, plan, message("assistant", "s" * 350))
     assert owner.messages[0] in owner.ai_agent.messages
+
+
+def test_trigger_logs_warning_on_chat_logger(monkeypatch, caplog):
+    """A genuine trigger must emit exactly one WARNING record on the chat logger."""
+    monkeypatch.setenv("TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD", "1000")
+    owner = fixture_owner()
+    with caplog.at_level(logging.WARNING, logger="chat"):
+        plan = prepare_recovery(owner, "user2agent", owner.messages, 0, 0)
+    assert plan is not None
+    # print_warning is the only reporting call, so the trigger must appear once
+    # and must not be duplicated by a second logger call.
+    records = [record for record in caplog.records
+               if record.name == "chat"
+               and "Summary recovery triggered" in record.getMessage()]
+    assert len(records) == 1
+    record = records[0]
+    assert record.levelno == logging.WARNING
+    text = record.getMessage()
+    assert f"layer=user2agent" in text
+    assert f"budget={plan.budget}" in text
+    assert f"normal_tokens={plan.normal_tokens}" in text
+    assert f"candidate_tokens={plan.candidate_tokens}" in text
+    assert f"removed_messages={len(plan.removed_keys)}" in text
+
+
+@pytest.mark.parametrize("layer", ["user2agent", "agent2llm"])
+def test_deferred_plan_logs_no_trigger_warning(monkeypatch, caplog, layer):
+    """A plan rejected by a later admission check must not claim a trigger."""
+    monkeypatch.setenv(f"TOPSAILAI_{layer.upper()}_TOKEN_SUMMARIZE_THRESHOLD", "1000")
+    owner = fixture_owner()
+    # Prove this setup reaches the trigger point before deferring it, so the
+    # negative assertion below cannot pass for the wrong reason.
+    assert prepare_recovery(owner, layer, owner.messages, 0, 0, True) is not None
+    owner._check_dynamic_summary_feasibility = lambda *args: (False, "unsafe input", None, None)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="chat"):
+        assert prepare_recovery(owner, layer, owner.messages, 0, 0, True) is None
+    assert not [record for record in caplog.records if "Summary recovery triggered" in record.getMessage()]
+    assert [record for record in caplog.records if "Summary recovery deferred" in record.getMessage()]
+
+
+def test_disabled_recovery_logs_no_trigger_warning(monkeypatch, caplog):
+    """The disabled switch must stay silent, preserving legacy behavior."""
+    monkeypatch.setenv("TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD", "1000")
+    owner = fixture_owner(enabled=False)
+    with caplog.at_level(logging.WARNING, logger="chat"):
+        assert prepare_recovery(owner, "user2agent", owner.messages, 0, 0) is None
+    assert not [record for record in caplog.records if "Summary recovery" in record.getMessage()]
+
+
+def test_trigger_prints_to_stdout(monkeypatch, capsys):
+    """The trigger must reach stdout through print_warning, not only the log file."""
+    monkeypatch.setenv("TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD", "1000")
+    # print_warning prints only when interactive mode or the explicit override is on.
+    monkeypatch.setenv("TOPSAILAI_INTERACTIVE_MODE", "1")
+    owner = fixture_owner()
+    plan = prepare_recovery(owner, "user2agent", owner.messages, 0, 0)
+    assert plan is not None
+    out = capsys.readouterr().out
+    assert "Warning: Summary recovery triggered" in out
+    assert f"budget={plan.budget}" in out
+    assert f"removed_messages={len(plan.removed_keys)}" in out
+
+
+def test_trigger_stdout_respects_print_gate(monkeypatch, capsys):
+    """A noninteractive process without the override must stay quiet on stdout."""
+    monkeypatch.setenv("TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD", "1000")
+    monkeypatch.setenv("TOPSAILAI_INTERACTIVE_MODE", "0")
+    monkeypatch.delenv("TOPSAILAI_PRINT_ENABLED", raising=False)
+    owner = fixture_owner()
+    assert prepare_recovery(owner, "user2agent", owner.messages, 0, 0) is not None
+    assert "Summary recovery triggered" not in capsys.readouterr().out

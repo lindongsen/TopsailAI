@@ -5,6 +5,7 @@ from dataclasses import replace
 from topsailai.context import ctx_manager
 from topsailai.logger import logger
 from topsailai.utils import env_tool
+from topsailai.utils.print_tool import print_warning
 from topsailai.workspace.context.summary_recovery import (
     fingerprint, message_key, select_recovery,
 )
@@ -64,14 +65,20 @@ def prepare_recovery(owner, layer, messages, head, tail, keep_session=False):
     if not allowed:
         logger.warning("Summary recovery deferred: %s; session_id=%s", reason, owner.session_id)
         return None
-    logger.info(
-        "Summary recovery selected: layer=%s budget=%s normal=%s candidate=%s reserve=%s session_id=%s",
-        layer, plan.budget, plan.normal_tokens, plan.candidate_tokens, reserve, owner.session_id,
-    )
     runtime_tokens = owner._get_current_tokens(list(plan.runtime_keep))
     if runtime_tokens is None or runtime_tokens + reserve > plan.budget:
         logger.warning("Summary recovery deferred: runtime survivors exceed target; session_id=%s", owner.session_id)
         return None
+    # Report only a plan that survived every admission check, so this record is
+    # evidence that the mechanism actually triggered for this operation.
+    message = (
+        f"Summary recovery triggered: layer={layer} budget={plan.budget} "
+        f"normal_tokens={plan.normal_tokens} candidate_tokens={plan.candidate_tokens} "
+        f"reserve={reserve} removed_messages={len(plan.removed_keys)} "
+        f"session_id={owner.session_id}"
+    )
+    # print_warning reaches stdout and the chat log, so one call is enough.
+    print_warning(message)
     return replace(plan, expected_state=fingerprint(owner.session_id, owner.messages, runtime))
 
 
