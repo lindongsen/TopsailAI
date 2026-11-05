@@ -290,10 +290,16 @@ func stringValue(values map[string]any, keys ...string) string {
 	return ""
 }
 
+// isTerminalCommandStatus reports whether a durable outcome has been reached. Pre-execution
+// states are never terminal even though their effect certainty is unknown: a command that is
+// still admitted, dispatched, or endpoint_admitted has not produced any provider effect yet, so
+// waiting for a terminal state must keep waiting instead of returning a premature receipt.
 func isTerminalCommandStatus(status, certainty string) bool {
 	switch status {
 	case "finished", "rejected", "expired", "cancelled_before_execution", "cancelled", "failed", "too_late_to_cancel", "unconfirmed":
 		return true
+	case "admitted", "dispatched", "endpoint_admitted":
+		return false
 	case "executing":
 		return certainty == "unknown"
 	}
