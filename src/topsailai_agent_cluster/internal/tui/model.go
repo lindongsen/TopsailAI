@@ -86,6 +86,9 @@ func FindSession(id string, endpoints []protocol.Endpoint, reports map[string]pr
 
 // StatusLabel maps durable evidence to conservative operator wording.
 func StatusLabel(status protocol.CommandStatus, receipt protocol.ExecutionReceipt) string {
+	if status == protocol.StatusUnconfirmed {
+		return "delivery unconfirmed, effect unknown"
+	}
 	if receipt.DeliveryBoundary == protocol.DeliverySignalSent && !receipt.ExitConfirmed {
 		return "stop request sent"
 	}

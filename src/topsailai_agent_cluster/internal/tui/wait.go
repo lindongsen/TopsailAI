@@ -44,7 +44,7 @@ func WaitForTerminal(ctx context.Context, reader CommandStateReader, commandID s
 func IsTerminalState(state map[string]any) bool {
 	value, _ := state["status"].(string)
 	switch protocol.CommandStatus(value) {
-	case protocol.StatusFinished, protocol.StatusRejected, protocol.StatusFailed, protocol.StatusCancelled, protocol.StatusExpired:
+	case protocol.StatusFinished, protocol.StatusRejected, protocol.StatusFailed, protocol.StatusCancelled, protocol.StatusExpired, protocol.StatusUnconfirmed:
 		return true
 	default:
 		return false

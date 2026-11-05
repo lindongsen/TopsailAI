@@ -292,7 +292,7 @@ func stringValue(values map[string]any, keys ...string) string {
 
 func isTerminalCommandStatus(status, certainty string) bool {
 	switch status {
-	case "finished", "rejected", "expired", "cancelled_before_execution", "cancelled", "failed", "too_late_to_cancel":
+	case "finished", "rejected", "expired", "cancelled_before_execution", "cancelled", "failed", "too_late_to_cancel", "unconfirmed":
 		return true
 	case "executing":
 		return certainty == "unknown"
@@ -332,6 +332,9 @@ func (w *World) PollRealCommandForCaller(commandID string, timeout time.Duration
 	return last, fmt.Errorf("command %q polling timed out", commandID)
 }
 
+// isStrictTerminalCommandStatus reports a confirmed terminal result. An unconfirmed
+// delivery is terminal but its effect is unknown, so it is deliberately excluded here:
+// a caller waiting for a confirmed result must not treat "we do not know" as success.
 func isStrictTerminalCommandStatus(status, certainty string) bool {
 	switch status {
 	case "finished", "rejected", "expired", "cancelled_before_execution", "cancelled", "failed", "too_late_to_cancel":
