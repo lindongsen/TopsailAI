@@ -1,0 +1,58 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+	"unicode"
+)
+
+// completeCommand completes only the command token at a named scope prompt.
+func (t *TerminalEditor) completeCommand(prompt string) error {
+	prompt = strings.TrimPrefix(prompt, ansiBoldGreen)
+	var kind ScopeKind
+	switch {
+	case strings.HasPrefix(prompt, "workspace>"):
+		kind = ScopeWorkspace
+	case strings.HasPrefix(prompt, "endpoint["):
+		kind = ScopeEndpoint
+	case strings.HasPrefix(prompt, "session["):
+		kind = ScopeSession
+	default:
+		return nil
+	}
+	e := t.editor
+	if e.overflow || e.cursor != len(e.text) || strings.IndexFunc(string(e.text), unicode.IsSpace) >= 0 {
+		return nil
+	}
+	prefix := string(e.text)
+	matches := []string{}
+	for _, name := range availableCommands(kind) {
+		if strings.HasPrefix(name, prefix) {
+			matches = append(matches, name)
+		}
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+	common := matches[0]
+	for _, name := range matches[1:] {
+		for !strings.HasPrefix(name, common) {
+			common = common[:len(common)-1]
+		}
+	}
+	suffix := strings.TrimPrefix(common, prefix)
+	if len(matches) == 1 {
+		suffix += " "
+	}
+	// Completion must not poison an otherwise valid line when it cannot fit.
+	if e.bytes+len(suffix) <= e.limit {
+		for _, r := range suffix {
+			e.insert(r)
+		}
+	}
+	if len(matches) > 1 {
+		_, err := fmt.Fprintf(t.output, "\r\n%s\r\n", strings.Join(matches, "  "))
+		return err
+	}
+	return nil
+}

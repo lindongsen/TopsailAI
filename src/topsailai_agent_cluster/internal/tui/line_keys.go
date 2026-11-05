@@ -28,6 +28,7 @@ const (
 	lineKeyNext
 	lineKeyInterrupt
 	lineKeyEOF
+	lineKeyTab
 )
 
 type lineKey struct {
@@ -46,6 +47,8 @@ func readLineKey(reader *bufio.Reader) (lineKey, error) {
 		return lineKey{}, errLineKey
 	}
 	switch r {
+	case '\t':
+		return lineKey{kind: lineKeyTab}, nil
 	case 27:
 		return readEscapeKey(reader)
 	case '\r', '\n':

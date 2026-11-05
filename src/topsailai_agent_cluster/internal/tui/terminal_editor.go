@@ -76,6 +76,15 @@ func (t *TerminalEditor) ReadLine(ctx context.Context, prompt string, history bo
 			}
 			return "", false, keyErr
 		}
+		if key.kind == lineKeyTab {
+			if history {
+				err = t.completeCommand(prompt)
+			}
+			if err != nil {
+				return
+			}
+			continue
+		}
 		switch t.editor.apply(key, history) {
 		case lineEditContinue:
 		case lineEditSubmit:

@@ -14,7 +14,7 @@ func TestLineKeysSupported(t *testing.T) {
 		input string
 		kind  lineKeyKind
 	}{
-		{"\r", lineKeyEnter}, {"\n", lineKeyEnter}, {"\b", lineKeyBackspace}, {"\x7f", lineKeyBackspace},
+		{"\t", lineKeyTab}, {"\r", lineKeyEnter}, {"\n", lineKeyEnter}, {"\b", lineKeyBackspace}, {"\x7f", lineKeyBackspace},
 		{"\x01", lineKeyHome}, {"\x05", lineKeyEnd}, {"\x02", lineKeyLeft}, {"\x06", lineKeyRight},
 		{"\x10", lineKeyPrevious}, {"\x0e", lineKeyNext}, {"\x03", lineKeyInterrupt}, {"\x04", lineKeyEOF},
 		{"\x1b[A", lineKeyPrevious}, {"\x1b[B", lineKeyNext}, {"\x1b[C", lineKeyRight}, {"\x1b[D", lineKeyLeft},
@@ -49,7 +49,7 @@ func TestLineKeysUnicode(t *testing.T) {
 
 // TestLineKeysRejectMalformed never converts escape payloads to printable keys.
 func TestLineKeysRejectMalformed(t *testing.T) {
-	for _, input := range []string{"\xff", "\t", "\x1bx", "\x1b[Z", "\x1b[200~", "\x1bO3~", "\x1b[\x00", "\x1b[\xff"} {
+	for _, input := range []string{"\xff", "\x1bx", "\x1b[Z", "\x1b[200~", "\x1bO3~", "\x1b[\x00", "\x1b[\xff"} {
 		if _, err := readLineKey(bufio.NewReader(strings.NewReader(input))); !errors.Is(err, errLineKey) {
 			t.Fatalf("input=%q err=%v", input, err)
 		}
