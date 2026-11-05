@@ -149,6 +149,9 @@ func (r CommandRunner) Status(ctx context.Context, out io.Writer, commandID stri
 	if jsonMode {
 		return RenderJSON(out, result)
 	}
+	if r.Policy == InteractivePolicy {
+		return renderInteractiveStartResult(out, commandID, result)
+	}
 	_, err = fmt.Fprintln(out, StatusLabel(protocol.CommandStatus(stringValue(result, "status")), ReceiptForStatus(result)))
 	return err
 }

@@ -272,8 +272,12 @@ func TestStatusAcceptsExplicitCommandIDInEveryScope(t *testing.T) {
 			if diagnostics != "" {
 				t.Fatalf("unexpected diagnostics: %q", diagnostics)
 			}
-			if !strings.Contains(output, "confirmed result") {
-				t.Fatalf("missing durable status evidence: %q", output)
+			want := "CommandID: cmd-1\nStatus: finished\nDeliveryBoundary: \nEffectCertainty: \nErrorCode: \n"
+			if !strings.Contains(output, want) {
+				t.Fatalf("missing interactive status fields %q in output: %q", want, output)
+			}
+			if strings.Contains(output, "confirmed result") {
+				t.Fatalf("interactive status used legacy semantic label: %q", output)
 			}
 		})
 	}
