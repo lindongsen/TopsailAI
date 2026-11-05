@@ -90,21 +90,57 @@ def test_invalid_pid(source, pid):
         meta.read_session_meta(str(home), "sample", pid)
 
 
-@pytest.mark.parametrize("session", ["../x", "a/b", "a\\b", "a..b", "topsailai", "(temp)", "bad!", None])
+@pytest.mark.parametrize("session", ["../x", "a/b", "a\\b", "a..b", "bad!", None])
 def test_invalid_session(source, session):
-    """Reject unsafe and temporary identities before opening any file."""
+    """Reject unsafe identities before opening any file."""
     home, _, _ = source
     with pytest.raises(meta.SessionMetaError, match="unsafe_session_id"):
         meta.read_session_meta(str(home), session, 123)
 
 
+@pytest.mark.parametrize("session", ["topsailai", "(temp)"])
+@pytest.mark.parametrize("stored", ["", "topsailai"])
+@pytest.mark.parametrize("suffix", ["stdout", "stderr"])
+def test_temporary_session_meta(tmp_path, capsys, session, stored, suffix):
+    """Temporary rows read their reserved-prefix metadata despite no session ID."""
+    directory = tmp_path / "workspace" / "task"
+    directory.mkdir(parents=True)
+    (directory / f"topsailai.123.session.{suffix}").write_text("log")
+    body = json.dumps(dict(session_id=stored, pid=123, status="running"))
+    path = directory / "topsailai.123.session.meta"
+    path.write_text(body)
+    result = meta.read_session_meta(str(tmp_path), session, 123)
+    assert result.path == path and result.text == body
+    row = dict(session_id=session, pid=123, session_pid=123,
+               filename=f"topsailai.123.session.{suffix}")
+    assert meta.print_workspace_meta(str(tmp_path), row)
+    assert capsys.readouterr().out.split("\n", 1)[1] == body + "\n"
+
+
+@pytest.mark.parametrize("stored", ["other", None, 123])
+def test_temporary_session_identity_mismatch(tmp_path, stored):
+    """A temporary record must still carry an absent or reserved identity."""
+    directory = tmp_path / "workspace" / "task"
+    directory.mkdir(parents=True)
+    (directory / "topsailai.123.session.meta").write_text(
+        json.dumps(dict(session_id=stored, pid=123)))
+    with pytest.raises(meta.SessionMetaError, match="identity_mismatch"):
+        meta.read_session_meta(str(tmp_path), "(temp)", 123)
+
+
+def test_temporary_session_missing(tmp_path):
+    """A temporary session without a record reports absence, not a fallback."""
+    with pytest.raises(meta.SessionMetaError, match="missing"):
+        meta.read_session_meta(str(tmp_path), "(temp)", 123)
+
+
 @pytest.mark.parametrize("changes", [
     {"is_task": True}, {"pid": True}, {"pid": "123"}, {"pid": 0},
     {"session_pid": True}, {"session_pid": 124}, {"filename": "sample.123.stdout"},
-    {"session_id": "topsailai", "filename": "topsailai.123.session.stdout"},
+    {"session_id": "topsailai", "filename": "sample.123.session.stdout"},
 ])
 def test_unsupported_row(source, capsys, changes):
-    """Task/legacy/temporary rows cannot cause parent or fallback reads."""
+    """Task/legacy/mismatched rows cannot cause parent or fallback reads."""
     home, _, row = source
     row.update(changes)
     assert not meta.print_workspace_meta(str(home), row)
@@ -246,10 +282,9 @@ def test_discovered_session_row(tmp_path, capsys, session, suffix):
     assert path.read_text() == body
 
 
-@pytest.mark.parametrize("filename", ["topsailai.123.session.stderr", "legacy.123.stderr",
-                                      "sample.123.task.stdout"])
+@pytest.mark.parametrize("filename", ["legacy.123.stderr", "sample.123.task.stdout"])
 def test_discovery_preserves_unsupported_boundaries(tmp_path, capsys, filename):
-    """Discovery does not authorize legacy, temporary or task metadata reads."""
+    """Discovery does not authorize legacy or task metadata reads."""
     from cli_topsailai.log_files import discover_log_files
     directory = tmp_path / "workspace" / "task"
     directory.mkdir(parents=True)
@@ -258,6 +293,20 @@ def test_discovery_preserves_unsupported_boundaries(tmp_path, capsys, filename):
     assert row["pid"] == 123
     assert not meta.print_workspace_meta(str(tmp_path), row)
     assert "[ERROR]" in capsys.readouterr().out
+
+
+def test_discovered_temporary_row_reads_reserved_prefix(tmp_path, capsys):
+    """A discovered temporary row reads its reserved-prefix metadata."""
+    from cli_topsailai.log_files import discover_log_files
+    directory = tmp_path / "workspace" / "task"
+    directory.mkdir(parents=True)
+    (directory / "topsailai.123.session.stdout").write_text("log")
+    body = json.dumps(dict(session_id="", pid=123, status="running"))
+    (directory / "topsailai.123.session.meta").write_text(body)
+    row, = discover_log_files(str(directory))
+    assert row["session_id"] == "(temp)" and not row["is_task"]
+    assert meta.print_workspace_meta(str(tmp_path), row)
+    assert capsys.readouterr().out.split("\n", 1)[1] == body + "\n"
 
 
 def test_discovery_skips_invalid_entries_and_preserves_time(tmp_path, monkeypatch):

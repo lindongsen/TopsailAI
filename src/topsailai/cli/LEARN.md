@@ -161,3 +161,17 @@ Made explicit task precedence visible in dry-run through a redacted placeholder,
 ### Why this prevents recurrence
 
 Testing both semantic precedence and the actual character classes promised by the interface prevents a passing byte-for-byte test from validating corrupted input, while exercising privacy and cleanup at non-execution boundaries keeps dry-run and failed setup behavior consistent with a real launch.
+
+## Temporary sessions have no session ID, so `/meta` must map the display sentinel to the file prefix
+
+### Trigger
+
+Workspace `/meta` rejected every temporary row with `unsupported_row`, even though `topsailai.{pid}.session.meta` files existed and were complete. The user reported that rows without a session ID do have metadata files and must be readable.
+
+### Action taken
+
+Confirmed two independent rejections: the filename check compared against the display sentinel `(temp)` instead of the on-disk prefix `topsailai`, and the reader reused the driver's `metadata_path` guard, which intentionally rejects temporary ids, plus an exact `session_id` equality that a temporary record cannot satisfy because it persists `""`. Added a display-to-file identity mapping, composed the metadata path inside `session_meta` itself, and accepted `""` or `topsailai` as the same absent identity for temporary records only. Verified against the live task directory (2/2 temporary rows now print their metadata) and with unit tests covering both sentinels, both stored identities, both suffixes, mismatch, and absence.
+
+### Why this prevents recurrence
+
+The display layer and the storage layer use different identifiers for the same session, so any path composition or identity check must translate the display sentinel first. Keeping the driver's stricter guard untouched preserves its own safety contract while the read-only metadata path gains exactly the one exception it needs.

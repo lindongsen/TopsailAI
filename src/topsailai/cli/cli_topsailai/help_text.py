@@ -348,7 +348,7 @@ def print_help(
         },
         {
             "cmd": "/meta <number>",
-            "desc": "Read exact session metadata from the current ordinary workspace row without refreshing. Task and temporary rows are unsupported; --json is not supported.",
+            "desc": "Read exact session metadata from the current ordinary workspace row without refreshing. Task rows are unsupported; temporary rows are read through the reserved topsailai prefix; --json is not supported.",
             "example": "Example: /meta 3",
             "scopes": ["workspace"],
         },

@@ -225,6 +225,19 @@ def test_meta_scope_contract(capsys):
     assert "/meta <number>" not in output
 
 
+def test_meta_temporary_row_contract(capsys):
+    """Workspace meta help and usage doc must state temporary-row support."""
+    from pathlib import Path
+
+    print_help([], "workspace", keyword="meta")
+    output = capsys.readouterr().out
+    assert "temporary rows are read through the reserved topsailai prefix" in output
+    assert "Task rows are unsupported" in output
+    document = (Path(__file__).resolve().parents[3] / "docs/usage/topsailai.md").read_text()
+    assert "Temporary rows are supported" in document
+    assert "reserved `topsailai` prefix" in document
+    assert "temporary, legacy and incomplete identities are rejected" not in document
+
 
 def test_runtime_help_describes_broadcast(capsys):
     """Runtime help exposes queue-only broadcast semantics."""
