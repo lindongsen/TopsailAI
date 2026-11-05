@@ -283,9 +283,9 @@ func TestStatusAcceptsExplicitCommandIDInEveryScope(t *testing.T) {
 	}
 }
 
-func TestStatusRequiresCommandIDOutsideSessionScope(t *testing.T) {
+func TestStatusWithoutCommandIDExplainsTheShortForm(t *testing.T) {
 	_, diagnostics := runScope(t, scopeStub(), "status\nquit\n", ColorPolicy{})
-	want := "error: status requires a command ID in workspace scope; use status <command-id>\n"
+	want := "error: no command has been submitted in this CLI yet; run an action such as start, then run status without an argument\n"
 	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 }
 

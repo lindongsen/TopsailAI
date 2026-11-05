@@ -231,7 +231,7 @@ func TestUnitCBatch2PrefetchedHelpQuit(t *testing.T) {
 func unitC19MainHelp() string {
 	return "Current scope: workspace\n\nCommands:\n" +
 		"  list [endpoint] [--clean]   list sessions across all endpoints\n  cd [target]   navigate to an endpoint or session\n  show [endpoint-or-session]   show endpoint or session details\n" + unitC19StartHelpLine() +
-		"  status <command-id>   show command result\n  refresh   refresh inventories\n  help [command]   show help\n  quit   exit\n\nNext: list -> <number> or cd <number> -> show/logs. Run help list for row selection rules.\nStart example: start <endpoint> <resource> --profile <id> --profile-revision <revision>\nRun help all for every command and scope.\n"
+		"  status [command-id]   show command result\n  refresh   refresh inventories\n  help [command]   show help\n  quit   exit\n\nNext: list -> <number> or cd <number> -> show/logs. Run help list for row selection rules.\nStart example: start <endpoint> <resource> --profile <id> --profile-revision <revision>\nRun help all for every command and scope.\n"
 }
 
 // unitC19StartHelpLine is a fixed independent overview line shared by two scopes.

@@ -707,6 +707,8 @@ func interactiveRefresh(parent context.Context, api InteractiveAPI, state *inter
 }
 
 // interactiveShow renders the current scope target or an explicit target.
+// A bare ASCII row number selects the session from the most recently rendered
+// list, so the operator never has to type a provider session identifier.
 func interactiveShow(parent context.Context, api InteractiveAPI, state *interactiveState, id string, out io.Writer) error {
 	if state.Invalidated {
 		return state.requireUsable()
@@ -726,6 +728,12 @@ func interactiveShow(parent context.Context, api InteractiveAPI, state *interact
 			}
 			id = session.SessionID
 		}
+	} else if isASCIIDecimal(id) {
+		row, err := resolveRowSelection(state, id)
+		if err != nil {
+			return err
+		}
+		id = row.SessionID
 	}
 	return (CommandRunner{API: api, Policy: InteractivePolicy}).Show(ctx, out, id, false)
 }

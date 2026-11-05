@@ -12,6 +12,8 @@ import (
 )
 
 // interactiveLogs resolves the session inside the current endpoint scope.
+// A bare ASCII row number selects the session from the most recently rendered
+// list, so the operator never has to type a provider session identifier.
 func interactiveLogs(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, maxBytes int, out io.Writer) error {
 	if err := rejectInteractiveOption("logs", rest); err != nil {
 		return err
@@ -20,6 +22,9 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 		return state.requireUsable()
 	}
 	endpointID := state.Scope.EndpointID
+	if endpointID == "" {
+		return fmt.Errorf("no endpoint selected; use cd <hostname>/<endpoint-id>")
+	}
 	resourceID := state.Scope.SessionID
 	if target := strings.TrimSpace(rest); target != "" {
 		args := strings.Fields(target)
@@ -27,9 +32,13 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 			return fmt.Errorf("usage: logs [session]")
 		}
 		resourceID = args[0]
-	}
-	if endpointID == "" {
-		return fmt.Errorf("no endpoint selected; use cd <hostname>/<endpoint-id>")
+		if isASCIIDecimal(args[0]) {
+			row, err := resolveRowSelectionInEndpoint(state, args[0], endpointID)
+			if err != nil {
+				return err
+			}
+			resourceID = row.SessionID
+		}
 	}
 	if resourceID == "" {
 		return fmt.Errorf("no session selected; use cd <hostname>/<endpoint-id>/<session>")
@@ -53,6 +62,8 @@ func interactiveValue(values map[string]any, key string) string {
 }
 
 // interactiveStatus answers an explicit command ID in any scope.
+// Without an argument it reports the last command submitted in this CLI, so the
+// operator never has to retype an opaque command identifier.
 func interactiveStatus(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, out io.Writer) error {
 	if err := rejectInteractiveOption("status", rest); err != nil {
 		return err
@@ -67,7 +78,7 @@ func interactiveStatus(parent context.Context, api InteractiveAPI, state *intera
 		return (CommandRunner{API: api, Policy: InteractivePolicy}).Status(ctx, out, commandID, false)
 	}
 	if state.Scope.Kind != ScopeSession {
-		return fmt.Errorf("status requires a command ID in %s scope; use status <command-id>", state.Scope.Kind)
+		return fmt.Errorf("no command has been submitted in this CLI yet; run an action such as start, then run status without an argument")
 	}
 	if state.Invalidated {
 		return fmt.Errorf("selected session invalidated; use the session again")

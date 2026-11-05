@@ -32,13 +32,13 @@ var fieldHelp = []string{
 var commandHelpCatalog = map[string]commandHelp{
 	"list":      {"list [endpoint] [--clean]", ListHelpDescription + "; JSON output (--json/-json) is available only in the standalone non-interactive command", []string{"endpoint: optional endpoint ID filter", "--clean: omit endpoints that failed to report; diagnostics still go to stderr"}, []string{"list", "list endpoint-1", "list --clean"}},
 	"cd":        {"cd [target]", "navigate between workspace, endpoint, and session scopes; bare cd returns to workspace", []string{"target: latest displayed row number, hostname, hostname/endpoint-id, session, hostname/endpoint-id/session, .., or /", "a bare ASCII number is shorthand for cd <number>; leading zeros are accepted and the number is temporary; a valid replacement list that fails during loading, rendering, or diagnostics invalidates the previous row numbers; invalid syntax or an invalid scoped filter preserves them", "failed-endpoint placeholders are displayed but cannot be selected; session scope rejects numeric row navigation", "after a valid replacement begins, a load, render, or diagnostic failure leaves no selectable row bindings; invalid syntax or an invalid scoped filter is rejected before replacement begins and preserves the previous bindings", "a hostname shared by several endpoints prompts for a numbered choice, a hostname/endpoint-id answer, or cancel"}, []string{"cd", "cd 1", "cd /", "cd ..", "cd ai-dev", "cd ai-dev/endpoint-1", "cd res_abc", "cd ai-dev/endpoint-1/res_abc"}},
-	"show":      {"show [endpoint-or-session]", "show detailed information for an endpoint or session; defaults to the current scope target", []string{"endpoint-or-session: optional endpoint ID or session/resource ID"}, []string{"show", "show endpoint-1"}},
+	"show":      {"show [endpoint-or-session]", "show detailed information for an endpoint or session; defaults to the current scope target", []string{"endpoint-or-session: optional endpoint ID, session/resource ID, or a bare list row number", "a bare ASCII number selects the session shown at that row of the most recently rendered list"}, []string{"show", "show 1", "show endpoint-1"}},
 	"start":     {"start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--payload <json>]", "start an agent through the selected endpoint; interactive mode executes directly and does not support --json", []string{"endpoint: endpoint ID", "resource: compatibility resource identifier", "--profile: launch profile ID (required)", "--profile-revision: launch profile revision (required)", "--folder: optional working folder; empty value is treated as omitted", "--payload: optional JSON payload; defaults to {}", "--json: rejected in interactive mode"}, []string{"start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1", `start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1 --payload '{"note":"example"}'`}},
 	"resume":    {"resume [--payload <json>]", "resume the selected session", []string{"--payload: optional JSON payload; defaults to {}", "--json: rejected in interactive mode"}, []string{"resume", `resume --payload '{"note":"example"}'`}},
 	"stop":      {"stop", "stop the selected session after confirmation", []string{"--json: rejected in interactive mode"}, []string{"stop"}},
 	"inject":    {"inject <json>", "inject context into the selected session", []string{"json: context payload", "--json: rejected in interactive mode"}, []string{`inject {"text":"context"}`}},
 	"interrupt": {"interrupt <json>", "request a soft or hard execution interrupt for the selected session", []string{"json: object with action soft_interrupt or hard_interrupt; soft_interrupt also accepts an optional string message", "--json: rejected in interactive mode"}, []string{`interrupt {"action":"soft_interrupt","message":"Stop and summarize now."}`, `interrupt {"action":"hard_interrupt"}`}},
-	"logs":      {"logs [session]", "show bounded output for a session in the current endpoint", []string{"session: optional session/resource ID; defaults to the current session"}, []string{"logs", "logs res_abc"}},
+	"logs":      {"logs [session]", "show bounded output for a session in the current endpoint", []string{"session: optional session/resource ID or a bare list row number; defaults to the current session", "a bare ASCII number selects the session shown at that row of the most recently rendered list"}, []string{"logs", "logs 1", "logs res_abc"}},
 	"send":      {"send <json>", "send a JSON message to the selected session", []string{"json: message payload"}, []string{`send {"text":"hello"}`}},
 	"status":    {"status <command-id>", "show the durable result of a command", []string{"command-id: submitted command identifier"}, []string{"status cmd_123"}},
 	"refresh":   {"refresh", "reload the latest Server inventory and the interactive session table; does not force provider discovery", nil, []string{"refresh"}},
@@ -231,7 +231,7 @@ func PrintScopedCommandHelp(out io.Writer, target string, kind ScopeKind) error 
 	if !ok {
 		return fmt.Errorf("unknown help command %q; next: run help all", target)
 	}
-	entry = scopedHelpEntry(target, kind)
+	entry = interactiveHelpEntry(target, kind)
 	if target == "start" {
 		return printInteractiveStartHelp(out, entry)
 	}
@@ -298,7 +298,7 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 		return err
 	}
 	for _, name := range availableCommands(kind) {
-		entry := scopedHelpEntry(name, kind)
+		entry := interactiveHelpEntry(name, kind)
 		description := scopeCommandDescriptions[kind][name]
 		if description == "" {
 			description = entry.description
@@ -417,5 +417,21 @@ func scopedHelpEntry(name string, kind ScopeKind) commandHelp {
 		entry.parameters = []string{"command-id: optional submitted command identifier", "without an ID: last submitted command takes precedence over current session state"}
 		entry.examples = []string{"status", "status cmd_123"}
 	}
+	return entry
+}
+
+// interactiveHelpEntry extends scopedHelpEntry for the interactive REPL only.
+// The REPL remembers the last command it submitted, so no interactive scope
+// requires a command ID; the standalone CLI has no such memory and keeps the
+// mandatory form.
+func interactiveHelpEntry(name string, kind ScopeKind) commandHelp {
+	entry := scopedHelpEntry(name, kind)
+	if name != "status" || kind == ScopeSession {
+		return entry
+	}
+	entry.syntax = "status [command-id]"
+	entry.description = "show the durable result of a command; without an ID it reports the last command submitted in this CLI"
+	entry.parameters = []string{"command-id: optional submitted command identifier; omit it to reuse the last command submitted in this CLI"}
+	entry.examples = []string{"status", "status cmd_123"}
 	return entry
 }
