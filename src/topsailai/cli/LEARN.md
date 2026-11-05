@@ -209,3 +209,28 @@ diverging. One known consequence of the timestamp format is that `/cd`, `/send`,
 and `/resume` read a digits-only argument as a 1-based list index, so those
 sessions are selected by list position; this is documented in the usage doc
 instead of being worked around in the identifier.
+
+## A stale socket file is not a control channel
+
+### Trigger
+
+Literal `/session (temp)` reported `ambiguous_target` even though only one
+temporary session was running: the task directory held 16
+`topsailai.*.session.sock` files, and 15 of them outlived their owner processes.
+
+### Action taken
+
+Gated socket discovery on owner liveness (`probe_process(pid) is
+ProcessState.ALIVE`, failing closed on `UNKNOWN` and on probe errors) so a stale
+file is never a candidate, then kept the ambiguity error for genuinely multiple
+live owners. Verified against the live task directory: the literal `(temp)`
+argument resolved `topsailai.2175537.session.sock` and printed that session's
+real history, while the unit tests pin the stale-plus-one-live case.
+
+### Why this prevents recurrence
+
+A Unix socket file survives its owner, so existence proves only that a channel
+once existed. Any discovery that treats existence as availability will prefer a
+dead endpoint over a live one and will report false ambiguity; liveness must be
+part of the candidate predicate, and an unverifiable state must fail closed
+rather than claim a channel.
