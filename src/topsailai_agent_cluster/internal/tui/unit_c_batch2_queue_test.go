@@ -171,7 +171,7 @@ func TestUnitCBatch2CancelAllowsQueuedStart(t *testing.T) {
 						unitC19Release(t, d, q, nil)
 					} else {
 						d.reply(t, *d.pending, "cancel\n", nil)
-						awaitExactOutput(t, d.output, d.ready+"start cancelled\ncluster> ")
+						awaitExactOutput(t, d.output, d.ready+"start cancelled\nworkspace> ")
 						d.reply(t, d.next(t), grammar, nil)
 						d.reply(t, d.next(t), "quit\n", nil)
 					}
@@ -183,12 +183,12 @@ func TestUnitCBatch2CancelAllowsQueuedStart(t *testing.T) {
 						t.Fatalf("C19 continuation: delta=%+v intents=%+v", delta, intents)
 					}
 					expectedErrors := ""
-					prefix := d.ready + "start cancelled\ncluster> "
+					prefix := d.ready + "start cancelled\nworkspace> "
 					if control == "interrupt" {
 						expectedErrors = "interrupted\n"
-						prefix = d.ready + unitCBatch2HelpText() + "cluster> "
+						prefix = d.ready + unitCBatch2HelpText() + "workspace> "
 					}
-					suffix := "command submitted: unit-c-command; use status unit-c-command to query\nCommandID: unit-c-command\nStatus: finished\nDeliveryBoundary: \nEffectCertainty: \nErrorCode: \ncluster> "
+					suffix := "command submitted: unit-c-command; use status unit-c-command to query\nCommandID: unit-c-command\nStatus: finished\nDeliveryBoundary: \nEffectCertainty: \nErrorCode: \nworkspace> "
 					if d.output.String() != prefix+suffix || d.errors.String() != expectedErrors {
 						t.Fatalf("C19 continuation: output=%q errors=%q", d.output.String(), d.errors.String())
 					}
@@ -218,7 +218,7 @@ func TestUnitCBatch2PrefetchedHelpQuit(t *testing.T) {
 			}
 			output := d.output.String()
 			// B2_MAIN_HELP: detached main help observation sensitivity seam.
-			want := d.ready + unitCBatch2HelpText() + "cluster> " + unitC19MainHelp() + "cluster> "
+			want := d.ready + unitCBatch2HelpText() + "workspace> " + unitC19MainHelp() + "workspace> "
 			if output != want || d.errors.String() != "interrupted\n" {
 				t.Fatalf("C19 main help: output=%q want=%q errors=%q", output, want, d.errors.String())
 			}

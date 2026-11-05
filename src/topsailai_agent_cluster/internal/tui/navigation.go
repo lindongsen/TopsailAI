@@ -21,17 +21,17 @@ const (
 )
 
 // interactiveCD navigates between workspace, endpoint, and session scopes.
-func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lineSource <-chan lineReadResult, out io.Writer, color ColorPolicy) error {
+func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lineSource <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) error {
 	target := strings.TrimSpace(rest)
 	switch target {
 	case "", "/":
 		state.enterWorkspace()
-		return rerenderNavigatedList(parent, api, state, out, color)
+		return rerenderNavigatedList(parent, api, state, trustedOut, color)
 	case "..":
 		if err := cdParent(state, out); err != nil {
 			return err
 		}
-		return rerenderNavigatedList(parent, api, state, out, color)
+		return rerenderNavigatedList(parent, api, state, trustedOut, color)
 	}
 	parts := strings.Split(target, "/")
 	if len(parts) > 3 {
@@ -67,7 +67,7 @@ func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiv
 	if resolveErr != nil {
 		return resolveErr
 	}
-	return rerenderNavigatedList(parent, api, state, out, color)
+	return rerenderNavigatedList(parent, api, state, trustedOut, color)
 }
 
 // rerenderNavigatedList refreshes the visible list for workspace and endpoint scopes.

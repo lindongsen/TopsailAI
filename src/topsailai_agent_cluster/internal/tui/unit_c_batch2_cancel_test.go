@@ -56,7 +56,7 @@ func TestUnitCBatch2CommandInterrupt(t *testing.T) {
 				if closeInput {
 					closes = 1
 				}
-				d.assertTerminal(t, d.ready+unitCBatch2HelpText()+"cluster> ", "interrupted\n", closes)
+				d.assertTerminal(t, d.ready+unitCBatch2HelpText()+"workspace> ", "interrupted\n", closes)
 			})
 		}
 	}
@@ -121,7 +121,7 @@ func runUnitCBatch2WatcherRow(t *testing.T, mode string, field startDraftField, 
 		if got != nil {
 			t.Fatalf("C16 watcher barrier: interrupt result=%v", got)
 		}
-		d.assertTerminal(t, d.ready+unitCBatch2HelpText()+"cluster> ", "interrupted\n", 0)
+		d.assertTerminal(t, d.ready+unitCBatch2HelpText()+"workspace> ", "interrupted\n", 0)
 	}
 	t.Logf("C16 watcher causal facts: %+v", d.ledger.snapshot())
 }
@@ -186,7 +186,7 @@ func TestUnitCBatch2InitialStartupTermination(t *testing.T) {
 				}
 				counts, intents := api.snapshot()
 				_, closes := reader.Counts()
-				if counts != (unitCAPICounts{List: 1}) || len(intents) != 0 || closes != 1 || out.String() != "" || strings.Contains(errOut.String(), "cluster>") {
+				if counts != (unitCAPICounts{List: 1}) || len(intents) != 0 || closes != 1 || out.String() != "" || strings.Contains(errOut.String(), "workspace>") {
 					t.Fatalf("C16 startup: counts=%+v closes=%d out=%q errors=%q", counts, closes, out.String(), errOut.String())
 				}
 			})
@@ -257,7 +257,7 @@ func TestUnitCBatch2Priority(t *testing.T) {
 						wantOut += unitCBatch2HelpText()
 					}
 					if mode == "interrupt-eof" {
-						wantOut += "cluster> "
+						wantOut += "workspace> "
 						wantErrors = "interrupted\n"
 					}
 				}

@@ -30,13 +30,13 @@ func TestScopePromptUsesEndpointFallbackAndSuppressesColor(t *testing.T) {
 	if err := RenderPrompt(&colored, scope, false, ColorPolicy{Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	if want := ansiBoldGreen + "cluster[endpoint-1]>" + ansiReset + " "; colored.String() != want {
+	if want := ansiBoldGreen + "endpoint[endpoint-1]>" + ansiReset + " "; colored.String() != want {
 		t.Fatalf("colored endpoint prompt = %q, want %q", colored.String(), want)
 	}
 	if err := RenderPrompt(&plain, scope, false, ColorPolicy{}); err != nil {
 		t.Fatal(err)
 	}
-	if plain.String() != "cluster[endpoint-1]> " || strings.Contains(plain.String(), "\x1b") {
+	if plain.String() != "endpoint[endpoint-1]> " || strings.Contains(plain.String(), "\x1b") {
 		t.Fatalf("plain endpoint prompt = %q", plain.String())
 	}
 }

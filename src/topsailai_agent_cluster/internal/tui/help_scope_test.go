@@ -226,9 +226,9 @@ func TestHelpOverviewKeepsScopePrompts(t *testing.T) {
 		scope ScopeState
 		want  string
 	}{
-		{"workspace", ScopeState{Kind: ScopeWorkspace}, ansiBoldGreen + "cluster>" + ansiReset + " "},
-		{"endpoint", ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1", Hostname: "ai-dev"}, ansiBoldGreen + "cluster[ai-dev/endpoint-1]>" + ansiReset + " "},
-		{"session", ScopeState{Kind: ScopeSession, EndpointID: "endpoint-1", Hostname: "ai-dev", ProviderSessionID: "20261027152208", SessionID: "res-1"}, ansiBoldGreen + "cluster[ai-dev/20261027152208]>" + ansiReset + " "},
+		{"workspace", ScopeState{Kind: ScopeWorkspace}, ansiBoldGreen + "workspace>" + ansiReset + " "},
+		{"endpoint", ScopeState{Kind: ScopeEndpoint, EndpointID: "endpoint-1", Hostname: "ai-dev"}, ansiBoldGreen + "endpoint[ai-dev/endpoint-1]>" + ansiReset + " "},
+		{"session", ScopeState{Kind: ScopeSession, EndpointID: "endpoint-1", Hostname: "ai-dev", ProviderSessionID: "20261027152208", SessionID: "res-1"}, ansiBoldGreen + "session[ai-dev/20261027152208]>" + ansiReset + " "},
 	}
 	for _, testCase := range cases {
 		var out strings.Builder
@@ -266,8 +266,8 @@ func TestStartupInventoryUsesSharedListPath(t *testing.T) {
 	stub := startupStub()
 	output, _ := runStartup(t, stub, "quit\n", InteractiveOptions{})
 	manual, _ := runScope(t, startupStub(), "list\nquit\n", ColorPolicy{})
-	startupTable := segmentBeforePrompt(output, "cluster> ")
-	manualTable := segmentBeforePrompt(manual, "cluster> ")
+	startupTable := segmentBeforePrompt(output, "workspace> ")
+	manualTable := segmentBeforePrompt(manual, "workspace> ")
 	startupTable = strings.TrimSuffix(startupTable, "list: view sessions | <n> or cd <n>: select | start: launch agent | help: commands | q: quit\n")
 	if startupTable != manualTable {
 		t.Fatalf("startup table %q differs from manual list %q", startupTable, manualTable)

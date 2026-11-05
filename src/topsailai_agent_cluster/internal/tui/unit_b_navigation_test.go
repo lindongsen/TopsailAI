@@ -18,7 +18,7 @@ func TestUnitBBareNumberMatchesExplicitCD(t *testing.T) {
 	if lastPrompt(bareOutput) != lastPrompt(cdOutput) {
 		t.Fatalf("final prompts differ: bare=%q cd=%q", lastPrompt(bareOutput), lastPrompt(cdOutput))
 	}
-	if !strings.Contains(bareOutput, "cluster[host-one/provider-res-1]>") {
+	if !strings.Contains(bareOutput, "session[host-one/provider-res-1]>") {
 		t.Fatalf("bare number did not select session: %q", bareOutput)
 	}
 }
@@ -301,12 +301,12 @@ func TestUnitBB5SessionScopeAndQualifiedPathsPreserveBaseline(t *testing.T) {
 	assertActionableError(t, diagnostics, "error: row-number navigation is unavailable in session scope; use cd .. or cd <session>")
 	for _, input := range []string{"cd ai-dev/endpoint-1/res-1\ncd ..\nquit\n", "cd ai-dev/endpoint-1/res-1\ncd /\nquit\n", "cd ai-dev/endpoint-1\ncd res-1\nquit\n"} {
 		output, diagnostics := runNav(t, singleHostStub(), input)
-		if diagnostics != "" || !strings.Contains(output, "cluster[") {
+		if diagnostics != "" || !(strings.Contains(output, "endpoint[") || strings.Contains(output, "session[")) {
 			t.Fatalf("baseline path failed for %q: output=%q diagnostics=%q", input, output, diagnostics)
 		}
 	}
 	output, diagnostics := runNav(t, conflictStub(), "cd ai-dev\nai-dev/endpoint-2\nquit\n")
-	if diagnostics != "" || !strings.Contains(output, "cluster[ai-dev/endpoint-2]>") {
+	if diagnostics != "" || !strings.Contains(output, "endpoint[ai-dev/endpoint-2]>") {
 		t.Fatalf("hostname conflict path failed: output=%q diagnostics=%q", output, diagnostics)
 	}
 }
@@ -418,8 +418,8 @@ func TestUnitBB5SessionScopeRejectsNumericNavigation(t *testing.T) {
 // TestUnitBB5ParentAndRootNavigation are independent parent and root assertions.
 func TestUnitBB5ParentAndRootNavigation(t *testing.T) {
 	for _, tc := range []struct{ name, input, want string }{
-		{"parent", "cd ai-dev/endpoint-1/res-1\ncd ..\nquit\n", "cluster[ai-dev/endpoint-1]>"},
-		{"root", "cd ai-dev/endpoint-1/res-1\ncd /\nquit\n", "cluster>"},
+		{"parent", "cd ai-dev/endpoint-1/res-1\ncd ..\nquit\n", "endpoint[ai-dev/endpoint-1]>"},
+		{"root", "cd ai-dev/endpoint-1/res-1\ncd /\nquit\n", "workspace>"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			output, diagnostics := runNav(t, singleHostStub(), tc.input)
@@ -434,11 +434,11 @@ func TestUnitBB5ParentAndRootNavigation(t *testing.T) {
 // conflict prompt and the qualified endpoint/session path.
 func TestUnitBB5HostnameConflictAndEndpointIDSelection(t *testing.T) {
 	output, diagnostics := runNav(t, conflictStub(), "cd ai-dev\nai-dev/endpoint-2\nquit\n")
-	if diagnostics != "" || lastPrompt(output) != "cluster[ai-dev/endpoint-2]>" {
+	if diagnostics != "" || lastPrompt(output) != "endpoint[ai-dev/endpoint-2]>" {
 		t.Fatalf("conflict selection prompt=%q diagnostics=%q", lastPrompt(output), diagnostics)
 	}
 	output, diagnostics = runNav(t, singleHostStub(), "cd endpoint-1/res-1\nquit\n")
-	if diagnostics != "" || lastPrompt(output) != "cluster[ai-dev/provider-res-1]>" {
+	if diagnostics != "" || lastPrompt(output) != "session[ai-dev/provider-res-1]>" {
 		t.Fatalf("endpoint-id path prompt=%q diagnostics=%q", lastPrompt(output), diagnostics)
 	}
 }
@@ -536,7 +536,7 @@ func TestUnitBB5NumericQualifiedEndpointPath(t *testing.T) {
 	stub.endpoints = append([]protocol.Endpoint{{EndpointID: "1", Hostname: "numeric-host"}}, stub.endpoints...)
 	stub.reports["1"] = scopeInventory("2", "generation-2")
 	output, diagnostics := runNav(t, stub, "cd 1/2\nquit\n")
-	if diagnostics != "" || !strings.Contains(output, "cluster[numeric-host/provider-2]>") {
+	if diagnostics != "" || !strings.Contains(output, "session[numeric-host/provider-2]>") {
 		t.Fatalf("numeric qualified path failed: output=%q diagnostics=%q", output, diagnostics)
 	}
 }

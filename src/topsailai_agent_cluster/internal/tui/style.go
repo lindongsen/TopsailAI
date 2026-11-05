@@ -35,7 +35,7 @@ func writeStyled(w io.Writer, style, text string, policy ColorPolicy) error {
 
 // RenderPrompt writes a trusted, reset-safe REPL prompt.
 func RenderPrompt(w io.Writer, scope ScopeState, invalidated bool, policy ColorPolicy) error {
-	prompt := "cluster"
+	prompt := scope.Kind.String()
 	switch scope.Kind {
 	case ScopeEndpoint:
 		endpoint := scope.Hostname

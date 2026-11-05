@@ -414,7 +414,7 @@ func (d *unitCBatch2Driver) assertTerminal(t *testing.T, out, errOut string, clo
 func (d *unitCBatch2Driver) interruptContinuation(t *testing.T) {
 	t.Helper()
 	help := unitCBatch2HelpText()
-	awaitExactOutput(t, d.output, d.ready+help+"cluster> ")
+	awaitExactOutput(t, d.output, d.ready+help+"workspace> ")
 	awaitExactOutput(t, d.errors, "interrupted\n")
 	_, closes := d.reader.Counts()
 	// B2_COMMAND_CLOSE: detached pre-quit close observation.

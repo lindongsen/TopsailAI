@@ -84,14 +84,14 @@ func TestUnitCBatch3CancelRepl(t *testing.T) {
 			d := newUnitCBatch2Driver(t, "cancel", false)
 			d.startup(t, field)
 			d.reply(t, *d.pending, "cancel\n", nil)
-			awaitExactOutput(t, d.output, d.ready+"start cancelled\ncluster> ")
+			awaitExactOutput(t, d.output, d.ready+"start cancelled\nworkspace> ")
 			d.assertUnchanged(t)
 			d.reply(t, d.next(t), "1\n", nil)
 			d.reply(t, d.next(t), "show\n", nil)
 			d.reply(t, d.next(t), "quit\n", nil)
 			unitC19Finish(t, d)
 			got := d.output.String()
-			if !strings.Contains(got, "cluster[host-1/provider-session-1]> ") || !strings.Contains(got, "session: res_session-1") || d.errors.String() != "" {
+			if !strings.Contains(got, "session[host-1/provider-session-1]> ") || !strings.Contains(got, "session: res_session-1") || d.errors.String() != "" {
 				t.Fatalf("C6 REPL: output=%q diagnostics=%q", got, d.errors.String())
 			}
 			after, intents := d.api.snapshot()

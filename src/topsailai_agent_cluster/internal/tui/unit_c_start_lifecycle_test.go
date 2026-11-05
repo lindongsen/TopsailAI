@@ -140,7 +140,7 @@ func (w *terminalHarnessReadyWriter) Write(data []byte) (int, error) {
 	}
 	w.pending = append(w.pending, data...)
 	for {
-		marker := []byte("cluster> ")
+		marker := []byte("workspace> ")
 		index := bytes.Index(w.pending, marker)
 		for f := startFieldEndpoint; f <= startFieldRevision; f++ {
 			candidate := []byte("start." + startFieldName(f) + "> ")

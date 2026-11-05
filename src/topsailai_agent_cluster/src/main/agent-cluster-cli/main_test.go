@@ -172,7 +172,7 @@ func TestInjectedTTYTrueEntersInteractiveWithoutRealTerminal(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code=%d diagnostics=%q", code, diagnostics.String())
 	}
-	if !strings.Contains(output.String(), "cluster") || !strings.Contains(output.String(), ">") {
+	if !strings.Contains(output.String(), "workspace>") {
 		t.Fatalf("interactive output=%q", output.String())
 	}
 }

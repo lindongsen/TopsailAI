@@ -336,7 +336,7 @@ func TestStartFieldPromptsDistinguishWizardFromREPL(t *testing.T) {
 		if err := writeStartHelp(&out, field, interactiveState{}, ColorPolicy{}); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.HasSuffix(out.String(), "start."+startFieldName(field)+"> ") || strings.Contains(out.String(), "cluster>") {
+		if !strings.HasSuffix(out.String(), "start."+startFieldName(field)+"> ") || strings.Contains(out.String(), "workspace>") {
 			t.Fatalf("field=%d output=%q", field, out.String())
 		}
 	}

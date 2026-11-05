@@ -280,7 +280,7 @@ func (d *unitCReferenceDriver) initial(t *testing.T) string {
 	defer timer.Stop()
 	for {
 		text := d.out.String()
-		if strings.HasSuffix(text, "cluster> ") && strings.Count(text, "cluster> ") == 1 && d.pending != nil {
+		if strings.HasSuffix(text, "workspace> ") && strings.Count(text, "workspace> ") == 1 && d.pending != nil {
 			if d.pending.n != 1 {
 				d.fail(t, "initial ordinal is not one")
 			}
@@ -334,7 +334,7 @@ func (d *unitCReferenceDriver) continuation(t *testing.T, before string, ticket 
 	timer := time.NewTimer(3 * time.Second)
 	defer timer.Stop()
 	for {
-		if d.out.String() == before+"cluster> " && d.errOut.String() == "interrupted\n" {
+		if d.out.String() == before+"workspace> " && d.errOut.String() == "interrupted\n" {
 			if d.pending == nil || d.pending.n != ticket {
 				d.fail(t, "interrupt lost held ticket")
 			}
@@ -470,7 +470,7 @@ func TestUnitCStartRunInteractiveTerminationMatrix(t *testing.T) {
 					if got != nil {
 						d.fail(t, "quit result is not nil")
 					}
-					want += "cluster> "
+					want += "workspace> "
 				}
 				after, intents := d.api.snapshot()
 				if unitCAPIAdd(countsBefore, after) != (unitCAPICounts{}) || len(intents) != 0 {

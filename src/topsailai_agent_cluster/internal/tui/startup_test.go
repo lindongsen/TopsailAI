@@ -44,7 +44,7 @@ func TestStartupRendersInventoryBeforeFirstPrompt(t *testing.T) {
 		t.Fatalf("startup inventory missing session row: %q", output)
 	}
 	headerIndex := strings.Index(output, "LAST_SUCCESS")
-	promptIndex := strings.Index(output, "cluster> ")
+	promptIndex := strings.Index(output, "workspace> ")
 	if headerIndex < 0 || promptIndex < 0 {
 		t.Fatalf("startup output incomplete: %q", output)
 	}
@@ -58,7 +58,7 @@ func TestStartupRowsBindSessionThroughCD(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "cluster[ai-dev/provider-session-1]") {
+	if !strings.Contains(output, "session[ai-dev/provider-session-1]") {
 		t.Fatalf("startup row navigation did not enter session: %q", output)
 	}
 	if !strings.Contains(output, "session: res_session-1") {
@@ -68,10 +68,10 @@ func TestStartupRowsBindSessionThroughCD(t *testing.T) {
 
 func TestStartupLeavesWorkspaceScope(t *testing.T) {
 	output, _ := runStartup(t, startupStub(), "quit\n", InteractiveOptions{})
-	if !strings.Contains(output, "cluster> ") {
+	if !strings.Contains(output, "workspace> ") {
 		t.Fatalf("workspace prompt missing: %q", output)
 	}
-	if strings.Contains(output, "cluster[") {
+	if (strings.Contains(output, "endpoint[") || strings.Contains(output, "session[")) {
 		t.Fatalf("startup entered a nested scope: %q", output)
 	}
 }
@@ -113,10 +113,10 @@ func TestStartupFailureKeepsWorkspaceScope(t *testing.T) {
 	stub := startupStub()
 	stub.failList = true
 	output, _ := runStartup(t, stub, "quit\n", InteractiveOptions{})
-	if !strings.Contains(output, "cluster> ") {
+	if !strings.Contains(output, "workspace> ") {
 		t.Fatalf("workspace prompt missing after failure: %q", output)
 	}
-	if strings.Contains(output, "cluster[") {
+	if (strings.Contains(output, "endpoint[") || strings.Contains(output, "session[")) {
 		t.Fatalf("failed startup changed scope: %q", output)
 	}
 }

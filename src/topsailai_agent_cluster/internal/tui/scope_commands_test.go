@@ -167,7 +167,7 @@ func TestListNarrowsToCurrentEndpoint(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	scoped := segmentBeforePrompt(output, "cluster[host-one/endpoint-1]> ")
+	scoped := segmentBeforePrompt(output, "endpoint[host-one/endpoint-1]> ")
 	if !strings.Contains(scoped, "host-one") {
 		t.Fatalf("missing current endpoint row: %q", scoped)
 	}
@@ -181,7 +181,7 @@ func TestListInSessionScopeShowsSiblingSessions(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	scoped := segmentBeforePrompt(output, "cluster[host-one/provider-res-1]> ")
+	scoped := segmentBeforePrompt(output, "session[host-one/provider-res-1]> ")
 	if !strings.Contains(scoped, "provider-1b") {
 		t.Fatalf("missing sibling session: %q", scoped)
 	}
@@ -238,7 +238,7 @@ func TestRefreshNarrowsToCurrentEndpoint(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	scoped := segmentBeforePrompt(output, "cluster[host-one/endpoint-1]> ")
+	scoped := segmentBeforePrompt(output, "endpoint[host-one/endpoint-1]> ")
 	if !strings.Contains(scoped, "host-one") {
 		t.Fatalf("missing current endpoint row: %q", scoped)
 	}
@@ -379,9 +379,9 @@ func TestScopePromptsKeepExactAnsiSequences(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "workspace", input: "quit\n", want: ansiBoldGreen + "cluster>" + ansiReset + " "},
-		{name: "endpoint", input: "cd host-one/endpoint-1\nquit\n", want: ansiBoldGreen + "cluster[host-one/endpoint-1]>" + ansiReset + " "},
-		{name: "session", input: "cd host-one/endpoint-1/res-1\nquit\n", want: ansiBoldGreen + "cluster[host-one/provider-res-1]>" + ansiReset + " "},
+		{name: "workspace", input: "quit\n", want: ansiBoldGreen + "workspace>" + ansiReset + " "},
+		{name: "endpoint", input: "cd host-one/endpoint-1\nquit\n", want: ansiBoldGreen + "endpoint[host-one/endpoint-1]>" + ansiReset + " "},
+		{name: "session", input: "cd host-one/endpoint-1/res-1\nquit\n", want: ansiBoldGreen + "session[host-one/provider-res-1]>" + ansiReset + " "},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

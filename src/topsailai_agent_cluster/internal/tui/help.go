@@ -83,16 +83,16 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"quit":    "exit",
 	},
 	ScopeSession: {
-		"list":      "list sibling sessions in the current endpoint",
-		"cd":        "navigate back to endpoint or workspace",
-		"show":      "show endpoint or session details",
-		"logs":      "show session logs",
-		"send":      "send a message to the current session",
+		"list":      "list sessions in the current endpoint; an explicit endpoint must match it",
+		"cd":        "bare cd or cd /: workspace; cd ..: endpoint; cd <target>: navigate",
+		"show":      "show the current session, or an explicit endpoint/session target",
+		"logs":      "show current session output, or another session in this endpoint",
+		"send":      "send a JSON object to the current session after confirmation",
 		"resume":    "resume the current session",
 		"stop":      "stop the current session",
 		"inject":    "inject context into the current session",
 		"interrupt": "interrupt the current session",
-		"status":    "show command result",
+		"status":    "explicit ID: command result; omitted: last submitted command, otherwise current session state",
 		"refresh":   "revalidate the current session",
 		"help":      "show help",
 		"quit":      "exit",
@@ -178,7 +178,7 @@ func scopeCommandLines(kind ScopeKind) []string {
 	names := availableCommands(kind)
 	lines := make([]string, 0, len(names))
 	for _, name := range names {
-		entry := commandHelpCatalog[name]
+		entry := scopedHelpEntry(name, kind)
 		description := scopeCommandDescriptions[kind][name]
 		if description == "" {
 			description = entry.description
@@ -231,6 +231,7 @@ func PrintScopedCommandHelp(out io.Writer, target string, kind ScopeKind) error 
 	if !ok {
 		return fmt.Errorf("unknown help command %q; next: run help all", target)
 	}
+	entry = scopedHelpEntry(target, kind)
 	if target == "start" {
 		return printInteractiveStartHelp(out, entry)
 	}
@@ -297,7 +298,7 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 		return err
 	}
 	for _, name := range availableCommands(kind) {
-		entry := commandHelpCatalog[name]
+		entry := scopedHelpEntry(name, kind)
 		description := scopeCommandDescriptions[kind][name]
 		if description == "" {
 			description = entry.description
@@ -308,7 +309,9 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 	}
 	workflow := "Next: list -> <number> or cd <number> -> show/logs. Run help list for row selection rules."
 	if kind == ScopeSession {
-		workflow = "use cd .. or cd / to leave session scope; numeric row navigation is unavailable here; run help <command> for syntax."
+		workflow = "Bare cd or cd / returns to workspace; cd .. returns to endpoint. Numeric row navigation is unavailable in session scope.\n" +
+			"Session selectors use internal resource IDs or unique names, not necessarily the provider SESSION_ID shown in list.\n" +
+			"Actions require adapter capability support and fresh session data; scope availability alone does not guarantee support."
 	}
 	example := "Start example: start <endpoint> <resource> --profile <id> --profile-revision <revision>"
 	if kind == ScopeSession {
@@ -403,4 +406,16 @@ func HelpCommandNames() []string {
 	result := append([]string(nil), commandHelpOrder...)
 	sort.Strings(result)
 	return result
+}
+
+// scopedHelpEntry describes session status without changing standalone command help.
+func scopedHelpEntry(name string, kind ScopeKind) commandHelp {
+	entry := commandHelpCatalog[name]
+	if name == "status" && kind == ScopeSession {
+		entry.syntax = "status [command-id]"
+		entry.description = "show an explicit command result; without an ID, use the last command submitted in this CLI, otherwise show current session state"
+		entry.parameters = []string{"command-id: optional submitted command identifier", "without an ID: last submitted command takes precedence over current session state"}
+		entry.examples = []string{"status", "status cmd_123"}
+	}
+	return entry
 }

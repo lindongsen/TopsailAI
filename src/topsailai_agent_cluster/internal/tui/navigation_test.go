@@ -89,7 +89,12 @@ func runNav(t *testing.T, stub InteractiveAPI, input string) (string, string) {
 // lastPrompt returns the final prompt line of the captured output.
 func lastPrompt(output string) string {
 	trimmed := strings.TrimSuffix(output, " ")
-	index := strings.LastIndex(trimmed, "cluster")
+	index := -1
+	for _, prefix := range []string{"workspace>", "endpoint[", "session["} {
+		if candidate := strings.LastIndex(trimmed, prefix); candidate > index {
+			index = candidate
+		}
+	}
 	if index < 0 {
 		return ""
 	}
@@ -102,7 +107,7 @@ func TestCDRowNumberUsesMostRecentList(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if got := lastPrompt(output); got != "cluster[host-one/provider-res-1]>" {
+	if got := lastPrompt(output); got != "session[host-one/provider-res-1]>" {
 		t.Fatalf("final prompt = %q, want first session", got)
 	}
 }
@@ -140,7 +145,7 @@ func TestCDWithoutArgumentsReturnsToWorkspace(t *testing.T) {
 			if diagnostics != "" {
 				t.Fatalf("unexpected diagnostics: %q", diagnostics)
 			}
-			if got := lastPrompt(output); got != "cluster>" {
+			if got := lastPrompt(output); got != "workspace>" {
 				t.Fatalf("final prompt = %q, want workspace prompt", got)
 			}
 		})
@@ -162,7 +167,7 @@ func TestCDSlashReturnsToWorkspaceFromAnyScope(t *testing.T) {
 			if diagnostics != "" {
 				t.Fatalf("unexpected diagnostics: %q", diagnostics)
 			}
-			if got := lastPrompt(output); got != "cluster>" {
+			if got := lastPrompt(output); got != "workspace>" {
 				t.Fatalf("final prompt = %q, want workspace prompt", got)
 			}
 		})
@@ -175,7 +180,7 @@ func TestCDParentMovesOneLevelUp(t *testing.T) {
 		if diagnostics != "" {
 			t.Fatalf("unexpected diagnostics: %q", diagnostics)
 		}
-		if got := lastPrompt(output); got != "cluster[ai-dev/endpoint-1]>" {
+		if got := lastPrompt(output); got != "endpoint[ai-dev/endpoint-1]>" {
 			t.Fatalf("final prompt = %q, want endpoint prompt with hostname", got)
 		}
 	})
@@ -184,7 +189,7 @@ func TestCDParentMovesOneLevelUp(t *testing.T) {
 		if diagnostics != "" {
 			t.Fatalf("unexpected diagnostics: %q", diagnostics)
 		}
-		if got := lastPrompt(output); got != "cluster>" {
+		if got := lastPrompt(output); got != "workspace>" {
 			t.Fatalf("final prompt = %q, want workspace prompt", got)
 		}
 	})
@@ -196,7 +201,7 @@ func TestCDParentMovesOneLevelUp(t *testing.T) {
 		if !strings.Contains(output, "already at workspace scope\n") {
 			t.Fatalf("missing workspace notice: %q", output)
 		}
-		if got := lastPrompt(output); got != "cluster>" {
+		if got := lastPrompt(output); got != "workspace>" {
 			t.Fatalf("final prompt = %q, want workspace prompt", got)
 		}
 	})
@@ -207,7 +212,7 @@ func TestCDHostnameEntersUniqueEndpoint(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if got := lastPrompt(output); got != "cluster[ai-dev/endpoint-1]>" {
+	if got := lastPrompt(output); got != "endpoint[ai-dev/endpoint-1]>" {
 		t.Fatalf("final prompt = %q, want endpoint prompt", got)
 	}
 }
@@ -231,7 +236,7 @@ func TestCDHostnameConflictSelectsNumberedCandidate(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if got := lastPrompt(output); got != "cluster[ai-dev/endpoint-2]>" {
+	if got := lastPrompt(output); got != "endpoint[ai-dev/endpoint-2]>" {
 		t.Fatalf("final prompt = %q, want second candidate endpoint", got)
 	}
 }
@@ -241,7 +246,7 @@ func TestCDHostnameConflictAcceptsFullPath(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if got := lastPrompt(output); got != "cluster[ai-dev/endpoint-2]>" {
+	if got := lastPrompt(output); got != "endpoint[ai-dev/endpoint-2]>" {
 		t.Fatalf("final prompt = %q, want second candidate endpoint", got)
 	}
 }
@@ -266,7 +271,7 @@ func TestCDHostnameConflictCancelKeepsScope(t *testing.T) {
 			if !strings.Contains(output, testCase.want) {
 				t.Fatalf("output = %q, want %q", output, testCase.want)
 			}
-			if got := lastPrompt(output); got != "cluster>" {
+			if got := lastPrompt(output); got != "workspace>" {
 				t.Fatalf("final prompt = %q, want unchanged workspace prompt", got)
 			}
 		})
@@ -281,7 +286,7 @@ func TestCDHostnameConflictEOFKeepsScope(t *testing.T) {
 	if !strings.Contains(output, "scope transition cancelled\n") {
 		t.Fatalf("output = %q, want cancellation notice", output)
 	}
-	if got := lastPrompt(output); got != "cluster>" {
+	if got := lastPrompt(output); got != "workspace>" {
 		t.Fatalf("final prompt = %q, want unchanged workspace prompt", got)
 	}
 }
@@ -291,7 +296,7 @@ func TestCDHostnameEndpointPathEntersEndpoint(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if got := lastPrompt(output); got != "cluster[ai-dev/endpoint-1]>" {
+	if got := lastPrompt(output); got != "endpoint[ai-dev/endpoint-1]>" {
 		t.Fatalf("final prompt = %q, want endpoint prompt", got)
 	}
 }
@@ -301,7 +306,7 @@ func TestCDSessionInsideEndpointScope(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if got := lastPrompt(output); got != "cluster[ai-dev/provider-res-1]>" {
+	if got := lastPrompt(output); got != "session[ai-dev/provider-res-1]>" {
 		t.Fatalf("final prompt = %q, want session prompt", got)
 	}
 }
@@ -311,7 +316,7 @@ func TestCDFullPathEntersSession(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if got := lastPrompt(output); got != "cluster[ai-dev/provider-res-1]>" {
+	if got := lastPrompt(output); got != "session[ai-dev/provider-res-1]>" {
 		t.Fatalf("final prompt = %q, want session prompt", got)
 	}
 }
@@ -340,7 +345,7 @@ func TestCDFailureKeepsCurrentScope(t *testing.T) {
 	if !strings.Contains(diagnostics, "was not found") {
 		t.Fatalf("missing failure diagnostic: %q", diagnostics)
 	}
-	if got := lastPrompt(output); got != "cluster[ai-dev/endpoint-1]>" {
+	if got := lastPrompt(output); got != "endpoint[ai-dev/endpoint-1]>" {
 		t.Fatalf("final prompt = %q, want unchanged endpoint prompt", got)
 	}
 }
@@ -350,7 +355,7 @@ func TestCDFailureKeepsSessionScope(t *testing.T) {
 	if !strings.Contains(diagnostics, "was not found") {
 		t.Fatalf("missing failure diagnostic: %q", diagnostics)
 	}
-	if got := lastPrompt(output); got != "cluster[ai-dev/provider-res-1]>" {
+	if got := lastPrompt(output); got != "session[ai-dev/provider-res-1]>" {
 		t.Fatalf("final prompt = %q, want unchanged session prompt", got)
 	}
 }
@@ -358,7 +363,7 @@ func TestCDFailureKeepsSessionScope(t *testing.T) {
 func TestUseCommandReportsRemoval(t *testing.T) {
 	output, diagnostics := runNav(t, singleHostStub(), "use 1\nquit\n")
 	assertActionableError(t, diagnostics, `error: "use" has been removed; use "cd" to navigate`)
-	if got := lastPrompt(output); got != "cluster>" {
+	if got := lastPrompt(output); got != "workspace>" {
 		t.Fatalf("final prompt = %q, want unchanged workspace prompt", got)
 	}
 }
@@ -371,7 +376,7 @@ func TestCDPromptFillsHostnameThroughRealListPath(t *testing.T) {
 	if !strings.Contains(output, "ai-dev") {
 		t.Fatalf("list did not render the endpoint hostname: %q", output)
 	}
-	if got := lastPrompt(output); got != "cluster[ai-dev/provider-res-1]>" {
+	if got := lastPrompt(output); got != "session[ai-dev/provider-res-1]>" {
 		t.Fatalf("final prompt = %q, want hostname in session prompt", got)
 	}
 }
@@ -394,7 +399,7 @@ func TestCDPromptFillsHostnameFromListRows(t *testing.T) {
 	if err := RenderPrompt(&prompt, state.Scope, false, ColorPolicy{}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := prompt.String(), "cluster[ai-dev/provider-res-1]> "; got != want {
+	if got, want := prompt.String(), "session[ai-dev/provider-res-1]> "; got != want {
 		t.Fatalf("prompt = %q, want %q", got, want)
 	}
 }
@@ -405,9 +410,9 @@ func TestCDPromptsUseExactAnsiSequences(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "workspace", input: "quit\n", want: ansiBoldGreen + "cluster>" + ansiReset + " "},
-		{name: "endpoint", input: "cd ai-dev/endpoint-1\nquit\n", want: ansiBoldGreen + "cluster[ai-dev/endpoint-1]>" + ansiReset + " "},
-		{name: "session", input: "cd ai-dev/endpoint-1/res-1\nquit\n", want: ansiBoldGreen + "cluster[ai-dev/provider-res-1]>" + ansiReset + " "},
+		{name: "workspace", input: "quit\n", want: ansiBoldGreen + "workspace>" + ansiReset + " "},
+		{name: "endpoint", input: "cd ai-dev/endpoint-1\nquit\n", want: ansiBoldGreen + "endpoint[ai-dev/endpoint-1]>" + ansiReset + " "},
+		{name: "session", input: "cd ai-dev/endpoint-1/res-1\nquit\n", want: ansiBoldGreen + "session[ai-dev/provider-res-1]>" + ansiReset + " "},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -433,7 +438,7 @@ func TestCDPromptHasNoAnsiWhenColorDisabled(t *testing.T) {
 	if strings.Contains(output.String(), "\x1b") {
 		t.Fatalf("colorless output contains ANSI: %q", output.String())
 	}
-	if !strings.Contains(output.String(), "cluster[ai-dev/provider-res-1]> ") {
+	if !strings.Contains(output.String(), "session[ai-dev/provider-res-1]> ") {
 		t.Fatalf("missing plain prompt: %q", output.String())
 	}
 }
@@ -458,9 +463,9 @@ func TestSessionPromptUsesProviderSessionIDAndSanitizesIt(t *testing.T) {
 		scope ScopeState
 		want  string
 	}{
-		{name: "provider session id", scope: ScopeState{Kind: ScopeSession, Hostname: "ai-dev", ProviderSessionID: "20261027152208", SessionName: "统一Agent管理方案"}, want: "cluster[ai-dev/20261027152208]> "},
-		{name: "empty provider session id", scope: ScopeState{Kind: ScopeSession, Hostname: "ai-dev", ProviderSessionID: "", SessionName: "统一Agent管理方案", SessionID: "res_1234567890abcdef"}, want: "cluster[ai-dev/-]> "},
-		{name: "slash in provider session id", scope: ScopeState{Kind: ScopeSession, Hostname: "ai-dev", ProviderSessionID: "provider/session"}, want: "cluster[ai-dev/provider∕session]> "},
+		{name: "provider session id", scope: ScopeState{Kind: ScopeSession, Hostname: "ai-dev", ProviderSessionID: "20261027152208", SessionName: "统一Agent管理方案"}, want: "session[ai-dev/20261027152208]> "},
+		{name: "empty provider session id", scope: ScopeState{Kind: ScopeSession, Hostname: "ai-dev", ProviderSessionID: "", SessionName: "统一Agent管理方案", SessionID: "res_1234567890abcdef"}, want: "session[ai-dev/-]> "},
+		{name: "slash in provider session id", scope: ScopeState{Kind: ScopeSession, Hostname: "ai-dev", ProviderSessionID: "provider/session"}, want: "session[ai-dev/provider∕session]> "},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -484,7 +489,7 @@ func TestSessionPromptKeepsGreenBoldStyle(t *testing.T) {
 	if err := RenderPrompt(&output, scope, false, ColorPolicy{Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := output.String(), ansiBoldGreen+"cluster[ai-dev/20261027152208]>"+ansiReset+" "; got != want {
+	if got, want := output.String(), ansiBoldGreen+"session[ai-dev/20261027152208]>"+ansiReset+" "; got != want {
 		t.Fatalf("prompt = %q, want %q", got, want)
 	}
 }
@@ -495,7 +500,7 @@ func TestSessionPromptDoesNotFallBackToDisplayNameOrResourceID(t *testing.T) {
 	if err := RenderPrompt(&output, scope, false, ColorPolicy{}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := output.String(), "cluster[ai-dev/-]> "; got != want {
+	if got, want := output.String(), "session[ai-dev/-]> "; got != want {
 		t.Fatalf("prompt = %q, want %q", got, want)
 	}
 }

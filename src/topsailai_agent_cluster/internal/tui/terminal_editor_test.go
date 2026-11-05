@@ -30,7 +30,7 @@ func TestTerminalEditorLines(t *testing.T) {
 		history bool
 		want    string
 	}{{true, "help"}, {true, "help"}, {false, "secret"}, {true, "help"}} {
-		got, bad, err := editor.ReadLine(context.Background(), "cluster> ", c.history, 32)
+		got, bad, err := editor.ReadLine(context.Background(), "workspace> ", c.history, 32)
 		if err != nil || bad || got != c.want {
 			t.Fatalf("%q %v %v", got, bad, err)
 		}
@@ -125,7 +125,7 @@ func TestTerminalByteReaderCancellation(t *testing.T) {
 
 // TestTerminalPromptRowOwnership prevents stranded prompts while preserving question rows.
 func TestTerminalPromptRowOwnership(t *testing.T) {
-	for _, prompt := range []string{"cluster> ", "cluster[host/session]> ", "start.folder> ", "start.task> ", "\nanswer> "} {
+	for _, prompt := range []string{"workspace> ", "session[host/session]> ", "start.folder> ", "start.task> ", "\nanswer> "} {
 		for _, width := range []int{12, 80} {
 			var out strings.Builder
 			editor := NewTerminalEditor(&editorTestInput{Reader: strings.NewReader("\r")}, &out, func() int { return width }, func() (func() error, error) { return func() error { return nil }, nil })

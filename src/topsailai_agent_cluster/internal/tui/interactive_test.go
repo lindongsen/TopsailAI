@@ -132,7 +132,7 @@ func TestInteractiveLoopContinuesAfterErrorAndQuit(t *testing.T) {
 	if !strings.Contains(errorsOut.String(), `unknown command "bad"`) || !strings.Contains(output.String(), "Current scope:") {
 		t.Fatalf("recovery output missing: out=%q err=%q", output.String(), errorsOut.String())
 	}
-	if !strings.Contains(output.String(), "cluster> ") {
+	if !strings.Contains(output.String(), "workspace> ") {
 		t.Fatalf("prompt missing: %q", output.String())
 	}
 }
@@ -144,7 +144,7 @@ func TestInteractiveUseChangesPromptAndEOFIsSuccessful(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunInteractive: %v", err)
 	}
-	if !strings.Contains(output.String(), "cluster[endpoint-1/-]> ") || !strings.Contains(output.String(), "running") {
+	if !strings.Contains(output.String(), "session[endpoint-1/-]> ") || !strings.Contains(output.String(), "running") {
 		t.Fatalf("state output missing: %q", output.String())
 	}
 }
@@ -189,7 +189,7 @@ func TestInteractiveLineLimitAndClear(t *testing.T) {
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{LineLimit: 4}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(errorsOut.String(), "exceeds") || !strings.Contains(output.String(), "cluster>") {
+	if !strings.Contains(errorsOut.String(), "exceeds") || !strings.Contains(output.String(), "workspace>") {
 		t.Fatalf("limit/clear not covered: %q %q", output.String(), errorsOut.String())
 	}
 }
@@ -268,7 +268,7 @@ func TestReplacementInvalidationIsStickyAndRequiresUse(t *testing.T) {
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "cluster[endpoint-1/-!]> ") {
+	if !strings.Contains(output.String(), "session[endpoint-1/-!]> ") {
 		t.Fatalf("missing invalidated prompt: %q", output.String())
 	}
 	if strings.Count(errorsOut.String(), "selected session generation changed; use the session again") != 1 {
@@ -381,7 +381,7 @@ func TestInteractiveListRowsBindSessionThroughCD(t *testing.T) {
 	if !strings.Contains(output.String(), "NO") || !strings.Contains(output.String(), "host-a") || !strings.Contains(output.String(), "topsailai") {
 		t.Fatalf("missing readable row presentation: %q", output.String())
 	}
-	if !strings.Contains(output.String(), "cluster[endpoint-1/-]>") {
+	if !strings.Contains(output.String(), "session[endpoint-1/-]>") {
 		t.Fatalf("cd did not bind session: %q errors=%q", output.String(), errorsOut.String())
 	}
 }
@@ -396,7 +396,7 @@ func TestInteractiveUseCommandIsRemovedAndBindsNothing(t *testing.T) {
 		`error: "use" has been removed; use "cd" to navigate`,
 		`error: "use" has been removed; use "cd" to navigate`,
 	)
-	if strings.Contains(output.String(), "cluster[endpoint-1/-]>") {
+	if strings.Contains(output.String(), "session[endpoint-1/-]>") {
 		t.Fatalf("removed use command bound a session: %q", output.String())
 	}
 }

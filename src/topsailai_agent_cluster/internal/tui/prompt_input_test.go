@@ -28,7 +28,7 @@ func TestPromptReaderGating(t *testing.T) {
 		steps++
 		switch steps {
 		case 1:
-			if !history || !strings.HasSuffix(out.String(), "cluster> ") || prompt != "cluster> " {
+			if !history || !strings.HasSuffix(out.String(), "workspace> ") || prompt != "workspace> " {
 				t.Fatalf("prompt=%q history=%v out=%q", prompt, history, out.String())
 			}
 			return "start", false, nil

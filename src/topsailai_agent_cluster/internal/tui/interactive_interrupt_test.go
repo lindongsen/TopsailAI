@@ -43,7 +43,7 @@ func (w *promptWatcher) Write(data []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	written, err := w.buffer.Write(data)
-	if strings.Contains(w.buffer.String(), "cluster> ") {
+	if strings.Contains(w.buffer.String(), "workspace> ") {
 		w.once.Do(func() { close(w.ready) })
 	}
 	return written, err
