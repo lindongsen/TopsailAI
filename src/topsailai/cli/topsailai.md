@@ -36,6 +36,7 @@ The CLI is organized as five scopes. Each scope is a navigation and action conte
 - Resume driver selection does not use `ai_agent_driver` or `TOPSAILAI_AGENT_DRIVER`; only the built-in driver choices apply.
 - The selected model configuration is resolved immediately before an agent launch or resume and applies only to the launched child process, never to the parent shell.
 - The CLI validates driver entry files once at its configuration boundary. An invalid explicit override is rejected rather than silently replaced with a default, and configuration changes require restarting the CLI.
+- In `workspace`, `session` and `project` scope the leading `/` of a command is optional, so a command and its `/`-prefixed spelling are the same command. Only the first token is normalized, so the remainder of the line (a message body, a JSON payload or a path) is passed through unchanged. The `!<command>` shell escape is never normalized, and `runtime` and `doc` scope keep their existing spellings.
 
 ## Caveats
 
