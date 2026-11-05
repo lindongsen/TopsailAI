@@ -71,7 +71,7 @@ func TestStartupLeavesWorkspaceScope(t *testing.T) {
 	if !strings.Contains(output, "workspace> ") {
 		t.Fatalf("workspace prompt missing: %q", output)
 	}
-	if (strings.Contains(output, "endpoint[") || strings.Contains(output, "session[")) {
+	if strings.Contains(output, "endpoint[") || strings.Contains(output, "session[") {
 		t.Fatalf("startup entered a nested scope: %q", output)
 	}
 }
@@ -116,7 +116,7 @@ func TestStartupFailureKeepsWorkspaceScope(t *testing.T) {
 	if !strings.Contains(output, "workspace> ") {
 		t.Fatalf("workspace prompt missing after failure: %q", output)
 	}
-	if (strings.Contains(output, "endpoint[") || strings.Contains(output, "session[")) {
+	if strings.Contains(output, "endpoint[") || strings.Contains(output, "session[") {
 		t.Fatalf("failed startup changed scope: %q", output)
 	}
 }
