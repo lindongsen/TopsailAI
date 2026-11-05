@@ -806,7 +806,7 @@ def prompt_selection(
                 continue
             lower_input = user_input.lower()
 
-            if lower_input in ("q", "quit", "exit"):
+            if lower_input in ("q", "quit", "exit", "/q", "/quit", "/exit"):
                 if state.current_scope == "doc":
                     return ("leave_scope", None)
                 return ("quit", None)
@@ -817,7 +817,11 @@ def prompt_selection(
                 execute_shell_command(user_input)
                 continue
 
-            if lower_input.split() and lower_input.split()[0] == "/meta" and state.current_scope != "runtime":
+            # A leading '/' is optional for the workspace task-list commands
+            # below, so "meta 1" and "/meta 1" are equivalent.
+            first_token = lower_input.split()[0] if lower_input.split() else ""
+
+            if first_token in ("/meta", "meta") and state.current_scope != "runtime":
                 if state.current_scope != "workspace" or state.workspace_showing_managed_projects:
                     print("[ERROR] /meta is only available in the ordinary workspace task list.")
                     continue
@@ -832,7 +836,7 @@ def prompt_selection(
                     continue
                 return ("meta", number - 1)
 
-            if lower_input.split() and lower_input.split()[0] == "/kill":
+            if first_token in ("/kill", "kill"):
                 if state.current_scope != "workspace" or state.workspace_showing_managed_projects:
                     print("[ERROR] /kill is only available in the ordinary workspace task list.")
                     continue
@@ -847,7 +851,7 @@ def prompt_selection(
                     continue
                 return ("kill", number - 1)
 
-            if lower_input.split() and lower_input.split()[0] == "/driver":
+            if first_token in ("/driver", "driver"):
                 if state.current_scope != "workspace" or state.workspace_showing_managed_projects:
                     print("[ERROR] /driver is only available in the ordinary workspace task list.")
                     continue
@@ -863,17 +867,18 @@ def prompt_selection(
             # Restricted command set when workspace is showing the managed
             # project list. Only r/recent, p/projects, q/quit/cd, and
             # p agent <number> are accepted; everything else is rejected.
+            # A leading '/' is optional for every accepted command.
             if (
                 state.current_scope == "workspace"
                 and state.workspace_showing_managed_projects
             ):
-                if lower_input in ("r", "recent"):
+                if lower_input in ("r", "recent", "/r", "/recent"):
                     return ("refresh", None)
-                if lower_input in ("p", "projects"):
+                if lower_input in ("p", "projects", "/p", "/projects"):
                     return ("show_managed_projects", None)
                 if lower_input in ("cd", "/cd"):
                     return ("refresh", None)
-                if lower_input.startswith("p ") or lower_input.startswith("/p "):
+                if lower_input.startswith(("p ", "/p ")):
                     parts = user_input.split(None, 2)
                     subcmd = parts[1].lower() if len(parts) > 1 else ""
                     if subcmd == "agent":
@@ -898,9 +903,8 @@ def prompt_selection(
             # Project scope: r/recent shows recent session/project history.
             # This must be checked before the global r/refresh binding.
             if state.current_scope == "project" and (
-                lower_input in ("r", "recent")
-                or lower_input.startswith("r ")
-                or lower_input.startswith("recent ")
+                lower_input in ("r", "recent", "/r", "/recent")
+                or lower_input.startswith(("r ", "recent ", "/r ", "/recent "))
             ):
                 parts = user_input.split(None, 1)
                 if len(parts) > 1:
@@ -931,7 +935,7 @@ def prompt_selection(
             ):
                 return ("refresh", "all")
 
-            if lower_input in ("r", "refresh", "/refresh"):
+            if lower_input in ("r", "/r", "refresh", "/refresh"):
                 return ("refresh", None)
             if lower_input.startswith("/clean") or lower_input.startswith("clean"):
                 parts = user_input.split()
@@ -959,18 +963,14 @@ def prompt_selection(
             if lower_input in ("/stream", "stream"):
                 return ("stream", None)
 
-            if state.current_scope == "workspace" and lower_input == "scopes":
+            if state.current_scope == "workspace" and lower_input in ("scopes", "/scopes"):
                 return ("scopes", None)
 
             if lower_input in ("/help", "help"):
                 return ("help", None)
 
-            if lower_input.startswith("/help "):
-                keyword = user_input[6:].strip()
-                return ("help", keyword)
-
-            if lower_input.startswith("help "):
-                keyword = user_input[5:].strip()
+            if lower_input.startswith(("/help ", "help ")):
+                keyword = user_input.split(None, 1)[1].strip()
                 return ("help", keyword)
 
             # Per-command help: /cmd -h or /cmd --help
@@ -1028,9 +1028,9 @@ def prompt_selection(
 
             # Managed project list commands (available in workspace and project scopes).
             if state.current_scope in ("workspace", "project"):
-                if lower_input in ("p", "projects"):
+                if lower_input in ("p", "projects", "/p", "/projects"):
                     return ("show_managed_projects", None)
-                if lower_input.startswith("p ") or lower_input.startswith("/p "):
+                if lower_input.startswith(("p ", "/p ")):
                     parts = user_input.split(None, 2)
                     subcmd = parts[1].lower() if len(parts) > 1 else ""
                     if subcmd == "add":
@@ -1048,7 +1048,7 @@ def prompt_selection(
                         f"'{subcmd}'. Use p add or p del.{Colors.RESET}"
                     )
                     continue
-            if lower_input == "/models":
+            if lower_input in ("/models", "models"):
                 if state.current_scope in ("workspace", "project"):
                     return ("models", "select")
                 print(
@@ -1056,7 +1056,12 @@ def prompt_selection(
                     f"or project scope.{Colors.RESET}"
                 )
                 continue
-            if lower_input in ("/models current", "/models clear"):
+            if lower_input in (
+                "/models current",
+                "models current",
+                "/models clear",
+                "models clear",
+            ):
                 if state.current_scope in ("workspace", "project"):
                     return ("models", lower_input.split()[1])
                 print(
@@ -1064,15 +1069,7 @@ def prompt_selection(
                     f"or project scope.{Colors.RESET}"
                 )
                 continue
-            if lower_input in ("/models current", "/models clear"):
-                if state.current_scope in ("workspace", "project"):
-                    return ("models", lower_input.split()[1])
-                print(
-                    f"{Colors.RED}[ERROR] /models is only available in workspace "
-                    f"or project scope.{Colors.RESET}"
-                )
-                continue
-            if lower_input.startswith("/models "):
+            if lower_input.startswith(("/models ", "models ")):
                 print(
                     f"{Colors.RED}[ERROR] Usage: /models, /models current, "
                     f"or /models clear{Colors.RESET}"

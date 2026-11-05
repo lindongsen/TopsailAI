@@ -63,6 +63,12 @@ The CLI has five scopes, derived from the original design notes in `../../topsai
 - **`[session:<id>]`** — a focused scope for one session. It provides context retrieval and streaming, runtime messaging, agent2llm and persistent context injection, configured session commands, and return to workspace scope.
 - **`[doc]`** — a browser for Markdown documentation grouped under `docs/`. It provides numbered document reading, list refresh, help, and return to workspace scope.
 
+### Optional leading slash
+
+In `workspace`, `session` and `project` scope, the leading `/` of a command is optional: `meta 1` and `/meta 1` are the same command, and the same holds for every other command in those scopes, including `q`/`quit`/`exit`, `r`/`recent`, `p`/`projects`, `models`, `scopes`, `clean`, `help`, `session`, `agent`, `resume`, `retrieve`, `stream`, `send` and the YAML-configured commands. Only the first token is normalized, so the rest of the line — a message body, a JSON payload or a path — is passed through unchanged. The `!<command>` shell escape is never normalized.
+
+`runtime` and `doc` scope keep their existing spellings; this rule does not extend to them.
+
 ## Session Output Files
 
 The stream watcher discovers session and task stdout/stderr files in the task directory (`{TOPSAILAI_HOME}/workspace/task/`).

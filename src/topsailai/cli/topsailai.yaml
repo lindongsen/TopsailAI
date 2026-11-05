@@ -57,7 +57,7 @@ instructions_helper:
 
 instructions:
   # > Rules:
-  # The instructions do not need to start with '/' in these scopes (compatibility): workspace, session
+  # The instructions do not need to start with '/' in these scopes (compatibility): workspace, session, project
   # Can dynamically recognize variables in the shell, assign values in order, and the format of variables in the shell is {variable-name}
   # After entering a scope, call 'help' only displays instructions related to that scope
 
