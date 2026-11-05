@@ -16,6 +16,7 @@ description: |
   - "resume / watch / send a message to a running session"
   - "interrupt or control a running agent"
   - "inspect logs, sessions, or runtime state under ~/.topsailai"
+  - "where is the usage data broken down by model" / "per-model token totals"
   - "add, update, or remove a model in the model registry" (`topsailai models`)
 ---
 
@@ -31,8 +32,10 @@ configured agent driver (for example `topsailai_agent_chats` or
 
 The agent runtime stores its generated data under `TOPSAILAI_HOME` (default
 `~/.topsailai`): logs under `log/`, sessions and tasks under `workspace/task/`,
-memory under `memory/`, skills under `skill/`, and global configuration in
-`settings.yaml` plus `.env.local` / `.env`.
+per-model usage statistics under `workspace/stats/`, memory under `memory/`,
+skills under `skill/`, and global configuration in `settings.yaml` plus
+`.env.local` / `.env`. The session database is `memory.db` in that same home
+directory.
 
 ## Human factual context (`USER.md`)
 
@@ -82,6 +85,7 @@ Use this skill when the user wants to:
 - Choose the right agent mode for a task.
 - Watch, resume, message, or control a running session.
 - Inspect agent runtime logs, sessions, or state.
+- Find usage statistics broken down by model.
 
 ## Launch workflow
 
@@ -379,6 +383,30 @@ flag_overview: 1
 - Use the `topsailai models` command to manage it instead of editing the file
   by hand.
 
+## Per-model usage statistics
+
+Usage data broken down by model lives in two stores. Read
+`references/model-usage-statistics.md` in this skill for the complete field
+reference, naming rules, derived-value formulas and reading caveats.
+
+- **Per-model cumulative totals** — `{TOPSAILAI_HOME}/workspace/stats/`
+  (default `~/.topsailai/workspace/stats/`), one document per model named
+  `{slug}.{digest}.model.stats.json`. Totals are cumulative across sessions,
+  processes and restarts, and the sibling `.lock` file is not a document.
+- **Per-attempt records** — `{TOPSAILAI_HOME}/workspace/task/`, one JSON Lines
+  file per process named `{session_id}.{pid}.session.stats.jsonl`. Every record
+  carries `model_name`, so this store answers "which model did this attempt use"
+  and provides bounded recent history.
+
+The session database `{TOPSAILAI_HOME}/memory.db` (table `session`) has **no
+`model_name` column**, so `topsailai_list_sessions` and
+`topsailai_session_info` report conversation totals only and cannot answer a
+per-model question.
+
+No CLI reader exists for the per-model documents: no `topsailai` subcommand
+lists or aggregates them, and `topsailai models` manages only the model registry.
+Read the documents directly and aggregate them yourself.
+
 ## Log files
 
 Runtime logs live under `{TOPSAILAI_HOME}/log/` (default
@@ -395,5 +423,7 @@ Runtime logs live under `{TOPSAILAI_HOME}/log/` (default
 
 - **SKILL.md**: this document.
 - **scripts/**: none.
-- **references/**: none.
+- **references/**: `model-usage-statistics.md` — per-model usage statistics
+  reference: the two storage locations, file naming rules, every field, derived
+  value formulas, retention and reading caveats.
 - **assets/**: none.
