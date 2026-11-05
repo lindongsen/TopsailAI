@@ -103,7 +103,7 @@ One admitted standard management intent, independent of current Session membersh
 | operation | TEXT | Versioned standard operation such as agent.start/resume/stop |
 | request_json | TEXT | Frozen standard target/profile ID and revision, generation, payload, capability revision and immutable deadline |
 | request_hash | TEXT | Versioned canonical request digest for duplicate/conflict detection |
-| state | TEXT | admitted, dispatched, endpoint_admitted, executing, finished, rejected, expired or cancelled_before_execution |
+| state | TEXT | admitted, dispatched, endpoint_admitted, executing, finished, rejected, expired, cancelled_before_execution or unconfirmed |
 | result_json | TEXT nullable | Standard delivery boundary, effect certainty, outcome and redacted error; no provider-specific response schema |
 | deadline_at_ms | BIGINT | Immutable admission/execution validity deadline |
 | finished_at_ms | BIGINT nullable | Terminal command lifecycle time, not task success |

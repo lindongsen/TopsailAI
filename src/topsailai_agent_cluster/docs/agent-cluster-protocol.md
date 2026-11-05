@@ -106,9 +106,12 @@ Track lifecycle separately from provider evidence:
 ```text
 Server admitted -> dispatched -> Endpoint admitted -> executing -> finished
                  -> expired/rejected/cancelled_before_execution
+executing -> unconfirmed (deadline passed with delivery sent and exit unconfirmed)
 ```
 
 Evidence fields include delivery boundary, effect certainty (`not_applied`, `acknowledged`, `unknown`), provider outcome (`succeeded`, `failed`, `not_reported`), and response details. Finished execution of a CLI call does not mean successful agent work. An acknowledged FIFO write can finish the transport command while provider outcome remains not_reported. An execution timeout may have unknown effects.
+
+`unconfirmed` is terminal and always carries `unknown` effect certainty. It is written when a command is still `executing` after its immutable deadline, because delivery already happened and the exit was never confirmed. Reporting such a command as `not_applied` would deny a signal that was actually sent, and leaving it `executing` forever would hide the terminal outcome from the operator. Reads converge these rows idempotently and never overwrite a command that already reached `finished`, `rejected` or `failed`.
 
 End-to-end delivery is at-least-once with bounded deduplication, NOT exactly-once execution:
 
