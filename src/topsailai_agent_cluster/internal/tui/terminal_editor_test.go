@@ -145,3 +145,31 @@ func TestTerminalPromptRowOwnership(t *testing.T) {
 		}
 	}
 }
+
+// TestTerminalEditorGreenPrompt preserves styling without counting ANSI as columns.
+func TestTerminalEditorGreenPrompt(t *testing.T) {
+	for _, width := range []int{12, 80} {
+		var plain, green strings.Builder
+		for _, colored := range []bool{false, true} {
+			out := &plain
+			if colored {
+				out = &green
+			}
+			var prompt strings.Builder
+			if err := RenderPrompt(&prompt, ScopeState{}, false, ColorPolicy{Enabled: colored}); err != nil {
+				t.Fatal(err)
+			}
+			editor := NewTerminalEditor(&editorTestInput{Reader: strings.NewReader("x\r")}, out, func() int { return width }, func() (func() error, error) { return func() error { return nil }, nil })
+			if _, _, err := editor.ReadLine(context.Background(), prompt.String(), true, 32); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if !strings.Contains(green.String(), ansiBoldGreen) || !strings.Contains(green.String(), ansiReset) {
+			t.Fatal("green prompt missing")
+		}
+		stripped := strings.ReplaceAll(strings.ReplaceAll(green.String(), ansiBoldGreen, ""), ansiReset, "")
+		if stripped != plain.String() {
+			t.Fatalf("width=%d colored cursor/layout differs", width)
+		}
+	}
+}

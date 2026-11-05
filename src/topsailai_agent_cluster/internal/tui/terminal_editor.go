@@ -98,10 +98,18 @@ func (t *TerminalEditor) redraw(prompt string) error {
 	if width < 4 {
 		width = 4
 	}
+	green := strings.HasPrefix(prompt, ansiBoldGreen) && strings.HasSuffix(prompt, ansiReset+" ")
+	if green {
+		prompt = strings.TrimSuffix(strings.TrimPrefix(prompt, ansiBoldGreen), ansiReset+" ") + " "
+	}
 	prompt = clipCell(prompt, max(1, width/2))
-	budget := width - displayWidth(prompt) - 1
+	promptWidth := displayWidth(prompt)
+	budget := width - promptWidth - 1
 	text, cursor := t.editor.viewport(budget)
-	_, err := fmt.Fprintf(t.output, "\r\x1b[2K%s%s\r\x1b[%dC", prompt, text, displayWidth(prompt)+cursor)
+	if green {
+		prompt = ansiBoldGreen + prompt + ansiReset
+	}
+	_, err := fmt.Fprintf(t.output, "\r\x1b[2K%s%s\r\x1b[%dC", prompt, text, promptWidth+cursor)
 	return err
 }
 

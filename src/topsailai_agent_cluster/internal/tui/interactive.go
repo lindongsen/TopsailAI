@@ -219,7 +219,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		var err error
 		if options.ReadLine != nil {
 			var prompt strings.Builder
-			if promptErr := writePrompt(&prompt, state, ColorPolicy{}); promptErr != nil {
+			if promptErr := writePrompt(&prompt, state, options.Color); promptErr != nil {
 				return promptErr
 			}
 			readCtx, cancelRead := context.WithCancel(parent)
