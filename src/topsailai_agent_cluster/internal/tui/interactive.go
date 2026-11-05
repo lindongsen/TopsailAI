@@ -397,6 +397,15 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 			recorder := &startOutputRecorder{}
 			startOut := newRecordingWriter(out, recorder)
 			err := projectLaunch(ctx, api, query, state, rest, lineResults, startOut, options)
+			if stderrors.Is(err, errLaunchQuit) {
+				return true, startOutputError(nil, recorder, startOut)
+			}
+			if stderrors.Is(err, errLaunchRefresh) {
+				if _, writeErr := fmt.Fprintln(startOut, "start cancelled"); writeErr != nil {
+					return false, startOutputError(writeErr, recorder, startOut)
+				}
+				return false, startOutputError(interactiveRefresh(ctx, api, state, trustedOut, errOut, options.Color), recorder, startOut)
+			}
 			return false, startOutputError(err, recorder, startOut)
 		}
 		draft, err := parseInteractiveStartDraft(rest)

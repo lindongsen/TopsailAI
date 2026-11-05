@@ -72,7 +72,7 @@ func TestProjectLaunchWizard(t *testing.T) {
 func TestLaunchAnswerFailure(t *testing.T) {
 	for _, input := range []string{"", strings.Repeat("x", 20) + "\n"} {
 		lines, done, stop := startInputReader(strings.NewReader(input), 8)
-		_, err := launchAnswer(context.Background(), lines, io.Discard, "task")
+		_, _, err := launchAnswer(context.Background(), lines, io.Discard, &interactiveState{}, "task")
 		stop()
 		done.Wait()
 		if err == nil {
@@ -163,3 +163,69 @@ type launchFailWriter struct{ err error }
 
 // Write simulates a disconnected terminal without mutating shared output state.
 func (w launchFailWriter) Write([]byte) (int, error) { return 0, w.err }
+
+// TestProjectLaunchControlWords proves wizard control words never reach the launch query or admission.
+func TestProjectLaunchControlWords(t *testing.T) {
+	for _, item := range []struct {
+		name, rest, input string
+		wantErr           error
+		wantAdmit         int
+		wantCalls         int
+		wantFolder        string
+		wantHelp          bool
+		wantUnavailable   bool
+	}{
+		{name: "help-endpoint", rest: "", input: "help start\nendpoint-1\n1\ndo work\n", wantAdmit: 1, wantCalls: 2, wantFolder: "/work/my app", wantHelp: true},
+		{name: "help-folder", rest: "endpoint-1", input: "help\n1\ndo work\n", wantAdmit: 1, wantCalls: 2, wantFolder: "/work/my app", wantHelp: true},
+		{name: "help-task", rest: "endpoint-1", input: "1\nhelp\ndo work\n", wantAdmit: 1, wantCalls: 2, wantFolder: "/work/my app", wantHelp: true},
+		{name: "quit-endpoint", rest: "", input: "q\n", wantErr: errLaunchQuit},
+		{name: "quit-task", rest: "endpoint-1", input: "1\nq\n", wantErr: errLaunchQuit, wantCalls: 2},
+		{name: "refresh-folder", rest: "endpoint-1", input: "1\nr\n", wantErr: errLaunchRefresh, wantCalls: 2},
+		{name: "quoted-control", rest: "endpoint-1", input: "'q'\ndo work\n", wantAdmit: 1, wantCalls: 2, wantFolder: "q"},
+		{name: "unavailable-command", rest: "endpoint-1", input: "list\n1\ndo work\n", wantAdmit: 1, wantCalls: 2, wantFolder: "/work/my app", wantUnavailable: true},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			stub := &launchStub{interactiveStub: startupStub()}
+			lines, done, stop := startInputReader(strings.NewReader(item.input), 8192)
+			defer func() { stop(); done.Wait() }()
+			var out strings.Builder
+			err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, item.rest, lines, &out, InteractiveOptions{})
+			if item.wantErr != nil {
+				if !errors.Is(err, item.wantErr) {
+					t.Fatalf("err=%v want %v", err, item.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("err=%v", err)
+			}
+			if stub.admit != item.wantAdmit || stub.calls != item.wantCalls {
+				t.Fatalf("admit=%d calls=%d want admit=%d calls=%d", stub.admit, stub.calls, item.wantAdmit, item.wantCalls)
+			}
+			if item.wantHelp && !strings.Contains(out.String(), "Syntax: start") {
+				t.Fatalf("help missing: %q", out.String())
+			}
+			if item.wantUnavailable && !strings.Contains(out.String(), "command unavailable during start input") {
+				t.Fatalf("diagnostic missing: %q", out.String())
+			}
+			if item.wantFolder != "" {
+				if len(stub.intents) != 1 || stub.intents[0].Folder != item.wantFolder {
+					t.Fatalf("intents=%#v", stub.intents)
+				}
+			}
+		})
+	}
+}
+
+// TestProjectLaunchQuitExitsRepl proves a wizard quit leaves interactive mode instead of printing an error.
+func TestProjectLaunchQuitExitsRepl(t *testing.T) {
+	stub := &launchStub{interactiveStub: startupStub()}
+	lines, done, stop := startInputReader(strings.NewReader("q\n"), 8192)
+	defer func() { stop(); done.Wait() }()
+	var out strings.Builder
+	quit, err := executeInteractiveLine(context.Background(), stub, &interactiveState{}, "start", lines, &out, &out, io.Discard, InteractiveOptions{})
+	if !quit || err != nil {
+		t.Fatalf("quit=%v err=%v", quit, err)
+	}
+	if stub.admit != 0 || stub.calls != 0 {
+		t.Fatalf("admit=%d calls=%d", stub.admit, stub.calls)
+	}
+}

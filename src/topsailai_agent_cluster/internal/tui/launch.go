@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -17,21 +18,125 @@ type LaunchQuerier interface {
 	GetLaunchOptions(context.Context, string, string) (protocol.LaunchOptions, error)
 }
 
-// launchAnswer reads literal, history-free input with explicit cancellation.
-func launchAnswer(ctx context.Context, lines <-chan lineReadResult, out io.Writer, field string) (string, error) {
-	prompt := "start." + field + "> "
-	if _, err := io.WriteString(out, prompt); err != nil {
-		return "", &startPromptTermination{kind: startPromptFatal, cause: err}
+// launchAnswerOutcome classifies one project-launch prompt answer.
+type launchAnswerOutcome int
+
+const (
+	launchAnswerValue launchAnswerOutcome = iota
+	launchAnswerCancel
+	launchAnswerQuit
+	launchAnswerRefresh
+)
+
+// errLaunchQuit signals that the operator asked to leave the REPL from a launch prompt.
+var errLaunchQuit = errors.New("launch quit")
+
+// errLaunchRefresh signals that the operator asked to refresh from a launch prompt.
+var errLaunchRefresh = errors.New("launch refresh")
+
+// classifyLaunchAnswer maps one answer to an outcome and its literal value.
+// A quoted control word stays a literal value, matching the legacy start wizard.
+func classifyLaunchAnswer(line string) (launchAnswerOutcome, string) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || trimmed == "cancel" {
+		return launchAnswerCancel, ""
 	}
-	line, err := readStartAnswer(ctx, lines, prompt)
+	if isQuotedLaunchAnswer(trimmed) {
+		return launchAnswerValue, strings.TrimSuffix(strings.TrimPrefix(trimmed, trimmed[:1]), trimmed[:1])
+	}
+	switch trimmed {
+	case "q", "quit", "exit":
+		return launchAnswerQuit, ""
+	case "r", "refresh":
+		return launchAnswerRefresh, ""
+	}
+	return launchAnswerValue, line
+}
+
+// isQuotedLaunchAnswer reports whether the answer is wrapped in matching quotes.
+func isQuotedLaunchAnswer(trimmed string) bool {
+	single := strings.HasPrefix(trimmed, "'") && strings.HasSuffix(trimmed, "'")
+	double := strings.HasPrefix(trimmed, `"`) && strings.HasSuffix(trimmed, `"`)
+	return single || double
+}
+
+// launchAnswer reads literal, history-free input with explicit cancellation and control words.
+// Help and unavailable-command answers are reported and the same field is asked again.
+func launchAnswer(ctx context.Context, lines <-chan lineReadResult, out io.Writer, state *interactiveState, field string) (string, launchAnswerOutcome, error) {
+	prompt := "start." + field + "> "
+	for {
+		if _, err := io.WriteString(out, prompt); err != nil {
+			return "", launchAnswerCancel, &startPromptTermination{kind: startPromptFatal, cause: err}
+		}
+		line, err := readStartAnswer(ctx, lines, prompt)
+		if errors.Is(err, errStartPromptOverflow) {
+			if writeErr := writeInteractiveError(out, "start", fmt.Errorf("input line exceeds the maximum length")); writeErr != nil {
+				return "", launchAnswerCancel, &startPromptTermination{kind: startPromptFatal, cause: writeErr}
+			}
+			continue
+		}
+		if err != nil {
+			return "", launchAnswerCancel, err
+		}
+		outcome, value := classifyLaunchAnswer(line)
+		if outcome == launchAnswerCancel {
+			if _, writeErr := fmt.Fprintln(out, "start cancelled"); writeErr != nil {
+				return "", launchAnswerCancel, &startPromptTermination{kind: startPromptFatal, cause: writeErr}
+			}
+			return "", launchAnswerCancel, nil
+		}
+		if outcome != launchAnswerValue {
+			return "", outcome, nil
+		}
+		if handled, handleErr := handleLaunchAnswerControl(out, state, line); handleErr != nil {
+			return "", launchAnswerCancel, handleErr
+		} else if handled {
+			continue
+		}
+		return value, launchAnswerValue, nil
+	}
+}
+
+// handleLaunchAnswerControl prints help or rejects a known command without consuming the answer.
+func handleLaunchAnswerControl(out io.Writer, state *interactiveState, line string) (bool, error) {
+	trimmed := strings.TrimSpace(line)
+	if isQuotedLaunchAnswer(trimmed) {
+		return false, nil
+	}
+	switch trimmed {
+	case "help", "?", "help start":
+		if err := PrintScopedCommandHelp(out, "start", state.Scope.Kind); err != nil {
+			return false, &startPromptTermination{kind: startPromptFatal, cause: err}
+		}
+		return true, nil
+	}
+	command, _ := splitCommand(trimmed)
+	if _, known := commandHelpCatalog[canonicalCommandName(command)]; known {
+		if err := writeInteractiveError(out, "start", fmt.Errorf("command unavailable during start input; cancel before running another command")); err != nil {
+			return false, &startPromptTermination{kind: startPromptFatal, cause: err}
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// launchAnswerValueOrControl returns the literal value or the REPL control signal.
+// A cancelled answer returns an empty value and no error, because it already reported itself.
+func launchAnswerValueOrControl(ctx context.Context, lines <-chan lineReadResult, out io.Writer, state *interactiveState, field string) (string, error) {
+	value, outcome, err := launchAnswer(ctx, lines, out, state, field)
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(line) == "" || line == "cancel" {
-		_, err := fmt.Fprintln(out, "start cancelled")
-		return "", err
+	switch outcome {
+	case launchAnswerCancel:
+		return "", nil
+	case launchAnswerQuit:
+		return "", errLaunchQuit
+	case launchAnswerRefresh:
+		return "", errLaunchRefresh
+	default:
+		return value, nil
 	}
-	return line, nil
 }
 
 // projectLaunch collects a complete draft before submitting exactly one durable start.
@@ -45,7 +150,7 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 		endpointID = args[0]
 	}
 	if endpointID == "" {
-		endpointID, err = launchAnswer(ctx, lines, out, "endpoint")
+		endpointID, err = launchAnswerValueOrControl(ctx, lines, out, state, "endpoint")
 		if err != nil || endpointID == "" {
 			return err
 		}
@@ -69,7 +174,7 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 				return err
 			}
 		}
-		answer, err := launchAnswer(ctx, lines, out, "adapter")
+		answer, err := launchAnswerValueOrControl(ctx, lines, out, state, "adapter")
 		if err != nil || answer == "" {
 			return err
 		}
@@ -99,7 +204,7 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 	if _, err := fmt.Fprintln(out, "Choose a project number or enter a folder; empty/cancel cancels."); err != nil {
 		return err
 	}
-	folder, err := launchAnswer(ctx, lines, out, "folder")
+	folder, err := launchAnswerValueOrControl(ctx, lines, out, state, "folder")
 	if err != nil || folder == "" {
 		return err
 	}
@@ -112,7 +217,7 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 	if err := protocol.ValidateFolder(folder); err != nil {
 		return err
 	}
-	task, err := launchAnswer(ctx, lines, out, "task")
+	task, err := launchAnswerValueOrControl(ctx, lines, out, state, "task")
 	if err != nil || task == "" {
 		return err
 	}
