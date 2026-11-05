@@ -123,7 +123,11 @@ def test_local_owner_empty_result_branch(tmp_path, request, monkeypatch, layer):
         "hook__context__before__summary_generate_" + layer]
     assert [row["name"] for row in scenario.deployment.rows()] == ["Alpha", "zeta", "A", "z"]
     from topsailai.hooks.point_entry import pending_cleanup
-    assert all(r.status == "success" for r in scenario.reports[0])
+    report = scenario.reports[0]
+    assert report.status == "success" and report.cleanup.state == "safe"
+    assert all(r.status == "success" and r.cleanup.state == "safe" for r in report.handlers)
+    assert all(r.status == "success" and r.cleanup.state == "safe"
+               for r in report.handlers[-1].children)
     assert pending_cleanup() == ()
 
 
@@ -139,10 +143,15 @@ def test_direct_order_and_checkpoint_custody(tmp_path, request, monkeypatch, lay
     hooks.initialize_hook_points(tree.config)
     operation = DirectSummaryOperation(layer)
     result = operation.emit("before_summary_generate")
-    assert [(r.kind, r.name, r.status) for r in result] == [
+    assert result.status == "success" and result.cleanup.state == "safe"
+    assert [(r.handler.kind, r.handler.name, r.status) for r in result.handlers] == [
         ("module", "Alpha.py", "success"), ("module", "observer.py", "success"),
-        ("module", "zeta.py", "success"), ("script", "A", "success"),
-        ("script", "z", "success")]
+        ("module", "zeta.py", "success"), ("default_script_hook", "hook_script", "success")]
+    assert [(r.handler.kind, r.handler.name, r.status)
+            for r in result.handlers[-1].children] == [
+        ("script", "A", "success"), ("script", "z", "success")]
+    assert all(r.cleanup.state == "safe" for r in result.handlers)
+    assert all(r.cleanup.state == "safe" for r in result.handlers[-1].children)
     assert operation.emit("before_summary_generate").already_handled
     assert [r["name"] for r in tree.rows()] == ["Alpha", "zeta", "A", "z"]
     second = DirectSummaryOperation(layer)
@@ -172,8 +181,18 @@ def test_direct_error_and_deadline_settlement(tmp_path, request, monkeypatch, fa
     monkeypatch.setattr(hooks, "_point_configuration", ())
     hooks.initialize_hook_points(tree.config)
     result = DirectSummaryOperation("user2agent").emit("before_summary_generate")
-    assert next(r for r in result if r.name == "A").status == (
-        "timeout" if fault == "blocked" else "error")
+    expected_status = "timeout" if fault == "blocked" else "completed_with_errors"
+    assert result.status == expected_status and result.cleanup.state == "safe"
+    terminal = result.handlers[-1]
+    assert terminal.handler.kind == "default_script_hook"
+    assert terminal.status == expected_status
+    assert [(r.handler.name, r.status) for r in terminal.children] == [
+        ("A", "timeout" if fault == "blocked" else "error"),
+        ("z", "not_run" if fault == "blocked" else "success")]
+    assert all(r.cleanup.state == "safe" for r in result.handlers)
+    assert all(r.cleanup.state == "safe" for r in terminal.children)
+    from topsailai.hooks.point_entry import pending_cleanup
+    assert pending_cleanup() == ()
     assert [r["name"] for r in tree.rows()] == (
         ["Alpha", "zeta", "A"] if fault == "blocked" else ["Alpha", "zeta", "A", "z"])
     tree.close()
