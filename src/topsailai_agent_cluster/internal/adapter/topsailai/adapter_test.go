@@ -178,22 +178,63 @@ func TestStopRequiresGenerationAndPreservesSignalSemantics(t *testing.T) {
 }
 
 func TestTopsailaiAdapterExecutesDeclaredInterruptOperation(t *testing.T) {
-	runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"provider-secret","process_generation":"g1"}]}`)}
-	a := newTestAdapter(t, runner)
-	if _, err := a.Discover(context.Background(), adapter.DiscoverRequest{}); err != nil {
-		t.Fatal(err)
+	for _, testCase := range []struct {
+		name    string
+		payload string
+		want    []string
+	}{
+		{name: "soft", payload: `{"action":"soft_interrupt","message":"stop now"}`, want: []string{"runtime", "control", "soft_interrupt", "-s", "provider-secret", "-a", `{"message":"stop now"}`, "--json"}},
+		{name: "hard", payload: `{"action":"hard_interrupt"}`, want: []string{"runtime", "control", "hard_interrupt", "-s", "provider-secret", "-a", `{}`, "--json"}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"provider-secret","process_generation":"g1"}]}`)}
+			a := newTestAdapter(t, runner)
+			if _, err := a.Discover(context.Background(), adapter.DiscoverRequest{}); err != nil {
+				t.Fatal(err)
+			}
+			runner.out = []byte(`{"delivery_boundary":"submitted"}`)
+			_, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
+				CommandID: "interrupt-1", Operation: protocol.OperationExecutionInterrupt,
+				Target:  &protocol.CommandTarget{ResourceID: "res_provider-secret", Generation: "g1"},
+				Payload: []byte(testCase.payload),
+			}})
+			if err != nil {
+				t.Fatalf("declared interrupt operation failed: %v", err)
+			}
+			if !reflect.DeepEqual(runner.args, testCase.want) {
+				t.Fatalf("unexpected interrupt argv: %#v", runner.args)
+			}
+		})
 	}
-	runner.out = []byte(`{"delivery_boundary":"submitted"}`)
-	_, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
-		CommandID: "interrupt-1", Operation: protocol.OperationExecutionInterrupt,
-		Target:  &protocol.CommandTarget{ResourceID: "res_provider-secret", Generation: "g1"},
-		Payload: []byte(`{"text":"interrupt"}`),
-	}})
-	if err != nil {
-		t.Fatalf("declared interrupt operation failed: %v", err)
-	}
-	if !reflect.DeepEqual(runner.args, []string{"runtime", "control", "-s", "provider-secret", "-a", `{"text":"interrupt"}`, "--json"}) {
-		t.Fatalf("unexpected interrupt argv: %#v", runner.args)
+}
+
+func TestTopsailaiAdapterRejectsInvalidInterruptPayload(t *testing.T) {
+	for _, payload := range []string{
+		`null`,
+		`[]`,
+		`{}`,
+		`{"action":"interrupt"}`,
+		`{"action":"clear_interrupt"}`,
+		`{"action":"hard_interrupt","message":"not allowed"}`,
+		`{"action":"soft_interrupt","unknown":true}`,
+		`{"action":"soft_interrupt","message":1}`,
+	} {
+		t.Run(payload, func(t *testing.T) {
+			runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"provider-secret","process_generation":"g1"}]}`)}
+			a := newTestAdapter(t, runner)
+			if _, err := a.Discover(context.Background(), adapter.DiscoverRequest{}); err != nil {
+				t.Fatal(err)
+			}
+			runner.args = nil
+			_, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
+				CommandID: "interrupt-invalid", Operation: protocol.OperationExecutionInterrupt,
+				Target:  &protocol.CommandTarget{ResourceID: "res_provider-secret", Generation: "g1"},
+				Payload: []byte(payload),
+			}})
+			if err == nil || runner.args != nil {
+				t.Fatalf("invalid payload reached provider: err=%v args=%#v", err, runner.args)
+			}
+		})
 	}
 }
 

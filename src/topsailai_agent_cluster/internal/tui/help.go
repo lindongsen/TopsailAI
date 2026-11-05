@@ -37,7 +37,7 @@ var commandHelpCatalog = map[string]commandHelp{
 	"resume":    {"resume [--payload <json>]", "resume the selected session", []string{"--payload: optional JSON payload; defaults to {}", "--json: rejected in interactive mode"}, []string{"resume", `resume --payload '{"note":"example"}'`}},
 	"stop":      {"stop", "stop the selected session after confirmation", []string{"--json: rejected in interactive mode"}, []string{"stop"}},
 	"inject":    {"inject <json>", "inject context into the selected session", []string{"json: context payload", "--json: rejected in interactive mode"}, []string{`inject {"text":"context"}`}},
-	"interrupt": {"interrupt <json>", "request an execution interrupt for the selected session", []string{"json: control payload", "--json: rejected in interactive mode"}, []string{`interrupt {"action":"interrupt"}`}},
+	"interrupt": {"interrupt <json>", "request a soft or hard execution interrupt for the selected session", []string{"json: object with action soft_interrupt or hard_interrupt; soft_interrupt also accepts an optional string message", "--json: rejected in interactive mode"}, []string{`interrupt {"action":"soft_interrupt","message":"Stop and summarize now."}`, `interrupt {"action":"hard_interrupt"}`}},
 	"logs":      {"logs [session]", "show bounded output for a session in the current endpoint", []string{"session: optional session/resource ID; defaults to the current session"}, []string{"logs", "logs res_abc"}},
 	"send":      {"send <json>", "send a JSON message to the selected session", []string{"json: message payload"}, []string{`send {"text":"hello"}`}},
 	"status":    {"status <command-id>", "show the durable result of a command", []string{"command-id: submitted command identifier"}, []string{"status cmd_123"}},

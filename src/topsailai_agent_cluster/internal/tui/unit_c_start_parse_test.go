@@ -185,7 +185,7 @@ func TestUnitCStartStandaloneHelpMatchesCurrentPreCContract(t *testing.T) {
 		{"list", "6bd206a5189193222ff5e9baadb104be632b1caa57d8574abd4218b1b615108c", 1298},
 		{"start", "74345eaaa6d716dd8e5489febac7c4afd1a4ef8530844ccf57fbc34394f9be62", 854},
 		{"btw", "bfce130962dc1b5e01cd764bc94ae3d7699816986506d9740b8ddeb2144d4222", 219},
-		{"control", "461072489b4a4746d93eee86819e001d6f680c7156fc421dd5899a23b9fc6dc6", 247},
+		{"control", "9f1bfd81fcdbc946874fa3dba2c6f6517b557b215a002b76420de9c43653c495", 432},
 	} {
 		var output bytes.Buffer
 		if err := PrintCommandHelp(&output, tc.target); err != nil {

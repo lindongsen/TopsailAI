@@ -259,7 +259,11 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 		}
 		args = []string{"runtime", "btw", "-s", providerKey, "-m", message, "--json"}
 	case protocol.OperationExecutionInterrupt, "control":
-		args = []string{"runtime", "control", "-s", providerKey, "-a", string(intent.Payload), "--json"}
+		action, payload, err := interruptControlPayload(intent.Payload)
+		if err != nil {
+			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "invalid_payload")}, err
+		}
+		args = []string{"runtime", "control", action, "-s", providerKey, "-a", string(payload), "--json"}
 	case protocol.OperationAgentStart:
 		if intent.LaunchProfileID == "" {
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "profile_required")}, errors.New("launch profile is required")
@@ -293,6 +297,41 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 		return adapter.ExecuteResult{Receipt: receipt}, runErr
 	}
 	return adapter.ExecuteResult{Receipt: receiptFromJSON(intent, output)}, nil
+}
+
+func interruptControlPayload(payload []byte) (string, []byte, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &envelope); err != nil || envelope == nil {
+		return "", nil, errors.New("interrupt payload must be a JSON object")
+	}
+	var action string
+	if err := json.Unmarshal(envelope["action"], &action); err != nil || action == "" {
+		return "", nil, errors.New("interrupt payload action must be soft_interrupt or hard_interrupt")
+	}
+	delete(envelope, "action")
+	switch action {
+	case "soft_interrupt":
+		if len(envelope) > 1 || (len(envelope) == 1 && envelope["message"] == nil) {
+			return "", nil, errors.New("soft_interrupt accepts only an optional message")
+		}
+		if raw, ok := envelope["message"]; ok {
+			var message string
+			if err := json.Unmarshal(raw, &message); err != nil {
+				return "", nil, errors.New("soft_interrupt message must be a string")
+			}
+		}
+	case "hard_interrupt":
+		if len(envelope) != 0 {
+			return "", nil, errors.New("hard_interrupt does not accept arguments")
+		}
+	default:
+		return "", nil, errors.New("interrupt payload action must be soft_interrupt or hard_interrupt")
+	}
+	args, err := json.Marshal(envelope)
+	if err != nil {
+		return "", nil, fmt.Errorf("encode interrupt payload: %w", err)
+	}
+	return action, args, nil
 }
 
 func runtimeMessage(payload []byte) (string, error) {
