@@ -167,30 +167,104 @@ class TestSendControlRequest:
 
 class TestFormatHumanResponse:
     def test_ok_without_result(self):
-        text = format_human_response({"status": "ok", "request_id": "abc"})
-        assert text == "[ok] request_id=abc"
+        text = format_human_response({"status": "ok", "request_id": "abc"}, color=False)
+        assert text == "status: ok    request_id: abc"
 
     def test_ok_with_result(self):
         text = format_human_response({
             "status": "ok",
             "request_id": "abc",
             "result": {"count": 3},
-        })
-        assert "[ok]" in text
-        assert "request_id=abc" in text
-        assert '{"count": 3}' in text
+        }, color=False)
+        assert "status: ok" in text
+        assert "request_id: abc" in text
+        assert '  "count": 3' in text
+
+    def test_multiline_string_result_keeps_real_newlines(self):
+        """Instruction help output must not be escaped into one line."""
+        result = "-----\nInstructions:\n\n  /env.set\n    - set_env\n-----"
+        text = format_human_response(
+            {"status": "ok", "request_id": "abc", "result": result}, color=False)
+        assert result in text
+        assert "\\n" not in text
+        assert text.endswith(result)
 
     def test_error(self):
         text = format_human_response({
             "status": "error",
             "request_id": "abc",
             "error": "unknown action",
-        })
-        assert text == "[error] request_id=abc error=unknown action"
+        }, color=False)
+        assert text == "status: error    request_id: abc\nerror: unknown action"
+
+    def test_error_still_prints_non_empty_result(self):
+        """A non-empty result is never hidden, even when the status is error."""
+        text = format_human_response({
+            "status": "error",
+            "request_id": "abc",
+            "error": "boom",
+            "result": "line1\nline2",
+        }, color=False)
+        assert "error: boom" in text
+        assert "line1\nline2" in text
 
     def test_unknown_status(self):
-        text = format_human_response({"request_id": "abc"})
-        assert "[unknown]" in text
+        text = format_human_response({"request_id": "abc"}, color=False)
+        assert "status: unknown" in text
+
+    def test_unknown_status_still_prints_result(self):
+        text = format_human_response(
+            {"request_id": "abc", "result": {"state": "queued"}}, color=False)
+        assert "status: unknown" in text
+        assert '"state": "queued"' in text
+
+    @pytest.mark.parametrize("result", [None, "", "   ", {}, [], ()])
+    def test_empty_result_is_omitted(self, result):
+        """Only an empty result may be hidden."""
+        text = format_human_response(
+            {"status": "ok", "request_id": "abc", "result": result}, color=False)
+        assert text == "status: ok    request_id: abc"
+
+    def test_ansi_and_control_characters_are_stripped(self):
+        text = format_human_response({
+            "status": "ok",
+            "request_id": "abc",
+            "result": "\x1b[31mred\x1b[0m\x00ok\r\nnext",
+        }, color=False)
+        assert "\x1b" not in text
+        assert "\x00" not in text
+        assert "redok" in text
+
+    def test_error_text_is_sanitized(self):
+        text = format_human_response({
+            "status": "error",
+            "request_id": "abc",
+            "error": "\x1b[2Jcleared",
+        }, color=False)
+        assert "\x1b" not in text
+        assert "cleared" in text
+
+    def test_color_disabled_emits_no_escape_codes(self):
+        text = format_human_response(
+            {"status": "ok", "request_id": "abc", "result": "x"}, color=False)
+        assert "\x1b" not in text
+
+    def test_color_enabled_emits_escape_codes(self):
+        text = format_human_response(
+            {"status": "ok", "request_id": "abc", "result": "x"}, color=True)
+        assert "\x1b" in text
+
+    def test_no_color_environment_disables_color(self, monkeypatch):
+        monkeypatch.setenv("NO_COLOR", "1")
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+        text = format_human_response({"status": "ok", "request_id": "abc"})
+        assert "\x1b" not in text
+
+    def test_non_tty_disables_color(self, monkeypatch):
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: False, raising=False)
+        text = format_human_response({"status": "ok", "request_id": "abc"})
+        assert "\x1b" not in text
 
 
 class TestGetParams:
@@ -287,7 +361,8 @@ class TestMain:
         captured = capsys.readouterr()
         assert "No matching" in captured.err
 
-    def test_successful_send_json_by_default(self, tmp_path, capsys):
+    def test_successful_send_readable_by_default(self, tmp_path, capsys):
+        """The default output is readable text, not escaped JSON."""
         (tmp_path / "abc.123.session.stdout").write_text("")
         (tmp_path / "abc.123.session.sock").write_text("")
 
@@ -307,9 +382,76 @@ class TestMain:
         assert code == 0
         captured = capsys.readouterr()
         output = captured.out
-        assert json.loads(output) == mock_response
-        assert '  "status": "ok"' in output
-        assert '    "handled": true' in output
+        assert "status: ok" in output
+        assert "request_id: server-id" in output
+        assert '  "handled": true' in output
+        assert '"request_id": "server-id"' not in output
+
+    def test_default_output_keeps_multiline_result_readable(self, tmp_path, capsys):
+        """A multi-line instruction result must not be escaped into one line."""
+        (tmp_path / "abc.123.session.stdout").write_text("")
+        (tmp_path / "abc.123.session.sock").write_text("")
+
+        result = "-----\nInstructions:\n\n  /env.set\n    - set_env\n-----"
+        mock_send = MagicMock(return_value=(True, {
+            "request_id": "server-id",
+            "status": "ok",
+            "result": result,
+        }))
+
+        code = self._run_main(
+            ["script", "-s", "abc", "-p", "123", "-c", "call_instruction"],
+            tmp_path,
+            mock_send=mock_send,
+        )
+
+        assert code == 0
+        output = capsys.readouterr().out
+        assert result in output
+        assert "\\n" not in output
+
+    def test_default_output_prints_result_for_error_status(self, tmp_path, capsys):
+        """A non-empty result is printed even when the status is not ok."""
+        (tmp_path / "abc.123.session.stdout").write_text("")
+        (tmp_path / "abc.123.session.sock").write_text("")
+
+        mock_send = MagicMock(return_value=(True, {
+            "request_id": "server-id",
+            "status": "error",
+            "error": "unknown action",
+            "result": {"detail": "kept"},
+        }))
+
+        code = self._run_main(
+            ["script", "-s", "abc", "-p", "123", "-c", "hard_interrupt"],
+            tmp_path,
+            mock_send=mock_send,
+        )
+
+        assert code != 0
+        output = capsys.readouterr().out
+        assert "error: unknown action" in output
+        assert '"detail": "kept"' in output
+
+    def test_default_output_omits_empty_result(self, tmp_path, capsys):
+        """Only an empty result may be hidden."""
+        (tmp_path / "abc.123.session.stdout").write_text("")
+        (tmp_path / "abc.123.session.sock").write_text("")
+
+        mock_send = MagicMock(return_value=(True, {
+            "request_id": "server-id",
+            "status": "ok",
+            "result": {},
+        }))
+
+        code = self._run_main(
+            ["script", "-s", "abc", "-p", "123", "-c", "hard_interrupt"],
+            tmp_path,
+            mock_send=mock_send,
+        )
+
+        assert code == 0
+        assert capsys.readouterr().out.strip() == "status: ok    request_id: server-id"
 
     def test_successful_send_json_output(self, tmp_path, capsys):
         (tmp_path / "abc.123.session.stdout").write_text("")
@@ -332,6 +474,56 @@ class TestMain:
         captured = capsys.readouterr()
         output = json.loads(captured.out.strip())
         assert output["status"] == "ok"
+
+    def test_json_output_preserves_escaped_multiline_result(self, tmp_path, capsys):
+        """--json keeps the pre-change escaped single-line result."""
+        (tmp_path / "abc.123.session.stdout").write_text("")
+        (tmp_path / "abc.123.session.sock").write_text("")
+
+        result = "-----\nInstructions:\n-----"
+        mock_response = {
+            "request_id": "server-id",
+            "status": "ok",
+            "result": result,
+        }
+        mock_send = MagicMock(return_value=(True, mock_response))
+
+        code = self._run_main(
+            ["script", "-s", "abc", "-p", "123", "-c", "call_instruction", "--json"],
+            tmp_path,
+            mock_send=mock_send,
+        )
+
+        assert code == 0
+        output = capsys.readouterr().out
+        assert json.loads(output) == mock_response
+        assert "\\n" in output
+
+    def test_multi_target_human_mode_prints_headers(self, tmp_path, capsys):
+        """Each target block is headed by its socket path in human mode."""
+        (tmp_path / "abc.123.session.stdout").write_text("")
+        (tmp_path / "abc.123.session.sock").write_text("")
+        (tmp_path / "def.456.session.stdout").write_text("")
+        (tmp_path / "def.456.session.sock").write_text("")
+
+        mock_send = MagicMock(return_value=(True, {
+            "request_id": "server-id",
+            "status": "ok",
+            "result": "line1\nline2",
+        }))
+
+        code = self._run_main(
+            ["script", "-c", "hard_interrupt"],
+            tmp_path,
+            mock_send=mock_send,
+        )
+
+        assert code == 0
+        output = capsys.readouterr().out
+        assert output.count("=== ") == 2
+        assert "abc.123.session.sock ===" in output
+        assert "def.456.session.sock ===" in output
+        assert output.count("line1\nline2") == 2
 
     def test_server_error_exits_nonzero(self, tmp_path, capsys):
         (tmp_path / "abc.123.session.stdout").write_text("")

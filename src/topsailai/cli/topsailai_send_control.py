@@ -18,11 +18,13 @@ path(s) from each match.
 import argparse
 import json
 import os
+import re
 import sys
 from typing import Any, List, Optional, Tuple
 
 import _import_topsailai  # noqa: F401
 
+from cli_topsailai.colors import Colors, colored
 from cli_topsailai.log_files import parse_stdout_filename
 from cli_topsailai.runtime_control import (
     build_socket_path, get_control_actions, send_control_request,
@@ -87,17 +89,93 @@ def discover_socket_paths(
     return [socket_path for socket_path, _ in targets]
 
 
-def format_human_response(response: dict) -> str:
-    """Format a control response for human-readable output."""
+_ANSI_ESCAPE_RE = re.compile(
+    r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
+)
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def _sanitize_text(text: str) -> str:
+    """Strip ANSI escapes and control characters except newline and tab.
+
+    Control responses originate from the agent process, so a result may carry
+    terminal escape sequences. Removing them keeps a human-readable block from
+    clearing or recoloring the terminal.
+    """
+    return _CONTROL_CHAR_RE.sub("", _ANSI_ESCAPE_RE.sub("", text))
+
+
+def _is_empty_result(result: Any) -> bool:
+    """Report whether a result carries nothing worth printing.
+
+    Only an empty result may be hidden; every non-empty result is printed
+    regardless of the response status.
+    """
+    if result is None:
+        return True
+    if isinstance(result, str):
+        return not result.strip()
+    if isinstance(result, (dict, list, tuple, set)):
+        return len(result) == 0
+    return False
+
+
+def _render_result(result: Any) -> str:
+    """Render a non-empty result, preserving real newlines in strings.
+
+    A string result is printed verbatim so instruction help output keeps its
+    own indentation and separator widths. Structured results are rendered as
+    indented JSON, which is already multi-line.
+    """
+    if isinstance(result, str):
+        return _sanitize_text(result)
+    if isinstance(result, (dict, list)):
+        return _sanitize_text(json.dumps(result, ensure_ascii=False, indent=2))
+    return _sanitize_text(str(result))
+
+
+def _color_enabled() -> bool:
+    """Enable color only on a TTY with NO_COLOR unset."""
+    if os.environ.get("NO_COLOR"):
+        return False
+    try:
+        return bool(sys.stdout.isatty())
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _paint(text: str, color: str, enabled: bool) -> str:
+    """Apply a color only when color output is enabled."""
+    return colored(text, color=color) if enabled else text
+
+
+def format_human_response(response: dict, color: Optional[bool] = None) -> str:
+    """Format a control response as readable text.
+
+    A non-empty ``result`` is always printed, whatever the status; only an
+    empty result is omitted. ``color`` overrides TTY detection when given.
+    """
+    if not isinstance(response, dict):
+        return _sanitize_text(str(response))
+    enabled = _color_enabled() if color is None else color
     status = response.get("status", "unknown")
-    request_id = response.get("request_id", "")
-    if status == "ok":
-        result = response.get("result")
-        if result is None:
-            return f"[{status}] request_id={request_id}"
-        return f"[{status}] request_id={request_id} result={json.dumps(result, ensure_ascii=False)}"
-    error = response.get("error", "unknown error")
-    return f"[{status}] request_id={request_id} error={error}"
+    request_id = _sanitize_text(str(response.get("request_id", "")))
+    status_color = {"ok": Colors.GREEN, "error": Colors.RED}.get(status, Colors.YELLOW)
+    lines = [
+        f"{_paint('status:', Colors.GRAY, enabled)} "
+        f"{_paint(str(status), status_color, enabled)}    "
+        f"{_paint('request_id:', Colors.GRAY, enabled)} {request_id}"
+    ]
+    error = response.get("error")
+    if error not in (None, ""):
+        lines.append(
+            f"{_paint('error:', Colors.GRAY, enabled)} {_sanitize_text(str(error))}"
+        )
+    result = response.get("result")
+    if not _is_empty_result(result):
+        lines.append("")
+        lines.append(_render_result(result))
+    return "\n".join(lines)
 
 
 def get_params() -> dict:
@@ -157,7 +235,10 @@ def get_params() -> dict:
         dest="json_output",
         action="store_true",
         default=False,
-        help="Output the raw server response as JSON.",
+        help=(
+            "Print the raw server response as JSON instead of readable text. "
+            "Use this for scripts; the default output is for humans."
+        ),
     )
 
     args = parser.parse_args()
@@ -222,6 +303,8 @@ def main() -> int:
 
     success_count = 0
     errors: List[Tuple[str, str]] = []
+    json_output = params["json_output"]
+    multiple = len(targets) > 1
     for socket_path in targets:
         success, response = send_control_request(
             socket_path,
@@ -230,7 +313,14 @@ def main() -> int:
             params["timeout"],
         )
 
-        print(json.dumps(response, ensure_ascii=False, indent=2))
+        if json_output:
+            print(json.dumps(response, ensure_ascii=False, indent=2))
+        else:
+            if multiple:
+                print(f"=== {socket_path} ===")
+            print(format_human_response(response))
+            if multiple:
+                print()
 
         if success and response.get("status") == "ok":
             success_count += 1

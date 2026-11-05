@@ -175,3 +175,37 @@ Confirmed two independent rejections: the filename check compared against the di
 ### Why this prevents recurrence
 
 The display layer and the storage layer use different identifiers for the same session, so any path composition or identity check must translate the display sentinel first. Keeping the driver's stricter guard untouched preserves its own safety contract while the read-only metadata path gains exactly the one exception it needs.
+
+## Generated session identities must follow the project's existing identifier convention
+
+### Trigger
+
+`topsailai_agent_chats` ran with no session identity when neither
+`TOPSAILAI_SESSION_ID` nor `SESSION_ID` was set, so the run produced no session
+record, no session stdout file, and no resumable history.
+
+### Action taken
+
+Generated the identity at the CLI entry point instead of inside the library,
+because the library's "no ID means no session" contract is relied on by other
+callers. Resolution mirrors the launcher (`TOPSAILAI_SESSION_ID`, then
+`SESSION_ID`, then generate), the effective value is exported through both
+aliases, and the generated value is the compact local timestamp
+`YYYYMMDDHHMMSS` — the same format `topsailai_launch_agent._ensure_session_id`
+already produces. Verified the identity survives `initialize_session_id` and
+round-trips through `get_session_stdout_path` plus `parse_stdout_filename`, and
+confirmed the launcher always exports an identity to its child so resume never
+regenerates one.
+
+### Why this prevents recurrence
+
+The first implementation invented a new prefixed, random-suffixed format
+(`chats-<timestamp>-<hex>`) to dodge two parser behaviors, which was more design
+than the requirement needed and inconsistent with the identifier the launcher
+already generates. Before inventing an identifier format, check whether the
+project already has one and reuse it; only deviate when a concrete parser
+conflict is proven, and then document the deviation rather than silently
+diverging. One known consequence of the timestamp format is that `/cd`, `/send`,
+and `/resume` read a digits-only argument as a 1-based list index, so those
+sessions are selected by list position; this is documented in the usage doc
+instead of being worked around in the identifier.

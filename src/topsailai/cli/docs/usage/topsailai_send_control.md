@@ -32,7 +32,7 @@ When `--socket-path` is provided, discovery is skipped and only that socket is t
 | `-a ARGS`, `--args ARGS` | JSON object with action-specific arguments. Defaults to `{}`. |
 | `--socket-path SOCKET_PATH` | Send the request directly to this socket path. |
 | `--timeout TIMEOUT` | Set the socket connection timeout in seconds. Defaults to `5.0`. |
-| `--json` | Retained for backward compatibility; server responses are always printed as JSON with two-space indentation. |
+| `--json` | Print the raw server response as JSON instead of readable text. Use this for scripts; the default output is for humans. See [Output](#output). |
 
 ## Exit Status
 
@@ -40,6 +40,49 @@ When `--socket-path` is provided, discovery is skipped and only that socket is t
 |------|---------|
 | `0` | At least one targeted socket returned a successful response. |
 | `1` | No sockets were targeted or all targeted requests failed. |
+
+## Output
+
+The default output is readable text intended for a human. `--json` prints the raw server response instead and is the machine-readable contract.
+
+### Readable output (default)
+
+The first line reports the response status and request ID. An `error` line follows when the response carries one. The `result` is then printed after a blank line.
+
+```text
+status: ok    request_id: cfc6806abd80454db046c6b372518bff
+
+-------------------------------------------------------------------------
+Instructions:
+
+  /env.set
+    - set_env,
+        set environment
+
+        Args:
+            k (str): key
+            v (str): value
+
+-------------------------------------------------------------------------
+```
+
+Rendering depends on the result type:
+
+| Result type | Rendering |
+|-------------|-----------|
+| String | Printed verbatim, so real newlines, indentation and separator widths are preserved. |
+| Object or array | Printed as JSON with two-space indentation. |
+| Other scalar | Printed with `str()`. |
+
+A non-empty `result` is always printed, whatever the status is. A response with `status: error` therefore shows both the `error` line and the `result`. Only an empty result is omitted: `null`, an empty or whitespace-only string, and an empty object, array, tuple or set.
+
+Terminal escape sequences and control characters other than newline and tab are removed from the status, request ID, error and result, because a control response originates from the agent process and may carry them. Color is used only when standard output is a terminal and `NO_COLOR` is unset.
+
+When more than one socket is targeted, each block is preceded by a `=== <socket path> ===` header and followed by a blank line.
+
+### JSON output (`--json`)
+
+`--json` prints each response with `json.dumps(..., ensure_ascii=False, indent=2)` and performs no sanitizing, so the output is exactly what the server returned. When more than one socket is targeted, the responses are printed one after another; the combined output is not a single JSON document.
 
 ## Examples
 
