@@ -250,7 +250,7 @@ func printInteractiveStartHelp(out io.Writer, entry commandHelp) error {
 	if err := printCommandDetail(out, "start", entry); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintln(out, "Project launch: start [endpoint] selects a live adapter and project (or manual folder), then asks for the initial task. Empty/cancel cancels. Legacy explicit --profile syntax and clients without launch queries use the endpoint/resource/profile/revision prompts; q quits, r refreshes, and help repeats guidance.")
+	_, err := fmt.Fprintln(out, "Project launch: start [endpoint] selects a live adapter and project (or manual folder), then asks for the initial task. Without an endpoint argument it prints a numbered endpoint list and accepts a bare number, so no endpoint identifier has to be typed. Empty/cancel cancels. Legacy explicit --profile syntax and clients without launch queries use the endpoint/resource/profile/revision prompts; q quits, r refreshes, and help repeats guidance.")
 	return err
 }
 

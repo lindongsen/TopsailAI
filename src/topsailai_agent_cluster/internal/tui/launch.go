@@ -149,11 +149,9 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 	if len(args) == 1 {
 		endpointID = args[0]
 	}
-	if endpointID == "" {
-		endpointID, err = launchAnswerValueOrControl(ctx, lines, out, state, "endpoint")
-		if err != nil || endpointID == "" {
-			return err
-		}
+	endpointID, err = resolveLaunchEndpoint(ctx, api, state, endpointID, lines, out)
+	if err != nil || endpointID == "" {
+		return err
 	}
 	queryCtx, cancel := commandContext(ctx)
 	catalog, err := query.GetLaunchOptions(queryCtx, endpointID, "")
