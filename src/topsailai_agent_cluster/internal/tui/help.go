@@ -249,7 +249,7 @@ func printInteractiveStartHelp(out io.Writer, entry commandHelp) error {
 	if err := printCommandDetail(out, "start", entry); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintln(out, "Interactive missing arguments: start without all required values asks for endpoint, resource, profile, and profile-revision in that order; answers are literal values, numeric-looking values remain literal IDs, and completion starts immediately. Empty/cancel cancels, q quits, r refreshes, and help repeats this guidance.")
+	_, err := fmt.Fprintln(out, "Project launch: start [endpoint] selects a live adapter and project (or manual folder), then asks for the initial task. Empty/cancel cancels. Legacy explicit --profile syntax and clients without launch queries use the endpoint/resource/profile/revision prompts; q quits, r refreshes, and help repeats guidance.")
 	return err
 }
 

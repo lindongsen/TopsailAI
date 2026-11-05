@@ -27,13 +27,17 @@ const (
 	// FrameReceiptAck acknowledges a persisted receipt.
 	FrameReceiptAck = "receipt_ack"
 	// FrameOutputRequest requests a bounded provider output snapshot.
-	FrameOutputRequest = "output_request"
+	FrameOutputRequest  = "output_request"
+	FrameLaunchRequest  = "launch_request"
+	FrameLaunchResponse = "launch_response"
 	// FrameOutputResponse returns a bounded provider output snapshot.
 	FrameOutputResponse = "output_response"
 )
 
 // Frame is the bounded JSON envelope exchanged over the persistent channel.
 type Frame struct {
+	LaunchQuery          *protocol.LaunchQuery            `json:"launch_query,omitempty"`
+	LaunchOptions        *protocol.LaunchOptions          `json:"launch_options,omitempty"`
 	Type                 string                           `json:"type"`
 	ProtocolVersion      string                           `json:"protocol_version"`
 	FrameID              string                           `json:"frame_id,omitempty"`

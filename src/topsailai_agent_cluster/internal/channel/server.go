@@ -30,6 +30,7 @@ type Server struct {
 	OnRejectReason   func(endpointID, certificateIdentity, reason, requestID string)
 	RevokedSerials   map[string]bool
 	pendingOutput    map[string]pendingOutputRequest
+	pendingLaunch    map[string]pendingLaunchRequest
 }
 
 // pendingOutputRequest tracks one output request so read-limit failures can be reported.
@@ -155,6 +156,9 @@ func (s *Server) readLoop(ctx context.Context, peer *Peer) {
 		s.Mu.Unlock()
 		if frame.Type == FrameHeartbeat {
 			_ = wsjson.Write(ctx, peer.Conn, Frame{Type: FrameHeartbeatAck, ProtocolVersion: ProtocolVersion, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10)})
+		}
+		if frame.Type == FrameLaunchResponse {
+			s.deliverLaunch(peer, frame)
 		}
 		if frame.Type == FrameOutputResponse {
 			s.Mu.Lock()

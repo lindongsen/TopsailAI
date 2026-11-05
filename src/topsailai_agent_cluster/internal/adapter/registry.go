@@ -78,3 +78,14 @@ func (r *Registry) Get(adapterID string) (Adapter, bool) {
 	instance, ok := r.instances[adapterID]
 	return instance, ok
 }
+
+// All returns a detached snapshot of configured instances for read-only discovery.
+func (r *Registry) All() []Adapter {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]Adapter, 0, len(r.instances))
+	for _, instance := range r.instances {
+		result = append(result, instance)
+	}
+	return result
+}

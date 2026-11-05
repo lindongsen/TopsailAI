@@ -434,7 +434,7 @@ func unitCBatch2HelpText() string {
 		"  endpoint: endpoint ID\n  resource: compatibility resource identifier\n  --profile: launch profile ID (required)\n  --profile-revision: launch profile revision (required)\n  --folder: optional working folder; empty value is treated as omitted\n  --payload: optional JSON payload; defaults to {}\n  --json: rejected in interactive mode\nExamples:\n" +
 		"  start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1\n" +
 		`  start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1 --payload '{"note":"example"}'` + "\n" +
-		"Interactive missing arguments: start without all required values asks for endpoint, resource, profile, and profile-revision in that order; answers are literal values, numeric-looking values remain literal IDs, and completion starts immediately. Empty/cancel cancels, q quits, r refreshes, and help repeats this guidance.\n"
+		"Project launch: start [endpoint] selects a live adapter and project (or manual folder), then asks for the initial task. Empty/cancel cancels. Legacy explicit --profile syntax and clients without launch queries use the endpoint/resource/profile/revision prompts; q quits, r refreshes, and help repeats guidance.\n"
 }
 
 // waitRun reads the cached result after the runner publication barrier.

@@ -285,6 +285,8 @@ func (s *Service) channelLoop(ctx context.Context) {
 			s.publishRefresh(ctx, frame.RequestID)
 		case channel.FrameCommand:
 			s.executeFrame(ctx, frame)
+		case channel.FrameLaunchRequest:
+			s.launchFrame(ctx, frame)
 		case channel.FrameOutputRequest:
 			s.outputFrame(ctx, frame)
 		}

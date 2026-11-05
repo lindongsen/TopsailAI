@@ -268,7 +268,14 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 		if intent.Folder != "" {
 			args = append(args, intent.Folder)
 		}
+		task, supplied, err := initialTask(intent.Payload)
+		if err != nil {
+			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "invalid_payload")}, err
+		}
 		args = append(args, "--background", "--json", "--non-interactive")
+		if supplied {
+			args = append(args, "--task="+task)
+		}
 	case protocol.OperationAgentResume:
 		args = []string{"workspace", "resume", "-s", providerKey, "--background", "--json"}
 	case protocol.OperationAgentStop:

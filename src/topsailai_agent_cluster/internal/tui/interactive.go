@@ -373,6 +373,12 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "refresh":
 		return false, interactiveRefresh(ctx, api, state, out, errOut, options.Color)
 	case "start":
+		if query, ok := api.(LaunchQuerier); ok && !strings.Contains(rest, "--") {
+			recorder := &startOutputRecorder{}
+			startOut := newRecordingWriter(out, recorder)
+			err := projectLaunch(ctx, api, query, state, rest, lineResults, startOut, options)
+			return false, startOutputError(err, recorder, startOut)
+		}
 		draft, err := parseInteractiveStartDraft(rest)
 		if err != nil {
 			return false, err
