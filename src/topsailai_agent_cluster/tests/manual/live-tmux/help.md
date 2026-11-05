@@ -24,16 +24,16 @@ For **each** of list, cd, show, start, resume, stop, inject, interrupt, logs, se
 | Command | Required syntax/semantics |
 | --- | --- |
 | list | `list [endpoint] [--clean]`; scoped filter must match current endpoint; --clean omits failed endpoints, diagnostics remain |
-| cd | `cd [target]`; empty and / return workspace, .. moves parent, latest row/hostname/endpoint/internal session selectors supported |
-| show | `show [endpoint-or-session]`; omitted target uses selected scope target; workspace without target must report required selection |
-| start | wizard `start [endpoint]`; folder/project and task prompts; legacy explicit endpoint/resource/profile/revision syntax documented separately |
+| cd | `cd [target]`; empty and / return workspace, .. moves parent, latest row number/hostname/endpoint/internal session/provider session selectors supported |
+| show | `show [endpoint-or-session]`; omitted target uses selected scope target; a bare row number or the displayed provider session ID is accepted; workspace without target must report required selection and name `show <number>` |
+| start | wizard `start [endpoint]`; without an endpoint argument it prints a numbered endpoint list and accepts a bare number, so no endpoint identifier has to be typed; folder/project and task prompts; legacy explicit endpoint/resource/profile/revision syntax documented separately |
 | resume | `resume [--payload <json>]`; selected stopped historical session, confirmation, valid payload; complete fresh inventory must prove no live generation before and after confirmation |
 | stop | `stop`; confirmation, pinned resource and generation |
 | inject | `inject <json>`; object with text/message for TopsailAI, confirmation |
 | interrupt | `interrupt <json>`; provider-compatible control operation and confirmation; verify real effect, not just admission |
-| logs | `logs [session]`; selected session by default; bounded stdout body, not just metadata |
+| logs | `logs [session]`; selected session by default; a bare row number or the displayed provider session ID is accepted; bounded stdout body, not just metadata |
 | send | `send <json>`; JSON object with text/message for TopsailAI, confirmation |
-| status | session `status [command-id]`; explicit result, otherwise last CLI-submitted command, otherwise selected session state; other scopes require ID if none retained |
+| status | `status [command-id]`; explicit result, otherwise the last command submitted in this CLI, otherwise selected session state; with no retained command it explains the short form instead of demanding an identifier |
 | refresh | `refresh`; reload server inventory, not a promise of synchronous provider discovery |
 | help | `help [command]`, all, scope/scopes and aliases |
 | quit | `quit`; restores terminal and exits without stopping agent |
@@ -43,3 +43,17 @@ For **each** of list, cd, show, start, resume, stop, inject, interrupt, logs, se
 Enter `help all`, `help scope`, `help scopes`, `?`, `help btw`, `help control`, `help q`, `help unknown-command`. Expect all 14 canonical commands with scope lists, six aliases, workspace/endpoint/session model and every cd form; aliases resolve to canonical detailed help. Unknown help reports error and leaves scope unchanged. Run `logs --help` and `start --help`: if REPL rejects option-style help, error must explicitly direct to `help logs`/`help start`; standalone --help support does not prove REPL support.
 
 Capture full actual help output as the run-specific reference. A discrepancy between prose, syntax, example and actual action is a defect even when all are separately printable.
+
+## HELP-04 Short input forms
+
+Every command that takes a session or endpoint target accepts a short form, so an operator never has to type a long identifier.
+
+| Command | Short form | Long form still accepted |
+| --- | --- | --- |
+| `cd` | `cd <row>` | `cd <hostname>/<endpoint>`, `cd <hostname>/<endpoint>/<session>` |
+| `show` | `show <row>` | `show <endpoint-id>`, `show <resource-id>`, `show <provider-session-id>` |
+| `logs` | `logs <row>` | `logs <resource-id>`, `logs <provider-session-id>` |
+| `status` | `status` (no argument) | `status <command-id>` |
+| `start` | `start` then a bare endpoint number | `start <endpoint-id>` |
+
+Actionable errors must name the short form: a missing session reports `use cd <number> to select a session row`, and a workspace-scope `show` reports `use show <number> for a session row or show <endpoint-id>`.
