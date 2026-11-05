@@ -651,7 +651,9 @@ func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveSta
 			return endpoint, report, session, nil
 		}
 	}
-	return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %q was not found", state.SessionID)
+	// The endpoint no longer reports the pinned session, so the selection can never be
+	// resolved again; name the recovery step instead of leaving the operator to guess.
+	return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %q was not found; use cd .. to leave the session scope", state.SessionID)
 }
 
 func validateSessionFreshness(report protocol.InventoryReport, session protocol.Session) error {

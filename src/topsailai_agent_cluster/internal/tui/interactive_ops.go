@@ -376,14 +376,49 @@ func interactiveSessionLifecycle(parent context.Context, api InteractiveAPI, sta
 		revalidate := func(revalidateCtx context.Context) error {
 			return validateResumeSelectionAbsent(revalidateCtx, api, state)
 		}
-		return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentResume, name, state.SessionID, state.Generation, payload, lines, out, options, revalidate)
+		return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentResume, name, state.SessionID, state.Generation, payload, lines, out, options, revalidate, nil)
 	}
 	_, _, session, err := findSelected(ctx, api, state)
 	cancel()
 	if err != nil {
 		return err
 	}
-	return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentStop, name, session.SessionID, session.Generation, payload, lines, out, options, nil)
+	postSubmit := func(postCtx context.Context, result map[string]any) error {
+		return reconcileStoppedSelection(postCtx, api, state, session.SessionID, out)
+	}
+	return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentStop, name, session.SessionID, session.Generation, payload, lines, out, options, nil, postSubmit)
+}
+
+// reconcileStoppedSelection leaves the session scope once a fresh inventory proves the
+// stopped session is no longer reported. The durable receipt stays the only authority for
+// what happened; this reconciliation only decides where the operator continues working, so
+// an inventory failure keeps the scope and never turns an acknowledged stop into an error.
+func reconcileStoppedSelection(ctx context.Context, api InteractiveAPI, state *interactiveState, sessionID string, out io.Writer) error {
+	if state.Scope.Kind != ScopeSession || state.SessionID != sessionID {
+		return nil
+	}
+	loaded, err := loadReports(ctx, api, state.EndpointID)
+	if err != nil {
+		_, writeErr := fmt.Fprintf(out, "session %s scope unchanged: endpoint inventory unavailable; use cd .. to leave the session scope\n", sessionID)
+		return writeErr
+	}
+	report, ok := loaded.reports[state.EndpointID]
+	if !ok || !report.ReportComplete {
+		_, writeErr := fmt.Fprintf(out, "session %s scope unchanged: endpoint inventory unavailable; use cd .. to leave the session scope\n", sessionID)
+		return writeErr
+	}
+	for _, session := range report.Sessions {
+		if session.SessionID == sessionID {
+			return nil
+		}
+	}
+	endpoint, found := endpointByID(loaded, state.EndpointID)
+	if !found {
+		endpoint = protocol.Endpoint{EndpointID: state.EndpointID, Hostname: state.Scope.Hostname}
+	}
+	state.enterEndpoint(endpoint)
+	_, err = fmt.Fprintf(out, "session %s is no longer reported by endpoint %s; returned to endpoint scope\n", sessionID, endpoint.EndpointID)
+	return err
 }
 
 // validateResumeSelectionAbsent proves from a complete fresh adapter inventory that the selected historical session has no live generation.
@@ -443,14 +478,15 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	if err != nil {
 		return err
 	}
-	return interactiveConfirmedAction(parent, api, state, op, name, session.SessionID, session.Generation, json.RawMessage(payloadText), lines, out, options, nil)
+	return interactiveConfirmedAction(parent, api, state, op, name, session.SessionID, session.Generation, json.RawMessage(payloadText), lines, out, options, nil, nil)
 }
 
 // interactiveConfirmedAction keeps mutating confirmation and shared intent submission in one path.
 // The human confirmation is read with the cancel-only parent context so that a slow
 // operator answer is never truncated by the command deadline; the command deadline
-// starts only after the answer has been accepted.
-func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, resource, generation string, payload json.RawMessage, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions, revalidate func(context.Context) error) error {
+// starts only after the answer has been accepted. postSubmit runs after the durable
+// receipt has been rendered and may reconcile the interactive scope with that receipt.
+func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, resource, generation string, payload json.RawMessage, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions, revalidate func(context.Context) error, postSubmit func(context.Context, map[string]any) error) error {
 	if _, err := fmt.Fprintf(out, "%s %s? Confirm %s? [y/N] ", name, resource, name); err != nil {
 		return err
 	}
@@ -497,5 +533,11 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 	if err != nil {
 		return err
 	}
-	return renderInteractiveStartResult(out, action.CommandID, result)
+	if err := renderInteractiveStartResult(out, action.CommandID, result); err != nil {
+		return err
+	}
+	if postSubmit == nil {
+		return nil
+	}
+	return postSubmit(ctx, result)
 }
