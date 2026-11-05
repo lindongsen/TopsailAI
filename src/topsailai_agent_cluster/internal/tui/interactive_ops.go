@@ -539,5 +539,9 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 	if postSubmit == nil {
 		return nil
 	}
-	return postSubmit(ctx, result)
+	// The command deadline may already be exhausted by the local wait, so the scope
+	// reconciliation gets its own bounded budget instead of inheriting a dead context.
+	postCtx, cancelPost := commandContext(parent)
+	defer cancelPost()
+	return postSubmit(postCtx, result)
 }

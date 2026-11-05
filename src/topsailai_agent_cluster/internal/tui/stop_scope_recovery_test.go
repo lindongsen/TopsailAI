@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"topsailai_agent_cluster/internal/protocol"
 )
@@ -161,5 +162,62 @@ func TestNonRemovingOperationsKeepTheSessionScope(t *testing.T) {
 				t.Fatalf("final prompt = %q, want session prompt", got)
 			}
 		})
+	}
+}
+
+// postSubmitBudgetStub records the command context and the context used by the
+// post-submit reconciliation so the test can prove they are not the same budget.
+type postSubmitBudgetStub struct {
+	*interactiveStub
+	commandCtx      context.Context
+	reconcileCtx    context.Context
+	reconcileErr    error
+	reconcileBudget time.Duration
+}
+
+func (s *postSubmitBudgetStub) AdmitCommand(ctx context.Context, intent protocol.ImmutableIntent) (map[string]any, error) {
+	s.commandCtx = ctx
+	return s.interactiveStub.AdmitCommand(ctx, intent)
+}
+
+func (s *postSubmitBudgetStub) GetInventory(ctx context.Context, id string) (protocol.InventoryReport, error) {
+	// Inventory reads before admission belong to the preflight; every later read is the
+	// post-submit reconciliation, which must not reuse the command budget.
+	if s.commandCtx != nil {
+		s.reconcileCtx = ctx
+		s.reconcileErr = ctx.Err()
+		if deadline, ok := ctx.Deadline(); ok {
+			s.reconcileBudget = time.Until(deadline)
+		}
+	}
+	return s.interactiveStub.GetInventory(ctx, id)
+}
+
+// TestStopScopeRecoveryUsesItsOwnBudget proves the reconciliation after the durable receipt
+// runs on a fresh bounded context: the local wait may already have exhausted the command
+// deadline, and reusing it would report an unavailable inventory for a healthy endpoint.
+func TestStopScopeRecoveryUsesItsOwnBudget(t *testing.T) {
+	stub := &postSubmitBudgetStub{interactiveStub: stopScopeStub()}
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nstop\ny\nquit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if stub.reconcileCtx == nil {
+		t.Fatal("reconciliation never read the inventory")
+	}
+	if stub.reconcileCtx == stub.commandCtx {
+		t.Fatal("reconciliation reused the command context")
+	}
+	if stub.reconcileErr != nil {
+		t.Fatalf("reconciliation context already failed when it read the inventory: %v", stub.reconcileErr)
+	}
+	if stub.reconcileBudget <= 0 {
+		t.Fatalf("reconciliation budget = %v, want a fresh bounded budget", stub.reconcileBudget)
+	}
+	if !strings.Contains(output, "session res-1 is no longer reported by endpoint endpoint-1; returned to endpoint scope") {
+		t.Fatalf("reconciliation did not converge the scope: %q", output)
+	}
+	if got := lastPrompt(output); got != "endpoint[host-one/endpoint-1]>" {
+		t.Fatalf("final prompt = %q, want endpoint prompt", got)
 	}
 }
