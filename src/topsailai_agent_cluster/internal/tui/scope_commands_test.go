@@ -138,7 +138,7 @@ func TestLogsIsUnavailableInWorkspaceScope(t *testing.T) {
 
 func TestLogsRequiresSessionInEndpointScope(t *testing.T) {
 	_, diagnostics := runScope(t, scopeStub(), "cd host-one/endpoint-1\nlogs\nquit\n", ColorPolicy{})
-	want := "error: no session selected; use cd <hostname>/<endpoint-id>/<session>\n"
+	want := "error: no session selected; use cd <number> to select a session row, or cd <hostname>/<endpoint-id>/<session>\n"
 	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 }
 
@@ -198,7 +198,7 @@ func TestListRejectsMismatchingFilterOutsideWorkspace(t *testing.T) {
 
 func TestShowRequiresTargetInWorkspaceScope(t *testing.T) {
 	_, diagnostics := runScope(t, scopeStub(), "show\nquit\n", ColorPolicy{})
-	want := "error: show requires an endpoint or session in workspace scope; use show <endpoint-or-session>\n"
+	want := "error: show requires an endpoint or session in workspace scope; use show <number> for a session row or show <endpoint-id>\n"
 	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 }
 

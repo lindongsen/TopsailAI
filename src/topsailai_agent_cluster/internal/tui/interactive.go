@@ -718,7 +718,7 @@ func interactiveShow(parent context.Context, api InteractiveAPI, state *interact
 	if id == "" {
 		switch state.Scope.Kind {
 		case ScopeWorkspace:
-			return fmt.Errorf("show requires an endpoint or session in workspace scope; use show <endpoint-or-session>")
+			return fmt.Errorf("show requires an endpoint or session in workspace scope; use show <number> for a session row or show <endpoint-id>")
 		case ScopeEndpoint:
 			id = state.Scope.EndpointID
 		default:

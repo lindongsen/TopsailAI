@@ -72,7 +72,7 @@ func (s *interactiveSelection) reset(endpointID, sessionID, generation string) {
 // requireUsable rejects no-selection and sticky-invalidated states.
 func (s interactiveSelection) requireUsable() error {
 	if s.EndpointID == "" || s.SessionID == "" {
-		return fmt.Errorf("no session selected; use cd <endpoint>/<session>")
+		return fmt.Errorf("no session selected; use cd <number> to select a session row, or cd <endpoint>/<session>")
 	}
 	if s.Invalidated {
 		return fmt.Errorf("selected session invalidated; use the session again")

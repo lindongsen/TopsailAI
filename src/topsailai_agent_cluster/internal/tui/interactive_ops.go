@@ -23,7 +23,7 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 	}
 	endpointID := state.Scope.EndpointID
 	if endpointID == "" {
-		return fmt.Errorf("no endpoint selected; use cd <hostname>/<endpoint-id>")
+		return fmt.Errorf("no endpoint selected; use cd <number> to enter an endpoint row, or cd <hostname>/<endpoint-id>")
 	}
 	resourceID := state.Scope.SessionID
 	if target := strings.TrimSpace(rest); target != "" {
@@ -41,7 +41,7 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 		}
 	}
 	if resourceID == "" {
-		return fmt.Errorf("no session selected; use cd <hostname>/<endpoint-id>/<session>")
+		return fmt.Errorf("no session selected; use cd <number> to select a session row, or cd <hostname>/<endpoint-id>/<session>")
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
