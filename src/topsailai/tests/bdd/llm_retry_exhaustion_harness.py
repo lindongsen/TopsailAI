@@ -33,6 +33,13 @@ SIGINT_RETRY_MENU_READY = "BDD_SIGINT_RETRY_MENU_READY"
 SIGINT_CHILD_RESULT = "BDD_SIGINT_CHILD_RESULT="
 
 
+def _skip_retry_backoff():
+    """Skip only this consumer's backoff without changing shared time.sleep."""
+    clock = MagicMock(wraps=time)
+    clock.sleep = MagicMock(return_value=None)
+    return patch("topsailai.ai_base.llm_base.time", clock)
+
+
 class _ScenarioComplete(Exception):
     """Stop a continuous-chat BDD scenario after its successful fresh turn."""
 
@@ -277,7 +284,7 @@ class LLMRetryScenario:
             {"role": "user", "content": "original request"},
         ]
         try:
-            with patch("topsailai.ai_base.llm_base.time.sleep", return_value=None):
+            with _skip_retry_backoff():
                 self.result = self.model.chat(
                     messages,
                     for_raw=True,
@@ -309,7 +316,7 @@ class LLMRetryScenario:
             {"role": "user", "content": "original request"},
         ]
         try:
-            with patch("topsailai.ai_base.llm_base.time.sleep", return_value=None):
+            with _skip_retry_backoff():
                 self.result = self.model.chat(
                     messages,
                     for_raw=True,
@@ -380,9 +387,7 @@ class LLMRetryScenario:
                 stack.enter_context(patch(
                     "topsailai.workspace.agent.agent_shell_base.terminal_title.refresh_terminal_title"
                 ))
-                stack.enter_context(patch(
-                    "topsailai.ai_base.llm_base.time.sleep", return_value=None
-                ))
+                stack.enter_context(_skip_retry_backoff())
                 try:
                     chat._run(
                         message="old request",
@@ -564,9 +569,7 @@ def _run_sigint_retry_menu_child() -> int:
             stack.enter_context(patch(
                 "topsailai.workspace.agent.agent_shell_base.terminal_title.refresh_terminal_title"
             ))
-            stack.enter_context(patch(
-                "topsailai.ai_base.llm_base.time.sleep", return_value=None
-            ))
+            stack.enter_context(_skip_retry_backoff())
             answer = None
             error_result = None
             try:
