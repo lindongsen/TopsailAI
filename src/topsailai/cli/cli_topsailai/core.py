@@ -356,10 +356,25 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
     if workspace_command == "list" and getattr(args, "json", False):
         output_format = "json"
     include_completed = bool(getattr(args, "all", False))
+    from cli_topsailai.log_files import SessionSelectorError, parse_session_selector
+
+    try:
+        session_ids = parse_session_selector(getattr(args, "session", None))
+    except SessionSelectorError as error:
+        print(
+            f"{Colors.RED}[ERROR] Invalid session selector: {error}. "
+            f"Usage: topsailai workspace list [-s ID1,ID2] [--json]{Colors.RESET}",
+            file=sys.stderr,
+        )
+        return 2
     if output_format == "json":
-        _print_workspace_json(include_completed=include_completed)
+        _print_workspace_json(
+            include_completed=include_completed, session_ids=session_ids,
+        )
     else:
-        _print_workspace_table(include_completed=include_completed)
+        _print_workspace_table(
+            include_completed=include_completed, session_ids=session_ids,
+        )
     return 0
 
 
@@ -1206,12 +1221,16 @@ def prompt_selection(
             return ("quit", None)
 
 
-def _print_workspace_table(include_completed: bool = False) -> None:
+def _print_workspace_table(
+    include_completed: bool = False,
+    session_ids: Optional[List[str]] = None,
+) -> None:
     """Print the workspace task list and return.
 
     This helper is used by the ``-w`` / ``--workspace`` flag to display the
     same table that normally appears at the ``[workspace]>`` prompt without
-    entering interactive mode. ``include_completed`` mirrors ``r all``.
+    entering interactive mode. ``include_completed`` mirrors ``r all``, and
+    ``session_ids`` restricts the table to the named sessions.
     """
     from cli_topsailai.formatting import print_header, print_table
     from cli_topsailai.log_files import discover_workspace_log_files as discover_log_files
@@ -1228,11 +1247,19 @@ def _print_workspace_table(include_completed: bool = False) -> None:
     print(f"{Colors.DIM}HOME: {topsailai_home}{Colors.RESET}")
     print(f"{Colors.DIM}DIR:  {task_dir}{Colors.RESET}")
 
-    log_files = discover_log_files(task_dir, include_completed=include_completed)
+    log_files = discover_log_files(
+        task_dir, include_completed=include_completed, session_ids=session_ids,
+    )
     enrich_files_with_session_names(log_files)
     _enrich_driver_rows(log_files, topsailai_home, driver_authority)
     if log_files:
         print_table(log_files)
+    elif session_ids is not None:
+        print(
+            f"\n{Colors.YELLOW}[WARN] No log files found for the selected "
+            f"sessions: {', '.join(session_ids)}{Colors.RESET}"
+        )
+        print(f"  {task_dir}")
     else:
         print(f"\n{Colors.YELLOW}[WARN] No .stdout log files found in:{Colors.RESET}")
         print(f"  {task_dir}")
@@ -1291,8 +1318,15 @@ def _workspace_json_item(file_info: dict, index: int) -> dict:
     }
 
 
-def _print_workspace_json(include_completed: bool = False) -> None:
-    """Print the workspace task list as one JSON document."""
+def _print_workspace_json(
+    include_completed: bool = False,
+    session_ids: Optional[List[str]] = None,
+) -> None:
+    """Print the workspace task list as one JSON document.
+
+    ``session_ids`` restricts the document to the named sessions, so ``items``
+    and ``total`` describe the same filtered subset the table would show.
+    """
     from cli_topsailai.log_files import discover_workspace_log_files as discover_log_files
     from cli_topsailai.paths import get_topsailai_home
     from cli_topsailai.session_info import enrich_files_with_session_names
@@ -1300,7 +1334,9 @@ def _print_workspace_json(include_completed: bool = False) -> None:
     topsailai_home = get_topsailai_home()
     driver_authority = _driver_authority(os.environ)
     task_dir = os.path.join(topsailai_home, "workspace", "task")
-    log_files = discover_log_files(task_dir, include_completed=include_completed)
+    log_files = discover_log_files(
+        task_dir, include_completed=include_completed, session_ids=session_ids,
+    )
     enrich_files_with_session_names(log_files)
     _enrich_driver_rows(log_files, topsailai_home, driver_authority)
     items = [
@@ -1610,6 +1646,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     workspace_list_parser.add_argument(
         "--json", action="store_true", help="output the list as JSON, overriding the workspace format",
+    )
+    workspace_list_parser.add_argument(
+        "-s", "--session",
+        default=None,
+        dest="session",
+        metavar="ID1,ID2",
+        help="only show the listed comma-separated session IDs",
     )
     workspace_list_parser.set_defaults(func=_handle_workspace_subcommand)
     workspace_subparsers.add_parser(

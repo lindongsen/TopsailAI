@@ -272,7 +272,7 @@ def test_workspace_subcommand_forwards_all_flag(monkeypatch):
 
     core._handle_workspace_subcommand(Namespace(workspace_command=None, format=None, all=True))
 
-    table.assert_called_once_with(include_completed=True)
+    table.assert_called_once_with(include_completed=True, session_ids=None)
 
 
 def test_workspace_subcommand_defaults_to_hidden(monkeypatch):
@@ -284,7 +284,7 @@ def test_workspace_subcommand_defaults_to_hidden(monkeypatch):
 
     core._handle_workspace_subcommand(Namespace(workspace_command=None, format=None))
 
-    table.assert_called_once_with(include_completed=False)
+    table.assert_called_once_with(include_completed=False, session_ids=None)
 
 
 def test_workspace_json_exposes_verified_process_generation(monkeypatch):

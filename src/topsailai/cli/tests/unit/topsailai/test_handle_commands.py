@@ -1625,7 +1625,7 @@ class TestWorkspaceFlag(unittest.TestCase):
         with self.assertRaises(SystemExit):
             main(["-w"])
 
-        mock_print_workspace.assert_called_once_with(include_completed=False)
+        mock_print_workspace.assert_called_once_with(include_completed=False, session_ids=None)
         mock_exit.assert_called_once_with(0)
 
     @patch("cli_topsailai.core._print_workspace_table")
@@ -1643,7 +1643,7 @@ class TestWorkspaceFlag(unittest.TestCase):
         with self.assertRaises(SystemExit):
             main(["--workspace"])
 
-        mock_print_workspace.assert_called_once_with(include_completed=False)
+        mock_print_workspace.assert_called_once_with(include_completed=False, session_ids=None)
         mock_exit.assert_called_once_with(0)
 
     @patch("cli_topsailai.core._print_workspace_table")
@@ -1699,7 +1699,7 @@ class TestWorkspaceFormat(unittest.TestCase):
             main(["workspace", "-f", "json"])
 
         self.assertEqual(raised.exception.code, 0)
-        mock_print_json.assert_called_once_with(include_completed=False)
+        mock_print_json.assert_called_once_with(include_completed=False, session_ids=None)
 
     @patch("cli_topsailai.core._print_workspace_json")
     def test_long_format_option_dispatches_json(self, mock_print_json: MagicMock) -> None:
@@ -1710,7 +1710,7 @@ class TestWorkspaceFormat(unittest.TestCase):
             main(["workspace", "--format", "json"])
 
         self.assertEqual(raised.exception.code, 0)
-        mock_print_json.assert_called_once_with(include_completed=False)
+        mock_print_json.assert_called_once_with(include_completed=False, session_ids=None)
 
     @patch("cli_topsailai.core._print_workspace_json")
     def test_list_json_selects_json_over_default_table(self, mock_print_json: MagicMock) -> None:
@@ -1721,7 +1721,7 @@ class TestWorkspaceFormat(unittest.TestCase):
             main(["workspace", "list", "--json"])
 
         self.assertEqual(raised.exception.code, 0)
-        mock_print_json.assert_called_once_with(include_completed=False)
+        mock_print_json.assert_called_once_with(include_completed=False, session_ids=None)
 
     @patch("cli_topsailai.core._print_workspace_json")
     def test_list_inherits_workspace_json_format(self, mock_print_json: MagicMock) -> None:
@@ -1732,7 +1732,7 @@ class TestWorkspaceFormat(unittest.TestCase):
             main(["workspace", "--format", "json", "list"])
 
         self.assertEqual(raised.exception.code, 0)
-        mock_print_json.assert_called_once_with(include_completed=False)
+        mock_print_json.assert_called_once_with(include_completed=False, session_ids=None)
 
     @patch("cli_topsailai.core._print_workspace_table")
     def test_list_defaults_to_table(self, mock_table: MagicMock) -> None:
@@ -1743,7 +1743,7 @@ class TestWorkspaceFormat(unittest.TestCase):
             main(["workspace", "list"])
 
         self.assertEqual(raised.exception.code, 0)
-        mock_table.assert_called_once_with(include_completed=False)
+        mock_table.assert_called_once_with(include_completed=False, session_ids=None)
 
     @patch("cli_topsailai.core._print_workspace_table")
     def test_workspace_without_format_preserves_table(self, mock_table: MagicMock) -> None:
@@ -1754,7 +1754,7 @@ class TestWorkspaceFormat(unittest.TestCase):
             main(["workspace"])
 
         self.assertEqual(raised.exception.code, 0)
-        mock_table.assert_called_once_with(include_completed=False)
+        mock_table.assert_called_once_with(include_completed=False, session_ids=None)
 
     def test_invalid_or_missing_format_is_rejected(self) -> None:
         """Argparse rejects unsupported and missing format values."""

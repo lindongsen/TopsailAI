@@ -183,6 +183,8 @@ The prompt `[workspace]>` indicates workspace scope (the task list). Choosing a 
 
 For non-interactive task-list output, `topsailai workspace list` defaults to the human-readable table. Scope-level `-f json` / `--format json` selects JSON, and `topsailai workspace list --json` explicitly selects JSON, overriding the scope format.
 
+`topsailai workspace list -s ID1,ID2` (long form `--session`) restricts the output to the named sessions. The value is one comma-separated list; whitespace around each ID is stripped, empty segments are dropped, and duplicates are removed while preserving first-seen order. A session's task rows carry the same session ID and are therefore listed with it. The on-disk temporary identity `topsailai` and the display label `(temp)` select the same rows. Filtering happens before any session-metadata read or session-info lookup, so unselected rows cost no extra I/O. `-a/--all` still applies inside the selected subset, and the JSON document keeps its shape with `items` and `total` describing the filtered subset. An empty or whitespace-only selector is a usage error with exit code `2` rather than a silent "select everything", and a selector that matches no session prints a warning naming the requested IDs. Without `-s`, behavior is unchanged.
+
 The legacy `--list-docs` and `--read-doc` options are deprecated and print a warning; use `topsailai docs list` and `topsailai docs read <name>` instead.
 
 ### Doc scope commands
@@ -432,7 +434,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | Command | Description |
 |---------|-------------|
 | `runtime` | Execute one exact send, btw, control or logs operation; see the contract above. |
-| `workspace [-f json] [list [--json]]` | Display the workspace task list and exit. The default is the human-readable table; `-f/--format json` sets the workspace-scope format, while `list --json` explicitly selects JSON and takes precedence. |
+| `workspace [-f json] [list [-s ID1,ID2] [--json]]` | Display the workspace task list and exit. The default is the human-readable table; `-f/--format json` sets the workspace-scope format, while `list --json` explicitly selects JSON and takes precedence. `list -s/--session ID1,ID2` restricts the output to the named comma-separated sessions, including their task rows, and is applied before any metadata read. |
 | `workspace kill <session_id> -g GENERATION [--json]` | Send SIGTERM without confirmation only when the exact session process generation is still verified. Obtain `GENERATION` from `workspace list --json` or `workspace -f json`; success means the OS accepted the signal, not that process exit was confirmed. |
 | `workspace agent [<folder>] [-m MODE] [-b/--background] [--task MESSAGE] [--non-interactive] [--json]` | Launch a configured agent in the foreground; the folder defaults to the caller's working directory. `--task` supplies the initial user task so a fresh agent starts without manual input. Background defaults to raw and honors an explicit `-m raw|tmux|dtach`, failing closed with exit code 4 when that mechanism is unavailable. `--non-interactive` suppresses launcher prompts for this launch only. |
 | `workspace resume -s SESSION [-d DRIVER] [-m MODE] [-b/--background] [--json]` | Resume one exact persisted idle session; background success means submission rather than readiness. |
@@ -479,6 +481,12 @@ The folder is optional and defaults to the caller's working directory, so `topsa
 
 # Display the workspace task list as JSON
 topsailai workspace list --json
+
+# Display only two specific sessions
+topsailai workspace list -s 20261107021807,20261107023139
+
+# Display only those sessions as JSON
+topsailai workspace list -s 20261107021807,20261107023139 --json
 
 # List all usage documentation files
 ./topsailai_cli.py docs list

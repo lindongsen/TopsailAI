@@ -302,23 +302,104 @@ def discover_log_files(
     return log_files
 
 
+class SessionSelectorError(ValueError):
+    """Report an unusable session selector before any discovery work."""
+
+
+def parse_session_selector(value: Optional[str]) -> Optional[List[str]]:
+    """Parse a comma-separated session selector into exact session IDs.
+
+    ``None`` means "no filter" and is returned unchanged. An empty or
+    whitespace-only value is rejected, because "select nothing" and "select
+    everything" are opposite meanings that must never be confused. Whitespace
+    around each ID is stripped, empty segments are dropped, duplicates are
+    removed while preserving first-seen order, and the on-disk temporary
+    identity ``topsailai`` is normalized to the display label ``(temp)`` so
+    both spellings select the same rows.
+
+    Args:
+        value: Raw selector text, or ``None`` when no selector was given.
+
+    Returns:
+        The ordered distinct session IDs, or ``None`` for no filter.
+
+    Raises:
+        SessionSelectorError: The value is not a string or names no session.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise SessionSelectorError("session selector must be a string")
+
+    selected: List[str] = []
+    seen = set()
+    for part in value.split(","):
+        session_id = part.strip()
+        if not session_id:
+            continue
+        if session_id == TEMP_SESSION_ID:
+            session_id = TEMP_SESSION_MARKER
+        if session_id in seen:
+            continue
+        seen.add(session_id)
+        selected.append(session_id)
+
+    if not selected:
+        raise SessionSelectorError(
+            "session selector must name at least one session ID"
+        )
+    return selected
+
+
+def filter_log_files_by_session(
+    files: List[dict],
+    session_ids: Optional[List[str]],
+) -> List[dict]:
+    """Keep only the rows belonging to the selected sessions.
+
+    Task rows carry the same ``session_id`` as their parent session row, so a
+    session and its tasks stay together. ``None`` means no filter and returns
+    the input unchanged. Rows without a session identity (generic log files)
+    are excluded whenever a filter is active, because they cannot be selected.
+
+    Args:
+        files: Discovered log file records.
+        session_ids: Exact session IDs to keep, or ``None`` for no filter.
+
+    Returns:
+        The retained records in their original order.
+    """
+    if session_ids is None:
+        return files
+    selected = set(session_ids)
+    return [item for item in files if item.get("session_id") in selected]
+
+
 def discover_workspace_log_files(
     task_dir: str,
     on_item: Optional[Callable[[dict], None]] = None,
     *,
     include_completed: bool = False,
+    session_ids: Optional[List[str]] = None,
 ) -> List[dict]:
     """Hide every completed session using exact metadata before display.
 
     ``include_completed`` is an explicit opt-in used by the ``r all`` command.
-    Metadata is read for every row before the filter decision, so requesting
-    completed rows adds no extra I/O. The ``_workspace_meta_pid`` and
-    ``_workspace_meta_snapshot`` markers are always attached before the drop so
-    hostname and session-name enrichment still work for retained rows.
+    Metadata is read for every retained row before the filter decision, so
+    requesting completed rows adds no extra I/O. The ``_workspace_meta_pid``
+    and ``_workspace_meta_snapshot`` markers are always attached before the
+    drop so hostname and session-name enrichment still work for retained rows.
+
+    ``session_ids`` restricts the result to the named sessions. The restriction
+    is applied immediately after discovery, so an unselected row costs no
+    session-metadata read and no session-info lookup. Task rows share their
+    parent's ``session_id`` and are therefore retained with it, and the
+    ambiguity check for a task's parent PID still sees every row of that
+    session because the filter never splits one session's rows.
     """
     from cli_topsailai.session_meta import SessionMetaError, read_session_meta
 
-    files = discover_log_files(task_dir)
+    files = filter_log_files_by_session(discover_log_files(task_dir), session_ids)
     session_candidates = {}
     for item in files:
         if not item.get("is_task"):

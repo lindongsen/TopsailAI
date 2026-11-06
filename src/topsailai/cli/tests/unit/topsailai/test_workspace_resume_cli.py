@@ -121,10 +121,10 @@ def test_workspace_handler_preserves_agent_and_list_routes():
     agent.assert_called_once_with(["folder"], startup_cwd="/startup")
     with patch.object(core, "_print_workspace_json") as output:
         assert core._handle_workspace_subcommand(Namespace(format="json")) == 0
-        output.assert_called_once_with(include_completed=False)
+        output.assert_called_once_with(include_completed=False, session_ids=None)
     with patch.object(core, "_print_workspace_table") as output:
         assert core._handle_workspace_subcommand(Namespace()) == 0
-        output.assert_called_once_with(include_completed=False)
+        output.assert_called_once_with(include_completed=False, session_ids=None)
 
 
 def test_background_defaults_to_raw():
