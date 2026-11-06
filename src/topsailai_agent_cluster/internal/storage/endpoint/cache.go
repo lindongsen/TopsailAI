@@ -2,6 +2,7 @@ package endpointstorage
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -73,6 +74,33 @@ func (s *Store) ListSourceSnapshots(ctx context.Context) ([]SourceSnapshot, erro
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+// SourceSnapshot loads one Adapter's persisted collection state without scanning the table.
+// It returns false when no row exists, so a caller can distinguish "unknown" from "empty".
+func (s *Store) SourceSnapshot(ctx context.Context, adapterID string) (SourceSnapshot, bool, error) {
+	if adapterID == "" {
+		return SourceSnapshot{}, false, errors.New("adapter ID is required")
+	}
+	var item SourceSnapshot
+	var data string
+	var complete, known, stale int
+	var successMS *int64
+	err := s.db.QueryRowContext(ctx, `SELECT adapter_id, provider_type, display_name, version, health, sessions_json, report_complete, collection_status, last_attempt_at_ms, last_success_at_ms, data_known, stale, COALESCE(error_code, ''), COALESCE(error_message, '') FROM source_cache WHERE adapter_id=?`, adapterID).Scan(&item.AdapterID, &item.ProviderType, &item.DisplayName, &item.Version, &item.Health, &data, &complete, &item.CollectionStatus, &item.LastAttemptAtMS, &successMS, &known, &stale, &item.ErrorCode, &item.ErrorMessage)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SourceSnapshot{}, false, nil
+	}
+	if err != nil {
+		return SourceSnapshot{}, false, fmt.Errorf("load source %q: %w", adapterID, err)
+	}
+	if err := json.Unmarshal([]byte(data), &item.Sessions); err != nil {
+		return SourceSnapshot{}, false, fmt.Errorf("decode source %q: %w", adapterID, err)
+	}
+	item.ReportComplete = complete != 0
+	item.LastSuccessAtMS = successMS
+	item.DataKnown = known != 0
+	item.Stale = stale != 0
+	return item, true, nil
 }
 
 func boolInt(value bool) int {

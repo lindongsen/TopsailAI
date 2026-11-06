@@ -405,3 +405,121 @@ func TestReadOutputForwardsBothBudgets(t *testing.T) {
 		})
 	}
 }
+
+// countingInspectAdapter counts live inspections so a test can prove the read path
+// does not re-run the provider's full discovery when the persisted snapshot answers.
+type countingInspectAdapter struct {
+	adapter.Adapter
+	inspections int
+	generation  string
+	found       bool
+}
+
+func (a *countingInspectAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
+	a.inspections++
+	return adapter.InspectResult{Found: a.found, Generation: a.generation}, nil
+}
+
+func (a *countingInspectAdapter) ReadOutput(context.Context, adapter.OutputRequest) (adapter.OutputResult, error) {
+	return adapter.OutputResult{Lines: []string{"line"}}, nil
+}
+
+// TestReadOutputSkipsDiscoveryWhenSnapshotAnswers proves the read path revalidates
+// from the persisted collection snapshot instead of re-running the provider's full
+// discovery, which costs seconds per read. It also proves the fallback still
+// inspects live when the snapshot cannot answer, so an unknown observation is never
+// mistaken for a match.
+func TestReadOutputSkipsDiscoveryWhenSnapshotAnswers(t *testing.T) {
+	cases := []struct {
+		name            string
+		snapshot        *endpointstorage.SourceSnapshot
+		generation      string
+		wantInspections int
+		wantError       bool
+	}{
+		{
+			name:            "known fresh snapshot answers without discovery",
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			generation:      "g1",
+			wantInspections: 0,
+		},
+		{
+			name:            "known fresh snapshot rejects a mismatched generation without discovery",
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			generation:      "g2",
+			wantInspections: 0,
+			wantError:       true,
+		},
+		{
+			name:            "stale snapshot falls back to one live inspection",
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Stale: true, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			generation:      "g1",
+			wantInspections: 1,
+		},
+		{
+			name:            "unknown data falls back to one live inspection",
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionFailed, LastAttemptAtMS: 1, DataKnown: false, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			generation:      "g1",
+			wantInspections: 1,
+		},
+		{
+			name:            "resource absent from snapshot falls back to one live inspection",
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{SessionID: "res_other", Generation: "g1"}}},
+			generation:      "g1",
+			wantInspections: 1,
+		},
+		{
+			name:            "no snapshot row falls back to one live inspection",
+			snapshot:        nil,
+			generation:      "g1",
+			wantInspections: 1,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.db")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			instance := &countingInspectAdapter{generation: "g1", found: true}
+			registry := adapter.NewRegistry()
+			if err := registry.RegisterType("fixture", func(context.Context, adapter.Config) (adapter.Adapter, error) {
+				return instance, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
+				t.Fatal(err)
+			}
+			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if testCase.snapshot != nil {
+				for index := range testCase.snapshot.Sessions {
+					if testCase.snapshot.Sessions[index].SessionID == "res_target" {
+						testCase.snapshot.Sessions[index].SessionID = mapping.ResourceID
+					}
+				}
+				if err := store.ApplySourceSnapshot(context.Background(), *testCase.snapshot, 2); err != nil {
+					t.Fatal(err)
+				}
+			}
+			e, err := NewExecutor(store, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, readErr := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, Generation: testCase.generation, MaxBytes: 4096})
+			if testCase.wantError && readErr == nil {
+				t.Fatal("expected a generation mismatch error")
+			}
+			if !testCase.wantError && readErr != nil {
+				t.Fatalf("unexpected error: %v", readErr)
+			}
+			if instance.inspections != testCase.wantInspections {
+				t.Fatalf("live inspections=%d, want %d", instance.inspections, testCase.wantInspections)
+			}
+		})
+	}
+}
