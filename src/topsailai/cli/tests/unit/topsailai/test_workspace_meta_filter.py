@@ -64,8 +64,13 @@ def test_visible_meta_preserves_session_info_queries(task_dir, monkeypatch, stat
                                                     workspace):
     """Keep session-info enrichment for metadata that is not completed."""
     write_meta(task_dir, status=status, session_name=name, project_workspace=workspace)
-    query = Mock(return_value=session_info._LookupResult("queried", "/queried", True))
-    monkeypatch.setattr(session_info, "_get_session_info", query)
+    query = Mock(
+        side_effect=lambda session_ids: {
+            session_id: session_info._LookupResult("queried", "/queried", True)
+            for session_id in session_ids
+        }
+    )
+    monkeypatch.setattr(session_info, "_get_sessions_info", query)
     monkeypatch.setattr(session_info, "_SESSION_INFO_CACHE", session_info._SessionInfoCache())
     monkeypatch.setattr(session_info, "load_project_workspace_lookup", Mock(return_value={}))
     callback = Mock()
@@ -79,8 +84,13 @@ def test_visible_meta_preserves_session_info_queries(task_dir, monkeypatch, stat
 def test_running_unnamed_meta_preserves_refresh_query(task_dir, monkeypatch):
     """Refresh a running unnamed session even after its first query was cached."""
     write_meta(task_dir, status="running", session_name=None)
-    query = Mock(return_value=session_info._LookupResult("new name", "/queried", True))
-    monkeypatch.setattr(session_info, "_get_session_info", query)
+    query = Mock(
+        side_effect=lambda session_ids: {
+            session_id: session_info._LookupResult("new name", "/queried", True)
+            for session_id in session_ids
+        }
+    )
+    monkeypatch.setattr(session_info, "_get_sessions_info", query)
     monkeypatch.setattr(session_info, "_is_pid_alive", Mock(return_value=True))
     monkeypatch.setattr(session_info, "_SESSION_INFO_CACHE", session_info._SessionInfoCache())
     session_info._SESSION_INFO_CACHE.set("sample", (None, "/cached"))
@@ -89,7 +99,7 @@ def test_running_unnamed_meta_preserves_refresh_query(task_dir, monkeypatch):
     session_info.enrich_files_with_session_names(rows)
     query.assert_not_called()
     session_info.enrich_running_unnamed_sessions(rows)
-    query.assert_called_once_with("sample")
+    query.assert_called_once_with(["sample"])
     assert all(row["session_name"] == "new name" for row in rows)
     assert all(row["project_workspace"] == "/cached" for row in rows)
 
@@ -102,14 +112,19 @@ def test_unavailable_meta_keeps_rows_and_existing_fallback(task_dir, monkeypatch
     if content is not None:
         (task_dir / "sample.123.session.meta").write_text(content)
     monkeypatch.setattr(session_info, "_SESSION_INFO_CACHE", session_info._SessionInfoCache())
-    query = Mock(return_value=session_info._LookupResult("fallback", "/fallback", True))
-    monkeypatch.setattr(session_info, "_get_session_info", query)
+    query = Mock(
+        side_effect=lambda session_ids: {
+            session_id: session_info._LookupResult("fallback", "/fallback", True)
+            for session_id in session_ids
+        }
+    )
+    monkeypatch.setattr(session_info, "_get_sessions_info", query)
     monkeypatch.setattr(session_info, "load_project_workspace_lookup", Mock(return_value={}))
     rows = log_files.discover_workspace_log_files(str(task_dir))
     session_info.enrich_files_with_session_names(rows)
     assert len(rows) == 3
     assert all(row["session_name"] == "fallback" for row in rows)
-    query.assert_called_once_with("sample")
+    query.assert_called_once_with(["sample"])
 
 
 def test_metadata_reread_each_refresh(task_dir):
@@ -139,7 +154,7 @@ def test_workspace_output_uses_filtered_rows(task_dir, monkeypatch, capsys, outp
     monkeypatch.setattr(core, "_driver_authority", Mock(return_value=None))
     monkeypatch.setattr(core, "_enrich_driver_rows", Mock())
     query = Mock(side_effect=AssertionError("unexpected session-info lookup"))
-    monkeypatch.setattr(session_info, "_get_session_info", query)
+    monkeypatch.setattr(session_info, "_get_sessions_info", query)
     if output == "json":
         core._print_workspace_json()
         assert json.loads(capsys.readouterr().out)["items"] == []

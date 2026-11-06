@@ -136,14 +136,21 @@ def _is_session_running(home: str, session_id: str) -> bool:
     return _is_pid_alive(pid)
 
 
-def _session_to_dict(session: SessionData, home: str) -> dict[str, Any]:
+def _session_to_dict(
+    session: SessionData, home: str, running: Optional[bool] = None
+) -> dict[str, Any]:
     """Convert a SessionData object into a JSON-serializable dictionary.
 
     The returned dictionary contains every field stored on *session* plus
     computed metadata such as running status and human-readable timestamps.
+
+    *running* lets a batch caller inject a status it already resolved with one
+    directory scan; when it is ``None`` the status is resolved here, which is
+    the single-session behaviour.
     """
     session_id = str(session.session_id) if session.session_id else ""
-    running = _is_session_running(home, session_id)
+    if running is None:
+        running = _is_session_running(home, session_id)
     create_time_str = ""
     if session.create_time:
         create_time_str = session.create_time.strftime("%Y-%m-%d %H:%M:%S")
@@ -181,8 +188,18 @@ def _format_session_json(session: SessionData, home: str) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
-def _format_session(session: SessionData, home: str, color_enabled: bool) -> str:
-    """Format a single session as a detailed card."""
+def _format_session(
+    session: SessionData,
+    home: str,
+    color_enabled: bool,
+    running: Optional[bool] = None,
+) -> str:
+    """Format a single session as a detailed card.
+
+    *running* lets a batch caller inject a status it already resolved with one
+    directory scan; when it is ``None`` the status is resolved here, which is
+    the single-session behaviour.
+    """
     total_width = shutil.get_terminal_size().columns
     if total_width < 40:
         total_width = 80
@@ -198,7 +215,8 @@ def _format_session(session: SessionData, home: str, color_enabled: bool) -> str
         relative = _relative_time(session.create_time)
 
     task = str(session.task) if session.task else ""
-    running = _is_session_running(home, session_id)
+    if running is None:
+        running = _is_session_running(home, session_id)
     status = "Running" if running else "Idle"
     status_color = Colors.GREEN if running else Colors.GRAY
 

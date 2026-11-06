@@ -591,3 +591,43 @@ class TestDocumentedInputHelpers(unittest.TestCase):
         """Options use zero-based menu labels and empty input renders empty text."""
         self.assertEqual(human_tool._render_options(["yes", "no"]), "  0) yes\n  1) no")
         self.assertEqual(human_tool._render_options([]), "")
+
+
+class TestAskDecisionPromptEcho(unittest.TestCase):
+    """Prompt echo on the degradation paths.
+
+    When ``ask_decision`` cannot prompt, the Human never sees the question.
+    The prompt is therefore echoed verbatim with a plain ``print()`` so the
+    blocked decision stays observable in logs and tee output.
+    """
+
+    @patch('topsailai.tools.human_tool._is_sub_agent_context', return_value=True)
+    def test_sub_agent_context_echoes_prompt(self, mock_sub):
+        """Sub-agent context echoes the prompt before returning unavailable."""
+        with patch('builtins.print') as mock_print:
+            result = human_tool.ask_decision('question?', default='fallback')
+        self.assertEqual(result['status'], 'unavailable')
+        self.assertEqual(result['answer'], 'fallback')
+        echoed = [c.args[0] for c in mock_print.call_args_list if c.args]
+        self.assertTrue(any('question?' in str(text) for text in echoed))
+
+    @patch('topsailai.tools.human_tool._has_usable_input_source', return_value=False)
+    @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(None, None))
+    def test_no_input_source_echoes_prompt(self, mock_resolve, mock_src):
+        """No usable input source echoes the prompt before returning unavailable."""
+        with patch('builtins.print') as mock_print:
+            result = human_tool.ask_decision('question?', default='fallback')
+        self.assertEqual(result['status'], 'unavailable')
+        echoed = [c.args[0] for c in mock_print.call_args_list if c.args]
+        self.assertTrue(any('question?' in str(text) for text in echoed))
+
+    @patch('topsailai.tools.human_tool._has_usable_input_source', return_value=True)
+    @patch('topsailai.tools.human_tool._resolve_input_funcs',
+           return_value=(lambda p, t: 'yes', None))
+    def test_answered_path_does_not_echo_prompt(self, mock_resolve, mock_src):
+        """A prompt that is actually displayed must not be printed a second time."""
+        with patch('builtins.print') as mock_print:
+            result = human_tool.ask_decision('question?', default='fallback')
+        self.assertEqual(result['status'], 'answered')
+        echoed = [c.args[0] for c in mock_print.call_args_list if c.args]
+        self.assertFalse(any('question?' in str(text) for text in echoed))

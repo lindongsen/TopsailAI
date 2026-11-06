@@ -379,6 +379,8 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 			return false, err
 		}
 		return false, interactiveList(ctx, api, state, filter, clean, trustedOut, errOut, options.Color)
+	case "endpoints":
+		return false, interactiveEndpoints(ctx, api, rest, out, options.Color)
 	case "table":
 		return false, fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "use":
@@ -705,23 +707,33 @@ func validateAdapterFreshness(report protocol.InventoryReport, adapterID string)
 	return nil
 }
 
-// interactiveRefresh reloads the latest Server inventory for the current scope.
-// In session scope it also revalidates the pinned selection from the same load,
-// so the operator sees the refreshed endpoint table while a changed generation
-// still invalidates the selection instead of silently retargeting it.
+// interactiveRefresh forces one fresh Endpoint collection in the current scope and
+// renders the committed inventory, so the operator sees fresh data rather than a
+// cached Server projection. In session scope it revalidates the pinned selection
+// against that same committed document, so a changed generation still invalidates
+// the selection instead of silently retargeting it.
 func interactiveRefresh(parent context.Context, api InteractiveAPI, state *interactiveState, out, errors io.Writer, color ColorPolicy) error {
+	ctx, cancel := context.WithTimeout(parent, refreshCommandTimeout)
+	defer cancel()
 	scoped, err := scopedListFilter(state, "")
 	if err != nil {
 		return err
 	}
 	state.Rows = nil
 	staged := make([]SessionRow, 0)
-	ctx, cancel := commandContext(parent)
-	defer cancel()
-	loaded, err := loadReports(ctx, api, scoped)
+	loaded, err := forceCollection(ctx, api, scoped)
 	if err != nil {
 		state.Rows = nil
 		return err
+	}
+	// Endpoint and session scope name one exact Endpoint, so its failure is the
+	// operator's answer; workspace scope reports per-Endpoint failures as
+	// diagnostics while still rendering the healthy Endpoints.
+	if state.Scope.Kind != ScopeWorkspace {
+		if refreshErr, failed := loaded.errors[state.Scope.EndpointID]; failed {
+			state.Rows = nil
+			return refreshErr
+		}
 	}
 	if state.Scope.Kind == ScopeSession {
 		if _, _, _, err := findSelectedIn(loaded, state); err != nil {

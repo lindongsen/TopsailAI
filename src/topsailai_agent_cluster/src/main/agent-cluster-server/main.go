@@ -102,7 +102,7 @@ func main() {
 		}
 	}
 	service, err := serverapi.NewService(serverapi.ServiceDeps{
-		APIHandler:           serverapi.NewHandlerWithCommandsAndBrokerAndOutput(store, cfg.AuthToken, commandService, broker, channelService),
+		APIHandler:           serverapi.NewHandlerWithCommandsAndBrokerAndOutputAndRefresh(store, cfg.AuthToken, commandService, broker, channelService, channelService),
 		ChannelServer:        channelService,
 		Storage:              store,
 		Logger:               logger,

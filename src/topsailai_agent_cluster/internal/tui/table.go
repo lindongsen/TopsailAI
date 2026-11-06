@@ -133,26 +133,60 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 		}
 	}
 	fitTableWidths(widths, options.Width)
-	writeRow := func(values, states []string, rowStyle string, header bool) error {
+	if options.Width > 0 && options.Width < minimumTableWidth(len(widths)) {
+		if err := writeNarrowTable(out, cells, states, rowStyles, columns, options.Width, options.Color); err != nil {
+			return err
+		}
+	} else if err := writeFramedTable(out, headers, cells, states, rowStyles, widths, columns, options.Color); err != nil {
+		return err
+	}
+	if len(rows) > 0 {
+		if err := writeStatusSummary(out, rows, options.Color); err != nil {
+			return err
+		}
+	}
+	if len(rows) == 0 {
+		if len(failures) == 0 {
+			if _, err := io.WriteString(out, "no sessions\n"); err != nil {
+				return err
+			}
+		} else if _, err := io.WriteString(out, "no sessions available; partial failure\n"); err != nil {
+			return err
+		}
+	}
+	sort.Slice(failures, func(i, j int) bool { return failures[i].EndpointID < failures[j].EndpointID })
+	for _, failure := range failures {
+		if _, err := fmt.Fprintf(errors, "endpoint %s unavailable: %s\n", escapeCell(failure.EndpointID), sanitizeTerminal([]byte(failure.Err.Error()))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeFramedTable draws one full-width table: a rule, the header row, a column
+// separator, every data row, and a closing rule. It is shared by the session and
+// endpoint layouts so both keep identical framing, clipping and colour rules.
+func writeFramedTable(out io.Writer, headers []string, cells, states [][]string, rowStyles []string, widths []int, columns []tableColumn, policy ColorPolicy) error {
+	writeRow := func(values, rowStates []string, rowStyle string, header bool) error {
 		for i, value := range values {
 			if i > 0 {
-				if err := writeStyled(out, rowStyle, " │ ", options.Color); err != nil {
+				if err := writeStyled(out, rowStyle, " │ ", policy); err != nil {
 					return err
 				}
 			}
 			cell := clipCell(value, widths[i])
 			cell += strings.Repeat(" ", widths[i]-displayWidth(cell))
 			if header {
-				if err := writeStyled(out, ansiBoldCyan, cell, options.Color); err != nil {
+				if err := writeStyled(out, ansiBoldCyan, cell, policy); err != nil {
 					return err
 				}
 				continue
 			}
 			state := ""
-			if len(states) > i {
-				state = states[i]
+			if len(rowStates) > i {
+				state = rowStates[i]
 			}
-			if err := writeCellState(out, cell, columns[i].warn, state, rowStyle, options.Color); err != nil {
+			if err := writeCellState(out, cell, columns[i].warn, state, rowStyle, policy); err != nil {
 				return err
 			}
 		}
@@ -182,50 +216,21 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 		_, err := io.WriteString(out, strings.Repeat("─", total)+"\n")
 		return err
 	}
-	if options.Width > 0 && options.Width < minimumTableWidth(len(widths)) {
-		if err := writeNarrowTable(out, cells, states, rowStyles, columns, options.Width, options.Color); err != nil {
-			return err
-		}
-	} else {
-		if err := writeRule(); err != nil {
-			return err
-		}
-		if err := writeRow(headers, nil, "", true); err != nil {
-			return err
-		}
-		if err := writeSeparator(); err != nil {
-			return err
-		}
-		for index, row := range cells {
-			if err := writeRow(row, states[index], rowStyles[index], false); err != nil {
-				return err
-			}
-		}
-		if err := writeRule(); err != nil {
+	if err := writeRule(); err != nil {
+		return err
+	}
+	if err := writeRow(headers, nil, "", true); err != nil {
+		return err
+	}
+	if err := writeSeparator(); err != nil {
+		return err
+	}
+	for index, row := range cells {
+		if err := writeRow(row, states[index], rowStyles[index], false); err != nil {
 			return err
 		}
 	}
-	if len(rows) > 0 {
-		if err := writeStatusSummary(out, rows, options.Color); err != nil {
-			return err
-		}
-	}
-	if len(rows) == 0 {
-		if len(failures) == 0 {
-			if _, err := io.WriteString(out, "no sessions\n"); err != nil {
-				return err
-			}
-		} else if _, err := io.WriteString(out, "no sessions available; partial failure\n"); err != nil {
-			return err
-		}
-	}
-	sort.Slice(failures, func(i, j int) bool { return failures[i].EndpointID < failures[j].EndpointID })
-	for _, failure := range failures {
-		if _, err := fmt.Fprintf(errors, "endpoint %s unavailable: %s\n", escapeCell(failure.EndpointID), sanitizeTerminal([]byte(failure.Err.Error()))); err != nil {
-			return err
-		}
-	}
-	return nil
+	return writeRule()
 }
 
 // statusOrder fixes the summary precedence so output is deterministic.

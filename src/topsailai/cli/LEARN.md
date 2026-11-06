@@ -234,3 +234,65 @@ once existed. Any discovery that treats existence as availability will prefer a
 dead endpoint over a live one and will report false ambiguity; liveness must be
 part of the candidate predicate, and an unverifiable state must fail closed
 rather than claim a channel.
+
+## A subprocess timeout must kill the process group, not just the child
+
+### Trigger
+
+`topsailai_session_info` kept burning 8-13% CPU per process for ~10s after the
+session table had already been printed. A refresh left 12 orphaned lookup
+processes behind, and repeated refreshes stacked new generations on top.
+
+### Action taken
+
+Traced the process tree and found that `subprocess.run(timeout=5)` killed only
+the direct child: because `topsailai_session_info.py` has no executable bit, the
+dispatcher `../bin/topsailai.cli` wraps it in `uv run`, so the interpreter that
+actually does the work is a grandchild and survives as an orphan (ppid=1).
+Replaced the call with `_run_lookup_command()`, which starts the child with
+`start_new_session=True` and, on `TimeoutExpired`, signals the whole group via
+`os.killpg(process.pid, SIGKILL)` with a `process.kill()` fallback and a bounded
+reap. Verified with a synthetic two-level tree (0 survivors at +0/+1/+3/+6s) and
+with a real refresh over 17 session stdout files (0 orphans at +0/+3/+6/+10s,
+versus 12 before the fix).
+
+### Why this prevents recurrence
+
+A timeout is a statement about a whole unit of work, but `subprocess.run` only
+owns the direct child. Whenever the launched command is a wrapper (`uv run`,
+`sh -c`, a launcher script), the real work happens one or more levels down, so
+the kill must target the process group and the child must be started as a group
+leader. Killing the child alone reports a clean timeout while the actual CPU
+consumer keeps running, which is exactly the symptom that looks like "the
+command is slow" rather than "the command leaks processes".
+
+## A batch command must not inherit a per-item directory scan
+
+### Trigger
+
+`topsailai_sessions_info` collapsed N storage queries into one, yet 141 session
+IDs still took 15.97s and exceeded the consumer's 5s timeout. The reference
+formatters it reused resolve running status through `_find_session_pid`, which
+lists the whole `workspace/task` directory (4591 entries) once per session, so
+the batch paid O(sessions x entries) while its docstring claimed the cost did
+not grow with the number of sessions.
+
+### Action taken
+
+Added an optional `running: Optional[bool] = None` parameter to
+`_session_to_dict` and `_format_session`, where `None` preserves the
+single-session behaviour exactly, and had the batch command resolve every
+status from one `os.listdir` before formatting. Verified with a fair
+same-process A/B on identical inputs: 0.05s versus 2.03s (40x) with identical
+JSON, and with two negative controls proving the new tests fail on a
+per-session scan and on a computed-but-ignored status map.
+
+### Why this prevents recurrence
+
+Reusing a formatter also reuses its cost model, so a batch wrapper must audit
+every per-item side effect inside the reused code rather than only the query it
+replaces. A cost claim in a docstring is not evidence: it must be pinned by a
+test that counts the expensive operation, and that test must be shown failing
+against the regressed implementation. Also compare timings in one process on
+identical inputs, because host load and a shrinking directory can otherwise be
+mistaken for a fix.

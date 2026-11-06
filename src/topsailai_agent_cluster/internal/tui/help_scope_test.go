@@ -243,7 +243,7 @@ func TestHelpOverviewKeepsScopePrompts(t *testing.T) {
 
 func TestHelpOverviewKeepsScopeRestrictions(t *testing.T) {
 	output, diagnostics := runScope(t, scopeStub(), "send {}\nquit\n", ColorPolicy{})
-	if !strings.Contains(diagnostics, `command "send" is unavailable in workspace scope; available commands: list, cd, show, start, stop, status, refresh, help, quit`) {
+	if !strings.Contains(diagnostics, `command "send" is unavailable in workspace scope; available commands: list, endpoints, cd, show, start, stop, status, refresh, help, quit`) {
 		t.Fatalf("scope restriction lost: %q", diagnostics)
 	}
 	if strings.Contains(output, "admitted") {
@@ -327,6 +327,7 @@ func TestNonInteractiveHelpCatalogMatchesStandaloneDispatch(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	for _, want := range []string{
 		"agent-cluster-cli [options] [--endpoint <id>] list [--clean]",
+		"agent-cluster-cli [options] [--endpoint <id>] refresh",
 		"agent-cluster-cli [options] show <endpoint-or-session>",
 		"agent-cluster-cli [options] [--lines <lines>] logs <endpoint> <session>",
 		"agent-cluster-cli [options] status <command-id>",
@@ -344,7 +345,7 @@ func TestNonInteractiveHelpCatalogMatchesStandaloneDispatch(t *testing.T) {
 	}
 	for _, line := range lines {
 		name := strings.Fields(line)[2]
-		for _, forbidden := range []string{"inject", "interrupt", "cd", "refresh", "quit"} {
+		for _, forbidden := range []string{"inject", "interrupt", "cd", "quit"} {
 			if name == forbidden {
 				t.Fatalf("standalone help leaked interactive command %q: %q", forbidden, joined)
 			}

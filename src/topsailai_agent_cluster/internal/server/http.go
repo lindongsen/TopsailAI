@@ -22,6 +22,11 @@ type OutputRequester interface {
 	RequestOutput(context.Context, string, protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error)
 }
 
+// RefreshRequester forces one fresh Endpoint collection and returns its committed report.
+type RefreshRequester interface {
+	RequestRefreshAndWait(context.Context, string) (protocol.InventoryReport, error)
+}
+
 // Handler serves authenticated Server APIs backed by durable storage.
 type Handler struct {
 	Store          *serverstorage.Store
@@ -30,6 +35,7 @@ type Handler struct {
 	MaxBodyBytes   int64
 	Broker         *EventBroker
 	Output         OutputRequester
+	Refresh        RefreshRequester
 }
 
 // NewHandler returns an HTTP handler with standard API routing.
@@ -142,6 +148,14 @@ func (h *Handler) endpoints(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) endpointResource(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/endpoints/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 3 && parts[1] == "session-state" && parts[2] == "refresh" {
+		if r.Method != http.MethodPost {
+			h.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported")
+			return
+		}
+		h.refreshInventory(w, r, parts[0])
+		return
+	}
 	if len(parts) != 2 || (parts[1] != "session-state" && parts[1] != "capabilities") {
 		h.writeError(w, http.StatusNotFound, "not_found", "resource not found")
 		return
@@ -163,6 +177,39 @@ func (h *Handler) endpointResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported")
+}
+
+// refreshTimeout bounds one forced collection so a slow Endpoint cannot hold the request open.
+// It exceeds the Endpoint collection budget so the Endpoint reports its own failure first.
+const refreshTimeout = 30 * time.Second
+
+// refreshInventory forces one fresh Endpoint collection and returns the committed document.
+// The response is re-read from storage, so it always equals a following GET session-state.
+func (h *Handler) refreshInventory(w http.ResponseWriter, r *http.Request, endpointID string) {
+	if h.Refresh == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "unavailable", "forced collection channel is unavailable")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), refreshTimeout)
+	defer cancel()
+	submitted, err := h.Refresh.RequestRefreshAndWait(ctx, endpointID)
+	if err != nil {
+		h.writeError(w, http.StatusServiceUnavailable, "endpoint_unavailable", "forced collection failed: "+err.Error())
+		return
+	}
+	committed, err := h.Store.GetInventory(ctx, endpointID)
+	if err != nil {
+		h.writeError(w, http.StatusServiceUnavailable, "not_committed", "forced collection was not committed: "+err.Error())
+		return
+	}
+	// Storage silently ignores a report that is not newer than the stored document, so a
+	// submitted report alone cannot prove freshness; the committed document must be at
+	// least as new as the report this request forced.
+	if committed.ObservedAtMS < submitted.ObservedAtMS || (committed.ObservedAtMS == submitted.ObservedAtMS && committed.SnapshotRevision < submitted.SnapshotRevision) {
+		h.writeError(w, http.StatusConflict, "not_committed", "forced collection was not committed")
+		return
+	}
+	h.write(w, http.StatusOK, 0, "success", committed)
 }
 
 func (h *Handler) putEndpoint(w http.ResponseWriter, r *http.Request) {
@@ -300,6 +347,12 @@ func NewHandlerWithCommandsAndBroker(store *serverstorage.Store, token string, c
 
 // NewHandlerWithCommandsAndBrokerAndOutput returns an authenticated handler with output forwarding.
 func NewHandlerWithCommandsAndBrokerAndOutput(store *serverstorage.Store, token string, commands *CommandService, broker *EventBroker, output OutputRequester) http.Handler {
-	h := &Handler{Store: store, Authenticator: security.BearerAuthenticator{Token: token}, CommandService: commands, MaxBodyBytes: 4 << 20, Broker: broker, Output: output}
+	return NewHandlerWithCommandsAndBrokerAndOutputAndRefresh(store, token, commands, broker, output, nil)
+}
+
+// NewHandlerWithCommandsAndBrokerAndOutputAndRefresh returns an authenticated handler
+// with output forwarding and forced Endpoint collection.
+func NewHandlerWithCommandsAndBrokerAndOutputAndRefresh(store *serverstorage.Store, token string, commands *CommandService, broker *EventBroker, output OutputRequester, refresh RefreshRequester) http.Handler {
+	h := &Handler{Store: store, Authenticator: security.BearerAuthenticator{Token: token}, CommandService: commands, MaxBodyBytes: 4 << 20, Broker: broker, Output: output, Refresh: refresh}
 	return h.authenticated(h.routes())
 }

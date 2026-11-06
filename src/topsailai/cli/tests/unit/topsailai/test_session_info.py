@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Unit tests for cli_topsailai.session_info."""
 
+import json
 import os
-import sys
+import shutil
+import signal
 import subprocess
+import sys
+import tempfile
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -17,110 +22,186 @@ sys.path.insert(
 from cli_topsailai import session_info
 
 
-class TestGetSessionInfo(unittest.TestCase):
-    """Tests for _get_session_info."""
+def _batch_payload(*records):
+    """Build the JSON array printed by ``topsailai_sessions_info --json``."""
+    return json.dumps(
+        [
+            {
+                "session_id": session_id,
+                "session_name": name,
+                "project_workspace": workspace,
+            }
+            for session_id, name, workspace in records
+        ]
+    )
 
-    @patch("cli_topsailai.session_info.subprocess.run")
-    def test_valid_session_returns_name_and_workspace(self, mock_run):
-        """Valid JSON response returns session_name and project_workspace."""
+
+def _lookup_result(stdout, returncode=0, stderr=""):
+    """Build a completed-process stand-in for the batch lookup command."""
+    return MagicMock(returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+def _batch_lookup(*records):
+    """Build the mapping returned by ``_get_sessions_info`` for *records*."""
+    return {
+        session_id: session_info._LookupResult(name, workspace, True)
+        for session_id, name, workspace in records
+    }
+
+
+class TestGetSessionsInfo(unittest.TestCase):
+    """Tests for _get_sessions_info."""
+
+    @patch("cli_topsailai.session_info._run_lookup_command")
+    def test_valid_records_return_name_and_workspace(self, mock_run):
+        """A JSON array of records is mapped by session_id."""
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout='{"session_name": "Auto Summary", "project_workspace": "/work/project-a"}',
+            stdout=json.dumps([
+                {
+                    "session_id": "s1",
+                    "session_name": "Auto Summary",
+                    "project_workspace": "/work/project-a",
+                },
+                {
+                    "session_id": "s2",
+                    "session_name": "Second",
+                    "project_workspace": "/work/project-b",
+                },
+            ]),
             stderr="",
         )
-        result = session_info._get_session_info("s1")
-        self.assertTrue(result.success)
-        self.assertEqual(result.name, "Auto Summary")
-        self.assertEqual(result.project_workspace, "/work/project-a")
-        mock_run.assert_called_once()
+        result = session_info._get_sessions_info(["s1", "s2"])
+        self.assertEqual(set(result), {"s1", "s2"})
+        self.assertTrue(result["s1"].success)
+        self.assertEqual(result["s1"].name, "Auto Summary")
+        self.assertEqual(result["s1"].project_workspace, "/work/project-a")
+        self.assertEqual(result["s2"].name, "Second")
+        mock_run.assert_called_once_with(
+            ["topsailai_sessions_info", "--json", "s1", "s2"]
+        )
 
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_whitespace_name_normalized(self, mock_run):
         """Whitespace-only name is normalized to None; workspace is preserved."""
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout='{"session_name": "   ", "project_workspace": "/work/project-a"}',
+            stdout=json.dumps([
+                {
+                    "session_id": "s1",
+                    "session_name": "   ",
+                    "project_workspace": "/work/project-a",
+                }
+            ]),
             stderr="",
         )
-        result = session_info._get_session_info("s1")
-        self.assertTrue(result.success)
-        self.assertIsNone(result.name)
-        self.assertEqual(result.project_workspace, "/work/project-a")
+        result = session_info._get_sessions_info(["s1"])
+        self.assertTrue(result["s1"].success)
+        self.assertIsNone(result["s1"].name)
+        self.assertEqual(result["s1"].project_workspace, "/work/project-a")
 
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_whitespace_workspace_normalized(self, mock_run):
         """Whitespace-only workspace is normalized to None."""
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout='{"session_name": "Auto Summary", "project_workspace": "   "}',
+            stdout=json.dumps([
+                {
+                    "session_id": "s1",
+                    "session_name": "Auto Summary",
+                    "project_workspace": "   ",
+                }
+            ]),
             stderr="",
         )
-        result = session_info._get_session_info("s1")
-        self.assertTrue(result.success)
-        self.assertEqual(result.name, "Auto Summary")
-        self.assertIsNone(result.project_workspace)
+        result = session_info._get_sessions_info(["s1"])
+        self.assertTrue(result["s1"].success)
+        self.assertEqual(result["s1"].name, "Auto Summary")
+        self.assertIsNone(result["s1"].project_workspace)
 
-    @patch("cli_topsailai.session_info.subprocess.run")
-    def test_non_zero_exit_returns_failure(self, mock_run):
-        """Non-zero exit code is treated as a transient failure."""
+    @patch("cli_topsailai.session_info._run_lookup_command")
+    def test_non_zero_exit_with_records_is_partial_success(self, mock_run):
+        """Exit code 1 for unknown identifiers still yields the found records."""
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stdout=json.dumps([
+                {"session_id": "s1", "session_name": "Found",
+                 "project_workspace": "/work/a"}
+            ]),
+            stderr="[INFO] Session not found: s2",
+        )
+        result = session_info._get_sessions_info(["s1", "s2"])
+        self.assertEqual(set(result), {"s1"})
+        self.assertEqual(result["s1"].name, "Found")
+
+    @patch("cli_topsailai.session_info._run_lookup_command")
+    def test_non_zero_exit_without_stdout_returns_empty(self, mock_run):
+        """A storage error with no payload is a transient failure."""
         mock_run.return_value = MagicMock(
             returncode=1,
             stdout="",
             stderr="error",
         )
-        result = session_info._get_session_info("s1")
-        self.assertFalse(result.success)
-        self.assertIsNone(result.name)
-        self.assertIsNone(result.project_workspace)
+        self.assertEqual(session_info._get_sessions_info(["s1"]), {})
 
-    @patch("cli_topsailai.session_info.subprocess.run")
-    def test_invalid_json_returns_failure(self, mock_run):
+    @patch("cli_topsailai.session_info._run_lookup_command")
+    def test_invalid_json_returns_empty(self, mock_run):
         """Invalid JSON response is treated as a transient failure."""
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout="not json",
             stderr="",
         )
-        result = session_info._get_session_info("s1")
-        self.assertFalse(result.success)
-        self.assertIsNone(result.name)
-        self.assertIsNone(result.project_workspace)
+        self.assertEqual(session_info._get_sessions_info(["s1"]), {})
 
-    @patch("cli_topsailai.session_info.subprocess.run")
-    def test_non_dict_payload_returns_failure(self, mock_run):
-        """Non-dict JSON payload is treated as a transient failure."""
+    @patch("cli_topsailai.session_info._run_lookup_command")
+    def test_non_list_payload_returns_empty(self, mock_run):
+        """A single-object payload is rejected because the batch shape is an array."""
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout='["session_name"]',
+            stdout='{"session_id": "s1", "session_name": "Name"}',
             stderr="",
         )
-        result = session_info._get_session_info("s1")
-        self.assertFalse(result.success)
-        self.assertIsNone(result.name)
-        self.assertIsNone(result.project_workspace)
+        self.assertEqual(session_info._get_sessions_info(["s1"]), {})
+
+    @patch("cli_topsailai.session_info._run_lookup_command")
+    def test_unrequested_and_malformed_records_ignored(self, mock_run):
+        """Records for other identifiers or non-objects never enter the result."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps([
+                "not-a-record",
+                {"session_id": "other", "session_name": "Other"},
+                {"session_name": "No Id"},
+                {"session_id": "s1", "session_name": "Wanted"},
+            ]),
+            stderr="",
+        )
+        result = session_info._get_sessions_info(["s1"])
+        self.assertEqual(set(result), {"s1"})
+        self.assertEqual(result["s1"].name, "Wanted")
 
     @patch(
-        "cli_topsailai.session_info.subprocess.run",
+        "cli_topsailai.session_info._run_lookup_command",
         side_effect=FileNotFoundError("not found"),
     )
-    def test_missing_command_returns_failure(self, mock_run):
+    def test_missing_command_returns_empty(self, mock_run):
         """Missing external command is treated as a transient failure."""
-        result = session_info._get_session_info("s1")
-        self.assertFalse(result.success)
-        self.assertIsNone(result.name)
-        self.assertIsNone(result.project_workspace)
+        self.assertEqual(session_info._get_sessions_info(["s1"]), {})
 
     @patch(
-        "cli_topsailai.session_info.subprocess.run",
+        "cli_topsailai.session_info._run_lookup_command",
         side_effect=subprocess.TimeoutExpired(cmd=["x"], timeout=5),
     )
-    def test_timeout_returns_failure(self, mock_run):
+    def test_timeout_returns_empty(self, mock_run):
         """Timeout is treated as a transient failure."""
-        result = session_info._get_session_info("s1")
-        self.assertFalse(result.success)
-        self.assertIsNone(result.name)
-        self.assertIsNone(result.project_workspace)
+        self.assertEqual(session_info._get_sessions_info(["s1"]), {})
 
+    @patch("cli_topsailai.session_info._run_lookup_command")
+    def test_empty_request_skips_subprocess(self, mock_run):
+        """No identifiers means no subprocess at all."""
+        self.assertEqual(session_info._get_sessions_info([]), {})
+        mock_run.assert_not_called()
 
 class TestEnrichFilesWithSessionNames(unittest.TestCase):
     """Tests for enrich_files_with_session_names."""
@@ -129,13 +210,14 @@ class TestEnrichFilesWithSessionNames(unittest.TestCase):
         """Clear module-level cache after each test."""
         session_info._SESSION_INFO_CACHE._data.clear()
 
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_adds_session_name_to_files(self, mock_run):
-        """Session names are added to file dicts."""
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": "Auto Summary", "project_workspace": "/work/project-a"}',
-            stderr="",
+        """Session names are added to file dicts from one batch response."""
+        mock_run.return_value = _lookup_result(
+            _batch_payload(
+                ("s1", "Auto Summary", "/work/project-a"),
+                ("s2", "Auto Summary", "/work/project-a"),
+            )
         )
         files = [
             {"session_id": "s1"},
@@ -144,14 +226,13 @@ class TestEnrichFilesWithSessionNames(unittest.TestCase):
         session_info.enrich_files_with_session_names(files)
         self.assertEqual(files[0]["session_name"], "Auto Summary")
         self.assertEqual(files[1]["session_name"], "Auto Summary")
+        self.assertEqual(mock_run.call_count, 1)
 
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_deduplicates_session_ids(self, mock_run):
-        """Same session ID is only queried once."""
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": "Auto Summary", "project_workspace": "/work/project-a"}',
-            stderr="",
+        """Same session ID is only requested once in the batch command."""
+        mock_run.return_value = _lookup_result(
+            _batch_payload(("s1", "Auto Summary", "/work/project-a"))
         )
         files = [
             {"session_id": "s1"},
@@ -160,10 +241,13 @@ class TestEnrichFilesWithSessionNames(unittest.TestCase):
         ]
         session_info.enrich_files_with_session_names(files)
         self.assertEqual(mock_run.call_count, 1)
+        mock_run.assert_called_once_with(
+            ["topsailai_sessions_info", "--json", "s1"]
+        )
         for f in files:
             self.assertEqual(f["session_name"], "Auto Summary")
 
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_temp_session_skipped(self, mock_run):
         """Temporary sessions are skipped and stored as None."""
         files = [{"session_id": "(temp)"}]
@@ -172,7 +256,7 @@ class TestEnrichFilesWithSessionNames(unittest.TestCase):
         self.assertIsNone(files[0]["session_name"])
         self.assertIsNone(files[0]["project_workspace"])
 
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_empty_session_id_skipped(self, mock_run):
         """Empty session IDs are skipped and stored as None."""
         files = [{"session_id": ""}]
@@ -181,37 +265,51 @@ class TestEnrichFilesWithSessionNames(unittest.TestCase):
         self.assertIsNone(files[0]["session_name"])
         self.assertIsNone(files[0]["project_workspace"])
 
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_transient_failure_not_cached(self, mock_run):
         """Transient failures are not cached; retries are allowed."""
-        mock_run.return_value = MagicMock(
-            returncode=1,
-            stdout="",
-            stderr="error",
-        )
+        mock_run.return_value = _lookup_result("", returncode=1, stderr="error")
         files = [{"session_id": "s1"}]
         session_info.enrich_files_with_session_names(files)
         self.assertIsNone(files[0]["session_name"])
         self.assertEqual(mock_run.call_count, 1)
 
         # Second refresh should invoke subprocess again because failure was not cached.
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": "Recovered Name", "project_workspace": "/work/project-a"}',
-            stderr="",
+        mock_run.return_value = _lookup_result(
+            _batch_payload(("s1", "Recovered Name", "/work/project-a"))
         )
         files2 = [{"session_id": "s1"}]
         session_info.enrich_files_with_session_names(files2)
         self.assertEqual(mock_run.call_count, 2)
         self.assertEqual(files2[0]["session_name"], "Recovered Name")
 
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
+    def test_unknown_identifier_is_not_cached_as_failure(self, mock_run):
+        """A missing identifier in a partial batch is retried on the next refresh."""
+        mock_run.return_value = _lookup_result(
+            _batch_payload(("s1", "Found", "/work/a")),
+            returncode=1,
+            stderr="[INFO] Session not found: s2",
+        )
+        files = [{"session_id": "s1"}, {"session_id": "s2"}]
+        session_info.enrich_files_with_session_names(files)
+        self.assertEqual(files[0]["session_name"], "Found")
+        self.assertIsNone(files[1]["session_name"])
+        self.assertIs(session_info._SESSION_INFO_CACHE.get("s2"), session_info._MISSING)
+
+        mock_run.return_value = _lookup_result(
+            _batch_payload(("s2", "Late Name", "/work/b"))
+        )
+        files2 = [{"session_id": "s2"}]
+        session_info.enrich_files_with_session_names(files2)
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertEqual(files2[0]["session_name"], "Late Name")
+
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_successful_result_cached(self, mock_run):
         """Successful lookups are cached and not re-fetched."""
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": "Cached Name", "project_workspace": "/work/project-a"}',
-            stderr="",
+        mock_run.return_value = _lookup_result(
+            _batch_payload(("s1", "Cached Name", "/work/project-a"))
         )
         files = [{"session_id": "s1"}]
         session_info.enrich_files_with_session_names(files)
@@ -224,55 +322,43 @@ class TestEnrichFilesWithSessionNames(unittest.TestCase):
         mock_run.assert_not_called()
         self.assertEqual(files2[0]["session_name"], "Cached Name")
 
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_empty_name_in_valid_json_not_cached(self, mock_run):
         """A valid JSON response with missing/empty name is not cached."""
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": ""}',
-            stderr="",
-        )
+        mock_run.return_value = _lookup_result(_batch_payload(("s1", "", "")))
         files = [{"session_id": "s1"}]
         session_info.enrich_files_with_session_names(files)
         self.assertIsNone(files[0]["session_name"])
         self.assertEqual(mock_run.call_count, 1)
 
         # Second refresh should invoke subprocess again because empty name was not cached.
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": "Updated Name", "project_workspace": "/work/project-a"}',
-            stderr="",
+        mock_run.return_value = _lookup_result(
+            _batch_payload(("s1", "Updated Name", "/work/project-a"))
         )
         files2 = [{"session_id": "s1"}]
         session_info.enrich_files_with_session_names(files2)
         self.assertEqual(mock_run.call_count, 2)
         self.assertEqual(files2[0]["session_name"], "Updated Name")
 
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_whitespace_name_not_cached(self, mock_run):
         """A whitespace-only name is not cached."""
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": "   "}',
-            stderr="",
-        )
+        mock_run.return_value = _lookup_result(_batch_payload(("s1", "   ", "")))
         files = [{"session_id": "s1"}]
         session_info.enrich_files_with_session_names(files)
         self.assertIsNone(files[0]["session_name"])
         self.assertEqual(mock_run.call_count, 1)
 
         # Second refresh should invoke subprocess again.
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": "Real Name", "project_workspace": "/work/project-a"}',
-            stderr="",
+        mock_run.return_value = _lookup_result(
+            _batch_payload(("s1", "Real Name", "/work/project-a"))
         )
         files2 = [{"session_id": "s1"}]
         session_info.enrich_files_with_session_names(files2)
         self.assertEqual(mock_run.call_count, 2)
         self.assertEqual(files2[0]["session_name"], "Real Name")
 
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_cache_hit_returns_cached_name(self, mock_run):
         """Cached session name is returned without subprocess call."""
         session_info._SESSION_INFO_CACHE.set("s1", ("Cached Name", "/work/cached"))
@@ -281,16 +367,19 @@ class TestEnrichFilesWithSessionNames(unittest.TestCase):
         mock_run.assert_not_called()
         self.assertEqual(files[0]["session_name"], "Cached Name")
 
-    @patch("cli_topsailai.session_info.subprocess.run")
-    def test_concurrent_lookup_for_multiple_ids(self, mock_run):
-        """Multiple distinct IDs are fetched concurrently."""
+    @patch("cli_topsailai.session_info._run_lookup_command")
+    def test_single_batch_call_for_multiple_ids(self, mock_run):
+        """Every distinct ID is resolved by exactly one subprocess call."""
 
         def side_effect(cmd, **kwargs):
-            session_id = cmd[-1]
-            return MagicMock(
-                returncode=0,
-                stdout=f'{{"session_name": "Name {session_id}", "project_workspace": "/work/{session_id}"}}',
-                stderr="",
+            session_ids = cmd[2:]
+            return _lookup_result(
+                _batch_payload(
+                    *[
+                        (sid, f"Name {sid}", f"/work/{sid}")
+                        for sid in session_ids
+                    ]
+                )
             )
 
         mock_run.side_effect = side_effect
@@ -303,9 +392,12 @@ class TestEnrichFilesWithSessionNames(unittest.TestCase):
         self.assertEqual(files[0]["session_name"], "Name s1")
         self.assertEqual(files[1]["session_name"], "Name s2")
         self.assertEqual(files[2]["session_name"], "Name s3")
-        self.assertEqual(mock_run.call_count, 3)
+        self.assertEqual(mock_run.call_count, 1)
+        mock_run.assert_called_once_with(
+            ["topsailai_sessions_info", "--json", "s1", "s2", "s3"]
+        )
 
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_missing_session_id_handled(self, mock_run):
         """Files without session_id get None."""
         files = [{}]
@@ -322,13 +414,11 @@ class TestEnrichFilesWithProjectWorkspace(unittest.TestCase):
         session_info._SESSION_INFO_CACHE._data.clear()
 
     @patch("cli_topsailai.session_info.load_project_workspace_lookup")
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_prefers_session_info_workspace_over_lookup(self, mock_run, mock_lookup):
         """Authoritative session record wins over project_history lookup."""
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": "Auto Summary", "project_workspace": "/work/from-session"}',
-            stderr="",
+        mock_run.return_value = _lookup_result(
+            _batch_payload(("s1", "Auto Summary", "/work/from-session"))
         )
         mock_lookup.return_value = {"s1": "/work/from-history"}
         files = [{"session_id": "s1"}]
@@ -336,14 +426,12 @@ class TestEnrichFilesWithProjectWorkspace(unittest.TestCase):
         self.assertEqual(files[0]["project_workspace"], "/work/from-session")
 
     @patch("cli_topsailai.session_info.load_project_workspace_lookup")
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_falls_back_to_lookup_when_session_info_has_no_workspace(
         self, mock_run, mock_lookup
     ):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": "Auto Summary"}',
-            stderr="",
+        mock_run.return_value = _lookup_result(
+            _batch_payload(("s1", "Auto Summary", ""))
         )
         mock_lookup.return_value = {"s1": "/work/from-history"}
         files = [{"session_id": "s1"}]
@@ -351,27 +439,21 @@ class TestEnrichFilesWithProjectWorkspace(unittest.TestCase):
         self.assertEqual(files[0]["project_workspace"], "/work/from-history")
 
     @patch("cli_topsailai.session_info.load_project_workspace_lookup")
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_falls_back_to_lookup_on_session_info_failure(
         self, mock_run, mock_lookup
     ):
-        mock_run.return_value = MagicMock(
-            returncode=1,
-            stdout="",
-            stderr="error",
-        )
+        mock_run.return_value = _lookup_result("", returncode=1, stderr="error")
         mock_lookup.return_value = {"s1": "/work/from-history"}
         files = [{"session_id": "s1"}]
         session_info.enrich_files_with_session_names(files)
         self.assertEqual(files[0]["project_workspace"], "/work/from-history")
 
     @patch("cli_topsailai.session_info.load_project_workspace_lookup")
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_missing_workspace_shows_none(self, mock_run, mock_lookup):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": "Auto Summary"}',
-            stderr="",
+        mock_run.return_value = _lookup_result(
+            _batch_payload(("s1", "Auto Summary", ""))
         )
         mock_lookup.return_value = {}
         files = [{"session_id": "s1"}]
@@ -401,12 +483,10 @@ class TestEnrichFilesWithProjectWorkspace(unittest.TestCase):
         self.assertIsNone(files[0]["project_workspace"])
 
     @patch("cli_topsailai.session_info.load_project_workspace_lookup")
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_workspace_lookup_refreshed_each_call(self, mock_run, mock_lookup):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": "Auto Summary", "project_workspace": "/work/first"}',
-            stderr="",
+        mock_run.return_value = _lookup_result(
+            _batch_payload(("s1", "Auto Summary", "/work/first"))
         )
         mock_lookup.return_value = {}
         files = [{"session_id": "s1"}]
@@ -555,23 +635,24 @@ class TestEnrichRunningUnnamedSessions(unittest.TestCase):
         session_info._SESSION_INFO_CACHE._data.clear()
 
     @patch("cli_topsailai.session_info._is_pid_alive")
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_backfills_running_unnamed_session(self, mock_run, mock_alive):
         """A running unnamed session gets its name from session info."""
         mock_alive.return_value = True
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": "Fresh Name", "project_workspace": "/work/a"}',
-            stderr="",
+        mock_run.return_value = _lookup_result(
+            _batch_payload(("s1", "Fresh Name", "/work/a"))
         )
         files = [
             {"session_id": "s1", "session_name": None, "pid": 1234},
         ]
         session_info.enrich_running_unnamed_sessions(files)
         self.assertEqual(files[0]["session_name"], "Fresh Name")
+        mock_run.assert_called_once_with(
+            ["topsailai_sessions_info", "--json", "s1"]
+        )
 
     @patch("cli_topsailai.session_info._is_pid_alive")
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_named_sessions_are_unchanged(self, mock_run, mock_alive):
         """Sessions that already have a name are not queried."""
         mock_alive.return_value = True
@@ -583,7 +664,7 @@ class TestEnrichRunningUnnamedSessions(unittest.TestCase):
         mock_run.assert_not_called()
 
     @patch("cli_topsailai.session_info._is_pid_alive")
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_dead_sessions_are_unchanged(self, mock_run, mock_alive):
         """Dead sessions are not queried even if unnamed."""
         mock_alive.return_value = False
@@ -595,15 +676,11 @@ class TestEnrichRunningUnnamedSessions(unittest.TestCase):
         mock_run.assert_not_called()
 
     @patch("cli_topsailai.session_info._is_pid_alive")
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_failure_is_silent(self, mock_run, mock_alive):
         """A failed lookup leaves the file unchanged."""
         mock_alive.return_value = True
-        mock_run.return_value = MagicMock(
-            returncode=1,
-            stdout="",
-            stderr="error",
-        )
+        mock_run.return_value = _lookup_result("", returncode=1, stderr="error")
         files = [
             {"session_id": "s1", "session_name": None, "pid": 1234},
         ]
@@ -611,14 +688,12 @@ class TestEnrichRunningUnnamedSessions(unittest.TestCase):
         self.assertIsNone(files[0]["session_name"])
 
     @patch("cli_topsailai.session_info._is_pid_alive")
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_deduplicates_session_ids(self, mock_run, mock_alive):
-        """The same session ID is queried only once."""
+        """The same session ID is requested only once."""
         mock_alive.return_value = True
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": "Shared Name"}',
-            stderr="",
+        mock_run.return_value = _lookup_result(
+            _batch_payload(("s1", "Shared Name", ""))
         )
         files = [
             {"session_id": "s1", "session_name": None, "pid": 1234},
@@ -626,24 +701,45 @@ class TestEnrichRunningUnnamedSessions(unittest.TestCase):
         ]
         session_info.enrich_running_unnamed_sessions(files)
         self.assertEqual(mock_run.call_count, 1)
+        mock_run.assert_called_once_with(
+            ["topsailai_sessions_info", "--json", "s1"]
+        )
         self.assertEqual(files[0]["session_name"], "Shared Name")
         self.assertEqual(files[1]["session_name"], "Shared Name")
 
     @patch("cli_topsailai.session_info._is_pid_alive")
-    @patch("cli_topsailai.session_info.subprocess.run")
+    @patch("cli_topsailai.session_info._run_lookup_command")
+    def test_multiple_unnamed_sessions_use_one_batch_call(self, mock_run, mock_alive):
+        """Several unnamed running sessions are resolved by one subprocess."""
+        mock_alive.return_value = True
+        mock_run.return_value = _lookup_result(
+            _batch_payload(("s1", "First", ""), ("s2", "Second", ""))
+        )
+        files = [
+            {"session_id": "s1", "session_name": None, "pid": 1234},
+            {"session_id": "s2", "session_name": None, "pid": 5678},
+        ]
+        session_info.enrich_running_unnamed_sessions(files)
+        self.assertEqual(mock_run.call_count, 1)
+        mock_run.assert_called_once_with(
+            ["topsailai_sessions_info", "--json", "s1", "s2"]
+        )
+        self.assertEqual(files[0]["session_name"], "First")
+        self.assertEqual(files[1]["session_name"], "Second")
+
+    @patch("cli_topsailai.session_info._is_pid_alive")
+    @patch("cli_topsailai.session_info._run_lookup_command")
     def test_empty_name_result_is_ignored(self, mock_run, mock_alive):
         """An empty name from session info does not overwrite the field."""
         mock_alive.return_value = True
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"session_name": ""}',
-            stderr="",
-        )
+        mock_run.return_value = _lookup_result(_batch_payload(("s1", "", "")))
         files = [
             {"session_id": "s1", "session_name": None, "pid": 1234},
         ]
         session_info.enrich_running_unnamed_sessions(files)
         self.assertIsNone(files[0]["session_name"])
+
+
 class TestCompletedMetadataSnapshot(unittest.TestCase):
     """Tests for scan-local completed metadata snapshots."""
 
@@ -652,7 +748,7 @@ class TestCompletedMetadataSnapshot(unittest.TestCase):
         session_info._SESSION_INFO_CACHE._data.clear()
 
     @patch("cli_topsailai.session_info.load_project_workspace_lookup")
-    @patch("cli_topsailai.session_info._get_session_info")
+    @patch("cli_topsailai.session_info._get_sessions_info")
     def test_snapshot_name_and_path_avoid_query(self, mock_query, mock_lookup):
         """A complete snapshot supplies both fields without a subprocess lookup."""
         mock_lookup.return_value = {"s1": "/history"}
@@ -666,17 +762,17 @@ class TestCompletedMetadataSnapshot(unittest.TestCase):
         self.assertEqual(files[0]["project_workspace"], "/meta")
 
     @patch("cli_topsailai.session_info.load_project_workspace_lookup")
-    @patch("cli_topsailai.session_info._get_session_info")
+    @patch("cli_topsailai.session_info._get_sessions_info")
     def test_missing_snapshot_path_queries_and_preserves_name(self, mock_query, mock_lookup):
         """A cold snapshot path lookup updates cache and avoids a retry."""
-        mock_query.return_value = session_info._LookupResult("Queried", "/queried", True)
+        mock_query.return_value = _batch_lookup(("s1", "Queried", "/queried"))
         mock_lookup.return_value = {"s1": "/history"}
         files = [{
             "session_id": "s1", "pid": 123, "is_task": False,
             "_completed_session_meta": ("s1", 123, "Completed", None),
         }]
         session_info.enrich_files_with_session_names(files)
-        mock_query.assert_called_once_with("s1")
+        mock_query.assert_called_once_with(["s1"])
         self.assertEqual(session_info._SESSION_INFO_CACHE.get("s1"),
                          ("Queried", "/queried"))
         self.assertEqual(files[0]["session_name"], "Completed")
@@ -688,7 +784,7 @@ class TestCompletedMetadataSnapshot(unittest.TestCase):
         self.assertEqual(files[0]["project_workspace"], "/queried")
 
     @patch("cli_topsailai.session_info.load_project_workspace_lookup")
-    @patch("cli_topsailai.session_info._get_session_info")
+    @patch("cli_topsailai.session_info._get_sessions_info")
     def test_mixed_instances_reuse_meta_cache_without_query(self, mock_query, mock_lookup):
         """An ordinary row reuses a completed snapshot cached for the same ID."""
         mock_lookup.return_value = {}
@@ -704,10 +800,10 @@ class TestCompletedMetadataSnapshot(unittest.TestCase):
         self.assertEqual(files[1]["project_workspace"], "/first")
 
     @patch("cli_topsailai.session_info.load_project_workspace_lookup")
-    @patch("cli_topsailai.session_info._get_session_info")
+    @patch("cli_topsailai.session_info._get_sessions_info")
     def test_query_failure_keeps_snapshot_and_retries(self, mock_query, mock_lookup):
         """A failed path lookup does not poison retries or erase the name."""
-        mock_query.return_value = session_info._LookupResult(None, None, False)
+        mock_query.return_value = {}
         mock_lookup.return_value = {"s1": "/history"}
         files = [{
             "session_id": "s1", "pid": 123, "is_task": False,
@@ -721,36 +817,38 @@ class TestCompletedMetadataSnapshot(unittest.TestCase):
 
     def test_mismatched_snapshot_falls_back_to_query(self):
         """A snapshot for another PID is rejected rather than reused."""
-        with patch("cli_topsailai.session_info._get_session_info") as mock_query, \
+        with patch("cli_topsailai.session_info._get_sessions_info") as mock_query, \
                 patch("cli_topsailai.session_info.load_project_workspace_lookup") as mock_lookup:
-            mock_query.return_value = session_info._LookupResult("Queried", "/queried", True)
+            mock_query.return_value = _batch_lookup(("s1", "Queried", "/queried"))
             mock_lookup.return_value = {}
             files = [{
                 "session_id": "s1", "pid": 456, "is_task": False,
                 "_completed_session_meta": ("s1", 123, "Wrong", "/wrong"),
             }]
             session_info.enrich_files_with_session_names(files)
-            mock_query.assert_called_once_with("s1")
+            mock_query.assert_called_once_with(["s1"])
             self.assertEqual(files[0]["session_name"], "Queried")
 
 
     def test_snapshot_session_id_mismatch_falls_back_to_query(self):
         """A snapshot for another session ID is rejected even with the same PID."""
-        with patch("cli_topsailai.session_info._get_session_info") as mock_query, \
+        with patch("cli_topsailai.session_info._get_sessions_info") as mock_query, \
                 patch("cli_topsailai.session_info.load_project_workspace_lookup") as mock_lookup:
-            mock_query.return_value = session_info._LookupResult("Queried", "/queried", True)
+            mock_query.return_value = _batch_lookup(
+                ("row-session", "Queried", "/queried")
+            )
             mock_lookup.return_value = {}
             files = [{
                 "session_id": "row-session", "pid": 123, "is_task": False,
                 "_completed_session_meta": ("wrong-session", 123, "Wrong", "/wrong"),
             }]
             session_info.enrich_files_with_session_names(files)
-            mock_query.assert_called_once_with("row-session")
+            mock_query.assert_called_once_with(["row-session"])
             self.assertEqual(files[0]["session_name"], "Queried")
             self.assertEqual(files[0]["project_workspace"], "/queried")
 
     @patch("cli_topsailai.session_info.load_project_workspace_lookup")
-    @patch("cli_topsailai.session_info._get_session_info")
+    @patch("cli_topsailai.session_info._get_sessions_info")
     def test_snapshot_name_wins_but_cached_path_is_preserved(self, mock_query, mock_lookup):
         """A cached path wins while the completed snapshot name wins over its name."""
         mock_lookup.return_value = {"s1": "/history"}
@@ -765,18 +863,18 @@ class TestCompletedMetadataSnapshot(unittest.TestCase):
         self.assertEqual(files[0]["project_workspace"], "/cached")
 
     @patch("cli_topsailai.session_info.load_project_workspace_lookup")
-    @patch("cli_topsailai.session_info._get_session_info")
+    @patch("cli_topsailai.session_info._get_sessions_info")
     def test_name_only_cache_still_queries_for_missing_snapshot_path(self, mock_query, mock_lookup):
         """A name-only cache is completed by a successful workspace lookup."""
         mock_lookup.return_value = {"s1": "/history"}
         session_info._SESSION_INFO_CACHE.set("s1", ("Cached Name", None))
-        mock_query.return_value = session_info._LookupResult("Queried Name", "/queried", True)
+        mock_query.return_value = _batch_lookup(("s1", "Queried Name", "/queried"))
         files = [{
             "session_id": "s1", "pid": 123, "is_task": False,
             "_completed_session_meta": ("s1", 123, "Completed", None),
         }]
         session_info.enrich_files_with_session_names(files)
-        mock_query.assert_called_once_with("s1")
+        mock_query.assert_called_once_with(["s1"])
         self.assertEqual(session_info._SESSION_INFO_CACHE.get("s1"),
                          ("Queried Name", "/queried"))
         self.assertEqual(files[0]["session_name"], "Completed")
@@ -788,7 +886,7 @@ class TestCompletedMetadataSnapshot(unittest.TestCase):
         self.assertEqual(files[0]["project_workspace"], "/queried")
 
     @patch("cli_topsailai.session_info._is_pid_alive", return_value=True)
-    @patch("cli_topsailai.session_info._get_session_info")
+    @patch("cli_topsailai.session_info._get_sessions_info")
     def test_repeated_and_running_enrichment_do_not_query_snapshot(self, mock_query, mock_alive):
         """A complete snapshot remains named through repeated enrichment passes."""
         files = [{
@@ -802,7 +900,7 @@ class TestCompletedMetadataSnapshot(unittest.TestCase):
         self.assertEqual(files[0]["session_name"], "Completed")
 
     @patch("cli_topsailai.session_info.load_project_workspace_lookup")
-    @patch("cli_topsailai.session_info._get_session_info")
+    @patch("cli_topsailai.session_info._get_sessions_info")
     def test_same_session_id_different_snapshot_pids_share_first_cache_value(
         self, mock_query, mock_lookup
     ):
@@ -840,5 +938,111 @@ class TestCompletedMetadataSnapshot(unittest.TestCase):
             mock_query.assert_not_called()
             self.assertEqual(ordinary[0]["session_name"], winner[2])
             self.assertEqual(ordinary[0]["project_workspace"], winner[3])
+
+
+class TestKillProcessGroup(unittest.TestCase):
+    """Tests for _kill_process_group and _run_lookup_command."""
+
+    def _spawn_group_with_grandchild(self):
+        """Start a process group whose grandchild outlives its direct parent.
+
+        The CLI dispatcher runs the script through ``uv run``, so the process
+        that burns CPU is a grandchild.  This fixture reproduces that shape:
+        a shell leader that starts a long-lived grandchild and then exits, so
+        only a process-group kill can reach the survivor.
+        """
+        process = subprocess.Popen(
+            ["/bin/sh", "-c", "sleep 120 >/dev/null 2>&1 & echo $!; exit 0"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        stdout, _stderr = process.communicate(timeout=10)
+        grandchild_pid = int(stdout.strip())
+        self.addCleanup(self._reap, grandchild_pid)
+        return process, grandchild_pid
+
+    @staticmethod
+    def _reap(pid):
+        """Best-effort cleanup so a failed assertion cannot leak a process."""
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _is_alive(pid):
+        """Return True while *pid* still exists."""
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+
+    def test_kill_process_group_reaches_grandchild(self):
+        """A grandchild survives a direct-child kill but not a group kill."""
+        process, grandchild_pid = self._spawn_group_with_grandchild()
+        self.assertTrue(self._is_alive(grandchild_pid))
+
+        session_info._kill_process_group(process)
+
+        deadline = time.time() + 5
+        while time.time() < deadline and self._is_alive(grandchild_pid):
+            time.sleep(0.05)
+        self.assertFalse(
+            self._is_alive(grandchild_pid),
+            "grandchild survived the process-group kill",
+        )
+
+    def test_kill_process_group_tolerates_dead_group(self):
+        """Killing an already-terminated group is not an error."""
+        process = subprocess.Popen(
+            ["/bin/sh", "-c", "exit 0"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        process.communicate(timeout=10)
+        session_info._kill_process_group(process)
+
+    def test_run_lookup_command_returns_completed_process(self):
+        """A successful command returns its exit code and stdout."""
+        result = session_info._run_lookup_command(
+            ["/bin/sh", "-c", "printf 'payload'"]
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "payload")
+
+    def test_run_lookup_command_kills_group_on_timeout(self):
+        """A timeout kills the whole group and still raises TimeoutExpired."""
+        original_timeout = session_info._SESSION_INFO_TIMEOUT
+        session_info._SESSION_INFO_TIMEOUT = 1
+        self.addCleanup(
+            setattr, session_info, "_SESSION_INFO_TIMEOUT", original_timeout
+        )
+
+        pid_dir = tempfile.mkdtemp(prefix="topsailai-session-info-")
+        self.addCleanup(shutil.rmtree, pid_dir, True)
+        pid_file = os.path.join(pid_dir, "pid")
+
+        with self.assertRaises(subprocess.TimeoutExpired):
+            session_info._run_lookup_command(
+                ["/bin/sh", "-c", f"sleep 120 & echo $! > {pid_file}; wait"]
+            )
+
+        with open(pid_file, "r", encoding="utf-8") as handle:
+            grandchild_pid = int(handle.read().strip())
+        self.addCleanup(self._reap, grandchild_pid)
+
+        deadline = time.time() + 5
+        while time.time() < deadline and self._is_alive(grandchild_pid):
+            time.sleep(0.05)
+        self.assertFalse(
+            self._is_alive(grandchild_pid),
+            "grandchild survived the timeout kill",
+        )
+
 if __name__ == "__main__":
     unittest.main()

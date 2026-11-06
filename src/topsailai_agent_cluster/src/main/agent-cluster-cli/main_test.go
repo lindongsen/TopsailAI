@@ -240,12 +240,12 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, command := range []string{"list", "show", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "help"} {
+	for _, command := range []string{"list", "refresh", "show", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "help"} {
 		if !strings.Contains(text, " "+command) {
 			t.Fatalf("help missing dispatched command %q: %q", command, text)
 		}
 	}
-	for _, interactiveOnly := range []string{"inject", "interrupt", "cd", "refresh", "quit"} {
+	for _, interactiveOnly := range []string{"inject", "interrupt", "cd", "quit"} {
 		if strings.Contains(text, "[options] "+interactiveOnly+" ") {
 			t.Fatalf("non-interactive help leaked command %q: %q", interactiveOnly, text)
 		}
@@ -585,5 +585,79 @@ func TestInteractiveShortFlagEntryPoint(t *testing.T) {
 				t.Fatalf("prompt missing: %q", out.String())
 			}
 		})
+	}
+}
+
+// TestEndpointsHelpAndDispatchContract pins the advertised syntax and proves the
+// dispatch path against an isolated Server, including the JSON projection, the
+// optional ID filter and the rejection of surplus arguments.
+func TestEndpointsHelpAndDispatchContract(t *testing.T) {
+	var helpOut, helpDiagnostics strings.Builder
+	if err := runWithIO([]string{"help", "endpoints"}, strings.NewReader(""), &helpOut, &helpDiagnostics, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	const syntax = "agent-cluster-cli [options] [--endpoint <id>] endpoints [endpoint-id]"
+	if !strings.Contains(helpOut.String(), syntax) {
+		t.Fatalf("help=%q missing executable syntax %q", helpOut.String(), syntax)
+	}
+
+	server := newListBehaviorServer(t)
+	defer server.Close()
+	base := []string{"--server-url", server.URL, "--token", "test-token"}
+
+	var output, diagnostics strings.Builder
+	if err := runWithIO(append(append([]string{}, base...), "endpoints"), strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
+		t.Fatalf("endpoints failed: %v diagnostics=%q", err, diagnostics.String())
+	}
+	text := output.String()
+	for _, want := range []string{"ENDPOINT_ID", "endpoint-1", "endpoint-2", "endpoint-3", "online(2)", "offline(1)"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("endpoints output=%q missing %q", text, want)
+		}
+	}
+	if strings.Contains(text, "\x1b") {
+		t.Fatalf("non-terminal endpoints output contains ANSI bytes: %q", text)
+	}
+
+	// The global --endpoint flag narrows the listing to one endpoint.
+	output.Reset()
+	if err := runWithIO(append(append([]string{}, base...), "--endpoint", "endpoint-2", "endpoints"), strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
+		t.Fatalf("filtered endpoints failed: %v", err)
+	}
+	if filtered := output.String(); !strings.Contains(filtered, "endpoint-2") || strings.Contains(filtered, "endpoint-1") {
+		t.Fatalf("filtered endpoints output=%q", filtered)
+	}
+
+	// A positional endpoint ID is the same filter.
+	output.Reset()
+	if err := runWithIO(append(append([]string{}, base...), "endpoints", "endpoint-3"), strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
+		t.Fatalf("positional filter failed: %v", err)
+	}
+	if filtered := output.String(); !strings.Contains(filtered, "endpoint-3") || strings.Contains(filtered, "endpoint-1") {
+		t.Fatalf("positional filter output=%q", filtered)
+	}
+
+	// JSON mode carries the reported fields and no presentation bytes.
+	output.Reset()
+	if err := runWithIO(append(append([]string{}, base...), "--json", "endpoints"), strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
+		t.Fatalf("JSON endpoints failed: %v", err)
+	}
+	var decoded []protocol.Endpoint
+	if err := json.Unmarshal([]byte(output.String()), &decoded); err != nil {
+		t.Fatalf("JSON endpoints=%q err=%v", output.String(), err)
+	}
+	if len(decoded) != 3 || decoded[0].EndpointID != "endpoint-1" || decoded[0].ConnectionState != "online" {
+		t.Fatalf("JSON endpoints=%#v", decoded)
+	}
+
+	// Surplus arguments are rejected instead of silently listing everything.
+	for _, args := range [][]string{
+		append(append([]string{}, base...), "endpoints", "endpoint-1", "endpoint-2"),
+		append(append([]string{}, base...), "--endpoint", "endpoint-1", "endpoints", "endpoint-2"),
+		append(append([]string{}, base...), "endpoints", "--clean"),
+	} {
+		if err := runWithIO(args, strings.NewReader(""), io.Discard, io.Discard, false, nil); err == nil {
+			t.Fatalf("endpoints accepted invalid arguments %v", args)
+		}
 	}
 }
