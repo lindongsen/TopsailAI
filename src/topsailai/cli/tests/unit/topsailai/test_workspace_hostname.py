@@ -178,13 +178,13 @@ def test_sanitized_bounded_display(tmp_path, value, expected):
 
 
 def test_temporary_session_and_task(tmp_path):
-    """Reserved temporary IDs remain empty under the hardened reader policy."""
+    """A temporary row reads its reserved-prefix record; a task row stays empty."""
     path = write_meta(tmp_path, sid="topsailai", hostname="temp-host")
     for name in ("topsailai.123.session.stdout", "topsailai.456.child.task.stdout"):
         (path.parent / name).touch()
     rows = log_files.discover_workspace_log_files(str(path.parent))
     formatting.enrich_workspace_rows(rows, str(tmp_path))
-    assert [r["hostname"] for r in rows] == ["", ""]
+    assert [r["hostname"] for r in rows] == ["temp-host", ""]
 
 
 def test_invalid_and_generic_rows_do_not_read_metadata(tmp_path, monkeypatch):

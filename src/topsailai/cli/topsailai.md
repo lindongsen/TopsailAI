@@ -30,6 +30,8 @@ The CLI is organized as five scopes. Each scope is a navigation and action conte
 - Completion evidence requires the row PID to equal the session PID, so task rows are never marked `DONE`.
 - Session-info display caching must not bypass the completion check, so cached names and project workspaces cannot make completed sessions reappear after a refresh.
 - Metadata admission is absent-only, while successful session-info queries retain their existing updates.
+- Workspace field resolution is primary-then-metadata: the session-info lookup and the recorded project-workspace index stay authoritative, and the row's exact session metadata record is consulted only for a field the primary source left empty. The fallback binds to the row's own `(session_id, pid)` pair and never substitutes another session's or another PID's record.
+- Metadata-derived values are display evidence only. `workspace_pid` stays liveness-gated and remains the sole PID `/kill` may signal, while the metadata PID is carried in a separate display field, so no signal authority and no `process_generation` is ever derived from metadata.
 - Driver commands are restricted to the ordinary workspace task list; project, session, runtime, doc and managed-project views reject them.
 - The external driver alone owns duplicate-start exclusion, its lock, metadata and log cleanup. The CLI never writes, acquires or deletes these records.
 - The CLI retains live child handles in memory and reaps exits on later interactions without terminating resident drivers when leaving the CLI.

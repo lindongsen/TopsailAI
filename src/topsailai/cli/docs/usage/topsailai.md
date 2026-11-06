@@ -128,7 +128,7 @@ Workspace discovery reads exact session metadata for each parent session row and
 | `/driver stop <number>` | Gracefully stop one verified driver, not its session (ordinary workspace only). |
 | `/driver log <number>` | Read the bounded driver log snapshot. |
 | `/driver meta <number>` | Read the driver metadata snapshot; distinct from `/meta`. |
-| `/kill <number>` | Send SIGTERM to exactly the displayed row PID after y/N confirmation (ordinary workspace only). |
+| `/kill <number>` | Send SIGTERM to the row's live session PID after y/N confirmation (ordinary workspace only). A row whose process is no longer alive has no signalable PID, even when its metadata PID is displayed. |
 | `/refresh` | Re-scan the task directory and refresh the list. `r all` or `/refresh all` also includes rows whose metadata status is `completed`; a plain `r` or `/refresh` restores the default hidden view. |
 | `/session <number\|session_id>` | Retrieve full context messages for a session. A row without a session id (a temporary session displayed as `(temp)`) is served through its control channel when one exists; see [Workspace session history](#workspace-session-history). |
 | `/agent [<number\|folder>]` | Launch an agent. With no argument, run the YAML-configured agent command. With an argument, change to the selected folder and run `topsailai_launch_agent`. The effective model selection is applied to the child process. |
@@ -153,10 +153,29 @@ When the CLI starts, it prints the workspace task list built by scanning `{TOPSA
 | Column | Description |
 |---|---|
 | `No` | Row number used to select the file |
-| `Session` | Session ID, or `(temp)` for temporary sessions |
-| `PID` | Process ID embedded in the filename |
-| `Modified` | Last modification time |
+| `Session Name` | Session name, or `-` when no source resolves one |
+| `Session ID` | Session ID, or `(temp)` for temporary sessions |
+| `PID` | Process ID for the row; see [Field resolution and metadata fallback](#field-resolution-and-metadata-fallback) |
+| `Hostname` | Host recorded in the session metadata, or empty |
+| `Status` | `INPUT`, `RUN`, `DONE`, or `-` |
+| `Driver` | Driver observation, or `-` |
 | `Created` | Creation time |
+| `Project Workspace` | Recorded project workspace, or `-` |
+
+### Field resolution and metadata fallback
+
+`Session Name`, `Project Workspace`, `Hostname`, and the displayed `PID` are resolved from a primary source first, then from the row's exact session metadata file `{TOPSAILAI_HOME}/workspace/task/{session_id}.{pid}.session.meta` when the primary source yields nothing. The metadata read is a fallback only: a value the primary source resolves is never replaced, so a renamed session keeps its primary name.
+
+| Field | Primary source | Metadata fallback |
+|---|---|---|
+| `Session Name` | `topsailai_session_info --json` for the row's session | `session_name` from the exact metadata record |
+| `Project Workspace` | the same lookup, then the recorded project-workspace index | `project_workspace` from the exact metadata record, only when it is an absolute path |
+| `Hostname` | metadata only | `hostname` from the exact metadata record |
+| `PID` | the PID embedded in the filename, kept only while that process is alive | `pid` from the exact metadata record, display only |
+
+The fallback binds to the row's own `(session_id, pid)` pair and re-validates both against the record's stored `session_id` and `pid`. A record for another session or another PID is never substituted, and one session ID may own several metadata files, so no newest-file selection is made. A blank `session_name` or a relative `project_workspace` is treated as absent. Temporary rows are displayed as `(temp)` but stored under the reserved `topsailai` prefix, so their `Hostname` is read through that prefix; their `Session Name`, `Project Workspace`, and `PID` stay unresolved because a temporary session has no real identifier.
+
+The metadata `PID` is display evidence only and never grants signal authority: `workspace_pid` stays liveness-gated, `/kill` still signals only a live row PID, and the JSON `process_generation` stays `null` for a row whose process is not verified to hold its exact session stdout file, so non-interactive `workspace kill` remains impossible for an exited row.
 
 The prompt `[workspace]>` indicates workspace scope (the task list). Choosing a session switches to `[session:<session_id>]>` scope.
 
@@ -419,7 +438,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `models select <number-or-name>` | Set the workspace default model selection. |
 | `models clear` | Clear the workspace model selection. |
 
-The JSON workspace document contains `host`, `pwd`, `home`, `task_dir`, `items`, and `total`. Each item contains `no`, `filename`, `session_name`, `session_id`, `is_task`, `pid`, `process_generation`, `status`, `completed`, `driver`, `created_at`, and `project_workspace`. `process_generation` is the positive operating-system process generation required by non-interactive `workspace kill`; it is present only when an ordinary session process is currently verified to hold that exact session stdout file, and otherwise is `null`. Callers must not substitute a PID, timestamp, row number, or older generation. `created_at` is the local creation time in ISO 8601 format with a timezone offset (`YYYY-MM-DDTHH:MM:SS+/-HHMM`), or `null` when the creation time is unavailable. Items retain the default oldest-first order. An empty workspace returns `"items": []` and `"total": 0`.
+The JSON workspace document contains `host`, `pwd`, `home`, `task_dir`, `items`, and `total`. Each item contains `no`, `filename`, `session_name`, `session_id`, `is_task`, `pid`, `process_generation`, `status`, `completed`, `driver`, `created_at`, and `project_workspace`. `session_name`, `project_workspace`, and `pid` follow the same primary-then-metadata resolution documented in [Field resolution and metadata fallback](#field-resolution-and-metadata-fallback), so `pid` may be the metadata PID of an exited row. `process_generation` is the positive operating-system process generation required by non-interactive `workspace kill`; it is present only when an ordinary session process is currently verified to hold that exact session stdout file, and otherwise is `null`. A non-null `pid` therefore never implies signal authority, and callers must not substitute a PID, timestamp, row number, or older generation. `created_at` is the local creation time in ISO 8601 format with a timezone offset (`YYYY-MM-DDTHH:MM:SS+/-HHMM`), or `null` when the creation time is unavailable. Items retain the default oldest-first order. An empty workspace returns `"items": []` and `"total": 0`.
 
 The `project list --json` document is a JSON array of managed project records, ordered oldest-first by `created_at`. Each record contains the stored fields `name`, `path`, `created_at`, and `updated_at`, plus the 1-based `no` row number that matches the table row. An empty registry returns `[]` and exit code `0`, so callers never have to parse a warning message. The public parser tolerates unknown arguments, so an unrecognized option is ignored and the default table is printed; the usage error with exit code `2` applies only when the internal handler receives an option other than `--json`.
 

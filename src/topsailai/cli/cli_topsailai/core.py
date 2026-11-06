@@ -1243,7 +1243,7 @@ def _workspace_json_item(file_info: dict, index: int) -> dict:
     from cli_topsailai.agent_launch_process import _process_identity
     from cli_topsailai.log_files import is_process_holding_file
 
-    pid = file_info.get("workspace_pid")
+    pid = file_info.get("workspace_display_pid", file_info.get("workspace_pid"))
     status = file_info.get("workspace_status", "idle")
     generation = None
     evidence_pid = file_info.get("pid")

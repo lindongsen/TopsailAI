@@ -127,6 +127,30 @@ def _hostname_display(value: object) -> str:
     return _fit_table_cell(text.strip(), 32).rstrip()
 
 
+def _meta_display_pid(file_info: dict) -> int | None:
+    """Return the PID recorded in the row's exact metadata record, if any.
+
+    This value is display evidence only. It never grants signal authority, so
+    ``workspace_pid`` and ``process_generation`` keep their liveness-gated
+    meaning and a reused PID can never be signalled through this fallback.
+    """
+    snapshot = file_info.get("_workspace_meta_snapshot")
+    if not isinstance(snapshot, tuple) or len(snapshot) != 4:
+        return None
+    _home, session_id, pid, data = snapshot
+    if not isinstance(data, dict) or type(pid) is not int or pid <= 0:
+        return None
+    if not isinstance(session_id, str) or session_id != file_info.get("session_id"):
+        return None
+    expected_pid = (
+        file_info.get("session_pid") if file_info.get("is_task")
+        else file_info.get("pid")
+    )
+    if pid != expected_pid or data.get("pid") != pid:
+        return None
+    return pid
+
+
 def enrich_workspace_rows(files: List[dict], topsailai_home: str, *, driver_entry=None) -> None:
     """Refresh session state and attach session-level driver snapshots."""
     from cli_topsailai.session_driver import metadata_path, observe_driver
@@ -149,6 +173,12 @@ def enrich_workspace_rows(files: List[dict], topsailai_home: str, *, driver_entr
             except (ProcessLookupError, PermissionError, OSError):
                 pid = None
         file_info["workspace_pid"] = pid
+        # Display-only fallback: an exited session keeps the PID recorded in its
+        # exact metadata record, while ``workspace_pid`` stays liveness-gated so
+        # no signal authority is ever derived from metadata.
+        file_info["workspace_display_pid"] = (
+            pid if pid is not None else _meta_display_pid(file_info)
+        )
         file_info["workspace_status"] = (
             "input" if pid and is_session_pipe_open(file_info)
             else "running" if pid else "idle"
@@ -228,7 +258,7 @@ def print_table(files: List[dict]) -> None:
     rows = []
 
     for idx, file_info in enumerate(files, start=1):
-        pid = file_info.get("workspace_pid")
+        pid = file_info.get("workspace_display_pid", file_info.get("workspace_pid"))
         session = _display_session_id(
             file_info["session_id"], file_info.get("is_task", False)
         )

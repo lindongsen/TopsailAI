@@ -201,6 +201,40 @@ def _completed_meta_snapshot(file_info: dict) -> Optional[Tuple[str, int, str, O
     return session_id, parent_pid, name.strip(), project_workspace
 
 
+def _workspace_meta_fallback(file_info: dict) -> Tuple[Optional[str], Optional[str]]:
+    """Return the exact session metadata name and workspace for one row.
+
+    The fallback is consulted only when the primary lookup produced nothing.
+    It reuses the discovery snapshot, which ``read_session_meta`` already
+    validated for identity, and re-checks that identity against the row so a
+    snapshot for another session or PID can never be substituted.
+    """
+    snapshot = file_info.get("_workspace_meta_snapshot")
+    if not isinstance(snapshot, tuple) or len(snapshot) != 4:
+        return None, None
+    _home, session_id, pid, data = snapshot
+    if not isinstance(data, dict):
+        return None, None
+    if not isinstance(session_id, str) or session_id != file_info.get("session_id"):
+        return None, None
+    expected_pid = (
+        file_info.get("session_pid") if file_info.get("is_task")
+        else file_info.get("pid")
+    )
+    if type(pid) is not int or pid != expected_pid:
+        return None, None
+    if data.get("session_id") != session_id or data.get("pid") != pid:
+        return None, None
+
+    name = data.get("session_name")
+    name = name.strip() if isinstance(name, str) and name.strip() else None
+    project_workspace = data.get("project_workspace")
+    if (not isinstance(project_workspace, str) or not project_workspace.strip()
+            or not os.path.isabs(project_workspace)):
+        project_workspace = None
+    return name, project_workspace
+
+
 def enrich_files_with_session_names(files: List[dict]) -> None:
     """Add session names and workspaces while reusing completed scan metadata."""
     if not files:
@@ -273,6 +307,15 @@ def enrich_files_with_session_names(files: List[dict]) -> None:
         file_info["project_workspace"] = (
             project_workspace or workspace_lookup.get(session_id)
         )
+        # Fallback: consult the row's exact session metadata record only when
+        # the primary lookup produced nothing, so a renamed session keeps its
+        # primary name and a failed lookup still shows the recorded one.
+        if not file_info["session_name"] or not file_info["project_workspace"]:
+            meta_name, meta_path = _workspace_meta_fallback(file_info)
+            if not file_info["session_name"]:
+                file_info["session_name"] = meta_name
+            if not file_info["project_workspace"]:
+                file_info["project_workspace"] = meta_path
 
 
 def _is_pid_alive(pid: Optional[int]) -> bool:

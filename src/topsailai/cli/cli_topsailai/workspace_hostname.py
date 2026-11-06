@@ -37,8 +37,6 @@ def enrich_workspace_hostnames(files: list[dict], home: str) -> None:
                 f"{'topsailai' if sid == '(temp)' else sid}.{pid}.session.stdout",
                 f"{'topsailai' if sid == '(temp)' else sid}.{pid}.session.stderr"):
             continue
-        if sid == "(temp)":
-            continue
         if not isinstance(sid, str) or not sid or type(pid) is not int or pid <= 0:
             continue
         key = (sid, pid)
