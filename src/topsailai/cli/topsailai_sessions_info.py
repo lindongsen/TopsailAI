@@ -3,9 +3,14 @@
 
 Each requested session is rendered with exactly the same card and JSON record
 as ``topsailai_session_info``, because this command reuses that module's
-formatters instead of reimplementing them.  All requested identifiers are
-resolved with a single storage query, so the cost does not grow with the
-number of sessions.
+formatters instead of reimplementing them.
+
+Two costs are bounded independently of the number of requested sessions: all
+identifiers are resolved with a single storage query, and the running status of
+every session is derived from a single scan of the session stdout directory.
+The reference command scans that directory once per session, so calling it in a
+loop would cost O(sessions x directory entries); this command pays one scan for
+the whole batch.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ import _import_topsailai  # noqa: F401
 
 import topsailai_session_info as session_info
 
-from cli_topsailai.colors import Colors
+from cli_topsailai.colors import Colors, colored
 from cli_topsailai.paths import get_topsailai_home
 from topsailai.context.ctx_manager import get_session_manager
 from topsailai.context.session_manager import SessionData
@@ -89,19 +94,109 @@ def _order_found_sessions(
     return found, missing
 
 
-def _format_sessions_json(sessions: list[SessionData], home: str) -> str:
+def _session_id_of(session: SessionData) -> str:
+    """Return the identifier spelling used by the reference formatters."""
+    return str(session.session_id) if session.session_id else ""
+
+
+def _running_status_map(home: str) -> dict[str, bool]:
+    """Return ``session_id -> is_running`` from one scan of the stdout directory.
+
+    The reference command resolves running status per session, and each
+    resolution lists the whole task directory.  A batch must not pay that cost
+    once per session, so the directory is listed once here and the newest
+    stdout file per session is selected with the same rules as
+    ``topsailai_session_info._find_session_pid``: newest modification time
+    wins, and the first entry encountered wins a tie.
+
+    A session with no stdout file is absent from the returned mapping, which
+    callers must read as "not running" rather than "unknown".
+    """
+    task_dir = os.path.join(home, session_info.TASK_SUBDIR)
+    if not os.path.isdir(task_dir):
+        return {}
+
+    try:
+        entries = os.listdir(task_dir)
+    except OSError:
+        return {}
+
+    newest: dict[str, tuple[float, int]] = {}
+    for entry in entries:
+        if not entry.endswith(".session.stdout"):
+            continue
+        session_id, pid = session_info._parse_session_stdout_filename(entry)
+        if session_id is None or pid is None:
+            continue
+        full_path = os.path.join(task_dir, entry)
+        if not os.path.isfile(full_path):
+            continue
+        try:
+            mtime = os.path.getmtime(full_path)
+        except OSError:
+            continue
+        current = newest.get(session_id)
+        if current is None or mtime > current[0]:
+            newest[session_id] = (mtime, pid)
+
+    return {
+        session_id: session_info._is_pid_alive(pid)
+        for session_id, (_mtime, pid) in newest.items()
+    }
+
+
+def _format_sessions_json(
+    sessions: list[SessionData], home: str, running_by_id: dict[str, bool]
+) -> str:
     """Format sessions as a JSON array of the single-session JSON records."""
     return json.dumps(
-        [session_info._session_to_dict(session, home) for session in sessions],
+        [
+            session_info._session_to_dict(
+                session, home, running_by_id.get(_session_id_of(session), False)
+            )
+            for session in sessions
+        ],
         ensure_ascii=False,
         indent=2,
     )
 
 
-def _format_sessions(sessions: list[SessionData], home: str, color_enabled: bool) -> str:
+def _format_sessions(
+    sessions: list[SessionData],
+    home: str,
+    color_enabled: bool,
+    running_by_id: dict[str, bool],
+) -> str:
     """Format sessions as the single-session cards separated by a blank line."""
-    cards = [session_info._format_session(session, home, color_enabled) for session in sessions]
+    cards = [
+        session_info._format_session(
+            session, home, color_enabled, running_by_id.get(_session_id_of(session), False)
+        )
+        for session in sessions
+    ]
     return "\n\n".join(cards)
+
+
+def _stderr_color_enabled() -> bool:
+    """Return True if stderr messages may carry ANSI color codes.
+
+    Diagnostics are written to stderr so stdout stays machine-parseable, which
+    means their color decision must follow stderr rather than stdout.  Honouring
+    ``NO_COLOR`` here keeps ``--no-color`` effective on the diagnostic channel
+    too, instead of leaving escape sequences in a stream meant for parsing.
+    """
+    if os.getenv("NO_COLOR"):
+        return False
+    if os.getenv("FORCE_COLOR"):
+        return True
+    return sys.stderr.isatty()
+
+
+def _diagnostic(text: str, color: str) -> str:
+    """Return *text* colored only when the stderr channel supports color."""
+    if _stderr_color_enabled():
+        return colored(text, color)
+    return text
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -114,7 +209,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     requested = _unique_session_ids(args.session_ids)
     if not requested:
         print(
-            f"{Colors.RED}[ERROR] No session identifier provided{Colors.RESET}",
+            _diagnostic("[ERROR] No session identifier provided", Colors.RED),
             file=sys.stderr,
         )
         return 2
@@ -127,21 +222,29 @@ def main(argv: Optional[list[str]] = None) -> int:
         manager = get_session_manager(args.db_conn)
         sessions = manager.list_sessions(sessions=requested)
     except Exception as e:
-        print(f"{Colors.RED}[ERROR] {e}{Colors.RESET}")
+        print(_diagnostic(f"[ERROR] {e}", Colors.RED), file=sys.stderr)
         return 1
 
     found, missing = _order_found_sessions(requested, sessions)
 
     for session_id in missing:
         print(
-            f"{Colors.YELLOW}[INFO] Session not found: {session_id}{Colors.RESET}",
+            _diagnostic(f"[INFO] Session not found: {session_id}", Colors.YELLOW),
             file=sys.stderr,
         )
 
-    if args.json:
-        print(_format_sessions_json(found, home))
-    elif found:
-        print(_format_sessions(found, home, session_info._supports_color()))
+    if found:
+        running_by_id = _running_status_map(home)
+        if args.json:
+            print(_format_sessions_json(found, home, running_by_id))
+        else:
+            print(
+                _format_sessions(
+                    found, home, session_info._supports_color(), running_by_id
+                )
+            )
+    elif args.json:
+        print(_format_sessions_json(found, home, {}))
 
     return 1 if missing else 0
 

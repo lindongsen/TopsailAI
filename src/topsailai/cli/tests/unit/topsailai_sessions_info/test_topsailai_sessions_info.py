@@ -89,15 +89,28 @@ class TestFormatSessionsJson:
         for session in sessions:
             session.create_time = datetime(2026, 7, 5, 10, 30, 15)
 
-        parsed = json.loads(ssi._format_sessions_json(sessions, str(tmp_path)))
+        parsed = json.loads(ssi._format_sessions_json(sessions, str(tmp_path), {}))
 
         assert isinstance(parsed, list)
         assert len(parsed) == 2
         assert parsed[0] == si._session_to_dict(sessions[0], str(tmp_path))
         assert parsed[1] == si._session_to_dict(sessions[1], str(tmp_path))
 
+    def test_injected_running_status_matches_reference_resolution(self, tmp_path: Path):
+        task_dir = tmp_path / "workspace" / "task"
+        task_dir.mkdir(parents=True)
+        (task_dir / "s1.999999999.session.stdout").write_text("x")
+        session = SessionData(session_id="s1", task="Task one")
+
+        running_by_id = ssi._running_status_map(str(tmp_path))
+        parsed = json.loads(ssi._format_sessions_json([session], str(tmp_path), running_by_id))
+
+        assert parsed[0] == si._session_to_dict(session, str(tmp_path))
+        assert parsed[0]["is_running"] is False
+        assert parsed[0]["status"] == "Idle"
+
     def test_empty_batch_is_empty_array(self, tmp_path: Path):
-        assert json.loads(ssi._format_sessions_json([], str(tmp_path))) == []
+        assert json.loads(ssi._format_sessions_json([], str(tmp_path), {})) == []
 
 
 class TestFormatSessions:
@@ -110,13 +123,93 @@ class TestFormatSessions:
         for session in sessions:
             session.create_time = datetime(2026, 7, 5, 10, 30, 15)
 
-        output = ssi._format_sessions(sessions, str(tmp_path), False)
+        output = ssi._format_sessions(sessions, str(tmp_path), False, {})
 
         expected = "\n\n".join(
             si._format_session(session, str(tmp_path), False) for session in sessions
         )
         assert output == expected
         assert output.count("Session Information") == 2
+
+
+class _CountingOs:
+    """Stand-in for the ``os`` module that counts ``listdir`` calls.
+
+    The consumer module imports the real ``os`` singleton, so patching
+    ``ssi.os.listdir`` would mutate process-wide state: any unrelated
+    ``os.listdir`` call from pytest internals would inflate the count and make
+    the assertion flaky.  This proxy is bound only to the consumer module and
+    delegates every other attribute to the real module.
+    """
+
+    def __init__(self, listdir_impl):
+        self._listdir_impl = listdir_impl
+        self.listdir_calls = 0
+
+    def listdir(self, path):
+        """Count the call, then delegate to the configured implementation."""
+        self.listdir_calls += 1
+        return self._listdir_impl(path)
+
+    def __getattr__(self, name):
+        """Delegate every other attribute to the real ``os`` module."""
+        return getattr(os, name)
+
+
+class TestRunningStatusMap:
+    def test_single_scan_for_many_sessions(self, tmp_path: Path):
+        task_dir = tmp_path / "workspace" / "task"
+        task_dir.mkdir(parents=True)
+        for index in range(50):
+            (task_dir / f"s{index}.999999999.session.stdout").write_text("x")
+
+        counting_os = _CountingOs(os.listdir)
+        with patch.object(ssi, "os", counting_os):
+            running_by_id = ssi._running_status_map(str(tmp_path))
+
+        assert counting_os.listdir_calls == 1
+        assert len(running_by_id) == 50
+        assert all(value is False for value in running_by_id.values())
+
+    def test_newest_stdout_file_wins(self, tmp_path: Path):
+        task_dir = tmp_path / "workspace" / "task"
+        task_dir.mkdir(parents=True)
+        old = task_dir / "s1.111111111.session.stdout"
+        new = task_dir / "s1.222222222.session.stdout"
+        old.write_text("x")
+        new.write_text("x")
+        os.utime(old, (1000, 1000))
+        os.utime(new, (2000, 2000))
+
+        with patch.object(ssi.session_info, "_is_pid_alive", return_value=True) as alive:
+            running_by_id = ssi._running_status_map(str(tmp_path))
+
+        assert running_by_id == {"s1": True}
+        alive.assert_called_once_with(222222222)
+
+    def test_missing_directory_is_empty_map(self, tmp_path: Path):
+        assert ssi._running_status_map(str(tmp_path)) == {}
+
+    def test_unreadable_directory_is_empty_map(self, tmp_path: Path):
+        task_dir = tmp_path / "workspace" / "task"
+        task_dir.mkdir(parents=True)
+        def denied(_path):
+            raise OSError("denied")
+
+        with patch.object(ssi, "os", _CountingOs(denied)):
+            assert ssi._running_status_map(str(tmp_path)) == {}
+
+    def test_ignores_non_stdout_and_unparsable_entries(self, tmp_path: Path):
+        task_dir = tmp_path / "workspace" / "task"
+        task_dir.mkdir(parents=True)
+        (task_dir / "notes.txt").write_text("x")
+        (task_dir / "s1.notapid.session.stdout").write_text("x")
+        (task_dir / "s2.333333333.session.stdout").write_text("x")
+
+        with patch.object(ssi.session_info, "_is_pid_alive", return_value=False):
+            running_by_id = ssi._running_status_map(str(tmp_path))
+
+        assert running_by_id == {"s2": False}
 
 
 class TestMain:
@@ -166,12 +259,70 @@ class TestMain:
         assert captured.out == ""
         assert "Session not found: gone" in captured.err
 
-    def test_invalid_db_conn_reports_error(self, tmp_path: Path, capsys):
+    def test_all_sessions_missing_json_prints_empty_array(
+        self, db_conn: str, tmp_path: Path, capsys
+    ):
+        code = ssi.main(["gone", "--db-conn", db_conn, "--home", str(tmp_path), "--json"])
+        captured = capsys.readouterr()
+
+        assert code == 1
+        assert json.loads(captured.out) == []
+        assert "Session not found: gone" in captured.err
+
+    def test_invalid_db_conn_reports_error_on_stderr(self, tmp_path: Path, capsys):
         code = ssi.main(["s1", "--db-conn", "invalid://bad", "--home", str(tmp_path)])
         captured = capsys.readouterr()
 
         assert code == 1
-        assert "[ERROR]" in captured.out
+        assert "[ERROR]" in captured.err
+        assert captured.out == ""
+
+    def test_invalid_db_conn_keeps_json_stdout_parseable(self, tmp_path: Path, capsys):
+        code = ssi.main(
+            ["s1", "--db-conn", "invalid://bad", "--home", str(tmp_path), "--json"]
+        )
+        captured = capsys.readouterr()
+
+        assert code == 1
+        assert captured.out == ""
+        assert "[ERROR]" in captured.err
+
+    def test_batch_scans_task_directory_once(self, db_conn: str, tmp_path: Path, capsys):
+        task_dir = tmp_path / "workspace" / "task"
+        task_dir.mkdir(parents=True)
+        for index in range(20):
+            (task_dir / f"s{index}.999999999.session.stdout").write_text("x")
+
+        counting_os = _CountingOs(os.listdir)
+        with patch.object(ssi, "os", counting_os):
+            code = ssi.main(
+                ["s1", "s2", "--db-conn", db_conn, "--home", str(tmp_path), "--json"]
+            )
+
+        captured = capsys.readouterr()
+        assert code == 0
+        assert counting_os.listdir_calls == 1
+        assert [record["session_id"] for record in json.loads(captured.out)] == ["s1", "s2"]
+
+    def test_batch_renders_running_status_from_the_single_scan(
+        self, db_conn: str, tmp_path: Path, capsys
+    ):
+        task_dir = tmp_path / "workspace" / "task"
+        task_dir.mkdir(parents=True)
+        (task_dir / "s1.424242.session.stdout").write_text("x")
+
+        with patch.object(ssi.session_info, "_is_pid_alive", return_value=True):
+            code = ssi.main(
+                ["s1", "s2", "--db-conn", db_conn, "--home", str(tmp_path), "--json"]
+            )
+
+        captured = capsys.readouterr()
+        records = {record["session_id"]: record for record in json.loads(captured.out)}
+        assert code == 0
+        assert records["s1"]["is_running"] is True
+        assert records["s1"]["status"] == "Running"
+        assert records["s2"]["is_running"] is False
+        assert records["s2"]["status"] == "Idle"
 
     def test_no_color_sets_environment(self, db_conn: str, tmp_path: Path, capsys):
         with patch.dict(os.environ, {}, clear=False):
@@ -181,6 +332,20 @@ class TestMain:
             ) == 0
             assert os.environ.get("NO_COLOR") == "1"
         capsys.readouterr()
+
+    def test_no_color_strips_ansi_from_stderr_diagnostics(
+        self, db_conn: str, tmp_path: Path, capsys
+    ):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("NO_COLOR", None)
+            code = ssi.main(
+                ["gone", "--db-conn", db_conn, "--home", str(tmp_path), "--no-color"]
+            )
+        captured = capsys.readouterr()
+
+        assert code == 1
+        assert "\x1b[" not in captured.err
+        assert captured.err.strip() == "[INFO] Session not found: gone"
 
     def test_whitespace_only_identifier_is_rejected(self, db_conn: str, capsys):
         code = ssi.main(["   ", "--db-conn", db_conn])

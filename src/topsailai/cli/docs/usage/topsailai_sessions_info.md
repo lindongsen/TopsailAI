@@ -19,6 +19,21 @@ same card fields in text mode and the same JSON record in JSON mode. The only
 difference is that one invocation accepts many session IDs and resolves them with
 a single storage query.
 
+## Cost
+
+Two costs are bounded independently of the number of requested identifiers:
+
+- All identifiers are resolved with **one** storage query, not one query per
+  session.
+- Every running status is derived from **one** scan of the session stdout
+  directory under `{TOPSAILAI_HOME}/workspace/task/`. The single-session command
+  scans that directory once per session, so calling it in a loop costs
+  O(sessions x directory entries); this command pays one scan for the whole
+  batch.
+
+The per-session rendering itself is linear in the number of sessions, so a very
+large batch still costs proportionally more to format and print.
+
 ## Invocation
 
 ```bash
@@ -71,12 +86,16 @@ The per-session fields are the same as `topsailai_session_info`; see
 |-----------|--------|--------|-----------|
 | Every requested session found | cards or JSON array | empty | `0` |
 | Some requested sessions missing | cards or JSON array of the found sessions | `[INFO] Session not found: <id>` per missing identifier | `1` |
-| Every requested session missing | empty | `[INFO] Session not found: <id>` per identifier | `1` |
-| Storage error | `[ERROR] <message>` | empty | `1` |
+| Every requested session missing, text mode | empty | `[INFO] Session not found: <id>` per identifier | `1` |
+| Every requested session missing, JSON mode | `[]` | `[INFO] Session not found: <id>` per identifier | `1` |
+| Storage error | empty | `[ERROR] <message>` | `1` |
 | No identifier given | empty | `[ERROR] No session identifier provided` or argparse usage error | `2` |
 
-Missing identifiers are reported on stderr in both output modes, so stdout stays
-machine-parseable when only part of the batch exists.
+Every diagnostic is written to stderr in both output modes, so stdout stays
+machine-parseable: a partial batch still yields a valid JSON array of the found
+sessions, and a storage error yields empty stdout rather than an `[ERROR]` line
+that would make the payload unparseable. `--no-color` also applies to these
+diagnostics, so stderr carries no ANSI escape sequences when it is set.
 
 ## Examples
 

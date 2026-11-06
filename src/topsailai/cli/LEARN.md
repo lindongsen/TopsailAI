@@ -265,3 +265,34 @@ the kill must target the process group and the child must be started as a group
 leader. Killing the child alone reports a clean timeout while the actual CPU
 consumer keeps running, which is exactly the symptom that looks like "the
 command is slow" rather than "the command leaks processes".
+
+## A batch command must not inherit a per-item directory scan
+
+### Trigger
+
+`topsailai_sessions_info` collapsed N storage queries into one, yet 141 session
+IDs still took 15.97s and exceeded the consumer's 5s timeout. The reference
+formatters it reused resolve running status through `_find_session_pid`, which
+lists the whole `workspace/task` directory (4591 entries) once per session, so
+the batch paid O(sessions x entries) while its docstring claimed the cost did
+not grow with the number of sessions.
+
+### Action taken
+
+Added an optional `running: Optional[bool] = None` parameter to
+`_session_to_dict` and `_format_session`, where `None` preserves the
+single-session behaviour exactly, and had the batch command resolve every
+status from one `os.listdir` before formatting. Verified with a fair
+same-process A/B on identical inputs: 0.05s versus 2.03s (40x) with identical
+JSON, and with two negative controls proving the new tests fail on a
+per-session scan and on a computed-but-ignored status map.
+
+### Why this prevents recurrence
+
+Reusing a formatter also reuses its cost model, so a batch wrapper must audit
+every per-item side effect inside the reused code rather than only the query it
+replaces. A cost claim in a docstring is not evidence: it must be pinned by a
+test that counts the expensive operation, and that test must be shown failing
+against the regressed implementation. Also compare timings in one process on
+identical inputs, because host load and a shrinking directory can otherwise be
+mistaken for a fix.
