@@ -663,8 +663,13 @@ class AgentChat(AgentChatBase):
                     print(f"total_prompt_tokens : {total_tokens}")
                     print(f"total_cached_tokens : {total_cached_tokens}")
                     print(f"cache_hit_rate      : {cache_hit_rate}")
-                    print(f"summary_count       : {max(0, _summary_count(self.ctx_runtime_data) - summary_count_before)}")
-                    print(f"total_summary_count : {_get_session_summary_count(session_id, self.ctx_runtime_data)}")
+                    turn_summary_count = max(
+                        0, _summary_count(self.ctx_runtime_data) - summary_count_before
+                    )
+                    total_summary_count = _get_session_summary_count(
+                        session_id, self.ctx_runtime_data
+                    )
+                    print(f"summary_count       : +{turn_summary_count}(total {total_summary_count})")
                     sys.stdout.flush()
 
                 if env_tool.is_debug_mode() or env_tool.EnvReaderInstance.check_bool("TOPSAILAI_PRINT_TOOL_STAT", True):

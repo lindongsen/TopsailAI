@@ -33,11 +33,21 @@ if env_tool.is_interactive_mode() or env_tool.is_debug_mode():
     print(SPLIT_LINE)
     print(f"[{self.agent_name}] have scheduled tasks [{curr_count}] times")
     ...
+    print(f"summary_count       : +{turn_summary_count}(total {total_summary_count})")
 ```
 
 The per-turn summary starts with a centered title header between two separator
 lines, and its field rows include `model_name` resolved from the active
 `ai_agent.llm_model.model_name` (empty when unavailable).
+
+Field rows align their colons by hard-coded padding after each label, so a new
+row must copy the same spacing; `summary_count` follows the existing alignment.
+`summary_count` reports both counters on one row as `+{turn}(total {session})`:
+the leading `+N` is the number of summaries performed during the current turn
+(`_summary_count()` minus the snapshot taken at turn start, floored at `0`), and
+`(total N)` is the session-wide cumulative count from `_get_session_summary_count()`,
+which falls back to the runtime count when the session is unavailable. The former
+separate `total_summary_count` row no longer exists.
 
 ### Note for maintainers
 When adding console output to workspace/agent code, always gate it behind `env_tool.is_interactive_mode() or env_tool.is_debug_mode()`. Prefer the project's logger (`from topsailai.logger import logger` or `logging.getLogger(__name__)`) for diagnostics that should be emitted regardless of mode.

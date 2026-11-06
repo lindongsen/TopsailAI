@@ -1058,9 +1058,10 @@ class TestTurnSummaryHeader(unittest.TestCase):
         header = " TopsailAI Turn Summary ".center(len(SPLIT_LINE))
         self.assertIn(header, printed)
         self.assertIn("model_name          : Kimi-K2.5", printed)
-        self.assertEqual(printed.count("summary_count       : 3"), 2)
-        self.assertIn("total_summary_count : 3", printed)
-        self.assertIn("total_summary_count : 6", printed)
+        self.assertEqual(printed.count("summary_count       : +3(total 3)"), 1)
+        self.assertIn("summary_count       : +3(total 6)", printed)
+        # The former two-row form is gone: turn delta and session total share one row.
+        self.assertNotIn("total_summary_count", "\n".join(printed))
         # The header sits between two separator lines, above the field rows.
         header_index = printed.index(header)
         self.assertEqual(printed[header_index - 1], SPLIT_LINE)
