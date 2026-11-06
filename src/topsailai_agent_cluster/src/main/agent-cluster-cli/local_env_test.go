@@ -74,3 +74,57 @@ func TestExecutableEnvPrecedence(t *testing.T) {
 		t.Fatal("invalid file mutated environment")
 	}
 }
+
+// TestHomeEnvPrecedence proves the per-user file only fills keys left unset by
+// the process environment and the executable-local file.
+func TestHomeEnvPrecedence(t *testing.T) {
+	dir := t.TempDir()
+	t.Logf("cleanup task fixture %s", dir)
+	executable := filepath.Join(dir, "cli")
+	home := filepath.Join(dir, "home")
+	homeEnvPath := filepath.Join(home, filepath.FromSlash(homeEnvRelativePath))
+	if err := os.MkdirAll(filepath.Dir(homeEnvPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]string{"FROM_PROCESS": "process"}
+	lookup := func(key string) (string, bool) { v, ok := values[key]; return v, ok }
+	set := func(key, value string) error { values[key] = value; return nil }
+
+	// A missing home file is not an error.
+	if err := loadHomeEnv(home, lookup, set); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadHomeEnv("", lookup, set); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, ".env.local"), []byte("FROM_LOCAL=local\nSHARED=local\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(homeEnvPath, []byte("FROM_HOME=home\nSHARED=home\nFROM_PROCESS=home\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadExecutableEnv(executable, lookup, set); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadHomeEnv(home, lookup, set); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{"FROM_PROCESS": "process", "FROM_LOCAL": "local", "FROM_HOME": "home", "SHARED": "local"} {
+		if values[key] != want {
+			t.Fatalf("key=%s got %q want %q", key, values[key], want)
+		}
+	}
+
+	// A malformed home file fails closed before mutating any key.
+	if err := os.WriteFile(homeEnvPath, []byte("FROM_HOME=changed\ninvalid\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	err := loadHomeEnv(home, lookup, set)
+	if err == nil || values["FROM_HOME"] != "home" {
+		t.Fatal("invalid home file mutated environment")
+	}
+	if strings.Contains(err.Error(), "changed") {
+		t.Fatal("diagnostic leaked a value")
+	}
+}

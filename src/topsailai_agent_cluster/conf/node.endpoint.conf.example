@@ -16,6 +16,10 @@ INSTANCE_ID=local-endpoint-1
 CHANNEL_ADDRESS=wss://127.0.0.1:53943
 AUTH_TOKEN=replace-with-a-real-token
 
+# Server HTTP API the installed CLI dials. Use the address the server API is
+# reachable at from this node; it is written into the per-user CLI env file.
+SERVER_API_URL=http://127.0.0.1:53680
+
 # Provider adapters. ADAPTERS must stay single-quoted: the shell strips unquoted
 # double quotes while sourcing, which would corrupt the JSON payload. The command
 # must be an absolute path that exists on this node.

@@ -12,20 +12,24 @@ import (
 
 const maxLocalEnvBytes = 1 << 20
 
-// loadExecutableEnv reads only the executable-local configuration, never the cwd.
-func loadExecutableEnv(executable string, lookup func(string) (string, bool), set func(string, string) error) error {
-	path := filepath.Join(filepath.Dir(executable), ".env.local")
+// homeEnvRelativePath is the per-user CLI configuration installed beside the
+// cluster node, relative to the user's home directory.
+const homeEnvRelativePath = ".topsailai/.topsailai_agent_cluster.env"
+
+// loadEnvFile applies literal assignments from path without overriding keys that
+// are already set, so a higher-precedence source always wins.
+func loadEnvFile(path, label string, lookup func(string) (string, bool), set func(string, string) error) error {
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("open executable-local .env.local: %w", err)
+		return fmt.Errorf("open %s: %w", label, err)
 	}
 	defer file.Close()
 	values, err := parseLocalEnv(io.LimitReader(file, maxLocalEnvBytes+1))
 	if err != nil {
-		return fmt.Errorf("load executable-local .env.local: %w", err)
+		return fmt.Errorf("load %s: %w", label, err)
 	}
 	for key, value := range values {
 		if _, exists := lookup(key); exists {
@@ -36,6 +40,22 @@ func loadExecutableEnv(executable string, lookup func(string) (string, bool), se
 		}
 	}
 	return nil
+}
+
+// loadExecutableEnv reads only the executable-local configuration, never the cwd.
+func loadExecutableEnv(executable string, lookup func(string) (string, bool), set func(string, string) error) error {
+	path := filepath.Join(filepath.Dir(executable), ".env.local")
+	return loadEnvFile(path, "executable-local .env.local", lookup, set)
+}
+
+// loadHomeEnv reads the per-user configuration written when a node is installed.
+// An unavailable home directory is not an error: the file is optional.
+func loadHomeEnv(home string, lookup func(string) (string, bool), set func(string, string) error) error {
+	if home == "" {
+		return nil
+	}
+	path := filepath.Join(home, filepath.FromSlash(homeEnvRelativePath))
+	return loadEnvFile(path, "home "+homeEnvRelativePath, lookup, set)
 }
 
 // parseLocalEnv validates all assignments before any process environment mutation.
@@ -106,10 +126,20 @@ func validEnvKey(key string) bool {
 }
 
 // prepareExecutableEnv keeps process-level configuration at the actual CLI entry point.
+// Precedence is process environment, then the executable-local file, then the
+// per-user file written at install time; each source only fills unset keys.
 func prepareExecutableEnv() error {
 	executable, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("locate CLI executable: %w", err)
 	}
-	return loadExecutableEnv(executable, os.LookupEnv, os.Setenv)
+	if err := loadExecutableEnv(executable, os.LookupEnv, os.Setenv); err != nil {
+		return err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// An unresolvable home directory only means the optional file is absent.
+		return nil
+	}
+	return loadHomeEnv(home, os.LookupEnv, os.Setenv)
 }

@@ -10,7 +10,8 @@
 # Topology:
 #   server    local bundle, the cluster server
 #   endpoint  local bundle, the local-endpoint endpoint
-#   relay     socat hop publishing the channel port on the docker bridge gateway
+#   relay     socat hops publishing the channel and API ports on the docker
+#             bridge gateway, so a container CLI can reach the Server
 #   ai-dev    endpoint bundle inside the ai-dev container, dialled through relay
 #
 # Joint verbs act on every role; the role-scoped verbs act on one role only.
@@ -26,7 +27,8 @@ CONTAINER_NAME=ai-dev
 CONTAINER_BUNDLE_GUEST=/opt/git/ai/lindongsen/work/hosts/ai-dev/agent-cluster.new
 BRIDGE_ADDRESS=172.18.0.1
 RELAY_PORT=53943
-RELAY_PID="${LOCAL_BUNDLE}/pids/relay.pid"
+API_RELAY_PORT=53680
+RELAY_PID_DIR="${LOCAL_BUNDLE}/pids"
 
 # Start order; stop order is the reverse so consumers leave before producers.
 START_ORDER=(server endpoint relay ai-dev)
@@ -53,57 +55,82 @@ function local_ctl() {
     "${CONTROL}" -c "${LOCAL_BUNDLE}/conf/${role}.conf" "$@"
 }
 
-# Reports the pid of a live relay hop.
+# Reports the pid of a live relay hop for one published port.
 function relay_pid_of() {
-    [ -f "${RELAY_PID}" ] || return 1
+    local pid_file="${RELAY_PID_DIR}/relay-$1.pid"
+    [ -f "${pid_file}" ] || return 1
     local pid
-    pid=$(cat "${RELAY_PID}" 2>/dev/null)
+    pid=$(cat "${pid_file}" 2>/dev/null)
     [ -n "${pid}" ] || return 1
     kill -0 "${pid}" 2>/dev/null || return 1
     echo "${pid}"
 }
 
-# Publishes the channel port on the bridge gateway so the container can dial it.
-function start_relay() {
-    if pid=$(relay_pid_of); then
-        echo "relay already running with pid ${pid}"
+# Publishes one loopback port on the bridge gateway so a container can dial it.
+function start_relay_port() {
+    local port="$1"
+    local pid_file="${RELAY_PID_DIR}/relay-${port}.pid"
+    if pid=$(relay_pid_of "${port}"); then
+        echo "relay ${port} already running with pid ${pid}"
         return 0
     fi
-    mkdir -p "$(dirname "${RELAY_PID}")"
-    nohup socat "TCP-LISTEN:${RELAY_PORT},bind=${BRIDGE_ADDRESS},fork,reuseaddr" \
-        "TCP:127.0.0.1:${RELAY_PORT}" \
+    mkdir -p "${RELAY_PID_DIR}"
+    nohup socat "TCP-LISTEN:${port},bind=${BRIDGE_ADDRESS},fork,reuseaddr" \
+        "TCP:127.0.0.1:${port}" \
         >>"${LOCAL_BUNDLE}/logs/relay.stdout.log" 2>&1 &
     local pid=$!
-    echo "${pid}" >"${RELAY_PID}"
+    echo "${pid}" >"${pid_file}"
     sleep 1
     if ! kill -0 "${pid}" 2>/dev/null; then
-        rm -f "${RELAY_PID}"
-        echo "relay failed to start; see ${LOCAL_BUNDLE}/logs/relay.stdout.log" >&2
+        rm -f "${pid_file}"
+        echo "relay ${port} failed to start; see ${LOCAL_BUNDLE}/logs/relay.stdout.log" >&2
         return 1
     fi
-    echo "started relay with pid ${pid}"
+    echo "started relay ${port} with pid ${pid}"
 }
 
-# Stops the relay hop.
-function stop_relay() {
+# Stops one relay hop.
+function stop_relay_port() {
+    local port="$1"
+    local pid_file="${RELAY_PID_DIR}/relay-${port}.pid"
     local pid
-    if pid=$(relay_pid_of); then
-        echo "stopping relay pid ${pid}"
+    if pid=$(relay_pid_of "${port}"); then
+        echo "stopping relay ${port} pid ${pid}"
         kill "${pid}" 2>/dev/null
     else
-        echo "relay is not running"
+        echo "relay ${port} is not running"
     fi
-    rm -f "${RELAY_PID}"
+    rm -f "${pid_file}"
 }
 
-# Reports whether the relay hop is running.
-function status_relay() {
+# Reports whether one relay hop is running.
+function status_relay_port() {
+    local port="$1"
     local pid
-    if pid=$(relay_pid_of); then
-        echo "relay: running pid ${pid} on ${BRIDGE_ADDRESS}:${RELAY_PORT}"
+    if pid=$(relay_pid_of "${port}"); then
+        echo "relay ${port}: running pid ${pid} on ${BRIDGE_ADDRESS}:${port}"
     else
-        echo "relay: stopped"
+        echo "relay ${port}: stopped"
     fi
+}
+
+# Publishes both the channel port and the Server API port. The channel carries
+# endpoint traffic; the API port is what an installed CLI dials from a container.
+function start_relay() {
+    start_relay_port "${RELAY_PORT}" || return 1
+    start_relay_port "${API_RELAY_PORT}" || return 1
+}
+
+# Stops both relay hops.
+function stop_relay() {
+    stop_relay_port "${API_RELAY_PORT}"
+    stop_relay_port "${RELAY_PORT}"
+}
+
+# Reports both relay hops.
+function status_relay() {
+    status_relay_port "${RELAY_PORT}"
+    status_relay_port "${API_RELAY_PORT}"
 }
 
 # Runs the portable controller inside the ai-dev container for its endpoint role.
@@ -130,6 +157,16 @@ function stop_container_endpoint() {
 # prefixes each line with the container name to keep the two endpoints distinct.
 function status_container_endpoint() {
     container_ctl status | sed 's/^/ai-dev /'
+}
+
+# Installs the container bundle into system paths: the endpoint binary, the CLI
+# as /usr/local/sbin/topsailai_agent_cluster, and the per-user CLI env file that
+# points the CLI at the Server API. Re-running with identical configuration is a
+# no-op, so this is safe after a bundle refresh.
+function install_container_node() {
+    docker exec "${CONTAINER_NAME}" bash -c \
+        "cd '${CONTAINER_BUNDLE_GUEST}' && ./install-node.sh" ||
+        die "cannot install the node bundle inside ${CONTAINER_NAME}"
 }
 
 # Brings up every role in dependency order.
@@ -171,7 +208,7 @@ function status_all() {
     done
 }
 
-USAGE="usage: $0 {start|stop|restart|status|start-server|stop-server|restart-server|status-server|start-endpoint|stop-endpoint|restart-endpoint|status-endpoint|start-relay|stop-relay|status-relay|start-ai-dev|stop-ai-dev|restart-ai-dev|status-ai-dev}"
+USAGE="usage: $0 {start|stop|restart|status|install-ai-dev|start-server|stop-server|restart-server|status-server|start-endpoint|stop-endpoint|restart-endpoint|status-endpoint|start-relay|stop-relay|status-relay|start-ai-dev|stop-ai-dev|restart-ai-dev|status-ai-dev}"
 
 case "${1:-start}" in
     start) start_all ;;
@@ -189,6 +226,7 @@ case "${1:-start}" in
     start-relay) start_relay ;;
     stop-relay) stop_relay ;;
     status-relay) status_relay ;;
+    install-ai-dev) install_container_node ;;
     start-ai-dev) start_relay; start_container_endpoint ;;
     stop-ai-dev) stop_container_endpoint ;;
     restart-ai-dev) stop_container_endpoint; start_relay; start_container_endpoint ;;

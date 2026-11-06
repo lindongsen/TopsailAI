@@ -7,6 +7,9 @@
 # ./agent-clusterctl start there. Nothing in the bundle refers back to this
 # repository, so the node needs no source tree and no build toolchain.
 #
+# An endpoint bundle also carries the operator CLI and install-node.sh, because
+# installing an endpoint installs the CLI that reaches the Server from that node.
+#
 # Usage:
 #   make-node-bundle.sh --role <server|endpoint> --dest <dir> [options]
 #
@@ -40,7 +43,7 @@ function die() {
 }
 
 function usage() {
-    sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//' >&2
+    sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' >&2
     exit 2
 }
 
@@ -73,6 +76,8 @@ esac
 
 PKG="./src/main/agent-cluster-${ROLE}"
 BINARY_NAME="agent-cluster-${ROLE}"
+CLI_PKG="./src/main/agent-cluster-cli"
+CLI_NAME="agent-cluster-cli"
 
 mkdir -p "${DEST}/bin" "${DEST}/conf" "${DEST}/certs" \
     "${DEST}/data" "${DEST}/logs" "${DEST}/run" ||
@@ -88,8 +93,23 @@ else
         die "build failed for ${PKG}"
 fi
 
+# An endpoint bundle also carries the operator CLI: installing an endpoint
+# installs the CLI that reaches the Server from that node.
+if [ "${ROLE}" = "endpoint" ]; then
+    if [ "${STATIC}" -eq 1 ]; then
+        ( cd "${PROJECT_DIR}" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
+            -o "${DEST}/bin/${CLI_NAME}" "${CLI_PKG}" ) ||
+            die "static build failed for ${CLI_PKG}"
+    else
+        ( cd "${PROJECT_DIR}" && go build -o "${DEST}/bin/${CLI_NAME}" "${CLI_PKG}" ) ||
+            die "build failed for ${CLI_PKG}"
+    fi
+fi
+
 install -m 0755 "${SCRIPT_DIR}/agent-clusterctl" "${DEST}/agent-clusterctl" ||
     die "cannot install controller"
+install -m 0755 "${SCRIPT_DIR}/install-node.sh" "${DEST}/install-node.sh" ||
+    die "cannot install installer"
 install -m 0644 "${CONFIG}" "${DEST}/conf/node.conf" ||
     die "cannot install configuration"
 install -m 0644 "${CA}" "${DEST}/certs/ca.pem" || die "cannot install CA"
@@ -114,5 +134,11 @@ fi
 echo "bundle ready: ${DEST}"
 echo "  role    : ${ROLE}"
 echo "  binary  : bin/${BINARY_NAME}"
+if [ "${ROLE}" = "endpoint" ]; then
+    echo "  cli     : bin/${CLI_NAME}"
+fi
 echo "  config  : conf/node.conf"
 echo "carry it to the node and run: ./agent-clusterctl doctor && ./agent-clusterctl start"
+if [ "${ROLE}" = "endpoint" ]; then
+    echo "install the CLI and its per-user env file with: ./install-node.sh"
+fi
