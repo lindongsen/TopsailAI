@@ -69,8 +69,9 @@ func (c *APIClient) ListCommands(ctx context.Context, endpointID, resourceID str
 type OutputSnapshot = protocol.OutputSnapshotResponse
 
 // GetOutput retrieves a bounded output snapshot for a resource.
-func (c *APIClient) GetOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes int) (protocol.OutputSnapshotResponse, error) {
-	path := fmt.Sprintf("/api/v1/output?endpoint_id=%s&resource_id=%s&generation=%s&max_bytes=%d", url.QueryEscape(endpointID), url.QueryEscape(resourceID), url.QueryEscape(generation), maxBytes)
+// maxLines bounds the provider line count and zero keeps the provider default.
+func (c *APIClient) GetOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (protocol.OutputSnapshotResponse, error) {
+	path := fmt.Sprintf("/api/v1/output?endpoint_id=%s&resource_id=%s&generation=%s&max_bytes=%d&max_lines=%d", url.QueryEscape(endpointID), url.QueryEscape(resourceID), url.QueryEscape(generation), maxBytes, maxLines)
 	var result protocol.OutputSnapshotResponse
 	err := c.get(ctx, path, &result)
 	return result, err

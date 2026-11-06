@@ -16,7 +16,7 @@ type CommandAPI interface {
 	GetCapabilities(context.Context, string) (protocol.CapabilityDescriptor, error)
 	GetCommand(context.Context, string) (map[string]any, error)
 	ListCommands(context.Context, string, string, int) ([]map[string]any, error)
-	GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error)
+	GetOutput(context.Context, string, string, string, int, int) (protocol.OutputSnapshotResponse, error)
 	AdmitCommand(context.Context, protocol.ImmutableIntent) (map[string]any, error)
 }
 
@@ -125,7 +125,7 @@ func (r CommandRunner) Logs(ctx context.Context, out io.Writer, endpointID, reso
 			break
 		}
 	}
-	snapshot, err := r.API.GetOutput(ctx, endpointID, resourceID, generation, maxBytes)
+	snapshot, err := r.API.GetOutput(ctx, endpointID, resourceID, generation, maxBytes, maxLines)
 	if err != nil {
 		return err
 	}

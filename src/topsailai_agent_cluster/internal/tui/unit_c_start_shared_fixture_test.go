@@ -100,7 +100,7 @@ func (a *unitCAPI) ListCommands(context.Context, string, string, int) ([]map[str
 }
 
 // GetOutput returns an empty bounded output snapshot and records the call.
-func (a *unitCAPI) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+func (a *unitCAPI) GetOutput(context.Context, string, string, string, int, int) (protocol.OutputSnapshotResponse, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.counts.Output++

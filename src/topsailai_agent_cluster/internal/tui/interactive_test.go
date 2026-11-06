@@ -95,11 +95,12 @@ type outputRequest struct {
 	resourceID string
 	generation string
 	maxBytes   int
+	maxLines   int
 }
 
-func (s *interactiveStub) GetOutput(_ context.Context, endpointID, resourceID, generation string, maxBytes int) (protocol.OutputSnapshotResponse, error) {
+func (s *interactiveStub) GetOutput(_ context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (protocol.OutputSnapshotResponse, error) {
 	s.outputCalls++
-	s.outputRequests = append(s.outputRequests, outputRequest{endpointID: endpointID, resourceID: resourceID, generation: generation, maxBytes: maxBytes})
+	s.outputRequests = append(s.outputRequests, outputRequest{endpointID: endpointID, resourceID: resourceID, generation: generation, maxBytes: maxBytes, maxLines: maxLines})
 	return protocol.OutputSnapshotResponse{Data: "log\x1b[31m"}, nil
 }
 func (s *interactiveStub) AdmitCommand(_ context.Context, intent protocol.ImmutableIntent) (map[string]any, error) {

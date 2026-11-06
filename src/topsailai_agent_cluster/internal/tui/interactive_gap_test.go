@@ -308,7 +308,7 @@ func (s *uncertainAdmissionStub) AdmitCommand(context.Context, protocol.Immutabl
 func (s *uncertainAdmissionStub) ListCommands(context.Context, string, string, int) ([]map[string]any, error) {
 	return nil, nil
 }
-func (s *uncertainAdmissionStub) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+func (s *uncertainAdmissionStub) GetOutput(context.Context, string, string, string, int, int) (protocol.OutputSnapshotResponse, error) {
 	return protocol.OutputSnapshotResponse{}, nil
 }
 
@@ -336,7 +336,7 @@ func (r *deadlineWaitReader) GetCapabilities(context.Context, string) (protocol.
 func (r *deadlineWaitReader) ListCommands(context.Context, string, string, int) ([]map[string]any, error) {
 	return nil, nil
 }
-func (r *deadlineWaitReader) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+func (r *deadlineWaitReader) GetOutput(context.Context, string, string, string, int, int) (protocol.OutputSnapshotResponse, error) {
 	return protocol.OutputSnapshotResponse{}, nil
 }
 func (r *deadlineWaitReader) AdmitCommand(context.Context, protocol.ImmutableIntent) (map[string]any, error) {
@@ -377,7 +377,7 @@ func (s *freshnessStub) GetCommand(context.Context, string) (map[string]any, err
 func (s *freshnessStub) ListCommands(context.Context, string, string, int) ([]map[string]any, error) {
 	return nil, nil
 }
-func (s *freshnessStub) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+func (s *freshnessStub) GetOutput(context.Context, string, string, string, int, int) (protocol.OutputSnapshotResponse, error) {
 	return protocol.OutputSnapshotResponse{}, nil
 }
 func (s *freshnessStub) AdmitCommand(context.Context, protocol.ImmutableIntent) (map[string]any, error) {

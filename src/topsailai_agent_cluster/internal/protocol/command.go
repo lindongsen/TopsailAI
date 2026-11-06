@@ -136,11 +136,14 @@ type Budget struct {
 }
 
 // OutputSnapshotRequest requests a bounded output snapshot from an Endpoint.
+// MaxBytes bounds the returned payload; MaxLines bounds the provider line count
+// and zero keeps the provider default.
 type OutputSnapshotRequest struct {
 	EndpointID string `json:"endpoint_id"`
 	ResourceID string `json:"resource_id"`
 	Generation string `json:"generation"`
 	MaxBytes   int    `json:"max_bytes"`
+	MaxLines   int    `json:"max_lines"`
 }
 
 // OutputSnapshotResponse contains a bounded output snapshot or an error code.

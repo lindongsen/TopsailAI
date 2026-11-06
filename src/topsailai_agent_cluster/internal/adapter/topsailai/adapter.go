@@ -382,11 +382,11 @@ func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest)
 	if err != nil {
 		return adapter.OutputResult{}, err
 	}
-	limit := request.Limit
-	if limit <= 0 || limit > 10000 {
-		limit = 20
+	lines := request.MaxLines
+	if lines <= 0 || lines > 10000 {
+		lines = 20
 	}
-	output, err := a.run(ctx, []string{"runtime", "logs", "-s", key, "-n", fmt.Sprint(limit), "--json"}, nil)
+	output, err := a.run(ctx, []string{"runtime", "logs", "-s", key, "-n", fmt.Sprint(lines), "--json"}, nil)
 	if err != nil {
 		return adapter.OutputResult{}, err
 	}

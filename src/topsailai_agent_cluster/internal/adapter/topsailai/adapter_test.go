@@ -260,12 +260,48 @@ func TestReadOutputMarksProviderTruncation(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner.out = []byte(`{"ok":true,"response":{"lines":["one"],"scan_limited":true}}`)
-	output, err := a.ReadOutput(context.Background(), adapter.OutputRequest{Target: protocol.CommandTarget{ResourceID: result.Sessions[0].SessionID}, Limit: 10})
+	output, err := a.ReadOutput(context.Background(), adapter.OutputRequest{Target: protocol.CommandTarget{ResourceID: result.Sessions[0].SessionID}, MaxLines: 10})
 	if err != nil || !output.Truncated || !output.ScanLimited {
 		t.Fatalf("truncation not reported: %#v %v", output, err)
 	}
 	if !reflect.DeepEqual(runner.args, []string{"runtime", "logs", "-s", "s", "-n", "10", "--json"}) {
 		t.Fatalf("unexpected logs argv: %#v", runner.args)
+	}
+}
+
+// TestReadOutputLineBudgetIndependentOfBytes proves the requested line count
+// reaches the provider as -n and is not derived from the byte budget, which is
+// the defect that made `logs -n` ineffective in session scope.
+func TestReadOutputLineBudgetIndependentOfBytes(t *testing.T) {
+	cases := []struct {
+		name     string
+		maxBytes int
+		maxLines int
+		want     string
+	}{
+		{name: "explicit count with large byte budget", maxBytes: 1 << 20, maxLines: 250, want: "250"},
+		{name: "explicit count with small byte budget", maxBytes: 16, maxLines: 250, want: "250"},
+		{name: "unset count keeps provider default", maxBytes: 1 << 20, maxLines: 0, want: "20"},
+		{name: "count above provider maximum keeps default", maxBytes: 1 << 20, maxLines: 10001, want: "20"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"s","process_generation":"g"}]}`)}
+			a := newTestAdapter(t, runner)
+			result, err := a.Discover(context.Background(), adapter.DiscoverRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner.out = []byte(`{"ok":true,"response":{"lines":["one"]}}`)
+			runner.args = nil
+			if _, err := a.ReadOutput(context.Background(), adapter.OutputRequest{Target: protocol.CommandTarget{ResourceID: result.Sessions[0].SessionID}, MaxBytes: testCase.maxBytes, MaxLines: testCase.maxLines}); err != nil {
+				t.Fatal(err)
+			}
+			want := []string{"runtime", "logs", "-s", "s", "-n", testCase.want, "--json"}
+			if !reflect.DeepEqual(runner.args, want) {
+				t.Fatalf("argv=%#v, want %#v", runner.args, want)
+			}
+		})
 	}
 }
 

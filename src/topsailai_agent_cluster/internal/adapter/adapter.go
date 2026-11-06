@@ -61,9 +61,12 @@ type ExecuteResult struct {
 }
 
 // OutputRequest requests a bounded output snapshot.
+// MaxBytes bounds the returned payload; MaxLines bounds the provider line count
+// and zero keeps the provider default.
 type OutputRequest struct {
-	Target protocol.CommandTarget
-	Limit  int
+	Target   protocol.CommandTarget
+	MaxBytes int
+	MaxLines int
 }
 
 // OutputResult contains a bounded output snapshot.

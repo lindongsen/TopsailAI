@@ -334,3 +334,74 @@ func TestResumePreflightRequiresAuthoritativeAbsence(t *testing.T) {
 		})
 	}
 }
+
+// recordingOutputAdapter captures the adapter-level output request so the
+// Endpoint forwarding boundary can be asserted without a live provider.
+type recordingOutputAdapter struct {
+	adapter.Adapter
+	request adapter.OutputRequest
+}
+
+func (a *recordingOutputAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
+	return adapter.InspectResult{Found: true, Generation: "g1"}, nil
+}
+
+func (a *recordingOutputAdapter) ReadOutput(_ context.Context, request adapter.OutputRequest) (adapter.OutputResult, error) {
+	a.request = request
+	return adapter.OutputResult{Lines: []string{"line"}}, nil
+}
+
+// TestReadOutputForwardsBothBudgets proves the Endpoint forwards the requested
+// line count unchanged and keeps the byte budget independent, because dropping
+// either budget here makes the operator's `logs -n` request ineffective.
+func TestReadOutputForwardsBothBudgets(t *testing.T) {
+	cases := []struct {
+		name         string
+		maxBytes     int
+		maxLines     int
+		wantBytes    int
+		wantMaxLines int
+	}{
+		{name: "line count is forwarded unchanged", maxBytes: 4096, maxLines: 250, wantBytes: 4096, wantMaxLines: 250},
+		{name: "absent line count keeps provider default", maxBytes: 4096, maxLines: 0, wantBytes: 4096, wantMaxLines: 0},
+		{name: "line count above provider maximum is clamped", maxBytes: 4096, maxLines: 20000, wantBytes: 4096, wantMaxLines: 10000},
+		{name: "negative line count keeps provider default", maxBytes: 4096, maxLines: -5, wantBytes: 4096, wantMaxLines: 0},
+		{name: "byte budget keeps its own default", maxBytes: 0, maxLines: 250, wantBytes: 64 << 10, wantMaxLines: 250},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.db")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			recorder := &recordingOutputAdapter{}
+			registry := adapter.NewRegistry()
+			if err := registry.RegisterType("fixture", func(context.Context, adapter.Config) (adapter.Adapter, error) {
+				return recorder, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
+				t.Fatal(err)
+			}
+			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			e, err := NewExecutor(store, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, Generation: "g1", MaxBytes: testCase.maxBytes, MaxLines: testCase.maxLines}); err != nil {
+				t.Fatal(err)
+			}
+			if recorder.request.MaxBytes != testCase.wantBytes {
+				t.Fatalf("MaxBytes=%d, want %d", recorder.request.MaxBytes, testCase.wantBytes)
+			}
+			if recorder.request.MaxLines != testCase.wantMaxLines {
+				t.Fatalf("MaxLines=%d, want %d", recorder.request.MaxLines, testCase.wantMaxLines)
+			}
+		})
+	}
+}

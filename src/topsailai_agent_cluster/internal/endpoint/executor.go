@@ -179,7 +179,14 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 	if limit > 1<<20 {
 		limit = 1 << 20
 	}
-	result, err := instance.ReadOutput(ctx, adapter.OutputRequest{Target: protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}, Limit: limit})
+	lines := request.MaxLines
+	if lines < 0 {
+		lines = 0
+	}
+	if lines > 10000 {
+		lines = 10000
+	}
+	result, err := instance.ReadOutput(ctx, adapter.OutputRequest{Target: protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}, MaxBytes: limit, MaxLines: lines})
 	if errors.Is(err, adapter.ErrUnsupported) {
 		return protocol.OutputSnapshotResponse{ErrorCode: "unsupported"}, nil
 	}

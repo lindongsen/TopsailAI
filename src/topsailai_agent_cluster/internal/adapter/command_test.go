@@ -141,7 +141,7 @@ func TestReadOutputTranslatesOpaqueResourceID(t *testing.T) {
 	argvPath := t.TempDir() + "/argv"
 	t.Setenv("AGENT_CLUSTER_COMMAND_HELPER_ARGV", argvPath)
 	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ProviderKey: "native-output", ResourceID: "res-output"}})
-	result, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "res-output", Generation: "gen-1"}, Limit: 32})
+	result, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "res-output", Generation: "gen-1"}, MaxBytes: 32})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestOutputIsBoundedDuringRead(t *testing.T) {
 	a := commandAdapterForTest(t, commandMapper{mapping: ResourceMapping{AdapterID: "adapter-1", ProviderKey: "native-output"}})
 
 	completedStarted := time.Now()
-	if _, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "res-output"}, Limit: 2 << 20}); err != nil {
+	if _, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "res-output"}, MaxBytes: 2 << 20}); err != nil {
 		t.Fatalf("complete output: %v", err)
 	}
 	if _, statErr := os.Stat(donePath); statErr != nil {
@@ -183,7 +183,7 @@ func TestOutputIsBoundedDuringRead(t *testing.T) {
 	}
 
 	started := time.Now()
-	result, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "res-output"}, Limit: 16})
+	result, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "res-output"}, MaxBytes: 16})
 	if !errors.Is(err, ErrOutputTooLarge) {
 		t.Fatalf("error=%v, want ErrOutputTooLarge", err)
 	}
@@ -281,7 +281,7 @@ func TestCommandAdapterRejectsMapperOwnershipMismatch(t *testing.T) {
 	if _, err := a.Execute(context.Background(), ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c", Operation: "send", Target: &protocol.CommandTarget{ResourceID: "r", Generation: "g"}}}); err == nil {
 		t.Fatal("execute accepted a resource owned by another adapter")
 	}
-	if _, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "r", Generation: "g"}, Limit: 1}); err == nil {
+	if _, err := a.ReadOutput(context.Background(), OutputRequest{Target: protocol.CommandTarget{ResourceID: "r", Generation: "g"}, MaxBytes: 1}); err == nil {
 		t.Fatal("output accepted a resource owned by another adapter")
 	}
 }

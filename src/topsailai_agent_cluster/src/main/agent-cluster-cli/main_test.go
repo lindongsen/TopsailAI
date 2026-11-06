@@ -55,7 +55,7 @@ func (s *sharedPathStub) ListCommands(context.Context, string, string, int) ([]m
 	s.calls = append(s.calls, "history")
 	return nil, nil
 }
-func (s *sharedPathStub) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+func (s *sharedPathStub) GetOutput(context.Context, string, string, string, int, int) (protocol.OutputSnapshotResponse, error) {
 	s.calls = append(s.calls, "output")
 	return protocol.OutputSnapshotResponse{}, nil
 }
@@ -124,7 +124,7 @@ func (s *actionPathStub) GetCommand(context.Context, string) (map[string]any, er
 func (s *actionPathStub) ListCommands(context.Context, string, string, int) ([]map[string]any, error) {
 	return nil, nil
 }
-func (s *actionPathStub) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+func (s *actionPathStub) GetOutput(context.Context, string, string, string, int, int) (protocol.OutputSnapshotResponse, error) {
 	return protocol.OutputSnapshotResponse{}, nil
 }
 func (s *actionPathStub) AdmitCommand(_ context.Context, intent protocol.ImmutableIntent) (map[string]any, error) {
