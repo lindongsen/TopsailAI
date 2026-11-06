@@ -151,9 +151,16 @@ deb-endpoint:
 # picks up, and it installs whichever file the shell happens to expand last. The
 # controller package is built first because both role packages depend on it, so a
 # failure there stops before the large binaries build.
+#
+# The version is resolved once here and pinned for all three builds. Each builder
+# invocation otherwise re-derives it from git, so a commit landing mid-run yields
+# a set whose role packages depend on a controller version that was never built,
+# and dpkg then refuses to install the endpoint.
 deb:
 	@rm -f $(DEB_DIR)/agent-cluster-*.deb
-	@$(MAKE) --no-print-directory deb-node deb-server deb-endpoint
+	@version=$$(bash $(DEB_BUILDER) --print-version $(call deb_arg,--version,$(DEB_VERSION))) || exit 1; \
+	echo "building version $$version"; \
+	$(MAKE) --no-print-directory deb-node deb-server deb-endpoint DEB_VERSION="$$version"
 	@echo ""
 	@echo "packages in $(DEB_DIR):"
 	@ls -1 $(DEB_DIR)/*.deb

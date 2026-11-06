@@ -49,6 +49,7 @@ KEY=""
 CA="${LOCAL_CERTS}/ca.pem"
 ADAPTERS=""
 KEEP=0
+PRINT_VERSION=0
 
 function die() {
     echo "ERROR: $*" >&2
@@ -77,16 +78,11 @@ while [ $# -gt 0 ]; do
         --ca) CA="${2:-}"; shift 2 ;;
         --adapters) ADAPTERS="${2:-}"; shift 2 ;;
         --keep) KEEP=1; shift ;;
+        --print-version) PRINT_VERSION=1; shift ;;
         -h | --help) usage ;;
         *) die "unknown argument $1" ;;
     esac
 done
-
-case "${ROLE}" in
-    node | server | endpoint) ;;
-    *) die "--role must be node, server or endpoint" ;;
-esac
-[ -n "${DEST}" ] || die "--dest is required"
 
 # A Debian version must start with a digit and must not carry a hyphen in the
 # upstream part, so a tag-derived description is normalised before use.
@@ -105,6 +101,22 @@ function default_version() {
         *) echo "0.0.0+git${described}" ;;
     esac
 }
+
+# Resolving the version is a separate mode so that one `make deb` run can pin a
+# single version for every package. Each invocation otherwise re-derives it from
+# git, and a commit landing between two builds yields a set whose role packages
+# depend on a controller version that was never produced.
+if [ "${PRINT_VERSION}" -eq 1 ]; then
+    [ -n "${VERSION}" ] || VERSION=$(default_version)
+    echo "${VERSION}"
+    exit 0
+fi
+
+case "${ROLE}" in
+    node | server | endpoint) ;;
+    *) die "--role must be node, server or endpoint" ;;
+esac
+[ -n "${DEST}" ] || die "--dest is required"
 
 [ -n "${VERSION}" ] || VERSION=$(default_version)
 [ -n "${ARCH}" ] || ARCH=$(dpkg --print-architecture 2>/dev/null) ||
