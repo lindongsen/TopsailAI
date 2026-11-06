@@ -315,18 +315,25 @@ def ask_decision(
     )
     if invalid_reason is not None:
         return build_result("invalid_request", default, -1, invalid_reason)
+    # Build the prompt before the degradation guards so that a decision the
+    # Human can never see is still recorded on stdout. The Human decision for
+    # this change is to echo it verbatim with a plain print(): print_info() is
+    # gated by is_print_enabled(), which is false in the non-interactive case
+    # that reaches these guards.
+    prompt = _build_prompt(question, options, default)
+
     # Sub-agent guard: do not prompt nested agents.
     if _is_sub_agent_context():
         logger.info("[human_tool] Skipping ask_decision in sub-agent context.")
+        print(prompt, flush=True)
         return build_result("unavailable", default, -1)
 
     # Non-interactive / no-stdin degradation.
     with_timeout, plain = _resolve_input_funcs()
     if not _has_usable_input_source(with_timeout, plain):
         logger.info("[human_tool] No usable input source; returning unavailable.")
+        print(prompt, flush=True)
         return build_result("unavailable", default, -1)
-
-    prompt = _build_prompt(question, options, default)
 
     # Try reading input through available channels.
     while True:

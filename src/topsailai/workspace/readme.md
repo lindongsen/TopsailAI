@@ -53,6 +53,7 @@ Interactive input utilities with hook integration.
 - **Message Source**: `get_message()` reads from CLI args, stdin, files, or interactive prompt
 - **History**: readline history persisted to `TOPSAILAI_HOME/.input_history`
 - **Hook checkpoint**: `input_message()` calls `hook__workspace__before__input_message()` directly after selecting input mode and before input acquisition, without an application binding or Hook Executor; input retries do not redispatch the checkpoint.
+- **Prompt echo**: when pipe input is enabled but stdin is not a TTY, no terminal helper is spawned, so `input_from_pipe()` echoes the prompt with a plain `print()`; the same echo covers `ask_decision` degradation paths. `print_info()` cannot be used because it is gated by `is_print_enabled()`, which is false in exactly this non-interactive case.
 
 #### `hook_instruction.py`
 `/` command hook registry and execution.

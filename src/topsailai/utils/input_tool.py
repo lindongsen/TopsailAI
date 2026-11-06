@@ -1020,6 +1020,13 @@ def input_from_pipe(
 
         if helper_read_fd is not None:
             _set_nonblocking(helper_read_fd)
+        elif prompt:
+            # No terminal helper was spawned (stdin is not a TTY), so nothing
+            # has displayed the prompt yet. Echo it directly so the waiting
+            # state stays observable in logs and tee output. A plain print is
+            # required here: print_info() is gated by is_print_enabled(),
+            # which is false in exactly this non-interactive case.
+            print(prompt, flush=True)
 
         chunks: list[bytes] = []
         deadline = None if timeout is None else time.monotonic() + float(timeout)

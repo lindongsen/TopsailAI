@@ -251,3 +251,11 @@ Trigger: an implementer added an `observe_*` wrapper (`observe_tool_execute`) ar
 Action: call the named Hook Point function directly, keep payload builders data-only and never dispatch Hooks from them, and obtain explicit Human approval before adding any wrapper, adapter, or indirection. Do not reinterpret implementation convenience as authorization.
 
 Why this prevents recurrence: the mandatory rule and Human decision provenance are now explicit in `features/feature-unified-hooks-design.md` and `docs/Hooks_API.md`, so future implementers cannot claim the constraint was undocumented or infer permission from historical adapter descriptions.
+
+## A prompt that no terminal can display must be echoed at the lowest shared layer
+
+Trigger: with `TOPSAILAI_INPUT_PIPE_ENABLED=1` and stdin not a TTY, `input_from_pipe()` never spawned a terminal helper, so the prompt was never written anywhere. The session turn prompt, the project-workspace lock prompt, and the tool-approval prompt were all silently invisible, and the operator could only see the answer appear out of nowhere in the tee log.
+
+Action: echo the prompt with a plain `print(prompt, flush=True)` in the `elif prompt:` branch of `input_from_pipe()` (after the helper-spawn block), and echo it in the `ask_decision` degradation guards after moving `_build_prompt()` above them. Never use `print_info()` for this: it routes through `print_with_time` and returns early when `env_tool.is_print_enabled()` is false, which is exactly the non-interactive case being fixed.
+
+Why this prevents recurrence: fixing only `workspace/input_tool.py` would have left the lock and approval prompts invisible, because all three callers funnel through `utils/input_tool.input_from_pipe()`. The echo belongs at that shared layer so every caller inherits it, and the `print_info()` gate is the trap that makes an apparently correct fix produce no output at all.

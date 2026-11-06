@@ -861,3 +861,82 @@ class TestInputHistoryJsonlRotation:
         assert os.path.exists(history_file)
         entries = input_tool.load_input_history_jsonl(history_file)
         assert len(entries) == 1
+
+
+class TestInputFromPipePromptEcho:
+    """Prompt echo when no terminal helper can display it.
+
+    A prompt passed to ``input_from_pipe`` is normally rendered by the spawned
+    terminal helper. When stdin is not a TTY no helper is spawned, so the
+    prompt would otherwise be invisible. These tests pin that fallback echo and
+    its two boundaries: no duplicate when a helper exists, and no stray output
+    when there is no prompt.
+    """
+
+    def _write_to_pipe_after_delay(self, pipe_path: str, content: bytes, delay: float = 0.05):
+        """Spawn a thread that opens the FIFO and writes content after a delay."""
+
+        def writer():
+            time.sleep(delay)
+            with open(pipe_path, "wb") as fifo:
+                fifo.write(content)
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        return thread
+
+    def test_prompt_is_echoed_when_no_terminal_helper(self, tmp_path, capsys):
+        """Without a TTY the prompt must still reach stdout exactly once."""
+        pipe_path = str(tmp_path / "prompt.pipe")
+        writer = self._write_to_pipe_after_delay(pipe_path, b"answer\n")
+        try:
+            result = input_tool.input_from_pipe(
+                pipe_path, timeout=2.0, prompt=">>> Your Turn: "
+            )
+            assert result == "answer"
+        finally:
+            writer.join(timeout=2.0)
+
+        captured = capsys.readouterr()
+        assert captured.out.count(">>> Your Turn: ") == 1
+
+    def test_prompt_is_not_duplicated_when_helper_exists(self, tmp_path, capsys):
+        """A spawned helper owns the prompt, so the fallback echo must be skipped."""
+        pipe_path = str(tmp_path / "helper.pipe")
+        read_fd, write_fd = os.pipe()
+        os.write(write_fd, b"from helper\n")
+        os.close(write_fd)
+
+        # Force the helper branch: under pytest stdin is not a TTY and its
+        # fileno() raises, so the spawn path would otherwise never be taken.
+        fake_stdin = MagicMock()
+        fake_stdin.fileno.return_value = 0
+
+        writer = self._write_to_pipe_after_delay(pipe_path, b"")
+        try:
+            with patch.object(input_tool.sys, "stdin", fake_stdin), \
+                    patch.object(input_tool.os, "isatty", return_value=True), \
+                    patch.object(input_tool, "_spawn_terminal_input_subprocess",
+                                 return_value=(MagicMock(), read_fd)):
+                result = input_tool.input_from_pipe(
+                    pipe_path, timeout=2.0, prompt=">>> Your Turn: "
+                )
+            assert result == "from helper"
+        finally:
+            writer.join(timeout=2.0)
+
+        captured = capsys.readouterr()
+        assert ">>> Your Turn: " not in captured.out
+
+    def test_empty_prompt_emits_no_extra_output(self, tmp_path, capsys):
+        """An empty prompt must not produce a blank line."""
+        pipe_path = str(tmp_path / "empty.pipe")
+        writer = self._write_to_pipe_after_delay(pipe_path, b"answer\n")
+        try:
+            result = input_tool.input_from_pipe(pipe_path, timeout=2.0, prompt="")
+            assert result == "answer"
+        finally:
+            writer.join(timeout=2.0)
+
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "answer"
