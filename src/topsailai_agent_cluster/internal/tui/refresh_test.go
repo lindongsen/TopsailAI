@@ -118,9 +118,10 @@ func TestRefreshWorkspaceScopeDegrades(t *testing.T) {
 	}
 }
 
-// TestRefreshSessionScopeForcesThenRevalidates proves a session refresh forces a
-// collection before revalidating the pinned session.
-func TestRefreshSessionScopeForcesThenRevalidates(t *testing.T) {
+// TestRefreshSessionScopeForcesThenRenders proves a session refresh forces a
+// collection and renders the committed endpoint table, so the operator sees the
+// reloaded rows instead of only a confirmation line.
+func TestRefreshSessionScopeForcesThenRenders(t *testing.T) {
 	stub := refreshScopeStub()
 	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nrefresh\nquit\n", ColorPolicy{})
 	if diagnostics != "" {
@@ -129,8 +130,12 @@ func TestRefreshSessionScopeForcesThenRevalidates(t *testing.T) {
 	if len(stub.refreshCalls) != 1 || stub.refreshCalls[0] != "endpoint-1" {
 		t.Fatalf("forced collections=%v, want only endpoint-1", stub.refreshCalls)
 	}
-	if !strings.Contains(output, "session refreshed: res-1") {
-		t.Fatalf("missing session refresh evidence: %q", output)
+	scoped := segmentBeforePrompt(output, "session[host-one/provider-res-1]> ")
+	if !strings.Contains(scoped, "SESSION_ID") || !strings.Contains(scoped, "provider-res-1") {
+		t.Fatalf("session refresh did not render the endpoint table: %q", scoped)
+	}
+	if strings.Contains(scoped, "host-two") {
+		t.Fatalf("session refresh leaked another endpoint: %q", scoped)
 	}
 }
 

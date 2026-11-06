@@ -36,7 +36,7 @@ func (*offlineAPI) ListCommands(context.Context, string, string, int) ([]map[str
 	return nil, nil
 }
 
-func (*offlineAPI) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+func (*offlineAPI) GetOutput(context.Context, string, string, string, int, int) (protocol.OutputSnapshotResponse, error) {
 	return protocol.OutputSnapshotResponse{}, nil
 }
 

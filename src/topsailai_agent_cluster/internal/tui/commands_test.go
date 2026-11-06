@@ -43,7 +43,7 @@ func (s *runnerStubAPI) ListCommands(context.Context, string, string, int) ([]ma
 	s.calls = append(s.calls, "history")
 	return nil, nil
 }
-func (s *runnerStubAPI) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+func (s *runnerStubAPI) GetOutput(context.Context, string, string, string, int, int) (protocol.OutputSnapshotResponse, error) {
 	s.calls = append(s.calls, "output")
 	return protocol.OutputSnapshotResponse{Data: "log", ObservedAtMS: 10}, nil
 }

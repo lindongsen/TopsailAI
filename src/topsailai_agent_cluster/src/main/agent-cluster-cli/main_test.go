@@ -55,7 +55,7 @@ func (s *sharedPathStub) ListCommands(context.Context, string, string, int) ([]m
 	s.calls = append(s.calls, "history")
 	return nil, nil
 }
-func (s *sharedPathStub) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+func (s *sharedPathStub) GetOutput(context.Context, string, string, string, int, int) (protocol.OutputSnapshotResponse, error) {
 	s.calls = append(s.calls, "output")
 	return protocol.OutputSnapshotResponse{}, nil
 }
@@ -124,7 +124,7 @@ func (s *actionPathStub) GetCommand(context.Context, string) (map[string]any, er
 func (s *actionPathStub) ListCommands(context.Context, string, string, int) ([]map[string]any, error) {
 	return nil, nil
 }
-func (s *actionPathStub) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+func (s *actionPathStub) GetOutput(context.Context, string, string, string, int, int) (protocol.OutputSnapshotResponse, error) {
 	return protocol.OutputSnapshotResponse{}, nil
 }
 func (s *actionPathStub) AdmitCommand(_ context.Context, intent protocol.ImmutableIntent) (map[string]any, error) {
@@ -261,8 +261,30 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 	if !strings.Contains(output.String(), "Syntax: agent-cluster-cli [options] start <endpoint> <resource> [payload] [generation]") || strings.Contains(output.String(), "--payload") {
 		t.Fatalf("standalone start detail is inconsistent: %q", output.String())
 	}
-	if err := runWithIO([]string{"help", "inject"}, strings.NewReader(""), io.Discard, io.Discard, false, nil); err == nil {
-		t.Fatal("non-interactive help accepted undispatched inject command")
+	output.Reset()
+	if err := runWithIO([]string{"help", "inject"}, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
+		t.Fatalf("accepted alias help failed: %v", err)
+	}
+	if !strings.Contains(output.String(), "Syntax: agent-cluster-cli [options] btw <endpoint> <resource> [payload] [generation]") || !strings.Contains(output.String(), "Alias of: btw") {
+		t.Fatalf("alias help=%q", output.String())
+	}
+	if err := runWithIO([]string{"help", "interrupt"}, strings.NewReader(""), io.Discard, io.Discard, false, nil); err == nil {
+		t.Fatal("non-interactive help accepted undispatched interrupt command")
+	}
+}
+
+// TestInjectAliasMatchesBtwDispatch proves the accepted alias reaches the same
+// confirmation gate as the advertised spelling without contacting a Server.
+func TestInjectAliasMatchesBtwDispatch(t *testing.T) {
+	for _, command := range []string{"btw", "inject"} {
+		var output, diagnostics strings.Builder
+		err := runWithIO([]string{"--server-url", "http://127.0.0.1:1", command, "ep", "res", `{"text":"x"}`}, strings.NewReader(""), &output, &diagnostics, false, nil)
+		if err == nil {
+			t.Fatalf("%s unexpectedly succeeded", command)
+		}
+		if !strings.Contains(err.Error(), "confirmation required for "+command+" target=res") {
+			t.Fatalf("%s error=%v", command, err)
+		}
 	}
 }
 

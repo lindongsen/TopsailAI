@@ -30,6 +30,14 @@ certificates:
 make deb DEB_CONFIG=conf/site/node.conf DEB_CERT=site/node.pem DEB_KEY=site/node-key.pem
 ```
 
+One `make deb` run resolves the version once and pins it for all three packages, so the set is
+always internally consistent: the role packages depend on the exact controller version that was
+built beside them. Pass `DEB_VERSION` to label a release explicitly:
+
+```bash
+make deb DEB_VERSION=1.0.0
+```
+
 Install on the target node:
 
 ```bash

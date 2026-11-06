@@ -22,3 +22,5 @@ Use PASS only with fresh command output and the required effect. FAIL stops depe
 Every case records case ID, input including keys, precondition, output, expected state, actual state, elapsed time and evidence. Full help and command transcripts live under workspace `.tmp/live-tmux-audit/`; no credentials in persisted documentation. Dynamic values `<endpoint>`, `<resource>`, `<generation>`, `<command-id>`, `<session-id>` and `<time>` come from the current run, never copied from old runs.
 
 The documented interactive command set is list, endpoints, cd, show, start, resume, stop, inject, interrupt, logs, send, status, refresh, help, quit. Aliases: ?=help, exit=quit, q=quit, r=refresh, btw=inject, control=interrupt. Standalone CLI flags are not implicitly supported in the REPL.
+
+The standalone `agent-cluster-cli` advertises `btw` and also accepts `inject` as an alias of it, so `inject <endpoint> <resource> [payload] [generation]` and `help inject` behave exactly like `btw`; `help` still lists only the advertised spelling.

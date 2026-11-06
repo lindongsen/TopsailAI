@@ -16,7 +16,7 @@ type CommandAPI interface {
 	GetCapabilities(context.Context, string) (protocol.CapabilityDescriptor, error)
 	GetCommand(context.Context, string) (map[string]any, error)
 	ListCommands(context.Context, string, string, int) ([]map[string]any, error)
-	GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error)
+	GetOutput(context.Context, string, string, string, int, int) (protocol.OutputSnapshotResponse, error)
 	AdmitCommand(context.Context, protocol.ImmutableIntent) (map[string]any, error)
 }
 
@@ -50,12 +50,12 @@ func (r CommandRunner) ListWithOptions(ctx context.Context, out, errors io.Write
 	if err != nil {
 		return err
 	}
-	return r.RenderLoaded(out, errors, loaded, filter, jsonMode, options)
+	return renderListRows(out, errors, loaded, filter, jsonMode, options)
 }
 
-// RenderLoaded renders an already loaded inventory projection, so a forced
-// collection can reuse the exact list rendering without a second read.
-func (r CommandRunner) RenderLoaded(out, errors io.Writer, loaded reportLoad, filter string, jsonMode bool, options TableOptions) error {
+// renderListRows renders one already loaded inventory set, so a caller that
+// validated the same load does not repeat the API round trip.
+func renderListRows(out, errors io.Writer, loaded reportLoad, filter string, jsonMode bool, options TableOptions) error {
 	rows := ListRows(loaded.endpoints, loaded.reports, filter)
 	if jsonMode {
 		return RenderJSON(out, rows)
@@ -131,7 +131,7 @@ func (r CommandRunner) Logs(ctx context.Context, out io.Writer, endpointID, reso
 			break
 		}
 	}
-	snapshot, err := r.API.GetOutput(ctx, endpointID, resourceID, generation, maxBytes)
+	snapshot, err := r.API.GetOutput(ctx, endpointID, resourceID, generation, maxBytes, maxLines)
 	if err != nil {
 		return err
 	}

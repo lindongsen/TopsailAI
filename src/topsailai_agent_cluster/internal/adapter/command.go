@@ -180,7 +180,7 @@ func (a *commandAdapter) ReadOutput(parent context.Context, request OutputReques
 	}
 
 	// ReadOutput retrieves bounded provider output for a resource.
-	args = append(args, "--read-output", providerKey, "--max-bytes", fmt.Sprint(request.Limit))
+	args = append(args, "--read-output", providerKey, "--max-bytes", fmt.Sprint(request.MaxBytes))
 	cmd := exec.CommandContext(ctx, a.config.Command, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -189,9 +189,9 @@ func (a *commandAdapter) ReadOutput(parent context.Context, request OutputReques
 	if err := cmd.Start(); err != nil {
 		return OutputResult{}, fmt.Errorf("start adapter %q output: %w", a.config.AdapterID, err)
 	}
-	maxRead := request.Limit*6 + 4096
-	if maxRead < 4096 || maxRead < request.Limit {
-		maxRead = request.Limit
+	maxRead := request.MaxBytes*6 + 4096
+	if maxRead < 4096 || maxRead < request.MaxBytes {
+		maxRead = request.MaxBytes
 	}
 	// The provider envelope has bounded JSON overhead; never buffer beyond this fixed multiple.
 	maxRead++

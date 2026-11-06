@@ -637,6 +637,15 @@ func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveSta
 	if err != nil {
 		return protocol.Endpoint{}, protocol.InventoryReport{}, nil, err
 	}
+	return findSelectedIn(loaded, state)
+}
+
+// findSelectedIn revalidates the pinned selection against an already loaded
+// inventory, so a caller that also renders that load performs one API round trip.
+func findSelectedIn(loaded reportLoad, state *interactiveState) (protocol.Endpoint, protocol.InventoryReport, *protocol.Session, error) {
+	if err := state.requireUsable(); err != nil {
+		return protocol.Endpoint{}, protocol.InventoryReport{}, nil, err
+	}
 	for _, endpoint := range loaded.endpoints {
 		if endpoint.EndpointID != state.EndpointID {
 			continue
@@ -698,39 +707,12 @@ func validateAdapterFreshness(report protocol.InventoryReport, adapterID string)
 
 // interactiveRefresh forces one fresh Endpoint collection in the current scope and
 // renders the committed inventory, so the operator sees fresh data rather than a
-// cached Server projection.
+// cached Server projection. In session scope it revalidates the pinned selection
+// against that same committed document, so a changed generation still invalidates
+// the selection instead of silently retargeting it.
 func interactiveRefresh(parent context.Context, api InteractiveAPI, state *interactiveState, out, errors io.Writer, color ColorPolicy) error {
 	ctx, cancel := context.WithTimeout(parent, refreshCommandTimeout)
 	defer cancel()
-	if state.Scope.Kind == ScopeSession {
-		// A session refresh revalidates the pinned session against a fresh report.
-		if err := refreshEndpoint(ctx, api, state.Scope.EndpointID); err != nil {
-			return err
-		}
-		_, _, session, err := findSelected(ctx, api, state)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(out, "session refreshed:", session.SessionID)
-		return err
-	}
-	return interactiveRefreshList(ctx, api, state, out, errors, color)
-}
-
-// refreshEndpoint forces one fresh collection for a single Endpoint.
-// A client without forced collection keeps the previous read-only behaviour.
-func refreshEndpoint(ctx context.Context, api InteractiveAPI, endpointID string) error {
-	refresher, ok := api.(InventoryRefresher)
-	if !ok {
-		return nil
-	}
-	_, err := refresher.RefreshInventory(ctx, endpointID)
-	return err
-}
-
-// interactiveRefreshList forces collection for every Endpoint in scope and renders
-// the committed documents through the shared list renderer.
-func interactiveRefreshList(ctx context.Context, api InteractiveAPI, state *interactiveState, out, errors io.Writer, color ColorPolicy) error {
 	scoped, err := scopedListFilter(state, "")
 	if err != nil {
 		return err
@@ -742,15 +724,22 @@ func interactiveRefreshList(ctx context.Context, api InteractiveAPI, state *inte
 		state.Rows = nil
 		return err
 	}
-	// Endpoint scope names one exact Endpoint, so its failure is the operator's
-	// answer; workspace scope reports per-Endpoint failures as diagnostics.
-	if state.Scope.Kind == ScopeEndpoint {
+	// Endpoint and session scope name one exact Endpoint, so its failure is the
+	// operator's answer; workspace scope reports per-Endpoint failures as
+	// diagnostics while still rendering the healthy Endpoints.
+	if state.Scope.Kind != ScopeWorkspace {
 		if refreshErr, failed := loaded.errors[state.Scope.EndpointID]; failed {
 			state.Rows = nil
 			return refreshErr
 		}
 	}
-	err = (CommandRunner{API: api, Policy: InteractivePolicy}).RenderLoaded(out, errors, loaded, scoped, false, TableOptions{Width: OutputWidth(out), Color: color, OnRows: func(rows []SessionRow) { staged = append(staged, rows...) }})
+	if state.Scope.Kind == ScopeSession {
+		if _, _, _, err := findSelectedIn(loaded, state); err != nil {
+			state.Rows = nil
+			return err
+		}
+	}
+	err = renderListRows(out, errors, loaded, scoped, false, TableOptions{Width: OutputWidth(out), Color: color, OnRows: func(rows []SessionRow) { staged = append(staged, rows...) }})
 	if err != nil {
 		state.Rows = nil
 		return err

@@ -116,7 +116,7 @@ func (h *Handler) output(w http.ResponseWriter, r *http.Request) {
 	if maxBytes > 1<<20 {
 		maxBytes = 1 << 20
 	}
-	response, err := h.Output.RequestOutput(r.Context(), endpointID, protocol.OutputSnapshotRequest{EndpointID: endpointID, ResourceID: resourceID, Generation: q.Get("generation"), MaxBytes: maxBytes})
+	response, err := h.Output.RequestOutput(r.Context(), endpointID, protocol.OutputSnapshotRequest{EndpointID: endpointID, ResourceID: resourceID, Generation: q.Get("generation"), MaxBytes: maxBytes, MaxLines: parseMaxLines(q.Get("max_lines"))})
 	if err != nil {
 		code := response.ErrorCode
 		if code == "" {
@@ -288,6 +288,20 @@ func parseInt(value string, fallback int) int {
 	n, err := strconv.Atoi(value)
 	if err != nil || n < 0 {
 		return fallback
+	}
+	return n
+}
+
+// parseMaxLines bounds an optional provider line count. An absent or invalid
+// value keeps the provider default, and an explicit count is clamped to the
+// documented provider range so a caller cannot request unbounded output.
+func parseMaxLines(value string) int {
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	if n > 10000 {
+		return 10000
 	}
 	return n
 }

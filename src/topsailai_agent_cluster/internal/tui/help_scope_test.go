@@ -370,7 +370,14 @@ func TestPrintNonInteractiveCommandHelp(t *testing.T) {
 			t.Fatalf("help %s=%q", command, out.String())
 		}
 	}
-	if err := PrintNonInteractiveCommandHelp(&out, "inject"); err == nil || !strings.Contains(err.Error(), "unknown help command") {
+	out.Reset()
+	if err := PrintNonInteractiveCommandHelp(&out, "inject"); err != nil {
+		t.Fatalf("accepted alias help failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "Syntax: agent-cluster-cli [options] btw <endpoint> <resource> [payload] [generation]") || !strings.Contains(out.String(), `Alias of: btw`) {
+		t.Fatalf("alias help=%q", out.String())
+	}
+	if err := PrintNonInteractiveCommandHelp(&out, "interrupt"); err == nil || !strings.Contains(err.Error(), "unknown help command") {
 		t.Fatalf("unknown help error=%v", err)
 	}
 	if !containsCommand(nonInteractiveHelpOrder, "start") || containsCommand(nonInteractiveHelpOrder, "inject") {

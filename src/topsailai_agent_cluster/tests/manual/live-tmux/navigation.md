@@ -22,7 +22,7 @@ author: DawsonLin
 | OBS-03 | endpoint `logs <internal-resource>` | same body as selected session; endpoint bare logs rejects missing session |
 | OBS-04 | new CLI session `status` before submissions | provider state (e.g. input/running); after admission status means last command result, not provider state |
 | OBS-05 | `status <command-id>` | CommandID, Status, DeliveryBoundary, EffectCertainty, ErrorCode; compare submitted ID; unknown ID must error |
-| OBS-06 | `refresh`, alias `r` in each scope | inventory refreshed/revalidated; scope stays valid or explicit invalidation; no false claim of forced provider polling |
+| OBS-06 | `refresh`, alias `r` in each scope | a fresh Endpoint collection is forced and awaited before rendering; in session scope the current endpoint table is rendered before the prompt, so the operator sees the reloaded rows; scope stays valid or explicit invalidation; a failed forced collection is reported instead of silently rendering cached data |
 
 Selection precedence for `cd`, `logs` and `show`: a bare ASCII row number selects the session at that row of the most recently rendered list; a numeric token that is not a valid row number is retried as a provider session ID; a non-numeric token resolves by resource ID, then provider session ID, then display name. An unresolvable numeric token reports the row range (`row 77 is out of range; valid rows are 1-4`), and a numeric token that reaches the identifier path without a rendered list appends `; run list to select a session by row number`. Row numbers are the operator-facing shorthand, so no long identifier has to be typed.
 

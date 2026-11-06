@@ -60,7 +60,7 @@ func TestAPIClientMethodsAndErrors(t *testing.T) {
 	if _, err := client.ListCommands(ctx, "e1", "res_1", 2); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.GetOutput(ctx, "e1", "res_1", "g1", 10); err != nil {
+	if _, err := client.GetOutput(ctx, "e1", "res_1", "g1", 10, 250); err != nil {
 		t.Fatal(err)
 	}
 	intent := protocol.ImmutableIntent{CommandID: "c1", EndpointID: "e1", Operation: "send"}
@@ -88,5 +88,27 @@ func TestAPIClientRequestDecodeAndTransportErrors(t *testing.T) {
 	server.Close()
 	if _, err := client.GetCommand(context.Background(), "c1"); err == nil {
 		t.Fatal("transport failure succeeded")
+	}
+}
+
+// TestAPIClientGetOutputSendsLineBudget proves the requested line count is
+// transmitted, because a line count that never reaches the Server cannot reach
+// the provider and silently leaves `logs -n` ineffective.
+func TestAPIClientGetOutputSendsLineBudget(t *testing.T) {
+	var query string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"code":0,"message":"ok","data":{"data":"ok"}}`)
+	}))
+	defer server.Close()
+	client := NewAPIClient(server.URL, "")
+	if _, err := client.GetOutput(context.Background(), "e1", "res_1", "g1", 4096, 250); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"max_bytes=4096", "max_lines=250"} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("query=%q missing %q", query, want)
+		}
 	}
 }

@@ -45,7 +45,7 @@ func (s *matrixAPI) GetCommand(context.Context, string) (map[string]any, error) 
 func (*matrixAPI) ListCommands(context.Context, string, string, int) ([]map[string]any, error) {
 	return nil, nil
 }
-func (*matrixAPI) GetOutput(context.Context, string, string, string, int) (protocol.OutputSnapshotResponse, error) {
+func (*matrixAPI) GetOutput(context.Context, string, string, string, int, int) (protocol.OutputSnapshotResponse, error) {
 	return protocol.OutputSnapshotResponse{}, nil
 }
 func (s *matrixAPI) AdmitCommand(context.Context, protocol.ImmutableIntent) (map[string]any, error) {

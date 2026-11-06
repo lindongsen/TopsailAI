@@ -170,3 +170,55 @@ func TestCommandHTTPRoutesWithStore(t *testing.T) {
 		t.Fatalf("empty command status=%d", got.Code)
 	}
 }
+
+// recordingOutputRequester captures the forwarded output request so the Server
+// boundary can be asserted without a live Endpoint.
+type recordingOutputRequester struct {
+	request protocol.OutputSnapshotRequest
+}
+
+func (r *recordingOutputRequester) RequestOutput(_ context.Context, _ string, request protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error) {
+	r.request = request
+	return protocol.OutputSnapshotResponse{Data: "ok"}, nil
+}
+
+// TestOutputHTTPForwardsLineBudget proves the Server parses and clamps the
+// optional max_lines parameter, because a line count dropped at this boundary
+// never reaches the Endpoint and leaves `logs -n` ineffective.
+func TestOutputHTTPForwardsLineBudget(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+		want  int
+	}{
+		{name: "absent keeps provider default", query: "", want: 0},
+		{name: "explicit count is forwarded", query: "&max_lines=250", want: 250},
+		{name: "count above provider maximum is clamped", query: "&max_lines=10001", want: 10000},
+		{name: "non-numeric count keeps provider default", query: "&max_lines=abc", want: 0},
+		{name: "zero count keeps provider default", query: "&max_lines=0", want: 0},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, err := serverstorage.Open(context.Background(), filepath.Join(t.TempDir(), "server.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			requester := &recordingOutputRequester{}
+			h := NewHandlerWithCommandsAndBrokerAndOutput(store, "secret", &CommandService{Store: store}, nil, requester)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/output?endpoint_id=e1&resource_id=res_1&generation=g1"+testCase.query, nil)
+			req.Header.Set("Authorization", "Bearer secret")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if requester.request.MaxLines != testCase.want {
+				t.Fatalf("max_lines=%d, want %d", requester.request.MaxLines, testCase.want)
+			}
+			if requester.request.MaxBytes != 64<<10 {
+				t.Fatalf("max_bytes=%d, want the default byte budget", requester.request.MaxBytes)
+			}
+		})
+	}
+}

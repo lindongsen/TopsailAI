@@ -168,9 +168,12 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 	if !ok {
 		return protocol.OutputSnapshotResponse{ErrorCode: "unknown_adapter"}, fmt.Errorf("adapter %q is not configured", mapping.AdapterID)
 	}
-	inspection, err := instance.Inspect(ctx, adapter.InspectRequest{Target: protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}})
-	if err != nil || !inspection.Found || inspection.Generation != request.Generation {
-		return protocol.OutputSnapshotResponse{ErrorCode: "generation_mismatch"}, fmt.Errorf("resource generation does not match")
+	// Revalidate the target generation from the Endpoint's own latest accepted
+	// collection snapshot. A live inspection re-runs the provider's full discovery,
+	// which costs seconds per read, so it is reserved for the cases the snapshot
+	// cannot answer: unknown data, stale data, or a resource absent from it.
+	if err := e.revalidateGeneration(ctx, instance, mapping.AdapterID, request); err != nil {
+		return protocol.OutputSnapshotResponse{ErrorCode: "generation_mismatch"}, err
 	}
 	limit := request.MaxBytes
 	if limit <= 0 {
@@ -179,7 +182,14 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 	if limit > 1<<20 {
 		limit = 1 << 20
 	}
-	result, err := instance.ReadOutput(ctx, adapter.OutputRequest{Target: protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}, Limit: limit})
+	lines := request.MaxLines
+	if lines < 0 {
+		lines = 0
+	}
+	if lines > 10000 {
+		lines = 10000
+	}
+	result, err := instance.ReadOutput(ctx, adapter.OutputRequest{Target: protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}, MaxBytes: limit, MaxLines: lines})
 	if errors.Is(err, adapter.ErrUnsupported) {
 		return protocol.OutputSnapshotResponse{ErrorCode: "unsupported"}, nil
 	}
@@ -193,6 +203,30 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 		response.Truncated = true
 	}
 	return response, nil
+}
+
+// revalidateGeneration confirms the requested generation without paying for a full
+// provider discovery on every read. It trusts only a known, non-stale snapshot that
+// actually contains the resource; anything else falls back to a live inspection so
+// an unknown observation is never mistaken for a match.
+func (e *Executor) revalidateGeneration(ctx context.Context, instance adapter.Adapter, adapterID string, request protocol.OutputSnapshotRequest) error {
+	snapshot, found, err := e.store.SourceSnapshot(ctx, adapterID)
+	if err == nil && found && snapshot.DataKnown && !snapshot.Stale {
+		for _, session := range snapshot.Sessions {
+			if session.SessionID != request.ResourceID {
+				continue
+			}
+			if session.Generation != request.Generation {
+				return fmt.Errorf("resource generation does not match")
+			}
+			return nil
+		}
+	}
+	inspection, inspectErr := instance.Inspect(ctx, adapter.InspectRequest{Target: protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}})
+	if inspectErr != nil || !inspection.Found || inspection.Generation != request.Generation {
+		return fmt.Errorf("resource generation does not match")
+	}
+	return nil
 }
 
 func (e *Executor) adapterForIntent(ctx context.Context, intent protocol.ImmutableIntent) (adapter.Adapter, error) {

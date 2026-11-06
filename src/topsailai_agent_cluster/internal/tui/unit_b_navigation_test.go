@@ -570,9 +570,9 @@ type recordingOutputAPI struct {
 	outputs map[string]string
 }
 
-func (s *recordingOutputAPI) GetOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes int) (protocol.OutputSnapshotResponse, error) {
+func (s *recordingOutputAPI) GetOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (protocol.OutputSnapshotResponse, error) {
 	s.interactiveStub.outputCalls++
-	s.interactiveStub.outputRequests = append(s.interactiveStub.outputRequests, outputRequest{endpointID: endpointID, resourceID: resourceID, generation: generation, maxBytes: maxBytes})
+	s.interactiveStub.outputRequests = append(s.interactiveStub.outputRequests, outputRequest{endpointID: endpointID, resourceID: resourceID, generation: generation, maxBytes: maxBytes, maxLines: maxLines})
 	return protocol.OutputSnapshotResponse{Data: s.outputs[resourceID]}, nil
 }
 

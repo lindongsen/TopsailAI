@@ -93,7 +93,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"inject":    "inject context into the current session",
 		"interrupt": "interrupt the current session",
 		"status":    "explicit ID: command result; omitted: last submitted command, otherwise current session state",
-		"refresh":   "revalidate the current session",
+		"refresh":   "reload the current endpoint table and revalidate the current session",
 		"help":      "show help",
 		"quit":      "exit",
 	},
@@ -110,6 +110,11 @@ func CommandHelpLines() []string {
 }
 
 var nonInteractiveHelpOrder = []string{"list", "endpoints", "show", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "help"}
+
+// nonInteractiveHelpAliases maps accepted standalone spellings to the advertised
+// command. The advertised list keeps one spelling per surface, while an accepted
+// alias still resolves to the same detailed help.
+var nonInteractiveHelpAliases = map[string]string{"inject": "btw"}
 
 // NonInteractiveCommandHelpLines returns only commands dispatched by the standalone CLI.
 func NonInteractiveCommandHelpLines() []string {
@@ -132,12 +137,22 @@ func PrintNonInteractiveCommandHelp(out io.Writer, target string) error {
 		}
 		return nil
 	}
-	if !containsCommand(nonInteractiveHelpOrder, target) {
+	advertised := target
+	if alias, ok := nonInteractiveHelpAliases[target]; ok {
+		advertised = alias
+	}
+	if !containsCommand(nonInteractiveHelpOrder, advertised) {
 		return fmt.Errorf("unknown help command %q; available commands: %s", target, strings.Join(nonInteractiveHelpOrder, ", "))
 	}
-	entry := nonInteractiveHelpEntry(target)
-	_, err := fmt.Fprintf(out, "%s\n\nSyntax: %s\nDescription: %s\n", target, entry.syntax, entry.description)
-	return err
+	entry := nonInteractiveHelpEntry(advertised)
+	if _, err := fmt.Fprintf(out, "%s\n\nSyntax: %s\nDescription: %s\n", advertised, entry.syntax, entry.description); err != nil {
+		return err
+	}
+	if advertised != target {
+		_, err := fmt.Fprintf(out, "Alias of: %s (accepted spelling %q)\n", advertised, target)
+		return err
+	}
+	return nil
 }
 
 func containsCommand(names []string, target string) bool {

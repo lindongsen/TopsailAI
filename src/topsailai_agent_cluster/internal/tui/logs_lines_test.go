@@ -213,3 +213,34 @@ func TestRenderReceiptDetailsSkipsEmptyFields(t *testing.T) {
 		t.Fatalf("expected no output, got=%q", out.String())
 	}
 }
+
+// TestLogsForwardsParsedLineCountToAPI proves the line limit parsed from the
+// interactive command reaches the API request instead of only trimming the
+// rendered text, which is the defect this test guards.
+func TestLogsForwardsParsedLineCountToAPI(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  int
+	}{
+		{name: "short flag", input: "cd host-one/endpoint-1/res-1\nlogs -n 250\nquit\n", want: 250},
+		{name: "long flag", input: "cd host-one/endpoint-1/res-1\nlogs --lines 7\nquit\n", want: 7},
+		{name: "equals form", input: "cd host-one/endpoint-1/res-1\nlogs --lines=33\nquit\n", want: 33},
+		{name: "absent keeps interactive default", input: "cd host-one/endpoint-1/res-1\nlogs\nquit\n", want: 100},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			stub := scopeStub()
+			if _, diagnostics := runScope(t, stub, testCase.input, ColorPolicy{}); diagnostics != "" {
+				t.Fatalf("unexpected diagnostics: %q", diagnostics)
+			}
+			if len(stub.outputRequests) != 1 {
+				t.Fatalf("output requests=%+v", stub.outputRequests)
+			}
+			if got := stub.outputRequests[0].maxLines; got != testCase.want {
+				t.Fatalf("maxLines=%d want=%d", got, testCase.want)
+			}
+		})
+	}
+}
