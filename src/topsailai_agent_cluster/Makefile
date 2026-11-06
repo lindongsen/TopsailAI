@@ -146,9 +146,14 @@ deb-endpoint:
 	@bash $(DEB_BUILDER) --role endpoint --dest $(DEB_DIR) $(DEB_COMMON_ARGS) $(DEB_SITE_ARGS) \
 		$(call deb_arg,--adapters,$(DEB_ADAPTERS))
 
-# Builds every package. The controller package is built first because both role
-# packages depend on it, so a failure there stops before the large binaries build.
-deb: deb-node deb-server deb-endpoint
+# Builds every package. Packages left by an earlier version are removed first: a
+# directory holding two versions of the same package is what `dpkg -i *.deb`
+# picks up, and it installs whichever file the shell happens to expand last. The
+# controller package is built first because both role packages depend on it, so a
+# failure there stops before the large binaries build.
+deb:
+	@rm -f $(DEB_DIR)/agent-cluster-*.deb
+	@$(MAKE) --no-print-directory deb-node deb-server deb-endpoint
 	@echo ""
 	@echo "packages in $(DEB_DIR):"
 	@ls -1 $(DEB_DIR)/*.deb
@@ -170,9 +175,13 @@ deb-inspect:
 		echo ""; \
 	done
 
+# Removes the staging tree and the built packages, which is what the help text
+# promises. Keeping the packages would leave a stale version behind for the next
+# `dpkg -i *.deb`.
 deb-clean:
 	rm -rf $(DEB_DIR)/build
-	@echo "removed $(DEB_DIR)/build"
+	rm -f $(DEB_DIR)/agent-cluster-*.deb
+	@echo "removed $(DEB_DIR)/build and $(DEB_DIR)/*.deb"
 
 cluster-start:
 	bash $(LAUNCHER) start
