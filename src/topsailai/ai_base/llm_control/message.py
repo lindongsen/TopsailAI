@@ -16,6 +16,8 @@ from topsailai.ai_base.constants import (
     LLM_KEYWORD_MISTAKE,
     NON_SYSTEM_PROMPT_MESSAGE_INDEX,
     ROLE_SYSTEM,
+    STEP_NAME_TASK,
+    STEP_NAME_THOUGHT,
 )
 from topsailai.utils import (
     format_tool,
@@ -150,9 +152,44 @@ def get_tool_calls_of_rsp(rsp_obj):
         return rsp_msg.tool_calls
     return None
 
+def _coerce_assistant_task_steps(response):
+    """Rewrite assistant-emitted ``task`` steps into ``thought`` steps.
+
+    ``task`` is reserved for the human task message produced by
+    ``AgentBase._run()``. An LLM may still emit ``step_name: "task"`` in its own
+    response, which would then be stored as an assistant task declaration and
+    later compete with the real task during context summarization. Rewriting it
+    to ``thought`` keeps the content while removing the false task identity.
+
+    Args:
+        response (list): Parsed LLM response list.
+
+    Returns:
+        list: The same list, mutated in place when a task step was found.
+    """
+    if not isinstance(response, list):
+        return response
+
+    converted_count = 0
+    for item in response:
+        if isinstance(item, dict) and item.get("step_name") == STEP_NAME_TASK:
+            item["step_name"] = STEP_NAME_THOUGHT
+            converted_count += 1
+
+    if converted_count:
+        print_warning(
+            f"{LLM_KEYWORD_MISTAKE}: converted {converted_count} "
+            "task step(s) to thought because task is reserved for the human task message"
+        )
+
+    return response
+
 def fix_llm_mistakes(response:list, rsp_obj=None):
     if not response:
         return response
+
+    # case: assistant emits a reserved task step
+    response = _coerce_assistant_task_steps(response)
 
     new_response = check_or_fix_mistakes(response, rsp_obj=rsp_obj)
     if new_response and new_response is not response:

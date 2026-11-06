@@ -480,6 +480,106 @@ class TestFixLlmMistakes:
         warning.assert_not_called()
 
 
+class TestCoerceAssistantTaskSteps:
+    """Test suite for the reserved assistant task-step coercion."""
+
+    def test_coerces_assistant_task_step_to_thought(self):
+        """Verify an assistant task step becomes a thought step."""
+        from topsailai.ai_base.llm_control.message import fix_llm_mistakes
+
+        response = [
+            {"raw_text": "这个默认安装标记可以改吗？", "step_name": "task"},
+            {"step_name": "action"},
+        ]
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning") as warning:
+            result = fix_llm_mistakes(response)
+
+        assert [item["step_name"] for item in result] == ["thought", "action"]
+        assert result[0]["raw_text"] == "这个默认安装标记可以改吗？"
+        warning.assert_called_once()
+        assert "converted 1 task step(s) to thought" in warning.call_args.args[0]
+
+    def test_coerces_task_step_through_format_response_json(self):
+        """Verify the JSON parsing boundary also coerces a task step."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        raw = (
+            '[{"raw_text": "old question", "step_name": "task"},'
+            ' {"step_name": "action"}]'
+        )
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning"):
+            result = format_response(raw)
+
+        assert [item["step_name"] for item in result] == ["thought", "action"]
+
+    def test_coerces_task_step_through_format_response_topsailai(self):
+        """Verify the topsailai text format also coerces a task step."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        raw = "topsailai.task\nold question\ntopsailai.action\n"
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning"):
+            result = format_response(raw)
+
+        assert [item["step_name"] for item in result] == ["thought", "action"]
+
+    def test_coerces_multiple_task_steps(self):
+        """Verify every task step is coerced and counted once."""
+        from topsailai.ai_base.llm_control.message import fix_llm_mistakes
+
+        response = [
+            {"step_name": "task", "raw_text": "first"},
+            {"step_name": "task", "raw_text": "second"},
+        ]
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning") as warning:
+            result = fix_llm_mistakes(response)
+
+        assert [item["step_name"] for item in result] == ["thought", "thought"]
+        assert "converted 2 task step(s) to thought" in warning.call_args.args[0]
+
+    def test_leaves_non_task_steps_unchanged(self):
+        """Verify a response without a task step is not reported as fixed."""
+        from topsailai.ai_base.llm_control.message import fix_llm_mistakes
+
+        response = [{"step_name": "thought", "raw_text": "reasoning"}]
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning") as warning:
+            result = fix_llm_mistakes(response)
+
+        assert result is response
+        assert [item["step_name"] for item in result] == ["thought"]
+        warning.assert_not_called()
+
+    def test_leaves_string_response_unchanged(self):
+        """Verify a string response is returned untouched."""
+        from topsailai.ai_base.llm_control.message import fix_llm_mistakes
+
+        raw = "topsailai.thought\nreasoning"
+
+        assert fix_llm_mistakes(raw) == raw
+
+    def test_task_message_is_not_a_summary_anchor(self):
+        """Verify a coerced assistant task step is not a summary task anchor."""
+        from topsailai.ai_base.llm_control.message import fix_llm_mistakes
+        from topsailai.workspace.context.base import ContextRuntimeBase
+        from topsailai.utils import json_tool
+
+        response = [{"step_name": "task", "raw_text": "old question"}]
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning"):
+            fixed = fix_llm_mistakes(response)
+
+        message = {
+            "role": "assistant",
+            "content": json_tool.to_json_str(fixed),
+        }
+
+        assert ContextRuntimeBase._is_task_message(message) is False
+
+
 class TestParseXmlFunctionCall:
     """Test suite for _parse_xml_function_call helper."""
 
