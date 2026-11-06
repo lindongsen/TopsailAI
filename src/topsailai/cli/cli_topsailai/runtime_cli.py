@@ -12,7 +12,8 @@ import sys
 
 from cli_topsailai.paths import get_topsailai_home
 from cli_topsailai.runtime_operations import (
-    MESSAGE_LIMIT, RuntimeRequest, RuntimeResult, execute_runtime_request,
+    MESSAGE_LIMIT, RuntimeRequest, RuntimeResult, execute_log_follow,
+    execute_runtime_request,
 )
 
 
@@ -80,6 +81,7 @@ def build_parser(control_actions=None):
             "  topsailai runtime btw -s SESSION --stdin < message.txt\n"
             "  topsailai runtime control get_session_messages -s SESSION -a '{}' --json\n"
             "  topsailai runtime logs -s SESSION -p PID -n 100 --json\n"
+            "  topsailai runtime logs -s SESSION -p PID -n 100 -f\n"
             "  topsailai runtime -s SESSION -i '/send hello'\n\n"
             f"Supported control handlers: {handler_list}\n"
             "The list is queried from the live registry when help is requested; "
@@ -102,6 +104,8 @@ def build_parser(control_actions=None):
                             default=argparse.SUPPRESS)
     parser.add_argument("--json", action="store_true", help="emit one public JSON result")
     parser.add_argument("--stdin", action="store_true", help="read bounded non-TTY UTF-8 input")
+    parser.add_argument("-f", "--follow", action="store_true",
+                        help="keep printing appended log records until interrupted")
     parser.add_argument(
         "positionals", nargs="*", metavar="ACTION",
         help="send, btw, control ACTION_NAME, or logs",
@@ -162,11 +166,11 @@ def normalize(args):
         count = getattr(args, "lines", 20)
         if (len(args.positionals) != 1 or instruction is not None or message is not None or
                 payload_text is not None or args.stdin or hasattr(args, "timeout") or
-                not 1 <= count <= 10000):
+                not 1 <= count <= 10000 or (args.follow and args.json)):
             raise RuntimeUsageError("Invalid logs arguments")
-        return RuntimeRequest("logs", lines=count)
-    if hasattr(args, "lines"):
-        raise RuntimeUsageError("Line counts apply only to logs")
+        return RuntimeRequest("logs", lines=count, follow=args.follow)
+    if hasattr(args, "lines") or args.follow:
+        raise RuntimeUsageError("Line counts and follow apply only to logs")
     if instruction is not None:
         if args.positionals or message is not None or payload_text is not None:
             raise RuntimeUsageError("Conflicting instruction sources")
@@ -243,7 +247,8 @@ def public_result(result):
     )}
 
 
-def run_runtime_cli(argv, *, stdin=None, executor=None, home_resolver=None):
+def run_runtime_cli(argv, *, stdin=None, executor=None, home_resolver=None,
+                    follow_executor=None):
     """Normalize once, execute once and keep help registry lookup best-effort."""
     help_requested = not argv or "--help" in argv
     parser = build_parser(_help_control_actions() if help_requested else None)
@@ -253,16 +258,24 @@ def run_runtime_cli(argv, *, stdin=None, executor=None, home_resolver=None):
         parser.print_help()
         return 0
     json_mode = _json_requested(argv)
+    follow_mode = False
     try:
         args = parser.parse_intermixed_args(argv)
         json_mode = args.json
         request = normalize(args)
+        follow_mode = request.follow
         if args.stdin:
             request.message = _read_stdin(sys.stdin if stdin is None else stdin)
         home = (home_resolver or get_topsailai_home)()
-        result = (executor or execute_runtime_request)(
-            request, Path(home) / "workspace" / "task",
-            session_id=getattr(args, "session_id", None), pid=getattr(args, "pid", None))
+        task_dir = Path(home) / "workspace" / "task"
+        selectors = {"session_id": getattr(args, "session_id", None),
+                     "pid": getattr(args, "pid", None)}
+        if follow_mode:
+            result = (follow_executor or execute_log_follow)(
+                request, task_dir, emit=print,
+                warn=lambda message: print(message, file=sys.stderr), **selectors)
+        else:
+            result = (executor or execute_runtime_request)(request, task_dir, **selectors)
     except RuntimeInputError as exc:
         result = RuntimeResult(
             False, 5, request.action, getattr(args, "session_id", None),
@@ -271,13 +284,21 @@ def run_runtime_cli(argv, *, stdin=None, executor=None, home_resolver=None):
     except RuntimeUsageError:
         result = RuntimeResult(False, 2, "", error_code="usage_error",
                                message="Invalid runtime arguments")
+    except KeyboardInterrupt:
+        # A followed log has no bounded end, so an interrupt is its normal exit.
+        if follow_mode:
+            return 0
+        raise
     if json_mode:
         print(json.dumps(public_result(result), ensure_ascii=True))
-    elif result.ok and result.action == "logs":
+    elif result.ok and result.action == "logs" and not follow_mode:
         for line in result.response["lines"]:
             print(line)
         if result.response["scan_limited"]:
             print("Log scan limit reached; output is partial", file=sys.stderr)
+    elif result.ok and follow_mode:
+        # Followed records were already streamed as they arrived.
+        pass
     elif result.ok:
         print(f"Runtime {result.action}: {result.delivery_state}")
     else:

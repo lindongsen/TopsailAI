@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
+import time
 
 from cli_topsailai import runtime_control, runtime_pipe, runtime_target, runtime_logs
 
@@ -23,7 +24,7 @@ class RuntimeRequest:
     payload: dict | None = None
     timeout: float = 5.0
     lines: int | None = None
-
+    follow: bool = False
 
 @dataclass
 class RuntimeResult:
@@ -65,10 +66,11 @@ def _validate(request, control_actions):
     if request.action == "logs":
         if (request.message is not None or request.control_action is not None or
                 request.payload is not None or type(request.lines) is not int or
-                not 1 <= request.lines <= runtime_logs.MAX_LINES or request.timeout != 5.0):
+                not 1 <= request.lines <= runtime_logs.MAX_LINES or
+                request.timeout != 5.0 or type(request.follow) is not bool):
             raise _usage()
         return None
-    if request.lines is not None:
+    if request.lines is not None or request.follow:
         raise _usage()
     if type(request.timeout) not in (int, float):
         raise _usage()
@@ -138,6 +140,56 @@ def _endpoint(target, action, socket_path_builder):
         path = target.task_dir / f"{prefix}.agent2llm_inject_messages.jsonl"
         kind = "injection"
     return runtime_target.validate_runtime_endpoint(target, endpoint_path=path, endpoint_kind=kind)
+
+
+def execute_log_follow(
+    request: RuntimeRequest,
+    task_dir: Path,
+    *,
+    session_id: str | None = None,
+    pid: int | None = None,
+    emit=None,
+    warn=None,
+    poll_interval=runtime_logs.FOLLOW_POLL_INTERVAL,
+    sleep=time.sleep,
+) -> RuntimeResult:
+    """Print the initial tail, then appended records until the host interrupts.
+
+    The target is resolved once and the descriptor is opened once, so a later
+    poll can never select another session log. Host interrupts propagate after
+    the held unterminated record is emitted exactly once.
+    """
+    emit = emit or (lambda line: print(line))
+    warn = warn or (lambda message: None)
+    target = None
+    try:
+        _validate(request, runtime_control.get_control_actions)
+        target = runtime_logs.resolve_log_target(task_dir, session_id=session_id, pid=pid)
+        with runtime_logs.LogFollower(target, request.lines, poll_interval=poll_interval,
+                                      sleep=sleep) as follower:
+            tail = follower.tail
+            for line in tail.lines:
+                emit(line)
+            if tail.scan_limited:
+                warn("Log scan limit reached; output is partial")
+            try:
+                while True:
+                    for line in follower.poll():
+                        emit(line)
+                    follower.wait()
+            except KeyboardInterrupt:
+                # Emit bytes written since the last poll, then the held record.
+                try:
+                    for line in follower.poll():
+                        emit(line)
+                except (runtime_target.RuntimeTargetError, OSError):
+                    pass
+                for line in follower.flush():
+                    emit(line)
+                raise
+    except (runtime_target.RuntimeTargetError, runtime_pipe.PipeDeliveryError,
+            runtime_control.ControlDeliveryError) as exc:
+        return _failure("logs", exc, target)
 
 
 def execute_runtime_request(

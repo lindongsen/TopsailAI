@@ -1,4 +1,4 @@
-"""Read bounded session log snapshots without requiring a living process.
+"""Read bounded session log snapshots and follow appended records.
 
 Author: DawsonLin
 """
@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import time
 
 from cli_topsailai.runtime_target import RuntimeTarget, RuntimeTargetError
 from cli_topsailai.log_files import parse_stdout_filename
@@ -16,7 +17,8 @@ from cli_topsailai.log_files import parse_stdout_filename
 MAX_LINES = 10000
 SCAN_BUDGET = 8 * 1024 * 1024
 CHUNK_SIZE = 64 * 1024
-
+FOLLOW_POLL_INTERVAL = 0.5
+FOLLOW_MAX_PENDING = 1024 * 1024
 
 class RuntimeLogError(RuntimeTargetError):
     """Classify local read errors without transport semantics."""
@@ -138,12 +140,8 @@ def _scan(stream, size, count, chunk_size, budget):
     return lines, total, truncated, limited, bytes_read
 
 
-def read_log_tail(target, count=20, *, chunk_size=CHUNK_SIZE, budget=SCAN_BUDGET):
-    """Open one regular file, tail its captured size, and close on every exit."""
-    if type(count) is not int or not 1 <= count <= MAX_LINES:
-        raise RuntimeTargetError("usage_error", "Invalid line count")
-    if type(chunk_size) is not int or type(budget) is not int or chunk_size <= 0 or budget <= 0:
-        raise RuntimeTargetError("usage_error", "Invalid read bounds")
+def _open_regular_log(target):
+    """Open one regular session log with no-follow custody and return its stream."""
     try:
         path = Path(target.stdout_path)
         before = path.lstat()
@@ -156,16 +154,152 @@ def read_log_tail(target, count=20, *, chunk_size=CHUNK_SIZE, budget=SCAN_BUDGET
         except BaseException:
             os.close(fd)
             raise
-        with stream:
+        try:
             opened = os.fstat(stream.fileno())
             if not stat.S_ISREG(opened.st_mode):
                 raise RuntimeLogError("endpoint_invalid", "Invalid session log file")
             if not _same_identity(before, opened):
                 raise RuntimeLogError("log_changed", "Session log changed before read")
+        except BaseException:
+            stream.close()
+            raise
+        return stream, opened
+    except OSError as exc:
+        raise _io_error(exc) from exc
+
+
+def read_log_tail(target, count=20, *, chunk_size=CHUNK_SIZE, budget=SCAN_BUDGET):
+    """Open one regular file, tail its captured size, and close on every exit."""
+    if type(count) is not int or not 1 <= count <= MAX_LINES:
+        raise RuntimeTargetError("usage_error", "Invalid line count")
+    if type(chunk_size) is not int or type(budget) is not int or chunk_size <= 0 or budget <= 0:
+        raise RuntimeTargetError("usage_error", "Invalid read bounds")
+    try:
+        stream, opened = _open_regular_log(target)
+        with stream:
             lines, total, truncated, limited, amount = _scan(stream, opened.st_size, count, chunk_size, budget)
             after = os.fstat(stream.fileno())
             if after.st_size < opened.st_size or not _same_identity(opened, after):
                 raise RuntimeLogError("log_changed", "Session log changed during read")
-        return LogTail(str(path), lines, count, len(lines), total, truncated, limited, amount, opened.st_size)
+        return LogTail(str(Path(target.stdout_path)), lines, count, len(lines), total,
+                       truncated, limited, amount, opened.st_size)
     except OSError as exc:
         raise _io_error(exc) from exc
+
+
+class LogFollower:
+    """Follow one selected session log through a single open descriptor.
+
+    The descriptor is opened once, so a later poll can never select another
+    session log, and rotation keeps reading the original file. Only complete
+    LF-delimited records are emitted; an unterminated remainder is held in a
+    bounded buffer and emitted once when the follow ends.
+    """
+
+    def __init__(self, target, count=20, *, chunk_size=CHUNK_SIZE, budget=SCAN_BUDGET,
+                 poll_interval=FOLLOW_POLL_INTERVAL, max_pending=FOLLOW_MAX_PENDING,
+                 sleep=time.sleep):
+        """Validate follow bounds before any file access."""
+        if type(count) is not int or not 1 <= count <= MAX_LINES:
+            raise RuntimeTargetError("usage_error", "Invalid line count")
+        if (type(chunk_size) is not int or type(budget) is not int or
+                type(max_pending) is not int or chunk_size <= 0 or budget <= 0 or
+                max_pending <= 0 or not isinstance(poll_interval, (int, float)) or
+                poll_interval <= 0):
+            raise RuntimeTargetError("usage_error", "Invalid follow bounds")
+        self._target = target
+        self._count = count
+        self._chunk_size = chunk_size
+        self._budget = budget
+        self._poll_interval = poll_interval
+        self._max_pending = max_pending
+        self._sleep = sleep
+        self._stream = None
+        self._identity = None
+        self._position = 0
+        self._pending = b""
+        self._tail = None
+
+    def __enter__(self):
+        """Capture the initial tail and the follow position from one descriptor."""
+        stream, opened = _open_regular_log(self._target)
+        try:
+            lines, total, truncated, limited, amount = _scan(
+                stream, opened.st_size, self._count, self._chunk_size, self._budget)
+        except BaseException:
+            stream.close()
+            raise
+        self._stream = stream
+        self._identity = opened
+        self._position = opened.st_size
+        self._tail = LogTail(str(Path(self._target.stdout_path)), lines, self._count,
+                             len(lines), total, truncated, limited, amount, opened.st_size)
+        return self
+
+    def __exit__(self, *exc_info):
+        """Close the owned descriptor on every exit path."""
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            stream.close()
+        return False
+
+    @property
+    def tail(self):
+        """Return the initial snapshot evidence captured at open."""
+        if self._tail is None:
+            raise RuntimeTargetError("usage_error", "Follower is not open")
+        return self._tail
+
+    def wait(self):
+        """Sleep one poll interval without holding any file state."""
+        self._sleep(self._poll_interval)
+
+    def poll(self):
+        """Read appended bytes once and return newly completed records."""
+        stream = self._require_open()
+        try:
+            current = os.fstat(stream.fileno())
+            if not stat.S_ISREG(current.st_mode) or not _same_identity(self._identity, current):
+                raise RuntimeLogError("log_changed", "Session log changed during follow")
+            if current.st_size < self._position:
+                # Truncation or in-place rotation restarts at the new beginning.
+                self._position = 0
+                self._pending = b""
+            data, remaining = b"", self._budget
+            while remaining > 0:
+                amount = min(self._chunk_size, remaining)
+                stream.seek(self._position)
+                chunk = stream.read(amount)
+                if not chunk:
+                    break
+                data += chunk
+                self._position += len(chunk)
+                remaining -= len(chunk)
+                if len(chunk) < amount:
+                    break
+        except OSError as exc:
+            raise _io_error(exc) from exc
+        return self._records(data)
+
+    def flush(self):
+        """Return the held unterminated remainder once, then clear it."""
+        pending, self._pending = self._pending, b""
+        return (pending.decode("utf-8", errors="replace"),) if pending else ()
+
+    def _records(self, data):
+        """Split appended bytes into complete records and hold the remainder."""
+        records = (self._pending + data).split(b"\n")
+        self._pending = records.pop()
+        lines = [record.removesuffix(b"\r").decode("utf-8", errors="replace")
+                 for record in records]
+        while len(self._pending) > self._max_pending:
+            piece, self._pending = (self._pending[:self._max_pending],
+                                    self._pending[self._max_pending:])
+            lines.append(piece.decode("utf-8", errors="replace"))
+        return tuple(lines)
+
+    def _require_open(self):
+        """Reject use outside the owned descriptor lifetime."""
+        if self._stream is None:
+            raise RuntimeTargetError("usage_error", "Follower is not open")
+        return self._stream

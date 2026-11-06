@@ -49,7 +49,7 @@ The CLI is organized as five scopes. Each scope is a navigation and action conte
 - Interactive `/kill` does not verify process-instance identity, so stale lists must be refreshed before use. Non-interactive termination requires the verified process generation instead.
 - Publication proves driver liveness, not model readiness or analysis completion. An unconfirmed child may still run.
 - Clean driver finalization normally removes metadata and logs, so `EXIT` and `FAIL` are residual observations rather than durable exit history.
-- Log and metadata reads are bounded snapshots, not transactions; incomplete concurrent writes report an error without automatic retries.
+- Log and metadata reads are bounded snapshots, not transactions; incomplete concurrent writes report an error without automatic retries. `logs -f/--follow` is the only unbounded-duration read: it holds one descriptor, prints only complete records, keeps at most a 1 MiB unterminated remainder, and ends on host interrupt with exit `0`.
 - Log content may contain secrets or terminal escape sequences, and `/env.search` intentionally displays values that may contain secrets.
 - FIFO messaging requires platform FIFO support and control uses Unix-domain sockets; no cross-platform fallback transport is silently selected.
 - The dual-pane UI relies on the Python `curses` module and falls back to a single-pane mode when it is unavailable or stdout is not a TTY.
