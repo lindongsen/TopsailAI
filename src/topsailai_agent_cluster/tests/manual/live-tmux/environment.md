@@ -21,4 +21,4 @@ Set terminal to 180 columns by 40 rows with scrollback sufficient for help all. 
 
 ## ENV-04 Startup
 
-Launch interactive CLI in a dedicated window. Expect table headings NO, ENDPOINT, ADAPTER, SESSION_NAME, SESSION_ID, SESSION_STATUS, DATA_STATUS, LAST_SUCCESS and one green `workspace>` prompt. A healthy session has DATA_STATUS ok; LAST_SUCCESS is local time, not an ID. Verify startup does not create an agent. Save evidence and process ownership before proceeding.
+Launch interactive CLI in a dedicated window. Expect table headings NO, ENDPOINT, ADAPTER, SESSION_NAME, SESSION_ID, SESSION_STATUS, DATA_STATUS and one green `workspace>` prompt. A healthy session has DATA_STATUS ok carrying a trailing local-time stamp such as `ok (2026-11-06T11:58:36)`, which is a timestamp, not an ID. Verify startup does not create an agent. Save evidence and process ownership before proceeding.

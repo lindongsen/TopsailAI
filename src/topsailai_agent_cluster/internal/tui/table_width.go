@@ -40,8 +40,8 @@ func fitTableWidths(widths []int, limit int) {
 
 // writeNarrowTable keeps tiny terminals bounded with one labelled field per line.
 // Labels and status values keep their styling so narrow output stays readable.
-func writeNarrowTable(out io.Writer, rows [][]string, width int, policy ColorPolicy) error {
-	for _, row := range rows {
+func writeNarrowTable(out io.Writer, rows, states [][]string, width int, policy ColorPolicy) error {
+	for index, row := range rows {
 		for i, value := range row {
 			label := clipCell(tableHeaders[i]+": ", width)
 			if err := writeStyled(out, ansiBoldCyan, label, policy); err != nil {
@@ -56,10 +56,7 @@ func writeNarrowTable(out io.Writer, rows [][]string, width int, policy ColorPol
 				// Session names stay complete even in a narrow terminal.
 				cell = value
 			}
-			state := rowState(row)
-			if i == columnDataStatus {
-				state = value
-			}
+			state := states[index][i]
 			if err := writeCellState(out, cell, i, state, policy); err != nil {
 				return err
 			}

@@ -46,7 +46,7 @@ func TestTableUnknownWidthPreservesOutput(t *testing.T) {
 
 // TestNarrowTableWriteFailure preserves writer failure identity.
 func TestNarrowTableWriteFailure(t *testing.T) {
-	if err := writeNarrowTable(exampleFailureWriter{err: errTableFixture}, [][]string{{"example:"}}, 40, ColorPolicy{}); err != errTableFixture {
+	if err := writeNarrowTable(exampleFailureWriter{err: errTableFixture}, [][]string{{"example:"}}, [][]string{{""}}, 40, ColorPolicy{}); err != errTableFixture {
 		t.Fatalf("error=%v", err)
 	}
 }
@@ -93,11 +93,20 @@ func TestNarrowTableKeepsStylingAndFullSessionName(t *testing.T) {
 	if !strings.Contains(rendered, ansiBoldCyan+"SESSION_NAME: "+ansiReset) {
 		t.Fatalf("narrow label is not styled: %q", rendered)
 	}
-	if !strings.Contains(rendered, ansiGreen+"running"+ansiReset) {
-		t.Fatalf("running state is not green: %q", rendered)
+	statusLines := []string{}
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.HasPrefix(line, ansiBoldCyan+"SESSION_STATUS: "+ansiReset) {
+			statusLines = append(statusLines, line)
+		}
 	}
-	if !strings.Contains(rendered, ansiRed+"failed"+ansiReset) {
-		t.Fatalf("failed state is not red: %q", rendered)
+	if len(statusLines) != 2 {
+		t.Fatalf("status lines=%d want 2: %q", len(statusLines), rendered)
+	}
+	if !strings.Contains(statusLines[0], ansiGreen) || !strings.HasSuffix(statusLines[0], ansiReset) {
+		t.Fatalf("running state is not green: %q", statusLines[0])
+	}
+	if !strings.Contains(statusLines[1], ansiRed) || !strings.HasSuffix(statusLines[1], ansiReset) {
+		t.Fatalf("failed state is not red: %q", statusLines[1])
 	}
 }
 

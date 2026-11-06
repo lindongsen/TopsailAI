@@ -254,7 +254,7 @@ func TestHelpOverviewKeepsScopeRestrictions(t *testing.T) {
 func TestStartupInventoryRunsOncePerSession(t *testing.T) {
 	stub := startupStub()
 	output, _ := runStartup(t, stub, "quit\n", InteractiveOptions{})
-	if got := strings.Count(output, "LAST_SUCCESS"); got != 1 {
+	if got := strings.Count(output, "DATA_STATUS"); got != 1 {
 		t.Fatalf("startup rendered %d inventories, want 1: %q", got, output)
 	}
 	if stub.inventoryCalls != 1 {
@@ -276,8 +276,11 @@ func TestStartupInventoryUsesSharedListPath(t *testing.T) {
 
 func TestHelpListOmitsRemovedTimestampColumns(t *testing.T) {
 	text := helpText(t, "list")
-	if !strings.Contains(text, "LAST_SUCCESS") {
-		t.Fatalf("help list missing LAST_SUCCESS: %q", text)
+	if !strings.Contains(text, "DATA_STATUS") {
+		t.Fatalf("help list missing DATA_STATUS: %q", text)
+	}
+	if strings.Contains(text, "LAST_SUCCESS") {
+		t.Fatalf("help list still contains LAST_SUCCESS: %q", text)
 	}
 	if strings.Contains(text, "GENERATION") {
 		t.Fatalf("help list still contains GENERATION: %q", text)

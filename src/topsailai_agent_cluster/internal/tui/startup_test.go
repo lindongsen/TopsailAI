@@ -43,7 +43,7 @@ func TestStartupRendersInventoryBeforeFirstPrompt(t *testing.T) {
 	if !strings.Contains(output, "provider-session-1") {
 		t.Fatalf("startup inventory missing session row: %q", output)
 	}
-	headerIndex := strings.Index(output, "LAST_SUCCESS")
+	headerIndex := strings.Index(output, "DATA_STATUS")
 	promptIndex := strings.Index(output, "workspace> ")
 	if headerIndex < 0 || promptIndex < 0 {
 		t.Fatalf("startup output incomplete: %q", output)
@@ -153,7 +153,7 @@ func TestNonInteractiveListDoesNotRunStartupInventory(t *testing.T) {
 	if err := (CommandRunner{API: stub}).List(context.Background(), &output, "", false); err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if got := strings.Count(output.String(), "LAST_SUCCESS"); got != 1 {
+	if got := strings.Count(output.String(), "DATA_STATUS"); got != 1 {
 		t.Fatalf("non-interactive list rendered %d tables, want 1: %q", got, output.String())
 	}
 	if stub.inventoryCalls != 1 {

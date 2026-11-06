@@ -65,7 +65,7 @@ Feature: non-interactive TUI
     And the output contains "SESSION_ID"
     And the output contains "SESSION_STATUS"
     And the output contains "DATA_STATUS"
-    And the output contains "LAST_SUCCESS"
+    And the output contains "ok ("
 
 
   Scenario: tui logs returns bounded snapshot

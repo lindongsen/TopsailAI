@@ -19,15 +19,15 @@ func TestTableColumnsWidthsAndEmptyResult(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	headerCells := strings.Split(lines[0], " │ ")
-	if len(headerCells) != 8 {
+	if len(headerCells) != 7 {
 		t.Fatalf("header cell count=%d header=%q", len(headerCells), lines[0])
 	}
-	for index, want := range []string{"NO", "ENDPOINT", "ADAPTER", "SESSION_NAME", "SESSION_ID", "SESSION_STATUS", "DATA_STATUS", "LAST_SUCCESS"} {
+	for index, want := range []string{"NO", "ENDPOINT", "ADAPTER", "SESSION_NAME", "SESSION_ID", "SESSION_STATUS", "DATA_STATUS"} {
 		if strings.TrimSpace(headerCells[index]) != want {
 			t.Fatalf("header cell %d=%q want=%q", index, headerCells[index], want)
 		}
 	}
-	if strings.Contains(lines[0], "GENERATION") || strings.Contains(lines[0], "LAST_SUCCESS_MS") {
+	if strings.Contains(lines[0], "GENERATION") || strings.Contains(lines[0], "LAST_SUCCESS") {
 		t.Fatalf("header still has removed columns: %q", lines[0])
 	}
 	if !strings.Contains(lines[1], "─┼─") {
@@ -36,8 +36,8 @@ func TestTableColumnsWidthsAndEmptyResult(t *testing.T) {
 	if len(lines[2]) > 190 || !strings.Contains(lines[2], "...") {
 		t.Fatalf("bounded row=%q len=%d", lines[2], len(lines[2]))
 	}
-	if !strings.HasSuffix(lines[2], "2023-11-14 22:13:20") {
-		t.Fatalf("timestamp not right aligned: %q", lines[2])
+	if !strings.HasSuffix(lines[2], "ok (2023-11-14T22:13:20)") {
+		t.Fatalf("timestamp not embedded in DATA_STATUS: %q", lines[2])
 	}
 	out.Reset()
 	if err := RenderTable(&out, &errors, nil, nil, TableOptions{}); err != nil {
@@ -282,14 +282,14 @@ func TestTableNilLastSuccessDisplaysDash(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	cells := strings.Split(lines[2], " │ ")
-	if got := strings.TrimSpace(cells[columnLastSuccess]); got != "-" {
-		t.Fatalf("LAST_SUCCESS cell = %q, want %q; row=%q", got, "-", lines[2])
+	if got := strings.TrimSpace(cells[columnDataStatus]); got != "ok" {
+		t.Fatalf("DATA_STATUS cell = %q, want %q; row=%q", got, "ok", lines[2])
 	}
 }
 
 func TestTableLastSuccessUsesNonUTCOffset(t *testing.T) {
 	stamp := int64(1700000000000)
-	rows := []SessionRow{{EndpointID: "ep", ProviderSessionID: "provider", LastSuccessAtMS: &stamp}}
+	rows := []SessionRow{{EndpointID: "ep", ProviderSessionID: "provider", CollectionStatus: protocol.CollectionSucceeded, LastSuccessAtMS: &stamp}}
 	var out, errors strings.Builder
 	location := time.FixedZone("CST", 8*3600)
 	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: location}); err != nil {
@@ -297,7 +297,8 @@ func TestTableLastSuccessUsesNonUTCOffset(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	cells := strings.Split(lines[2], " │ ")
-	if got := cells[columnLastSuccess]; got != "2023-11-15 06:13:20" {
-		t.Fatalf("LAST_SUCCESS cell = %q, want %q; row=%q", got, "2023-11-15 06:13:20", lines[2])
+	want := "ok (2023-11-15T06:13:20)"
+	if got := strings.TrimSpace(cells[columnDataStatus]); got != want {
+		t.Fatalf("DATA_STATUS cell = %q, want %q; row=%q", got, want, lines[2])
 	}
 }

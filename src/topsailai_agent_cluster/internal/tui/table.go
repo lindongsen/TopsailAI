@@ -23,20 +23,19 @@ type TableOptions struct {
 	Color  ColorPolicy
 	Clean  bool
 	OnRows func([]SessionRow)
-	// Location formats LAST_SUCCESS; nil means the local timezone.
+	// Location formats the DATA_STATUS success stamp; nil means the local timezone.
 	Location *time.Location
 }
 
 // Column indices are named so a column change cannot silently shift colors or alignment.
 const (
-	columnState       = 5
-	columnDataStatus  = 6
-	columnLastSuccess = 7
-	columnName        = 3
+	columnState      = 5
+	columnDataStatus = 6
+	columnName       = 3
 )
 
-var tableHeaders = []string{"NO", "ENDPOINT", "ADAPTER", "SESSION_NAME", "SESSION_ID", "SESSION_STATUS", "DATA_STATUS", "LAST_SUCCESS"}
-var tableCaps = []int{4, 20, 18, 64, 36, 14, 19, 19}
+var tableHeaders = []string{"NO", "ENDPOINT", "ADAPTER", "SESSION_NAME", "SESSION_ID", "SESSION_STATUS", "DATA_STATUS"}
+var tableCaps = []int{4, 20, 18, 64, 36, 14, 35}
 
 // minimumTableWidth reports the smallest width able to hold one column per field.
 func minimumTableWidth(columns int) int {
@@ -51,8 +50,10 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 		widths[i] = len(header)
 	}
 	cells := make([][]string, len(rows))
+	states := make([][]string, len(rows))
 	for i, row := range rows {
 		cells[i] = tableCells(row, options.Location)
+		states[i] = tableStates(row, cells[i])
 		for j, cell := range cells[i] {
 			n := displayWidth(cell)
 			if j == columnName {
@@ -68,7 +69,7 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 		}
 	}
 	fitTableWidths(widths, options.Width)
-	writeRow := func(values []string, header bool) error {
+	writeRow := func(values, states []string, header bool) error {
 		for i, value := range values {
 			if i > 0 {
 				if _, err := io.WriteString(out, " │ "); err != nil {
@@ -76,19 +77,15 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 				}
 			}
 			cell := clipCell(value, widths[i])
-			if i == columnLastSuccess {
-				cell = strings.Repeat(" ", widths[i]-displayWidth(cell)) + cell
-			} else {
-				cell += strings.Repeat(" ", widths[i]-displayWidth(cell))
-			}
+			cell += strings.Repeat(" ", widths[i]-displayWidth(cell))
 			if header && options.Color.Enabled {
 				if err := writeStyled(out, ansiBoldCyan, cell, options.Color); err != nil {
 					return err
 				}
 			} else {
-				state := rowState(values)
-				if i == columnDataStatus {
-					state = value
+				state := ""
+				if len(states) > i {
+					state = states[i]
 				}
 				if err := writeCellState(out, cell, i, state, options.Color); err != nil {
 					return err
@@ -113,18 +110,18 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 		return err
 	}
 	if options.Width > 0 && options.Width < minimumTableWidth(len(widths)) {
-		if err := writeNarrowTable(out, cells, options.Width, options.Color); err != nil {
+		if err := writeNarrowTable(out, cells, states, options.Width, options.Color); err != nil {
 			return err
 		}
 	} else {
-		if err := writeRow(tableHeaders, true); err != nil {
+		if err := writeRow(tableHeaders, nil, true); err != nil {
 			return err
 		}
 		if err := writeSeparator(); err != nil {
 			return err
 		}
-		for _, row := range cells {
-			if err := writeRow(row, false); err != nil {
+		for index, row := range cells {
+			if err := writeRow(row, states[index], false); err != nil {
 				return err
 			}
 		}
@@ -156,7 +153,28 @@ func tableCells(row SessionRow, location *time.Location) []string {
 	if adapter == "" {
 		adapter = row.AdapterID
 	}
-	return []string{strconv.Itoa(row.No), escapeCell(endpoint), escapeCell(adapter), escapeCell(row.DisplayName), escapeCell(row.ProviderSessionID), escapeCell(row.State), escapeCell(dataStatus(row)), formatLastSuccess(row.LastSuccessAtMS, location)}
+	return []string{strconv.Itoa(row.No), escapeCell(endpoint), escapeCell(adapter), escapeCell(row.DisplayName), escapeCell(row.ProviderSessionID), escapeCell(row.State), escapeCell(dataStatusCell(row, location))}
+}
+
+// tableStates derives each column's colour state from the row itself, so a
+// decorated cell such as "ok (<timestamp>)" keeps the colour of its base status.
+func tableStates(row SessionRow, cells []string) []string {
+	states := make([]string, len(cells))
+	for i := range cells {
+		states[i] = rowState(cells)
+	}
+	states[columnDataStatus] = dataStatus(row)
+	return states
+}
+
+// dataStatusCell embeds the latest success stamp in DATA_STATUS.
+func dataStatusCell(row SessionRow, location *time.Location) string {
+	base := dataStatus(row)
+	stamp := formatLastSuccess(row.LastSuccessAtMS, location)
+	if stamp == "-" {
+		return base
+	}
+	return base + " (" + stamp + ")"
 }
 
 // formatLastSuccess renders a millisecond timestamp in the given location.
@@ -167,7 +185,7 @@ func formatLastSuccess(value *int64, location *time.Location) string {
 	if location == nil {
 		location = time.Local
 	}
-	return time.UnixMilli(*value).In(location).Format("2006-01-02 15:04:05")
+	return time.UnixMilli(*value).In(location).Format("2006-01-02T15:04:05")
 }
 func escapeCell(value string) string {
 	clean := sanitizeTerminal([]byte(value))

@@ -90,7 +90,7 @@ wait_for_text 'SESSION_NAME'
 wait_for_text 'SESSION_ID'
 wait_for_text 'SESSION_STATUS'
 wait_for_text 'DATA_STATUS'
-wait_for_text 'LAST_SUCCESS'
+wait_for_text 'ok ('
 
 # Workspace scope rejects send before any payload parsing.
 baseline=$(pane_snapshot)

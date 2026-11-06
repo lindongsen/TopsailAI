@@ -25,8 +25,7 @@ var fieldHelp = []string{
 	"SESSION_NAME: session display name; empty when the provider did not report one.",
 	"SESSION_ID: provider-native session ID; empty when the provider did not report one.",
 	"SESSION_STATUS: provider-reported lifecycle state, such as running, stopped, or failed.",
-	"DATA_STATUS: collection result plus freshness qualifiers; base values are ok, failed, partial, unknown, or unrecognized, optionally followed by /stale, /unknown, or /unknown+stale.",
-	"LAST_SUCCESS: local-time timestamp of the latest successful collection, not the failure start time; - means no success has been recorded.",
+	"DATA_STATUS: collection result plus freshness qualifiers; base values are ok, failed, partial, unknown, or unrecognized, optionally followed by /stale, /unknown, or /unknown+stale; a trailing parenthesised local-time stamp such as ok (2026-11-06T11:58:36) reports the latest successful collection, not the failure start time, and is omitted when no success has been recorded.",
 }
 
 var commandHelpCatalog = map[string]commandHelp{
