@@ -87,7 +87,7 @@ func TestLegacyAndInteractiveShowUseSharedRunnerMethods(t *testing.T) {
 func TestLegacyActionAndInteractiveSendShareIntentFields(t *testing.T) {
 	legacy := &actionPathStub{}
 	var legacyOut strings.Builder
-	if err := action(context.Background(), legacy, &legacyOut, []string{"send", "ep", "session", `{"text":"hi"}`, "gen"}, true, false, 100, "", "", ""); err != nil {
+	if err := action(context.Background(), legacy, &legacyOut, []string{"send", "ep", "session", `{"text":"hi"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	interactive := &actionPathStub{}
@@ -250,7 +250,7 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 			t.Fatalf("non-interactive help leaked command %q: %q", interactiveOnly, text)
 		}
 	}
-	if !strings.Contains(text, "agent-cluster-cli [options] start <endpoint> <resource> [payload] [generation]") {
+	if !strings.Contains(text, "agent-cluster-cli [options] start <endpoint> <resource> [text] [generation]") {
 		t.Fatalf("start syntax does not show flags before command: %q", text)
 	}
 
@@ -258,14 +258,14 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 	if err := runWithIO([]string{"help", "start"}, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "Syntax: agent-cluster-cli [options] start <endpoint> <resource> [payload] [generation]") || strings.Contains(output.String(), "--payload") {
+	if !strings.Contains(output.String(), "Syntax: agent-cluster-cli [options] start <endpoint> <resource> [text] [generation]") || strings.Contains(output.String(), "--payload") {
 		t.Fatalf("standalone start detail is inconsistent: %q", output.String())
 	}
 	output.Reset()
 	if err := runWithIO([]string{"help", "inject"}, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
 		t.Fatalf("accepted alias help failed: %v", err)
 	}
-	if !strings.Contains(output.String(), "Syntax: agent-cluster-cli [options] btw <endpoint> <resource> [payload] [generation]") || !strings.Contains(output.String(), "Alias of: btw") {
+	if !strings.Contains(output.String(), "Syntax: agent-cluster-cli [options] btw <endpoint> <resource> [text] [generation]") || !strings.Contains(output.String(), "Alias of: btw") {
 		t.Fatalf("alias help=%q", output.String())
 	}
 	if err := runWithIO([]string{"help", "interrupt"}, strings.NewReader(""), io.Discard, io.Discard, false, nil); err == nil {
@@ -285,6 +285,56 @@ func TestInjectAliasMatchesBtwDispatch(t *testing.T) {
 		if !strings.Contains(err.Error(), "confirmation required for "+command+" target=res") {
 			t.Fatalf("%s error=%v", command, err)
 		}
+	}
+}
+
+// TestStandalonePlainTextPayloadsNeedNoJSON proves every text-carrying
+// standalone command accepts plain text and produces the standard payload.
+func TestStandalonePlainTextPayloadsNeedNoJSON(t *testing.T) {
+	for _, tc := range []struct {
+		operation, value, want string
+	}{
+		{"send", "hello world", `{"text":"hello world"}`},
+		{"btw", "the notes are in docs/", `{"text":"the notes are in docs/"}`},
+		{"inject", "context", `{"text":"context"}`},
+		{"control", "soft stop now", `{"action":"soft_interrupt","message":"stop now"}`},
+		{"control", "hard", `{"action":"hard_interrupt"}`},
+		{"start", "summarize the open issues", `{"task":"summarize the open issues"}`},
+	} {
+		got, err := resolveActionPayload(tc.operation, tc.value)
+		if err != nil {
+			t.Fatalf("%s %q: %v", tc.operation, tc.value, err)
+		}
+		if string(got) != tc.want {
+			t.Fatalf("%s %q payload=%s want=%s", tc.operation, tc.value, got, tc.want)
+		}
+	}
+	if _, err := resolveActionPayload("control", "hard with a message"); err == nil {
+		t.Fatal("hard interrupt accepted a message")
+	}
+	if _, err := resolveActionPayload("start", "   "); err == nil {
+		t.Fatal("blank task accepted")
+	}
+}
+
+// TestStandalonePlainTextMessageReachesIntent proves the plain text path builds
+// the same immutable intent as the JSON form, without contacting a Server.
+func TestStandalonePlainTextMessageReachesIntent(t *testing.T) {
+	plain := &actionPathStub{}
+	var plainOut strings.Builder
+	if err := action(context.Background(), plain, &plainOut, []string{"send", "ep", "session", "hello world", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	jsonForm := &actionPathStub{}
+	var jsonOut strings.Builder
+	if err := action(context.Background(), jsonForm, &jsonOut, []string{"send", "ep", "session", `{"text":"hello world"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(plain.intents) != 1 || len(jsonForm.intents) != 1 {
+		t.Fatalf("intent counts plain=%d json=%d", len(plain.intents), len(jsonForm.intents))
+	}
+	if string(plain.intents[0].Payload) != string(jsonForm.intents[0].Payload) {
+		t.Fatalf("payload plain=%s json=%s", plain.intents[0].Payload, jsonForm.intents[0].Payload)
 	}
 }
 

@@ -63,7 +63,7 @@ func TestUnitCStartPromptRejectsRegisteredCommandsAsAnswers(t *testing.T) {
 		t.Fatalf("registered command was not rejected: admits=%d diagnostics=%q", stub.admit, diagnostics.String())
 	}
 	want := "error: command unavailable during start input; cancel before running another command\n" +
-		"usage: start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--payload <json>]\n" +
+		"usage: start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--task <text>]\n" +
 		"next: Run help start for valid syntax.\n"
 	if diagnostics.String() != want {
 		t.Fatalf("diagnostics=%q, want %q", diagnostics.String(), want)

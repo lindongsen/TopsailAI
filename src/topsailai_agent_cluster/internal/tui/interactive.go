@@ -443,8 +443,10 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 			commandErr = interactiveStart(ctx, api, state, request, startOut, options)
 		}
 		return false, startOutputError(commandErr, recorder, startOut, startTrustedOut, startErrOut)
-	case "resume", "stop":
+	case "resume":
 		return false, interactiveSessionLifecycle(ctx, api, state, name, rest, lineResults, out, trustedOut, options)
+	case "stop":
+		return false, interactiveStop(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	case "inject", "btw":
 		return false, interactiveSessionPayload(ctx, api, state, protocol.OperationContextInject, name, rest, lineResults, out, trustedOut, options)
 	case "interrupt", "control":

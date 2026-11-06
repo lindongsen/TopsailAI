@@ -13,7 +13,7 @@ func TestUnitAContextHelpAndHelpAll(t *testing.T) {
 	if err := PrintScopedCommandHelp(&workspace, "", ScopeWorkspace); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(workspace.String(), "inject <json>") || strings.Contains(workspace.String(), "interrupt <json>") {
+	if strings.Contains(workspace.String(), "inject <text>") || strings.Contains(workspace.String(), "interrupt [soft|hard]") {
 		t.Fatalf("workspace help exposed session commands: %q", workspace.String())
 	}
 	if !strings.Contains(workspace.String(), "Start example:") || !strings.Contains(workspace.String(), "Run help all") {
@@ -22,7 +22,7 @@ func TestUnitAContextHelpAndHelpAll(t *testing.T) {
 	if err := PrintScopedCommandHelp(&all, "all", ScopeWorkspace); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"inject <json>", "interrupt <json>", "Aliases: ?=help", "btw=inject", "control=interrupt", "r=refresh", "q=quit"} {
+	for _, name := range []string{"inject <text>", "interrupt [soft|hard] [message]", "Aliases: ?=help", "btw=inject", "control=interrupt", "r=refresh", "q=quit"} {
 		if !strings.Contains(all.String(), name) {
 			t.Fatalf("help all missing %q: %q", name, all.String())
 		}
@@ -58,7 +58,7 @@ func TestUnitAPrimaryHelpHidesCompatibilityAliases(t *testing.T) {
 	if err := PrintScopedCommandHelp(&output, "all", ScopeSession); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"inject <json>", "interrupt <json>"} {
+	for _, name := range []string{"inject <text>", "interrupt [soft|hard] [message]"} {
 		if !strings.Contains(output.String(), name) {
 			t.Fatalf("canonical command missing from help all: %q", name)
 		}
@@ -199,7 +199,7 @@ func TestUnitANonInteractiveAliasHelpRetainsDescriptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, alias := range []string{"btw", "control"} {
-		prefix := "agent-cluster-cli [options] " + alias + " <endpoint> <resource> [payload] [generation]"
+		prefix := "agent-cluster-cli [options] " + alias + " <endpoint> <resource> [text] [generation]"
 		found := 0
 		for _, line := range strings.Split(overview.String(), "\n") {
 			if !strings.HasPrefix(line, prefix) {

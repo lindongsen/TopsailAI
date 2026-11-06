@@ -105,7 +105,7 @@ assert_absent 'SESSION_STATUS'
 
 # Workspace scope rejects send before any payload parsing.
 baseline=$(pane_snapshot)
-send_line 'send {}'
+send_line 'send hello'
 wait_for_new_text 'command "send" is unavailable in workspace scope' "$baseline"
 
 # Endpoint scope is entered by endpoint id and still rejects send.
@@ -113,7 +113,7 @@ baseline=$(pane_snapshot)
 send_line "cd $endpoint_id"
 wait_for_new_text "/$endpoint_id]>" "$baseline"
 baseline=$(pane_snapshot)
-send_line 'send {}'
+send_line 'send hello'
 wait_for_new_text 'command "send" is unavailable in endpoint scope' "$baseline"
 
 # Session scope accepts status and the scope-grouped help.

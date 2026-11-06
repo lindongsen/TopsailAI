@@ -243,7 +243,7 @@ func TestHelpOverviewKeepsScopePrompts(t *testing.T) {
 
 func TestHelpOverviewKeepsScopeRestrictions(t *testing.T) {
 	output, diagnostics := runScope(t, scopeStub(), "send {}\nquit\n", ColorPolicy{})
-	if !strings.Contains(diagnostics, `command "send" is unavailable in workspace scope; available commands: list, cd, show, start, status, refresh, help, quit`) {
+	if !strings.Contains(diagnostics, `command "send" is unavailable in workspace scope; available commands: list, cd, show, start, stop, status, refresh, help, quit`) {
 		t.Fatalf("scope restriction lost: %q", diagnostics)
 	}
 	if strings.Contains(output, "admitted") {
@@ -330,11 +330,11 @@ func TestNonInteractiveHelpCatalogMatchesStandaloneDispatch(t *testing.T) {
 		"agent-cluster-cli [options] show <endpoint-or-session>",
 		"agent-cluster-cli [options] [--lines <lines>] logs <endpoint> <session>",
 		"agent-cluster-cli [options] status <command-id>",
-		"agent-cluster-cli [options] send <endpoint> <resource> [payload] [generation]",
-		"agent-cluster-cli [options] btw <endpoint> <resource> [payload] [generation]",
-		"agent-cluster-cli [options] control <endpoint> <resource> [payload] [generation]",
-		"agent-cluster-cli [options] start <endpoint> <resource> [payload] [generation]",
-		"agent-cluster-cli [options] resume <endpoint> <resource> [payload] [generation]",
+		"agent-cluster-cli [options] send <endpoint> <resource> [text] [generation]",
+		"agent-cluster-cli [options] btw <endpoint> <resource> [text] [generation]",
+		"agent-cluster-cli [options] control <endpoint> <resource> [text] [generation]",
+		"agent-cluster-cli [options] start <endpoint> <resource> [text] [generation]",
+		"agent-cluster-cli [options] resume <endpoint> <resource> [text] [generation]",
 		"agent-cluster-cli [options] stop <endpoint> <resource> <generation>",
 		"agent-cluster-cli help [command]",
 	} {
@@ -374,7 +374,7 @@ func TestPrintNonInteractiveCommandHelp(t *testing.T) {
 	if err := PrintNonInteractiveCommandHelp(&out, "inject"); err != nil {
 		t.Fatalf("accepted alias help failed: %v", err)
 	}
-	if !strings.Contains(out.String(), "Syntax: agent-cluster-cli [options] btw <endpoint> <resource> [payload] [generation]") || !strings.Contains(out.String(), `Alias of: btw`) {
+	if !strings.Contains(out.String(), "Syntax: agent-cluster-cli [options] btw <endpoint> <resource> [text] [generation]") || !strings.Contains(out.String(), `Alias of: btw`) {
 		t.Fatalf("alias help=%q", out.String())
 	}
 	if err := PrintNonInteractiveCommandHelp(&out, "interrupt"); err == nil || !strings.Contains(err.Error(), "unknown help command") {

@@ -96,12 +96,12 @@ func TestSendIsUnavailableOutsideSessionScope(t *testing.T) {
 		{
 			name:  "workspace",
 			input: "send {\"text\":\"hi\"}\nquit\n",
-			want:  "error: command \"send\" is unavailable in workspace scope; available commands: list, cd, show, start, status, refresh, help, quit\n",
+			want:  "error: command \"send\" is unavailable in workspace scope; available commands: list, cd, show, start, stop, status, refresh, help, quit\n",
 		},
 		{
 			name:  "endpoint",
 			input: "cd host-one/endpoint-1\nsend {\"text\":\"hi\"}\nquit\n",
-			want:  "error: command \"send\" is unavailable in endpoint scope; available commands: list, cd, show, start, logs, status, refresh, help, quit\n",
+			want:  "error: command \"send\" is unavailable in endpoint scope; available commands: list, cd, show, start, stop, logs, status, refresh, help, quit\n",
 		},
 	}
 	for _, testCase := range cases {
@@ -132,7 +132,7 @@ func TestSendWorksInSessionScope(t *testing.T) {
 
 func TestLogsIsUnavailableInWorkspaceScope(t *testing.T) {
 	_, diagnostics := runScope(t, scopeStub(), "logs\nquit\n", ColorPolicy{})
-	want := "error: command \"logs\" is unavailable in workspace scope; available commands: list, cd, show, start, status, refresh, help, quit\n"
+	want := "error: command \"logs\" is unavailable in workspace scope; available commands: list, cd, show, start, stop, status, refresh, help, quit\n"
 	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 }
 
@@ -338,8 +338,8 @@ func TestAvailableCommandsUseStableOrder(t *testing.T) {
 		kind ScopeKind
 		want string
 	}{
-		{kind: ScopeWorkspace, want: "list, cd, show, start, status, refresh, help, quit"},
-		{kind: ScopeEndpoint, want: "list, cd, show, start, logs, status, refresh, help, quit"},
+		{kind: ScopeWorkspace, want: "list, cd, show, start, stop, status, refresh, help, quit"},
+		{kind: ScopeEndpoint, want: "list, cd, show, start, stop, logs, status, refresh, help, quit"},
 		{kind: ScopeSession, want: "list, cd, show, resume, stop, inject, interrupt, logs, send, status, refresh, help, quit"},
 	}
 	for _, testCase := range cases {

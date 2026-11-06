@@ -31,11 +31,11 @@ var commandHelpCatalog = map[string]commandHelp{
 	"list":      {"list [endpoint] [--clean]", ListHelpDescription + "; JSON output (--json/-json) is available only in the standalone non-interactive command", []string{"endpoint: optional endpoint ID filter", "--clean: omit endpoints that failed to report; diagnostics still go to stderr"}, []string{"list", "list endpoint-1", "list --clean"}},
 	"cd":        {"cd [target]", "navigate between workspace, endpoint, and session scopes; bare cd returns to workspace", []string{"target: latest displayed row number, hostname, hostname/endpoint-id, session, hostname/endpoint-id/session, .., or /", "a bare ASCII number is shorthand for cd <number>; leading zeros are accepted and the number is temporary; a valid replacement list that fails during loading, rendering, or diagnostics invalidates the previous row numbers; invalid syntax or an invalid scoped filter preserves them", "failed-endpoint placeholders are displayed but cannot be selected; session scope rejects numeric row navigation", "after a valid replacement begins, a load, render, or diagnostic failure leaves no selectable row bindings; invalid syntax or an invalid scoped filter is rejected before replacement begins and preserves the previous bindings", "a hostname shared by several endpoints prompts for a numbered choice, a hostname/endpoint-id answer, or cancel", "entering session scope immediately renders one bounded output snapshot for the selected session, using the generation the transition validated; a failed read is reported as a diagnostic and does not change the selected session"}, []string{"cd", "cd 1", "cd /", "cd ..", "cd ai-dev", "cd ai-dev/endpoint-1", "cd res_abc", "cd ai-dev/endpoint-1/res_abc"}},
 	"show":      {"show [endpoint-or-session]", "show detailed information for an endpoint or session; defaults to the current scope target", []string{"endpoint-or-session: optional endpoint ID, session/resource ID, provider session ID, or a bare list row number", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID"}, []string{"show", "show 1", "show endpoint-1"}},
-	"start":     {"start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--payload <json>]", "start an agent through the selected endpoint; interactive mode executes directly and does not support --json", []string{"endpoint: endpoint ID", "resource: compatibility resource identifier", "--profile: launch profile ID (required)", "--profile-revision: launch profile revision (required)", "--folder: optional working folder; empty value is treated as omitted", "--payload: optional JSON payload; defaults to {}", "--json: rejected in interactive mode"}, []string{"start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1", `start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1 --payload '{"note":"example"}'`}},
-	"resume":    {"resume [--payload <json>]", "resume the selected session", []string{"--payload: optional JSON payload; defaults to {}", "--json: rejected in interactive mode"}, []string{"resume", `resume --payload '{"note":"example"}'`}},
-	"stop":      {"stop", "stop the selected session after confirmation", []string{"--json: rejected in interactive mode"}, []string{"stop"}},
-	"inject":    {"inject <json>", "inject context into the selected session", []string{"json: context payload", "--json: rejected in interactive mode"}, []string{`inject {"text":"context"}`}},
-	"interrupt": {"interrupt <json>", "request a soft or hard execution interrupt for the selected session", []string{"json: object with action soft_interrupt or hard_interrupt; soft_interrupt also accepts an optional string message", "--json: rejected in interactive mode"}, []string{`interrupt {"action":"soft_interrupt","message":"Stop and summarize now."}`, `interrupt {"action":"hard_interrupt"}`}},
+	"start":     {"start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--task <text>]", "start an agent through the selected endpoint; interactive mode executes directly and does not support --json", []string{"endpoint: endpoint ID", "resource: compatibility resource identifier", "--profile: launch profile ID (required)", "--profile-revision: launch profile revision (required)", "--folder: optional working folder; empty value is treated as omitted", "--task: optional literal initial task text; no JSON is required", "--json: rejected in interactive mode"}, []string{"start", "start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1", `start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1 --task "summarize the open issues"`}},
+	"resume":    {"resume", "resume the selected session", []string{"--json: rejected in interactive mode"}, []string{"resume"}},
+	"stop":      {"stop [session]", "stop a session after confirmation; session scope stops the selected session", []string{"session: optional session/resource ID, provider session ID, or a bare list row number; required outside session scope and rejected inside it", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID", "workspace scope resolves the row's own endpoint; a token matching sessions on several endpoints is rejected", "--json: rejected in interactive mode"}, []string{"stop", "stop 1", "stop res_abc"}},
+	"inject":    {"inject <text>", "inject context into the selected session", []string{"text: literal context text; no JSON is required", "--json: rejected in interactive mode"}, []string{"inject the deployment notes are in docs/", `inject {"text":"context"}`}},
+	"interrupt": {"interrupt [soft|hard] [message]", "request a soft or hard execution interrupt for the selected session", []string{"soft: soft interrupt, optionally followed by a literal message; empty input prompts for the action", "hard: hard interrupt; accepts no message", "--json: rejected in interactive mode"}, []string{"interrupt", "interrupt soft stop and summarize now", "interrupt hard"}},
 	"logs":      {"logs [-n <lines>] [session]", "show bounded output for a session in the current endpoint", []string{"-n, --lines: maximum number of trailing output lines to show; defaults to 0100", "session: optional session/resource ID, provider session ID, or a bare list row number; defaults to the current session", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID"}, []string{"logs", "logs -n 0250", "logs 1", "logs res_abc"}},
 	"send":      {"send <text>", "send a message to the selected session", []string{"text: message text, or a JSON object with a text field"}, []string{`send hello world`, `send {"text":"hello"}`}},
 	"status":    {"status <command-id>", "show the durable result of a command", []string{"command-id: submitted command identifier"}, []string{"status cmd_123"}},
@@ -65,6 +65,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"list":    "list sessions across all endpoints",
 		"cd":      "navigate to an endpoint or session",
 		"show":    "show endpoint or session details",
+		"stop":    "stop a session by row number or session ID",
 		"status":  "show command result",
 		"refresh": "refresh inventories",
 		"help":    "show help",
@@ -75,6 +76,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"cd":      "navigate to a session or back to workspace",
 		"show":    "show endpoint or session details",
 		"logs":    "show session logs",
+		"stop":    "stop a session in this endpoint by row number or session ID",
 		"status":  "show command result",
 		"refresh": "refresh the current endpoint",
 		"help":    "show help",
@@ -167,7 +169,7 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 	entry := commandHelpCatalog[canonical]
 	switch name {
 	case "start", "resume":
-		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [payload] [generation]"
+		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [text] [generation]"
 	case "stop":
 		entry.syntax = "agent-cluster-cli [options] stop <endpoint> <resource> <generation>"
 	case "logs":
@@ -179,7 +181,7 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 	case "list":
 		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] list [--clean]"
 	case "send", "btw", "control":
-		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [payload] [generation]"
+		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [text] [generation]"
 	case "help":
 		entry.syntax = "agent-cluster-cli help [command]"
 	}

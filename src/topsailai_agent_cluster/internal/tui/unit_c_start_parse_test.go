@@ -102,7 +102,7 @@ func TestUnitCStartDraftParserGrammarMatrix(t *testing.T) {
 		{"unknown-option", "e r --unknown x", [4]bool{}, true},
 		{"bad-quote", `e "unterminated`, [4]bool{}, true},
 		{"json-option", "e r --json", [4]bool{}, true},
-		{"invalid-payload", "e r --payload nope", [4]bool{}, true},
+		{"rejected-payload", "e r --payload nope", [4]bool{}, true},
 		{"missing-folder", "e r --folder", [4]bool{}, true},
 	}
 	for _, tc := range cases {
@@ -181,11 +181,11 @@ func TestUnitCStartStandaloneHelpMatchesCurrentPreCContract(t *testing.T) {
 		target, digest string
 		size           int
 	}{
-		{"", "23d071e7404df9a3365e78430ed733a42413804202775c26cffe23f8955a33da", 2107},
+		{"", "44c4d8dbf8f1a24889fc912b50a45bbf828304df7904774994ef9aa24f0301b8", 2248},
 		{"list", "9a6da012edcc86fbfe5e378f95857c8af4438cab49da85064904d5ac3d73985f", 1416},
-		{"start", "74345eaaa6d716dd8e5489febac7c4afd1a4ef8530844ccf57fbc34394f9be62", 854},
-		{"btw", "bfce130962dc1b5e01cd764bc94ae3d7699816986506d9740b8ddeb2144d4222", 219},
-		{"control", "9f1bfd81fcdbc946874fa3dba2c6f6517b557b215a002b76420de9c43653c495", 432},
+		{"start", "eed42a92a41460cd48cf7db3546ebc1b37791f0e08f12821fffbf979dc026f34", 878},
+		{"btw", "c0e4ae508c716488feeafd031490c9930e90ba244fbfd3afb80b3bc6d10ab97c", 288},
+		{"control", "a26f0c66b7e7c0ea8d4473b11d3554caadcf9e78ad16e9cdc7958d2a2bc439ba", 428},
 	} {
 		var output bytes.Buffer
 		if err := PrintCommandHelp(&output, tc.target); err != nil {

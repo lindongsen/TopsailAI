@@ -152,12 +152,12 @@ func TestUnitCBatch3DispatcherRequest(t *testing.T) {
 	for _, v := range []string{"endpoint-1", "resource-1", "profile-1", "revision-1"} {
 		lines <- lineReadResult{line: v}
 	}
-	exit, err := executeInteractiveLine(context.Background(), api, &state, `start --payload '{"tag":"existing"}' --folder work`, lines, &out, &out, io.Discard, InteractiveOptions{})
+	exit, err := executeInteractiveLine(context.Background(), api, &state, `start --task "existing tag" --folder work`, lines, &out, &out, io.Discard, InteractiveOptions{})
 	counts, intents := api.snapshot()
 	if exit || err != nil || counts != (unitCAPICounts{Capability: 1, Admit: 1, Command: 1}) || len(intents) != 1 {
 		t.Fatalf("F6 dispatcher: exit=%v err=%v counts=%+v intents=%v", exit, err, counts, intents)
 	}
-	unitC3CheckIntent(t, intents[0], `{"tag":"existing"}`, "work")
+	unitC3CheckIntent(t, intents[0], `{"task":"existing tag"}`, "work")
 	before.commandID = "unit-c-command"
 	if !reflect.DeepEqual(state, before) {
 		t.Fatalf("F6 state: got=%+v want=%+v", state, before)
@@ -226,7 +226,7 @@ func TestUnitCBatch3DiagnosticsRefresh(t *testing.T) {
 					prefix += unitCFieldToken(i)
 				}
 				if control == "invalid" {
-					want := "error: start input requires one non-empty value\nusage: start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--payload <json>]\nnext: Run help start for valid syntax.\n"
+					want := "error: start input requires one non-empty value\nusage: start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--task <text>]\nnext: Run help start for valid syntax.\n"
 					if diag.String() != want || out.String() != prefix+unitCFieldToken(field)+"start cancelled\n" {
 						t.Fatalf("F6 retry: out=%q diag=%q want=%q", out.String(), diag.String(), want)
 					}

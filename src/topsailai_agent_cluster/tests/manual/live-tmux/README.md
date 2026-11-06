@@ -23,4 +23,4 @@ Every case records case ID, input including keys, precondition, output, expected
 
 The documented interactive command set is list, cd, show, start, resume, stop, inject, interrupt, logs, send, status, refresh, help, quit. Aliases: ?=help, exit=quit, q=quit, r=refresh, btw=inject, control=interrupt. Standalone CLI flags are not implicitly supported in the REPL.
 
-The standalone `agent-cluster-cli` advertises `btw` and also accepts `inject` as an alias of it, so `inject <endpoint> <resource> [payload] [generation]` and `help inject` behave exactly like `btw`; `help` still lists only the advertised spelling.
+The standalone `agent-cluster-cli` advertises `btw` and also accepts `inject` as an alias of it, so `inject <endpoint> <resource> [text] [generation]` and `help inject` behave exactly like `btw`; `help` still lists only the advertised spelling.

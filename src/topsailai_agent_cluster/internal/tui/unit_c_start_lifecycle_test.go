@@ -250,7 +250,7 @@ func TestUnitCStartPromptTerminalHarness(t *testing.T) {
 		}
 	}
 	if name == "help-invalid" {
-		if diag.String() != "error: start input requires one non-empty value\nusage: start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--payload <json>]\nnext: Run help start for valid syntax.\n" {
+		if diag.String() != "error: start input requires one non-empty value\nusage: start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--task <text>]\nnext: Run help start for valid syntax.\n" {
 			t.Fatalf("validation diagnostic=%q", diag.String())
 		}
 	}

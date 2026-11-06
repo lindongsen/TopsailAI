@@ -2,13 +2,11 @@ package tui
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"topsailai_agent_cluster/internal/protocol"
 )
@@ -219,13 +217,7 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 	if err != nil || task == "" {
 		return err
 	}
-	if !utf8.ValidString(task) || strings.ContainsRune(task, 0) {
-		return fmt.Errorf("task must be UTF-8 without NUL")
-	}
-	if len(task) > protocol.MaxInitialTaskBytes {
-		return fmt.Errorf("task exceeds maximum bytes")
-	}
-	payload, err := json.Marshal(map[string]string{"task": task})
+	payload, err := TaskPayload(task)
 	if err != nil {
 		return err
 	}

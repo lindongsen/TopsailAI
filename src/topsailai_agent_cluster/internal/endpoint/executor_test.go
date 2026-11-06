@@ -523,3 +523,185 @@ func TestReadOutputSkipsDiscoveryWhenSnapshotAnswers(t *testing.T) {
 		})
 	}
 }
+
+// countingExecuteAdapter counts live inspections and executions so a test can prove
+// the mutating path revalidates from the persisted snapshot instead of re-running the
+// provider's full discovery, which costs seconds per command.
+type countingExecuteAdapter struct {
+	adapter.Adapter
+	inspections int
+	executions  int
+	generation  string
+	found       bool
+}
+
+func (a *countingExecuteAdapter) Describe(context.Context) (adapter.Descriptor, error) {
+	return adapter.Descriptor{AdapterID: "a1", Capabilities: protocol.CapabilityDescriptor{Revision: "v1", Capabilities: []protocol.Capability{
+		{Name: protocol.OperationMessageSend, Version: "v1"},
+		{Name: protocol.OperationAgentResume, Version: "v1"},
+	}}}, nil
+}
+
+func (a *countingExecuteAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
+	a.inspections++
+	return adapter.InspectResult{Found: a.found, Generation: a.generation}, nil
+}
+
+func (a *countingExecuteAdapter) Execute(_ context.Context, request adapter.ExecuteRequest) (adapter.ExecuteResult, error) {
+	a.executions++
+	return adapter.ExecuteResult{Receipt: protocol.ExecutionReceipt{CommandID: request.Intent.CommandID, Outcome: "submitted", DeliveryBoundary: protocol.DeliverySubmitted, EffectCertainty: protocol.EffectAcknowledged}}, nil
+}
+
+// TestExecuteSkipsDiscoveryWhenSnapshotAnswers proves a mutating command revalidates
+// its target generation from the Endpoint's own persisted collection snapshot instead
+// of re-running the provider's full discovery. The discovery is the dominant cost of
+// `send` (measured 11-13 s against a 0.7 s provider send), so paying it per command
+// makes every send look hung. The fallback still inspects live whenever the snapshot
+// cannot answer, so an unknown observation is never mistaken for a match.
+func TestExecuteSkipsDiscoveryWhenSnapshotAnswers(t *testing.T) {
+	cases := []struct {
+		name            string
+		snapshot        *endpointstorage.SourceSnapshot
+		generation      string
+		wantInspections int
+		wantExecutions  int
+		wantCode        string
+	}{
+		{
+			name:            "known fresh snapshot answers without discovery",
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			generation:      "g1",
+			wantInspections: 0,
+			wantExecutions:  1,
+		},
+		{
+			name:            "known fresh snapshot rejects a mismatched generation without discovery",
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			generation:      "g2",
+			wantInspections: 0,
+			wantCode:        "target_generation_mismatch",
+		},
+		{
+			name:            "stale snapshot falls back to one live inspection",
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Stale: true, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			generation:      "g1",
+			wantInspections: 1,
+			wantExecutions:  1,
+		},
+		{
+			name:            "unknown data falls back to one live inspection",
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionFailed, LastAttemptAtMS: 1, DataKnown: false, Sessions: []protocol.Session{{SessionID: "res_target", Generation: "g1"}}},
+			generation:      "g1",
+			wantInspections: 1,
+			wantExecutions:  1,
+		},
+		{
+			name:            "resource absent from snapshot falls back to one live inspection",
+			snapshot:        &endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{SessionID: "res_other", Generation: "g1"}}},
+			generation:      "g1",
+			wantInspections: 1,
+			wantExecutions:  1,
+		},
+		{
+			name:            "no snapshot row falls back to one live inspection",
+			snapshot:        nil,
+			generation:      "g1",
+			wantInspections: 1,
+			wantExecutions:  1,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.db")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			instance := &countingExecuteAdapter{generation: "g1", found: true}
+			registry := adapter.NewRegistry()
+			if err := registry.RegisterType("fixture", func(context.Context, adapter.Config) (adapter.Adapter, error) {
+				return instance, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
+				t.Fatal(err)
+			}
+			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if testCase.snapshot != nil {
+				for index := range testCase.snapshot.Sessions {
+					if testCase.snapshot.Sessions[index].SessionID == "res_target" {
+						testCase.snapshot.Sessions[index].SessionID = mapping.ResourceID
+					}
+				}
+				if err := store.ApplySourceSnapshot(context.Background(), *testCase.snapshot, 2); err != nil {
+					t.Fatal(err)
+				}
+			}
+			e, err := NewExecutor(store, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "send-" + testCase.name, EndpointID: "e1", Operation: protocol.OperationMessageSend, OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, Generation: testCase.generation}, Payload: []byte(`{"message":"hi"}`), ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
+			receipt, err := e.Execute(context.Background(), intent, "hash-"+testCase.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if receipt.ErrorCode != testCase.wantCode {
+				t.Fatalf("error code=%q, want %q", receipt.ErrorCode, testCase.wantCode)
+			}
+			if instance.inspections != testCase.wantInspections {
+				t.Fatalf("live inspections=%d, want %d", instance.inspections, testCase.wantInspections)
+			}
+			if instance.executions != testCase.wantExecutions {
+				t.Fatalf("provider executions=%d, want %d", instance.executions, testCase.wantExecutions)
+			}
+		})
+	}
+}
+
+// TestResumeStillInspectsLive proves the resume preflight keeps its authoritative
+// absence proof even when a fresh snapshot exists: a cached snapshot can lag one
+// collection cycle, so trusting it would let resume target an already-active session.
+func TestResumeStillInspectsLive(t *testing.T) {
+	store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	instance := &countingExecuteAdapter{generation: "g1", found: false}
+	registry := adapter.NewRegistry()
+	if err := registry.RegisterType("fixture", func(context.Context, adapter.Config) (adapter.Adapter, error) {
+		return instance, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := endpointstorage.SourceSnapshot{AdapterID: "a1", ProviderType: "fixture", CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: 1, DataKnown: true, ReportComplete: true, Sessions: []protocol.Session{{SessionID: mapping.ResourceID, Generation: "g1"}}}
+	if err := store.ApplySourceSnapshot(context.Background(), snapshot, 2); err != nil {
+		t.Fatal(err)
+	}
+	e, err := NewExecutor(store, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "resume-live", EndpointID: "e1", Operation: protocol.OperationAgentResume, OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, Generation: "g1"}, Payload: []byte(`{}`), ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
+	if _, err := e.Execute(context.Background(), intent, "hash-resume-live"); err != nil {
+		t.Fatal(err)
+	}
+	if instance.inspections != 1 {
+		t.Fatalf("live inspections=%d, want 1", instance.inspections)
+	}
+	if instance.executions != 1 {
+		t.Fatalf("provider executions=%d, want 1", instance.executions)
+	}
+}

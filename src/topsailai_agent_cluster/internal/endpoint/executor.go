@@ -68,7 +68,7 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 		receipt.Outcome = "expired"
 		return e.recordEarlyRejection(ctx, intent, receipt)
 	}
-	instance, err := e.adapterForIntent(ctx, intent)
+	instance, adapterID, err := e.adapterForIntent(ctx, intent)
 	if err != nil {
 		return protocol.ExecutionReceipt{}, err
 	}
@@ -88,15 +88,19 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 		return e.recordEarlyRejection(ctx, intent, unsupportedReceipt(intent, requestHash))
 	}
 	if intent.Target != nil {
-		inspection, inspectErr := instance.Inspect(ctx, adapter.InspectRequest{Target: *intent.Target})
 		if intent.Operation == protocol.OperationAgentResume {
+			// Resume authorizes on the absence of the target, and an absence proof
+			// must come from the authoritative provider observation: a cached
+			// snapshot can lag one collection cycle behind and would let a resume
+			// target a session that is already active again.
+			inspection, inspectErr := instance.Inspect(ctx, adapter.InspectRequest{Target: *intent.Target})
 			if inspectErr != nil {
 				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_observation_failed"))
 			}
 			if inspection.Found {
 				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_still_active"))
 			}
-		} else if inspectErr != nil || !inspection.Found || inspection.Generation != intent.Target.Generation {
+		} else if err := e.revalidateGeneration(ctx, instance, adapterID, *intent.Target); err != nil {
 			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_generation_mismatch"))
 		}
 	}
@@ -172,7 +176,7 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 	// collection snapshot. A live inspection re-runs the provider's full discovery,
 	// which costs seconds per read, so it is reserved for the cases the snapshot
 	// cannot answer: unknown data, stale data, or a resource absent from it.
-	if err := e.revalidateGeneration(ctx, instance, mapping.AdapterID, request); err != nil {
+	if err := e.revalidateGeneration(ctx, instance, mapping.AdapterID, protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}); err != nil {
 		return protocol.OutputSnapshotResponse{ErrorCode: "generation_mismatch"}, err
 	}
 	limit := request.MaxBytes
@@ -205,50 +209,53 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 	return response, nil
 }
 
-// revalidateGeneration confirms the requested generation without paying for a full
-// provider discovery on every read. It trusts only a known, non-stale snapshot that
-// actually contains the resource; anything else falls back to a live inspection so
+// revalidateGeneration confirms the requested target generation without paying for a
+// full provider discovery on every command. It trusts only a known, non-stale snapshot
+// that actually contains the resource; anything else falls back to a live inspection so
 // an unknown observation is never mistaken for a match.
-func (e *Executor) revalidateGeneration(ctx context.Context, instance adapter.Adapter, adapterID string, request protocol.OutputSnapshotRequest) error {
+func (e *Executor) revalidateGeneration(ctx context.Context, instance adapter.Adapter, adapterID string, target protocol.CommandTarget) error {
 	snapshot, found, err := e.store.SourceSnapshot(ctx, adapterID)
 	if err == nil && found && snapshot.DataKnown && !snapshot.Stale {
 		for _, session := range snapshot.Sessions {
-			if session.SessionID != request.ResourceID {
+			if session.SessionID != target.ResourceID {
 				continue
 			}
-			if session.Generation != request.Generation {
+			if session.Generation != target.Generation {
 				return fmt.Errorf("resource generation does not match")
 			}
 			return nil
 		}
 	}
-	inspection, inspectErr := instance.Inspect(ctx, adapter.InspectRequest{Target: protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}})
-	if inspectErr != nil || !inspection.Found || inspection.Generation != request.Generation {
+	inspection, inspectErr := instance.Inspect(ctx, adapter.InspectRequest{Target: target})
+	if inspectErr != nil || !inspection.Found || inspection.Generation != target.Generation {
 		return fmt.Errorf("resource generation does not match")
 	}
 	return nil
 }
 
-func (e *Executor) adapterForIntent(ctx context.Context, intent protocol.ImmutableIntent) (adapter.Adapter, error) {
+// adapterForIntent resolves the adapter instance that owns the intent target and
+// returns its configured adapter ID so callers can read that adapter's own persisted
+// collection snapshot without repeating the mapping lookup.
+func (e *Executor) adapterForIntent(ctx context.Context, intent protocol.ImmutableIntent) (adapter.Adapter, string, error) {
 	if intent.Target != nil {
 		mapping, err := e.store.LookupResourceID(ctx, intent.Target.ResourceID)
 		if err != nil {
-			return nil, fmt.Errorf("resource_id %q mapping lookup failed: %w", intent.Target.ResourceID, err)
+			return nil, "", fmt.Errorf("resource_id %q mapping lookup failed: %w", intent.Target.ResourceID, err)
 		}
 		instance, ok := e.registry.Get(mapping.AdapterID)
 		if !ok {
-			return nil, fmt.Errorf("resource_id %q adapter %q is not configured", intent.Target.ResourceID, mapping.AdapterID)
+			return nil, "", fmt.Errorf("resource_id %q adapter %q is not configured", intent.Target.ResourceID, mapping.AdapterID)
 		}
-		return instance, nil
+		return instance, mapping.AdapterID, nil
 	}
 	if intent.Operation != "agent.start" {
-		return nil, fmt.Errorf("resource_id is required for operation %q", intent.Operation)
+		return nil, "", fmt.Errorf("resource_id is required for operation %q", intent.Operation)
 	}
 	instance, ok := e.registry.Get(intent.LaunchProfileID)
 	if !ok {
-		return nil, fmt.Errorf("launch profile adapter %q is not configured", intent.LaunchProfileID)
+		return nil, "", fmt.Errorf("launch profile adapter %q is not configured", intent.LaunchProfileID)
 	}
-	return instance, nil
+	return instance, intent.LaunchProfileID, nil
 }
 
 func (e *Executor) lockFor(key string) *sync.Mutex {

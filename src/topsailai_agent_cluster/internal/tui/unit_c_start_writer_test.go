@@ -321,7 +321,7 @@ func c10ExpectedWrite(phase string) (string, string) {
 	case "prompt":
 		return "start: endpoint ID required (endpoint ID). cancel/empty: cancel; q: quit; r: refresh; help: guidance; starts immediately when complete.\n", "output"
 	case "help":
-		return "start\n\nSyntax: start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--payload <json>]\nAvailable in: workspace, endpoint\nDescription: start an agent through the selected endpoint; interactive mode executes directly and does not support --json\n", "output"
+		return "start\n\nSyntax: start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--task <text>]\nAvailable in: workspace, endpoint\nDescription: start an agent through the selected endpoint; interactive mode executes directly and does not support --json\n", "output"
 	case "cancel":
 		return "start cancelled\n", "output"
 	case "output":

@@ -11,7 +11,7 @@ author: DawsonLin
 | EDIT-02 | session `st`, TAB | candidates stop and status; typed st retained; no stop performed |
 | EDIT-03 | empty TAB twice | scope-permitted canonical candidates; prompt remains usable |
 | EDIT-04 | `unknownprefix`, TAB | no match, text preserved, no exit |
-| EDIT-05 | `send {}`, TAB | arguments unchanged; do not press Enter on a user session |
+| EDIT-05 | `send hello`, TAB | arguments unchanged; do not press Enter on a user session |
 | EDIT-06 | `hep`, Left, TAB | cursor-middle input remains unchanged; no malformed-key error |
 | EDIT-07 | type `helx`, Backspace, `p`, Enter | executes help, one green prompt after completion |
 | EDIT-08 | Up, Down | prior command recalled; unfinished draft restored; confirmation/task answers excluded from history |

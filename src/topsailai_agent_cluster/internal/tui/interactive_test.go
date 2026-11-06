@@ -481,14 +481,31 @@ func TestInteractiveSessionLifecycleAndControlCommands(t *testing.T) {
 
 func TestInteractiveSessionActionsRequireSessionScope(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-	_, diagnostics := runScope(t, stub, "resume\nstop\ninject {}\ninterrupt {}\nquit\n", ColorPolicy{})
-	for _, name := range []string{"resume", "stop", "inject", "interrupt"} {
+	_, diagnostics := runScope(t, stub, "resume\ninject {}\ninterrupt {}\nquit\n", ColorPolicy{})
+	for _, name := range []string{"resume", "inject", "interrupt"} {
 		if !strings.Contains(diagnostics, `command "`+name+`" is unavailable in workspace scope`) {
 			t.Fatalf("missing scope rejection for %s: %q", name, diagnostics)
 		}
 	}
 	if stub.admit != 0 {
 		t.Fatalf("scope-rejected actions admitted %d commands", stub.admit)
+	}
+}
+
+// TestInteractiveStopRequiresTargetOutsideSessionScope proves stop is reachable in
+// workspace scope but still demands an explicit target there, so a bare stop can
+// never fall back to a stale pinned selection.
+func TestInteractiveStopRequiresTargetOutsideSessionScope(t *testing.T) {
+	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+	_, diagnostics := runScope(t, stub, "stop\nquit\n", ColorPolicy{})
+	if strings.Contains(diagnostics, `command "stop" is unavailable in workspace scope`) {
+		t.Fatalf("stop must be available in workspace scope: %q", diagnostics)
+	}
+	if !strings.Contains(diagnostics, "stop requires a session in workspace scope; use stop <number> for a session row") {
+		t.Fatalf("missing target requirement: %q", diagnostics)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("targetless stop admitted %d commands", stub.admit)
 	}
 }
 
@@ -520,10 +537,10 @@ func TestInteractiveSessionActionValidation(t *testing.T) {
 	}{
 		{name: "resume arguments", input: "cd endpoint-1/session-1\nresume extra\nquit\n", want: "usage: resume"},
 		{name: "stop arguments", input: "cd endpoint-1/session-1\nstop extra\nquit\n", want: "usage: stop"},
-		{name: "inject missing payload", input: "cd endpoint-1/session-1\ninject\nquit\n", want: "usage: inject <json>"},
-		{name: "interrupt missing payload", input: "cd endpoint-1/session-1\ninterrupt\nquit\n", want: "usage: interrupt <json>"},
+		{name: "inject missing text", input: "cd endpoint-1/session-1\ninject\nquit\n", want: "usage: inject <text>"},
+		{name: "interrupt unknown action", input: "cd endpoint-1/session-1\ninterrupt nope\nquit\n", want: "usage: interrupt [soft|hard] [message]"},
 		{name: "inject json option", input: "cd endpoint-1/session-1\ninject {} --json\nquit\n", want: "does not support --json"},
-		{name: "interrupt invalid payload", input: "cd endpoint-1/session-1\ninterrupt nope\nquit\n", want: "payload must be a JSON object"},
+		{name: "interrupt hard with message", input: "cd endpoint-1/session-1\ninterrupt hard now\nquit\n", want: "hard does not accept a message"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -553,6 +570,58 @@ func TestInteractiveControlAliasesExecuteSharedOperations(t *testing.T) {
 		if !strings.Contains(output.String(), phrase) {
 			t.Fatalf("output missing %q: %q", phrase, output.String())
 		}
+	}
+}
+
+// TestInteractivePlainTextActionsNeedNoJSON proves the interactive grammar never asks the
+// operator to compose a JSON payload: literal text reaches the standard payload for send,
+// inject and interrupt, and a bare interrupt is guided through the action choice.
+func TestInteractivePlainTextActionsNeedNoJSON(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		op      string
+		payload string
+	}{
+		{name: "send literal text", input: "cd endpoint-1/session-1\nsend hello world\ny\nquit\n", op: protocol.OperationMessageSend, payload: `{"text":"hello world"}`},
+		{name: "inject literal text", input: "cd endpoint-1/session-1\ninject the deployment notes are in docs/\ny\nquit\n", op: protocol.OperationContextInject, payload: `{"text":"the deployment notes are in docs/"}`},
+		{name: "interrupt soft with message", input: "cd endpoint-1/session-1\ninterrupt soft stop and summarize now\ny\nquit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt","message":"stop and summarize now"}`},
+		{name: "interrupt hard", input: "cd endpoint-1/session-1\ninterrupt hard\ny\nquit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
+		{name: "guided interrupt defaults to soft", input: "cd endpoint-1/session-1\ninterrupt\n\n\ny\nquit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt"}`},
+		{name: "guided interrupt soft with message", input: "cd endpoint-1/session-1\ninterrupt\nsoft\nwrap up please\ny\nquit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt","message":"wrap up please"}`},
+		{name: "guided interrupt hard", input: "cd endpoint-1/session-1\ninterrupt\nhard\ny\nquit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+			_, diagnostics := runScope(t, stub, testCase.input, ColorPolicy{})
+			if diagnostics != "" {
+				t.Fatalf("diagnostics=%q", diagnostics)
+			}
+			if stub.admit != 1 || len(stub.intents) != 1 {
+				t.Fatalf("admitted %d commands with %d intents", stub.admit, len(stub.intents))
+			}
+			intent := stub.intents[0]
+			if intent.Operation != testCase.op {
+				t.Fatalf("operation=%q want %q", intent.Operation, testCase.op)
+			}
+			if string(intent.Payload) != testCase.payload {
+				t.Fatalf("payload=%s want %s", intent.Payload, testCase.payload)
+			}
+		})
+	}
+}
+
+// TestInteractiveGuidedInterruptRejectsUnknownAction proves the guided prompt validates the
+// action choice instead of silently substituting a default for a typo.
+func TestInteractiveGuidedInterruptRejectsUnknownAction(t *testing.T) {
+	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+	_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\ninterrupt\nnope\nquit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, "usage: interrupt [soft|hard] [message]") {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("invalid guided action admitted %d commands", stub.admit)
 	}
 }
 

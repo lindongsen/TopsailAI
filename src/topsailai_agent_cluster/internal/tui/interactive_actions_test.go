@@ -110,7 +110,7 @@ func TestInteractiveResumeRequiresAuthoritativeAbsence(t *testing.T) {
 
 // TestInteractiveNewCommandHelpAndScope covers every newly exposed session command.
 func TestInteractiveNewCommandHelpAndScope(t *testing.T) {
-	for _, name := range []string{"resume", "stop", "inject", "btw", "interrupt", "control"} {
+	for _, name := range []string{"resume", "inject", "btw", "interrupt", "control"} {
 		var out strings.Builder
 		if err := PrintCommandHelp(&out, name); err != nil {
 			t.Fatal(err)
@@ -120,6 +120,23 @@ func TestInteractiveNewCommandHelpAndScope(t *testing.T) {
 		}
 		if !commandAllowed(name, ScopeSession) || commandAllowed(name, ScopeEndpoint) || commandAllowed(name, ScopeWorkspace) {
 			t.Fatalf("invalid scopes for %s", name)
+		}
+	}
+}
+
+// TestInteractiveStopHelpAndScope proves stop is the one lifecycle command reachable
+// from every scope, because a row number is enough to name its target.
+func TestInteractiveStopHelpAndScope(t *testing.T) {
+	var out strings.Builder
+	if err := PrintCommandHelp(&out, "stop"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Available in: workspace, endpoint, session") {
+		t.Fatalf("stop help=%q", out.String())
+	}
+	for _, kind := range []ScopeKind{ScopeWorkspace, ScopeEndpoint, ScopeSession} {
+		if !commandAllowed("stop", kind) {
+			t.Fatalf("stop must be allowed in %s scope", kind)
 		}
 	}
 }
@@ -137,16 +154,16 @@ func TestStartMinimalProfileArguments(t *testing.T) {
 	}
 }
 
-// TestInteractiveStartAndResumePayloads pins custom, default, and literal --json payload data.
+// TestInteractiveStartAndResumePayloads pins the plain-text task and the empty resume payload.
 func TestInteractiveStartAndResumePayloads(t *testing.T) {
-	t.Run("start custom", func(t *testing.T) {
+	t.Run("start task", func(t *testing.T) {
 		stub := &interactiveStub{}
 		var out, diagnostics strings.Builder
-		input := `start endpoint-1 resource-1 --profile p --profile-revision r --payload '{"note":"literal --json data"}'` + "\nquit\n"
+		input := `start endpoint-1 resource-1 --profile p --profile-revision r --task "literal --json data"` + "\nquit\n"
 		if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &out, &diagnostics, InteractiveOptions{}); err != nil {
 			t.Fatal(err)
 		}
-		if diagnostics.Len() != 0 || len(stub.intents) != 1 || string(stub.intents[0].Payload) != `{"note":"literal --json data"}` {
+		if diagnostics.Len() != 0 || len(stub.intents) != 1 || string(stub.intents[0].Payload) != `{"task":"literal --json data"}` {
 			t.Fatalf("diagnostics=%q intents=%+v", diagnostics.String(), stub.intents)
 		}
 	})
@@ -156,7 +173,6 @@ func TestInteractiveStartAndResumePayloads(t *testing.T) {
 		want    string
 	}{
 		{name: "resume default", command: "resume", want: `{}`},
-		{name: "resume custom", command: `resume --payload '{"note":"literal --json data"}'`, want: `{"note":"literal --json data"}`},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}, sessionPresenceSequence: []bool{true, true, false, false}}
@@ -172,16 +188,19 @@ func TestInteractiveStartAndResumePayloads(t *testing.T) {
 	}
 }
 
-// TestInteractivePayloadValidationRejectsMalformedJSON verifies no malformed payload is admitted.
-func TestInteractivePayloadValidationRejectsMalformedJSON(t *testing.T) {
-	for _, input := range []string{
-		`start endpoint-1 resource-1 --profile p --profile-revision r --payload nope` + "\nquit\n",
-		"cd endpoint-1/session-1\nresume --payload nope\nquit\n",
+// TestInteractivePayloadValidationRejectsJSONArguments verifies no JSON payload argument is admitted.
+func TestInteractivePayloadValidationRejectsJSONArguments(t *testing.T) {
+	for _, testCase := range []struct {
+		input string
+		want  string
+	}{
+		{input: `start endpoint-1 resource-1 --profile p --profile-revision r --payload nope` + "\nquit\n", want: "--payload"},
+		{input: "cd endpoint-1/session-1\nresume --payload nope\nquit\n", want: "usage: resume"},
 	} {
 		stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-		_, diagnostics := runScope(t, stub, input, ColorPolicy{})
-		if stub.admit != 0 || !strings.Contains(diagnostics, "payload must be valid JSON") {
-			t.Fatalf("admit=%d diagnostics=%q", stub.admit, diagnostics)
+		_, diagnostics := runScope(t, stub, testCase.input, ColorPolicy{})
+		if stub.admit != 0 || !strings.Contains(diagnostics, testCase.want) {
+			t.Fatalf("admit=%d diagnostics=%q want=%q", stub.admit, diagnostics, testCase.want)
 		}
 	}
 }

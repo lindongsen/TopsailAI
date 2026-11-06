@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"topsailai_agent_cluster/internal/protocol"
 )
@@ -135,9 +136,10 @@ func interactiveStatus(parent context.Context, api InteractiveAPI, state *intera
 	return err
 }
 
-// sendPayloadBytes converts interactive send input into a runtime message payload.
-// A JSON object is forwarded unchanged; any other input is sent as plain text.
-func sendPayloadBytes(text string) (json.RawMessage, error) {
+// MessagePayload converts operator message text into the standard message payload.
+// A JSON object is forwarded unchanged so advanced callers keep full control; any
+// other input becomes literal text, so no JSON has to be written by hand.
+func MessagePayload(text string) (json.RawMessage, error) {
 	if strings.HasPrefix(text, "{") {
 		var payload map[string]any
 		if err := json.Unmarshal([]byte(text), &payload); err != nil || payload == nil {
@@ -150,6 +152,69 @@ func sendPayloadBytes(text string) (json.RawMessage, error) {
 		return nil, fmt.Errorf("encode payload: %w", err)
 	}
 	return json.RawMessage(wrapped), nil
+}
+
+// interruptActions maps every accepted plain spelling to the standard action name.
+var interruptActions = map[string]string{
+	"soft":           "soft_interrupt",
+	"soft_interrupt": "soft_interrupt",
+	"s":              "soft_interrupt",
+	"hard":           "hard_interrupt",
+	"hard_interrupt": "hard_interrupt",
+	"h":              "hard_interrupt",
+}
+
+// InterruptPayload converts the plain interrupt grammar into the standard payload.
+// Accepted forms are "soft [message]" and "hard"; a JSON object is forwarded
+// unchanged as the advanced form.
+func InterruptPayload(name, text string) (json.RawMessage, error) {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, "{") {
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(text), &payload); err != nil || payload == nil {
+			return nil, fmt.Errorf("usage: %s [soft|hard] [message]", name)
+		}
+		return json.RawMessage(text), nil
+	}
+	args, err := splitInteractiveArguments(text)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) == 0 {
+		return nil, fmt.Errorf("usage: %s [soft|hard] [message]", name)
+	}
+	action, known := interruptActions[strings.ToLower(args[0])]
+	if !known {
+		return nil, fmt.Errorf("usage: %s [soft|hard] [message]", name)
+	}
+	message := strings.Join(args[1:], " ")
+	if action == "hard_interrupt" {
+		if message != "" {
+			return nil, fmt.Errorf("%s hard does not accept a message", name)
+		}
+		return json.RawMessage(`{"action":"hard_interrupt"}`), nil
+	}
+	if message == "" {
+		return json.RawMessage(`{"action":"soft_interrupt"}`), nil
+	}
+	encoded, err := json.Marshal(map[string]string{"action": "soft_interrupt", "message": message})
+	if err != nil {
+		return nil, fmt.Errorf("encode payload: %w", err)
+	}
+	return json.RawMessage(encoded), nil
+}
+
+// TaskPayload validates one literal initial task and encodes the standard start payload.
+// The same bounds are enforced again by the adapter before any provider invocation.
+func TaskPayload(task string) (json.RawMessage, error) {
+	if !utf8.ValidString(task) || strings.ContainsRune(task, 0) || strings.TrimSpace(task) == "" || len(task) > protocol.MaxInitialTaskBytes {
+		return nil, fmt.Errorf("task must be nonblank UTF-8 without NUL and at most %d bytes", protocol.MaxInitialTaskBytes)
+	}
+	encoded, err := json.Marshal(map[string]string{"task": task})
+	if err != nil {
+		return nil, fmt.Errorf("encode payload: %w", err)
+	}
+	return json.RawMessage(encoded), nil
 }
 
 func interactiveSend(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lineSource <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
@@ -166,7 +231,7 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if len(payloadText) > options.LineLimit {
 		return fmt.Errorf("payload exceeds the maximum length")
 	}
-	sendPayload, err := sendPayloadBytes(payloadText)
+	sendPayload, err := MessagePayload(payloadText)
 	if err != nil {
 		return err
 	}
@@ -326,15 +391,18 @@ func parseInteractiveStartTokens(args []string, allowMissing bool) (interactiveS
 			}
 			position++
 			request.Folder = args[position]
-		case "--payload":
+		case "--task":
 			if position+1 >= len(args) || strings.HasPrefix(args[position+1], "--") {
-				return interactiveStartRequest{}, 0, fmt.Errorf("--payload requires a value")
+				return interactiveStartRequest{}, 0, fmt.Errorf("--task requires a value")
 			}
 			position++
-			if !json.Valid([]byte(args[position])) {
-				return interactiveStartRequest{}, 0, fmt.Errorf("payload must be valid JSON")
+			payload, err := TaskPayload(args[position])
+			if err != nil {
+				return interactiveStartRequest{}, 0, err
 			}
-			request.Payload = json.RawMessage(args[position])
+			request.Payload = payload
+		case "--payload":
+			return interactiveStartRequest{}, 0, fmt.Errorf("interactive start does not accept --payload; use --task <text>")
 		default:
 			return interactiveStartRequest{}, 0, fmt.Errorf("unknown start option %q", name)
 		}
@@ -399,7 +467,10 @@ func renderInteractiveStartResult(out io.Writer, commandID string, result map[st
 	return nil
 }
 
-// parseInteractivePayload parses an optional JSON payload for lifecycle commands.
+// parseInteractivePayload rejects every argument for a lifecycle command that takes none.
+// The interactive grammar never asks the operator to compose a JSON payload: the standard
+// empty object is supplied here, so the provider contract is unchanged while the operator
+// only ever types the command name.
 func parseInteractivePayload(name, rest string) (json.RawMessage, error) {
 	args, err := splitInteractiveArguments(rest)
 	if err != nil {
@@ -408,16 +479,10 @@ func parseInteractivePayload(name, rest string) (json.RawMessage, error) {
 	if len(args) == 0 {
 		return json.RawMessage(`{}`), nil
 	}
-	if len(args) != 2 || args[0] != "--payload" {
-		if len(args) == 1 && args[0] == "--json" {
-			return nil, fmt.Errorf("interactive %s does not support --json", name)
-		}
-		return nil, fmt.Errorf("usage: %s [--payload <json>]", name)
+	if len(args) == 1 && args[0] == "--json" {
+		return nil, fmt.Errorf("interactive %s does not support --json", name)
 	}
-	if !json.Valid([]byte(args[1])) {
-		return nil, fmt.Errorf("payload must be valid JSON")
-	}
-	return json.RawMessage(args[1]), nil
+	return nil, fmt.Errorf("usage: %s", name)
 }
 
 // interactiveSessionLifecycle executes resume or stop against the selected fresh session.
@@ -530,18 +595,27 @@ func validateResumeSelectionAbsent(ctx context.Context, api InteractiveAPI, stat
 
 // interactiveSessionPayload executes context injection or interruption with confirmation.
 // Selection authority is resolved under the command deadline; the confirmation itself is
-// read with the cancel-only parent context.
+// read with the cancel-only parent context. Context injection takes literal text, and a
+// bare interrupt guides the operator through the action choice instead of demanding JSON.
 func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, rest string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
 	payloadText := strings.TrimSpace(rest)
-	if payloadText == "" {
-		return fmt.Errorf("usage: %s <json>", name)
-	}
 	if !json.Valid([]byte(payloadText)) && strings.Contains(payloadText, "--json") {
 		return fmt.Errorf("interactive %s does not support --json", name)
 	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(payloadText), &payload); err != nil || payload == nil {
-		return fmt.Errorf("payload must be a JSON object")
+	var payload json.RawMessage
+	var err error
+	if op == protocol.OperationContextInject {
+		if payloadText == "" {
+			return fmt.Errorf("usage: %s <text>", name)
+		}
+		payload, err = MessagePayload(payloadText)
+	} else if payloadText == "" {
+		payload, err = promptInterruptPayload(parent, name, lines, out, trustedOut, options)
+	} else {
+		payload, err = InterruptPayload(name, payloadText)
+	}
+	if err != nil {
+		return err
 	}
 	ctx, cancel := commandContext(parent)
 	if err := state.requireUsable(); err != nil {
@@ -553,7 +627,41 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	if err != nil {
 		return err
 	}
-	return interactiveConfirmedAction(parent, api, state, op, name, session.SessionID, session.Generation, json.RawMessage(payloadText), lines, out, trustedOut, options, nil, nil)
+	return interactiveConfirmedAction(parent, api, state, op, name, session.SessionID, session.Generation, payload, lines, out, trustedOut, options, nil, nil)
+}
+
+// promptInterruptPayload guides a bare interrupt through the action choice and, for a soft
+// interrupt, one optional message. Empty answers select the safe defaults, so the operator
+// never has to compose a JSON object.
+func promptInterruptPayload(parent context.Context, name string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) (json.RawMessage, error) {
+	question := name + " action? soft or hard, empty selects soft " + confirmationHint + " "
+	if err := writeConfirmationQuestion(trustedOut, question, options.Color); err != nil {
+		return nil, err
+	}
+	markRecoverablePromptFailure(parent)
+	answer, err := readStartAnswer(parent, lines, name+".action> ")
+	if err != nil {
+		return nil, err
+	}
+	action := strings.ToLower(strings.TrimSpace(answer))
+	if action == "" {
+		action = "soft"
+	}
+	if _, known := interruptActions[action]; !known {
+		return nil, fmt.Errorf("usage: %s [soft|hard] [message]", name)
+	}
+	if interruptActions[action] == "hard_interrupt" {
+		return json.RawMessage(`{"action":"hard_interrupt"}`), nil
+	}
+	if _, err := fmt.Fprintln(out, "Optional message for the soft interrupt; empty sends none."); err != nil {
+		return nil, err
+	}
+	markRecoverablePromptFailure(parent)
+	message, err := readStartAnswer(parent, lines, name+".message> ")
+	if err != nil {
+		return nil, err
+	}
+	return InterruptPayload(name, "soft "+strings.TrimSpace(message))
 }
 
 // interactiveConfirmedAction keeps mutating confirmation and shared intent submission in one path.

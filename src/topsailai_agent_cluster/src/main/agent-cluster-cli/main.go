@@ -93,6 +93,8 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
 	folder := flags.String("folder", "", "working folder for start")
+	task := flags.String("task", "", "literal initial task text for start; no JSON is required")
+	generation := flags.String("generation", "", "target generation; alternative to the positional generation argument")
 	interactiveShort := flags.Bool("i", false, "start the interactive REPL (same as the interactive command)")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -154,7 +156,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		}
 		return status(ctx, api, output, flags.Arg(1), *jsonMode)
 	case "send", "btw", "inject", "control", "start", "resume", "stop":
-		return action(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder)
+		return action(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
 	}
@@ -213,26 +215,55 @@ func logs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID,
 	return legacyRunner(api).Logs(ctx, output, endpointID, resourceID, maxBytes, maxLines, jsonMode)
 }
 
-func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision, folder string) error {
+// resolveActionPayload converts one positional payload argument into the
+// standard operation payload. Plain text is accepted for every operation that
+// carries user text, so no caller has to write JSON; a JSON object is still
+// forwarded unchanged as the advanced form.
+func resolveActionPayload(operation, value string) (json.RawMessage, error) {
+	switch operation {
+	case "send", "btw", "inject":
+		return tui.MessagePayload(value)
+	case "control":
+		return tui.InterruptPayload(operation, value)
+	case "start":
+		return tui.TaskPayload(value)
+	}
+	return json.RawMessage(`{}`), nil
+}
+
+func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision, folder, task, generationFlag string) error {
 	operation := args[0]
-	if operation == "stop" && len(args) < 4 {
+	if operation == "stop" && len(args) < 4 && generationFlag == "" {
 		return fmt.Errorf("usage: stop <endpoint-id> <resource-id> <generation>")
 	}
 	if operation != "stop" && len(args) < 3 {
-		return fmt.Errorf("usage: %s <endpoint-id> <resource-id> [payload] [generation]", operation)
+		return fmt.Errorf("usage: %s <endpoint-id> <resource-id> [text] [generation]", operation)
 	}
 	endpointID, resourceID := args[1], args[2]
-	generation := ""
+	generation := generationFlag
 	payload := json.RawMessage(`{}`)
 	if operation == "stop" {
-		generation = args[3]
+		if generation == "" {
+			generation = args[3]
+		}
 	} else {
 		if len(args) >= 4 {
-			payload = json.RawMessage(args[3])
+			resolved, err := resolveActionPayload(operation, args[3])
+			if err != nil {
+				return err
+			}
+			payload = resolved
 		}
-		if len(args) >= 5 {
+		if generation == "" && len(args) >= 5 {
 			generation = args[4]
 		}
+	}
+	if operation == "start" && task != "" {
+		resolved, err := tui.TaskPayload(task)
+		if err != nil {
+			return err
+		}
+		payload = resolved
 	}
 	target := protocol.CommandTarget{Kind: "session", ResourceID: resourceID, Generation: generation}
 	if operation == "start" {

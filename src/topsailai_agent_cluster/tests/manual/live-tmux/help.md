@@ -27,12 +27,12 @@ For **each** of list, cd, show, start, resume, stop, inject, interrupt, logs, se
 | cd | `cd [target]`; empty and / return workspace, .. moves parent, latest row number/hostname/endpoint/internal session/provider session selectors supported |
 | show | `show [endpoint-or-session]`; omitted target uses selected scope target; a bare row number or the displayed provider session ID is accepted; workspace without target must report required selection and name `show <number>` |
 | start | wizard `start [endpoint]`; without an endpoint argument it prints a numbered endpoint list and accepts a bare number, so no endpoint identifier has to be typed; folder/project and task prompts; legacy explicit endpoint/resource/profile/revision syntax documented separately |
-| resume | `resume [--payload <json>]`; selected stopped historical session, confirmation, valid payload; complete fresh inventory must prove no live generation before and after confirmation |
+| resume | `resume`; selected stopped historical session, confirmation; complete fresh inventory must prove no live generation before and after confirmation |
 | stop | `stop`; confirmation, pinned resource and generation |
-| inject | `inject <json>`; object with text/message for TopsailAI, confirmation |
-| interrupt | `interrupt <json>`; provider-compatible control operation and confirmation; verify real effect, not just admission |
+| inject | `inject <text>`; literal context text, confirmation; no JSON is required |
+| interrupt | `interrupt [soft\|hard] [message]`; bare `interrupt` prompts for the action then an optional soft message; verify real effect, not just admission |
 | logs | `logs [session]`; selected session by default; a bare row number or the displayed provider session ID is accepted; bounded stdout body, not just metadata |
-| send | `send <json>`; JSON object with text/message for TopsailAI, confirmation |
+| send | `send <text>`; literal message text, confirmation; no JSON is required |
 | status | `status [command-id]`; explicit result, otherwise the last command submitted in this CLI, otherwise selected session state; with no retained command it explains the short form instead of demanding an identifier |
 | refresh | `refresh`; reload server inventory, not a promise of synchronous provider discovery |
 | help | `help [command]`, all, scope/scopes and aliases |

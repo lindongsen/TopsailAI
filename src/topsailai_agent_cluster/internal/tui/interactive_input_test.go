@@ -173,8 +173,8 @@ func TestInteractiveRejectsJSONOptions(t *testing.T) {
 	}
 }
 
-// TestSendPayloadBytesAcceptsPlainTextAndJSONObject pins the interactive send contract.
-func TestSendPayloadBytesAcceptsPlainTextAndJSONObject(t *testing.T) {
+// TestMessagePayloadAcceptsPlainTextAndJSONObject pins the interactive message contract.
+func TestMessagePayloadAcceptsPlainTextAndJSONObject(t *testing.T) {
 	cases := []struct {
 		name string
 		in   string
@@ -188,22 +188,22 @@ func TestSendPayloadBytesAcceptsPlainTextAndJSONObject(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := sendPayloadBytes(tc.in)
+			got, err := MessagePayload(tc.in)
 			if err != nil {
-				t.Fatalf("sendPayloadBytes(%q) error=%v", tc.in, err)
+				t.Fatalf("MessagePayload(%q) error=%v", tc.in, err)
 			}
 			if string(got) != tc.want {
-				t.Fatalf("sendPayloadBytes(%q)=%s want %s", tc.in, got, tc.want)
+				t.Fatalf("MessagePayload(%q)=%s want %s", tc.in, got, tc.want)
 			}
 		})
 	}
 }
 
-// TestSendPayloadBytesRejectsMalformedJSONObject keeps brace input strict.
-func TestSendPayloadBytesRejectsMalformedJSONObject(t *testing.T) {
+// TestMessagePayloadRejectsMalformedJSONObject keeps brace input strict.
+func TestMessagePayloadRejectsMalformedJSONObject(t *testing.T) {
 	for _, in := range []string{"{", `{"text":}`, `{"a":1`, "{not json}"} {
-		if _, err := sendPayloadBytes(in); err == nil {
-			t.Fatalf("sendPayloadBytes(%q) accepted malformed input", in)
+		if _, err := MessagePayload(in); err == nil {
+			t.Fatalf("MessagePayload(%q) accepted malformed input", in)
 		}
 	}
 }
