@@ -348,7 +348,7 @@ func listSessionIDs(output string) []string {
 		if len(cells) < 5 || cells[0] == "NO" || strings.Trim(cells[0], "─") == "" {
 			continue
 		}
-		id := strings.TrimSpace(cells[4])
+		id := strings.TrimSpace(cells[3])
 		if id != "" {
 			ids = append(ids, id)
 		}

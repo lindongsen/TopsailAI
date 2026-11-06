@@ -388,7 +388,7 @@ func TestInteractiveListRowsBindSessionThroughCD(t *testing.T) {
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "NO") || !strings.Contains(output.String(), "host-a") || !strings.Contains(output.String(), "topsailai") {
+	if !strings.Contains(output.String(), "NO") || !strings.Contains(output.String(), "host-a") {
 		t.Fatalf("missing readable row presentation: %q", output.String())
 	}
 	if !strings.Contains(output.String(), "session[endpoint-1/-]>") {

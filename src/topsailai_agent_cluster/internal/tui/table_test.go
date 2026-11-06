@@ -18,26 +18,27 @@ func TestTableColumnsWidthsAndEmptyResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	headerCells := strings.Split(lines[0], " │ ")
-	if len(headerCells) != 7 {
-		t.Fatalf("header cell count=%d header=%q", len(headerCells), lines[0])
+	// The table is framed by a top rule, so the header is the second line.
+	headerCells := strings.Split(lines[1], " │ ")
+	if len(headerCells) != len(tableHeaders) {
+		t.Fatalf("header cell count=%d header=%q", len(headerCells), lines[1])
 	}
-	for index, want := range []string{"NO", "ENDPOINT", "ADAPTER", "SESSION_NAME", "SESSION_ID", "SESSION_STATUS", "DATA_STATUS"} {
+	for index, want := range []string{"NO", "SESSION_STATUS", "SESSION_NAME", "SESSION_ID", "ENDPOINT", "DATA_STATUS"} {
 		if strings.TrimSpace(headerCells[index]) != want {
 			t.Fatalf("header cell %d=%q want=%q", index, headerCells[index], want)
 		}
 	}
-	if strings.Contains(lines[0], "GENERATION") || strings.Contains(lines[0], "LAST_SUCCESS") {
-		t.Fatalf("header still has removed columns: %q", lines[0])
+	if strings.Contains(lines[1], "GENERATION") || strings.Contains(lines[1], "LAST_SUCCESS") {
+		t.Fatalf("header still has removed columns: %q", lines[1])
 	}
-	if !strings.Contains(lines[1], "─┼─") {
-		t.Fatalf("missing header separator=%q", lines[1])
+	if !strings.Contains(lines[2], "─┼─") {
+		t.Fatalf("missing header separator=%q", lines[2])
 	}
-	if len(lines[2]) > 190 || !strings.Contains(lines[2], "...") {
-		t.Fatalf("bounded row=%q len=%d", lines[2], len(lines[2]))
+	if len(lines[3]) > 190 || !strings.Contains(lines[3], "...") {
+		t.Fatalf("bounded row=%q len=%d", lines[3], len(lines[3]))
 	}
-	if !strings.HasSuffix(lines[2], "ok (2023-11-14T22:13:20)") {
-		t.Fatalf("timestamp not embedded in DATA_STATUS: %q", lines[2])
+	if !strings.Contains(lines[3], "ok (22:13:20)") {
+		t.Fatalf("timestamp not embedded in DATA_STATUS: %q", lines[3])
 	}
 	out.Reset()
 	if err := RenderTable(&out, &errors, nil, nil, TableOptions{}); err != nil {
@@ -281,9 +282,11 @@ func TestTableNilLastSuccessDisplaysDash(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	cells := strings.Split(lines[2], " │ ")
+	// The table is framed by rules: line 0 is the top rule, so the data row
+	// follows the header and its separator.
+	cells := strings.Split(lines[3], " │ ")
 	if got := strings.TrimSpace(cells[columnDataStatus]); got != "ok" {
-		t.Fatalf("DATA_STATUS cell = %q, want %q; row=%q", got, "ok", lines[2])
+		t.Fatalf("DATA_STATUS cell = %q, want %q; row=%q", got, "ok", lines[3])
 	}
 }
 
@@ -296,9 +299,10 @@ func TestTableLastSuccessUsesNonUTCOffset(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	cells := strings.Split(lines[2], " │ ")
-	want := "ok (2023-11-15T06:13:20)"
+	// The table is framed by rules, so the data row follows the header pair.
+	cells := strings.Split(lines[3], " │ ")
+	want := "ok (06:13:20)"
 	if got := strings.TrimSpace(cells[columnDataStatus]); got != want {
-		t.Fatalf("DATA_STATUS cell = %q, want %q; row=%q", got, want, lines[2])
+		t.Fatalf("DATA_STATUS cell = %q, want %q; row=%q", got, want, lines[3])
 	}
 }

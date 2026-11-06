@@ -108,7 +108,7 @@ func TestUnitCStartPromptRefreshDropsDraftAndDoesNotAdmit(t *testing.T) {
 	if stub.admit != 0 {
 		t.Fatalf("refresh admitted stale draft: %d", stub.admit)
 	}
-	if !strings.Contains(output.String(), "NO │ ENDPOINT │") {
+	if !strings.Contains(output.String(), "NO │ SESSION_STATUS │") {
 		t.Fatalf("refresh did not render inventory: %q", output.String())
 	}
 }

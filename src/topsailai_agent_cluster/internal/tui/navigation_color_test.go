@@ -27,7 +27,9 @@ func TestNavigationListColors(t *testing.T) {
 				}
 				text := out.String()
 				if enabled {
-					for _, token := range []string{ansiBoldCyan + "NO", ansiGreen + "running"} {
+					// "running " with a trailing space matches only the padded
+					// SESSION_STATUS cell, not the "running(1)" summary row.
+					for _, token := range []string{ansiBoldCyan + "NO", ansiGreen + "running "} {
 						if got := strings.Count(text, token); got != c.tables {
 							t.Fatalf("%q count=%d want=%d output=%q", token, got, c.tables, text)
 						}
