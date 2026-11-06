@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // startupListHint tells the operator how to retry a failed startup inventory.
@@ -24,8 +25,7 @@ func runStartupList(parent context.Context, api InteractiveAPI, state *interacti
 		return writeErr
 	}
 	if err == nil {
-		_, writeErr := fmt.Fprintln(out, startupGuide)
-		return writeErr
+		return writeStartupGuide(out, color)
 	}
 	if _, writeErr := fmt.Fprintln(errOut, "error:", err); writeErr != nil {
 		return writeErr
@@ -35,4 +35,43 @@ func runStartupList(parent context.Context, api InteractiveAPI, state *interacti
 	}
 	_, writeErr := fmt.Fprintln(errOut, "next:", startupListHint)
 	return writeErr
+}
+
+// startupGuideSegments derives the guide's entries from startupGuide itself, so
+// the styled and plain forms can never drift apart.
+var startupGuideSegments = strings.Split(startupGuide, " | ")
+
+// writeStartupGuide renders the startup hint, colouring each command key and
+// dimming its description. With colour disabled it emits the exact plain
+// startupGuide string so redirected output stays byte-identical.
+func writeStartupGuide(out io.Writer, policy ColorPolicy) error {
+	if !policy.Enabled {
+		_, err := io.WriteString(out, startupGuide+"\n")
+		return err
+	}
+	for i, segment := range startupGuideSegments {
+		if i > 0 {
+			if err := writeStyled(out, ansiDim, " | ", policy); err != nil {
+				return err
+			}
+		}
+		key, description, found := strings.Cut(segment, ": ")
+		if !found {
+			if err := writeStyled(out, ansiBoldCyan, segment, policy); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := writeStyled(out, ansiBoldCyan, key, policy); err != nil {
+			return err
+		}
+		if err := writeStyled(out, ansiDim, ": ", policy); err != nil {
+			return err
+		}
+		if err := writeStyled(out, ansiCyan, description, policy); err != nil {
+			return err
+		}
+	}
+	_, err := io.WriteString(out, "\n")
+	return err
 }
