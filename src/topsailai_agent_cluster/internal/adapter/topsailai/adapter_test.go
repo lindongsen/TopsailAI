@@ -149,7 +149,7 @@ func TestExecuteUsesProviderCLIFlagsAndMessagePayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantArgs := []string{"runtime", "send", "-s", "provider-secret", "-m", "-- -g value with spaces \"quotes\"\nnext", "--json"}
+	wantArgs := []string{"runtime", "send", "-s", "provider-secret", "-m=-- -g value with spaces \"quotes\"\nnext", "--json"}
 	if !reflect.DeepEqual(runner.args, wantArgs) {
 		t.Fatalf("unexpected argv: %#v, want %#v", runner.args, wantArgs)
 	}
@@ -509,5 +509,30 @@ func TestResumeUsesExplicitProviderSessionSelector(t *testing.T) {
 	want := []string{"workspace", "resume", "-s", "provider-session", "--background", "--json"}
 	if !reflect.DeepEqual(runner.args, want) {
 		t.Fatalf("argv=%q want=%q", runner.args, want)
+	}
+}
+
+// TestExecuteUsesAssignmentFormForDashLeadingMessage guards the regression where a message
+// that is one dash-leading token was consumed by the provider parser as an option.
+func TestExecuteUsesAssignmentFormForDashLeadingMessage(t *testing.T) {
+	for _, operation := range []string{"send", "btw"} {
+		t.Run(operation, func(t *testing.T) {
+			runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"provider-secret","process_generation":"g1"}]}`)}
+			a := newTestAdapter(t, runner)
+			result, err := a.Discover(context.Background(), adapter.DiscoverRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner.out = []byte(`{"delivery_state":"submitted"}`)
+			target := &protocol.CommandTarget{ResourceID: result.Sessions[0].SessionID, Generation: "g1"}
+			payload := []byte(`{"text":"--json"}`)
+			if _, err := a.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{CommandID: "c1", Operation: operation, Target: target, Payload: payload}}); err != nil {
+				t.Fatal(err)
+			}
+			wantArgs := []string{"runtime", operation, "-s", "provider-secret", "-m=--json", "--json"}
+			if !reflect.DeepEqual(runner.args, wantArgs) {
+				t.Fatalf("unexpected argv: %#v, want %#v", runner.args, wantArgs)
+			}
+		})
 	}
 }

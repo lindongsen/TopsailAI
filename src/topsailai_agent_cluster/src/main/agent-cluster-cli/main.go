@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 
 	"github.com/mattn/go-isatty"
@@ -289,6 +290,12 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []st
 		return fmt.Errorf("usage: %s <endpoint-id> <resource-id> [text] [generation]", operation)
 	}
 	endpointID, resourceID := args[1], args[2]
+	// flag.Parse stops at the first positional, so a flag written after the command stays
+	// positional and would silently become a payload or a target generation. Reject it
+	// explicitly instead of corrupting the target.
+	if err := rejectMisplacedFlags(args); err != nil {
+		return err
+	}
 	generation := generationFlag
 	payload := json.RawMessage(`{}`)
 	if operation == "stop" {
@@ -339,6 +346,23 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []st
 		return err
 	}
 	return runner.RenderAction(output, result)
+}
+
+// rejectMisplacedFlags fails when a flag appears after the command name. flag.Parse stops
+// at the first positional, so such a token would otherwise be mapped to a payload or a
+// target generation and produce a misleading downstream error. A negative number is not a
+// flag, and a lone dash is a literal value, so both are accepted.
+func rejectMisplacedFlags(args []string) error {
+	for _, arg := range args[1:] {
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			continue
+		}
+		if _, err := strconv.ParseFloat(arg, 64); err == nil {
+			continue
+		}
+		return fmt.Errorf("option %q must be written before the command; run help %s for valid syntax", arg, args[0])
+	}
+	return nil
 }
 
 func operationName(value string) string {

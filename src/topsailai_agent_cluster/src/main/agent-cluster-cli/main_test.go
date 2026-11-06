@@ -661,3 +661,95 @@ func TestEndpointsHelpAndDispatchContract(t *testing.T) {
 		}
 	}
 }
+
+// TestInteractiveSendAcceptsProseContainingJSONFlag guards the regression where a substring
+// match on "--json" rejected ordinary message text before admission.
+func TestInteractiveSendAcceptsProseContainingJSONFlag(t *testing.T) {
+	for _, text := range []string{"please add --json to the config", "the flag is --json-output", "hello world"} {
+		t.Run(text, func(t *testing.T) {
+			stub := &actionPathStub{}
+			var out, diagnostics strings.Builder
+			input := "cd ep/session\nsend " + text + "\ny\nquit\n"
+			if err := tui.RunInteractive(context.Background(), stub, strings.NewReader(input), &out, &diagnostics, tui.InteractiveOptions{WaitTimeoutMS: 100}); err != nil {
+				t.Fatal(err)
+			}
+			if diagnostics.Len() != 0 {
+				t.Fatalf("diagnostics=%q", diagnostics.String())
+			}
+			if len(stub.intents) != 1 {
+				t.Fatalf("intents=%d, want 1", len(stub.intents))
+			}
+			want := `{"text":"` + text + `"}`
+			if got := string(stub.intents[0].Payload); got != want {
+				t.Fatalf("payload=%q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestInteractiveSendRejectsBareJSONFlag keeps the original guard for a payload that is
+// itself the flag token.
+func TestInteractiveSendRejectsBareJSONFlag(t *testing.T) {
+	stub := &actionPathStub{}
+	var out, diagnostics strings.Builder
+	input := "cd ep/session\nsend --json\ny\nquit\n"
+	if err := tui.RunInteractive(context.Background(), stub, strings.NewReader(input), &out, &diagnostics, tui.InteractiveOptions{WaitTimeoutMS: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.intents) != 0 {
+		t.Fatalf("intents=%d, want 0", len(stub.intents))
+	}
+	if !strings.Contains(diagnostics.String(), "does not support --json") {
+		t.Fatalf("diagnostics=%q", diagnostics.String())
+	}
+}
+
+// TestActionRejectsMisplacedFlag keeps a trailing flag from becoming a target generation.
+func TestActionRejectsMisplacedFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"send", "ep", "session", "hello", "--json"},
+		{"send", "ep", "session", "--json"},
+		{"stop", "ep", "session", "--json"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			stub := &actionPathStub{}
+			err := action(context.Background(), stub, &strings.Builder{}, args, true, false, 100, "", "", "", "", "")
+			if err == nil || !strings.Contains(err.Error(), "must be written before the command") {
+				t.Fatalf("err=%v", err)
+			}
+			if len(stub.intents) != 0 {
+				t.Fatalf("intents=%d, want 0", len(stub.intents))
+			}
+		})
+	}
+}
+
+// TestActionAcceptsDashLeadingTextThroughJSONPayload confirms the documented escape hatch:
+// a message that is itself a flag token is still deliverable as a JSON object payload.
+func TestActionAcceptsDashLeadingTextThroughJSONPayload(t *testing.T) {
+	stub := &actionPathStub{}
+	if err := action(context.Background(), stub, &strings.Builder{}, []string{"send", "ep", "session", `{"text":"--json"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.intents) != 1 {
+		t.Fatalf("intents=%d, want 1", len(stub.intents))
+	}
+	if got := string(stub.intents[0].Payload); got != `{"text":"--json"}` {
+		t.Fatalf("payload=%q", got)
+	}
+	if stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "gen" {
+		t.Fatalf("target=%+v", stub.intents[0].Target)
+	}
+}
+
+// TestActionAcceptsNegativeGeneration keeps a negative numeric generation usable, because a
+// leading dash alone does not make a token a flag.
+func TestActionAcceptsNegativeGeneration(t *testing.T) {
+	stub := &actionPathStub{}
+	if err := action(context.Background(), stub, &strings.Builder{}, []string{"send", "ep", "session", "hello", "-1"}, true, false, 100, "", "", "", "", ""); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "-1" {
+		t.Fatalf("intents=%+v", stub.intents)
+	}
+}

@@ -253,13 +253,16 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 		if err != nil {
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "invalid_payload")}, err
 		}
-		args = []string{"runtime", "send", "-s", providerKey, "-m", message, "--json"}
+		// The provider parser classifies a separate argv element, so a message that is
+		// one dash-leading token would be consumed as an option. The assignment form
+		// keeps the value attached to its flag without adding a shell or quoting layer.
+		args = []string{"runtime", "send", "-s", providerKey, "-m=" + message, "--json"}
 	case "btw", protocol.OperationContextInject:
 		message, err := runtimeMessage(intent.Payload)
 		if err != nil {
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "invalid_payload")}, err
 		}
-		args = []string{"runtime", "btw", "-s", providerKey, "-m", message, "--json"}
+		args = []string{"runtime", "btw", "-s", providerKey, "-m=" + message, "--json"}
 	case protocol.OperationExecutionInterrupt, "control":
 		action, payload, err := interruptControlPayload(intent.Payload)
 		if err != nil {

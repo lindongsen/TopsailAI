@@ -154,6 +154,24 @@ func MessagePayload(text string) (json.RawMessage, error) {
 	return json.RawMessage(wrapped), nil
 }
 
+// rejectJSONFlagPayload rejects a payload that is only the --json option, or a JSON object
+// followed by a stray --json option. Ordinary prose that merely contains or ends with the
+// text --json is literal message content and stays deliverable, because the interactive
+// commands have no --json option to honour.
+func rejectJSONFlagPayload(text, name string) error {
+	if text == "--json" {
+		return fmt.Errorf("interactive %s does not support --json", name)
+	}
+	if !strings.HasSuffix(text, " --json") {
+		return nil
+	}
+	head := strings.TrimSpace(strings.TrimSuffix(text, " --json"))
+	if !strings.HasPrefix(head, "{") || !json.Valid([]byte(head)) {
+		return nil
+	}
+	return fmt.Errorf("interactive %s does not support --json", name)
+}
+
 // interruptActions maps every accepted plain spelling to the standard action name.
 var interruptActions = map[string]string{
 	"soft":           "soft_interrupt",
@@ -222,8 +240,10 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 		return err
 	}
 	payloadText := strings.TrimSpace(rest)
-	if !json.Valid([]byte(payloadText)) && strings.Contains(payloadText, "--json") {
-		return fmt.Errorf("interactive send does not support --json")
+	// A bare --json option or a JSON object followed by a stray --json option is rejected,
+	// while ordinary prose that merely mentions --json stays literal message text.
+	if err := rejectJSONFlagPayload(payloadText, "send"); err != nil {
+		return err
 	}
 	if payloadText == "" {
 		return fmt.Errorf("payload must not be empty")
@@ -602,8 +622,10 @@ func validateResumeSelectionAbsent(ctx context.Context, api InteractiveAPI, stat
 // bare interrupt guides the operator through the action choice instead of demanding JSON.
 func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, rest string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
 	payloadText := strings.TrimSpace(rest)
-	if !json.Valid([]byte(payloadText)) && strings.Contains(payloadText, "--json") {
-		return fmt.Errorf("interactive %s does not support --json", name)
+	// A bare --json option or a JSON object followed by a stray --json option is rejected,
+	// while prose that mentions --json stays literal text for context injection.
+	if err := rejectJSONFlagPayload(payloadText, name); err != nil {
+		return err
 	}
 	var payload json.RawMessage
 	var err error
