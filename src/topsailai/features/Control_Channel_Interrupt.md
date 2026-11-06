@@ -277,6 +277,9 @@ Interrupting an agent is a destructive control action. The control channel shoul
 - `workspace/control_handlers/pause.py`: pause and clear-pause handlers.
 - `workspace/folder_utils.py`: resolves the interrupt and pause marker paths.
 - `utils/input_tool.py`: generic timeout-aware yes/no prompt used by the pause checkpoint.
+- `tests/bdd/features/control_pause.feature`: acceptance scenarios for the pause flow.
+- `tests/bdd/steps/control_pause_steps.py`: real control server, real ReAct loop, and real session FIFO steps.
+- `tests/bdd/test_control_pause.py`: pytest-bdd entry point for the pause scenarios.
 
 ## Open Decisions
 
