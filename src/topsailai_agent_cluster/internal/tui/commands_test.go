@@ -58,7 +58,7 @@ func TestCommandRunnerListUsesSharedQueryAndLegacyBytes(t *testing.T) {
 	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).List(context.Background(), &out, "", false); err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); !strings.Contains(got, "NO │ ENDPOINT") || !strings.Contains(got, "─┼─") || !strings.Contains(got, "1  │ ep") {
+	if got := out.String(); !strings.Contains(got, "NO │ SESSION_STATUS") || !strings.Contains(got, "─┼─") || !strings.Contains(got, "ep") {
 		t.Fatalf("output=%q missing table separators", got)
 	}
 	if got, want := strings.Join(api.calls, ","), "list,inventory:ep"; got != want {
@@ -79,7 +79,15 @@ func TestCommandRunnerListHeadersColorAndJSONIsolation(t *testing.T) {
 	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &plain, io.Discard, "", false, TableOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	plainHeader := strings.SplitN(plain.String(), "\n", 2)[0]
+	// The table is framed by horizontal rules, so locate the header row rather
+	// than assuming it is the first line.
+	plainHeader := ""
+	for _, line := range strings.Split(plain.String(), "\n") {
+		if strings.Contains(line, "SESSION_STATUS") {
+			plainHeader = line
+			break
+		}
+	}
 	for _, header := range tableHeaders {
 		if !strings.Contains(plainHeader, header) {
 			t.Fatalf("plain list missing header %q: %q", header, plainHeader)
@@ -97,12 +105,21 @@ func TestCommandRunnerListHeadersColorAndJSONIsolation(t *testing.T) {
 	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &coloredCleanList, io.Discard, "", false, TableOptions{Color: options.Color, Clean: true}); err != nil {
 		t.Fatal(err)
 	}
-	listHeader := strings.SplitN(coloredList.String(), "\n", 2)[0]
-	cleanListHeader := strings.SplitN(coloredCleanList.String(), "\n", 2)[0]
+	// The table is framed by rules, so the header is not the first line.
+	headerLine := func(text string) string {
+		for _, line := range strings.Split(text, "\n") {
+			if strings.Contains(line, "SESSION_STATUS") {
+				return line
+			}
+		}
+		return ""
+	}
+	listHeader := headerLine(coloredList.String())
+	cleanListHeader := headerLine(coloredCleanList.String())
 	if listHeader != cleanListHeader {
 		t.Fatalf("list/list --clean headers differ: list=%q clean=%q", listHeader, cleanListHeader)
 	}
-	for _, header := range []string{"NO", "ENDPOINT", "SESSION_NAME", "SESSION_ID", "SESSION_STATUS", "DATA_STATUS"} {
+	for _, header := range []string{"NO", "SESSION_STATUS", "SESSION_NAME", "SESSION_ID", "ENDPOINT", "DATA_STATUS"} {
 		assertStyledHeaderCell(t, listHeader, header)
 	}
 	if !strings.Contains(listHeader, ansiBoldCyan) || !strings.Contains(listHeader, ansiReset) {

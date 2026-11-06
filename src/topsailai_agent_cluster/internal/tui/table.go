@@ -29,13 +29,13 @@ type TableOptions struct {
 
 // Column indices are named so a column change cannot silently shift colors or alignment.
 const (
-	columnState      = 5
-	columnDataStatus = 6
-	columnName       = 3
+	columnState      = 1
+	columnName       = 2
+	columnDataStatus = 5
 )
 
-var tableHeaders = []string{"NO", "ENDPOINT", "ADAPTER", "SESSION_NAME", "SESSION_ID", "SESSION_STATUS", "DATA_STATUS"}
-var tableCaps = []int{4, 20, 18, 64, 36, 14, 35}
+var tableHeaders = []string{"NO", "SESSION_STATUS", "SESSION_NAME", "SESSION_ID", "ENDPOINT", "DATA_STATUS"}
+var tableCaps = []int{4, 14, 64, 36, 20, 35}
 
 // minimumTableWidth reports the smallest width able to hold one column per field.
 func minimumTableWidth(columns int) int {
@@ -109,11 +109,23 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 		_, err := io.WriteString(out, "\n")
 		return err
 	}
+	// writeRule draws the full-width horizontal rule that frames the table.
+	writeRule := func() error {
+		total := 3 * (len(widths) - 1)
+		for _, width := range widths {
+			total += width
+		}
+		_, err := io.WriteString(out, strings.Repeat("─", total)+"\n")
+		return err
+	}
 	if options.Width > 0 && options.Width < minimumTableWidth(len(widths)) {
 		if err := writeNarrowTable(out, cells, states, options.Width, options.Color); err != nil {
 			return err
 		}
 	} else {
+		if err := writeRule(); err != nil {
+			return err
+		}
 		if err := writeRow(tableHeaders, nil, true); err != nil {
 			return err
 		}
@@ -124,6 +136,14 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 			if err := writeRow(row, states[index], false); err != nil {
 				return err
 			}
+		}
+		if err := writeRule(); err != nil {
+			return err
+		}
+	}
+	if len(rows) > 0 {
+		if err := writeStatusSummary(out, rows, options.Color); err != nil {
+			return err
 		}
 	}
 	if len(rows) == 0 {
@@ -144,16 +164,98 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 	return nil
 }
 
+// statusOrder fixes the summary precedence so output is deterministic.
+var statusOrder = []string{"running", "waiting_input", "idle", "ready", "stopped", "completed", "failed", "error", "offline", "unknown"}
+
+// statusCount pairs one observed SESSION_STATUS with its row count.
+type statusCount struct {
+	State string
+	Count int
+}
+
+// statusCounts tallies rows by state in a deterministic order.
+func statusCounts(rows []SessionRow) []statusCount {
+	tally := make(map[string]int, len(rows))
+	for _, row := range rows {
+		state := row.State
+		if state == "" {
+			state = "unknown"
+		}
+		tally[state]++
+	}
+	counts := make([]statusCount, 0, len(tally))
+	seen := make(map[string]bool, len(tally))
+	for _, state := range statusOrder {
+		if count, ok := tally[state]; ok {
+			counts = append(counts, statusCount{State: state, Count: count})
+			seen[state] = true
+		}
+	}
+	// Unrecognized states stay visible, sorted so the summary never reorders.
+	rest := make([]string, 0, len(tally))
+	for state := range tally {
+		if !seen[state] {
+			rest = append(rest, state)
+		}
+	}
+	sort.Strings(rest)
+	for _, state := range rest {
+		counts = append(counts, statusCount{State: state, Count: tally[state]})
+	}
+	return counts
+}
+
+// writeStatusSummary renders "running(3) | input(2)" below the table, colouring
+// each state with the same mapping the SESSION_STATUS column uses.
+func writeStatusSummary(out io.Writer, rows []SessionRow, policy ColorPolicy) error {
+	counts := statusCounts(rows)
+	if len(counts) == 0 {
+		return nil
+	}
+	for i, count := range counts {
+		if i > 0 {
+			if err := writeStyled(out, ansiDim, " | ", policy); err != nil {
+				return err
+			}
+		}
+		label := statusSummaryLabel(count.State) + "(" + strconv.Itoa(count.Count) + ")"
+		if err := writeStyled(out, stateStyle(count.State), label, policy); err != nil {
+			return err
+		}
+	}
+	_, err := io.WriteString(out, "\n")
+	return err
+}
+
+// statusSummaryLabel shortens waiting_input to the operator-facing "input".
+func statusSummaryLabel(state string) string {
+	if state == "waiting_input" {
+		return "input"
+	}
+	return state
+}
+
+// stateStyle is the single state-to-colour mapping shared by the table and the
+// summary row, so a state can never be coloured differently in the two places.
+func stateStyle(state string) string {
+	switch state {
+	case "running":
+		return ansiGreen
+	case "stopped", "completed":
+		return ansiDim
+	case "failed", "error":
+		return ansiRed
+	default:
+		return ansiYellow
+	}
+}
+
 func tableCells(row SessionRow, location *time.Location) []string {
 	endpoint := row.EndpointLabel
 	if endpoint == "" {
 		endpoint = row.EndpointID
 	}
-	adapter := row.AdapterLabel
-	if adapter == "" {
-		adapter = row.AdapterID
-	}
-	return []string{strconv.Itoa(row.No), escapeCell(endpoint), escapeCell(adapter), escapeCell(row.DisplayName), escapeCell(row.ProviderSessionID), escapeCell(row.State), escapeCell(dataStatusCell(row, location))}
+	return []string{strconv.Itoa(row.No), escapeCell(row.State), escapeCell(row.DisplayName), escapeCell(row.ProviderSessionID), escapeCell(endpoint), escapeCell(dataStatusCell(row, location))}
 }
 
 // tableStates derives each column's colour state from the row itself, so a
@@ -185,7 +287,7 @@ func formatLastSuccess(value *int64, location *time.Location) string {
 	if location == nil {
 		location = time.Local
 	}
-	return time.UnixMilli(*value).In(location).Format("2006-01-02T15:04:05")
+	return time.UnixMilli(*value).In(location).Format("15:04:05")
 }
 func escapeCell(value string) string {
 	clean := sanitizeTerminal([]byte(value))
@@ -282,16 +384,7 @@ func writeCellState(w io.Writer, cell string, index int, state string, policy Co
 		}
 	}
 	if policy.Enabled && index == columnState {
-		switch state {
-		case "running":
-			return writeStyled(w, ansiGreen, cell, policy)
-		case "stopped", "completed":
-			return writeStyled(w, ansiDim, cell, policy)
-		case "failed", "error":
-			return writeStyled(w, ansiRed, cell, policy)
-		default:
-			return writeStyled(w, ansiYellow, cell, policy)
-		}
+		return writeStyled(w, stateStyle(state), cell, policy)
 	}
 	_, err := io.WriteString(w, cell)
 	return err

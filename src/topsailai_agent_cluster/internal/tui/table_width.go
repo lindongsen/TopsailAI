@@ -41,6 +41,11 @@ func fitTableWidths(widths []int, limit int) {
 // writeNarrowTable keeps tiny terminals bounded with one labelled field per line.
 // Labels and status values keep their styling so narrow output stays readable.
 func writeNarrowTable(out io.Writer, rows, states [][]string, width int, policy ColorPolicy) error {
+	if len(rows) > 0 {
+		if _, err := io.WriteString(out, strings.Repeat("─", width)+"\n"); err != nil {
+			return err
+		}
+	}
 	for index, row := range rows {
 		for i, value := range row {
 			label := clipCell(tableHeaders[i]+": ", width)

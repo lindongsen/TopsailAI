@@ -1,0 +1,254 @@
+#!/bin/bash
+# Author: DawsonLin
+# Purpose: Portable Agent Cluster node controller.
+#
+# A node bundle is self-contained and can be copied to any node:
+#
+#   <bundle>/
+#     agent-clusterctl          this script
+#     conf/node.conf            role configuration
+#     bin/agent-cluster-*       the role binary
+#     certs/                    CA and leaf certificate
+#     data/                     SQLite state
+#     logs/                     process and application logs
+#     run/                      pid files
+#
+# Carry the bundle to a node and run ./agent-clusterctl start. Every path is
+# resolved against the bundle directory, so the controller never depends on the
+# repository layout, the caller's working directory, or host-specific tooling
+# such as docker. Relay hops, container placement and certificate issuance stay
+# outside this script because they differ per site.
+#
+# Actions: start, stop, restart, status, doctor.
+# Usage:   agent-clusterctl [-c <config>] <action>
+
+set -uo pipefail
+
+CTL_DIR=$(dirname "$(readlink -f "$0")")
+CONFIG_FILE="${CTL_DIR}/conf/node.conf"
+ACTION=""
+
+function die() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+function usage() {
+    echo "usage: $(basename "$0") [-c <config>] {start|stop|restart|status|doctor}" >&2
+    exit 2
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -c)
+            [ $# -ge 2 ] || usage
+            CONFIG_FILE="$2"
+            shift 2
+            ;;
+        -h | --help) usage ;;
+        *)
+            ACTION="$1"
+            shift
+            ;;
+    esac
+done
+
+[ -n "${ACTION}" ] || usage
+
+# Expands a configured path against the bundle root unless it is already absolute.
+function resolve_path() {
+    local value="$1"
+    case "${value}" in
+        /*) echo "${value}" ;;
+        "") echo "" ;;
+        *) echo "${CTL_DIR}/${value}" ;;
+    esac
+}
+
+# Loads the role configuration and normalises every path against the bundle.
+function load_config() {
+    [ -f "${CONFIG_FILE}" ] || die "missing configuration ${CONFIG_FILE}"
+    # A node must not inherit stale cluster variables from its parent shell.
+    while IFS='=' read -r key _; do
+        case "${key}" in
+            AGENT_CLUSTER_*) unset "${key}" ;;
+        esac
+    done < <(env)
+    set -a
+    # shellcheck disable=SC1090
+    . "${CONFIG_FILE}"
+    set +a
+
+    ROLE="${ROLE:-}"
+    case "${ROLE}" in
+        server | endpoint) ;;
+        *) die "ROLE must be server or endpoint, got '${ROLE}'" ;;
+    esac
+
+    STOP_TIMEOUT_SECONDS="${STOP_TIMEOUT_SECONDS:-5}"
+    case "${STOP_TIMEOUT_SECONDS}" in
+        '' | *[!0-9]*) die "STOP_TIMEOUT_SECONDS must be a whole number" ;;
+    esac
+
+    TLS_CA_FILE=$(resolve_path "${TLS_CA_FILE:-certs/ca.pem}")
+    TLS_CERTIFICATE_FILE=$(resolve_path "${TLS_CERTIFICATE_FILE:-certs/node.pem}")
+    TLS_KEY_FILE=$(resolve_path "${TLS_KEY_FILE:-certs/node-key.pem}")
+    DATABASE_PATH=$(resolve_path "${DATABASE_PATH:-data/${ROLE}.sqlite}")
+    LOG_PATH=$(resolve_path "${LOG_PATH:-logs/${ROLE}.log}")
+    PID_FILE=$(resolve_path "${PID_FILE:-run/${ROLE}.pid}")
+    STDOUT_LOG=$(resolve_path "${STDOUT_LOG:-logs/${ROLE}.stdout.log}")
+}
+
+# Reports the binary serving the configured role.
+function role_binary() {
+    local name="agent-cluster-${ROLE}"
+    local configured="${BINARY:-bin/${name}}"
+    resolve_path "${configured}"
+}
+
+# Prints the pid of a live process recorded for this bundle.
+function pid_of() {
+    [ -f "${PID_FILE}" ] || return 1
+    local pid
+    pid=$(cat "${PID_FILE}" 2>/dev/null)
+    [ -n "${pid}" ] || return 1
+    kill -0 "${pid}" 2>/dev/null || return 1
+    echo "${pid}"
+}
+
+# Validates every artefact the role needs before any process starts.
+function doctor() {
+    local binary
+    binary=$(role_binary)
+    [ -x "${binary}" ] || die "missing executable ${binary}"
+    [ -f "${TLS_CA_FILE}" ] || die "missing CA ${TLS_CA_FILE}"
+    [ -f "${TLS_CERTIFICATE_FILE}" ] || die "missing certificate ${TLS_CERTIFICATE_FILE}"
+    [ -f "${TLS_KEY_FILE}" ] || die "missing private key ${TLS_KEY_FILE}"
+
+    if [ "${ROLE}" = "endpoint" ]; then
+        [ -n "${ENDPOINT_ID:-}" ] || die "ENDPOINT_ID is required for the endpoint role"
+        [ -n "${INSTANCE_ID:-}" ] || die "INSTANCE_ID is required for the endpoint role"
+        [ -n "${CHANNEL_ADDRESS:-}" ] || die "CHANNEL_ADDRESS is required for the endpoint role"
+        [ -n "${AUTH_TOKEN:-}" ] || die "AUTH_TOKEN is required for the endpoint role"
+        [ -n "${ADAPTERS:-}" ] || die "ADAPTERS is required for the endpoint role"
+        # The bundle cannot carry the provider binary, so every adapter command
+        # must already exist on this node. Failing here beats a runtime spawn error.
+        local command
+        while IFS= read -r command; do
+            [ -n "${command}" ] || continue
+            [ -x "${command}" ] ||
+                die "adapter command is not executable on this node: ${command}"
+        done < <(printf '%s' "${ADAPTERS}" |
+            grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' |
+            sed 's/.*"\([^"]*\)"$/\1/')
+    fi
+
+    echo "role       : ${ROLE}"
+    echo "bundle     : ${CTL_DIR}"
+    echo "config     : ${CONFIG_FILE}"
+    echo "binary     : ${binary}"
+    echo "certificate: ${TLS_CERTIFICATE_FILE}"
+    echo "database   : ${DATABASE_PATH}"
+    echo "log        : ${LOG_PATH}"
+    if [ "${ROLE}" = "endpoint" ]; then
+        echo "endpoint   : ${ENDPOINT_ID} (${INSTANCE_ID})"
+        echo "channel    : ${CHANNEL_ADDRESS}"
+    fi
+}
+
+# Starts the configured role in the background and records its pid.
+function start_node() {
+    if pid=$(pid_of); then
+        echo "${ROLE} already running with pid ${pid}"
+        return 0
+    fi
+
+    local binary
+    binary=$(role_binary)
+    [ -x "${binary}" ] || die "missing executable ${binary}; run doctor"
+
+    mkdir -p "$(dirname "${DATABASE_PATH}")" "$(dirname "${LOG_PATH}")" \
+        "$(dirname "${PID_FILE}")" "$(dirname "${STDOUT_LOG}")"
+
+    local -a args=(
+        --database-path "${DATABASE_PATH}"
+        --tls-ca-file "${TLS_CA_FILE}"
+        --tls-certificate-file "${TLS_CERTIFICATE_FILE}"
+        --tls-key-file "${TLS_KEY_FILE}"
+        --log-path "${LOG_PATH}"
+    )
+
+    if [ "${ROLE}" = "server" ]; then
+        args+=(--api-listen-addr "${API_LISTEN_ADDR:-:8080}")
+        args+=(--channel-listen-addr "${CHANNEL_LISTEN_ADDR:-:8443}")
+        # The bearer token the API handler validates; without it the server falls
+        # back to the built-in development token and every client call returns 401.
+        [ -n "${AUTH_TOKEN:-}" ] && args+=(--auth-token "${AUTH_TOKEN}")
+    else
+        args+=(--endpoint-id "${ENDPOINT_ID}")
+        args+=(--instance-id "${INSTANCE_ID}")
+        args+=(--channel-address "${CHANNEL_ADDRESS}")
+        args+=(--auth-token "${AUTH_TOKEN}")
+        # Adapters are supplied through the environment; no flag exists for them.
+        export AGENT_CLUSTER_ADAPTERS="${ADAPTERS}"
+    fi
+
+    [ -n "${LOG_MAX_SIZE_MB:-}" ] && args+=(--log-max-size-mb "${LOG_MAX_SIZE_MB}")
+    [ -n "${LOG_BACKUPS:-}" ] && args+=(--log-max-backups "${LOG_BACKUPS}")
+    [ -n "${LOG_MAX_AGE_DAYS:-}" ] && args+=(--log-max-age-days "${LOG_MAX_AGE_DAYS}")
+    [ -n "${LOG_OUTPUT:-}" ] && args+=(--log-output "${LOG_OUTPUT}")
+
+    nohup "${binary}" "${args[@]}" >>"${STDOUT_LOG}" 2>&1 &
+    local pid=$!
+    echo "${pid}" >"${PID_FILE}"
+    echo "started ${ROLE} with pid ${pid}"
+}
+
+# Stops the role, escalating to SIGKILL only when graceful termination stalls.
+function stop_node() {
+    local pid
+    if ! pid=$(pid_of); then
+        echo "${ROLE} is not running"
+        rm -f "${PID_FILE}"
+        return 0
+    fi
+
+    echo "stopping ${ROLE} pid ${pid}"
+    kill "${pid}" 2>/dev/null
+    local iterations=$((STOP_TIMEOUT_SECONDS * 10))
+    local waited=0
+    while [ "${waited}" -lt "${iterations}" ]; do
+        kill -0 "${pid}" 2>/dev/null || break
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    if kill -0 "${pid}" 2>/dev/null; then
+        echo "forcing ${ROLE} pid ${pid}"
+        kill -9 "${pid}" 2>/dev/null
+    fi
+    rm -f "${PID_FILE}"
+}
+
+# Reports whether the role is running and which binary backs it.
+function status_node() {
+    local pid
+    if pid=$(pid_of); then
+        echo "${ROLE}: running pid ${pid}"
+        if [ -e "/proc/${pid}/exe" ]; then
+            echo "${ROLE}: executable $(readlink -f "/proc/${pid}/exe")"
+        fi
+    else
+        echo "${ROLE}: stopped"
+    fi
+}
+
+load_config
+
+case "${ACTION}" in
+    start) doctor >/dev/null; start_node ;;
+    stop) stop_node ;;
+    restart) stop_node; doctor >/dev/null; start_node ;;
+    status) status_node ;;
+    doctor) doctor ;;
+    *) usage ;;
+esac
