@@ -153,7 +153,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return fmt.Errorf("usage: status <command-id>")
 		}
 		return status(ctx, api, output, flags.Arg(1), *jsonMode)
-	case "send", "btw", "control", "start", "resume", "stop":
+	case "send", "btw", "inject", "control", "start", "resume", "stop":
 		return action(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder)
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
@@ -262,7 +262,7 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []st
 }
 
 func operationName(value string) string {
-	if value == "btw" {
+	if value == "btw" || value == "inject" {
 		return "context.inject"
 	}
 	if value == "control" {
