@@ -104,6 +104,16 @@ function load_config() {
         '' | *[!0-9]*) die "STOP_TIMEOUT_SECONDS must be a whole number" ;;
     esac
 
+    # The pause after a completed collection cycle. Zero is rejected because it
+    # would turn the Endpoint into a busy loop that relaunches the provider
+    # continuously; the binary applies the same rule to its own environment.
+    COLLECTION_DELAY_MS="${COLLECTION_DELAY_MS:-5000}"
+    case "${COLLECTION_DELAY_MS}" in
+        '' | *[!0-9]*) die "COLLECTION_DELAY_MS must be a whole number" ;;
+    esac
+    [ "${COLLECTION_DELAY_MS}" -gt 0 ] ||
+        die "COLLECTION_DELAY_MS must be greater than zero"
+
     TLS_CA_FILE=$(resolve_path "${TLS_CA_FILE:-certs/ca.pem}")
     TLS_CERTIFICATE_FILE=$(resolve_path "${TLS_CERTIFICATE_FILE:-certs/node.pem}")
     TLS_KEY_FILE=$(resolve_path "${TLS_KEY_FILE:-certs/node-key.pem}")
@@ -205,6 +215,9 @@ function start_node() {
         args+=(--auth-token "${AUTH_TOKEN}")
         # Adapters are supplied through the environment; no flag exists for them.
         export AGENT_CLUSTER_ADAPTERS="${ADAPTERS}"
+        # The collection delay is likewise environment-only, so the binary owns
+        # the single parsing and fallback rule instead of duplicating it here.
+        export AGENT_CLUSTER_COLLECTION_DELAY_MS="${COLLECTION_DELAY_MS}"
     fi
 
     [ -n "${LOG_MAX_SIZE_MB:-}" ] && args+=(--log-max-size-mb "${LOG_MAX_SIZE_MB}")

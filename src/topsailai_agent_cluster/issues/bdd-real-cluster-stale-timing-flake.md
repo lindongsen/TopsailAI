@@ -37,7 +37,7 @@ The same suite passes when run alone: `go test ./tests/bdd -count=1` -> exit 0, 
 ## Suspected cause
 
 The scenario starts a real cluster with `FaultInjection{ProviderFailAfterN: 1,
-CollectionIntervalMS: 100}` and waits at most 5 seconds for the inventory to reach the stale state.
+CollectionDelayMS: 100}` and waits at most 5 seconds for the inventory to reach the stale state.
 Under full-parallel package load the real Endpoint's collection cycle and the provider fault
 injection can exceed that window, so the poll deadline expires before the expected state appears.
 The failure is a timing budget that is too tight for a loaded machine, not a logic defect in the

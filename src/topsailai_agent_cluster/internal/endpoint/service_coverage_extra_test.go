@@ -114,12 +114,12 @@ func TestNewServiceDefaultsAndRejectsInvalidDependencies(t *testing.T) {
 	if _, err := NewService(ServiceDeps{}); err == nil {
 		t.Fatal("missing dependencies accepted")
 	}
-	service, err := NewService(ServiceDeps{Collector: &serviceCollector{}, Channel: newServiceChannel(), Storage: store, CollectionInterval: -1, Heartbeater: nil})
+	service, err := NewService(ServiceDeps{Collector: &serviceCollector{}, Channel: newServiceChannel(), Storage: store, CollectionDelay: -1, Heartbeater: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.interval <= 0 {
-		t.Fatalf("default interval=%s", service.interval)
+	if service.collectionDelay != defaultCollectionDelay {
+		t.Fatalf("default collection delay=%s, want %s", service.collectionDelay, defaultCollectionDelay)
 	}
 	if err := service.Run(nil); err == nil {
 		t.Fatal("nil context accepted")

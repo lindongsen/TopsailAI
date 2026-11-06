@@ -307,7 +307,7 @@ func registerInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 func registerRealInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^a real cluster with two adapters where adapter-a succeeds and adapter-b fails$`, func() error {
 		activeScenario.world = &World{}
-		return activeScenario.world.StartRealCluster(harness.FaultInjection{TwoAdapters: true, ProviderFailAdapterID: "adapter-b", CollectionIntervalMS: 100})
+		return activeScenario.world.StartRealCluster(harness.FaultInjection{TwoAdapters: true, ProviderFailAdapterID: "adapter-b", CollectionDelayMS: 100})
 	})
 	ctx.Step(`^the real Endpoint publishes the isolated adapter inventory$`, func() error {
 		inventory, err := waitRealInventory(5*time.Second, func(report protocol.InventoryReport) bool { return len(report.Adapters) == 2 })
@@ -338,7 +338,7 @@ func registerRealInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 	})
 	ctx.Step(`^a real cluster whose provider fails after the first discovery$`, func() error {
 		activeScenario.world = &World{}
-		return activeScenario.world.StartRealCluster(harness.FaultInjection{ProviderFailAfterN: 1, CollectionIntervalMS: 100})
+		return activeScenario.world.StartRealCluster(harness.FaultInjection{ProviderFailAfterN: 1, CollectionDelayMS: 100})
 	})
 	ctx.Step(`^the real Endpoint refreshes inventory after provider failure$`, func() error {
 		first, err := waitRealInventory(5*time.Second, func(report protocol.InventoryReport) bool {
@@ -378,7 +378,7 @@ func registerRealInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 	})
 	ctx.Step(`^a real cluster whose provider fails before the first discovery$`, func() error {
 		activeScenario.world = &World{}
-		return activeScenario.world.StartRealCluster(harness.FaultInjection{ProviderAlwaysFail: true, CollectionIntervalMS: 100, ProviderFailAdapterID: "fixture-main"})
+		return activeScenario.world.StartRealCluster(harness.FaultInjection{ProviderAlwaysFail: true, CollectionDelayMS: 100, ProviderFailAdapterID: "fixture-main"})
 	})
 	ctx.Step(`^the real Endpoint publishes the failed first inventory$`, func() error {
 		_, err := waitRealInventory(5*time.Second, func(report protocol.InventoryReport) bool {

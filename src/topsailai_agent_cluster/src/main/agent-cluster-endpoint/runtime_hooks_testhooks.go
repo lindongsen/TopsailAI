@@ -12,15 +12,15 @@ import (
 )
 
 type runtimeHooks struct {
-	BeforeInvocation   func()
-	CollectionInterval time.Duration
-	ReceiptDelay       time.Duration
-	HoldPhase          string
-	HoldDir            string
+	BeforeInvocation func()
+	CollectionDelay  time.Duration
+	ReceiptDelay     time.Duration
+	HoldPhase        string
+	HoldDir          string
 }
 
 func newRuntimeHooks(logger *slog.Logger, databasePath string) runtimeHooks {
-	return runtimeHooks{BeforeInvocation: crashBeforeInvocation(logger, databasePath), HoldPhase: os.Getenv("AGENT_CLUSTER_TEST_HOLD_PHASE"), HoldDir: os.Getenv("AGENT_CLUSTER_TEST_HOLD_DIR"), CollectionInterval: durationEnv(logger, "AGENT_CLUSTER_TEST_COLLECTION_INTERVAL_MS", 10*time.Second, false), ReceiptDelay: durationEnv(logger, "AGENT_CLUSTER_TEST_DELAY_RECEIPT_MS", 0, true)}
+	return runtimeHooks{BeforeInvocation: crashBeforeInvocation(logger, databasePath), HoldPhase: os.Getenv("AGENT_CLUSTER_TEST_HOLD_PHASE"), HoldDir: os.Getenv("AGENT_CLUSTER_TEST_HOLD_DIR"), CollectionDelay: durationEnv(logger, "AGENT_CLUSTER_TEST_COLLECTION_DELAY_MS", 5*time.Second, false), ReceiptDelay: durationEnv(logger, "AGENT_CLUSTER_TEST_DELAY_RECEIPT_MS", 0, true)}
 }
 
 func durationEnv(logger *slog.Logger, name string, fallback time.Duration, allowZero bool) time.Duration {

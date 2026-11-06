@@ -75,7 +75,7 @@ func TestServiceCollectsRefreshesAndStops(t *testing.T) {
 	defer store.Close()
 	collector := &serviceCollector{}
 	transport := newServiceChannel()
-	service, err := NewService(ServiceDeps{Collector: collector, Channel: transport, Storage: store, CollectionInterval: 10 * time.Millisecond})
+	service, err := NewService(ServiceDeps{Collector: collector, Channel: transport, Storage: store, CollectionDelay: 10 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}

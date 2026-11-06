@@ -135,7 +135,7 @@ func main() {
 		_ = store.Close()
 		os.Exit(1)
 	}
-	service, err := endpointservice.NewService(endpointservice.ServiceDeps{Collector: collector, Executor: executor, Channel: client, Heartbeater: client, Storage: store, Logger: logger, CollectionInterval: runtime.CollectionInterval, HeartbeatInterval: 5 * time.Second, ReceiptDelay: runtime.ReceiptDelay})
+	service, err := endpointservice.NewService(endpointservice.ServiceDeps{Collector: collector, Executor: executor, Channel: client, Heartbeater: client, Storage: store, Logger: logger, CollectionDelay: runtime.CollectionDelay, HeartbeatInterval: 5 * time.Second, ReceiptDelay: runtime.ReceiptDelay})
 	if err != nil {
 		logger.Error("create endpoint service", "error", err)
 		_ = client.Close()

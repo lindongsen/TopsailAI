@@ -113,7 +113,11 @@ func (a *commandAdapter) Inspect(ctx context.Context, request InspectRequest) (I
 		}
 		return InspectResult{Found: true, Generation: session.Generation, State: session.State}, nil
 	}
-	return InspectResult{}, fmt.Errorf("unknown resource ID %q", request.Target.ResourceID)
+	// A resource that is absent from a successful discovery is a legitimate
+	// absence, not an observation failure. Reporting it as an error makes the
+	// caller treat "not found" as "could not observe", which permanently blocks
+	// operations that authorize on absence, such as agent.resume.
+	return InspectResult{Found: false}, nil
 }
 
 // Execute invokes the configured provider and decodes its execution receipt.

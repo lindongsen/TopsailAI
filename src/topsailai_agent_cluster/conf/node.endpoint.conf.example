@@ -25,6 +25,13 @@ SERVER_API_URL=http://127.0.0.1:53680
 # must be an absolute path that exists on this node.
 ADAPTERS='[{"adapter_id":"topsailai-local","provider_type":"topsailai","command":"/TopsailAI/src/topsailai/bin/topsailai","timeout_ms":120000}]'
 
+# Pause after a completed inventory collection before the next cycle starts, in
+# milliseconds. This is a delay, not a period: the effective cycle time is this
+# delay plus the collection duration, so a slow provider never causes overlapping
+# collections or silently dropped cycles. Raise it when provider discovery is
+# expensive; lowering it below the discovery cost only wastes provider launches.
+COLLECTION_DELAY_MS=5000
+
 # TLS material, relative to the bundle root.
 TLS_CA_FILE=certs/ca.pem
 TLS_CERTIFICATE_FILE=certs/node.pem

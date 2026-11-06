@@ -51,17 +51,22 @@ type OutputReader interface {
 	ReadOutput(context.Context, protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error)
 }
 
+// defaultCollectionDelay is the pause after a completed collection cycle before
+// the next cycle starts. It is a delay, not a period: the effective cycle time
+// is this delay plus the collection duration.
+const defaultCollectionDelay = 5 * time.Second
+
 // ServiceDeps contains explicit dependencies for the Endpoint lifecycle.
 type ServiceDeps struct {
-	Collector          ReportCollector
-	Executor           CommandExecutor
-	Channel            ChannelClient
-	Heartbeater        Heartbeater
-	Storage            *endpointstorage.Store
-	Logger             *slog.Logger
-	CollectionInterval time.Duration
-	HeartbeatInterval  time.Duration
-	ReceiptDelay       time.Duration
+	Collector         ReportCollector
+	Executor          CommandExecutor
+	Channel           ChannelClient
+	Heartbeater       Heartbeater
+	Storage           *endpointstorage.Store
+	Logger            *slog.Logger
+	CollectionDelay   time.Duration
+	HeartbeatInterval time.Duration
+	ReceiptDelay      time.Duration
 }
 
 // Service owns Endpoint collection, channel handling, and graceful shutdown.
@@ -72,7 +77,7 @@ type Service struct {
 	heartbeat         Heartbeater
 	storage           *endpointstorage.Store
 	logger            *slog.Logger
-	interval          time.Duration
+	collectionDelay   time.Duration
 	heartbeatInterval time.Duration
 	receiptDelay      time.Duration
 	cancel            context.CancelFunc
@@ -88,13 +93,13 @@ func NewService(deps ServiceDeps) (*Service, error) {
 	if deps.Collector == nil || deps.Channel == nil || deps.Storage == nil {
 		return nil, errors.New("collector, channel, and storage are required")
 	}
-	if deps.CollectionInterval <= 0 {
-		deps.CollectionInterval = 10 * time.Second
+	if deps.CollectionDelay <= 0 {
+		deps.CollectionDelay = defaultCollectionDelay
 	}
 	if deps.Heartbeater != nil && deps.HeartbeatInterval <= 0 {
 		deps.HeartbeatInterval = 5 * time.Second
 	}
-	return &Service{collector: deps.Collector, executor: deps.Executor, channel: deps.Channel, heartbeat: deps.Heartbeater, storage: deps.Storage, logger: deps.Logger, interval: deps.CollectionInterval, heartbeatInterval: deps.HeartbeatInterval, receiptDelay: deps.ReceiptDelay, pendingReceipts: make(map[string]protocol.ExecutionReceipt)}, nil
+	return &Service{collector: deps.Collector, executor: deps.Executor, channel: deps.Channel, heartbeat: deps.Heartbeater, storage: deps.Storage, logger: deps.Logger, collectionDelay: deps.CollectionDelay, heartbeatInterval: deps.HeartbeatInterval, receiptDelay: deps.ReceiptDelay, pendingReceipts: make(map[string]protocol.ExecutionReceipt)}, nil
 }
 
 // Run starts all Endpoint loops and waits until the context is cancelled.
@@ -219,15 +224,20 @@ func (s *Service) collectionLoop(ctx context.Context) {
 		}
 	}
 	publish()
-	ticker := time.NewTicker(s.interval)
-	defer ticker.Stop()
+	// Schedule the next cycle only after the previous one finished. A fixed
+	// ticker silently drops ticks while a slow collection is still running, so
+	// the effective period becomes the collection duration and the configured
+	// delay stops meaning anything. Waiting after completion keeps the
+	// configured delay honest and prevents overlapping collections.
 	for {
+		timer := time.NewTimer(s.collectionDelay)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
-			publish()
+		case <-timer.C:
 		}
+		publish()
 	}
 }
 

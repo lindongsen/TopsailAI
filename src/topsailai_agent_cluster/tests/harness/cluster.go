@@ -34,7 +34,7 @@ type FaultInjection struct {
 	CrashBeforeInvocation       bool
 	ProviderFailAfterN          int
 	ProviderAlwaysFail          bool
-	CollectionIntervalMS        int
+	CollectionDelayMS           int
 	ProviderFailAdapterID       string
 	TwoAdapters                 bool
 	NoSessions                  bool
@@ -336,8 +336,8 @@ func appendFaultEnvironment(env []string, faults FaultInjection) []string {
 	if faults.CrashBeforeInvocation {
 		env = append(env, "AGENT_CLUSTER_TEST_CRASH_BEFORE_INVOCATION=1")
 	}
-	if faults.CollectionIntervalMS > 0 {
-		env = append(env, fmt.Sprintf("AGENT_CLUSTER_TEST_COLLECTION_INTERVAL_MS=%d", faults.CollectionIntervalMS))
+	if faults.CollectionDelayMS > 0 {
+		env = append(env, fmt.Sprintf("AGENT_CLUSTER_TEST_COLLECTION_DELAY_MS=%d", faults.CollectionDelayMS))
 	}
 	if faults.ProviderFailAfterN > 0 {
 		env = append(env, fmt.Sprintf("AGENT_CLUSTER_TEST_PROVIDER_FAIL_AFTER_N=%d", faults.ProviderFailAfterN))

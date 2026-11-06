@@ -217,18 +217,40 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 	if a.mapper == nil {
 		return adapter.InspectResult{}, errors.New("durable resource mapper is required")
 	}
-	if _, err := a.mapper.LookupResourceID(ctx, request.Target.ResourceID); err != nil {
-		return adapter.InspectResult{}, err
-	}
-	result, err := a.Discover(ctx, adapter.DiscoverRequest{})
+	mapping, err := a.mapper.LookupResourceID(ctx, request.Target.ResourceID)
 	if err != nil {
 		return adapter.InspectResult{}, err
 	}
-	for _, session := range result.Sessions {
-		if session.SessionID == request.Target.ResourceID {
-			return adapter.InspectResult{Found: true, Generation: session.Generation, State: session.State}, nil
-		}
+	// Query only the requested provider session. A full workspace discovery scans
+	// the complete provider history, which costs seconds per command, so the
+	// targeted list is used instead; it reports the same generation evidence for
+	// the one session being revalidated.
+	output, err := a.run(ctx, []string{"workspace", "list", "-s", mapping.ProviderKey, "--json"}, nil)
+	if err != nil {
+		return adapter.InspectResult{}, err
 	}
+	var response workspaceResponse
+	if err := json.Unmarshal(output, &response); err != nil {
+		return adapter.InspectResult{}, fmt.Errorf("decode workspace list JSON: %w", err)
+	}
+	for _, item := range response.Items {
+		if item.SessionID != mapping.ProviderKey {
+			continue
+		}
+		generation, err := workspaceGeneration(item.ProcessGeneration)
+		if generation == "" {
+			generation, err = workspaceGeneration(item.Generation)
+		}
+		if err != nil {
+			return adapter.InspectResult{}, fmt.Errorf("decode workspace generation: %w", err)
+		}
+		state := item.State
+		if state == "" {
+			state = item.Status
+		}
+		return adapter.InspectResult{Found: true, Generation: generation, State: state}, nil
+	}
+	// An empty targeted result is a legitimate absence, not a malformed report.
 	return adapter.InspectResult{Found: false}, nil
 }
 
