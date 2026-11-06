@@ -73,7 +73,7 @@ func TestSendPayloadLengthRejectsBeforeAdmission(t *testing.T) {
 	var output, errorsOut strings.Builder
 	state := interactiveState{}
 	state.reset("endpoint-1", "session-1", "generation-1")
-	err := interactiveSend(context.Background(), stub, &state, payload, make(chan lineReadResult), &output, InteractiveOptions{LineLimit: 64})
+	err := interactiveSend(context.Background(), stub, &state, payload, make(chan lineReadResult), &output, &output, InteractiveOptions{LineLimit: 64})
 	if err == nil || err.Error() != "payload exceeds the maximum length" {
 		t.Fatalf("error=%v want payload length rejection", err)
 	}
