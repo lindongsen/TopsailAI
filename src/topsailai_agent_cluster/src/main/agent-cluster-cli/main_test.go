@@ -753,3 +753,78 @@ func TestActionAcceptsNegativeGeneration(t *testing.T) {
 		t.Fatalf("intents=%+v", stub.intents)
 	}
 }
+
+// TestActionRejectsUnquotedMultiWordText proves an unquoted message is rejected instead of
+// being silently truncated to its first word, which previously became the payload while the
+// second word became the target generation.
+func TestActionRejectsUnquotedMultiWordText(t *testing.T) {
+	stub := &actionPathStub{}
+	err := action(context.Background(), stub, &strings.Builder{}, []string{"send", "ep", "session", "please", "add", "to", "the", "config"}, true, false, 100, "", "", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "quote the message text") {
+		t.Fatalf("err=%v", err)
+	}
+	if !strings.Contains(err.Error(), "please add to the config") {
+		t.Fatalf("error must echo the whole intended message: %v", err)
+	}
+	if len(stub.intents) != 0 {
+		t.Fatalf("intents=%d, want 0", len(stub.intents))
+	}
+}
+
+// TestActionAcceptsQuotedMultiWordText keeps the documented quoted form working.
+func TestActionAcceptsQuotedMultiWordText(t *testing.T) {
+	stub := &actionPathStub{}
+	if err := action(context.Background(), stub, &strings.Builder{}, []string{"send", "ep", "session", "please add to the config"}, true, false, 100, "", "", "", "", ""); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.intents) != 1 {
+		t.Fatalf("intents=%d, want 1", len(stub.intents))
+	}
+	if got := string(stub.intents[0].Payload); got != `{"text":"please add to the config"}` {
+		t.Fatalf("payload=%q", got)
+	}
+}
+
+// TestActionAcceptsTextAndGeneration keeps the full documented positional form working.
+func TestActionAcceptsTextAndGeneration(t *testing.T) {
+	stub := &actionPathStub{}
+	if err := action(context.Background(), stub, &strings.Builder{}, []string{"send", "ep", "session", "hello", "gen-1"}, true, false, 100, "", "", "", "", ""); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "gen-1" {
+		t.Fatalf("intents=%+v", stub.intents)
+	}
+	if got := string(stub.intents[0].Payload); got != `{"text":"hello"}` {
+		t.Fatalf("payload=%q", got)
+	}
+}
+
+// TestActionAcceptsGenerationFlagWithText proves the flag form frees the generation slot.
+func TestActionAcceptsGenerationFlagWithText(t *testing.T) {
+	stub := &actionPathStub{}
+	if err := action(context.Background(), stub, &strings.Builder{}, []string{"send", "ep", "session", "hello"}, true, false, 100, "", "", "", "", "gen-1"); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "gen-1" {
+		t.Fatalf("intents=%+v", stub.intents)
+	}
+}
+
+// TestActionRejectsExtraStopPositionals keeps stop from accepting a stray text argument and
+// proves the error does not suggest quoting a message, because stop carries no message text.
+func TestActionRejectsExtraStopPositionals(t *testing.T) {
+	stub := &actionPathStub{}
+	err := action(context.Background(), stub, &strings.Builder{}, []string{"stop", "ep", "session", "gen-1", "extra"}, true, false, 100, "", "", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "unexpected arguments") {
+		t.Fatalf("err=%v", err)
+	}
+	if strings.Contains(err.Error(), "quote the message text") {
+		t.Fatalf("stop has no message text, so the error must not suggest quoting it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "extra") {
+		t.Fatalf("error must echo the unexpected argument: %v", err)
+	}
+	if len(stub.intents) != 0 {
+		t.Fatalf("intents=%d, want 0", len(stub.intents))
+	}
+}

@@ -296,6 +296,25 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []st
 	if err := rejectMisplacedFlags(args); err != nil {
 		return err
 	}
+	// The documented syntax accepts at most one text and one generation positional. A
+	// value supplied by a flag removes its positional slot, so an unquoted multi-word
+	// message is rejected instead of being silently truncated to its first word.
+	positionalLimit := 5
+	textStart := 3
+	if operation == "stop" {
+		positionalLimit = 4
+		textStart = 0
+	}
+	if generationFlag != "" {
+		positionalLimit--
+	}
+	if operation == "start" && task != "" {
+		positionalLimit--
+		textStart = 0
+	}
+	if err := rejectExtraPositionals(operation, args, positionalLimit, textStart); err != nil {
+		return err
+	}
 	generation := generationFlag
 	payload := json.RawMessage(`{}`)
 	if operation == "stop" {
@@ -363,6 +382,25 @@ func rejectMisplacedFlags(args []string) error {
 		return fmt.Errorf("option %q must be written before the command; run help %s for valid syntax", arg, args[0])
 	}
 	return nil
+}
+
+// rejectExtraPositionals fails when more positional arguments are supplied than the
+// documented syntax accepts. Without this check an unquoted multi-word message is silently
+// truncated: only the first word becomes the payload and the next word becomes the target
+// generation, so the operator believes the whole message was sent. The caller passes the
+// exact accepted count because it depends on the operation and on which flags were used,
+// and the index where the message text begins so the error can echo the whole intended
+// message instead of only the words that overflowed. A zero textStart means the operation
+// has no positional text slot, so the message must not suggest quoting text.
+func rejectExtraPositionals(operation string, args []string, limit, textStart int) error {
+	if len(args) <= limit {
+		return nil
+	}
+	overflow := args[limit:]
+	if textStart > 0 && textStart < len(args) {
+		return fmt.Errorf("unexpected arguments %q; quote the message text so it stays one argument, or run help %s for valid syntax", strings.Join(args[textStart:], " "), operation)
+	}
+	return fmt.Errorf("unexpected arguments %q; run help %s for valid syntax", strings.Join(overflow, " "), operation)
 }
 
 func operationName(value string) string {
