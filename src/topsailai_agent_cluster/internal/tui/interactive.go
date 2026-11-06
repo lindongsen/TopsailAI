@@ -379,6 +379,8 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 			return false, err
 		}
 		return false, interactiveList(ctx, api, state, filter, clean, trustedOut, errOut, options.Color)
+	case "endpoints":
+		return false, interactiveEndpoints(ctx, api, rest, out, options.Color)
 	case "table":
 		return false, fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "use":

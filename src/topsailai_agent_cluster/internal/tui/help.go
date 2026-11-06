@@ -38,6 +38,7 @@ var commandHelpCatalog = map[string]commandHelp{
 	"interrupt": {"interrupt <json>", "request a soft or hard execution interrupt for the selected session", []string{"json: object with action soft_interrupt or hard_interrupt; soft_interrupt also accepts an optional string message", "--json: rejected in interactive mode"}, []string{`interrupt {"action":"soft_interrupt","message":"Stop and summarize now."}`, `interrupt {"action":"hard_interrupt"}`}},
 	"logs":      {"logs [-n <lines>] [session]", "show bounded output for a session in the current endpoint", []string{"-n, --lines: maximum number of trailing output lines to show; defaults to 0100", "session: optional session/resource ID, provider session ID, or a bare list row number; defaults to the current session", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID"}, []string{"logs", "logs -n 0250", "logs 1", "logs res_abc"}},
 	"send":      {"send <text>", "send a message to the selected session", []string{"text: message text, or a JSON object with a text field"}, []string{`send hello world`, `send {"text":"hello"}`}},
+	"endpoints": {"endpoints [endpoint-id]", "list every registered endpoint with its connection state, observation time and capability revision; JSON output (--json) is available only in the standalone non-interactive command", []string{"endpoint-id: optional endpoint ID filter; an unknown filter renders an empty table", "read-only: it never forces provider discovery and never changes the list row numbers"}, []string{"endpoints", "endpoints endpoint-1"}},
 	"status":    {"status <command-id>", "show the durable result of a command", []string{"command-id: submitted command identifier"}, []string{"status cmd_123"}},
 	"refresh":   {"refresh", "force a fresh Endpoint collection and wait for it to be committed, then render the committed inventory", nil, []string{"refresh"}},
 	"help":      {"help [command]", "show the command overview or detailed help for one command", []string{"command: optional command name, or scope for the scope model"}, []string{"help", "help list", "help scope"}},
@@ -62,13 +63,14 @@ var scopeHelpOrder = []ScopeKind{ScopeWorkspace, ScopeEndpoint, ScopeSession}
 // comes from commandScopeMatrix so the two can never disagree.
 var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 	ScopeWorkspace: {
-		"list":    "list sessions across all endpoints",
-		"cd":      "navigate to an endpoint or session",
-		"show":    "show endpoint or session details",
-		"status":  "show command result",
-		"refresh": "refresh inventories",
-		"help":    "show help",
-		"quit":    "exit",
+		"list":      "list sessions across all endpoints",
+		"endpoints": "list every registered endpoint with its connection state and freshness",
+		"cd":        "navigate to an endpoint or session",
+		"show":      "show endpoint or session details",
+		"status":    "show command result",
+		"refresh":   "refresh inventories",
+		"help":      "show help",
+		"quit":      "exit",
 	},
 	ScopeEndpoint: {
 		"list":    "list sessions in the current endpoint",
@@ -107,7 +109,7 @@ func CommandHelpLines() []string {
 	return lines
 }
 
-var nonInteractiveHelpOrder = []string{"list", "show", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "help"}
+var nonInteractiveHelpOrder = []string{"list", "endpoints", "show", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "help"}
 
 // NonInteractiveCommandHelpLines returns only commands dispatched by the standalone CLI.
 func NonInteractiveCommandHelpLines() []string {
@@ -163,6 +165,8 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.syntax = "agent-cluster-cli [options] status <command-id>"
 	case "list":
 		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] list [--clean]"
+	case "endpoints":
+		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] endpoints [endpoint-id]"
 	case "send", "btw", "control":
 		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [payload] [generation]"
 	case "help":

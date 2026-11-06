@@ -30,6 +30,7 @@ func (r commandScopeRule) allows(kind ScopeKind) bool {
 // commandScopeMatrix is the single source of truth for canonical command availability.
 var commandScopeMatrix = []commandScopeRule{
 	{Name: "list", Workspace: true, Endpoint: true, Session: true},
+	{Name: "endpoints", Workspace: true},
 	{Name: "cd", Workspace: true, Endpoint: true, Session: true},
 	{Name: "show", Workspace: true, Endpoint: true, Session: true},
 	{Name: "start", Workspace: true, Endpoint: true},
