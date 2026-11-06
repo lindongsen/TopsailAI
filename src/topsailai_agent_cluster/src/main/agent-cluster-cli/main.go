@@ -77,7 +77,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		for _, line := range tui.NonInteractiveCommandHelpLines() {
 			fmt.Fprintln(errors, "  "+line)
 		}
-		fmt.Fprintln(errors, "  interactive        start the interactive REPL")
+		fmt.Fprintln(errors, "  interactive        start the interactive REPL (equivalent to -i)")
 		fmt.Fprintln(errors, "Options:")
 		flags.PrintDefaults()
 	}
@@ -93,18 +93,20 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
 	folder := flags.String("folder", "", "working folder for start")
+	interactiveShort := flags.Bool("i", false, "start the interactive REPL (same as the interactive command)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() == 0 {
+	interactiveSelected, err := resolveInteractiveSelection(*interactiveShort, flags.Args())
+	if err != nil {
+		return err
+	}
+	if !interactiveSelected && flags.NArg() == 0 {
 		return fmt.Errorf("a command is required: list, show, logs, send, stop")
 	}
 	api := client.NewAPIClient(*serverURL, *token)
 	ctx := context.Background()
-	if flags.Arg(0) == "interactive" {
-		if flags.NArg() != 1 {
-			return fmt.Errorf("usage: interactive")
-		}
+	if interactiveSelected {
 		if *jsonMode || *confirmed {
 			return fmt.Errorf("interactive does not support --json or --yes")
 		}
@@ -156,6 +158,25 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
 	}
+}
+
+// resolveInteractiveSelection decides whether the invocation enters the REPL.
+// The -i flag and the interactive command are interchangeable, but -i must not
+// silently discard a different command.
+func resolveInteractiveSelection(shortFlag bool, args []string) (bool, error) {
+	if len(args) == 0 {
+		return shortFlag, nil
+	}
+	if args[0] != "interactive" {
+		if shortFlag {
+			return false, fmt.Errorf("-i cannot be combined with the %q command", args[0])
+		}
+		return false, nil
+	}
+	if len(args) != 1 {
+		return false, fmt.Errorf("usage: interactive")
+	}
+	return true, nil
 }
 
 func parseListArgs(args []string, clean bool) (bool, error) {

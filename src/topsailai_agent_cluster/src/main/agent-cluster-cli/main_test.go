@@ -445,3 +445,73 @@ func TestListHelpAndDispatchContract(t *testing.T) {
 		t.Fatalf("dispatch output=%q", output.String())
 	}
 }
+
+// TestResolveInteractiveSelection pins the -i flag contract.
+func TestResolveInteractiveSelection(t *testing.T) {
+	cases := []struct {
+		name      string
+		shortFlag bool
+		args      []string
+		want      bool
+		wantErr   string
+	}{
+		{name: "flag only", shortFlag: true, args: nil, want: true},
+		{name: "neither", shortFlag: false, args: nil, want: false},
+		{name: "command only", shortFlag: false, args: []string{"interactive"}, want: true},
+		{name: "flag and command agree", shortFlag: true, args: []string{"interactive"}, want: true},
+		{name: "flag with other command", shortFlag: true, args: []string{"list"}, wantErr: `-i cannot be combined with the "list" command`},
+		{name: "other command only", shortFlag: false, args: []string{"list"}, want: false},
+		{name: "command with extra argument", shortFlag: false, args: []string{"interactive", "extra"}, wantErr: "usage: interactive"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveInteractiveSelection(tc.shortFlag, tc.args)
+			if tc.wantErr != "" {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("error=%v want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("selected=%t want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestInteractiveShortFlagEntryPoint exercises -i through the real entry point.
+func TestInteractiveShortFlagEntryPoint(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		input    string
+		terminal bool
+		wantCode int
+		wantErr  string
+	}{
+		{name: "short flag quits", args: []string{"-i"}, input: "quit\n", terminal: true, wantCode: 0},
+		{name: "long command still works", args: []string{"interactive"}, input: "quit\n", terminal: true, wantCode: 0},
+		{name: "short flag with json", args: []string{"--json", "-i"}, input: "quit\n", terminal: true, wantCode: 2, wantErr: "interactive does not support --json or --yes"},
+		{name: "short flag without terminal", args: []string{"-i"}, input: "quit\n", terminal: false, wantCode: 2, wantErr: "interactive mode requires a terminal on stdin"},
+		{name: "short flag with command", args: []string{"-i", "list"}, input: "quit\n", terminal: true, wantCode: 2, wantErr: `-i cannot be combined with the "list" command`},
+		{name: "no command", args: nil, input: "quit\n", terminal: true, wantCode: 2, wantErr: "a command is required: list, show, logs, send, stop"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out, errOut strings.Builder
+			code := runExitCode(tc.args, strings.NewReader(tc.input), &out, &errOut, func() bool { return tc.terminal })
+			if code != tc.wantCode {
+				t.Fatalf("code=%d want %d (stderr=%q)", code, tc.wantCode, errOut.String())
+			}
+			if tc.wantErr != "" && !strings.Contains(errOut.String(), tc.wantErr) {
+				t.Fatalf("stderr=%q want %q", errOut.String(), tc.wantErr)
+			}
+			if tc.wantCode == 0 && !strings.Contains(out.String(), "workspace>") {
+				t.Fatalf("prompt missing: %q", out.String())
+			}
+		})
+	}
+}
