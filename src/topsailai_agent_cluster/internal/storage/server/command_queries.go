@@ -36,6 +36,7 @@ func (s *Store) ListCommands(ctx context.Context, endpointID, resourceID string,
 			var receipt protocol.ExecutionReceipt
 			if json.Unmarshal(receiptJSON, &receipt) == nil {
 				record.ErrorCode, record.ExitConfirmed = receipt.ErrorCode, receipt.ExitConfirmed
+				record.ProviderResponse, record.ProviderResponseTruncated = receipt.ProviderResponse, receipt.ProviderResponseTruncated
 			}
 		}
 		record.IntentJSON = nil
@@ -68,6 +69,8 @@ func (s *Store) GetCommand(ctx context.Context, commandID string) (CommandRecord
 		if err := json.Unmarshal(receiptJSON, &receipt); err == nil {
 			record.ErrorCode = receipt.ErrorCode
 			record.ExitConfirmed = receipt.ExitConfirmed
+			record.ProviderResponse = receipt.ProviderResponse
+			record.ProviderResponseTruncated = receipt.ProviderResponseTruncated
 		}
 	}
 	return record, nil

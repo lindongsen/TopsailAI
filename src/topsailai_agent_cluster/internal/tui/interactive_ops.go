@@ -460,11 +460,14 @@ func interactiveStart(parent context.Context, api InteractiveAPI, state *interac
 }
 
 // renderInteractiveStartResult writes the durable start result without JSON formatting.
+// The provider's own return document is printed as a separate section so the
+// operator sees both this service's receipt and the provider's raw answer.
 func renderInteractiveStartResult(out io.Writer, commandID string, result map[string]any) error {
 	if _, err := fmt.Fprintf(out, "CommandID: %s\nStatus: %s\nDeliveryBoundary: %s\nEffectCertainty: %s\nErrorCode: %s\n", commandID, valueString(result, "status", "Status"), valueString(result, "delivery_boundary", "DeliveryBoundary"), valueString(result, "effect_certainty", "EffectCertainty"), valueString(result, "error_code", "ErrorCode")); err != nil {
 		return err
 	}
-	return nil
+	receipt := ReceiptForStatus(result)
+	return renderProviderResponse(out, receipt.ProviderResponse, receipt.ProviderResponseTruncated)
 }
 
 // parseInteractivePayload rejects every argument for a lifecycle command that takes none.

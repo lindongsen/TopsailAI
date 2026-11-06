@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"topsailai_agent_cluster/internal/adapter"
 	"topsailai_agent_cluster/internal/protocol"
@@ -294,9 +296,38 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 	if runErr != nil {
 		receipt := failedReceipt(intent, "provider_failed")
 		receipt.EffectCertainty = protocol.EffectUnknown
+		// The provider's own diagnostic is the only evidence of why the call
+		// failed, so carry it verbatim instead of discarding it.
+		receipt.ProviderResponse, receipt.ProviderResponseTruncated = boundedProviderResponse(providerFailureText(runErr))
 		return adapter.ExecuteResult{Receipt: receipt}, runErr
 	}
-	return adapter.ExecuteResult{Receipt: receiptFromJSON(intent, output)}, nil
+	receipt := receiptFromJSON(intent, output)
+	receipt.ProviderResponse, receipt.ProviderResponseTruncated = boundedProviderResponse(string(output))
+	return adapter.ExecuteResult{Receipt: receipt}, nil
+}
+
+// boundedProviderResponse applies the receipt bound to one provider document.
+// Truncation backs off to a rune boundary so the stored string stays valid
+// UTF-8, and the flag reports that the document is incomplete.
+func boundedProviderResponse(document string) (string, bool) {
+	if len(document) <= protocol.MaxProviderResponseBytes {
+		return document, false
+	}
+	limit := protocol.MaxProviderResponseBytes
+	for limit > 0 && !utf8.RuneStart(document[limit]) {
+		limit--
+	}
+	return document[:limit], true
+}
+
+// providerFailureText returns the provider's own stderr for a failed invocation.
+// execRunner wraps the exit error, so errors.As reaches the captured stderr.
+func providerFailureText(err error) string {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+		return string(exitErr.Stderr)
+	}
+	return ""
 }
 
 func interruptControlPayload(payload []byte) (string, []byte, error) {

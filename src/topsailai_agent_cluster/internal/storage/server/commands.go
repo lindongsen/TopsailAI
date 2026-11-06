@@ -12,20 +12,24 @@ import (
 )
 
 // CommandRecord is the durable command projection used for deduplication.
+// ProviderResponse is the provider's own return document, stored and returned
+// verbatim. Server never parses it, so it stays opaque descriptive evidence.
 type CommandRecord struct {
-	CommandID        string                    `json:"command_id"`
-	RequestHash      string                    `json:"request_hash"`
-	EndpointID       string                    `json:"endpoint_id"`
-	Operation        string                    `json:"operation"`
-	IntentJSON       []byte                    `json:"intent_json"`
-	Status           protocol.CommandStatus    `json:"status"`
-	Phase            protocol.CommandPhase     `json:"phase"`
-	DeliveryBoundary protocol.DeliveryBoundary `json:"delivery_boundary"`
-	EffectCertainty  protocol.EffectCertainty  `json:"effect_certainty"`
-	ExitConfirmed    bool                      `json:"exit_confirmed"`
-	ErrorCode        string                    `json:"error_code,omitempty"`
-	DeadlineAtMS     int64                     `json:"deadline_at_ms"`
-	CreateAtMS       int64                     `json:"create_at_ms"`
+	CommandID                 string                    `json:"command_id"`
+	RequestHash               string                    `json:"request_hash"`
+	EndpointID                string                    `json:"endpoint_id"`
+	Operation                 string                    `json:"operation"`
+	IntentJSON                []byte                    `json:"intent_json"`
+	Status                    protocol.CommandStatus    `json:"status"`
+	Phase                     protocol.CommandPhase     `json:"phase"`
+	DeliveryBoundary          protocol.DeliveryBoundary `json:"delivery_boundary"`
+	EffectCertainty           protocol.EffectCertainty  `json:"effect_certainty"`
+	ExitConfirmed             bool                      `json:"exit_confirmed"`
+	ErrorCode                 string                    `json:"error_code,omitempty"`
+	ProviderResponse          string                    `json:"provider_response,omitempty"`
+	ProviderResponseTruncated bool                      `json:"provider_response_truncated,omitempty"`
+	DeadlineAtMS              int64                     `json:"deadline_at_ms"`
+	CreateAtMS                int64                     `json:"create_at_ms"`
 }
 
 // MarshalJSON preserves the legacy exported field names while exposing stable snake-case fields.
@@ -49,6 +53,8 @@ func (r CommandRecord) MarshalJSON() ([]byte, error) {
 	fields["EffectCertainty"] = r.EffectCertainty
 	fields["ExitConfirmed"] = r.ExitConfirmed
 	fields["ErrorCode"] = r.ErrorCode
+	fields["ProviderResponse"] = r.ProviderResponse
+	fields["ProviderResponseTruncated"] = r.ProviderResponseTruncated
 	fields["DeadlineAtMS"] = r.DeadlineAtMS
 	fields["CreateAtMS"] = r.CreateAtMS
 	return json.Marshal(fields)

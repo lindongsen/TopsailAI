@@ -104,7 +104,7 @@ One admitted standard management intent, independent of current Session membersh
 | request_json | TEXT | Frozen standard target/profile ID and revision, generation, payload, capability revision and immutable deadline |
 | request_hash | TEXT | Versioned canonical request digest for duplicate/conflict detection |
 | state | TEXT | admitted, dispatched, endpoint_admitted, executing, finished, rejected, expired, cancelled_before_execution or unconfirmed |
-| result_json | TEXT nullable | Standard delivery boundary, effect certainty, outcome and redacted error; no provider-specific response schema |
+| result_json | TEXT nullable | Standard delivery boundary, effect certainty, outcome and redacted error, plus the provider's own return document as an opaque bounded string (`provider_response`, at most 64 KiB, with `provider_response_truncated` when the bound was reached). Server stores and returns that document verbatim and never parses it, so no provider-specific response schema is required or permitted |
 | deadline_at_ms | BIGINT | Immutable admission/execution validity deadline |
 | finished_at_ms | BIGINT nullable | Terminal command lifecycle time, not task success |
 | create_at_ms | BIGINT | Durable Server admission time |

@@ -110,22 +110,34 @@ const (
 	StatusUnconfirmed CommandStatus = "unconfirmed"
 )
 
+// MaxProviderResponseBytes bounds the opaque provider return document carried in
+// one receipt. The bound is applied at the adapter boundary, so an oversized
+// provider document is truncated and labelled before it can reach storage.
+const MaxProviderResponseBytes = 64 << 10
+
 // ExecutionReceipt records bounded evidence without claiming provider success.
+// ProviderResponse carries the provider's own return document verbatim. It is an
+// opaque bounded string, never a provider schema: Server stores and returns it
+// without interpreting any field, so the Server/Endpoint abstraction boundary is
+// unchanged. ProviderResponseTruncated reports that the bound was reached, so a
+// shortened document is never presented as complete.
 type ExecutionReceipt struct {
-	CommandID          string           `json:"command_id"`
-	RequestHash        string           `json:"request_hash"`
-	CommandRevision    int64            `json:"command_revision"`
-	EndpointInstanceID string           `json:"endpoint_instance_id"`
-	Phase              CommandPhase     `json:"phase"`
-	DeliveryBoundary   DeliveryBoundary `json:"delivery_boundary"`
-	EffectCertainty    EffectCertainty  `json:"effect_certainty"`
-	Outcome            string           `json:"outcome"`
-	ErrorCode          string           `json:"error_code,omitempty"`
-	ErrorMessage       string           `json:"error_message,omitempty"`
-	StartedAtMS        int64            `json:"started_at_ms,omitempty"`
-	FinishedAtMS       int64            `json:"finished_at_ms,omitempty"`
-	ProviderRequestRef string           `json:"provider_request_ref,omitempty"`
-	ExitConfirmed      bool             `json:"exit_confirmed"`
+	CommandID                 string           `json:"command_id"`
+	RequestHash               string           `json:"request_hash"`
+	CommandRevision           int64            `json:"command_revision"`
+	EndpointInstanceID        string           `json:"endpoint_instance_id"`
+	Phase                     CommandPhase     `json:"phase"`
+	DeliveryBoundary          DeliveryBoundary `json:"delivery_boundary"`
+	EffectCertainty           EffectCertainty  `json:"effect_certainty"`
+	Outcome                   string           `json:"outcome"`
+	ErrorCode                 string           `json:"error_code,omitempty"`
+	ErrorMessage              string           `json:"error_message,omitempty"`
+	StartedAtMS               int64            `json:"started_at_ms,omitempty"`
+	FinishedAtMS              int64            `json:"finished_at_ms,omitempty"`
+	ProviderRequestRef        string           `json:"provider_request_ref,omitempty"`
+	ProviderResponse          string           `json:"provider_response,omitempty"`
+	ProviderResponseTruncated bool             `json:"provider_response_truncated,omitempty"`
+	ExitConfirmed             bool             `json:"exit_confirmed"`
 }
 
 // Budget separates execution, local CLI, and caller wait limits.

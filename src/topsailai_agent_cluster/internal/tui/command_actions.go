@@ -122,5 +122,25 @@ func renderReceiptDetails(out io.Writer, receipt protocol.ExecutionReceipt) erro
 			return err
 		}
 	}
-	return nil
+	return renderProviderResponse(out, receipt.ProviderResponse, receipt.ProviderResponseTruncated)
+}
+
+// renderProviderResponse prints the provider's own return document verbatim as a
+// separate section, so the operator can distinguish this service's receipt from
+// the provider's raw answer. An absent document prints nothing, which keeps the
+// previous output byte-identical for providers that return no document.
+// Escape sequences are not stripped here: the terminal boundary already does
+// that, and the stored document must stay faithful to what the provider returned.
+func renderProviderResponse(out io.Writer, response string, truncated bool) error {
+	if response == "" {
+		return nil
+	}
+	if _, err := fmt.Fprintf(out, "provider_response:\n%s\n", response); err != nil {
+		return err
+	}
+	if !truncated {
+		return nil
+	}
+	_, err := fmt.Fprintf(out, "provider_response_truncated: true (limit %d bytes)\n", protocol.MaxProviderResponseBytes)
+	return err
 }
