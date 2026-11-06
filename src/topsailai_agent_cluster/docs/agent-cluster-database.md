@@ -30,7 +30,7 @@ One registered machine, independent of IP, hostname or process lifetime.
 | platform_json | TEXT | Standard OS, architecture and Endpoint software version |
 | labels_json | TEXT | Standard user labels, not adapter configuration |
 | enabled | INTEGER, CHECK 0 or 1 | Whether registration is enabled |
-| source_generation | BIGINT, nonnegative | Server-issued current connection fencing generation; initially zero |
+| source_generation | not implemented | The current `endpoints` table has no such column; Server-issued connection fencing generation remains a proposal |
 | instance_id | TEXT nullable | Current/last Endpoint process instance |
 | capabilities_json | TEXT nullable | Latest standard Endpoint/resource operation descriptors, no provider schemas |
 | capability_revision | TEXT nullable | Matching standard capability revision |
@@ -42,7 +42,7 @@ One registered machine, independent of IP, hostname or process lifetime.
 
 Capabilities/profile data are nullable before the first handshake and become stale across disconnection; they never independently authorize an action. Endpoint revalidates current profile/capability revisions and local policy before execution. Public presets describe what may be started, not how a private adapter implements it.
 
-Compute connection state using the active authenticated channel, Server process state and last_seen_at_ms. A persisted old timestamp cannot establish online status after Server restart. Metadata updates must patch only their fields and never overwrite a newer source_generation or health update using a stale whole-row object.
+Compute connection state using the active authenticated channel, Server process state and last_seen_at_ms. A persisted old timestamp cannot establish online status after Server restart. Metadata updates must patch only their fields and never overwrite a newer health update using a stale whole-row object.
 
 ## endpoint_session_state
 
@@ -51,8 +51,8 @@ One row per Endpoint containing only its latest successfully accepted complete s
 | Field | Type / constraint | Meaning |
 |---|---|---|
 | endpoint_id | TEXT primary key, foreign key endpoints | Owning machine |
-| schema_version | INTEGER, positive | Standard inventory document version |
-| source_generation | BIGINT, positive | Accepted source connection generation |
+| schema_version | TEXT, non-empty | Standard inventory document version, for example `v1` |
+| source_generation | TEXT, non-empty | Implemented value is the fixed marker `endpoint-local`; not a Server-issued fencing generation |
 | snapshot_revision | BIGINT, positive | Monotonic collection revision within that generation |
 | sessions_json | TEXT | Entire current standard inventory, never raw adapter-grouped CLI output |
 | observed_at_ms | BIGINT | Endpoint collection completion time |
