@@ -67,9 +67,15 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             "agent.tokens": self.agent_tokens,
         }
 
+        # session metadata
+        session_map = {
+            "session.rename": self.session_rename,
+        }
+
         # total
         instructions = {}
         instructions.update(ctx_map)
+        instructions.update(session_map)
 
         # result
         return instructions
@@ -77,6 +83,43 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
     def agent_tokens(self) -> str:
         """Report token usage for the two current message layers."""
         return get_tokens(self.ctx_runtime_data)
+
+    ##############################################################################
+    # Session metadata
+    ##############################################################################
+    def session_rename(self, *args) -> str:
+        """
+        Rename the current session and refresh its update_time.
+
+        The new name is the positional arguments joined with a single space,
+        so multi-word names do not need quoting.
+
+        Usage::
+
+            /session.rename my new name
+
+        Args:
+            *args: Positional words/phrases that are assembled into the new
+                session name.
+
+        Returns:
+            str: A concise confirmation or error message.
+        """
+        session_id = self.session_id
+        if not session_id:
+            return "no active session, cannot rename"
+
+        session_name = " ".join(str(arg) for arg in args).strip()
+        if not session_name:
+            return "Usage: /session.rename <session_name>"
+
+        if "\0" in session_name or "\n" in session_name or "\r" in session_name:
+            return "Invalid session name: control characters are not allowed"
+
+        if not ctx_manager.update_session_name(session_id, session_name):
+            return f"rename failed: session_id={session_id}"
+
+        return f"renamed session {session_id} -> {session_name}"
 
     ##############################################################################
     # Context, ctx

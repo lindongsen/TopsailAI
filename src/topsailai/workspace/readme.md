@@ -128,13 +128,14 @@ Base class with shared summarization infrastructure.
 - `_get_summary_prompt()` — loads summary prompts (task vs memory mode)
 
 #### `context/instruction.py` — `ContextRuntimeInstructions`
-Human-facing `/ctx.*` commands.
+Human-facing `/ctx.*` and `/session.*` commands.
 
 - `/ctx.clear` — clear session messages
 - `/ctx.history` — display message history
 - `/ctx.del_msg` — delete message by index
 - `/ctx.summarize` — trigger summarization
 - `/ctx.story` — save history as story memory
+- `/session.rename <session_name>` — rename the current session and refresh its `update_time`; the name is the positional arguments joined with spaces, so multi-word names need no quoting
 
 #### `context/agent_tool.py` — `ContextRuntimeAgentTools`
 Agent-callable tools for pruning messages in both layers.

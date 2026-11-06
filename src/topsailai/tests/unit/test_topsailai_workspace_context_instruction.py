@@ -81,6 +81,7 @@ class TestContextRuntimeInstructions(unittest.TestCase):
             "ctx.del_msg",
             "ctx.del_msgs",
             "ctx.summarize",
+            "session.rename",
         ]
         result = self.instruction.instructions
         for key in expected_keys:
@@ -288,6 +289,68 @@ class TestContextRuntimeInstructions(unittest.TestCase):
             need_interactive=True,
             force=True,
         )
+
+    ##############################################################################
+    # TestSessionRename
+    ##############################################################################
+    def test_session_rename_success(self):
+        """Renaming an active session delegates to ctx_manager and confirms."""
+        self.mock_ctx_runtime_data.session_id = "session_abc"
+        self.mock_ctx_manager.update_session_name.return_value = True
+
+        result = self.instruction.session_rename("my", "new", "name")
+
+        self.mock_ctx_manager.update_session_name.assert_called_once_with(
+            "session_abc", "my new name"
+        )
+        self.assertIn("session_abc", result)
+        self.assertIn("my new name", result)
+
+    def test_session_rename_without_session(self):
+        """Without an active session the handler refuses and does not delegate."""
+        self.mock_ctx_runtime_data.session_id = None
+
+        result = self.instruction.session_rename("anything")
+
+        self.mock_ctx_manager.update_session_name.assert_not_called()
+        self.assertIn("no active session", result)
+
+    def test_session_rename_without_name_shows_usage(self):
+        """Missing name yields the usage line and does not delegate."""
+        self.mock_ctx_runtime_data.session_id = "session_abc"
+
+        result = self.instruction.session_rename()
+
+        self.mock_ctx_manager.update_session_name.assert_not_called()
+        self.assertIn("Usage: /session.rename", result)
+
+    def test_session_rename_blank_name_shows_usage(self):
+        """Whitespace-only names are treated as missing."""
+        self.mock_ctx_runtime_data.session_id = "session_abc"
+
+        result = self.instruction.session_rename("   ")
+
+        self.mock_ctx_manager.update_session_name.assert_not_called()
+        self.assertIn("Usage: /session.rename", result)
+
+    def test_session_rename_reports_failure(self):
+        """A storage failure surfaces as a rename-failed message."""
+        self.mock_ctx_runtime_data.session_id = "session_abc"
+        self.mock_ctx_manager.update_session_name.return_value = False
+
+        result = self.instruction.session_rename("new")
+
+        self.assertIn("rename failed", result)
+        self.assertIn("session_abc", result)
+
+    def test_session_rename_rejects_control_characters(self):
+        """Control characters are refused before hitting storage."""
+        self.mock_ctx_runtime_data.session_id = "session_abc"
+
+        result = self.instruction.session_rename("bad\nname")
+
+        self.mock_ctx_manager.update_session_name.assert_not_called()
+        self.assertIn("Invalid session name", result)
 
 
 if __name__ == '__main__':

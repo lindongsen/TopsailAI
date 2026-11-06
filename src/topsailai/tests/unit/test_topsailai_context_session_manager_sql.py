@@ -1054,7 +1054,7 @@ class TestSessionUpdateTime:
         data.create_time = old_time
         session_mgr.create_session(data)
         with patch.object(session_sql, "datetime", side_effect=RuntimeError("clock")):
-            assert session_mgr.update_session_name("rollback_time", "new") is None
+            assert session_mgr.update_session_name("rollback_time", "new") is False
         session = session_mgr.get_session("rollback_time")
         assert session.session_name is None
         assert session.update_time == old_time

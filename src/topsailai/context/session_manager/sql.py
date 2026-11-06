@@ -702,13 +702,18 @@ class SessionSQLAlchemy(SessionStorageBase):
         """
         Update the name of an existing session.
 
+        The session row's ``update_time`` is refreshed in the same transaction
+        whenever the stored name actually changes, so the "updated at" column
+        always reflects the moment of the rename.
+
         Args:
             session_id (str): The session id to update.
             session_name (str): The new session name.
 
         Returns:
-            bool: True if the session name was updated successfully,
-                  False if the session does not exist or the update failed.
+            bool: True if the session name was updated successfully (or already
+                  equalled the requested name), False if the session does not
+                  exist or the update failed.
         """
         db_session = self.SessionLocal()
         try:
@@ -727,6 +732,7 @@ class SessionSQLAlchemy(SessionStorageBase):
         except Exception as e:
             db_session.rollback()
             logger.error(f"update_session_name failed: session_id={session_id}, {e}")
+            return False
         finally:
             db_session.close()
 
