@@ -395,7 +395,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "status":
 		return false, interactiveStatus(ctx, api, state, strings.TrimSpace(rest), out)
 	case "refresh":
-		return false, interactiveRefresh(ctx, api, state, out, errOut, options.Color)
+		return false, interactiveRefresh(ctx, api, state, trustedOut, errOut, options.Color)
 	case "start":
 		if query, ok := api.(LaunchQuerier); ok && !strings.Contains(rest, "--") {
 			recorder := &startOutputRecorder{}
