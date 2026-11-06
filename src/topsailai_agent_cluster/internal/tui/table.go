@@ -32,10 +32,16 @@ const (
 	columnState       = 5
 	columnDataStatus  = 6
 	columnLastSuccess = 7
+	columnName        = 3
 )
 
 var tableHeaders = []string{"NO", "ENDPOINT", "ADAPTER", "SESSION_NAME", "SESSION_ID", "SESSION_STATUS", "DATA_STATUS", "LAST_SUCCESS"}
-var tableCaps = []int{4, 20, 18, 36, 36, 14, 19, 19}
+var tableCaps = []int{4, 20, 18, 64, 36, 14, 19, 19}
+
+// minimumTableWidth reports the smallest width able to hold one column per field.
+func minimumTableWidth(columns int) int {
+	return 3*(columns-1) + columns
+}
 
 // RenderTable writes a bounded table and sorted endpoint diagnostics.
 func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFailure, options TableOptions) error {
@@ -48,7 +54,15 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 	for i, row := range rows {
 		cells[i] = tableCells(row, options.Location)
 		for j, cell := range cells[i] {
-			if n := displayWidth(cell); n > widths[j] {
+			n := displayWidth(cell)
+			if j == columnName {
+				// Session names are shown in full so a long name is never truncated.
+				if n > widths[j] {
+					widths[j] = n
+				}
+				continue
+			}
+			if n > widths[j] {
 				widths[j] = minInt(n, tableCaps[j])
 			}
 		}
@@ -98,8 +112,8 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 		_, err := io.WriteString(out, "\n")
 		return err
 	}
-	if options.Width > 0 && options.Width < 60 {
-		if err := writeNarrowTable(out, cells, options.Width); err != nil {
+	if options.Width > 0 && options.Width < minimumTableWidth(len(widths)) {
+		if err := writeNarrowTable(out, cells, options.Width, options.Color); err != nil {
 			return err
 		}
 	} else {

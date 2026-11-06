@@ -63,8 +63,11 @@ func RenderDetail(w io.Writer, detail Detail) {
 }
 
 // RenderSnapshot writes an explicit one-shot output snapshot result.
-func RenderSnapshot(w io.Writer, observedAtMS int64, content string, truncated bool) {
-	fmt.Fprintf(w, "observed_at_ms: %d\ntruncated: %t\n%s\n", observedAtMS, truncated, content)
+// maxLines bounds the content to its newest lines so a chatty session cannot
+// flood the terminal; a non-positive limit keeps every line.
+func RenderSnapshot(w io.Writer, observedAtMS int64, content string, truncated bool, maxLines int) {
+	bounded, clipped := TrimTailLines(content, maxLines)
+	fmt.Fprintf(w, "observed_at_ms: %d\ntruncated: %t\n%s\n", observedAtMS, truncated || clipped, bounded)
 }
 
 // ReceiptForStatus builds a receipt value from a generic command response.
@@ -89,4 +92,21 @@ func valueString(command map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+// TrimTailLines keeps at most maxLines trailing lines of a snapshot body.
+// A non-positive bound disables the limit, so callers can opt out explicitly.
+func TrimTailLines(content string, maxLines int) (string, bool) {
+	if maxLines <= 0 {
+		return content, false
+	}
+	trimmed := strings.TrimSuffix(content, "\n")
+	if trimmed == "" {
+		return content, false
+	}
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) <= maxLines {
+		return content, false
+	}
+	return strings.Join(lines[len(lines)-maxLines:], "\n") + "\n", true
 }

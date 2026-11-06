@@ -38,12 +38,32 @@ func fitTableWidths(widths []int, limit int) {
 	}
 }
 
-// writeNarrowTable keeps tiny terminals bounded with one clipped field per line.
-func writeNarrowTable(out io.Writer, rows [][]string, width int) error {
+// writeNarrowTable keeps tiny terminals bounded with one labelled field per line.
+// Labels and status values keep their styling so narrow output stays readable.
+func writeNarrowTable(out io.Writer, rows [][]string, width int, policy ColorPolicy) error {
 	for _, row := range rows {
 		for i, value := range row {
-			line := clipCell(tableHeaders[i]+": "+value, width)
-			if _, err := io.WriteString(out, line+"\n"); err != nil {
+			label := clipCell(tableHeaders[i]+": ", width)
+			if err := writeStyled(out, ansiBoldCyan, label, policy); err != nil {
+				return err
+			}
+			remaining := width - displayWidth(label)
+			if remaining < 0 {
+				remaining = 0
+			}
+			cell := clipCell(value, remaining)
+			if i == columnName {
+				// Session names stay complete even in a narrow terminal.
+				cell = value
+			}
+			state := rowState(row)
+			if i == columnDataStatus {
+				state = value
+			}
+			if err := writeCellState(out, cell, i, state, policy); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(out, "\n"); err != nil {
 				return err
 			}
 		}

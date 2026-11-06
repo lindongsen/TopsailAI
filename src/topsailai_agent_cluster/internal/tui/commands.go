@@ -113,7 +113,7 @@ func (r CommandRunner) Show(ctx context.Context, out io.Writer, id string, jsonM
 }
 
 // Logs retrieves and renders a bounded output snapshot.
-func (r CommandRunner) Logs(ctx context.Context, out io.Writer, endpointID, resourceID string, maxBytes int, jsonMode bool) error {
+func (r CommandRunner) Logs(ctx context.Context, out io.Writer, endpointID, resourceID string, maxBytes, maxLines int, jsonMode bool) error {
 	report, err := r.API.GetInventory(ctx, endpointID)
 	if err != nil {
 		return err
@@ -136,7 +136,7 @@ func (r CommandRunner) Logs(ctx context.Context, out io.Writer, endpointID, reso
 		_, err = fmt.Fprintln(out, snapshot.ErrorCode)
 		return err
 	}
-	RenderSnapshot(out, snapshot.ObservedAtMS, snapshot.Data, snapshot.Truncated)
+	RenderSnapshot(out, snapshot.ObservedAtMS, snapshot.Data, snapshot.Truncated, maxLines)
 	return nil
 }
 

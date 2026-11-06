@@ -270,7 +270,7 @@ func TestUnitAHelpAndErrorWriterBranches(t *testing.T) {
 		t.Fatal("interactive-only help target unexpectedly succeeded")
 	}
 	out.Reset()
-	if err := writeInteractiveError(&out, "send", fmt.Errorf("usage: send <json>")); err != nil {
+	if err := writeInteractiveError(&out, "send", fmt.Errorf("usage: send <text>")); err != nil {
 		t.Fatal(err)
 	}
 	assertActionableError(t, out.String(), "error: invalid arguments")

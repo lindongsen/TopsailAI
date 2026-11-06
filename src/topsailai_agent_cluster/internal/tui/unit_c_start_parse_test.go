@@ -159,7 +159,7 @@ func TestUnitCStartPromptRendererExactScopeBytes(t *testing.T) {
 		{"endpoint-host", ScopeState{Kind: ScopeEndpoint, Hostname: "host", EndpointID: "ep-1"}, false, "endpoint[host/ep-1]> "},
 		{"session-default-provider", ScopeState{Kind: ScopeSession, EndpointID: "ep-1"}, false, "session[ep-1/-]> "},
 		{"session-invalidated", ScopeState{Kind: ScopeSession, Hostname: "host", ProviderSessionID: "provider", EndpointID: "ep-1"}, true, "session[host/provider!]> "},
-		{"sanitized-and-clipped", ScopeState{Kind: ScopeEndpoint, Hostname: longEndpoint, EndpointID: "ep-1"}, false, "endpoint[endpoint∕with\\\\controls�宽宽宽宽宽.../ep-1]> "},
+		{"sanitized-and-unclipped", ScopeState{Kind: ScopeEndpoint, Hostname: longEndpoint, EndpointID: "ep-1"}, false, "endpoint[endpoint∕with\\\\controls�宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽宽/ep-1]> "},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,7 +181,7 @@ func TestUnitCStartStandaloneHelpMatchesCurrentPreCContract(t *testing.T) {
 		target, digest string
 		size           int
 	}{
-		{"", "e79303c5ebee16ad1e674a4e8976c2cb61e6cf4965686a114785c46eb8240311", 2009},
+		{"", "7b31b42c3b003bf04e7723cd601c3fc1027bb0317288a88eeedf9e89454ef942", 2069},
 		{"list", "6bd206a5189193222ff5e9baadb104be632b1caa57d8574abd4218b1b615108c", 1298},
 		{"start", "74345eaaa6d716dd8e5489febac7c4afd1a4ef8530844ccf57fbc34394f9be62", 854},
 		{"btw", "bfce130962dc1b5e01cd764bc94ae3d7699816986506d9740b8ddeb2144d4222", 219},

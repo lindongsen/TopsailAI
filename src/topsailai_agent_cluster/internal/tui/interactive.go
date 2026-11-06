@@ -20,6 +20,7 @@ import (
 type InteractiveOptions struct {
 	ReadLine          InteractiveLineReader
 	MaxBytes          int
+	MaxLines          int
 	WaitTimeoutMS     int64
 	LineLimit         int
 	Color             ColorPolicy
@@ -131,6 +132,9 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 	}
 	if input == nil || output == nil || errors == nil {
 		return fmt.Errorf("interactive streams are unavailable")
+	}
+	if options.MaxLines <= 0 {
+		options.MaxLines = 100
 	}
 	if options.MaxBytes <= 0 {
 		options.MaxBytes = 64 << 10
@@ -387,7 +391,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		}
 		return false, interactiveShow(ctx, api, state, strings.TrimSpace(rest), out)
 	case "logs":
-		return false, interactiveLogs(ctx, api, state, strings.TrimSpace(rest), options.MaxBytes, out)
+		return false, interactiveLogs(ctx, api, state, strings.TrimSpace(rest), options.MaxBytes, options.MaxLines, out)
 	case "status":
 		return false, interactiveStatus(ctx, api, state, strings.TrimSpace(rest), out)
 	case "refresh":

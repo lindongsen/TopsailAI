@@ -76,7 +76,7 @@ func TestRenderFunctionsProduceStableEvidence(t *testing.T) {
 		t.Fatalf("detail=%q", detailOut.String())
 	}
 	var snapshotOut bytes.Buffer
-	RenderSnapshot(&snapshotOut, 9, "output", true)
+	RenderSnapshot(&snapshotOut, 9, "output", true, 0)
 	if !strings.Contains(snapshotOut.String(), "truncated: true") {
 		t.Fatalf("snapshot=%q", snapshotOut.String())
 	}

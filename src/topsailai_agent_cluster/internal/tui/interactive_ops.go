@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,10 +15,7 @@ import (
 // interactiveLogs resolves the session inside the current endpoint scope.
 // A bare ASCII row number selects the session from the most recently rendered
 // list, so the operator never has to type a provider session identifier.
-func interactiveLogs(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, maxBytes int, out io.Writer) error {
-	if err := rejectInteractiveOption("logs", rest); err != nil {
-		return err
-	}
+func interactiveLogs(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, maxBytes, maxLines int, out io.Writer) error {
 	if state.Invalidated {
 		return state.requireUsable()
 	}
@@ -26,13 +24,13 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 		return fmt.Errorf("no endpoint selected; use cd <number> to enter an endpoint row, or cd <hostname>/<endpoint-id>")
 	}
 	resourceID := state.Scope.SessionID
-	if target := strings.TrimSpace(rest); target != "" {
-		args := strings.Fields(target)
-		if len(args) != 1 {
-			return fmt.Errorf("usage: logs [session]")
-		}
-		resourceID = args[0]
-		row, resolved, err := resolveSessionTokenInEndpoint(state, args[0], endpointID)
+	target, maxLines, err := parseLogsArgs(rest, maxLines)
+	if err != nil {
+		return err
+	}
+	if target != "" {
+		resourceID = target
+		row, resolved, err := resolveSessionTokenInEndpoint(state, target, endpointID)
 		if err != nil {
 			return err
 		}
@@ -53,7 +51,53 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 	if err != nil {
 		return numericTokenHint(strings.TrimSpace(rest), err)
 	}
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, out, endpointID, session.SessionID, maxBytes, false)
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, out, endpointID, session.SessionID, maxBytes, maxLines, false)
+}
+
+// parseLogsArgs splits an optional session token from an optional line limit.
+// Accepted forms are -n <lines>, --lines <lines>, and --lines=<lines>.
+func parseLogsArgs(rest string, fallback int) (string, int, error) {
+	maxLines := fallback
+	target := ""
+	tokens := strings.Fields(rest)
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "-n" || token == "--lines":
+			if i+1 >= len(tokens) {
+				return "", 0, fmt.Errorf("usage: logs [-n <lines>] [session]")
+			}
+			i++
+			parsed, err := parseLineCount(tokens[i])
+			if err != nil {
+				return "", 0, err
+			}
+			maxLines = parsed
+		case strings.HasPrefix(token, "--lines="):
+			parsed, err := parseLineCount(strings.TrimPrefix(token, "--lines="))
+			if err != nil {
+				return "", 0, err
+			}
+			maxLines = parsed
+		case strings.HasPrefix(token, "-"):
+			return "", 0, fmt.Errorf("usage: logs [-n <lines>] [session]")
+		default:
+			if target != "" {
+				return "", 0, fmt.Errorf("usage: logs [-n <lines>] [session]")
+			}
+			target = token
+		}
+	}
+	return target, maxLines, nil
+}
+
+// parseLineCount validates a positive line limit.
+func parseLineCount(raw string) (int, error) {
+	count, err := strconv.Atoi(raw)
+	if err != nil || count <= 0 {
+		return 0, fmt.Errorf("line count must be a positive integer")
+	}
+	return count, nil
 }
 
 func interactiveValue(values map[string]any, key string) string {
@@ -91,6 +135,23 @@ func interactiveStatus(parent context.Context, api InteractiveAPI, state *intera
 	return err
 }
 
+// sendPayloadBytes converts interactive send input into a runtime message payload.
+// A JSON object is forwarded unchanged; any other input is sent as plain text.
+func sendPayloadBytes(text string) (json.RawMessage, error) {
+	if strings.HasPrefix(text, "{") {
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(text), &payload); err != nil || payload == nil {
+			return nil, fmt.Errorf("payload must be a JSON object or plain text")
+		}
+		return json.RawMessage(text), nil
+	}
+	wrapped, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		return nil, fmt.Errorf("encode payload: %w", err)
+	}
+	return json.RawMessage(wrapped), nil
+}
+
 func interactiveSend(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lineSource <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {
 	if err := state.requireUsable(); err != nil {
 		return err
@@ -100,14 +161,14 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 		return fmt.Errorf("interactive send does not support --json")
 	}
 	if payloadText == "" {
-		return fmt.Errorf("payload must be a JSON object")
+		return fmt.Errorf("payload must not be empty")
 	}
-	if len(payloadText) == 0 || len(payloadText) > options.LineLimit {
+	if len(payloadText) > options.LineLimit {
 		return fmt.Errorf("payload exceeds the maximum length")
 	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(payloadText), &payload); err != nil || payload == nil {
-		return fmt.Errorf("payload must be a JSON object")
+	sendPayload, err := sendPayloadBytes(payloadText)
+	if err != nil {
+		return err
 	}
 	preflightCtx, cancelPreflight := commandContext(parent)
 	beforeCapability, err := PreflightCapability(preflightCtx, api, state.EndpointID, protocol.OperationMessageSend)
@@ -156,7 +217,7 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 		return fmt.Errorf("capability changed after confirmation; send cancelled")
 	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: json.RawMessage(payloadText), Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
+	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: sendPayload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
 	if err != nil {
 		return err
 	}

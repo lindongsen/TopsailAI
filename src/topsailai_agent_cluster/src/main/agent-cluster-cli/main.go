@@ -88,6 +88,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	token := flags.String("token", os.Getenv("AGENT_CLUSTER_TOKEN"), "Server bearer token")
 	waitTimeoutMS := flags.Int64("wait-timeout-ms", 0, "maximum local wait for command completion in milliseconds")
 	maxBytes := flags.Int("max-bytes", 64<<10, "maximum output snapshot size in bytes")
+	lines := flags.Int("lines", 100, "maximum number of output lines returned by logs")
 	noColor := flags.Bool("no-color", false, "disable terminal colors")
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
@@ -115,7 +116,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return editorErr
 		}
 		defer closeEditor()
-		return tui.RunInteractive(ctx, api, input, output, errors, tui.InteractiveOptions{ReadLine: readLine, MaxBytes: *maxBytes, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)})
+		return tui.RunInteractive(ctx, api, input, output, errors, tui.InteractiveOptions{ReadLine: readLine, MaxBytes: *maxBytes, MaxLines: *lines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)})
 	}
 	switch flags.Arg(0) {
 	case "help":
@@ -144,7 +145,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if flags.NArg() != 3 {
 			return fmt.Errorf("usage: logs <endpoint-id> <session-id>")
 		}
-		return logs(ctx, api, output, flags.Arg(1), flags.Arg(2), *maxBytes, *jsonMode)
+		return logs(ctx, api, output, flags.Arg(1), flags.Arg(2), *maxBytes, *lines, *jsonMode)
 	case "status":
 		if flags.NArg() != 2 {
 			return fmt.Errorf("usage: status <command-id>")
@@ -187,8 +188,8 @@ func status(ctx context.Context, api tui.CommandAPI, output io.Writer, commandID
 	return legacyRunner(api).Status(ctx, output, commandID, jsonMode)
 }
 
-func logs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID, resourceID string, maxBytes int, jsonMode bool) error {
-	return legacyRunner(api).Logs(ctx, output, endpointID, resourceID, maxBytes, jsonMode)
+func logs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID, resourceID string, maxBytes, maxLines int, jsonMode bool) error {
+	return legacyRunner(api).Logs(ctx, output, endpointID, resourceID, maxBytes, maxLines, jsonMode)
 }
 
 func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision, folder string) error {

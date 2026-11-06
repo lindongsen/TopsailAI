@@ -96,6 +96,31 @@ func (r CommandRunner) RenderAction(out io.Writer, result map[string]any) error 
 	if r.Policy == LegacyPolicy {
 		return RenderJSON(out, result)
 	}
-	_, err := fmt.Fprintln(out, StatusLabel(protocol.CommandStatus(stringValue(result, "status")), ReceiptForStatus(result)))
-	return err
+	if _, err := fmt.Fprintln(out, StatusLabel(protocol.CommandStatus(stringValue(result, "status")), ReceiptForStatus(result))); err != nil {
+		return err
+	}
+	return renderReceiptDetails(out, ReceiptForStatus(result))
+}
+
+// renderReceiptDetails prints the durable receipt fields carried by a result.
+// Absent fields are skipped so a minimal response keeps its previous output.
+func renderReceiptDetails(out io.Writer, receipt protocol.ExecutionReceipt) error {
+	pairs := [][2]string{
+		{"command_id", receipt.CommandID},
+		{"phase", string(receipt.Phase)},
+		{"delivery_boundary", string(receipt.DeliveryBoundary)},
+		{"effect_certainty", string(receipt.EffectCertainty)},
+		{"outcome", receipt.Outcome},
+		{"error_code", receipt.ErrorCode},
+		{"error_message", receipt.ErrorMessage},
+	}
+	for _, pair := range pairs {
+		if pair[1] == "" {
+			continue
+		}
+		if _, err := fmt.Fprintf(out, "%s: %s\n", pair[0], pair[1]); err != nil {
+			return err
+		}
+	}
+	return nil
 }

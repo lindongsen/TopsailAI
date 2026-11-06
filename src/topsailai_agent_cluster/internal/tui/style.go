@@ -72,8 +72,7 @@ func RenderPrompt(w io.Writer, scope ScopeState, invalidated bool, policy ColorP
 
 func sanitizePromptPart(value string) string {
 	value = escapeCell(value)
-	value = strings.ReplaceAll(value, "/", "∕")
-	return clipCell(value, 36)
+	return strings.ReplaceAll(value, "/", "∕")
 }
 
 func shortResourceID(value string) string {

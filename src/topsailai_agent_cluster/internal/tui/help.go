@@ -38,8 +38,8 @@ var commandHelpCatalog = map[string]commandHelp{
 	"stop":      {"stop", "stop the selected session after confirmation", []string{"--json: rejected in interactive mode"}, []string{"stop"}},
 	"inject":    {"inject <json>", "inject context into the selected session", []string{"json: context payload", "--json: rejected in interactive mode"}, []string{`inject {"text":"context"}`}},
 	"interrupt": {"interrupt <json>", "request a soft or hard execution interrupt for the selected session", []string{"json: object with action soft_interrupt or hard_interrupt; soft_interrupt also accepts an optional string message", "--json: rejected in interactive mode"}, []string{`interrupt {"action":"soft_interrupt","message":"Stop and summarize now."}`, `interrupt {"action":"hard_interrupt"}`}},
-	"logs":      {"logs [session]", "show bounded output for a session in the current endpoint", []string{"session: optional session/resource ID, provider session ID, or a bare list row number; defaults to the current session", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID"}, []string{"logs", "logs 1", "logs res_abc"}},
-	"send":      {"send <json>", "send a JSON message to the selected session", []string{"json: message payload"}, []string{`send {"text":"hello"}`}},
+	"logs":      {"logs [-n <lines>] [session]", "show bounded output for a session in the current endpoint", []string{"-n, --lines: maximum number of trailing output lines to show; defaults to 0100", "session: optional session/resource ID, provider session ID, or a bare list row number; defaults to the current session", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID"}, []string{"logs", "logs -n 0250", "logs 1", "logs res_abc"}},
+	"send":      {"send <text>", "send a message to the selected session", []string{"text: message text, or a JSON object with a text field"}, []string{`send hello world`, `send {"text":"hello"}`}},
 	"status":    {"status <command-id>", "show the durable result of a command", []string{"command-id: submitted command identifier"}, []string{"status cmd_123"}},
 	"refresh":   {"refresh", "reload the latest Server inventory and the interactive session table; does not force provider discovery", nil, []string{"refresh"}},
 	"help":      {"help [command]", "show the command overview or detailed help for one command", []string{"command: optional command name, or scope for the scope model"}, []string{"help", "help list", "help scope"}},
@@ -86,8 +86,8 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"list":      "list sessions in the current endpoint; an explicit endpoint must match it",
 		"cd":        "bare cd or cd /: workspace; cd ..: endpoint; cd <target>: navigate",
 		"show":      "show the current session, or an explicit endpoint/session target",
-		"logs":      "show current session output, or another session in this endpoint",
-		"send":      "send a JSON object to the current session after confirmation",
+		"logs":      "show current session output, or another session in this endpoint; -n <lines> bounds the trailing lines",
+		"send":      "send a message to the current session after confirmation",
 		"resume":    "resume the current session",
 		"stop":      "stop the current session",
 		"inject":    "inject context into the current session",
@@ -158,7 +158,7 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 	case "stop":
 		entry.syntax = "agent-cluster-cli [options] stop <endpoint> <resource> <generation>"
 	case "logs":
-		entry.syntax = "agent-cluster-cli [options] logs <endpoint> <session>"
+		entry.syntax = "agent-cluster-cli [options] [--lines <lines>] logs <endpoint> <session>"
 	case "show":
 		entry.syntax = "agent-cluster-cli [options] show <endpoint-or-session>"
 	case "status":

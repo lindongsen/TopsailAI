@@ -47,11 +47,8 @@ func TestSendPayloadObjectAndBytes(t *testing.T) {
 		payload string
 		wantErr string
 	}{
-		{name: "null", payload: "null", wantErr: "error: payload must be a JSON object\n"},
-		{name: "array", payload: "[]", wantErr: "error: payload must be a JSON object\n"},
-		{name: "number", payload: "123", wantErr: "error: payload must be a JSON object\n"},
-		{name: "string", payload: `"x"`, wantErr: "error: payload must be a JSON object\n"},
-		{name: "empty", payload: "", wantErr: "error: payload must be a JSON object\n"},
+		{name: "malformed object", payload: "{", wantErr: "error: payload must be a JSON object or plain text\n"},
+		{name: "empty", payload: "", wantErr: "error: payload must not be empty\n"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -60,7 +57,7 @@ func TestSendPayloadObjectAndBytes(t *testing.T) {
 			_, errorsOut := runInputScenario(t, stub, input, 8192)
 			assertActionableError(t, errorsOut, strings.TrimSuffix(testCase.wantErr, "\n"))
 			lines := strings.Split(strings.TrimSuffix(errorsOut, "\n"), "\n")
-			if lines[1] != "usage: send <json>" {
+			if lines[1] != "usage: send <text>" {
 				t.Fatalf("errors=%q want send usage", errorsOut)
 			}
 			if stub.admit != 0 {
@@ -172,6 +169,41 @@ func TestInteractiveRejectsJSONOptions(t *testing.T) {
 		_, errorsOut := runInputScenario(t, stub, command+"\nquit\n", 8192)
 		if !strings.Contains(errorsOut, "available only in non-interactive mode") || !strings.Contains(errorsOut, "JSON output is available only with the standalone command") {
 			t.Fatalf("command %q errors=%q", command, errorsOut)
+		}
+	}
+}
+
+// TestSendPayloadBytesAcceptsPlainTextAndJSONObject pins the interactive send contract.
+func TestSendPayloadBytesAcceptsPlainTextAndJSONObject(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain", "hello world", `{"text":"hello world"}`},
+		{"plain-with-quotes", `say "hi"`, `{"text":"say \"hi\""}`},
+		{"plain-leading-space", " padded", `{"text":" padded"}`},
+		{"json-object", `{"text":"hello"}`, `{"text":"hello"}`},
+		{"json-object-extra-field", `{"text":"hi","meta":1}`, `{"text":"hi","meta":1}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := sendPayloadBytes(tc.in)
+			if err != nil {
+				t.Fatalf("sendPayloadBytes(%q) error=%v", tc.in, err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("sendPayloadBytes(%q)=%s want %s", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSendPayloadBytesRejectsMalformedJSONObject keeps brace input strict.
+func TestSendPayloadBytesRejectsMalformedJSONObject(t *testing.T) {
+	for _, in := range []string{"{", `{"text":}`, `{"a":1`, "{not json}"} {
+		if _, err := sendPayloadBytes(in); err == nil {
+			t.Fatalf("sendPayloadBytes(%q) accepted malformed input", in)
 		}
 	}
 }

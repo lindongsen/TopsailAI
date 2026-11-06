@@ -325,7 +325,7 @@ func TestNonInteractiveHelpCatalogMatchesStandaloneDispatch(t *testing.T) {
 	for _, want := range []string{
 		"agent-cluster-cli [options] [--endpoint <id>] list [--clean]",
 		"agent-cluster-cli [options] show <endpoint-or-session>",
-		"agent-cluster-cli [options] logs <endpoint> <session>",
+		"agent-cluster-cli [options] [--lines <lines>] logs <endpoint> <session>",
 		"agent-cluster-cli [options] status <command-id>",
 		"agent-cluster-cli [options] send <endpoint> <resource> [payload] [generation]",
 		"agent-cluster-cli [options] btw <endpoint> <resource> [payload] [generation]",
