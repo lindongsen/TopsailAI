@@ -421,9 +421,14 @@ class AgentChat(AgentChatBase):
             message = self.format_message(message)
 
         # set terminal title once at session start
+        # the session name is generated asynchronously after the first turn
+        # starts, so the cache is reset here to make sure the later refresh
+        # is not suppressed by a title written before the name existed
         try:
+            terminal_title.reset_terminal_title_cache()
             terminal_title.refresh_terminal_title(
                 session_id=self.ctx_runtime_data.session_id,
+                force=True,
             )
         except Exception as e:
             logger.debug("Failed to refresh terminal title at session start: %s", e)
@@ -677,18 +682,22 @@ class AgentChat(AgentChatBase):
                     __content = tool_call_stat.export_json()
                     logger.info("ToolStat of tool_calls:\n [%s]", __content)
 
+                # refresh the terminal title before the times check, because
+                # the session name is generated during the first turn and a
+                # single-turn run would otherwise exit without ever showing it
+                try:
+                    terminal_title.refresh_terminal_title(
+                        session_id=self.ctx_runtime_data.session_id,
+                        force=True,
+                    )
+                except Exception as e:
+                    logger.debug("Failed to refresh terminal title: %s", e)
+
                 # check times after the completed-turn summary is emitted
                 if reached_times_limit:
                     break
 
                 # next time
-                try:
-                    terminal_title.refresh_terminal_title(
-                        session_id=self.ctx_runtime_data.session_id,
-                    )
-                except Exception as e:
-                    logger.debug("Failed to refresh terminal title: %s", e)
-
                 func_print_pre_input_message()
                 while True:
                     message = input_message(hook=self.hook_instruction)

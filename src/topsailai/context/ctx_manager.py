@@ -338,6 +338,36 @@ def generate_session_name(session_id: str, message: str, agent_startup_state=Non
         logger.debug(f"generate_session_name failed for session_id={session_id}: {e}")
         return ""
 
+def _refresh_terminal_title_after_rename(session_id: str, session_name: str) -> None:
+    """Push the freshly generated session name to the terminal title.
+
+    The name is produced by a background thread after the first turn starts,
+    which is later than the title refresh performed at session start. Without
+    this notification the terminal keeps showing the session id until the next
+    turn ends, and a single-turn run never shows the generated name at all.
+
+    The import is local to avoid a circular import: workspace.terminal_title
+    reads the session manager from this module. Any failure is swallowed so the
+    background naming thread is never interrupted.
+
+    Args:
+        session_id (str): The renamed session id.
+        session_name (str): The generated session name.
+    """
+    try:
+        from topsailai.workspace import terminal_title
+        terminal_title.refresh_terminal_title(
+            session_id=session_id,
+            session_name=session_name,
+            force=True,
+        )
+    except Exception as e:
+        logger.debug(
+            "auto_rename: failed to refresh terminal title for session_id=%s: %s",
+            session_id, e,
+        )
+
+
 def _async_update_session_name(
         session_id: str,
         message: str,
@@ -359,6 +389,7 @@ def _async_update_session_name(
     """
     thread_local_tool.set_thread_name(session_id)
     worker_agent_name = f"{agent_name}/GenerateSessionName"
+    renamed_session_name = ""
     with thread_local_tool.ctxm_give_agent_name(worker_agent_name):
         try:
             session_name = (
@@ -371,10 +402,16 @@ def _async_update_session_name(
 
             if update_session_name(session_id, session_name, session_mgr=session_mgr):
                 logger.info(f"auto_rename: session_id={session_id}, session_name={session_name}")
+                renamed_session_name = session_name
             else:
                 logger.warning("auto_rename storage update failed: session_id=%s", session_id)
         except Exception as e:
             logger.debug(f"auto_rename failed for session_id={session_id}: {e}")
+
+    # notify the terminal title outside the worker identity scope, so the
+    # composed agent name is not extended by an unrelated presentation concern
+    if renamed_session_name:
+        _refresh_terminal_title_after_rename(session_id, renamed_session_name)
 
 
 def _get_session_environment_paths() -> dict[str, Optional[str]]:

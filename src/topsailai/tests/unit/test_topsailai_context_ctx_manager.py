@@ -584,9 +584,21 @@ class TestAsyncSessionNameAgentIdentity(unittest.TestCase):
             identities.append(thread_local_tool.get_agent_name()) or True
         )
 
-        with patch('topsailai.context.ctx_manager.logger.info') as mock_info:
-            mock_info.side_effect = lambda *_: identities.append(
-                thread_local_tool.get_agent_name()
+        refresh_identities = []
+
+        def record_refresh(*_args, **_kwargs):
+            refresh_identities.append(thread_local_tool.get_agent_name())
+
+        with patch('topsailai.context.ctx_manager.logger.info') as mock_info, \
+                patch(
+                    'topsailai.context.ctx_manager.'
+                    '_refresh_terminal_title_after_rename',
+                    side_effect=record_refresh,
+                ) as mock_refresh:
+            mock_info.side_effect = lambda *args: (
+                identities.append(thread_local_tool.get_agent_name())
+                if str(args[0]).startswith('auto_rename')
+                else None
             )
             _async_update_session_name(
                 'session-123',
@@ -604,6 +616,9 @@ class TestAsyncSessionNameAgentIdentity(unittest.TestCase):
             'Auto Name',
         )
         self.assertIsNone(thread_local_tool.get_agent_name())
+        # the presentation concern runs outside the worker identity scope
+        mock_refresh.assert_called_once_with('session-123', 'Auto Name')
+        self.assertEqual(refresh_identities, [None])
 
     @patch('topsailai.context.ctx_manager.generate_session_name', return_value='Auto Name')
     def test_worker_restores_identity_after_storage_failure(self, mock_generate):
@@ -1318,6 +1333,33 @@ class TestSessionNamingStartupIsolation(unittest.TestCase):
 
         self.assertEqual(generate_session_name("session", "task", object()), "Name")
         self.assertFalse(mock_get_llm_chat.call_args.kwargs["load_startup_context"])
+
+
+class TestRefreshTerminalTitleAfterRename(unittest.TestCase):
+    """Verify the rename notification pushes the name to the terminal title."""
+
+    def test_refresh_forces_the_generated_name(self):
+        """Forward the generated name with force so a cached title is rewritten."""
+        from topsailai.context.ctx_manager import _refresh_terminal_title_after_rename
+
+        with patch('topsailai.workspace.terminal_title.refresh_terminal_title') as mock_refresh:
+            _refresh_terminal_title_after_rename('session-123', 'Auto Name')
+
+        mock_refresh.assert_called_once_with(
+            session_id='session-123',
+            session_name='Auto Name',
+            force=True,
+        )
+
+    def test_refresh_swallows_terminal_failure(self):
+        """A terminal failure must never interrupt the naming worker."""
+        from topsailai.context.ctx_manager import _refresh_terminal_title_after_rename
+
+        with patch(
+            'topsailai.workspace.terminal_title.refresh_terminal_title',
+            side_effect=RuntimeError('boom'),
+        ):
+            _refresh_terminal_title_after_rename('session-123', 'Auto Name')
 
 
 class TestSessionNamingCancellation(unittest.TestCase):

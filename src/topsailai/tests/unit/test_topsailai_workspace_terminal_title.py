@@ -239,5 +239,123 @@ class TestRefreshTerminalTitle(unittest.TestCase):
         self.assertFalse(result)
 
 
+class TestForceAndCacheReset(unittest.TestCase):
+    """Tests for the force flag and the cache reset helper."""
+
+    def setUp(self):
+        """Clear the cached title and skip-reason bookkeeping."""
+        terminal_title._last_title = None
+        terminal_title._logged_skip_reasons.clear()
+
+    def tearDown(self):
+        """Restore module state and environment after each test."""
+        terminal_title._last_title = None
+        terminal_title._logged_skip_reasons.clear()
+        for key in ["TOPSAILAI_TERMINAL_TITLE_ENABLED", "TOPSAILAI_INTERACTIVE_MODE"]:
+            if key in os.environ:
+                del os.environ[key]
+
+    @patch("sys.platform", "linux")
+    def test_force_rewrites_identical_title(self):
+        """force=True must write the title even when it equals the cached one."""
+        os.environ["TOPSAILAI_INTERACTIVE_MODE"] = "1"
+        fake_stdout = TTYStringIO()
+        with patch.object(sys, "stdout", fake_stdout):
+            terminal_title.set_terminal_title("myhost:my-session")
+            result = terminal_title.set_terminal_title(
+                "myhost:my-session", force=True
+            )
+        self.assertTrue(result)
+        self.assertEqual(fake_stdout.getvalue().count("\033]0;"), 2)
+
+    @patch("sys.platform", "linux")
+    def test_reset_cache_allows_rewrite(self):
+        """Clearing the cache must let the same title be written again."""
+        os.environ["TOPSAILAI_INTERACTIVE_MODE"] = "1"
+        fake_stdout = TTYStringIO()
+        with patch.object(sys, "stdout", fake_stdout):
+            terminal_title.set_terminal_title("myhost:my-session")
+            terminal_title.reset_terminal_title_cache()
+            result = terminal_title.set_terminal_title("myhost:my-session")
+        self.assertTrue(result)
+        self.assertEqual(fake_stdout.getvalue().count("\033]0;"), 2)
+
+    @patch("sys.platform", "linux")
+    def test_refresh_forwards_force(self):
+        """refresh_terminal_title must forward force to set_terminal_title."""
+        os.environ["TOPSAILAI_INTERACTIVE_MODE"] = "1"
+        fake_stdout = TTYStringIO()
+        with patch.object(sys, "stdout", fake_stdout):
+            with patch.object(terminal_title, "get_host_name", return_value="myhost"):
+                terminal_title.refresh_terminal_title(
+                    session_id="sid-123", session_name="my-session"
+                )
+                result = terminal_title.refresh_terminal_title(
+                    session_id="sid-123", session_name="my-session", force=True
+                )
+        self.assertTrue(result)
+        self.assertEqual(fake_stdout.getvalue().count("\033]0;"), 2)
+
+
+class TestSkipReasonDiagnostics(unittest.TestCase):
+    """Tests for the once-per-process skip reason logging."""
+
+    def setUp(self):
+        """Clear the cached title and skip-reason bookkeeping."""
+        terminal_title._last_title = None
+        terminal_title._logged_skip_reasons.clear()
+
+    def tearDown(self):
+        """Restore module state and environment after each test."""
+        terminal_title._last_title = None
+        terminal_title._logged_skip_reasons.clear()
+        for key in ["TOPSAILAI_TERMINAL_TITLE_ENABLED", "TOPSAILAI_INTERACTIVE_MODE"]:
+            if key in os.environ:
+                del os.environ[key]
+
+    def test_non_tty_skip_is_logged_once_at_info(self):
+        """A routine skip must be reported once at info, then downgraded."""
+        os.environ["TOPSAILAI_INTERACTIVE_MODE"] = "1"
+        fake_stdout = NonTTYStringIO()
+        with patch.object(sys, "stdout", fake_stdout):
+            with patch.object(terminal_title, "logger") as fake_logger:
+                terminal_title.set_terminal_title("title")
+                terminal_title.set_terminal_title("title")
+
+        info_messages = [
+            item.args[0] for item in fake_logger.info.call_args_list
+        ]
+        self.assertEqual(len(info_messages), 1)
+        self.assertIn("not an interactive TTY", info_messages[0])
+        self.assertEqual(fake_logger.debug.call_count, 1)
+
+    def test_disabled_skip_is_logged_once_at_info(self):
+        """The disabled switch must be reported once at info."""
+        os.environ["TOPSAILAI_TERMINAL_TITLE_ENABLED"] = "0"
+        with patch.object(terminal_title, "logger") as fake_logger:
+            terminal_title.set_terminal_title("title")
+            terminal_title.set_terminal_title("title")
+
+        info_messages = [
+            item.args[0] for item in fake_logger.info.call_args_list
+        ]
+        self.assertEqual(len(info_messages), 1)
+        self.assertIn("feature is disabled", info_messages[0])
+
+    def test_distinct_skip_reasons_are_each_reported(self):
+        """Different skip reasons must not suppress each other."""
+        os.environ["TOPSAILAI_INTERACTIVE_MODE"] = "1"
+        fake_stdout = NonTTYStringIO()
+        with patch.object(sys, "stdout", fake_stdout):
+            with patch.object(terminal_title, "logger") as fake_logger:
+                terminal_title.set_terminal_title("title")
+                terminal_title.set_terminal_title("")
+
+        info_messages = [
+            item.args[0] for item in fake_logger.info.call_args_list
+        ]
+        self.assertEqual(len(info_messages), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

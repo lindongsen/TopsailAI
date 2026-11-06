@@ -178,6 +178,7 @@ Loaded by `plugin_instruction/base/init.py` via `get_function_map()`; supports e
 | `agent/hooks/` | Pre-run and post-final-answer hook discovery and execution |
 | `session_stats_service.py`, `session_stats_writer.py`, `session_stats_projection.py` | Process-owned serialized statistics worker, per-session JSONL storage, and detached snapshot projection |
 | `model_stats_writer.py` | Per-model cumulative statistics document (`{TOPSAILAI_HOME}/workspace/stats/*.model.stats.json`); field reference in [docs/Model_Stats_Document.md](../docs/Model_Stats_Document.md) |
+| `terminal_title.py` | Terminal window title (`OSC 0` on POSIX, `SetConsoleTitleW` on Windows). `refresh_terminal_title(force=True)` rewrites a title that equals the cached one, and `reset_terminal_title_cache()` clears that cache; skip reasons are logged once per process at `info` so a missed update stays diagnosable |
 
 ### Thread-Local Agent Object
 

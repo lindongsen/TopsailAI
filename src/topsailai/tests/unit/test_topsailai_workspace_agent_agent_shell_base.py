@@ -333,6 +333,53 @@ class TestAgentChatRun(unittest.TestCase):
         # Should only call run once due to times=1
         self.assertEqual(self.mock_ai_agent.run.call_count, 1)
 
+    @patch("topsailai.workspace.agent.agent_shell_base.terminal_title")
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
+    def test_run_with_times_limit_refreshes_terminal_title(
+        self, mock_get_agent_step_call, mock_task_tool, mock_lock_tool,
+        mock_env_tool, mock_set_ai_agent, mock_get_hooks, mock_terminal_title
+    ):
+        """A single-turn run must still apply the async generated session name.
+
+        The session name is generated during the first turn, so refreshing the
+        title only after the times check would exit before the name exists.
+        """
+        from topsailai.workspace.agent.agent_shell_base import AgentChat
+
+        mock_get_hooks.return_value = []
+        mock_env_tool.EnvReaderInstance.get.return_value = None
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = lambda key, default: {
+            "TOPSAILAI_INTERACTIVE_MODE": False,
+            "TOPSAILAI_NEED_SYMBOL_FOR_ANSWER": False,
+            "TOPSAILAI_ENABLE_SESSION_LOCK": False,
+        }.get(key, default)
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_env_tool.is_debug_mode.return_value = False
+
+        mock_lock_tool.ctxm_void.return_value.__enter__ = MagicMock(return_value={})
+        mock_lock_tool.ctxm_void.return_value.__exit__ = MagicMock(return_value=False)
+
+        self.mock_ai_agent.run.return_value = "Response"
+
+        agent_chat = AgentChat(
+            hook_instruction=self.hook_instruction,
+            ctx_rt_aiagent=self.ctx_rt_aiagent,
+            ctx_rt_instruction=self.ctx_rt_instruction,
+        )
+
+        agent_chat.run(message="Test", times=1)
+
+        # the cache is reset at session start and the title is forced afterwards
+        mock_terminal_title.reset_terminal_title_cache.assert_called_once()
+        self.assertEqual(mock_terminal_title.refresh_terminal_title.call_count, 2)
+        for call in mock_terminal_title.refresh_terminal_title.call_args_list:
+            self.assertTrue(call.kwargs.get("force"))
+
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
     @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
     @patch("topsailai.workspace.agent.agent_chat_base.env_tool")

@@ -236,6 +236,14 @@ Lessons:
 3. Treat a new failure that appears after a test-infra fix as a coupling signal, not as an unrelated flake.
 
 
+## A presentation update must be triggered where the value is produced, not only where it is consumed
+
+Trigger: the terminal title kept showing `host:session_id` after the agent auto-generated a session name. Three defects combined: the title was refreshed at session start, before the asynchronous naming thread could produce a name; the end-of-turn refresh sat *after* `if reached_times_limit: break`, so every `times=1` entry never applied the name at all; and `_async_update_session_name()` never notified `terminal_title` when the name was actually stored.
+
+Action: notify the presentation layer from the producer (`_refresh_terminal_title_after_rename()` right after a successful `update_session_name()`), move the consumer-side refresh before the loop-exit check, and add `force` plus `reset_terminal_title_cache()` so a cached title cannot suppress a later write after the terminal overwrote it on its own.
+
+Why this prevents recurrence: a value produced asynchronously has two distinct moments — when it is stored and when it is displayed. Refreshing only at fixed checkpoints silently misses the value whenever the checkpoint precedes production, and a cache keyed on the rendered string then makes the miss permanent. Tests must assert the ordering (refresh happens before the exit check) and the producer-side notification, because a test that only checks "the title module works" passes while the title never updates.
+
 ## Hook Point wrappers require explicit Human approval before implementation
 
 Trigger: an implementer added an `observe_*` wrapper (`observe_tool_execute`) around Hook Points without Human approval, despite the earlier rejection of `observe_before_input` and the documented direct-call architecture; the Human explicitly expressed dissatisfaction.
