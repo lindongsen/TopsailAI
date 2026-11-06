@@ -54,8 +54,25 @@ func TestExecutorRejectsMissingTargetBeforeProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	intent := protocol.ImmutableIntent{CommandID: "missing-target", EndpointID: "e", Operation: "send", OperationVersion: "v1", ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
-	if _, err := e.Execute(context.Background(), intent, "hash"); err == nil {
-		t.Fatal("missing target must be rejected")
+	receipt, err := e.Execute(context.Background(), intent, "hash")
+	if err != nil {
+		t.Fatalf("a missing target is a decision, not an infrastructure failure: %v", err)
+	}
+	if receipt.ErrorCode != "target_required" {
+		t.Fatalf("error code=%q, want target_required", receipt.ErrorCode)
+	}
+	if receipt.EffectCertainty != protocol.EffectNotApplied {
+		t.Fatalf("effect certainty=%q, want not_applied", receipt.EffectCertainty)
+	}
+	if receipt.Outcome != "rejected" {
+		t.Fatalf("outcome=%q, want rejected", receipt.Outcome)
+	}
+	entry, err := store.GetJournal(context.Background(), intent.CommandID)
+	if err != nil {
+		t.Fatalf("the rejection must be durable: %v", err)
+	}
+	if entry.Phase != protocol.PhaseReceiptRecorded {
+		t.Fatalf("journal phase=%q, want %q", entry.Phase, protocol.PhaseReceiptRecorded)
 	}
 }
 

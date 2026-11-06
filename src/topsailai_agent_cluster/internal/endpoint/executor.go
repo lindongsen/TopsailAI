@@ -70,11 +70,26 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 	}
 	instance, adapterID, err := e.adapterForIntent(ctx, intent)
 	if err != nil {
+		// A coded resolution failure is a decision about the target, so it must
+		// become a durable terminal rejection. Returning a bare error here left
+		// the command looking in-flight forever, because no receipt was recorded
+		// and the Server therefore never learned the outcome.
+		var coded *resolutionError
+		if errors.As(err, &coded) {
+			receipt := rejectedReceipt(intent, requestHash, coded.code)
+			receipt.ErrorMessage = coded.message
+			return e.recordEarlyRejection(ctx, intent, receipt)
+		}
 		return protocol.ExecutionReceipt{}, err
 	}
 	descriptor, err := instance.Describe(ctx)
 	if err != nil {
-		return protocol.ExecutionReceipt{}, err
+		// The adapter is configured but cannot describe itself, so no capability
+		// can be validated and nothing was invoked: the effect is provably not
+		// applied and the command is terminally rejected.
+		receipt := rejectedReceipt(intent, requestHash, "capability_unavailable")
+		receipt.ErrorMessage = err.Error()
+		return e.recordEarlyRejection(ctx, intent, receipt)
 	}
 	if intent.Operation == "agent.start" {
 		if intent.LaunchProfileID == "" || intent.ProfileRevision == "" {
@@ -235,25 +250,31 @@ func (e *Executor) revalidateGeneration(ctx context.Context, instance adapter.Ad
 
 // adapterForIntent resolves the adapter instance that owns the intent target and
 // returns its configured adapter ID so callers can read that adapter's own persisted
-// collection snapshot without repeating the mapping lookup.
+// collection snapshot without repeating the mapping lookup. A target that cannot be
+// resolved to a configured adapter is reported as a coded resolution error so the
+// caller can record a terminal rejection; a storage failure stays a plain error
+// because it says nothing about the target's validity.
 func (e *Executor) adapterForIntent(ctx context.Context, intent protocol.ImmutableIntent) (adapter.Adapter, string, error) {
 	if intent.Target != nil {
 		mapping, err := e.store.LookupResourceID(ctx, intent.Target.ResourceID)
 		if err != nil {
+			if errors.Is(err, endpointstorage.ErrResourceNotFound) {
+				return nil, "", resolutionFailure("target_not_found", err)
+			}
 			return nil, "", fmt.Errorf("resource_id %q mapping lookup failed: %w", intent.Target.ResourceID, err)
 		}
 		instance, ok := e.registry.Get(mapping.AdapterID)
 		if !ok {
-			return nil, "", fmt.Errorf("resource_id %q adapter %q is not configured", intent.Target.ResourceID, mapping.AdapterID)
+			return nil, "", resolutionFailure("adapter_not_configured", fmt.Errorf("resource_id %q adapter %q is not configured", intent.Target.ResourceID, mapping.AdapterID))
 		}
 		return instance, mapping.AdapterID, nil
 	}
 	if intent.Operation != "agent.start" {
-		return nil, "", fmt.Errorf("resource_id is required for operation %q", intent.Operation)
+		return nil, "", resolutionFailure("target_required", fmt.Errorf("resource_id is required for operation %q", intent.Operation))
 	}
 	instance, ok := e.registry.Get(intent.LaunchProfileID)
 	if !ok {
-		return nil, "", fmt.Errorf("launch profile adapter %q is not configured", intent.LaunchProfileID)
+		return nil, "", resolutionFailure("adapter_not_configured", fmt.Errorf("launch profile adapter %q is not configured", intent.LaunchProfileID))
 	}
 	return instance, intent.LaunchProfileID, nil
 }
@@ -283,6 +304,22 @@ func supports(descriptor protocol.CapabilityDescriptor, operation, version strin
 		}
 	}
 	return false
+}
+
+// resolutionError reports why an intent could not be mapped to a configured
+// adapter. It carries a bounded standard error code so the caller can record a
+// terminal rejection instead of returning a bare error that leaves the command
+// looking in-flight forever.
+type resolutionError struct {
+	code    string
+	message string
+}
+
+func (e *resolutionError) Error() string { return e.message }
+
+// resolutionFailure builds a coded resolution error from an underlying cause.
+func resolutionFailure(code string, cause error) error {
+	return &resolutionError{code: code, message: cause.Error()}
 }
 
 func unknownReceipt(intent protocol.ImmutableIntent, hash, code string) protocol.ExecutionReceipt {

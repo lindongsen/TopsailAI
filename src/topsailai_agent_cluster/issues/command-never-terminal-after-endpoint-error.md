@@ -72,20 +72,41 @@ command that was refused before execution.
 - This is a correctness defect, not only a latency defect. It is independent of the discovery cost
   fixed in `issues/send-latency-redundant-discovery.md`.
 
-## Suggested resolution
+## Resolution
 
-Record a terminal receipt on every pre-execution failure instead of returning a bare error. The
-existing `recordEarlyRejection` helper already does this for other early branches
-(`internal/endpoint/executor.go:69`, `:81`), so the mapping-lookup and adapter-not-configured
-branches should use the same path with an explicit error code such as `target_not_found` or
-`adapter_not_configured`. Then `executeFrame` should not publish a receipt whose `CommandID` is
-empty; treat that as an internal error and skip publication rather than sending a frame the Server
-must reject.
+Implemented on 2026-11-07. A pre-execution failure is now classified as either a **decision about
+the target** (recorded as a durable terminal rejection) or an **infrastructure failure** (still a
+bare error, because it says nothing about the target's validity):
+
+- `internal/storage/endpoint/mapping.go` exports `ErrResourceNotFound`; `LookupResourceID` wraps it,
+  so a missing mapping is distinguishable from a database failure.
+- `internal/endpoint/executor.go` adds a `resolutionError` type carrying a bounded standard error
+  code. `adapterForIntent` returns `target_not_found`, `adapter_not_configured` or `target_required`
+  for the three resolution decisions, and a plain wrapped error for a genuine storage failure.
+- `Executor.Execute` converts a coded resolution failure into `rejectedReceipt` plus
+  `recordEarlyRejection`, and does the same for a `Describe` failure (`capability_unavailable`).
+  Nothing was invoked in either case, so `EffectCertainty` is `not_applied` and the Server maps the
+  receipt to `StatusRejected`, which `IsTerminalState` already treats as terminal.
+- `internal/endpoint/service.go` `executeFrame` refuses to publish a receipt whose `CommandID` is
+  empty, so a future early-return path cannot emit a frame the Server must reject.
+
+Verified end to end on the live local cluster: `send` to an unmapped resource now returns
+`status: rejected`, `error_code: target_not_found`, `effect_certainty: not_applied` in
+**0.11 / 0.32 / 0.21 s** (previously 10.04 / 10.02 / 10.03 s), and the Server log no longer records
+`command "" does not match a stored intent`.
 
 ## Prevention
 
-- A test that submits a command for an unmapped resource ID and asserts the durable status becomes
-  `rejected` with a bounded error code, and that the CLI returns without consuming the full wait
-  budget.
-- A guard in `executeFrame` that refuses to publish a receipt with an empty `CommandID`, so a future
-  early-return path cannot silently produce an unpersistable frame.
+- `TestExecuteRecordsTerminalRejectionForUnmappedResource` and
+  `TestExecuteRecordsTerminalRejectionForUnconfiguredAdapter` assert the durable journal entry is
+  `receipt_recorded` with the expected bounded error code, `not_applied` effect certainty and a
+  `rejected` outcome.
+- `TestServiceDoesNotPublishReceiptWithoutCommandID` asserts the transport carries zero receipt
+  frames when the executor returns an unusable receipt.
+- `TestExecutorRejectsMissingTargetBeforeProvider` was updated to the new contract: a missing target
+  returns a nil error plus a terminal rejection, not an error.
+- Each fix was reverted once to confirm the corresponding test fails on its intended assertion
+  rather than on an unrelated error. The first attempt at the `executeFrame` negative control passed
+  while the guard was removed, because the fixture intent omitted `CapabilityRevision` and
+  `CanonicalHash` returned before the guard; adding the field made the control fail as intended
+  (3 frames published, want 0).

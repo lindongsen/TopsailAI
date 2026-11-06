@@ -346,6 +346,13 @@ func (s *Service) executeFrame(ctx context.Context, frame channel.Frame) {
 	if err != nil {
 		s.logError("execute command", err)
 	}
+	// A receipt without a command ID cannot be persisted by the Server, so
+	// publishing it would leave the command non-terminal forever. Treat it as
+	// an internal error instead of emitting an unusable frame.
+	if receipt.CommandID == "" {
+		s.logError("execute command", errors.New("executor returned a receipt without a command ID"))
+		return
+	}
 	if s.receiptDelay > 0 {
 		timer := time.NewTimer(s.receiptDelay)
 		select {

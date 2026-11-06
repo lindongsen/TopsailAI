@@ -11,6 +11,11 @@ import (
 	"topsailai_agent_cluster/internal/adapter"
 )
 
+// ErrResourceNotFound reports that no durable mapping exists for a resource ID.
+// It is a legitimate rejection cause, not an infrastructure failure, so callers
+// can record a terminal command outcome instead of leaving the command pending.
+var ErrResourceNotFound = errors.New("resource mapping not found")
+
 // ResourceMapping is the durable adapter-package mapping contract.
 type ResourceMapping = adapter.ResourceMapping
 
@@ -58,7 +63,7 @@ func (s *Store) LookupResourceID(ctx context.Context, resourceID string) (Resour
 	var mapping ResourceMapping
 	err := s.db.QueryRowContext(ctx, `SELECT adapter_id, provider_key, resource_id FROM resource_mapping WHERE resource_id=?`, resourceID).Scan(&mapping.AdapterID, &mapping.ProviderKey, &mapping.ResourceID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ResourceMapping{}, fmt.Errorf("resource mapping for %q not found", resourceID)
+		return ResourceMapping{}, fmt.Errorf("%w: %q", ErrResourceNotFound, resourceID)
 	}
 	if err != nil {
 		return ResourceMapping{}, fmt.Errorf("lookup resource mapping: %w", err)
