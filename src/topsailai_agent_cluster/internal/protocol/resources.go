@@ -19,15 +19,19 @@ type Session struct {
 	// adapter. SessionID stays the opaque cluster resource ID used for routing.
 	ProviderSessionID string `json:"provider_session_id,omitempty"`
 	DisplayName       string `json:"display_name,omitempty"`
-	AgentID           string `json:"agent_id"`
-	Generation        string `json:"generation"`
-	AdapterID         string `json:"adapter_id"`
-	State             string `json:"state"`
-	StateReason       string `json:"state_reason,omitempty"`
-	Stale             bool   `json:"stale,omitempty"`
-	Unknown           bool   `json:"unknown,omitempty"`
-	CollectionStatus  string `json:"collection_status,omitempty"`
-	ObservedAtMS      int64  `json:"observed_at_ms"`
+	// ProjectWorkspace is the workspace the session is working on, as reported by
+	// the provider. It is descriptive report data only: it never participates in
+	// routing, capability selection, or authorization.
+	ProjectWorkspace string `json:"project_workspace,omitempty"`
+	AgentID          string `json:"agent_id"`
+	Generation       string `json:"generation"`
+	AdapterID        string `json:"adapter_id"`
+	State            string `json:"state"`
+	StateReason      string `json:"state_reason,omitempty"`
+	Stale            bool   `json:"stale,omitempty"`
+	Unknown          bool   `json:"unknown,omitempty"`
+	CollectionStatus string `json:"collection_status,omitempty"`
+	ObservedAtMS     int64  `json:"observed_at_ms"`
 }
 
 // AdapterSummary describes an adapter as report data, not an execution selector.

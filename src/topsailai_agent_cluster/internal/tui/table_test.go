@@ -322,3 +322,46 @@ func TestTableLastSuccessUsesNonUTCOffset(t *testing.T) {
 		t.Fatalf("DATA_STATUS cell = %q, want %q; row=%q", got, want, lines[3])
 	}
 }
+
+// TestTableRendersProjectWorkspaceInItsOwnColumn proves the provider workspace
+// reaches the table as a dedicated column and stays sanitized.
+func TestTableRendersProjectWorkspaceInItsOwnColumn(t *testing.T) {
+	var out, errors strings.Builder
+	rows := []SessionRow{{EndpointID: "endpoint-1", SessionID: "res_opaque", ProviderSessionID: "provider-1", ProjectWorkspace: "/work/project-a", State: "running", CollectionStatus: protocol.CollectionSucceeded}}
+	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	headerCells := strings.Split(lines[1], " │ ")
+	index := -1
+	for i, want := range tableHeaders {
+		if strings.TrimSpace(headerCells[i]) != want {
+			t.Fatalf("header cell %d=%q want=%q", i, headerCells[i], want)
+		}
+		if want == "PROJECT_WORKSPACE" {
+			index = i
+		}
+	}
+	if index < 0 {
+		t.Fatalf("PROJECT_WORKSPACE header missing: %q", lines[1])
+	}
+	rowCells := strings.Split(lines[3], " │ ")
+	if len(rowCells) != len(tableHeaders) {
+		t.Fatalf("row cell count=%d row=%q", len(rowCells), lines[3])
+	}
+	if got := strings.TrimSpace(rowCells[index]); got != "/work/project-a" {
+		t.Fatalf("workspace cell=%q want=/work/project-a", got)
+	}
+}
+
+// TestTableSanitizesProjectWorkspace keeps control sequences out of the cell.
+func TestTableSanitizesProjectWorkspace(t *testing.T) {
+	var out, errors strings.Builder
+	rows := []SessionRow{{EndpointID: "endpoint-1", SessionID: "res_opaque", ProjectWorkspace: "/work/\x1b[31mevil", State: "running", CollectionStatus: protocol.CollectionSucceeded}}
+	if err := RenderTable(&out, &errors, rows, nil, TableOptions{Location: time.UTC}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "\x1b[31m") {
+		t.Fatalf("escape sequence reached the table: %q", out.String())
+	}
+}

@@ -19,7 +19,7 @@ Workspace/endpoint help must explain starting a project and navigation; session 
 
 ## HELP-02 Detailed help
 
-For **each** of list, endpoints, cd, show, start, resume, stop, inject, interrupt, logs, send, status, refresh, help, quit, enter `help <command>` in all three scopes. Capture complete output, not only its first line. Expect command name, Syntax, Available in and Description; Parameters and Examples appear where applicable. An unavailable command may have detailed help but Available in must not authorize that scope. Verify every displayed example against actual parsing and provider contract; do not approve merely because help renders.
+For **each** of list, endpoints, cd, show, info, start, resume, stop, inject, interrupt, logs, send, status, refresh, help, quit, enter `help <command>` in all three scopes. Capture complete output, not only its first line. Expect command name, Syntax, Available in and Description; Parameters and Examples appear where applicable. An unavailable command may have detailed help but Available in must not authorize that scope. Verify every displayed example against actual parsing and provider contract; do not approve merely because help renders.
 
 | Command | Required syntax/semantics |
 | --- | --- |
@@ -27,6 +27,7 @@ For **each** of list, endpoints, cd, show, start, resume, stop, inject, interrup
 | endpoints | `endpoints [endpoint-id]`; workspace scope only; lists every registered endpoint with connection state, observation time and capability revision; an unknown filter renders an empty table, not an error; it never changes the `list` row numbers used by `cd <number>` |
 | cd | `cd [target]`; empty and / return workspace, .. moves parent, latest row number/hostname/endpoint/internal session/provider session selectors supported |
 | show | `show [endpoint-or-session]`; omitted target uses selected scope target; a bare row number or the displayed provider session ID is accepted; workspace without target must report required selection and name `show <number>` |
+| info | `info [session]`; read-only session detail; a bare row number or the displayed provider session ID is accepted; omitted target uses the current session in session scope and must report required selection in workspace and endpoint scope; endpoint scope must reject a row belonging to another endpoint; it never changes the selected session or the `list` row numbers |
 | start | wizard `start [endpoint]`; without an endpoint argument it prints a numbered endpoint list and accepts a bare number, so no endpoint identifier has to be typed; folder/project and task prompts; legacy explicit endpoint/resource/profile/revision syntax documented separately |
 | resume | `resume`; selected stopped historical session, confirmation; complete fresh inventory must prove no live generation before and after confirmation |
 | stop | `stop`; confirmation, pinned resource and generation |

@@ -392,6 +392,11 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 			return false, err
 		}
 		return false, interactiveShow(ctx, api, state, strings.TrimSpace(rest), out)
+	case "info":
+		if err := rejectInteractiveOption("info", rest); err != nil {
+			return false, err
+		}
+		return false, interactiveInfo(ctx, api, state, rest, out)
 	case "logs":
 		return false, interactiveLogs(ctx, api, state, strings.TrimSpace(rest), options.MaxBytes, options.MaxLines, out)
 	case "status":

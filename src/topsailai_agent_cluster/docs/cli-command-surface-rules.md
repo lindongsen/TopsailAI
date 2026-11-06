@@ -58,6 +58,7 @@ was dispatched rather than rejected as unknown.
 | `refresh` | `refresh` | `refresh`, `r` | yes |
 | `endpoints` | `endpoints` | `endpoints` | yes |
 | `show` | `show` | `show` | yes |
+| `info` | `info` | `info` | yes |
 | `logs` | `logs` | `logs` | yes |
 | `status` | `status` | `status` | yes |
 | `send` | `send` | `send` | yes |

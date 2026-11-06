@@ -63,6 +63,7 @@ Feature: non-interactive TUI
     And the output contains "no sessions"
     And the output contains "SESSION_NAME"
     And the output contains "SESSION_ID"
+    And the output contains "PROJECT_WORKSPACE"
     And the output contains "SESSION_STATUS"
     And the output contains "DATA_STATUS"
     And the output contains "ok ("

@@ -240,7 +240,7 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, command := range []string{"list", "refresh", "show", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "help"} {
+	for _, command := range []string{"list", "refresh", "show", "info", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "help"} {
 		if !strings.Contains(text, " "+command) {
 			t.Fatalf("help missing dispatched command %q: %q", command, text)
 		}

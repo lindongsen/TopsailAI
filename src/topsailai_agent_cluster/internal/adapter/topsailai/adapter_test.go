@@ -449,6 +449,37 @@ func TestDiscoverLeavesProviderSessionNameEmptyWhenAbsent(t *testing.T) {
 	}
 }
 
+// TestDiscoverForwardsProviderProjectWorkspace proves the provider workspace is
+// carried as descriptive report data instead of being dropped by the adapter.
+func TestDiscoverForwardsProviderProjectWorkspace(t *testing.T) {
+	runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"provider-secret","project_workspace":"/work/project-a","process_generation":"g1","status":"running"}]}`)}
+	a := newTestAdapter(t, runner)
+	result, err := a.Discover(context.Background(), adapter.DiscoverRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Sessions) != 1 {
+		t.Fatalf("sessions = %#v", result.Sessions)
+	}
+	if got := result.Sessions[0].ProjectWorkspace; got != "/work/project-a" {
+		t.Fatalf("project workspace = %q, want /work/project-a", got)
+	}
+}
+
+// TestDiscoverLeavesProjectWorkspaceEmptyWhenAbsent keeps an unreported
+// workspace empty rather than inventing a value.
+func TestDiscoverLeavesProjectWorkspaceEmptyWhenAbsent(t *testing.T) {
+	runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"provider-secret","process_generation":"g1","status":"running"}]}`)}
+	a := newTestAdapter(t, runner)
+	result, err := a.Discover(context.Background(), adapter.DiscoverRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Sessions[0].ProjectWorkspace; got != "" {
+		t.Fatalf("project workspace = %q, want empty", got)
+	}
+}
+
 func TestTopsailaiAdapterStartCommandOptionalFolderAndNonInteractive(t *testing.T) {
 	cases := []struct {
 		name   string

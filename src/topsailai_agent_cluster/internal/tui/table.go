@@ -34,6 +34,7 @@ const (
 	columnState      = "state"
 	columnName       = "name"
 	columnID         = "id"
+	columnWorkspace  = "workspace"
 	columnEndpoint   = "endpoint"
 	columnDataStatus = "data_status"
 )
@@ -55,6 +56,7 @@ var allColumns = []tableColumn{
 	{key: columnState, header: "SESSION_STATUS", cap: 14},
 	{key: columnName, header: "SESSION_NAME", cap: 64, wide: true},
 	{key: columnID, header: "SESSION_ID", cap: 36},
+	{key: columnWorkspace, header: "PROJECT_WORKSPACE", cap: 48},
 	{key: columnEndpoint, header: "ENDPOINT", cap: 20},
 	{key: columnDataStatus, header: "DATA_STATUS", cap: 35, warn: true},
 }
@@ -331,6 +333,7 @@ func tableCells(row SessionRow, location *time.Location) map[string]string {
 		columnState:      escapeCell(row.State),
 		columnName:       escapeCell(row.DisplayName),
 		columnID:         escapeCell(row.ProviderSessionID),
+		columnWorkspace:  escapeCell(row.ProjectWorkspace),
 		columnEndpoint:   escapeCell(endpoint),
 		columnDataStatus: escapeCell(dataStatusCell(row, location)),
 	}

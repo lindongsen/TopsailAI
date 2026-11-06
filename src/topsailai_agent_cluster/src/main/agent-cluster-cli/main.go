@@ -156,6 +156,11 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return fmt.Errorf("usage: show <endpoint-id-or-session-id>")
 		}
 		return show(ctx, api, output, flags.Arg(1), *jsonMode)
+	case "info":
+		if flags.NArg() != 2 {
+			return fmt.Errorf("usage: info <session-id>")
+		}
+		return legacyRunner(api).Info(ctx, output, flags.Arg(1), *jsonMode)
 	case "logs":
 		if flags.NArg() != 3 {
 			return fmt.Errorf("usage: logs <endpoint-id> <session-id>")

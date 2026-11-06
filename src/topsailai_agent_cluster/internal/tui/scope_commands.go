@@ -33,6 +33,7 @@ var commandScopeMatrix = []commandScopeRule{
 	{Name: "endpoints", Workspace: true},
 	{Name: "cd", Workspace: true, Endpoint: true, Session: true},
 	{Name: "show", Workspace: true, Endpoint: true, Session: true},
+	{Name: "info", Workspace: true, Endpoint: true, Session: true},
 	{Name: "start", Workspace: true, Endpoint: true},
 	{Name: "resume", Session: true},
 	{Name: "stop", Workspace: true, Endpoint: true, Session: true},

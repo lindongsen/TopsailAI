@@ -116,6 +116,9 @@ type workspaceItem struct {
 	State             string          `json:"state"`
 	Status            string          `json:"status"`
 	AgentID           string          `json:"agent_id"`
+	// ProjectWorkspace is the workspace this session is working on. It is
+	// forwarded as descriptive report data, never as a routing input.
+	ProjectWorkspace string `json:"project_workspace"`
 }
 
 func workspaceGeneration(raw json.RawMessage) (string, error) {
@@ -184,7 +187,7 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 		if state == "" {
 			state = item.Status
 		}
-		result.Sessions = append(result.Sessions, protocol.Session{SessionID: resourceID, ProviderSessionID: item.SessionID, DisplayName: item.SessionName, AgentID: item.AgentID, Generation: generation, AdapterID: a.config.AdapterID, State: state, ObservedAtMS: time.Now().UnixMilli()})
+		result.Sessions = append(result.Sessions, protocol.Session{SessionID: resourceID, ProviderSessionID: item.SessionID, DisplayName: item.SessionName, ProjectWorkspace: item.ProjectWorkspace, AgentID: item.AgentID, Generation: generation, AdapterID: a.config.AdapterID, State: state, ObservedAtMS: time.Now().UnixMilli()})
 	}
 	if response.Total != nil && *response.Total > len(response.Items) {
 		result.Complete = false
