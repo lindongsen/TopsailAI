@@ -185,6 +185,9 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.syntax = "agent-cluster-cli [options] show <endpoint-or-session>"
 	case "info":
 		entry.syntax = "agent-cluster-cli [options] info <session-id>"
+		// The standalone surface has no rendered list and no current session, so
+		// the interactive default must not be advertised here.
+		entry.description = "show session detail for one session identified by resource ID or provider session ID"
 	case "status":
 		entry.syntax = "agent-cluster-cli [options] status <command-id>"
 	case "list":
