@@ -240,12 +240,12 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, command := range []string{"list", "show", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "help"} {
+	for _, command := range []string{"list", "refresh", "show", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "help"} {
 		if !strings.Contains(text, " "+command) {
 			t.Fatalf("help missing dispatched command %q: %q", command, text)
 		}
 	}
-	for _, interactiveOnly := range []string{"inject", "interrupt", "cd", "refresh", "quit"} {
+	for _, interactiveOnly := range []string{"inject", "interrupt", "cd", "quit"} {
 		if strings.Contains(text, "[options] "+interactiveOnly+" ") {
 			t.Fatalf("non-interactive help leaked command %q: %q", interactiveOnly, text)
 		}

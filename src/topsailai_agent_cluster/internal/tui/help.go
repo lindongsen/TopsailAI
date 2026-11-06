@@ -109,7 +109,7 @@ func CommandHelpLines() []string {
 	return lines
 }
 
-var nonInteractiveHelpOrder = []string{"list", "endpoints", "show", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "help"}
+var nonInteractiveHelpOrder = []string{"list", "refresh", "endpoints", "show", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "help"}
 
 // nonInteractiveHelpAliases maps accepted standalone spellings to the advertised
 // command. The advertised list keeps one spelling per surface, while an accepted
@@ -180,6 +180,8 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.syntax = "agent-cluster-cli [options] status <command-id>"
 	case "list":
 		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] list [--clean]"
+	case "refresh":
+		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] refresh"
 	case "endpoints":
 		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] endpoints [endpoint-id]"
 	case "send", "btw", "control":

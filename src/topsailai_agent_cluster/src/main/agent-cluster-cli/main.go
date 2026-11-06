@@ -136,6 +136,11 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return err
 		}
 		return list(ctx, api, output, errors, *filter, listClean, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
+	case "refresh":
+		if err := parseRefreshArgs(flags.Args()[1:]); err != nil {
+			return err
+		}
+		return refresh(ctx, api, output, errors, *filter, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
 	case "endpoints":
 		endpointFilter, err := parseEndpointsArgs(flags.Args()[1:], *filter)
 		if err != nil {
@@ -198,6 +203,15 @@ func parseListArgs(args []string, clean bool) (bool, error) {
 	return clean, nil
 }
 
+// parseRefreshArgs rejects every positional argument, so a typo cannot silently
+// refresh a different scope than the operator intended.
+func parseRefreshArgs(args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] refresh")
+	}
+	return nil
+}
+
 // parseEndpointsArgs accepts at most one endpoint ID filter and rejects any
 // other argument, so a typo cannot silently list every endpoint.
 func parseEndpointsArgs(args []string, flagFilter string) (string, error) {
@@ -220,6 +234,14 @@ func legacyRunner(api tui.CommandAPI) tui.CommandRunner {
 
 func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, jsonMode bool, color tui.ColorPolicy) error {
 	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, tui.TableOptions{Width: tui.OutputWidth(output), Color: color, Clean: clean})
+}
+
+// refresh forces one fresh Endpoint collection and renders the committed
+// inventory, so the operator's next view is fresh rather than a cached projection.
+func refresh(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, jsonMode bool, color tui.ColorPolicy) error {
+	refreshCtx, cancel := context.WithTimeout(ctx, tui.RefreshCommandTimeout())
+	defer cancel()
+	return legacyRunner(api).Refresh(refreshCtx, output, errors, filter, jsonMode, tui.TableOptions{Width: tui.OutputWidth(output), Color: color})
 }
 
 // endpoints renders the endpoint projection for the standalone CLI.

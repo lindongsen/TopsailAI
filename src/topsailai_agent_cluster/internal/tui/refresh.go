@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"time"
 
 	"topsailai_agent_cluster/internal/protocol"
@@ -16,6 +18,34 @@ type InventoryRefresher interface {
 // refreshCommandTimeout exceeds the Server forced-collection budget, so the Server
 // reports its own explicit failure before the client gives up waiting.
 const refreshCommandTimeout = 35 * time.Second
+
+// RefreshCommandTimeout exposes the forced-collection client budget so every
+// entry point waits longer than the Server before giving up.
+func RefreshCommandTimeout() time.Duration {
+	return refreshCommandTimeout
+}
+
+// Refresh forces one fresh Endpoint collection and renders the committed inventory.
+// Unlike the interactive command it refuses to degrade to a read-only projection,
+// because a command named refresh must never silently return cached data.
+func (r CommandRunner) Refresh(ctx context.Context, out, errors io.Writer, filter string, jsonMode bool, options TableOptions) error {
+	if _, ok := r.API.(InventoryRefresher); !ok {
+		return fmt.Errorf("forced collection is unavailable: the API client does not support refresh")
+	}
+	loaded, err := forceCollection(ctx, r.API, filter)
+	if err != nil {
+		return err
+	}
+	if filter != "" {
+		if refreshErr, failed := loaded.errors[filter]; failed {
+			return refreshErr
+		}
+		if len(loaded.reports) == 0 {
+			return fmt.Errorf("endpoint %q not found", filter)
+		}
+	}
+	return renderListRows(out, errors, loaded, filter, jsonMode, options)
+}
 
 // forceCollection asks every Endpoint in scope to collect a fresh inventory and
 // returns the committed documents. A failed Endpoint keeps its last committed

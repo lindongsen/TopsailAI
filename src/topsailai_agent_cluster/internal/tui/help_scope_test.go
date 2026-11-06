@@ -327,6 +327,7 @@ func TestNonInteractiveHelpCatalogMatchesStandaloneDispatch(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	for _, want := range []string{
 		"agent-cluster-cli [options] [--endpoint <id>] list [--clean]",
+		"agent-cluster-cli [options] [--endpoint <id>] refresh",
 		"agent-cluster-cli [options] show <endpoint-or-session>",
 		"agent-cluster-cli [options] [--lines <lines>] logs <endpoint> <session>",
 		"agent-cluster-cli [options] status <command-id>",
@@ -344,7 +345,7 @@ func TestNonInteractiveHelpCatalogMatchesStandaloneDispatch(t *testing.T) {
 	}
 	for _, line := range lines {
 		name := strings.Fields(line)[2]
-		for _, forbidden := range []string{"inject", "interrupt", "cd", "refresh", "quit"} {
+		for _, forbidden := range []string{"inject", "interrupt", "cd", "quit"} {
 			if name == forbidden {
 				t.Fatalf("standalone help leaked interactive command %q: %q", forbidden, joined)
 			}
