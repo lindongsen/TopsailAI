@@ -384,7 +384,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "use":
 		return false, fmt.Errorf(`"use" has been removed; use "cd" to navigate`)
 	case "cd":
-		return false, interactiveCD(ctx, api, state, rest, lineResults, out, trustedOut, options.Color)
+		return false, interactiveCD(ctx, api, state, rest, lineResults, out, trustedOut, options.Color, options)
 	case "show":
 		if err := rejectInteractiveOption("show", rest); err != nil {
 			return false, err

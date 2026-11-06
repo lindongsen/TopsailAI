@@ -131,12 +131,23 @@ func (r CommandRunner) Logs(ctx context.Context, out io.Writer, endpointID, reso
 			break
 		}
 	}
+	if jsonMode {
+		snapshot, err := r.API.GetOutput(ctx, endpointID, resourceID, generation, maxBytes, maxLines)
+		if err != nil {
+			return err
+		}
+		return RenderJSON(out, snapshot)
+	}
+	return r.RenderSessionSnapshot(ctx, out, endpointID, resourceID, generation, maxBytes, maxLines)
+}
+
+// RenderSessionSnapshot reads and renders one bounded output snapshot for an
+// already validated generation, so a caller that just validated the selection
+// does not repeat the inventory round trip.
+func (r CommandRunner) RenderSessionSnapshot(ctx context.Context, out io.Writer, endpointID, resourceID, generation string, maxBytes, maxLines int) error {
 	snapshot, err := r.API.GetOutput(ctx, endpointID, resourceID, generation, maxBytes, maxLines)
 	if err != nil {
 		return err
-	}
-	if jsonMode {
-		return RenderJSON(out, snapshot)
 	}
 	if snapshot.ErrorCode != "" {
 		_, err = fmt.Fprintln(out, snapshot.ErrorCode)

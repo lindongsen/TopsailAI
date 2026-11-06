@@ -216,7 +216,9 @@ func TestRenderReceiptDetailsSkipsEmptyFields(t *testing.T) {
 
 // TestLogsForwardsParsedLineCountToAPI proves the line limit parsed from the
 // interactive command reaches the API request instead of only trimming the
-// rendered text, which is the defect this test guards.
+// rendered text, which is the defect this test guards. Entering the session
+// already renders one bounded snapshot, so the explicit logs read is the second
+// request and must carry its own parsed limit.
 func TestLogsForwardsParsedLineCountToAPI(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -235,10 +237,13 @@ func TestLogsForwardsParsedLineCountToAPI(t *testing.T) {
 			if _, diagnostics := runScope(t, stub, testCase.input, ColorPolicy{}); diagnostics != "" {
 				t.Fatalf("unexpected diagnostics: %q", diagnostics)
 			}
-			if len(stub.outputRequests) != 1 {
+			if len(stub.outputRequests) != 2 {
 				t.Fatalf("output requests=%+v", stub.outputRequests)
 			}
-			if got := stub.outputRequests[0].maxLines; got != testCase.want {
+			if got := stub.outputRequests[0].maxLines; got != 100 {
+				t.Fatalf("automatic entry snapshot maxLines=%d want=100", got)
+			}
+			if got := stub.outputRequests[1].maxLines; got != testCase.want {
 				t.Fatalf("maxLines=%d want=%d", got, testCase.want)
 			}
 		})

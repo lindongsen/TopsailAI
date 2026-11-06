@@ -59,12 +59,13 @@ func TestUnitBB8LogsUsesPinnedIdentityForBareAndExplicitNavigation(t *testing.T)
 	}
 	for _, input := range []string{"list\n1\nlogs\nquit\n", "list\ncd 1\nlogs\nquit\n"} {
 		api := run(input)
-		if len(api.outputRequests) != 1 {
+		if len(api.outputRequests) != 2 {
 			t.Fatalf("output requests=%+v", api.outputRequests)
 		}
-		request := api.outputRequests[0]
-		if request.endpointID != "endpoint-1" || request.resourceID != "res-1" || request.generation != "generation-1" || request.maxBytes <= 0 {
-			t.Fatalf("wrong output identity tuple: %+v", request)
+		for _, request := range api.outputRequests {
+			if request.endpointID != "endpoint-1" || request.resourceID != "res-1" || request.generation != "generation-1" || request.maxBytes <= 0 {
+				t.Fatalf("wrong output identity tuple: %+v", request)
+			}
 		}
 		if api.admit != 0 {
 			t.Fatalf("logs navigation admitted %d commands", api.admit)

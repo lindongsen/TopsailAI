@@ -96,7 +96,7 @@ func TestUnitCBatch3CancelRepl(t *testing.T) {
 			}
 			after, intents := d.api.snapshot()
 			delta := unitCAPIAdd(d.baseline, after)
-			if delta != (unitCAPICounts{List: 3, Inventory: 3, Capability: 1, ListCommands: 1}) || len(intents) != 0 {
+			if delta != (unitCAPICounts{List: 3, Inventory: 3, Capability: 1, ListCommands: 1, Output: 1}) || len(intents) != 0 {
 				t.Fatalf("C6 followup calls (navigation/show only): %+v intents=%d", delta, len(intents))
 			}
 		})

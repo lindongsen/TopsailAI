@@ -59,8 +59,17 @@ func TestUnitBNavigationSpellingsMatchFullStateAndCalls(t *testing.T) {
 			t.Fatalf("inventory calls for %s: bare=%d explicit=%d want=%d", id, count, explicitAPI.inventoryByID[id], want)
 		}
 	}
-	if bareAPI.outputCalls != 0 || explicitAPI.outputCalls != 0 || bareAPI.admit != 0 || explicitAPI.admit != 0 {
-		t.Fatalf("navigation performed side effects: bare output=%d admit=%d explicit output=%d admit=%d", bareAPI.outputCalls, bareAPI.admit, explicitAPI.outputCalls, explicitAPI.admit)
+	if bareAPI.outputCalls != 1 || explicitAPI.outputCalls != 1 || bareAPI.admit != 0 || explicitAPI.admit != 0 {
+		t.Fatalf("navigation side effects: bare output=%d admit=%d explicit output=%d admit=%d", bareAPI.outputCalls, bareAPI.admit, explicitAPI.outputCalls, explicitAPI.admit)
+	}
+	for _, api := range []*interactiveStub{bareAPI, explicitAPI} {
+		if len(api.outputRequests) != 1 {
+			t.Fatalf("output requests=%+v", api.outputRequests)
+		}
+		request := api.outputRequests[0]
+		if request.endpointID != "endpoint-1" || request.resourceID != "res-1" || request.generation != "generation-1" {
+			t.Fatalf("automatic snapshot used the wrong identity: %+v", request)
+		}
 	}
 }
 
@@ -516,8 +525,11 @@ func TestUnitBB3InteractiveCallCountMatrix(t *testing.T) {
 	}
 	startup := baseline("quit\n")
 	numeric := baseline("1\nquit\n")
-	if numeric.listCalls-startup.listCalls != 1 || numeric.inventoryByID["endpoint-1"]-startup.inventoryByID["endpoint-1"] != 1 || numeric.inventoryByID["endpoint-2"] != startup.inventoryByID["endpoint-2"] || numeric.outputCalls != 0 || numeric.admit != 0 {
+	if numeric.listCalls-startup.listCalls != 1 || numeric.inventoryByID["endpoint-1"]-startup.inventoryByID["endpoint-1"] != 1 || numeric.inventoryByID["endpoint-2"] != startup.inventoryByID["endpoint-2"] || numeric.outputCalls != 1 || numeric.admit != 0 {
 		t.Fatalf("numeric call counts unexpected: startup=%+v numeric=%+v", startup, numeric)
+	}
+	if len(numeric.outputRequests) != 1 || numeric.outputRequests[0].resourceID != "res-1" || numeric.outputRequests[0].generation != "generation-1" {
+		t.Fatalf("numeric entry snapshot requests=%+v", numeric.outputRequests)
 	}
 	name := baseline("cd endpoint-1\nquit\n")
 	if name.listCalls <= startup.listCalls || name.inventoryCalls <= startup.inventoryCalls || name.outputCalls != 0 || name.admit != 0 {

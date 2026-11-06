@@ -21,7 +21,10 @@ const (
 )
 
 // interactiveCD navigates between workspace, endpoint, and session scopes.
-func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lineSource <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) error {
+// Entering session scope renders one bounded output snapshot immediately, so the
+// operator sees the session's current output without typing logs.
+func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lineSource <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy, options InteractiveOptions) error {
+	previous := state.Scope
 	target := strings.TrimSpace(rest)
 	switch target {
 	case "", "/":
@@ -42,7 +45,10 @@ func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiv
 		if !numeric {
 			return fmt.Errorf("row number exceeds the supported integer range")
 		}
-		return cdRowNumber(state, api, parent, index)
+		if err := cdRowNumber(state, api, parent, index); err != nil {
+			return err
+		}
+		return autoLogsOnSessionEntry(parent, api, state, previous, out, options)
 	}
 	for _, part := range parts {
 		if strings.TrimSpace(part) == "" {
@@ -69,7 +75,45 @@ func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiv
 	if resolveErr != nil {
 		return resolveErr
 	}
-	return rerenderNavigatedList(parent, api, state, trustedOut, color)
+	if err := rerenderNavigatedList(parent, api, state, trustedOut, color); err != nil {
+		return err
+	}
+	return autoLogsOnSessionEntry(parent, api, state, previous, out, options)
+}
+
+// autoLogsOnSessionEntry renders one bounded output snapshot when a navigation
+// command actually enters session scope. The generation validated by the
+// transition is reused, so entering a session costs one output read and no
+// repeated inventory discovery. A failed read is reported without rolling back
+// the already validated selection.
+func autoLogsOnSessionEntry(parent context.Context, api InteractiveAPI, state *interactiveState, previous ScopeState, out io.Writer, options InteractiveOptions) error {
+	if state.Scope.Kind != ScopeSession || previous.Kind == ScopeSession {
+		return nil
+	}
+	maxBytes, maxLines := interactiveOutputBounds(options)
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	runner := CommandRunner{API: api, Policy: InteractivePolicy}
+	if err := runner.RenderSessionSnapshot(ctx, out, state.EndpointID, state.SessionID, state.Generation, maxBytes, maxLines); err != nil {
+		_, writeErr := fmt.Fprintf(out, "session selected; automatic logs failed: %v\n", err)
+		return writeErr
+	}
+	return nil
+}
+
+// interactiveOutputBounds resolves the bounded output read limits used by an
+// automatic snapshot, applying the same REPL defaults as RunInteractive so an
+// unset option never requests an unbounded read.
+func interactiveOutputBounds(options InteractiveOptions) (int, int) {
+	maxLines := options.MaxLines
+	if maxLines <= 0 {
+		maxLines = 100
+	}
+	maxBytes := options.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = 64 << 10
+	}
+	return maxBytes, maxLines
 }
 
 // rerenderNavigatedList refreshes the visible list for workspace and endpoint scopes.

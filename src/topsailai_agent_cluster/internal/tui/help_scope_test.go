@@ -155,7 +155,7 @@ func TestHelpScopeDescribesScopeModel(t *testing.T) {
 		"Scope model:",
 		"workspace  the root scope; shows all endpoints and sessions",
 		"endpoint   entered with cd <hostname> or cd <hostname>/<endpoint-id>",
-		"session    entered with cd <session> or cd <hostname>/<endpoint-id>/<session>",
+		"session    entered with cd <session> or cd <hostname>/<endpoint-id>/<session>; entering renders one bounded output snapshot",
 		"Navigation:",
 		"Commands differ by scope; run help to see the commands available in each scope.",
 	} {
