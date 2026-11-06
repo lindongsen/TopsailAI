@@ -1,0 +1,75 @@
+#!/bin/bash
+# Author: DawsonLin
+# Purpose: Rewrite the per-user Agent Cluster CLI env file from an installed node.
+#
+# The Debian package writes ${HOME}/.topsailai/.topsailai_agent_cluster.env at
+# install time so the CLI can reach the Server without flags. That file is a
+# snapshot of the configuration, so it goes stale when the token or the Server
+# address changes. This command regenerates it from the installed configuration,
+# which gives a token rotation a supported path instead of hand-editing a file
+# the installer refuses to overwrite.
+#
+# Usage: agent-cluster-node-setup [--config <file>] [--home <dir>] [--force]
+#
+#   --config  installed node configuration (default /etc/agent-cluster/node.conf)
+#   --home    home directory that receives the env file (default $HOME)
+#   --force   replace an existing env file whose content differs
+#
+# Exit status: 0 when the file was written or already matched, 1 on failure,
+# 2 on a usage error.
+
+set -uo pipefail
+
+CONFIG_FILE="/etc/agent-cluster/node.conf"
+TARGET_HOME="${HOME:-}"
+FORCE=0
+CLI_ENV_LIB="/usr/lib/agent-cluster/lib/cli-env.sh"
+
+function die() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+function usage() {
+    echo "usage: $(basename "$0") [--config <file>] [--home <dir>] [--force]" >&2
+    exit 2
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --config)
+            [ $# -ge 2 ] || usage
+            CONFIG_FILE="$2"
+            shift 2
+            ;;
+        --home)
+            [ $# -ge 2 ] || usage
+            TARGET_HOME="$2"
+            shift 2
+            ;;
+        --force) FORCE=1; shift ;;
+        -h | --help) usage ;;
+        *) die "unknown argument $1" ;;
+    esac
+done
+
+[ -f "${CONFIG_FILE}" ] || die "missing configuration ${CONFIG_FILE}"
+[ -f "${CLI_ENV_LIB}" ] || die "missing shared library ${CLI_ENV_LIB}"
+
+# The configuration is sourced exactly as the controller sources it, so the
+# values written here are the values the daemon runs with.
+set -a
+# shellcheck disable=SC1090
+. "${CONFIG_FILE}"
+set +a
+
+[ -n "${SERVER_API_URL:-}" ] ||
+    die "SERVER_API_URL is not set in ${CONFIG_FILE}; the CLI has no Server to dial"
+[ -n "${AUTH_TOKEN:-}" ] ||
+    die "AUTH_TOKEN is not set in ${CONFIG_FILE}; the CLI has no credential"
+
+# shellcheck source=lib/cli-env.sh
+. "${CLI_ENV_LIB}"
+
+cli_env_write "${TARGET_HOME}" "${SERVER_API_URL}" "${AUTH_TOKEN}" "${FORCE}" ||
+    die "cannot write the per-user CLI env file"

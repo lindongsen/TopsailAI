@@ -19,13 +19,27 @@
 # such as docker. Relay hops, container placement and certificate issuance stay
 # outside this script because they differ per site.
 #
+# The same script is installed by the Debian package, where the controller lives
+# in /usr/lib/agent-cluster and the configuration is the conffile
+# /etc/agent-cluster/node.conf. The bundle path is tried first, so one script
+# serves both layouts; -c still overrides either default.
+#
 # Actions: start, stop, restart, status, doctor.
 # Usage:   agent-clusterctl [-c <config>] <action>
 
 set -uo pipefail
 
 CTL_DIR=$(dirname "$(readlink -f "$0")")
+
+# The bundle layout keeps the configuration beside the controller. A Debian
+# package cannot: the controller lives in /usr/lib while the configuration is a
+# conffile in /etc. Resolve the bundle path first so a copied bundle behaves
+# exactly as before, then fall back to the packaged conffile.
+PACKAGED_CONFIG_FILE="/etc/agent-cluster/node.conf"
 CONFIG_FILE="${CTL_DIR}/conf/node.conf"
+if [ ! -f "${CONFIG_FILE}" ] && [ -f "${PACKAGED_CONFIG_FILE}" ]; then
+    CONFIG_FILE="${PACKAGED_CONFIG_FILE}"
+fi
 ACTION=""
 
 function die() {

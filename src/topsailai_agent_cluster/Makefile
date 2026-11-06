@@ -1,23 +1,62 @@
 # Author: DawsonLin
-# Purpose: Build, verify and operate the Agent Cluster locally.
+# Purpose: Build, verify, package and operate the Agent Cluster locally.
 #
 # Production binaries are written to bin/ because scripts/start-local-cluster.sh
 # loads them from there. The test-hooks variant stays in .tmp/artifacts/ so that
 # building instrumented binaries never overwrites the ones a running cluster uses.
+#
+# Debian packages are built into .tmp/deb/ and are the deployment artifact: a node
+# is provisioned with `dpkg -i` instead of copying a bundle directory. The package
+# carries the same payload as a bundle (controller, role binary, configuration and
+# TLS material), laid out according to Debian policy.
 
 SHELL := /bin/bash
 
 BIN_DIR := bin
 TESTHOOKS_DIR := .tmp/artifacts
+DEB_DIR := .tmp/deb
 LAUNCHER := scripts/start-local-cluster.sh
+DEB_BUILDER := scripts/make-deb.sh
 
 SERVER_PKG := ./src/main/agent-cluster-server
 ENDPOINT_PKG := ./src/main/agent-cluster-endpoint
 CLI_PKG := ./src/main/agent-cluster-cli
 
+# Site values baked into a package. A package carries its configuration and TLS
+# material, exactly like a bundle, so a real deployment overrides these:
+#
+#   make deb DEB_CONFIG=conf/site/node.conf DEB_CERT=... DEB_KEY=... DEB_CA=...
+#
+# The defaults build a package from the example configuration and the development
+# certificates, which is enough to exercise the packaging path locally.
+DEB_VERSION :=
+DEB_REVISION := 1
+DEB_ARCH :=
+DEB_CONFIG :=
+DEB_CERT :=
+DEB_KEY :=
+DEB_CA :=
+DEB_ADAPTERS :=
+
+# Passes one optional builder argument only when the variable is non-empty, so an
+# unset variable never becomes an empty positional value.
+deb_arg = $(if $(strip $(2)),$(1) $(2))
+
+# Argument groups shared by the package targets. Keeping them in variables makes
+# each recipe a single line, so the echoed command never shows dangling
+# continuations for arguments that were not supplied.
+DEB_COMMON_ARGS = $(call deb_arg,--version,$(DEB_VERSION)) \
+                  $(call deb_arg,--revision,$(DEB_REVISION)) \
+                  $(call deb_arg,--arch,$(DEB_ARCH))
+DEB_SITE_ARGS = $(call deb_arg,--config,$(DEB_CONFIG)) \
+                $(call deb_arg,--cert,$(DEB_CERT)) \
+                $(call deb_arg,--key,$(DEB_KEY)) \
+                $(call deb_arg,--ca,$(DEB_CA))
+
 .DEFAULT_GOAL := help
 
 .PHONY: help build build-testhooks vet test bdd integration fmt \
+        deb deb-node deb-server deb-endpoint deb-inspect deb-clean \
         server-start server-stop server-restart server-status \
         endpoint-start endpoint-stop endpoint-restart endpoint-status \
         cluster-start cluster-stop cluster-restart cluster-status
@@ -35,6 +74,17 @@ help:
 	@echo "  bdd               run the BDD feature suite"
 	@echo "  integration       run the integration suite with test hooks"
 	@echo "  fmt               format Go sources in place"
+	@echo ""
+	@echo "Package (Debian)"
+	@echo "  deb               build all three packages into $(DEB_DIR)/"
+	@echo "  deb-node          build the controller package only"
+	@echo "  deb-server        build the server package only"
+	@echo "  deb-endpoint      build the endpoint package only"
+	@echo "  deb-inspect       list the packages and their control fields"
+	@echo "  deb-clean         remove the package output and staging trees"
+	@echo ""
+	@echo "  Site values: DEB_VERSION DEB_REVISION DEB_ARCH DEB_CONFIG DEB_CERT"
+	@echo "               DEB_KEY DEB_CA DEB_ADAPTERS"
 	@echo ""
 	@echo "Cluster lifecycle (both roles)"
 	@echo "  cluster-start     start server then endpoint"
@@ -80,6 +130,49 @@ integration:
 
 fmt:
 	gofmt -w src internal
+
+# Builds one package. The builder derives the version from git when DEB_VERSION is
+# empty, so a package always identifies the commit it was built from.
+deb-node:
+	@mkdir -p $(DEB_DIR)
+	@bash $(DEB_BUILDER) --role node --dest $(DEB_DIR) $(DEB_COMMON_ARGS)
+
+deb-server:
+	@mkdir -p $(DEB_DIR)
+	@bash $(DEB_BUILDER) --role server --dest $(DEB_DIR) $(DEB_COMMON_ARGS) $(DEB_SITE_ARGS)
+
+deb-endpoint:
+	@mkdir -p $(DEB_DIR)
+	@bash $(DEB_BUILDER) --role endpoint --dest $(DEB_DIR) $(DEB_COMMON_ARGS) $(DEB_SITE_ARGS) \
+		$(call deb_arg,--adapters,$(DEB_ADAPTERS))
+
+# Builds every package. The controller package is built first because both role
+# packages depend on it, so a failure there stops before the large binaries build.
+deb: deb-node deb-server deb-endpoint
+	@echo ""
+	@echo "packages in $(DEB_DIR):"
+	@ls -1 $(DEB_DIR)/*.deb
+
+# Reports what each package contains and how it is declared, which is the check
+# that matters before handing a package to a node. conffiles is a separate
+# control file rather than a control field, so it is read from the control
+# archive; dpkg-deb -f cannot report it.
+deb-inspect:
+	@for package in $(DEB_DIR)/*.deb; do \
+		[ -f "$${package}" ] || continue; \
+		echo "=== $${package} ==="; \
+		dpkg-deb -f "$${package}" Package Version Architecture Depends Conflicts; \
+		echo "--- conffiles ---"; \
+		dpkg-deb --ctrl-tarfile "$${package}" | tar -xO ./conffiles 2>/dev/null \
+			|| echo "(none)"; \
+		echo "--- contents ---"; \
+		dpkg-deb -c "$${package}" | awk '{print $$1, $$6, $$7, $$8}'; \
+		echo ""; \
+	done
+
+deb-clean:
+	rm -rf $(DEB_DIR)/build
+	@echo "removed $(DEB_DIR)/build"
 
 cluster-start:
 	bash $(LAUNCHER) start

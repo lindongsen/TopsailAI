@@ -1,0 +1,355 @@
+#!/bin/bash
+# Author: DawsonLin
+# Purpose: Build a Debian package for one Agent Cluster node role.
+#
+# The package carries the same payload as a node bundle, laid out according to
+# Debian policy instead of inside one directory:
+#
+#   agent-cluster-node      controller, shared env writer, setup command
+#   agent-cluster-server    server binary, configuration, TLS material
+#   agent-cluster-endpoint  endpoint binary, CLI, configuration, TLS material
+#
+# A machine has one role, so the two role packages conflict: they both own
+# /etc/agent-cluster/node.conf and the single agent-clusterctl entry point. A
+# host that must run both roles uses the bundle path instead.
+#
+# Binaries are built statically (CGO disabled) so the package does not depend on
+# the node libc; the SQLite driver is pure Go, so nothing is lost.
+#
+# Usage:
+#   make-deb.sh --role <node|server|endpoint> --dest <dir> [options]
+#
+# Options:
+#   --role      node, server or endpoint (required)
+#   --dest      directory that receives the .deb (required)
+#   --version   package version (default: derived from git)
+#   --revision  package revision (default: 1)
+#   --arch      target architecture (default: dpkg --print-architecture)
+#   --config    role configuration template (default: conf/node.<role>.conf.example)
+#   --cert      leaf certificate to embed (default: development certificate)
+#   --key       private key paired with --cert (default: development key)
+#   --ca        CA certificate (default: .tmp/local-cluster/certs/ca.pem)
+#   --adapters  adapter JSON for the endpoint role; replaces the template value
+#   --keep      keep the staging tree for inspection
+
+set -uo pipefail
+
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+PROJECT_DIR=$(dirname "${SCRIPT_DIR}")
+LOCAL_CERTS="${PROJECT_DIR}/.tmp/local-cluster/certs"
+
+ROLE=""
+DEST=""
+VERSION=""
+REVISION="1"
+ARCH=""
+CONFIG=""
+CERT=""
+KEY=""
+CA="${LOCAL_CERTS}/ca.pem"
+ADAPTERS=""
+KEEP=0
+
+function die() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+function warn() {
+    echo "WARNING: $*" >&2
+}
+
+function usage() {
+    sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//' >&2
+    exit 2
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --role) ROLE="${2:-}"; shift 2 ;;
+        --dest) DEST="${2:-}"; shift 2 ;;
+        --version) VERSION="${2:-}"; shift 2 ;;
+        --revision) REVISION="${2:-}"; shift 2 ;;
+        --arch) ARCH="${2:-}"; shift 2 ;;
+        --config) CONFIG="${2:-}"; shift 2 ;;
+        --cert) CERT="${2:-}"; shift 2 ;;
+        --key) KEY="${2:-}"; shift 2 ;;
+        --ca) CA="${2:-}"; shift 2 ;;
+        --adapters) ADAPTERS="${2:-}"; shift 2 ;;
+        --keep) KEEP=1; shift ;;
+        -h | --help) usage ;;
+        *) die "unknown argument $1" ;;
+    esac
+done
+
+case "${ROLE}" in
+    node | server | endpoint) ;;
+    *) die "--role must be node, server or endpoint" ;;
+esac
+[ -n "${DEST}" ] || die "--dest is required"
+
+# A Debian version must start with a digit and must not carry a hyphen in the
+# upstream part, so a tag-derived description is normalised before use.
+function default_version() {
+    local described
+    described=$(cd "${PROJECT_DIR}" && git describe --tags --always --dirty 2>/dev/null) || described=""
+    if [ -z "${described}" ]; then
+        echo "0.0.0"
+        return
+    fi
+    described="${described#v}"
+    described="${described//-/+}"
+    described="${described//_/+}"
+    case "${described}" in
+        [0-9]*) echo "${described}" ;;
+        *) echo "0.0.0+git${described}" ;;
+    esac
+}
+
+[ -n "${VERSION}" ] || VERSION=$(default_version)
+[ -n "${ARCH}" ] || ARCH=$(dpkg --print-architecture 2>/dev/null) ||
+    die "cannot determine the target architecture; pass --arch"
+FULL_VERSION="${VERSION}-${REVISION}"
+PACKAGE="agent-cluster-${ROLE}"
+MAINTAINER="DawsonLin <dawson@yunify.com>"
+
+BUILD_ROOT="${PROJECT_DIR}/.tmp/deb/build/${ROLE}"
+PKG_ROOT="${BUILD_ROOT}/root"
+DEB_PATH="${DEST}/${PACKAGE}_${FULL_VERSION}_${ARCH}.deb"
+
+function cleanup() {
+    if [ "${KEEP}" -eq 1 ]; then
+        echo "staging tree kept at ${BUILD_ROOT}"
+        return
+    fi
+    rm -rf "${BUILD_ROOT}"
+}
+trap cleanup EXIT
+
+rm -rf "${BUILD_ROOT}"
+mkdir -p "${PKG_ROOT}/DEBIAN" "${DEST}" || die "cannot create ${BUILD_ROOT}"
+
+# Installs one file into the package tree with an explicit mode.
+function add_file() {
+    local source="$1"
+    local target="$2"
+    local mode="$3"
+    [ -f "${source}" ] || die "missing ${source}"
+    mkdir -p "$(dirname "${PKG_ROOT}${target}")" || die "cannot create ${target}"
+    install -m "${mode}" "${source}" "${PKG_ROOT}${target}" ||
+        die "cannot install ${target}"
+}
+
+# Installs one directory into the package tree with an explicit mode.
+function add_dir() {
+    local target="$1"
+    local mode="$2"
+    mkdir -p "${PKG_ROOT}${target}" || die "cannot create ${target}"
+    chmod "${mode}" "${PKG_ROOT}${target}" || die "cannot restrict ${target}"
+}
+
+# Adds a symlink to the package tree.
+function add_link() {
+    local target="$1"
+    local destination="$2"
+    mkdir -p "$(dirname "${PKG_ROOT}${target}")" || die "cannot create ${target}"
+    ln -sfn "${destination}" "${PKG_ROOT}${target}" || die "cannot link ${target}"
+}
+
+# Builds one static binary into the package tree.
+function build_binary() {
+    local pkg="$1"
+    local target="$2"
+    ( cd "${PROJECT_DIR}" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
+        -o "${PKG_ROOT}${target}" "${pkg}" ) ||
+        die "static build failed for ${pkg}"
+    chmod 0755 "${PKG_ROOT}${target}" || die "cannot set mode on ${target}"
+}
+
+# Writes the copyright file Debian policy expects under /usr/share/doc.
+function add_copyright() {
+    local target="/usr/share/doc/${PACKAGE}/copyright"
+    mkdir -p "$(dirname "${PKG_ROOT}${target}")" || die "cannot create ${target}"
+    {
+        echo "Copyright (c) DawsonLin."
+        echo "Internal distribution only; no public license is granted."
+        echo ""
+        echo "Built from the topsailai_agent_cluster project."
+    } >"${PKG_ROOT}${target}" || die "cannot write ${target}"
+    chmod 0644 "${PKG_ROOT}${target}"
+}
+
+# Writes the control file. Installed-Size is the on-disk size in KiB, which dpkg
+# uses to plan disk usage before unpacking.
+function write_control() {
+    local depends="$1"
+    local conflicts="$2"
+    local description="$3"
+    local installed_size
+    installed_size=$(du -sk "${PKG_ROOT}" | cut -f1)
+
+    {
+        echo "Package: ${PACKAGE}"
+        echo "Version: ${FULL_VERSION}"
+        echo "Architecture: ${ARCH}"
+        echo "Maintainer: ${MAINTAINER}"
+        echo "Installed-Size: ${installed_size}"
+        echo "Section: admin"
+        echo "Priority: optional"
+        echo "Depends: ${depends}"
+        if [ -n "${conflicts}" ]; then
+            echo "Conflicts: ${conflicts}"
+        fi
+        echo "Description: ${description}"
+        echo " Agent Cluster is a provider-neutral management plane: a Server"
+        echo " collects inventory from machine-scoped Endpoints and routes"
+        echo " operator commands back to them."
+        echo " ."
+        echo " This package provides the ${ROLE} role."
+    } >"${PKG_ROOT}/DEBIAN/control" || die "cannot write the control file"
+    chmod 0644 "${PKG_ROOT}/DEBIAN/control"
+}
+
+# Appends the packaged layout to the role configuration. The controller sources
+# the file, so a later assignment wins and the template stays readable as the
+# documented default. Absolute values are used because the packaged controller
+# lives in /usr/lib while state belongs in /var.
+function write_role_config() {
+    local template="$1"
+    local binary="/usr/local/sbin/agent-cluster-${ROLE}"
+    local database="/var/lib/agent-cluster/${ROLE}.sqlite"
+    local log="/var/log/agent-cluster/${ROLE}.log"
+    local stdout_log="/var/log/agent-cluster/${ROLE}.stdout.log"
+    local pid="/run/agent-cluster/${ROLE}.pid"
+
+    add_file "${template}" "/etc/agent-cluster/node.conf" 0640
+    {
+        echo ""
+        echo "# Packaged layout, appended by make-deb.sh. Later assignments win, so"
+        echo "# these values override the bundle-relative defaults above."
+        echo "BINARY=${binary}"
+        echo "TLS_CA_FILE=/etc/agent-cluster/certs/ca.pem"
+        echo "TLS_CERTIFICATE_FILE=/etc/agent-cluster/certs/node.pem"
+        echo "TLS_KEY_FILE=/etc/agent-cluster/certs/node-key.pem"
+        echo "DATABASE_PATH=${database}"
+        echo "LOG_PATH=${log}"
+        echo "STDOUT_LOG=${stdout_log}"
+        echo "PID_FILE=${pid}"
+    } >>"${PKG_ROOT}/etc/agent-cluster/node.conf" ||
+        die "cannot append the packaged layout"
+    chmod 0640 "${PKG_ROOT}/etc/agent-cluster/node.conf"
+
+    # An adapter override is appended for the same reason: the last assignment
+    # wins, and the value must stay single-quoted for the shell that sources it.
+    if [ -n "${ADAPTERS}" ]; then
+        [ "${ROLE}" = "endpoint" ] || die "--adapters only applies to the endpoint role"
+        case "${ADAPTERS}" in
+            *"'"*) die "--adapters must not contain a single quote" ;;
+        esac
+        {
+            echo ""
+            echo "# Adapter override supplied when the package was built."
+            echo "ADAPTERS='${ADAPTERS}'"
+        } >>"${PKG_ROOT}/etc/agent-cluster/node.conf" ||
+            die "cannot append the adapter override"
+    fi
+
+    echo "/etc/agent-cluster/node.conf" >"${PKG_ROOT}/DEBIAN/conffiles" ||
+        die "cannot write conffiles"
+    chmod 0644 "${PKG_ROOT}/DEBIAN/conffiles"
+}
+
+# Warns about values a real deployment must replace before the package is used.
+function warn_placeholders() {
+    local config="$1"
+    if grep -q "replace-with-a-real-token" "${config}"; then
+        warn "the configuration still holds the placeholder AUTH_TOKEN; pass --config with a real configuration"
+    fi
+    if grep -q "127.0.0.1" "${config}"; then
+        warn "the configuration still points at 127.0.0.1; pass --config with the site addresses"
+    fi
+}
+
+# Resolves the TLS material, defaulting to the development certificates so a
+# local package can be built without extra arguments.
+function resolve_tls() {
+    if [ -z "${CERT}" ]; then
+        case "${ROLE}" in
+            server) CERT="${LOCAL_CERTS}/server.pem" ;;
+            endpoint) CERT="${LOCAL_CERTS}/client.pem" ;;
+        esac
+        [ -n "${CERT}" ] && warn "using the development certificate ${CERT}; pass --cert for a real deployment"
+    fi
+    if [ -z "${KEY}" ]; then
+        case "${ROLE}" in
+            server) KEY="${LOCAL_CERTS}/server-key.pem" ;;
+            endpoint) KEY="${LOCAL_CERTS}/client-key.pem" ;;
+        esac
+        [ -n "${KEY}" ] && warn "using the development key ${KEY}; pass --key for a real deployment"
+    fi
+    [ -f "${CERT}" ] || die "missing certificate ${CERT}"
+    [ -f "${KEY}" ] || die "missing private key ${KEY}"
+    [ -f "${CA}" ] || die "missing CA ${CA}"
+}
+
+# Builds the role-independent controller package.
+function build_node_package() {
+    add_file "${SCRIPT_DIR}/agent-clusterctl" "/usr/lib/agent-cluster/agent-clusterctl" 0755
+    add_file "${SCRIPT_DIR}/lib/cli-env.sh" "/usr/lib/agent-cluster/lib/cli-env.sh" 0644
+    add_file "${SCRIPT_DIR}/agent-cluster-node-setup" "/usr/sbin/agent-cluster-node-setup" 0755
+    add_link "/usr/local/sbin/agent-clusterctl" "/usr/lib/agent-cluster/agent-clusterctl"
+    add_copyright
+
+    write_control "bash (>= 4.0), coreutils, dpkg" "" \
+        "Agent Cluster node controller and CLI configuration helper"
+}
+
+# Builds one role package: binary, configuration, TLS material and, for the
+# endpoint role, the operator CLI that reaches the Server from this node.
+function build_role_package() {
+    local template="${CONFIG}"
+    [ -n "${template}" ] || template="${PROJECT_DIR}/conf/node.${ROLE}.conf.example"
+    [ -f "${template}" ] || die "missing configuration template ${template}"
+    warn_placeholders "${template}"
+    resolve_tls
+
+    build_binary "./src/main/agent-cluster-${ROLE}" "/usr/local/sbin/agent-cluster-${ROLE}"
+    if [ "${ROLE}" = "endpoint" ]; then
+        build_binary "./src/main/agent-cluster-cli" "/usr/local/sbin/topsailai_agent_cluster"
+    fi
+
+    write_role_config "${template}"
+    add_file "${CA}" "/etc/agent-cluster/certs/ca.pem" 0644
+    add_file "${CERT}" "/etc/agent-cluster/certs/node.pem" 0644
+    add_file "${KEY}" "/etc/agent-cluster/certs/node-key.pem" 0600
+    add_dir "/var/lib/agent-cluster" 0750
+    add_dir "/var/log/agent-cluster" 0750
+    add_copyright
+
+    if [ "${ROLE}" = "endpoint" ]; then
+        add_file "${SCRIPT_DIR}/deb/postinst.endpoint" "/DEBIAN/postinst" 0755
+        write_control "agent-cluster-node (= ${FULL_VERSION}), bash (>= 4.0), coreutils" \
+            "agent-cluster-server" \
+            "Agent Cluster endpoint daemon and operator CLI"
+    else
+        write_control "agent-cluster-node (= ${FULL_VERSION}), bash (>= 4.0), coreutils" \
+            "agent-cluster-endpoint" \
+            "Agent Cluster server daemon"
+    fi
+}
+
+case "${ROLE}" in
+    node) build_node_package ;;
+    server | endpoint) build_role_package ;;
+esac
+
+# --root-owner-group makes every entry root:root, so the package does not depend
+# on the build account and needs no fakeroot.
+dpkg-deb --root-owner-group --build "${PKG_ROOT}" "${DEB_PATH}" >/dev/null ||
+    die "dpkg-deb failed for ${PACKAGE}"
+
+echo "package ready: ${DEB_PATH}"
+echo "  package : ${PACKAGE}"
+echo "  version : ${FULL_VERSION}"
+echo "  arch    : ${ARCH}"
+echo "  size    : $(du -k "${DEB_PATH}" | cut -f1) KiB"

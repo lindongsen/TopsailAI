@@ -1,0 +1,94 @@
+#!/bin/bash
+# Author: DawsonLin
+# Purpose: Debian postinst for the agent-cluster-endpoint package.
+#
+# Installing an endpoint also configures the operator CLI, because the CLI is how
+# an operator on that machine reaches the Server. The CLI reads
+# ${HOME}/.topsailai/.topsailai_agent_cluster.env when the process environment
+# does not already define the keys, so this script writes that file from the
+# installed configuration.
+#
+# The writer is the same library the bundle installer uses, so both deployment
+# paths produce an identical file with identical permissions.
+#
+# The env file is a convenience for the operator, not a prerequisite for the
+# daemon, so a failure to write it is reported as a warning instead of aborting
+# the package configuration. `agent-cluster-node-setup` regenerates it later.
+
+set -uo pipefail
+
+CONFIG_FILE="/etc/agent-cluster/node.conf"
+CLI_ENV_LIB="/usr/lib/agent-cluster/lib/cli-env.sh"
+
+function warn() {
+    echo "agent-cluster-endpoint: WARNING: $*" >&2
+}
+
+# Writes the env file for one user. Returns non-zero on failure so the caller can
+# report it without aborting the package configuration.
+function configure_user() {
+    local user="$1"
+    local home="$2"
+    [ -n "${home}" ] || return 1
+    [ -d "${home}" ] || return 1
+
+    # The library reports its own diagnostics; keep them visible but do not let a
+    # failure abort the install.
+    if cli_env_write "${home}" "${SERVER_API_URL}" "${AUTH_TOKEN}" 0; then
+        return 0
+    fi
+    warn "could not write the CLI env file for ${user}; run agent-cluster-node-setup --home ${home} --force"
+    return 1
+}
+
+case "${1:-configure}" in
+    configure) ;;
+    abort-upgrade | abort-remove | abort-deconfigure) exit 0 ;;
+    *) exit 0 ;;
+esac
+
+if [ ! -f "${CONFIG_FILE}" ]; then
+    warn "missing ${CONFIG_FILE}; the CLI env file was not written"
+    exit 0
+fi
+if [ ! -f "${CLI_ENV_LIB}" ]; then
+    warn "missing ${CLI_ENV_LIB}; the CLI env file was not written"
+    exit 0
+fi
+
+# Source the configuration exactly as the controller does, so the values written
+# into the env file are the values the daemon runs with.
+set -a
+# shellcheck disable=SC1090
+. "${CONFIG_FILE}"
+set +a
+
+if [ -z "${SERVER_API_URL:-}" ]; then
+    warn "SERVER_API_URL is not set in ${CONFIG_FILE}; the CLI has no Server to dial"
+    exit 0
+fi
+if [ -z "${AUTH_TOKEN:-}" ]; then
+    warn "AUTH_TOKEN is not set in ${CONFIG_FILE}; the CLI has no credential"
+    exit 0
+fi
+
+# shellcheck source=lib/cli-env.sh
+. "${CLI_ENV_LIB}"
+
+# Configure the account that invoked the install and root, which is the account a
+# dpkg run without sudo uses. A repeated home directory is written once.
+configured_homes=""
+if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    sudo_home=$(getent passwd "${SUDO_USER}" | cut -d: -f6)
+    if [ -n "${sudo_home}" ]; then
+        configure_user "${SUDO_USER}" "${sudo_home}"
+        configured_homes="${sudo_home}"
+    fi
+fi
+
+root_home=$(getent passwd root | cut -d: -f6)
+if [ -n "${root_home}" ] && [ "${root_home}" != "${configured_homes}" ]; then
+    configure_user root "${root_home}"
+fi
+
+exit 0

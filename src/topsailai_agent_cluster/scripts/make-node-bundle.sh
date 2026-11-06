@@ -9,6 +9,8 @@
 #
 # An endpoint bundle also carries the operator CLI and install-node.sh, because
 # installing an endpoint installs the CLI that reaches the Server from that node.
+# The per-user env-file writer lives in lib/cli-env.sh so the bundle installer and
+# the Debian package postinst share one implementation.
 #
 # Usage:
 #   make-node-bundle.sh --role <server|endpoint> --dest <dir> [options]
@@ -79,7 +81,7 @@ BINARY_NAME="agent-cluster-${ROLE}"
 CLI_PKG="./src/main/agent-cluster-cli"
 CLI_NAME="agent-cluster-cli"
 
-mkdir -p "${DEST}/bin" "${DEST}/conf" "${DEST}/certs" \
+mkdir -p "${DEST}/bin" "${DEST}/conf" "${DEST}/certs" "${DEST}/lib" \
     "${DEST}/data" "${DEST}/logs" "${DEST}/run" ||
     die "cannot create ${DEST}"
 
@@ -110,6 +112,8 @@ install -m 0755 "${SCRIPT_DIR}/agent-clusterctl" "${DEST}/agent-clusterctl" ||
     die "cannot install controller"
 install -m 0755 "${SCRIPT_DIR}/install-node.sh" "${DEST}/install-node.sh" ||
     die "cannot install installer"
+install -m 0644 "${SCRIPT_DIR}/lib/cli-env.sh" "${DEST}/lib/cli-env.sh" ||
+    die "cannot install the shared CLI env library"
 install -m 0644 "${CONFIG}" "${DEST}/conf/node.conf" ||
     die "cannot install configuration"
 install -m 0644 "${CA}" "${DEST}/certs/ca.pem" || die "cannot install CA"

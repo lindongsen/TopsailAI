@@ -9,6 +9,7 @@
 #     conf/node.conf            role configuration
 #     bin/agent-cluster-<role>  the role binary
 #     bin/agent-cluster-cli     the operator CLI (endpoint bundles only)
+#     lib/cli-env.sh            shared per-user env-file writer
 #
 # Installing an endpoint also installs the CLI, because the CLI is how an
 # operator on that machine reaches the Server. The CLI is installed as
@@ -28,10 +29,10 @@ set -uo pipefail
 INSTALL_DIR="/usr/local/sbin"
 FORCE=0
 CLI_NAME="topsailai_agent_cluster"
-ENV_RELATIVE_PATH=".topsailai/.topsailai_agent_cluster.env"
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 CONFIG_FILE="${SCRIPT_DIR}/conf/node.conf"
+CLI_ENV_LIB="${SCRIPT_DIR}/lib/cli-env.sh"
 
 function die() {
     echo "ERROR: $*" >&2
@@ -77,16 +78,6 @@ function load_config() {
     esac
 }
 
-# Quotes a value for the literal env-file parser: single quotes keep spaces and
-# comment characters intact, and the parser supports no escaping inside them.
-function quote_value() {
-    local value="$1"
-    case "${value}" in
-        *"'"*) die "value must not contain a single quote" ;;
-    esac
-    printf "'%s'" "${value}"
-}
-
 # Installs one binary from the bundle into the destination directory.
 function install_binary() {
     local source="$1"
@@ -97,49 +88,15 @@ function install_binary() {
     echo "installed ${target}"
 }
 
-# Writes the per-user CLI env file, replacing it only when forced.
+# Writes the per-user CLI env file, replacing it only when forced. The writer is
+# shared with the Debian package postinst so both deployment paths produce the
+# same file with the same permissions.
 function write_cli_env() {
-    local home="${HOME:-}"
-    [ -n "${home}" ] || die "HOME is required to write the CLI env file"
-    [ -n "${SERVER_API_URL:-}" ] || die "SERVER_API_URL is required to configure the CLI"
-    [ -n "${AUTH_TOKEN:-}" ] || die "AUTH_TOKEN is required to configure the CLI"
-
-    local target="${home}/${ENV_RELATIVE_PATH}"
-    local content
-    content=$(
-        echo "# Author: DawsonLin"
-        echo "# Purpose: Per-user Agent Cluster CLI configuration."
-        echo "# Written by install-node.sh; the CLI reads it when the process"
-        echo "# environment does not already define these keys."
-        echo "AGENT_CLUSTER_SERVER_URL=$(quote_value "${SERVER_API_URL}")"
-        echo "AGENT_CLUSTER_TOKEN=$(quote_value "${AUTH_TOKEN}")"
-    ) || die "cannot compose ${target}"
-
-    # Restrict only a directory this script created. An existing directory may be
-    # a symlink to a shared location (for example ${HOME}/.topsailai pointing at a
-    # mounted host directory), and chmod would follow that link and change the
-    # permissions of the shared target.
-    local env_dir
-    env_dir=$(dirname "${target}")
-    if [ ! -d "${env_dir}" ]; then
-        mkdir -p "${env_dir}" || die "cannot create ${env_dir}"
-        chmod 0700 "${env_dir}" || die "cannot restrict ${env_dir}"
-    fi
-
-    if [ -f "${target}" ]; then
-        if [ "$(cat "${target}")" = "${content}" ]; then
-            chmod 0600 "${target}"
-            echo "unchanged ${target}"
-            return 0
-        fi
-        if [ "${FORCE}" -ne 1 ]; then
-            die "${target} already exists with different content; re-run with --force to replace it"
-        fi
-    fi
-
-    printf '%s\n' "${content}" >"${target}" || die "cannot write ${target}"
-    chmod 0600 "${target}" || die "cannot restrict ${target}"
-    echo "wrote ${target}"
+    [ -f "${CLI_ENV_LIB}" ] || die "missing shared library ${CLI_ENV_LIB}"
+    # shellcheck source=lib/cli-env.sh
+    . "${CLI_ENV_LIB}"
+    cli_env_write "${HOME:-}" "${SERVER_API_URL:-}" "${AUTH_TOKEN:-}" "${FORCE}" ||
+        die "cannot write the per-user CLI env file"
 }
 
 load_config
