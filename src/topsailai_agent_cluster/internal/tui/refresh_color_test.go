@@ -1,0 +1,61 @@
+package tui
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+// TestRefreshKeepsTableColors proves the refresh command renders its table through
+// the trusted writer, so the operator sees the same styling as list and cd.
+func TestRefreshKeepsTableColors(t *testing.T) {
+	cases := []struct {
+		name, input string
+		tables      int
+	}{
+		{"workspace", "refresh\nquit\n", 2},
+		{"alias", "r\nquit\n", 2},
+		{"endpoint", "cd ai-dev/endpoint-1\nrefresh\nquit\n", 3},
+	}
+	for _, c := range cases {
+		for _, enabled := range []bool{true, false} {
+			t.Run(c.name+map[bool]string{true: "/color", false: "/plain"}[enabled], func(t *testing.T) {
+				var out, diagnostics strings.Builder
+				err := RunInteractive(context.Background(), singleHostStub(), strings.NewReader(c.input), &out, &diagnostics, InteractiveOptions{Color: ColorPolicy{Enabled: enabled}})
+				if err != nil || diagnostics.Len() != 0 {
+					t.Fatalf("err=%v diagnostics=%q", err, diagnostics.String())
+				}
+				text := out.String()
+				if enabled {
+					for _, token := range []string{ansiBoldCyan + "NO", ansiGreen + "running"} {
+						if got := strings.Count(text, token); got != c.tables {
+							t.Fatalf("%q count=%d want=%d output=%q", token, got, c.tables, text)
+						}
+					}
+				} else if strings.Contains(text, "\x1b") {
+					t.Fatalf("plain output contains ANSI: %q", text)
+				}
+			})
+		}
+	}
+}
+
+// TestRefreshStillFiltersProviderANSI proves the trusted writer only carries the
+// application's own styling: provider-derived cell text stays sanitized.
+func TestRefreshStillFiltersProviderANSI(t *testing.T) {
+	stub := singleHostStub()
+	stub.endpoints[0].DisplayName = "host\x1b[31mRED\x1b[0m"
+	stub.reports["endpoint-1"] = navInventory("sess\x1b[31mRED\x1b[0m", "generation-1")
+	var out, diagnostics strings.Builder
+	err := RunInteractive(context.Background(), stub, strings.NewReader("refresh\nquit\n"), &out, &diagnostics, InteractiveOptions{Color: ColorPolicy{Enabled: true}})
+	if err != nil || diagnostics.Len() != 0 {
+		t.Fatalf("err=%v diagnostics=%q", err, diagnostics.String())
+	}
+	text := out.String()
+	if strings.Contains(text, "\x1b[31m") {
+		t.Fatalf("provider ANSI reached the terminal: %q", text)
+	}
+	if !strings.Contains(text, "provider-sessRED") {
+		t.Fatalf("sanitized provider text missing: %q", text)
+	}
+}

@@ -40,7 +40,10 @@ scan:
 # IMPORTANT: `context._` is currently empty. Fill it with the sources
 # you want every agent run to receive (e.g. project.yaml, docs, features).
 context:
-  _: []
+  _:
+    - docs/agent-cluster-architecture.md
+    - docs/agent-cluster-protocol.md
+    - docs/agent-cluster-adapters.md
   default: []
 
 # Environment variable configuration: each item can define its own variables.
