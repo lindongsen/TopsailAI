@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -32,6 +33,7 @@ type Server struct {
 	RevokedSerials   map[string]bool
 	pendingOutput    map[string]pendingOutputRequest
 	pendingLaunch    map[string]pendingLaunchRequest
+	pendingRefresh   map[string]pendingRefreshRequest
 }
 
 // pendingOutputRequest tracks one output request so read-limit failures can be reported.
@@ -40,8 +42,17 @@ type pendingOutputRequest struct {
 	response   chan Frame
 }
 
+// pendingRefreshRequest tracks one forced collection so its committed report can be returned.
+type pendingRefreshRequest struct {
+	endpointID string
+	response   chan Frame
+}
+
 // Peer is one currently connected Endpoint.
 const channelReadLimit int64 = 2 << 20
+
+// maxPendingRefresh bounds concurrent forced collections so discovery cannot amplify.
+const maxPendingRefresh = 64
 
 // Peer is one currently connected Endpoint.
 type Peer struct {
@@ -55,7 +66,7 @@ type Peer struct {
 
 // NewServer constructs a channel server.
 func NewServer(tlsConfig *tls.Config) *Server {
-	return &Server{TLSConfig: tlsConfig, Fence: NewFence(), Active: make(map[string]*Peer), HeartbeatTimeout: 30 * time.Second, RevokedSerials: make(map[string]bool), pendingOutput: make(map[string]pendingOutputRequest)}
+	return &Server{TLSConfig: tlsConfig, Fence: NewFence(), Active: make(map[string]*Peer), HeartbeatTimeout: 30 * time.Second, RevokedSerials: make(map[string]bool), pendingOutput: make(map[string]pendingOutputRequest), pendingRefresh: make(map[string]pendingRefreshRequest)}
 }
 
 // Handler accepts Endpoint-initiated WebSocket upgrades and fences older peers.
@@ -175,6 +186,36 @@ func (s *Server) readLoop(ctx context.Context, peer *Peer) {
 		if s.OnFrame != nil {
 			s.OnFrame(*peer, frame)
 		}
+		// A forced collection is delivered only after the persistence hook ran, so the
+		// waiter observes the committed state rather than the submitted report.
+		if frame.Type == FrameInventory && frame.RequestID != "" {
+			s.deliverRefresh(peer, frame)
+		}
+	}
+}
+
+// deliverRefresh hands a correlated forced-collection report to its waiting request.
+func (s *Server) deliverRefresh(peer *Peer, frame Frame) {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	pending, ok := s.pendingRefresh[frame.RequestID]
+	if !ok || pending.endpointID != peer.EndpointID {
+		return
+	}
+	delete(s.pendingRefresh, frame.RequestID)
+	pending.response <- frame
+}
+
+// failPendingRefresh reports a transport failure to every request for one Endpoint.
+func (s *Server) failPendingRefresh(endpointID string) {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	for requestID, pending := range s.pendingRefresh {
+		if pending.endpointID != endpointID {
+			continue
+		}
+		delete(s.pendingRefresh, requestID)
+		pending.response <- Frame{Type: FrameInventory}
 	}
 }
 
@@ -233,6 +274,46 @@ func (s *Server) RequestRefresh(ctx context.Context, endpointID, requestID strin
 	return s.SendCommand(ctx, endpointID, Frame{Type: FrameInventoryRefresh, ProtocolVersion: ProtocolVersion, RequestID: requestID})
 }
 
+// RequestRefreshAndWait forces one fresh collection and returns the report the
+// Server persisted for it, so a caller can prove the data is fresh rather than cached.
+func (s *Server) RequestRefreshAndWait(ctx context.Context, endpointID string) (protocol.InventoryReport, error) {
+	requestID := security.NewRequestID()
+	response := make(chan Frame, 1)
+	s.Mu.Lock()
+	if len(s.pendingRefresh) >= maxPendingRefresh {
+		s.Mu.Unlock()
+		return protocol.InventoryReport{}, errors.New("refresh capacity exceeded")
+	}
+	s.pendingRefresh[requestID] = pendingRefreshRequest{endpointID: endpointID, response: response}
+	s.Mu.Unlock()
+	if err := s.SendCommand(ctx, endpointID, Frame{Type: FrameInventoryRefresh, ProtocolVersion: ProtocolVersion, RequestID: requestID}); err != nil {
+		s.Mu.Lock()
+		delete(s.pendingRefresh, requestID)
+		s.Mu.Unlock()
+		return protocol.InventoryReport{}, err
+	}
+	select {
+	case frame := <-response:
+		if frame.Payload == nil {
+			return protocol.InventoryReport{}, errors.New("refresh response is missing")
+		}
+		data, err := json.Marshal(frame.Payload)
+		if err != nil {
+			return protocol.InventoryReport{}, fmt.Errorf("marshal refresh response: %w", err)
+		}
+		var report protocol.InventoryReport
+		if err := json.Unmarshal(data, &report); err != nil {
+			return protocol.InventoryReport{}, fmt.Errorf("decode refresh response: %w", err)
+		}
+		return report, nil
+	case <-ctx.Done():
+		s.Mu.Lock()
+		delete(s.pendingRefresh, requestID)
+		s.Mu.Unlock()
+		return protocol.InventoryReport{}, ctx.Err()
+	}
+}
+
 // IsOnline reports whether an Endpoint has an authoritative, non-expired peer.
 func (s *Server) IsOnline(endpointID string, now time.Time) bool {
 	peer, err := s.currentPeer(endpointID)
@@ -266,7 +347,13 @@ func (s *Server) remove(peer *Peer) {
 	// overwritten by this disconnect.
 	observedAtMS := time.Now().UnixMilli()
 	s.Mu.Unlock()
-	if !authoritative || s.OnDisconnect == nil {
+	if !authoritative {
+		return
+	}
+	// A disconnected Endpoint can never answer a forced collection, so fail the
+	// waiters instead of letting them block until their own deadline.
+	s.failPendingRefresh(peer.EndpointID)
+	if s.OnDisconnect == nil {
 		return
 	}
 	// Notify outside the channel lock so persistence latency cannot block other peers.

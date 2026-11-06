@@ -50,6 +50,12 @@ func (r CommandRunner) ListWithOptions(ctx context.Context, out, errors io.Write
 	if err != nil {
 		return err
 	}
+	return r.RenderLoaded(out, errors, loaded, filter, jsonMode, options)
+}
+
+// RenderLoaded renders an already loaded inventory projection, so a forced
+// collection can reuse the exact list rendering without a second read.
+func (r CommandRunner) RenderLoaded(out, errors io.Writer, loaded reportLoad, filter string, jsonMode bool, options TableOptions) error {
 	rows := ListRows(loaded.endpoints, loaded.reports, filter)
 	if jsonMode {
 		return RenderJSON(out, rows)

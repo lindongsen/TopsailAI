@@ -694,20 +694,67 @@ func validateAdapterFreshness(report protocol.InventoryReport, adapterID string)
 	return nil
 }
 
-// interactiveRefresh narrows the refresh range to the current scope.
+// interactiveRefresh forces one fresh Endpoint collection in the current scope and
+// renders the committed inventory, so the operator sees fresh data rather than a
+// cached Server projection.
 func interactiveRefresh(parent context.Context, api InteractiveAPI, state *interactiveState, out, errors io.Writer, color ColorPolicy) error {
-	if state.Scope.Kind != ScopeSession {
-		// Workspace refreshes everything; endpoint scope is narrowed by scopedListFilter.
-		return interactiveList(parent, api, state, "", false, out, errors, color)
-	}
-	ctx, cancel := commandContext(parent)
+	ctx, cancel := context.WithTimeout(parent, refreshCommandTimeout)
 	defer cancel()
-	_, _, session, err := findSelected(ctx, api, state)
+	if state.Scope.Kind == ScopeSession {
+		// A session refresh revalidates the pinned session against a fresh report.
+		if err := refreshEndpoint(ctx, api, state.Scope.EndpointID); err != nil {
+			return err
+		}
+		_, _, session, err := findSelected(ctx, api, state)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(out, "session refreshed:", session.SessionID)
+		return err
+	}
+	return interactiveRefreshList(ctx, api, state, out, errors, color)
+}
+
+// refreshEndpoint forces one fresh collection for a single Endpoint.
+// A client without forced collection keeps the previous read-only behaviour.
+func refreshEndpoint(ctx context.Context, api InteractiveAPI, endpointID string) error {
+	refresher, ok := api.(InventoryRefresher)
+	if !ok {
+		return nil
+	}
+	_, err := refresher.RefreshInventory(ctx, endpointID)
+	return err
+}
+
+// interactiveRefreshList forces collection for every Endpoint in scope and renders
+// the committed documents through the shared list renderer.
+func interactiveRefreshList(ctx context.Context, api InteractiveAPI, state *interactiveState, out, errors io.Writer, color ColorPolicy) error {
+	scoped, err := scopedListFilter(state, "")
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(out, "session refreshed:", session.SessionID)
-	return err
+	state.Rows = nil
+	staged := make([]SessionRow, 0)
+	loaded, err := forceCollection(ctx, api, scoped)
+	if err != nil {
+		state.Rows = nil
+		return err
+	}
+	// Endpoint scope names one exact Endpoint, so its failure is the operator's
+	// answer; workspace scope reports per-Endpoint failures as diagnostics.
+	if state.Scope.Kind == ScopeEndpoint {
+		if refreshErr, failed := loaded.errors[state.Scope.EndpointID]; failed {
+			state.Rows = nil
+			return refreshErr
+		}
+	}
+	err = (CommandRunner{API: api, Policy: InteractivePolicy}).RenderLoaded(out, errors, loaded, scoped, false, TableOptions{Width: OutputWidth(out), Color: color, OnRows: func(rows []SessionRow) { staged = append(staged, rows...) }})
+	if err != nil {
+		state.Rows = nil
+		return err
+	}
+	state.setRows(staged)
+	return nil
 }
 
 // interactiveShow renders the current scope target or an explicit target.
