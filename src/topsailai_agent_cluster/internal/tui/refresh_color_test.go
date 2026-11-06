@@ -16,6 +16,9 @@ func TestRefreshKeepsTableColors(t *testing.T) {
 		{"workspace", "refresh\nquit\n", 2},
 		{"alias", "r\nquit\n", 2},
 		{"endpoint", "cd ai-dev/endpoint-1\nrefresh\nquit\n", 3},
+		// Entering session scope renders no table, so the startup table plus the
+		// refreshed one prove the session-scope refresh is styled like list.
+		{"session", "cd ai-dev/endpoint-1/res-1\nr\nquit\n", 2},
 	}
 	for _, c := range cases {
 		for _, enabled := range []bool{true, false} {

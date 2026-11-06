@@ -247,13 +247,35 @@ func TestRefreshNarrowsToCurrentEndpoint(t *testing.T) {
 	}
 }
 
-func TestRefreshRevalidatesCurrentSession(t *testing.T) {
+func TestRefreshRendersTableInSessionScope(t *testing.T) {
 	output, diagnostics := runScope(t, scopeStub(), "cd host-one/endpoint-1/res-1\nrefresh\nquit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "session refreshed: res-1") {
-		t.Fatalf("missing session refresh evidence: %q", output)
+	scoped := segmentBeforePrompt(output, "session[host-one/provider-res-1]> ")
+	if !strings.Contains(scoped, "SESSION_ID") || !strings.Contains(scoped, "provider-res-1") {
+		t.Fatalf("session refresh did not render the endpoint table: %q", scoped)
+	}
+	if strings.Contains(scoped, "host-two") {
+		t.Fatalf("session refresh leaked another endpoint: %q", scoped)
+	}
+	if got := lastPrompt(output); got != "session[host-one/provider-res-1]>" {
+		t.Fatalf("final prompt = %q, want session prompt", got)
+	}
+}
+
+func TestRefreshInSessionScopeStillRevalidatesTheSelection(t *testing.T) {
+	stub := scopeStub()
+	// Startup list, cd, then refresh: the refresh read is the fifth inventory call,
+	// so only that read reports a new generation for the pinned session.
+	stub.generationSequence = []string{"generation-1", "generation-1", "generation-1", "generation-1", "generation-2"}
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nrefresh\nquit\n", ColorPolicy{})
+	assertActionableError(t, diagnostics, "error: selected session generation changed; use the session again")
+	if got := strings.Count(output, "SESSION_ID"); got != 1 {
+		t.Fatalf("refresh rendered %d tables for an invalidated selection, want only the startup table: %q", got, output)
+	}
+	if got := lastPrompt(output); got != "session[host-one/provider-res-1!]>" {
+		t.Fatalf("final prompt = %q, want invalidated session prompt", got)
 	}
 }
 

@@ -635,6 +635,15 @@ func findSelected(ctx context.Context, api InteractiveAPI, state *interactiveSta
 	if err != nil {
 		return protocol.Endpoint{}, protocol.InventoryReport{}, nil, err
 	}
+	return findSelectedIn(loaded, state)
+}
+
+// findSelectedIn revalidates the pinned selection against an already loaded
+// inventory, so a caller that also renders that load performs one API round trip.
+func findSelectedIn(loaded reportLoad, state *interactiveState) (protocol.Endpoint, protocol.InventoryReport, *protocol.Session, error) {
+	if err := state.requireUsable(); err != nil {
+		return protocol.Endpoint{}, protocol.InventoryReport{}, nil, err
+	}
 	for _, endpoint := range loaded.endpoints {
 		if endpoint.EndpointID != state.EndpointID {
 			continue
@@ -694,20 +703,37 @@ func validateAdapterFreshness(report protocol.InventoryReport, adapterID string)
 	return nil
 }
 
-// interactiveRefresh narrows the refresh range to the current scope.
+// interactiveRefresh reloads the latest Server inventory for the current scope.
+// In session scope it also revalidates the pinned selection from the same load,
+// so the operator sees the refreshed endpoint table while a changed generation
+// still invalidates the selection instead of silently retargeting it.
 func interactiveRefresh(parent context.Context, api InteractiveAPI, state *interactiveState, out, errors io.Writer, color ColorPolicy) error {
-	if state.Scope.Kind != ScopeSession {
-		// Workspace refreshes everything; endpoint scope is narrowed by scopedListFilter.
-		return interactiveList(parent, api, state, "", false, out, errors, color)
-	}
-	ctx, cancel := commandContext(parent)
-	defer cancel()
-	_, _, session, err := findSelected(ctx, api, state)
+	scoped, err := scopedListFilter(state, "")
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(out, "session refreshed:", session.SessionID)
-	return err
+	state.Rows = nil
+	staged := make([]SessionRow, 0)
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	loaded, err := loadReports(ctx, api, scoped)
+	if err != nil {
+		state.Rows = nil
+		return err
+	}
+	if state.Scope.Kind == ScopeSession {
+		if _, _, _, err := findSelectedIn(loaded, state); err != nil {
+			state.Rows = nil
+			return err
+		}
+	}
+	err = renderListRows(out, errors, loaded, scoped, false, TableOptions{Width: OutputWidth(out), Color: color, OnRows: func(rows []SessionRow) { staged = append(staged, rows...) }})
+	if err != nil {
+		state.Rows = nil
+		return err
+	}
+	state.setRows(staged)
+	return nil
 }
 
 // interactiveShow renders the current scope target or an explicit target.
