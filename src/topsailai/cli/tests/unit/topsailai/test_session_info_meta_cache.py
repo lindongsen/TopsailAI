@@ -23,7 +23,7 @@ def test_meta_admission_does_not_replace_existing_entries(monkeypatch):
     monkeypatch.setattr(session_info, "_SESSION_INFO_CACHE", cache)
     monkeypatch.setattr(session_info, "load_project_workspace_lookup", Mock(return_value={}))
     query = Mock(side_effect=AssertionError("unexpected query"))
-    monkeypatch.setattr(session_info, "_get_session_info", query)
+    monkeypatch.setattr(session_info, "_get_sessions_info", query)
 
     existing = {
         "full": ("Existing", "/existing"),
@@ -48,7 +48,7 @@ def test_meta_seeds_before_query_planning_when_ordinary_row_precedes_snapshot(mo
     monkeypatch.setattr(session_info, "_SESSION_INFO_CACHE", cache)
     monkeypatch.setattr(session_info, "load_project_workspace_lookup", Mock(return_value={}))
     query = Mock(side_effect=AssertionError("unexpected query"))
-    monkeypatch.setattr(session_info, "_get_session_info", query)
+    monkeypatch.setattr(session_info, "_get_sessions_info", query)
 
     ordinary = {"session_id": "s1", "pid": 202, "is_task": False}
     snapshot = _row()
@@ -66,7 +66,7 @@ def test_invalid_snapshot_does_not_seed_but_can_use_existing_cache(monkeypatch):
     monkeypatch.setattr(session_info, "load_project_workspace_lookup", Mock(return_value={}))
     cache.set("s1", ("Cached", "/cached"))
     query = Mock(side_effect=AssertionError("cache should satisfy fallback"))
-    monkeypatch.setattr(session_info, "_get_session_info", query)
+    monkeypatch.setattr(session_info, "_get_sessions_info", query)
 
     invalid = _row()
     invalid["_completed_session_meta"] = ("other", 101, "Wrong", "/wrong")

@@ -234,3 +234,34 @@ once existed. Any discovery that treats existence as availability will prefer a
 dead endpoint over a live one and will report false ambiguity; liveness must be
 part of the candidate predicate, and an unverifiable state must fail closed
 rather than claim a channel.
+
+## A subprocess timeout must kill the process group, not just the child
+
+### Trigger
+
+`topsailai_session_info` kept burning 8-13% CPU per process for ~10s after the
+session table had already been printed. A refresh left 12 orphaned lookup
+processes behind, and repeated refreshes stacked new generations on top.
+
+### Action taken
+
+Traced the process tree and found that `subprocess.run(timeout=5)` killed only
+the direct child: because `topsailai_session_info.py` has no executable bit, the
+dispatcher `../bin/topsailai.cli` wraps it in `uv run`, so the interpreter that
+actually does the work is a grandchild and survives as an orphan (ppid=1).
+Replaced the call with `_run_lookup_command()`, which starts the child with
+`start_new_session=True` and, on `TimeoutExpired`, signals the whole group via
+`os.killpg(process.pid, SIGKILL)` with a `process.kill()` fallback and a bounded
+reap. Verified with a synthetic two-level tree (0 survivors at +0/+1/+3/+6s) and
+with a real refresh over 17 session stdout files (0 orphans at +0/+3/+6/+10s,
+versus 12 before the fix).
+
+### Why this prevents recurrence
+
+A timeout is a statement about a whole unit of work, but `subprocess.run` only
+owns the direct child. Whenever the launched command is a wrapper (`uv run`,
+`sh -c`, a launcher script), the real work happens one or more levels down, so
+the kill must target the process group and the child must be started as a group
+leader. Killing the child alone reports a clean timeout while the actual CPU
+consumer keeps running, which is exactly the symptom that looks like "the
+command is slow" rather than "the command leaks processes".

@@ -168,12 +168,14 @@ When the CLI starts, it prints the workspace task list built by scanning `{TOPSA
 
 | Field | Primary source | Metadata fallback |
 |---|---|---|
-| `Session Name` | `topsailai_session_info --json` for the row's session | `session_name` from the exact metadata record |
+| `Session Name` | one batched `topsailai_sessions_info --json <id>...` call for all listed sessions | `session_name` from the exact metadata record |
 | `Project Workspace` | the same lookup, then the recorded project-workspace index | `project_workspace` from the exact metadata record, only when it is an absolute path |
 | `Hostname` | metadata only | `hostname` from the exact metadata record |
 | `PID` | the PID embedded in the filename, kept only while that process is alive | `pid` from the exact metadata record, display only |
 
 The fallback binds to the row's own `(session_id, pid)` pair and re-validates both against the record's stored `session_id` and `pid`. A record for another session or another PID is never substituted, and one session ID may own several metadata files, so no newest-file selection is made. A blank `session_name` or a relative `project_workspace` is treated as absent. Temporary rows are displayed as `(temp)` but stored under the reserved `topsailai` prefix, so their `Hostname` is read through that prefix; their `Session Name`, `Project Workspace`, and `PID` stay unresolved because a temporary session has no real identifier.
+
+The primary lookup is a single batched call: every unresolved session ID in the current refresh is passed to one `topsailai_sessions_info --json` invocation instead of one `topsailai_session_info` call per session, so the refresh cost no longer grows with the number of listed sessions. Because that command exits `1` when any requested identifier is unknown, a non-zero exit code is not treated as a failure by itself; the JSON array on stdout is authoritative, and an identifier absent from it is simply left unresolved and retried on the next refresh rather than cached as a failure. Only an unusable response (timeout, missing command, unparseable or non-array payload) is treated as a transient failure, and a timed-out lookup kills its whole process group so no orphaned child keeps consuming CPU.
 
 The metadata `PID` is display evidence only and never grants signal authority: `workspace_pid` stays liveness-gated, `/kill` still signals only a live row PID, and the JSON `process_generation` stays `null` for a row whose process is not verified to hold its exact session stdout file, so non-interactive `workspace kill` remains impossible for an exited row.
 

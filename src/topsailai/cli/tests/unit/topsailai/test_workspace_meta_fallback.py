@@ -51,8 +51,13 @@ def make_rows(home, names):
 
 def fail_lookup(monkeypatch):
     """Make the primary session-info lookup fail like a timeout."""
-    query = Mock(return_value=session_info._LookupResult(None, None, False))
-    monkeypatch.setattr(session_info, "_get_session_info", query)
+    query = Mock(
+        side_effect=lambda session_ids: {
+            session_id: session_info._LookupResult(None, None, False)
+            for session_id in session_ids
+        }
+    )
+    monkeypatch.setattr(session_info, "_get_sessions_info", query)
     return query
 
 
@@ -87,8 +92,13 @@ def test_failed_lookup_renders_name_and_project_workspace(tmp_path, monkeypatch)
 
 def test_primary_lookup_wins_over_meta(tmp_path, monkeypatch):
     """The fallback never replaces a successful primary resolution."""
-    query = Mock(return_value=session_info._LookupResult("Primary Name", "/primary", True))
-    monkeypatch.setattr(session_info, "_get_session_info", query)
+    query = Mock(
+        side_effect=lambda session_ids: {
+            session_id: session_info._LookupResult("Primary Name", "/primary", True)
+            for session_id in session_ids
+        }
+    )
+    monkeypatch.setattr(session_info, "_get_sessions_info", query)
     write_meta(tmp_path, session_name="Recorded Name", project_workspace="/recorded/project")
     rows = make_rows(tmp_path, ["sample.123.session.stdout"])
 

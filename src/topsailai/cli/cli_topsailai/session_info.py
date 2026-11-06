@@ -2,20 +2,22 @@
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Tuple
 
-from cli_topsailai.colors import Colors
 from cli_topsailai.project_scope import load_project_workspace_lookup
 
 # Timeout for each external session-info lookup, in seconds.
 _SESSION_INFO_TIMEOUT = 5
 
-# Maximum number of concurrent subprocess lookups per refresh.
-_MAX_SESSION_INFO_WORKERS = 8
+# Maximum time to wait for a killed process group to be reaped, in seconds.
+_SESSION_INFO_REAP_TIMEOUT = 2
+
+# External command that resolves many session identifiers in one invocation.
+_SESSIONS_INFO_COMMAND = "topsailai_sessions_info"
 
 # Sentinel used to distinguish "not cached" from "cached None".
 _MISSING = object()
@@ -95,78 +97,148 @@ class _LookupResult:
         self.success = success
 
 
-def _get_session_info(session_id: str) -> _LookupResult:
-    """Return session metadata for *session_id* using ``topsailai_session_info``.
+def _kill_process_group(process: "subprocess.Popen[str]") -> None:
+    """Terminate *process* and every process in its process group.
 
-    Empty or whitespace-only names are treated as successful lookups but are
-    not cached by the caller, so the next refresh will retry them.  Transient
-    failures (timeout, missing command, non-zero exit, invalid JSON, etc.)
-    return ``success=False`` so the caller can avoid poisoning the cache.
+    The CLI dispatcher wraps the script in ``uv run``, so the interpreter that
+    actually burns CPU is a grandchild of this process.  Killing only the
+    direct child leaves that grandchild running as an orphan, which is why a
+    timed-out lookup kept consuming CPU after the refresh had already finished.
+    ``start_new_session=True`` makes the child a process-group leader, so the
+    whole tree can be signalled at once.
+
+    A process-group ID cannot be reused while the group still has members, so
+    signalling ``process.pid`` as the group ID stays safe even when the direct
+    child already exited; an empty group raises ``ProcessLookupError`` and is
+    treated as already terminated.  The group signal is therefore attempted
+    unconditionally, because a reaped leader can still have live descendants.
+
+    ``os.killpg`` and ``signal.SIGKILL`` are POSIX-only, so platforms without
+    them fall back to killing the direct child only.
     """
+    killpg = getattr(os, "killpg", None)
+    sigkill = getattr(signal, "SIGKILL", signal.SIGTERM)
+    if killpg is not None:
+        try:
+            killpg(process.pid, sigkill)
+        except OSError:
+            # The group is already gone or cannot be signalled; fall back to
+            # the direct child so a survivor is never left unattended.
+            pass
     try:
-        result = subprocess.run(
-            ["topsailai_session_info", "--json", session_id],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=_SESSION_INFO_TIMEOUT,
-            check=False,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return _LookupResult(None, None, False)
-
-    if result.returncode != 0 or not result.stdout:
-        return _LookupResult(None, None, False)
-
+        process.kill()
+    except OSError:
+        pass
     try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return _LookupResult(None, None, False)
+        process.communicate(timeout=_SESSION_INFO_REAP_TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        pass
 
-    if not isinstance(data, dict):
-        return _LookupResult(None, None, False)
 
-    name = data.get("session_name")
+def _run_lookup_command(cmd: List[str]) -> "subprocess.CompletedProcess[str]":
+    """Run *cmd* in its own process group and kill the group on timeout.
+
+    Raises ``subprocess.TimeoutExpired`` only after the whole process group has
+    been terminated, so the caller can treat the timeout as a transient failure
+    without leaving orphaned children behind.
+    """
+    process = subprocess.Popen(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=_SESSION_INFO_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        _kill_process_group(process)
+        raise
+    return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
+
+
+def _parse_session_record(record: object) -> Optional[_LookupResult]:
+    """Convert one JSON session record into a normalized lookup result."""
+    if not isinstance(record, dict):
+        return None
+
+    name = record.get("session_name")
     if isinstance(name, str):
         name = name.strip() or None
 
-    project_workspace = data.get("project_workspace")
+    project_workspace = record.get("project_workspace")
     if not isinstance(project_workspace, str) or not project_workspace.strip():
         project_workspace = None
 
     return _LookupResult(name, project_workspace, True)
 
 
-def _fetch_missing_session_info(session_ids: List[str]) -> None:
-    """Fetch session metadata concurrently and cache only non-empty results.
+def _get_sessions_info(session_ids: List[str]) -> dict[str, _LookupResult]:
+    """Return metadata for *session_ids* from one ``topsailai_sessions_info`` call.
 
-    Each lookup runs in its own thread so slow subprocess calls do not block
-    each other.  Transient failures are not cached, allowing retries on the
-    next refresh.  Empty/whitespace-only names are also not cached, but a
-    valid ``project_workspace`` without a name is still cached so the
-    workspace can be reused.
+    A single invocation resolves every identifier, so the cost of a refresh no
+    longer grows with the number of listed sessions.  The command exits ``1``
+    when any requested identifier is unknown, so a non-zero exit code is not a
+    failure by itself: the JSON array on stdout is authoritative and unknown
+    identifiers are simply absent from it.  Only an unusable response (timeout,
+    missing command, unparseable or non-array payload) yields an empty mapping,
+    which the caller treats as a transient failure and retries on the next
+    refresh.
+    """
+    if not session_ids:
+        return {}
+
+    try:
+        result = _run_lookup_command(
+            [_SESSIONS_INFO_COMMAND, "--json", *session_ids]
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return {}
+
+    if not result.stdout:
+        return {}
+
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}
+
+    if not isinstance(payload, list):
+        return {}
+
+    requested = set(session_ids)
+    resolved: dict[str, _LookupResult] = {}
+    for record in payload:
+        if not isinstance(record, dict):
+            continue
+        session_id = record.get("session_id")
+        if not isinstance(session_id, str) or session_id not in requested:
+            continue
+        lookup = _parse_session_record(record)
+        if lookup is not None:
+            resolved[session_id] = lookup
+    return resolved
+
+
+def _fetch_missing_session_info(session_ids: List[str]) -> None:
+    """Fetch session metadata in one batch and cache only non-empty results.
+
+    All identifiers are resolved by a single subprocess call.  Transient
+    failures are not cached, allowing retries on the next refresh.
+    Empty/whitespace-only names are also not cached, but a valid
+    ``project_workspace`` without a name is still cached so the workspace can
+    be reused.
     """
     if not session_ids:
         return
 
-    max_workers = min(_MAX_SESSION_INFO_WORKERS, len(session_ids))
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_id = {
-            executor.submit(_get_session_info, sid): sid for sid in session_ids
-        }
-        for future in as_completed(future_to_id):
-            session_id = future_to_id[future]
-            try:
-                lookup = future.result()
-            except Exception:
-                continue
-            if not lookup.success:
-                continue
-            # Cache when we have at least one useful piece of metadata.
-            if lookup.name or lookup.project_workspace:
-                _SESSION_INFO_CACHE.set(
-                    session_id, (lookup.name, lookup.project_workspace)
-                )
+    for session_id, lookup in _get_sessions_info(session_ids).items():
+        # Cache when we have at least one useful piece of metadata.
+        if lookup.name or lookup.project_workspace:
+            _SESSION_INFO_CACHE.set(
+                session_id, (lookup.name, lookup.project_workspace)
+            )
 
 
 def _completed_meta_snapshot(file_info: dict) -> Optional[Tuple[str, int, str, Optional[str]]]:
@@ -377,7 +449,7 @@ def _is_unnamed_running_session(file_info: dict) -> bool:
 
 
 def _fetch_session_names(session_ids: List[str]) -> dict[str, str]:
-    """Fetch non-empty session names concurrently.
+    """Fetch non-empty session names in one batch.
 
     Returns a mapping from session ID to session name.  Lookups that fail or
     return an empty/whitespace-only name are omitted.  Failures are silent so
@@ -387,21 +459,9 @@ def _fetch_session_names(session_ids: List[str]) -> dict[str, str]:
         return {}
 
     results: dict[str, str] = {}
-    max_workers = min(_MAX_SESSION_INFO_WORKERS, len(session_ids))
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_id = {}
-        for sid in session_ids:
-            print(f"{Colors.DIM}Querying session info for session: {sid}{Colors.RESET}")
-            sys.stdout.flush()
-            future_to_id[executor.submit(_get_session_info, sid)] = sid
-        for future in as_completed(future_to_id):
-            session_id = future_to_id[future]
-            try:
-                lookup = future.result()
-            except Exception:
-                continue
-            if lookup.success and lookup.name:
-                results[session_id] = lookup.name
+    for session_id, lookup in _get_sessions_info(session_ids).items():
+        if lookup.name:
+            results[session_id] = lookup.name
     return results
 
 
@@ -410,17 +470,17 @@ def enrich_running_unnamed_sessions(files: List[dict]) -> None:
 
     When the workspace task list is refreshed, running sessions may already
     have received a display name from the agent.  This function queries
-    ``topsailai_session_info`` for sessions that meet all of the following
+    ``topsailai_sessions_info`` for sessions that meet all of the following
     criteria:
 
       1. A real session ID exists (not empty, not ``(temp)``, not None).
       2. The embedded PID is alive.
       3. The ``session_name`` field is missing or empty.
 
-    Lookups are deduplicated and run concurrently.  Failures are silent and
-    do not block the refresh.  Only the ``session_name`` field is updated;
-    ``project_workspace`` is left untouched because it is already resolved by
-    :func:`enrich_files_with_session_names`.
+    Lookups are deduplicated and resolved by one batch call.  Failures are
+    silent and do not block the refresh.  Only the ``session_name`` field is
+    updated; ``project_workspace`` is left untouched because it is already
+    resolved by :func:`enrich_files_with_session_names`.
     """
     if not files:
         return
