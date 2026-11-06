@@ -24,8 +24,10 @@ func ResolveColorPolicy(outputTTY, noColorPresent, noColorFlag, termDumb, platfo
 	return ColorPolicy{Enabled: outputTTY && !noColorPresent && !noColorFlag && !termDumb && platformSupported}
 }
 
+// writeStyled writes text with one ANSI style. An empty style means the text
+// carries no colour, so it is written plain instead of emitting a bare reset.
 func writeStyled(w io.Writer, style, text string, policy ColorPolicy) error {
-	if !policy.Enabled {
+	if !policy.Enabled || style == "" {
 		_, err := io.WriteString(w, text)
 		return err
 	}

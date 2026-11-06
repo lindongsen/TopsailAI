@@ -8,7 +8,7 @@ author: DawsonLin
 | Case | Input and precondition | Expected output/effect |
 | --- | --- | --- |
 | NAV-01 | workspace: `list`, `list --clean` | table with all eight documented columns; healthy session retained; numbers correspond to latest rendered list |
-| NAV-02 | `cd <hostname>/<endpoint>` | endpoint prompt; automatic sibling table; cyan header, colored statuses, green prompt |
+| NAV-02 | `cd <hostname>/<endpoint>` | endpoint prompt; automatic sibling table; cyan header, whole data row coloured by session state, green prompt |
 | NAV-03 | endpoint: `list <endpoint>` then `list other-endpoint` | matching filter accepted; other filter rejected without scope/valid row-map change |
 | NAV-04 | endpoint: `<row>` or `cd <row>` from current list | selected session prompt contains provider label; subsequent show identifies correct internal resource/generation |
 | NAV-05 | session: `list`, then `1` | sibling list; numeric navigation rejected, selected session unchanged |
@@ -26,4 +26,4 @@ author: DawsonLin
 
 Selection precedence for `cd`, `logs` and `show`: a bare ASCII row number selects the session at that row of the most recently rendered list; a numeric token that is not a valid row number is retried as a provider session ID; a non-numeric token resolves by resource ID, then provider session ID, then display name. An unresolvable numeric token reports the row range (`row 77 is out of range; valid rows are 1-4`), and a numeric token that reaches the identifier path without a rendered list appends `; run list to select a session by row number`. Row numbers are the operator-facing shorthand, so no long identifier has to be typed.
 
-List state colors depend on state; do not demand green for input. ANSI captures must preserve app-owned color and reject external escape injection. Long names and narrow terminals must not destroy prompt navigation. Logs truncation reflects bounded reads; absent body must be investigated against provider output, never accepted on metadata alone.
+List state colors depend on state; do not demand green for input. A data row is coloured as one unit: every cell and the ` │ ` separators share the row's session-state colour, while DATA_STATUS keeps its own red/yellow warning when it reports a collection problem. ANSI captures must preserve app-owned color and reject external escape injection. Long names and narrow terminals must not destroy prompt navigation. Logs truncation reflects bounded reads; absent body must be investigated against provider output, never accepted on metadata alone.

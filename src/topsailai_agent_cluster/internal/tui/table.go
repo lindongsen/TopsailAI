@@ -70,26 +70,32 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 	}
 	fitTableWidths(widths, options.Width)
 	writeRow := func(values, states []string, header bool) error {
+		// A data row carries one colour for the whole line, derived from the
+		// session state, so the operator reads the row as a single unit.
+		rowStyle := ""
+		if !header {
+			rowStyle = stateStyle(rowState(values))
+		}
 		for i, value := range values {
 			if i > 0 {
-				if _, err := io.WriteString(out, " │ "); err != nil {
+				if err := writeStyled(out, rowStyle, " │ ", options.Color); err != nil {
 					return err
 				}
 			}
 			cell := clipCell(value, widths[i])
 			cell += strings.Repeat(" ", widths[i]-displayWidth(cell))
-			if header && options.Color.Enabled {
+			if header {
 				if err := writeStyled(out, ansiBoldCyan, cell, options.Color); err != nil {
 					return err
 				}
-			} else {
-				state := ""
-				if len(states) > i {
-					state = states[i]
-				}
-				if err := writeCellState(out, cell, i, state, options.Color); err != nil {
-					return err
-				}
+				continue
+			}
+			state := ""
+			if len(states) > i {
+				state = states[i]
+			}
+			if err := writeCellState(out, cell, i, state, rowStyle, options.Color); err != nil {
+				return err
 			}
 		}
 		_, err := io.WriteString(out, "\n")
@@ -371,23 +377,26 @@ func dataStatus(row SessionRow) string {
 	return base
 }
 
-func writeCellState(w io.Writer, cell string, index int, state string, policy ColorPolicy) error {
-	if policy.Enabled && index == columnDataStatus {
+// writeCellState writes one cell with the row's colour. A data row is coloured
+// as a whole from its session state, so every cell and separator of that row
+// shares one style; DATA_STATUS keeps its own warning colour when it reports a
+// collection problem, because that signal must stay visible on a healthy row.
+func writeCellState(w io.Writer, cell string, index int, state, rowStyle string, policy ColorPolicy) error {
+	if !policy.Enabled {
+		_, err := io.WriteString(w, cell)
+		return err
+	}
+	if index == columnDataStatus {
 		switch {
 		case state == "ok":
-			_, err := io.WriteString(w, cell)
-			return err
+			return writeStyled(w, rowStyle, cell, policy)
 		case strings.HasPrefix(state, "failed"):
 			return writeStyled(w, ansiRed, cell, policy)
 		default:
 			return writeStyled(w, ansiYellow, cell, policy)
 		}
 	}
-	if policy.Enabled && index == columnState {
-		return writeStyled(w, stateStyle(state), cell, policy)
-	}
-	_, err := io.WriteString(w, cell)
-	return err
+	return writeStyled(w, rowStyle, cell, policy)
 }
 
 func assignRowNumbers(rows []SessionRow) {
