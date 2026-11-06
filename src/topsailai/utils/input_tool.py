@@ -263,6 +263,149 @@ def input_yes_or_no(tips: str, input_func=None) -> bool:
         print("Please enter 'yes' or 'no'.")
 
 
+def _stdin_is_tty() -> bool:
+    """Return True when ``sys.stdin`` is an interactive terminal."""
+    try:
+        return bool(sys.stdin.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
+def _normalize_yes_no_default(default) -> bool:
+    """Return the boolean applied when no answer arrives.
+
+    Only ``"no"`` (case-insensitive, whitespace stripped) selects ``False``.
+    Any other value, including ``None`` and invalid types, falls back to
+    ``True`` so an unusable default never blocks a caller.
+    """
+    if isinstance(default, str) and default.strip().lower() == "no":
+        return False
+    return True
+
+
+def _normalize_poll_interval(poll_interval) -> float:
+    """Return a positive per-slice wait budget in seconds."""
+    if isinstance(poll_interval, bool) or not isinstance(poll_interval, (int, float)):
+        return 1.0
+    value = float(poll_interval)
+    if value != value or value <= 0:
+        return 1.0
+    return value
+
+
+def _read_one_slice(reader, seconds: float) -> str | None:
+    """Read at most one line within *seconds*, returning None when none arrived.
+
+    ``reader`` is an optional ``(tips, timeout)`` callable. When it is None the
+    terminal path of :func:`input_with_timeout` is used. A slice timeout and an
+    end-of-input condition both yield None so the caller can keep polling.
+    """
+    if reader is None:
+        return input_with_timeout(prompt="", timeout=seconds, default=None)
+    try:
+        return reader("", seconds)
+    except (TimeoutError, EOFError):
+        return None
+
+
+def input_yes_or_no_with_timeout(
+    tips: str,
+    timeout: float | None = None,
+    default: str = "yes",
+    input_func=None,
+    poll_interval: float = 1.0,
+    on_poll=None,
+) -> bool:
+    """Prompt for a yes/no answer within an overall time budget.
+
+    This is the timeout-aware counterpart of :func:`input_yes_or_no`. It is
+    deliberately generic: it knows only the words ``yes`` and ``no`` and never
+    interprets what the answer means to a caller.
+
+    The wait is sliced into short polls of *poll_interval* seconds. After every
+    slice that produced no answer, *on_poll* is invoked. A caller can therefore
+    keep a long wait responsive to unrelated signals by passing a callback that
+    raises or otherwise reacts between slices.
+
+    Parameters
+    ----------
+    tips:
+        Banner printed once before the first read. It is printed with a plain
+        ``print(..., flush=True)`` so it stays visible when framework display
+        output is disabled.
+    timeout:
+        Overall budget in seconds. ``None``, ``0``, negative, or invalid values
+        wait indefinitely.
+    default:
+        ``"yes"`` or ``"no"``, applied when the budget expires or when no
+        interactive input channel exists. Any other value means ``"yes"``.
+    input_func:
+        Optional ``(tips, timeout) -> str | None`` callable, typically the
+        agent-runtime input-with-timeout function. When omitted, the terminal
+        path of :func:`input_with_timeout` is used if ``sys.stdin`` is a TTY.
+    poll_interval:
+        Per-slice wait budget in seconds. Non-positive or invalid values fall
+        back to ``1.0``.
+    on_poll:
+        Optional callable invoked between slices that produced no answer.
+
+    Returns
+    -------
+    ``True`` for ``yes``, ``False`` for ``no``. The configured *default* is
+    returned when the budget expires or no input channel is available.
+    """
+    fallback = _normalize_yes_no_default(default)
+    if tips:
+        print(tips, flush=True)
+
+    base_slice = _normalize_poll_interval(poll_interval)
+
+    deadline = None
+    if timeout is not None:
+        try:
+            budget = float(timeout)
+        except (TypeError, ValueError):
+            budget = 0.0
+        if budget > 0:
+            deadline = time.monotonic() + budget
+
+    reader = input_func
+    if reader is None and not _stdin_is_tty():
+        logger.warning(
+            "input_yes_or_no_with_timeout: no interactive input channel "
+            "available; applying default '%s'",
+            "yes" if fallback else "no",
+        )
+        return fallback
+
+    while True:
+        slice_seconds = base_slice
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.warning(
+                    "input_yes_or_no_with_timeout: no answer within %s seconds; "
+                    "applying default '%s'",
+                    timeout,
+                    "yes" if fallback else "no",
+                )
+                return fallback
+            slice_seconds = min(base_slice, remaining)
+
+        line = _read_one_slice(reader, slice_seconds)
+        if line is not None:
+            decision = line.strip().lower()
+            if decision in ("yes", "y"):
+                return True
+            if decision in ("no", "n"):
+                return False
+            if decision:
+                print("Please enter 'yes' or 'no'.")
+
+        if on_poll is not None:
+            on_poll()
+
+
 def _get_input_history_max_size() -> int:
     """Return the maximum JSONL history file size in bytes before rotation.
 
