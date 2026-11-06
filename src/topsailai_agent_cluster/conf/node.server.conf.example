@@ -1,0 +1,35 @@
+# Author: DawsonLin
+# Purpose: Node configuration for the Agent Cluster server role.
+#
+# Paths are relative to the bundle root unless absolute. Edit the listener
+# addresses for the site: binding loopback keeps the server private to its host,
+# while binding a routable address lets endpoints on other hosts connect.
+
+ROLE=server
+
+# Listeners
+API_LISTEN_ADDR=127.0.0.1:53680
+CHANNEL_LISTEN_ADDR=127.0.0.1:53943
+
+# Pre-provisioned bearer token that endpoints must present.
+AUTH_TOKEN=replace-with-a-real-token
+
+# TLS material, relative to the bundle root.
+TLS_CA_FILE=certs/ca.pem
+TLS_CERTIFICATE_FILE=certs/node.pem
+TLS_KEY_FILE=certs/node-key.pem
+
+# State and logs, relative to the bundle root.
+DATABASE_PATH=data/server.sqlite
+LOG_PATH=logs/server.log
+PID_FILE=run/server.pid
+STDOUT_LOG=logs/server.stdout.log
+
+# Graceful shutdown window before SIGKILL.
+STOP_TIMEOUT_SECONDS=5
+
+# Log rotation bounds.
+LOG_MAX_SIZE_MB=100
+LOG_BACKUPS=10
+LOG_MAX_AGE_DAYS=30
+LOG_OUTPUT=file

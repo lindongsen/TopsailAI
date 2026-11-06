@@ -1,243 +1,173 @@
 #!/bin/bash
 # Author: DawsonLin
-# Purpose: Start, stop and inspect the local Agent Cluster server and endpoints.
+# Purpose: Drive the local Agent Cluster topology from the workspace.
 #
-# The Go binaries read process environment variables only; they never parse .env.
-# This script clears inherited AGENT_CLUSTER_* variables, sources the shared
-# workspace .env, then supplies the role-specific values as explicit command-line
-# flags because the server and each endpoint need different database paths and
-# different TLS leaf certificates.
+# Every role is delegated to a portable node bundle driven by agent-clusterctl, so
+# this script holds no role logic of its own: it only knows where each bundle
+# lives and in which order the roles come up. A bundle carries the controller,
+# the binaries and the configuration, which is what makes it movable to a node.
 #
-# Roles:
-#   server    the cluster server
-#   endpoint  the local-endpoint endpoint
-#   ai-dev    the ai-dev endpoint
+# Topology:
+#   server    local bundle, the cluster server
+#   endpoint  local bundle, the local-endpoint endpoint
+#   relay     socat hop publishing the channel port on the docker bridge gateway
+#   ai-dev    endpoint bundle inside the ai-dev container, dialled through relay
 #
 # Joint verbs act on every role; the role-scoped verbs act on one role only.
 
 set -uo pipefail
 
 PROJECT_DIR=/TopsailAI/src/topsailai_agent_cluster
-BIN_DIR="${PROJECT_DIR}/bin"
-RUN_DIR="${PROJECT_DIR}/.tmp/local-cluster"
-CERTS_DIR="${RUN_DIR}/certs"
-LOGS_DIR="${RUN_DIR}/logs"
-PIDS_DIR="${RUN_DIR}/pids"
-SERVER_BIN="${BIN_DIR}/agent-cluster-server"
-ENDPOINT_BIN="${BIN_DIR}/agent-cluster-endpoint"
-SHARED_ENV="${PROJECT_DIR}/.env"
+LOCAL_BUNDLE="${PROJECT_DIR}/.tmp/local-cluster"
+CONTROL_MASTER="${PROJECT_DIR}/scripts/agent-clusterctl"
+CONTROL="${LOCAL_BUNDLE}/agent-clusterctl"
+
+CONTAINER_NAME=ai-dev
+CONTAINER_BUNDLE_GUEST=/opt/git/ai/lindongsen/work/hosts/ai-dev/agent-cluster.new
+BRIDGE_ADDRESS=172.18.0.1
+RELAY_PORT=53943
+RELAY_PID="${LOCAL_BUNDLE}/pids/relay.pid"
 
 # Start order; stop order is the reverse so consumers leave before producers.
-START_ORDER=(server endpoint ai-dev)
-
-mkdir -p "${LOGS_DIR}" "${PIDS_DIR}"
+START_ORDER=(server endpoint relay ai-dev)
 
 function die() {
     echo "ERROR: $*" >&2
     exit 1
 }
 
-function load_shared_env() {
-    [ -f "${SHARED_ENV}" ] || die "missing shared configuration ${SHARED_ENV}"
-    # Inherited values would shadow the file, so clear them first.
-    while IFS='=' read -r key _; do
-        case "${key}" in
-            AGENT_CLUSTER_*) unset "${key}" ;;
-        esac
-    done < <(env)
-    set -a
-    # shellcheck disable=SC1090
-    . "${SHARED_ENV}"
-    set +a
+# Copies the controller into the bundle so the bundle stays self-contained.
+function ensure_control() {
+    [ -d "${LOCAL_BUNDLE}" ] || die "missing bundle ${LOCAL_BUNDLE}"
+    if ! cmp -s "${CONTROL_MASTER}" "${CONTROL}"; then
+        cp "${CONTROL_MASTER}" "${CONTROL}"
+        chmod +x "${CONTROL}"
+    fi
 }
 
-# Reports the executable serving a role.
-function role_binary() {
-    case "$1" in
-        server) echo "${SERVER_BIN}" ;;
-        endpoint | ai-dev) echo "${ENDPOINT_BIN}" ;;
-        *) return 1 ;;
-    esac
+# Runs the portable controller against the local bundle for one role.
+function local_ctl() {
+    local role="$1"
+    shift
+    ensure_control
+    "${CONTROL}" -c "${LOCAL_BUNDLE}/conf/${role}.conf" "$@"
 }
 
-# Reports the TLS leaf certificate identifying a role.
-function role_cert() {
-    case "$1" in
-        server) echo "${CERTS_DIR}/server.pem" ;;
-        endpoint) echo "${CERTS_DIR}/client.pem" ;;
-        ai-dev) echo "${CERTS_DIR}/endpoint-ai-dev.pem" ;;
-        *) return 1 ;;
-    esac
-}
-
-# Reports the TLS private key paired with role_cert.
-function role_key() {
-    case "$1" in
-        server) echo "${CERTS_DIR}/server-key.pem" ;;
-        endpoint) echo "${CERTS_DIR}/client-key.pem" ;;
-        ai-dev) echo "${CERTS_DIR}/endpoint-ai-dev-key.pem" ;;
-        *) return 1 ;;
-    esac
-}
-
-# Reports the SQLite database owned by a role.
-function role_db() {
-    case "$1" in
-        server) echo "${RUN_DIR}/server.sqlite" ;;
-        endpoint) echo "${RUN_DIR}/endpoint.sqlite" ;;
-        ai-dev) echo "${RUN_DIR}/endpoint-ai-dev.sqlite" ;;
-        *) return 1 ;;
-    esac
-}
-
-# Reports the endpoint identity a role announces; the certificate CN must match it.
-function role_endpoint_id() {
-    case "$1" in
-        endpoint) echo "local-endpoint" ;;
-        ai-dev) echo "ai-dev" ;;
-        *) return 1 ;;
-    esac
-}
-
-# Reports the endpoint instance identity a role announces.
-function role_instance_id() {
-    case "$1" in
-        endpoint) echo "local-endpoint-1" ;;
-        ai-dev) echo "ai-dev-1" ;;
-        *) return 1 ;;
-    esac
-}
-
-function pid_of() {
-    local name="$1"
-    local file="${PIDS_DIR}/${name}.pid"
-    [ -f "${file}" ] || return 1
+# Reports the pid of a live relay hop.
+function relay_pid_of() {
+    [ -f "${RELAY_PID}" ] || return 1
     local pid
-    pid=$(cat "${file}")
+    pid=$(cat "${RELAY_PID}" 2>/dev/null)
     [ -n "${pid}" ] || return 1
     kill -0 "${pid}" 2>/dev/null || return 1
     echo "${pid}"
 }
 
-function start_role() {
-    local name="$1"
-    shift
-    if pid=$(pid_of "${name}"); then
-        echo "${name} already running with pid ${pid}"
+# Publishes the channel port on the bridge gateway so the container can dial it.
+function start_relay() {
+    if pid=$(relay_pid_of); then
+        echo "relay already running with pid ${pid}"
         return 0
     fi
-    "$@" >>"${LOGS_DIR}/${name}.stdout.log" 2>&1 &
+    mkdir -p "$(dirname "${RELAY_PID}")"
+    nohup socat "TCP-LISTEN:${RELAY_PORT},bind=${BRIDGE_ADDRESS},fork,reuseaddr" \
+        "TCP:127.0.0.1:${RELAY_PORT}" \
+        >>"${LOCAL_BUNDLE}/logs/relay.stdout.log" 2>&1 &
     local pid=$!
-    echo "${pid}" >"${PIDS_DIR}/${name}.pid"
-    echo "started ${name} with pid ${pid}"
-}
-
-# Validates the prerequisites shared by every role.
-function preflight_common() {
-    load_shared_env
-    [ -f "${CERTS_DIR}/ca.pem" ] || die "missing ${CERTS_DIR}/ca.pem"
-}
-
-# Validates one role so a missing artefact fails before any process starts.
-function preflight_role() {
-    local name="$1"
-    local binary cert key
-    binary=$(role_binary "${name}") || die "unknown role ${name}"
-    cert=$(role_cert "${name}") || die "unknown role ${name}"
-    key=$(role_key "${name}") || die "unknown role ${name}"
-    [ -x "${binary}" ] || die "missing ${binary}; build it first"
-    [ -f "${cert}" ] || die "missing ${cert}"
-    [ -f "${key}" ] || die "missing ${key}"
-}
-
-# Starts one role with the flags that role requires.
-function start_named() {
-    local name="$1"
-    local binary cert key db
-    binary=$(role_binary "${name}") || die "unknown role ${name}"
-    cert=$(role_cert "${name}") || die "unknown role ${name}"
-    key=$(role_key "${name}") || die "unknown role ${name}"
-    db=$(role_db "${name}") || die "unknown role ${name}"
-    if [ "${name}" = "server" ]; then
-        start_role server \
-            "${binary}" \
-            --database-path "${db}" \
-            --tls-certificate-file "${cert}" \
-            --tls-key-file "${key}" \
-            --log-path "${LOGS_DIR}/server.log"
-        return 0
+    echo "${pid}" >"${RELAY_PID}"
+    sleep 1
+    if ! kill -0 "${pid}" 2>/dev/null; then
+        rm -f "${RELAY_PID}"
+        echo "relay failed to start; see ${LOCAL_BUNDLE}/logs/relay.stdout.log" >&2
+        return 1
     fi
-    start_role "${name}" \
-        "${binary}" \
-        --database-path "${db}" \
-        --endpoint-id "$(role_endpoint_id "${name}")" \
-        --instance-id "$(role_instance_id "${name}")" \
-        --tls-certificate-file "${cert}" \
-        --tls-key-file "${key}" \
-        --log-path "${LOGS_DIR}/${name}.log"
+    echo "started relay with pid ${pid}"
 }
 
-# Stops one role, escalating to SIGKILL only when graceful termination stalls.
-function stop_named() {
-    local name="$1"
+# Stops the relay hop.
+function stop_relay() {
     local pid
-    if pid=$(pid_of "${name}"); then
-        echo "stopping ${name} pid ${pid}"
+    if pid=$(relay_pid_of); then
+        echo "stopping relay pid ${pid}"
         kill "${pid}" 2>/dev/null
-        for _ in $(seq 1 50); do
-            kill -0 "${pid}" 2>/dev/null || break
-            sleep 0.1
-        done
-        if kill -0 "${pid}" 2>/dev/null; then
-            echo "forcing ${name} pid ${pid}"
-            kill -9 "${pid}" 2>/dev/null
-        fi
     else
-        echo "${name} is not running"
+        echo "relay is not running"
     fi
-    rm -f "${PIDS_DIR}/${name}.pid"
+    rm -f "${RELAY_PID}"
 }
 
-function status_named() {
-    local name="$1"
+# Reports whether the relay hop is running.
+function status_relay() {
     local pid
-    if pid=$(pid_of "${name}"); then
-        echo "${name}: running pid ${pid}"
+    if pid=$(relay_pid_of); then
+        echo "relay: running pid ${pid} on ${BRIDGE_ADDRESS}:${RELAY_PORT}"
     else
-        echo "${name}: stopped"
+        echo "relay: stopped"
     fi
 }
 
-function start_all() {
-    preflight_common
-    local name
-    for name in "${START_ORDER[@]}"; do
-        preflight_role "${name}"
-    done
-    for name in "${START_ORDER[@]}"; do
-        start_named "${name}"
-    done
+# Runs the portable controller inside the ai-dev container for its endpoint role.
+# The container bundle carries the same controller, binary and config as a local
+# bundle, so the launcher only has to enter the container and delegate.
+function container_ctl() {
+    docker exec "${CONTAINER_NAME}" bash -c \
+        "cd '${CONTAINER_BUNDLE_GUEST}' && ./agent-clusterctl -c conf/node.conf $*" ||
+        die "cannot run agent-clusterctl inside ${CONTAINER_NAME}"
+}
 
-    echo ""
-    echo "API      : ${AGENT_CLUSTER_API_LISTEN_ADDR}"
-    echo "Channel  : ${AGENT_CLUSTER_CHANNEL_LISTEN_ADDR}"
-    echo "Token    : ${AGENT_CLUSTER_AUTH_TOKEN}"
-    echo "Endpoints: local-endpoint, ai-dev"
+# Starts the endpoint bundle that lives inside the ai-dev container.
+function start_container_endpoint() {
+    container_ctl start
+}
+
+# Stops the endpoint running inside the ai-dev container.
+function stop_container_endpoint() {
+    container_ctl stop
+}
+
+# Reports whether the endpoint inside the ai-dev container is running. The
+# controller reports the role name it was configured with, so the launcher
+# prefixes each line with the container name to keep the two endpoints distinct.
+function status_container_endpoint() {
+    container_ctl status | sed 's/^/ai-dev /'
+}
+
+# Brings up every role in dependency order.
+function start_all() {
+    local role
+    for role in "${START_ORDER[@]}"; do
+        case "${role}" in
+            server | endpoint) local_ctl "${role}" start ;;
+            relay) start_relay ;;
+            ai-dev) start_container_endpoint ;;
+        esac
+    done
     echo ""
     echo "Try: topsailai_agent_cluster list"
 }
 
+# Tears every role down in reverse dependency order.
 function stop_all() {
-    local index name
+    local index role
     for ((index = ${#START_ORDER[@]} - 1; index >= 0; index--)); do
-        stop_named "${START_ORDER[index]}"
+        role="${START_ORDER[index]}"
+        case "${role}" in
+            server | endpoint) local_ctl "${role}" stop ;;
+            relay) stop_relay ;;
+            ai-dev) stop_container_endpoint ;;
+        esac
     done
 }
 
+# Reports every role.
 function status_all() {
-    local name
-    for name in "${START_ORDER[@]}"; do
-        status_named "${name}"
+    local role
+    for role in "${START_ORDER[@]}"; do
+        case "${role}" in
+            server | endpoint) local_ctl "${role}" status ;;
+            relay) status_relay ;;
+            ai-dev) status_container_endpoint ;;
+        esac
     done
 }
 
@@ -248,20 +178,20 @@ case "${1:-start}" in
     stop) stop_all ;;
     restart) stop_all; start_all ;;
     status) status_all ;;
-    start-server) preflight_common; preflight_role server; start_named server ;;
-    stop-server) stop_named server ;;
-    restart-server) stop_named server; preflight_common; preflight_role server; start_named server ;;
-    start-endpoint) preflight_common; preflight_role endpoint; start_named endpoint ;;
-    stop-endpoint) stop_named endpoint ;;
-    restart-endpoint) stop_named endpoint; preflight_common; preflight_role endpoint; start_named endpoint ;;
-    status-server) status_named server ;;
-    status-endpoint) status_named endpoint ;;
-    start-relay) preflight_common; start_relay ;;
+    start-server) local_ctl server start ;;
+    stop-server) local_ctl server stop ;;
+    restart-server) local_ctl server restart ;;
+    status-server) local_ctl server status ;;
+    start-endpoint) local_ctl endpoint start ;;
+    stop-endpoint) local_ctl endpoint stop ;;
+    restart-endpoint) local_ctl endpoint restart ;;
+    status-endpoint) local_ctl endpoint status ;;
+    start-relay) start_relay ;;
     stop-relay) stop_relay ;;
     status-relay) status_relay ;;
-    start-ai-dev) preflight_common; start_relay; start_container_endpoint ;;
+    start-ai-dev) start_relay; start_container_endpoint ;;
     stop-ai-dev) stop_container_endpoint ;;
-    restart-ai-dev) stop_container_endpoint; preflight_common; start_relay; start_container_endpoint ;;
+    restart-ai-dev) stop_container_endpoint; start_relay; start_container_endpoint ;;
     status-ai-dev) status_container_endpoint ;;
     *) die "${USAGE}" ;;
 esac
