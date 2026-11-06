@@ -274,7 +274,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		var promptRecoverable bool
 		commandCtx, cancel := context.WithCancel(parent)
 		if options.ReadLine != nil {
-			commandCtx = context.WithValue(commandCtx, promptReaderKey{}, promptReaderConfig{read: options.ReadLine, limit: options.LineLimit, failure: &promptFailure, recoverable: &promptRecoverable})
+			commandCtx = context.WithValue(commandCtx, promptReaderKey{}, promptReaderConfig{read: options.ReadLine, limit: options.LineLimit, color: options.Color, failure: &promptFailure, recoverable: &promptRecoverable})
 		}
 		controller.setCancel(cancel)
 		exit, execErr := executeInteractiveLine(commandCtx, api, &state, line, lineResults, out, output, errOut, options)
@@ -446,13 +446,13 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		}
 		return false, startOutputError(commandErr, recorder, startOut, startTrustedOut, startErrOut)
 	case "resume", "stop":
-		return false, interactiveSessionLifecycle(ctx, api, state, name, rest, lineResults, out, options)
+		return false, interactiveSessionLifecycle(ctx, api, state, name, rest, lineResults, out, trustedOut, options)
 	case "inject", "btw":
-		return false, interactiveSessionPayload(ctx, api, state, protocol.OperationContextInject, name, rest, lineResults, out, options)
+		return false, interactiveSessionPayload(ctx, api, state, protocol.OperationContextInject, name, rest, lineResults, out, trustedOut, options)
 	case "interrupt", "control":
-		return false, interactiveSessionPayload(ctx, api, state, protocol.OperationExecutionInterrupt, name, rest, lineResults, out, options)
+		return false, interactiveSessionPayload(ctx, api, state, protocol.OperationExecutionInterrupt, name, rest, lineResults, out, trustedOut, options)
 	case "send":
-		return false, interactiveSend(ctx, api, state, rest, lineResults, out, options)
+		return false, interactiveSend(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	default:
 		return false, fmt.Errorf("unknown command %q (try help)", name)
 	}

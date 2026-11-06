@@ -13,6 +13,7 @@ type promptReaderKey struct{}
 type promptReaderConfig struct {
 	read    InteractiveLineReader
 	limit   int
+	color   ColorPolicy
 	failure *error
 	// recoverable is set by a caller whose prompt read failure only cancels the
 	// current operation instead of ending the session.
@@ -35,9 +36,11 @@ func markRecoverablePromptFailure(ctx context.Context) {
 }
 
 // readPromptLine requests a history-free child answer after its question is written.
+// The default answer prompt is styled with the same policy as the REPL prompt, so the
+// child question is never the only unstyled prompt in the session.
 func readPromptLine(ctx context.Context, prompts ...string) (string, bool, error) {
 	config := ctx.Value(promptReaderKey{}).(promptReaderConfig)
-	prompt := "\nanswer> "
+	prompt := RenderAnswerPrompt(config.color)
 	if len(prompts) > 0 {
 		prompt = prompts[0]
 	}

@@ -152,7 +152,7 @@ func sendPayloadBytes(text string) (json.RawMessage, error) {
 	return json.RawMessage(wrapped), nil
 }
 
-func interactiveSend(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lineSource <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {
+func interactiveSend(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, lineSource <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
 	if err := state.requireUsable(); err != nil {
 		return err
 	}
@@ -180,7 +180,10 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if len(preview) > 512 {
 		preview = preview[:512] + "..."
 	}
-	if _, err := fmt.Fprintf(out, "send %s? Confirm send? [y/N] ", preview); err != nil {
+	// The preview is operator-supplied text, so it must be sanitized before it
+	// reaches the trusted writer that carries the question styling.
+	question := "send " + sanitizeInlineText(preview) + "? Confirm send? " + confirmationHint + " "
+	if err := writeConfirmationQuestion(trustedOut, question, options.Color); err != nil {
 		return err
 	}
 	markRecoverablePromptFailure(parent)
@@ -420,7 +423,7 @@ func parseInteractivePayload(name, rest string) (json.RawMessage, error) {
 // interactiveSessionLifecycle executes resume or stop against the selected fresh session.
 // Preflight authority checks run under the command deadline; the human confirmation is
 // read afterwards with the cancel-only parent context.
-func interactiveSessionLifecycle(parent context.Context, api InteractiveAPI, state *interactiveState, name, rest string, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {
+func interactiveSessionLifecycle(parent context.Context, api InteractiveAPI, state *interactiveState, name, rest string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
 	payload := json.RawMessage(`{}`)
 	var err error
 	if name == "resume" {
@@ -448,7 +451,7 @@ func interactiveSessionLifecycle(parent context.Context, api InteractiveAPI, sta
 		revalidate := func(revalidateCtx context.Context) error {
 			return validateResumeSelectionAbsent(revalidateCtx, api, state)
 		}
-		return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentResume, name, state.SessionID, state.Generation, payload, lines, out, options, revalidate, nil)
+		return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentResume, name, state.SessionID, state.Generation, payload, lines, out, trustedOut, options, revalidate, nil)
 	}
 	_, _, session, err := findSelected(ctx, api, state)
 	cancel()
@@ -458,7 +461,7 @@ func interactiveSessionLifecycle(parent context.Context, api InteractiveAPI, sta
 	postSubmit := func(postCtx context.Context, result map[string]any) error {
 		return reconcileStoppedSelection(postCtx, api, state, session.SessionID, out)
 	}
-	return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentStop, name, session.SessionID, session.Generation, payload, lines, out, options, nil, postSubmit)
+	return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentStop, name, session.SessionID, session.Generation, payload, lines, out, trustedOut, options, nil, postSubmit)
 }
 
 // reconcileStoppedSelection leaves the session scope once a fresh inventory proves the
@@ -528,7 +531,7 @@ func validateResumeSelectionAbsent(ctx context.Context, api InteractiveAPI, stat
 // interactiveSessionPayload executes context injection or interruption with confirmation.
 // Selection authority is resolved under the command deadline; the confirmation itself is
 // read with the cancel-only parent context.
-func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, rest string, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {
+func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, rest string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
 	payloadText := strings.TrimSpace(rest)
 	if payloadText == "" {
 		return fmt.Errorf("usage: %s <json>", name)
@@ -550,7 +553,7 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	if err != nil {
 		return err
 	}
-	return interactiveConfirmedAction(parent, api, state, op, name, session.SessionID, session.Generation, json.RawMessage(payloadText), lines, out, options, nil, nil)
+	return interactiveConfirmedAction(parent, api, state, op, name, session.SessionID, session.Generation, json.RawMessage(payloadText), lines, out, trustedOut, options, nil, nil)
 }
 
 // interactiveConfirmedAction keeps mutating confirmation and shared intent submission in one path.
@@ -558,8 +561,11 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 // operator answer is never truncated by the command deadline; the command deadline
 // starts only after the answer has been accepted. postSubmit runs after the durable
 // receipt has been rendered and may reconcile the interactive scope with that receipt.
-func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, resource, generation string, payload json.RawMessage, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions, revalidate func(context.Context) error, postSubmit func(context.Context, map[string]any) error) error {
-	if _, err := fmt.Fprintf(out, "%s %s? Confirm %s? [y/N] ", name, resource, name); err != nil {
+// The question is written through trustedOut because it carries application styling;
+// the interpolated resource identifier is provider data and is sanitized first.
+func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, resource, generation string, payload json.RawMessage, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions, revalidate func(context.Context) error, postSubmit func(context.Context, map[string]any) error) error {
+	question := name + " " + sanitizeInlineText(resource) + "? Confirm " + name + "? " + confirmationHint + " "
+	if err := writeConfirmationQuestion(trustedOut, question, options.Color); err != nil {
 		return err
 	}
 	markRecoverablePromptFailure(parent)

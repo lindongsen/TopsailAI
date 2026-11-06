@@ -35,6 +35,58 @@ func writeStyled(w io.Writer, style, text string, policy ColorPolicy) error {
 	return err
 }
 
+// answerPrompt is the history-free child question shown after a confirmation.
+const answerPrompt = "answer> "
+
+// confirmationHint is the trailing answer hint of every confirmation question.
+const confirmationHint = "[y/N]"
+
+// RenderAnswerPrompt returns the reset-safe answer prompt for a child read.
+// The leading newline keeps the question on its own row; the bold-green
+// wrapper is the exact form the terminal editor recognises, so the cursor
+// column accounting stays identical to the plain prompt.
+func RenderAnswerPrompt(policy ColorPolicy) string {
+	if !policy.Enabled {
+		return "\n" + answerPrompt
+	}
+	return "\n" + ansiBoldGreen + strings.TrimSuffix(answerPrompt, " ") + ansiReset + " "
+}
+
+// writeConfirmationQuestion writes a trusted confirmation question. The
+// question text is styled and the trailing answer hint is dimmed; with colour
+// disabled the exact plain question is written, so redirected output stays
+// byte-identical. Callers must sanitize every provider or payload value they
+// interpolate, because this writer carries trusted styling.
+func writeConfirmationQuestion(w io.Writer, question string, policy ColorPolicy) error {
+	if !policy.Enabled {
+		_, err := io.WriteString(w, question)
+		return err
+	}
+	// The hint is the trailing literal, so a payload that itself contains
+	// "[y/N]" must not be mistaken for it.
+	index := strings.LastIndex(question, confirmationHint)
+	if index < 0 {
+		return writeStyled(w, ansiBoldCyan, question, policy)
+	}
+	if err := writeStyled(w, ansiBoldCyan, question[:index], policy); err != nil {
+		return err
+	}
+	if err := writeStyled(w, ansiDim, confirmationHint, policy); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w, question[index+len(confirmationHint):])
+	return err
+}
+
+// sanitizeInlineText flattens untrusted text into one terminal-safe line before
+// it is interpolated into a trusted styled question. Terminal escape sequences
+// are stripped and control characters become a replacement rune, so a payload
+// preview can never inject styling or move the cursor.
+func sanitizeInlineText(value string) string {
+	clean := sanitizeTerminal([]byte(value))
+	return strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(clean)
+}
+
 // RenderPrompt writes a trusted, reset-safe REPL prompt.
 func RenderPrompt(w io.Writer, scope ScopeState, invalidated bool, policy ColorPolicy) error {
 	prompt := scope.Kind.String()
