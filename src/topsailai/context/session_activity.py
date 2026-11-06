@@ -27,6 +27,7 @@ _OWNER_SUFFIXES = (
     "agent2llm_interrupt.flag",
     "agent2llm_interrupt.fbt_waiting",
     "agent2llm_interrupt.fbt_retry",
+    "agent2llm_pause.flag",
 )
 _OWNER_PATTERN = re.compile(
     r"^(.+)\.([1-9][0-9]*)\.session\.((?:"

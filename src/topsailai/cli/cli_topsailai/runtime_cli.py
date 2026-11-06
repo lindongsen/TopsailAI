@@ -49,9 +49,9 @@ class UniqueValue(argparse.Action):
 
 
 _FALLBACK_CONTROL_ACTIONS = (
-    "call_instruction", "clear_interrupt", "get_runtime_messages",
-    "get_session_messages", "hard_interrupt", "heartbeat", "llm_control",
-    "soft_interrupt",
+    "call_instruction", "clear_interrupt", "clear_pause",
+    "get_runtime_messages", "get_session_messages", "hard_interrupt",
+    "heartbeat", "llm_control", "pause", "soft_interrupt",
 )
 
 

@@ -28,7 +28,7 @@ When `--socket-path` is provided, discovery is skipped and only that socket is t
 | `-h`, `--help` | Show the help message and exit. |
 | `-s SESSION_ID`, `--session_id SESSION_ID` | Target only stdout files whose session ID matches this value. |
 | `-p PID`, `--pid PID` | Target only stdout files whose PID matches this value. |
-| `-c COMMAND`, `--command COMMAND` | Control action to send. Supported actions: `call_instruction`, `clear_interrupt`, `get_runtime_messages`, `get_session_messages`, `hard_interrupt`, `heartbeat`, `llm_control`, `soft_interrupt`. See [Control handlers](#control-handlers) for payloads, results and errors. |
+| `-c COMMAND`, `--command COMMAND` | Control action to send. Supported actions: `call_instruction`, `clear_interrupt`, `clear_pause`, `get_runtime_messages`, `get_session_messages`, `hard_interrupt`, `heartbeat`, `llm_control`, `pause`, `soft_interrupt`. See [Control handlers](#control-handlers) for payloads, results and errors. |
 | `-a ARGS`, `--args ARGS` | JSON object with action-specific arguments. Defaults to `{}`. |
 | `--socket-path SOCKET_PATH` | Send the request directly to this socket path. |
 | `--timeout TIMEOUT` | Set the socket connection timeout in seconds. Defaults to `5.0`. |
@@ -124,11 +124,13 @@ Handlers are discovered from the live registry, so the accepted action names can
 |--------|---------|-------------------|----------------|
 | `call_instruction` | `instruction` (required string), `args` (optional list), `kwargs` (optional object) | The instruction's own return value | `missing or invalid instruction`, `args must be a list`, `kwargs must be an object`, `unknown instruction: NAME`, `instruction failed: ...` |
 | `clear_interrupt` | none | `action`, `session_id`, `pid`, `flag_path`, `removed`, `message` | `missing session_id`, `missing pid`, `failed to clear interrupt flag: ...` |
+| `clear_pause` | none | `action`, `session_id`, `pid`, `flag_path`, `removed`, `message` | `missing session_id`, `missing pid`, `failed to clear pause marker: ...` |
 | `get_runtime_messages` | none | `count`, `messages` | `no active agent in control context or current thread`, `active agent has no messages attribute` |
 | `get_session_messages` | `session_id` (required string) | `count`, `messages` | `missing or empty session_id`, `session manager is not available`, `session not found: ID`, `failed to retrieve session messages: ...` |
 | `hard_interrupt` | none | `action`, `session_id`, `pid`, `flag_path`, `message` | `missing session_id`, `missing pid`, `failed to write interrupt flag: ...` |
 | `heartbeat` | must be empty | `alive`, `pid`, `hostname`, `session_id` (nullable) | `invalid_payload` when any payload field is supplied |
 | `llm_control` | `operation` (must be `force_retry`) | `state: "flag_written"` | `unavailable`, `invalid_operation`, `unsupported_target`, `flag_write_failed`, `not_waiting` |
+| `pause` | `reason` (optional string), `prompt` (optional string), `timeout_seconds` (optional number), `default` (optional `continue` or `interrupt`) | `action`, `session_id`, `pid`, `flag_path`, `state: "pause_requested"`, `message` | `missing session_id`, `missing pid`, `failed to write pause marker: ...` |
 | `soft_interrupt` | `message` (optional string) | `action`, `session_id`, `pid`, `file_path`, `message` | `missing session_id`, `missing pid`, `failed to append inject message: ...` |
 
 A handler that rejects a request returns top-level `status: "error"` with an `error` string; the CLI then exits non-zero. A successful response means the handler accepted and performed its own local step, not that the agent has already reacted to it.
@@ -155,6 +157,21 @@ topsailai_send_control --session_id SESSION_ID --pid PID --command clear_interru
 ```
 
 Both handlers resolve `session_id`, `pid` and the task folder from the request context, falling back to the responding process identity. Writing the flag does not prove the agent has stopped.
+
+### `pause` and `clear_pause`
+
+`pause` atomically writes the session's pause marker, which the agent consumes at its next safe point and then blocks on a continue prompt. `clear_pause` removes an unconsumed marker and reports `removed: false` when none existed, so clearing is idempotent.
+
+```bash
+topsailai_send_control --session_id SESSION_ID --pid PID --command pause
+topsailai_send_control --session_id SESSION_ID --pid PID --command clear_pause
+topsailai_send_control --session_id SESSION_ID --pid PID \
+  --command pause --args '{"reason":"inspect state","timeout_seconds":300,"default":"interrupt"}'
+```
+
+The marker carries `reason`, `prompt`, `timeout_seconds` and `default`. `timeout_seconds` of `0` waits indefinitely; a positive value bounds the wait, after which `default` decides whether the loop continues or is interrupted. The prompt is answered through the session's normal input channel, so a piped session is resumed with `topsailai.py` `/send yes` or `/send no`.
+
+Acceptance is not reaction: `state: "pause_requested"` only proves the marker was written. The agent pauses at its next safe point, never in the middle of a streaming response, and only the outermost agent consumes the marker. A hard interrupt arriving first wins and discards the unconsumed marker. When no input channel is available the agent logs a warning and continues instead of blocking forever.
 
 ### `soft_interrupt`
 

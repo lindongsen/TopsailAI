@@ -58,12 +58,17 @@ from topsailai.workspace.agent.agent_shell_base import (
 logger = logging.getLogger(__name__)
 
 
-def _cleanup_stale_interrupt_flag(session_id: str | None, pid: int | None) -> None:
-    """Remove a stale hard-interrupt flag file for the current session/pid.
+def _cleanup_stale_session_flag(
+        session_id: str | None,
+        pid: int | None,
+        suffix: str,
+        description: str,
+    ) -> None:
+    """Remove one stale session-scoped flag file for the current session/pid.
 
-    The flag file is session-scoped and process-scoped. If the agent process
+    The flag files are session-scoped and process-scoped. If the agent process
     restarts while a flag was left behind, the new process must not start in
-    an interrupted state.
+    an interrupted or paused state.
     """
     if not session_id or pid is None:
         return
@@ -72,14 +77,28 @@ def _cleanup_stale_interrupt_flag(session_id: str | None, pid: int | None) -> No
 
     flag_path = os.path.join(
         FOLDER_WORKSPACE_TASK,
-        f"{session_id}.{pid}.session.agent2llm_interrupt.flag",
+        f"{session_id}.{pid}.session.{suffix}",
     )
     if os.path.exists(flag_path):
         try:
             os.remove(flag_path)
-            logger.warning("Cleaned stale hard interrupt flag on startup: %s", flag_path)
+            logger.warning("Cleaned stale %s on startup: %s", description, flag_path)
         except OSError as e:
-            logger.warning("Failed to clean stale hard interrupt flag %s: %s", flag_path, e)
+            logger.warning("Failed to clean stale %s %s: %s", description, flag_path, e)
+
+
+def _cleanup_stale_interrupt_flag(session_id: str | None, pid: int | None) -> None:
+    """Remove stale hard-interrupt and pause markers for the current session/pid.
+
+    A leftover pause marker would otherwise block the restarted process on a
+    continue prompt that nobody asked for.
+    """
+    _cleanup_stale_session_flag(
+        session_id, pid, "agent2llm_interrupt.flag", "hard interrupt flag",
+    )
+    _cleanup_stale_session_flag(
+        session_id, pid, "agent2llm_pause.flag", "pause marker",
+    )
 
 
 def get_ai_agent(
