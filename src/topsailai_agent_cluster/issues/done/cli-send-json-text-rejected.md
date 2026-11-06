@@ -122,5 +122,19 @@ Verified behavior of the built CLI:
 | `send ep-1 res-1 hello -1` | accepted, generation `-1` |
 | `send ep-1 res-1 '{"text":"--json"}' gen-1` | accepted, payload `{"text":"--json"}` |
 
-Defect D (unquoted multi-word text truncated to `args[3]`) remains open: the misplaced-flag guard
-does not cover a plain extra word. Tracked separately.
+Defect D (unquoted multi-word text truncated to `args[3]`) is resolved in commit `d5c1d537`
+(`fix: reject unquoted multi word message text`). `rejectExtraPositionals` rejects any
+positional beyond the documented syntax instead of silently dropping the extra words, and the
+error echoes the whole intended message so the operator can see what was not sent. The accepted
+count depends on the operation and on which flags were used: `stop` accepts four positionals and
+has no text slot, while a `--generation` or `start --task` flag removes its positional slot. A
+zero text slot produces an error that does not suggest quoting a message.
+
+Verified behavior of the built CLI after the fix:
+
+| argv | result |
+|---|---|
+| `send ep-1 res-1 please add to the config` | exit 2, `unexpected arguments "please add to the config"; quote the message text ...` |
+| `send ep-1 res-1 "please add to the config"` | accepted, payload `{"text":"please add to the config"}` |
+| `send ep-1 res-1 hello gen-1` | accepted, generation `gen-1` |
+| `stop ep-1 res-1 gen-1 extra` | exit 2, `unexpected arguments "extra"` without a quoting hint |
