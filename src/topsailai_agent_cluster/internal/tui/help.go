@@ -39,7 +39,7 @@ var commandHelpCatalog = map[string]commandHelp{
 	"inject":    {"inject <text>", "inject context into the selected session", []string{"text: literal context text; no JSON is required", "--json: rejected in interactive mode"}, []string{"inject the deployment notes are in docs/", `inject {"text":"context"}`}},
 	"interrupt": {"interrupt [soft|hard] [message]", "request a soft or hard execution interrupt for the selected session", []string{"soft: soft interrupt, optionally followed by a literal message; empty input prompts for the action", "hard: hard interrupt; accepts no message", "--json: rejected in interactive mode"}, []string{"interrupt", "interrupt soft stop and summarize now", "interrupt hard"}},
 	"logs":      {"logs [-n <lines>] [session]", "show bounded output for a session in the current endpoint", []string{"-n, --lines: maximum number of trailing output lines to show; defaults to 0100", "session: optional session/resource ID, provider session ID, or a bare list row number; defaults to the current session", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID"}, []string{"logs", "logs -n 0250", "logs 1", "logs res_abc"}},
-	"send":      {"send <text>", "send a message to the selected session", []string{"text: message text, or a JSON object with a text field"}, []string{`send hello world`, `send {"text":"hello"}`}},
+	"send":      {"send [text]", "send a message to the selected session; a bare send reads a multi-line message", []string{"text: message text, or a JSON object with a text field", "without text: read a multi-line message and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the message", "an empty multi-line message is rejected instead of submitting nothing"}, []string{`send hello world`, `send {"text":"hello"}`}},
 	"endpoints": {"endpoints [endpoint-id]", "list every registered endpoint with its connection state, observation time and capability revision; JSON output (--json) is available only in the standalone non-interactive command", []string{"endpoint-id: optional endpoint ID filter; an unknown filter renders an empty table", "read-only: it never forces provider discovery and never changes the list row numbers"}, []string{"endpoints", "endpoints endpoint-1"}},
 	"status":    {"status <command-id>", "show the durable result of a command", []string{"command-id: submitted command identifier"}, []string{"status cmd_123"}},
 	"refresh":   {"refresh", "force a fresh Endpoint collection and wait for it to be committed, then render the committed inventory", nil, []string{"refresh"}},
@@ -196,7 +196,11 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] refresh"
 	case "endpoints":
 		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] endpoints [endpoint-id]"
-	case "send", "btw", "control":
+	case "send":
+		entry.syntax = "agent-cluster-cli [options] send <endpoint> <resource> [text] [generation]"
+		entry.description = "send a message to one session; without text it reads a multi-line message from stdin"
+		entry.parameters = append(entry.parameters, "without text: read a multi-line message from stdin and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the message")
+	case "btw", "control":
 		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [text] [generation]"
 	case "help":
 		entry.syntax = "agent-cluster-cli help [command]"

@@ -225,10 +225,15 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if !json.Valid([]byte(payloadText)) && strings.Contains(payloadText, "--json") {
 		return fmt.Errorf("interactive send does not support --json")
 	}
+	// A bare send enters multi-line input mode, so the operator can compose a
+	// message without quoting newlines into one command line.
 	if payloadText == "" {
-		return fmt.Errorf("payload must not be empty")
-	}
-	if len(payloadText) > options.LineLimit {
+		block, err := readInteractiveMultiLine(parent, lineSource, out, options)
+		if err != nil {
+			return err
+		}
+		payloadText = block.Text
+	} else if len(payloadText) > options.LineLimit {
 		return fmt.Errorf("payload exceeds the maximum length")
 	}
 	sendPayload, err := MessagePayload(payloadText)

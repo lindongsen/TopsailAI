@@ -172,7 +172,16 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		}
 		return status(ctx, api, output, flags.Arg(1), *jsonMode)
 	case "send", "btw", "inject", "control", "start", "resume", "stop":
-		return action(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
+		// A bare send reads a multi-line block from the command input. On a
+		// terminal nothing else would prompt, so the operator would face a
+		// silent wait; the hint goes to the diagnostics stream to keep the
+		// machine-readable output clean.
+		if flags.Arg(0) == "send" && flags.NArg() == 3 && terminal {
+			if _, err := fmt.Fprintln(errors, tui.MultiLineHint); err != nil {
+				return err
+			}
+		}
+		return action(ctx, api, output, input, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
 	}
@@ -285,7 +294,7 @@ func resolveActionPayload(operation, value string) (json.RawMessage, error) {
 	return json.RawMessage(`{}`), nil
 }
 
-func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision, folder, task, generationFlag string) error {
+func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.Reader, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision, folder, task, generationFlag string) error {
 	operation := args[0]
 	if operation == "stop" && len(args) < 4 && generationFlag == "" {
 		return fmt.Errorf("usage: stop <endpoint-id> <resource-id> <generation>")
@@ -303,6 +312,18 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []st
 	} else {
 		if len(args) >= 4 {
 			resolved, err := resolveActionPayload(operation, args[3])
+			if err != nil {
+				return err
+			}
+			payload = resolved
+		} else if operation == "send" {
+			// A send without a text argument reads a multi-line block from the
+			// command input, so a message never has to be quoted into one line.
+			block, err := tui.ReadMultiLineBlock(input, 0)
+			if err != nil {
+				return err
+			}
+			resolved, err := resolveActionPayload(operation, block.Text)
 			if err != nil {
 				return err
 			}

@@ -87,7 +87,7 @@ func TestLegacyAndInteractiveShowUseSharedRunnerMethods(t *testing.T) {
 func TestLegacyActionAndInteractiveSendShareIntentFields(t *testing.T) {
 	legacy := &actionPathStub{}
 	var legacyOut strings.Builder
-	if err := action(context.Background(), legacy, &legacyOut, []string{"send", "ep", "session", `{"text":"hi"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), legacy, &legacyOut, strings.NewReader(""), []string{"send", "ep", "session", `{"text":"hi"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	interactive := &actionPathStub{}
@@ -322,12 +322,12 @@ func TestStandalonePlainTextPayloadsNeedNoJSON(t *testing.T) {
 func TestStandalonePlainTextMessageReachesIntent(t *testing.T) {
 	plain := &actionPathStub{}
 	var plainOut strings.Builder
-	if err := action(context.Background(), plain, &plainOut, []string{"send", "ep", "session", "hello world", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), plain, &plainOut, strings.NewReader(""), []string{"send", "ep", "session", "hello world", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	jsonForm := &actionPathStub{}
 	var jsonOut strings.Builder
-	if err := action(context.Background(), jsonForm, &jsonOut, []string{"send", "ep", "session", `{"text":"hello world"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), jsonForm, &jsonOut, strings.NewReader(""), []string{"send", "ep", "session", `{"text":"hello world"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(plain.intents) != 1 || len(jsonForm.intents) != 1 {
@@ -659,5 +659,168 @@ func TestEndpointsHelpAndDispatchContract(t *testing.T) {
 		if err := runWithIO(args, strings.NewReader(""), io.Discard, io.Discard, false, nil); err == nil {
 			t.Fatalf("endpoints accepted invalid arguments %v", args)
 		}
+	}
+}
+
+// unreadableInput fails the test if a command reads the command input stream.
+type unreadableInput struct {
+	reads int
+}
+
+func (u *unreadableInput) Read([]byte) (int, error) {
+	u.reads++
+	return 0, errors.New("command input must not be read")
+}
+
+// TestStandaloneSendWithoutTextReadsMultiLineBlock proves a bare send collects
+// one multi-line block terminated by a standalone EOF line.
+func TestStandaloneSendWithoutTextReadsMultiLineBlock(t *testing.T) {
+	stub := &actionPathStub{}
+	var out strings.Builder
+	input := strings.NewReader("first line\nsecond line\nEOF\n")
+	if err := action(context.Background(), stub, &out, input, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.intents) != 1 {
+		t.Fatalf("intent count=%d", len(stub.intents))
+	}
+	if got, want := string(stub.intents[0].Payload), `{"text":"first line\nsecond line"}`; got != want {
+		t.Fatalf("payload=%s want=%s", got, want)
+	}
+	if stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "gen" {
+		t.Fatalf("target=%+v", stub.intents[0].Target)
+	}
+}
+
+// TestStandaloneSendMultiLineEndsAtEndOfInput proves Ctrl+D (end of input)
+// finishes the block without a terminator line.
+func TestStandaloneSendMultiLineEndsAtEndOfInput(t *testing.T) {
+	stub := &actionPathStub{}
+	var out strings.Builder
+	input := strings.NewReader("first\nsecond\n")
+	if err := action(context.Background(), stub, &out, input, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.intents) != 1 {
+		t.Fatalf("intent count=%d", len(stub.intents))
+	}
+	if got, want := string(stub.intents[0].Payload), `{"text":"first\nsecond"}`; got != want {
+		t.Fatalf("payload=%s want=%s", got, want)
+	}
+}
+
+// TestStandaloneSendMultiLineRejectsEmptyBlock proves an immediately terminated
+// block submits nothing instead of an empty message.
+func TestStandaloneSendMultiLineRejectsEmptyBlock(t *testing.T) {
+	for _, input := range []string{"EOF\n", "", "\n\nEOF\n"} {
+		stub := &actionPathStub{}
+		var out strings.Builder
+		err := action(context.Background(), stub, &out, strings.NewReader(input), []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "")
+		if err == nil || err.Error() != "payload must not be empty" {
+			t.Fatalf("input=%q error=%v", input, err)
+		}
+		if len(stub.intents) != 0 {
+			t.Fatalf("input=%q admitted %d intents", input, len(stub.intents))
+		}
+	}
+}
+
+// TestStandaloneSendWithTextDoesNotReadInput proves the explicit text argument
+// keeps its previous behaviour and never consumes the command input stream.
+func TestStandaloneSendWithTextDoesNotReadInput(t *testing.T) {
+	stub := &actionPathStub{}
+	var out strings.Builder
+	input := &unreadableInput{}
+	if err := action(context.Background(), stub, &out, input, []string{"send", "ep", "session", "hello world", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if input.reads != 0 {
+		t.Fatalf("explicit text read the input stream %d times", input.reads)
+	}
+	if got, want := string(stub.intents[0].Payload), `{"text":"hello world"}`; got != want {
+		t.Fatalf("payload=%s want=%s", got, want)
+	}
+}
+
+// allCapabilityStub advertises every text-carrying operation so a test can
+// reach the payload path of btw, inject and control.
+type allCapabilityStub struct {
+	actionPathStub
+}
+
+func (s *allCapabilityStub) GetCapabilities(context.Context, string) (protocol.CapabilityDescriptor, error) {
+	return protocol.CapabilityDescriptor{Revision: "rev-1", Capabilities: []protocol.Capability{
+		{Name: protocol.OperationMessageSend},
+		{Name: protocol.OperationContextInject},
+		{Name: protocol.OperationExecutionInterrupt},
+	}}, nil
+}
+
+// TestStandaloneNonSendCommandsDoNotEnterMultiLineMode proves only send gains
+// multi-line input; the other text-carrying commands keep their grammar.
+func TestStandaloneNonSendCommandsDoNotEnterMultiLineMode(t *testing.T) {
+	for _, operation := range []string{"btw", "inject", "control"} {
+		stub := &allCapabilityStub{}
+		var out strings.Builder
+		input := &unreadableInput{}
+		if err := action(context.Background(), stub, &out, input, []string{operation, "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
+			t.Fatalf("%s: %v", operation, err)
+		}
+		if input.reads != 0 {
+			t.Fatalf("%s read the input stream %d times", operation, input.reads)
+		}
+		if len(stub.intents) != 1 {
+			t.Fatalf("%s intent count=%d", operation, len(stub.intents))
+		}
+	}
+}
+
+// TestStandaloneSendMultiLineRejectsUnreadableInput proves a missing stream is
+// reported instead of silently submitting an empty message.
+func TestStandaloneSendMultiLineRejectsUnreadableInput(t *testing.T) {
+	stub := &actionPathStub{}
+	var out strings.Builder
+	err := action(context.Background(), stub, &out, nil, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "")
+	if err == nil || err.Error() != "multi-line input requires a readable stream" {
+		t.Fatalf("error=%v", err)
+	}
+	if len(stub.intents) != 0 {
+		t.Fatalf("admitted %d intents", len(stub.intents))
+	}
+}
+
+// TestStandaloneSendHintsMultiLineOnTerminal proves a bare send on a terminal
+// announces how to finish the block, so the operator never faces a silent wait.
+func TestStandaloneSendHintsMultiLineOnTerminal(t *testing.T) {
+	var output, diagnostics strings.Builder
+	input := strings.NewReader("body line\nEOF\n")
+	// The unreachable Server fails the command after the block is read; the hint
+	// must already be visible by then.
+	_ = runWithIO([]string{"--server-url", "http://127.0.0.1:1", "send", "ep", "res"}, input, &output, &diagnostics, true, nil)
+	if !strings.Contains(diagnostics.String(), tui.MultiLineHint) {
+		t.Fatalf("diagnostics=%q want multi-line hint", diagnostics.String())
+	}
+}
+
+// TestStandaloneSendHintOnlyForBareSendOnTerminal proves the hint is scoped to
+// the one case that reads the block, so it never pollutes other invocations.
+func TestStandaloneSendHintOnlyForBareSendOnTerminal(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		terminal bool
+	}{
+		{name: "explicit text", args: []string{"send", "ep", "res", "hello"}, terminal: true},
+		{name: "non terminal", args: []string{"send", "ep", "res"}, terminal: false},
+		{name: "other operation", args: []string{"btw", "ep", "res"}, terminal: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var output, diagnostics strings.Builder
+			_ = runWithIO(append([]string{"--server-url", "http://127.0.0.1:1"}, tc.args...), strings.NewReader("body\nEOF\n"), &output, &diagnostics, tc.terminal, nil)
+			if strings.Contains(diagnostics.String(), tui.MultiLineHint) {
+				t.Fatalf("diagnostics=%q must not carry the multi-line hint", diagnostics.String())
+			}
+		})
 	}
 }

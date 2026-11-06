@@ -110,7 +110,7 @@ func TestInteractiveSendAdmissionCallMatrix(t *testing.T) {
 				}
 			} else if tc.wantDiagnostic == "result unknown" {
 				lines := strings.Split(strings.TrimSuffix(diagnostics, "\n"), "\n")
-				if len(lines) != 3 || !strings.HasPrefix(lines[0], "error: command cli-") || !strings.Contains(lines[0], " result unknown; use status ") || !strings.HasSuffix(lines[0], "; transport timeout") || lines[1] != "usage: send <text>" || !strings.HasPrefix(lines[2], "next: Run status ") || !strings.HasSuffix(lines[2], " to query the existing command.") {
+				if len(lines) != 3 || !strings.HasPrefix(lines[0], "error: command cli-") || !strings.Contains(lines[0], " result unknown; use status ") || !strings.HasSuffix(lines[0], "; transport timeout") || lines[1] != "usage: send [text]" || !strings.HasPrefix(lines[2], "next: Run status ") || !strings.HasSuffix(lines[2], " to query the existing command.") {
 					t.Fatalf("diagnostics=%q want exact uncertain-admission form", diagnostics)
 				}
 				statusID := strings.TrimSuffix(strings.TrimPrefix(lines[2], "next: Run status "), " to query the existing command.")

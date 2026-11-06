@@ -44,24 +44,26 @@ func TestReadLineBoundAndRecovery(t *testing.T) {
 func TestSendPayloadObjectAndBytes(t *testing.T) {
 	cases := []struct {
 		name    string
-		payload string
+		command string
 		wantErr string
 	}{
-		{name: "malformed object", payload: "{", wantErr: "error: payload must be a JSON object or plain text\n"},
-		{name: "empty", payload: "", wantErr: "error: payload must not be empty\n"},
+		{name: "malformed object", command: "send {", wantErr: "error: payload must be a JSON object or plain text\n"},
+		// A bare send enters multi-line mode, so an immediately terminated block
+		// is the empty-payload case and must still admit nothing.
+		{name: "empty block", command: "send\nEOF", wantErr: "error: payload must not be empty\n"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			stub := inputStub()
-			input := fmt.Sprintf("cd endpoint-1/session-1\nsend %s\nquit\n", testCase.payload)
+			input := fmt.Sprintf("cd endpoint-1/session-1\n%s\nquit\n", testCase.command)
 			_, errorsOut := runInputScenario(t, stub, input, 8192)
 			assertActionableError(t, errorsOut, strings.TrimSuffix(testCase.wantErr, "\n"))
 			lines := strings.Split(strings.TrimSuffix(errorsOut, "\n"), "\n")
-			if lines[1] != "usage: send <text>" {
+			if lines[1] != "usage: send [text]" {
 				t.Fatalf("errors=%q want send usage", errorsOut)
 			}
 			if stub.admit != 0 {
-				t.Fatalf("payload %q admitted %d commands", testCase.payload, stub.admit)
+				t.Fatalf("command %q admitted %d commands", testCase.command, stub.admit)
 			}
 		})
 	}
