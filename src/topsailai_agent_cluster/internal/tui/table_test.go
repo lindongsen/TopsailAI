@@ -23,7 +23,7 @@ func TestTableColumnsWidthsAndEmptyResult(t *testing.T) {
 	if len(headerCells) != len(tableHeaders) {
 		t.Fatalf("header cell count=%d header=%q", len(headerCells), lines[1])
 	}
-	for index, want := range []string{"NO", "SESSION_STATUS", "SESSION_NAME", "SESSION_ID", "ENDPOINT", "DATA_STATUS"} {
+	for index, want := range tableHeaders {
 		if strings.TrimSpace(headerCells[index]) != want {
 			t.Fatalf("header cell %d=%q want=%q", index, headerCells[index], want)
 		}
@@ -284,10 +284,27 @@ func TestTableNilLastSuccessDisplaysDash(t *testing.T) {
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	// The table is framed by rules: line 0 is the top rule, so the data row
 	// follows the header and its separator.
-	cells := strings.Split(lines[3], " │ ")
-	if got := strings.TrimSpace(cells[columnDataStatus]); got != "ok" {
+	if got := plainCell(t, lines[3], columnDataStatus); got != "ok" {
 		t.Fatalf("DATA_STATUS cell = %q, want %q; row=%q", got, "ok", lines[3])
 	}
+}
+
+// plainCell returns one cell of a plain-layout row by column key, so a layout
+// change cannot silently shift an assertion onto another column.
+func plainCell(t *testing.T, line, key string) string {
+	t.Helper()
+	columns := columnsFor(ColorPolicy{})
+	cells := strings.Split(line, " │ ")
+	if len(cells) != len(columns) {
+		t.Fatalf("cell count = %d, want %d: %q", len(cells), len(columns), line)
+	}
+	for index, column := range columns {
+		if column.key == key {
+			return strings.TrimSpace(cells[index])
+		}
+	}
+	t.Fatalf("column %q is not in the plain layout", key)
+	return ""
 }
 
 func TestTableLastSuccessUsesNonUTCOffset(t *testing.T) {
@@ -300,9 +317,8 @@ func TestTableLastSuccessUsesNonUTCOffset(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	// The table is framed by rules, so the data row follows the header pair.
-	cells := strings.Split(lines[3], " │ ")
 	want := "ok (06:13:20)"
-	if got := strings.TrimSpace(cells[columnDataStatus]); got != want {
+	if got := plainCell(t, lines[3], columnDataStatus); got != want {
 		t.Fatalf("DATA_STATUS cell = %q, want %q; row=%q", got, want, lines[3])
 	}
 }

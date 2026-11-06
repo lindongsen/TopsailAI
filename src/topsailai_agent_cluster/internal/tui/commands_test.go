@@ -105,10 +105,11 @@ func TestCommandRunnerListHeadersColorAndJSONIsolation(t *testing.T) {
 	if err := (CommandRunner{API: api}).ListWithOptions(context.Background(), &coloredCleanList, io.Discard, "", false, TableOptions{Color: options.Color, Clean: true}); err != nil {
 		t.Fatal(err)
 	}
-	// The table is framed by rules, so the header is not the first line.
+	// The table is framed by rules, so the header is not the first line. Locate
+	// it by DATA_STATUS, which every layout keeps.
 	headerLine := func(text string) string {
 		for _, line := range strings.Split(text, "\n") {
-			if strings.Contains(line, "SESSION_STATUS") {
+			if strings.Contains(line, "DATA_STATUS") {
 				return line
 			}
 		}
@@ -119,7 +120,7 @@ func TestCommandRunnerListHeadersColorAndJSONIsolation(t *testing.T) {
 	if listHeader != cleanListHeader {
 		t.Fatalf("list/list --clean headers differ: list=%q clean=%q", listHeader, cleanListHeader)
 	}
-	for _, header := range []string{"NO", "SESSION_STATUS", "SESSION_NAME", "SESSION_ID", "ENDPOINT", "DATA_STATUS"} {
+	for _, header := range columnHeaders(coloredColumns()) {
 		assertStyledHeaderCell(t, listHeader, header)
 	}
 	if !strings.Contains(listHeader, ansiBoldCyan) || !strings.Contains(listHeader, ansiReset) {

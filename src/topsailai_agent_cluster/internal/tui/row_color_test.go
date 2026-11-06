@@ -46,6 +46,12 @@ func sgrSequences(line string) []string {
 	return sequences
 }
 
+// coloredColumns returns the layout used when colour is enabled, which omits
+// SESSION_STATUS because the row colour already carries the state.
+func coloredColumns() []tableColumn {
+	return columnsFor(ColorPolicy{Enabled: true})
+}
+
 // dataRowLine returns the first data row of a wide table, which follows the top
 // rule, the header row and the header separator.
 func dataRowLine(t *testing.T, rendered string) string {
@@ -57,8 +63,19 @@ func dataRowLine(t *testing.T, rendered string) string {
 	return lines[3]
 }
 
+// headerLine returns the header row of a wide table.
+func headerLine(t *testing.T, rendered string) string {
+	t.Helper()
+	lines := strings.Split(strings.TrimSuffix(rendered, "\n"), "\n")
+	if len(lines) < 4 {
+		t.Fatalf("table has %d lines: %q", len(lines), rendered)
+	}
+	return lines[1]
+}
+
 // TestTableColorsWholeRowFromSessionState proves the operator sees one colour
-// across the entire data row, not only inside the SESSION_STATUS cell.
+// across the entire data row, and that the state column is dropped because the
+// row colour already carries it.
 func TestTableColorsWholeRowFromSessionState(t *testing.T) {
 	cases := []struct {
 		state string
@@ -88,8 +105,10 @@ func TestTableColorsWholeRowFromSessionState(t *testing.T) {
 			}
 			coloredRow := dataRowLine(t, colored.String())
 			plainRow := dataRowLine(t, plain.String())
-			if got := stripANSI(coloredRow); got != plainRow {
-				t.Fatalf("coloured row text = %q, want %q", got, plainRow)
+			// The coloured layout drops SESSION_STATUS, so its text must equal
+			// the plain row with that one cell removed and nothing else changed.
+			if got, want := stripANSI(coloredRow), withoutStateCell(t, plainRow); got != want {
+				t.Fatalf("coloured row text = %q, want %q", got, want)
 			}
 			// Every cell and every separator of the row carries the row style,
 			// so no cell is left uncoloured.
@@ -104,7 +123,7 @@ func TestTableColorsWholeRowFromSessionState(t *testing.T) {
 			}
 			// One style prefix per cell plus one per separator, and one reset
 			// after each, so the whole line is covered.
-			if got, want := strings.Count(coloredRow, testCase.style), len(tableHeaders)*2-1; got != want {
+			if got, want := strings.Count(coloredRow, testCase.style), len(coloredColumns())*2-1; got != want {
 				t.Fatalf("row %q style count = %d, want %d: %q", testCase.state, got, want, coloredRow)
 			}
 			if !strings.HasSuffix(coloredRow, ansiReset) {
@@ -112,6 +131,25 @@ func TestTableColorsWholeRowFromSessionState(t *testing.T) {
 			}
 		})
 	}
+}
+
+// withoutStateCell removes the SESSION_STATUS cell from a plain-layout row, so a
+// coloured row can be compared with the layout that actually omits the column.
+func withoutStateCell(t *testing.T, plainRow string) string {
+	t.Helper()
+	columns := columnsFor(ColorPolicy{})
+	cells := strings.Split(plainRow, " │ ")
+	if len(cells) != len(columns) {
+		t.Fatalf("plain cell count = %d, want %d: %q", len(cells), len(columns), plainRow)
+	}
+	kept := make([]string, 0, len(cells)-1)
+	for index, column := range columns {
+		if column.key == columnState {
+			continue
+		}
+		kept = append(kept, cells[index])
+	}
+	return strings.Join(kept, " │ ")
 }
 
 // TestTableRowColorKeepsDataStatusWarning proves a collection problem stays
@@ -138,12 +176,13 @@ func TestTableRowColorKeepsDataStatusWarning(t *testing.T) {
 	}
 	// The warning is confined to the DATA_STATUS cell: the remaining cells stay
 	// green, so the row still reads as one unit.
+	columns := coloredColumns()
 	cells := strings.Split(row, " │ ")
-	if len(cells) != len(tableHeaders) {
-		t.Fatalf("cell count = %d: %q", len(cells), row)
+	if len(cells) != len(columns) {
+		t.Fatalf("cell count = %d, want %d: %q", len(cells), len(columns), row)
 	}
 	for index, cell := range cells {
-		if index == columnDataStatus {
+		if columns[index].warn {
 			if !strings.Contains(cell, ansiRed) {
 				t.Fatalf("DATA_STATUS cell = %q, want red", cell)
 			}
@@ -170,8 +209,10 @@ func TestNarrowTableColorsWholeRow(t *testing.T) {
 	if err := RenderTable(&plain, io.Discard, rows, nil, options); err != nil {
 		t.Fatal(err)
 	}
-	if got := stripANSI(colored.String()); got != plain.String() {
-		t.Fatalf("coloured narrow text = %q, want %q", got, plain.String())
+	// The coloured narrow layout omits the SESSION_STATUS field, so its text
+	// must equal the plain layout with that one field line removed.
+	if got, want := stripANSI(colored.String()), withoutStateFieldLines(t, plain.String()); got != want {
+		t.Fatalf("coloured narrow text = %q, want %q", got, want)
 	}
 	// Each field line is "label: value"; the label stays bold cyan and the value
 	// carries the row colour. Blocks are separated by the horizontal rules, so
@@ -182,8 +223,8 @@ func TestNarrowTableColorsWholeRow(t *testing.T) {
 		t.Fatalf("blocks = %d, want %d: %q", len(blocks), len(rows), colored.String())
 	}
 	for index, block := range blocks {
-		if len(block) != len(tableHeaders) {
-			t.Fatalf("block %d has %d field lines, want %d: %q", index, len(block), len(tableHeaders), colored.String())
+		if len(block) != len(coloredColumns()) {
+			t.Fatalf("block %d has %d field lines, want %d: %q", index, len(block), len(coloredColumns()), colored.String())
 		}
 		for _, line := range block {
 			if !strings.Contains(line, wantStyles[index]) {
@@ -225,6 +266,22 @@ func narrowFieldBlocks(t *testing.T, rendered string) [][]string {
 	return blocks
 }
 
+// withoutStateFieldLines removes the SESSION_STATUS field line from every block
+// of a plain narrow layout, so it can be compared with the coloured layout that
+// omits the field.
+func withoutStateFieldLines(t *testing.T, rendered string) string {
+	t.Helper()
+	label := "SESSION_STATUS: "
+	kept := make([]string, 0, 16)
+	for _, line := range strings.Split(strings.TrimSuffix(rendered, "\n"), "\n") {
+		if strings.HasPrefix(line, label) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n") + "\n"
+}
+
 // TestTableRowColorDisabledStaysPlain proves redirected output stays free of
 // escapes even though every cell is now written through the styling helper.
 func TestTableRowColorDisabledStaysPlain(t *testing.T) {
@@ -255,15 +312,16 @@ func TestTableHeaderRowUnchangedByRowColour(t *testing.T) {
 		t.Fatalf("table has %d lines: %q", len(lines), out.String())
 	}
 	header := lines[1]
-	if got, want := strings.Count(header, ansiBoldCyan), len(tableHeaders); got != want {
+	columns := coloredColumns()
+	if got, want := strings.Count(header, ansiBoldCyan), len(columns); got != want {
 		t.Fatalf("header style count = %d, want %d: %q", got, want, header)
 	}
-	if got, want := strings.Count(header, " │ "), len(tableHeaders)-1; got != want {
+	if got, want := strings.Count(header, " │ "), len(columns)-1; got != want {
 		t.Fatalf("header separator count = %d, want %d: %q", got, want, header)
 	}
 	// Exactly one reset per cell: a separator must not add a reset of its own,
 	// which would mean the header row was styled as a whole.
-	if got, want := strings.Count(header, ansiReset), len(tableHeaders); got != want {
+	if got, want := strings.Count(header, ansiReset), len(columns); got != want {
 		t.Fatalf("header reset count = %d, want %d: %q", got, want, header)
 	}
 	// Every header cell is exactly one bold cyan span, so separators stay plain.
@@ -274,5 +332,39 @@ func TestTableHeaderRowUnchangedByRowColour(t *testing.T) {
 		if strings.Count(cell, ansiBoldCyan) != 1 {
 			t.Fatalf("header cell %d = %q, want a single style prefix", index, cell)
 		}
+	}
+}
+
+// TestTableDropsStateColumnOnlyWithColor proves the state column is removed
+// exactly when the row colour already carries the state, and kept otherwise so
+// redirected output still reports the state in text.
+func TestTableDropsStateColumnOnlyWithColor(t *testing.T) {
+	rows := []SessionRow{{EndpointID: "ep", AdapterID: "ad", ProviderSessionID: "prov", State: "running", CollectionStatus: protocol.CollectionSucceeded}}
+	var colored, plain, errors strings.Builder
+	if err := RenderTable(&colored, &errors, rows, nil, TableOptions{Color: ColorPolicy{Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RenderTable(&plain, &errors, rows, nil, TableOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	coloredHeader := headerLine(t, colored.String())
+	plainHeader := headerLine(t, plain.String())
+	if strings.Contains(coloredHeader, "SESSION_STATUS") {
+		t.Fatalf("coloured header still shows the state column: %q", coloredHeader)
+	}
+	if !strings.Contains(plainHeader, "SESSION_STATUS") {
+		t.Fatalf("plain header lost the only textual state signal: %q", plainHeader)
+	}
+	// The state text itself must be gone from the coloured row, because the row
+	// colour is now the only state signal there.
+	if strings.Contains(stripANSI(dataRowLine(t, colored.String())), "running") {
+		t.Fatalf("coloured row still repeats the state text: %q", dataRowLine(t, colored.String()))
+	}
+	if !strings.Contains(dataRowLine(t, plain.String()), "running") {
+		t.Fatalf("plain row lost the state text: %q", dataRowLine(t, plain.String()))
+	}
+	// The remaining columns keep their order and content in both layouts.
+	if got, want := len(coloredColumns()), len(tableHeaders)-1; got != want {
+		t.Fatalf("coloured column count = %d, want %d", got, want)
 	}
 }

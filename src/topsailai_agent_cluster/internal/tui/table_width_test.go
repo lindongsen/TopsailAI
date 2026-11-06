@@ -46,7 +46,8 @@ func TestTableUnknownWidthPreservesOutput(t *testing.T) {
 
 // TestNarrowTableWriteFailure preserves writer failure identity.
 func TestNarrowTableWriteFailure(t *testing.T) {
-	if err := writeNarrowTable(exampleFailureWriter{err: errTableFixture}, [][]string{{"example:"}}, [][]string{{""}}, 40, ColorPolicy{}); err != errTableFixture {
+	columns := columnsFor(ColorPolicy{})
+	if err := writeNarrowTable(exampleFailureWriter{err: errTableFixture}, [][]string{{"example:"}}, [][]string{{""}}, []string{""}, columns, 40, ColorPolicy{}); err != errTableFixture {
 		t.Fatalf("error=%v", err)
 	}
 }
@@ -67,9 +68,11 @@ func TestOutputWidthCapability(t *testing.T) {
 	}
 }
 
-// narrowProbeWidth returns a width below the tabular threshold without magic numbers.
+// narrowProbeWidth returns a width one column below the tabular threshold of the
+// narrowest layout, so a probe stays narrow whether or not the state column is
+// present while the longest field label still fits without clipping.
 func narrowProbeWidth() int {
-	return minimumTableWidth(len(tableHeaders)) - len("abcd")
+	return minimumTableWidth(len(coloredColumns())) - 1
 }
 
 // TestNarrowTableKeepsStylingAndFullSessionName guards the narrow-terminal contract.
@@ -93,20 +96,25 @@ func TestNarrowTableKeepsStylingAndFullSessionName(t *testing.T) {
 	if !strings.Contains(rendered, ansiBoldCyan+"SESSION_NAME: "+ansiReset) {
 		t.Fatalf("narrow label is not styled: %q", rendered)
 	}
-	statusLines := []string{}
+	// The coloured narrow layout omits the SESSION_STATUS field, so the state
+	// must be readable from the row colour alone.
+	if strings.Contains(rendered, "SESSION_STATUS: ") {
+		t.Fatalf("coloured narrow layout still shows the state field: %q", rendered)
+	}
+	numberLines := []string{}
 	for _, line := range strings.Split(rendered, "\n") {
-		if strings.HasPrefix(line, ansiBoldCyan+"SESSION_STATUS: "+ansiReset) {
-			statusLines = append(statusLines, line)
+		if strings.HasPrefix(line, ansiBoldCyan+"NO: "+ansiReset) {
+			numberLines = append(numberLines, line)
 		}
 	}
-	if len(statusLines) != 2 {
-		t.Fatalf("status lines=%d want 2: %q", len(statusLines), rendered)
+	if len(numberLines) != 2 {
+		t.Fatalf("NO lines=%d want 2: %q", len(numberLines), rendered)
 	}
-	if !strings.Contains(statusLines[0], ansiGreen) || !strings.HasSuffix(statusLines[0], ansiReset) {
-		t.Fatalf("running state is not green: %q", statusLines[0])
+	if !strings.Contains(numberLines[0], ansiGreen) || !strings.HasSuffix(numberLines[0], ansiReset) {
+		t.Fatalf("running row is not green: %q", numberLines[0])
 	}
-	if !strings.Contains(statusLines[1], ansiRed) || !strings.HasSuffix(statusLines[1], ansiReset) {
-		t.Fatalf("failed state is not red: %q", statusLines[1])
+	if !strings.Contains(numberLines[1], ansiRed) || !strings.HasSuffix(numberLines[1], ansiReset) {
+		t.Fatalf("failed row is not red: %q", numberLines[1])
 	}
 }
 

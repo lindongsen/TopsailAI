@@ -70,6 +70,16 @@ wait_for_new_text() {
   fail "timed out waiting for new text: $text"
 }
 
+# assert_absent proves a token is missing from the current pane, so a removed
+# column cannot silently reappear.
+assert_absent() {
+  local text=$1
+  capture
+  if grep -Fq "$text" "$capture_path"; then
+    fail "unexpected text present: $text"
+  fi
+}
+
 send_line() {
   tmux send-keys -t "$session_name" -l -- "$1"
   tmux send-keys -t "$session_name" Enter
@@ -83,13 +93,15 @@ AGENT_CLUSTER_ARTIFACT_DIR="$artifact_dir" \
 "$start_script"
 
 wait_for_text 'cluster>'
-# The startup inventory renders the table before the first prompt.
-wait_for_text 'SESSION_STATUS'
+# The startup inventory renders the table before the first prompt. Colour is
+# enabled in a real terminal, so the row colour carries the state and the
+# SESSION_STATUS column must be absent.
 wait_for_text 'SESSION_NAME'
 wait_for_text 'SESSION_ID'
 wait_for_text 'DATA_STATUS'
 wait_for_text 'ENDPOINT'
 wait_for_text 'ok ('
+assert_absent 'SESSION_STATUS'
 
 # Workspace scope rejects send before any payload parsing.
 baseline=$(pane_snapshot)

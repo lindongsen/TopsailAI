@@ -20,7 +20,7 @@ type commandHelp struct {
 
 var fieldHelp = []string{
 	"NO: display row number from the most recently rendered list; use cd <no> to enter that session.",
-	"SESSION_STATUS: provider-reported lifecycle state, such as running, stopped, or failed.",
+	"SESSION_STATUS: provider-reported lifecycle state, such as running, stopped, or failed; the column is shown only when colour is disabled, because an enabled table colours the whole data row by that state.",
 	"SESSION_NAME: session display name; empty when the provider did not report one.",
 	"SESSION_ID: provider-native session ID; empty when the provider did not report one.",
 	"ENDPOINT: endpoint hostname, falling back to its display name or ID.",

@@ -27,9 +27,11 @@ func TestNavigationListColors(t *testing.T) {
 				}
 				text := out.String()
 				if enabled {
-					// "running " with a trailing space matches only the padded
-					// SESSION_STATUS cell, not the "running(1)" summary row.
-					for _, token := range []string{ansiBoldCyan + "NO", ansiGreen + "running "} {
+					// The state column is dropped when colour is enabled, so the
+					// row colour is proven by the green NO cell; "1 " with a
+					// trailing space matches only the padded cell, not the
+					// "running(1)" summary row.
+					for _, token := range []string{ansiBoldCyan + "NO", ansiGreen + "1 "} {
 						if got := strings.Count(text, token); got != c.tables {
 							t.Fatalf("%q count=%d want=%d output=%q", token, got, c.tables, text)
 						}

@@ -27,15 +27,78 @@ type TableOptions struct {
 	Location *time.Location
 }
 
-// Column indices are named so a column change cannot silently shift colors or alignment.
+// Column keys name one logical field so a layout change cannot silently shift
+// colours, alignment, or the DATA_STATUS warning.
 const (
-	columnState      = 1
-	columnName       = 2
-	columnDataStatus = 5
+	columnNo         = "no"
+	columnState      = "state"
+	columnName       = "name"
+	columnID         = "id"
+	columnEndpoint   = "endpoint"
+	columnDataStatus = "data_status"
 )
 
-var tableHeaders = []string{"NO", "SESSION_STATUS", "SESSION_NAME", "SESSION_ID", "ENDPOINT", "DATA_STATUS"}
-var tableCaps = []int{4, 14, 64, 36, 20, 35}
+// tableColumn describes one column: its header, its width cap, whether it is
+// never truncated, and whether it keeps its own warning colour.
+type tableColumn struct {
+	key    string
+	header string
+	cap    int
+	wide   bool
+	warn   bool
+}
+
+// allColumns is the complete column set. SESSION_STATUS is dropped when the row
+// colour already carries the state, because the column would only repeat it.
+var allColumns = []tableColumn{
+	{key: columnNo, header: "NO", cap: 4},
+	{key: columnState, header: "SESSION_STATUS", cap: 14},
+	{key: columnName, header: "SESSION_NAME", cap: 64, wide: true},
+	{key: columnID, header: "SESSION_ID", cap: 36},
+	{key: columnEndpoint, header: "ENDPOINT", cap: 20},
+	{key: columnDataStatus, header: "DATA_STATUS", cap: 35, warn: true},
+}
+
+// columnsFor returns the columns to render for one output capability. Colour
+// already shows the state on every cell of the row, so SESSION_STATUS is omitted
+// there; without colour it stays, because it is then the only per-row state
+// signal.
+func columnsFor(policy ColorPolicy) []tableColumn {
+	if !policy.Enabled {
+		return allColumns
+	}
+	columns := make([]tableColumn, 0, len(allColumns)-1)
+	for _, column := range allColumns {
+		if column.key == columnState {
+			continue
+		}
+		columns = append(columns, column)
+	}
+	return columns
+}
+
+// columnHeaders returns the header text of one layout.
+func columnHeaders(columns []tableColumn) []string {
+	headers := make([]string, len(columns))
+	for i, column := range columns {
+		headers[i] = column.header
+	}
+	return headers
+}
+
+// columnWidths starts every column at its header width, so a short value never
+// widens the table beyond its content.
+func columnWidths(columns []tableColumn) []int {
+	widths := make([]int, len(columns))
+	for i, column := range columns {
+		widths[i] = displayWidth(column.header)
+	}
+	return widths
+}
+
+// tableHeaders lists the plain layout headers, used by callers that render
+// without colour such as help and redirected output.
+var tableHeaders = columnHeaders(allColumns)
 
 // minimumTableWidth reports the smallest width able to hold one column per field.
 func minimumTableWidth(columns int) int {
@@ -45,18 +108,19 @@ func minimumTableWidth(columns int) int {
 // RenderTable writes a bounded table and sorted endpoint diagnostics.
 func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFailure, options TableOptions) error {
 	assignRowNumbers(rows)
-	widths := append([]int(nil), tableCaps...)
-	for i, header := range tableHeaders {
-		widths[i] = len(header)
-	}
+	columns := columnsFor(options.Color)
+	headers := columnHeaders(columns)
+	widths := columnWidths(columns)
 	cells := make([][]string, len(rows))
 	states := make([][]string, len(rows))
+	rowStyles := make([]string, len(rows))
 	for i, row := range rows {
-		cells[i] = tableCells(row, options.Location)
-		states[i] = tableStates(row, cells[i])
+		cells[i] = projectCells(tableCells(row, options.Location), columns)
+		states[i] = tableStates(row, columns)
+		rowStyles[i] = stateStyle(rowState(row))
 		for j, cell := range cells[i] {
 			n := displayWidth(cell)
-			if j == columnName {
+			if columns[j].wide {
 				// Session names are shown in full so a long name is never truncated.
 				if n > widths[j] {
 					widths[j] = n
@@ -64,18 +128,12 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 				continue
 			}
 			if n > widths[j] {
-				widths[j] = minInt(n, tableCaps[j])
+				widths[j] = minInt(n, columns[j].cap)
 			}
 		}
 	}
 	fitTableWidths(widths, options.Width)
-	writeRow := func(values, states []string, header bool) error {
-		// A data row carries one colour for the whole line, derived from the
-		// session state, so the operator reads the row as a single unit.
-		rowStyle := ""
-		if !header {
-			rowStyle = stateStyle(rowState(values))
-		}
+	writeRow := func(values, states []string, rowStyle string, header bool) error {
 		for i, value := range values {
 			if i > 0 {
 				if err := writeStyled(out, rowStyle, " │ ", options.Color); err != nil {
@@ -94,7 +152,7 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 			if len(states) > i {
 				state = states[i]
 			}
-			if err := writeCellState(out, cell, i, state, rowStyle, options.Color); err != nil {
+			if err := writeCellState(out, cell, columns[i].warn, state, rowStyle, options.Color); err != nil {
 				return err
 			}
 		}
@@ -125,21 +183,21 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 		return err
 	}
 	if options.Width > 0 && options.Width < minimumTableWidth(len(widths)) {
-		if err := writeNarrowTable(out, cells, states, options.Width, options.Color); err != nil {
+		if err := writeNarrowTable(out, cells, states, rowStyles, columns, options.Width, options.Color); err != nil {
 			return err
 		}
 	} else {
 		if err := writeRule(); err != nil {
 			return err
 		}
-		if err := writeRow(tableHeaders, nil, true); err != nil {
+		if err := writeRow(headers, nil, "", true); err != nil {
 			return err
 		}
 		if err := writeSeparator(); err != nil {
 			return err
 		}
 		for index, row := range cells {
-			if err := writeRow(row, states[index], false); err != nil {
+			if err := writeRow(row, states[index], rowStyles[index], false); err != nil {
 				return err
 			}
 		}
@@ -256,22 +314,43 @@ func stateStyle(state string) string {
 	}
 }
 
-func tableCells(row SessionRow, location *time.Location) []string {
+// tableCells returns every column value keyed by column key, so a layout can
+// select a subset without depending on positional indices.
+func tableCells(row SessionRow, location *time.Location) map[string]string {
 	endpoint := row.EndpointLabel
 	if endpoint == "" {
 		endpoint = row.EndpointID
 	}
-	return []string{strconv.Itoa(row.No), escapeCell(row.State), escapeCell(row.DisplayName), escapeCell(row.ProviderSessionID), escapeCell(endpoint), escapeCell(dataStatusCell(row, location))}
+	return map[string]string{
+		columnNo:         strconv.Itoa(row.No),
+		columnState:      escapeCell(row.State),
+		columnName:       escapeCell(row.DisplayName),
+		columnID:         escapeCell(row.ProviderSessionID),
+		columnEndpoint:   escapeCell(endpoint),
+		columnDataStatus: escapeCell(dataStatusCell(row, location)),
+	}
+}
+
+// projectCells orders the keyed values into one layout.
+func projectCells(values map[string]string, columns []tableColumn) []string {
+	cells := make([]string, len(columns))
+	for i, column := range columns {
+		cells[i] = values[column.key]
+	}
+	return cells
 }
 
 // tableStates derives each column's colour state from the row itself, so a
 // decorated cell such as "ok (<timestamp>)" keeps the colour of its base status.
-func tableStates(row SessionRow, cells []string) []string {
-	states := make([]string, len(cells))
-	for i := range cells {
-		states[i] = rowState(cells)
+func tableStates(row SessionRow, columns []tableColumn) []string {
+	states := make([]string, len(columns))
+	for i, column := range columns {
+		if column.warn {
+			states[i] = dataStatus(row)
+			continue
+		}
+		states[i] = rowState(row)
 	}
-	states[columnDataStatus] = dataStatus(row)
 	return states
 }
 
@@ -349,11 +428,10 @@ func minInt(a, b int) int {
 	}
 	return b
 }
-func rowState(values []string) string {
-	if len(values) > columnState {
-		return values[columnState]
-	}
-	return ""
+
+// rowState reports the provider-reported lifecycle state that colours one row.
+func rowState(row SessionRow) string {
+	return row.State
 }
 
 // dataStatus combines collection outcome and data freshness for table display.
@@ -379,14 +457,14 @@ func dataStatus(row SessionRow) string {
 
 // writeCellState writes one cell with the row's colour. A data row is coloured
 // as a whole from its session state, so every cell and separator of that row
-// shares one style; DATA_STATUS keeps its own warning colour when it reports a
+// shares one style; a warning column keeps its own colour when it reports a
 // collection problem, because that signal must stay visible on a healthy row.
-func writeCellState(w io.Writer, cell string, index int, state, rowStyle string, policy ColorPolicy) error {
+func writeCellState(w io.Writer, cell string, warn bool, state, rowStyle string, policy ColorPolicy) error {
 	if !policy.Enabled {
 		_, err := io.WriteString(w, cell)
 		return err
 	}
-	if index == columnDataStatus {
+	if warn {
 		switch {
 		case state == "ok":
 			return writeStyled(w, rowStyle, cell, policy)
