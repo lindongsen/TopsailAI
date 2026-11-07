@@ -145,7 +145,7 @@ Every successful accepted update performs one transactional conditional INSERT/U
 - Use operator authentication plus scopes such as view, read_output, send_message, control and endpoint_admin. Authorize each target and operation at Server admission and revalidate current permission immediately before dispatch.
 - Endpoint rechecks identity, validity, local provider/workspace allowlists, target generation and allowed operation. Server authorization does not override local safety policy.
 - Revocation closes existing sessions and invalidates queued dispatch; certificates rotate without changing endpoint identity.
-- Never expose an arbitrary remote shell, executable path, environment override, filesystem path, socket path or unvalidated raw provider action in the generic API.
+- Never expose an arbitrary remote shell, executable path, environment override, filesystem path, socket path or unvalidated raw provider action in the generic API. The only command execution surface is the standard `command.exec` operation, which runs one argv array matched against an Endpoint-global allowlist in a session working directory with a minimal environment, bounded lifetime and bounded output. It is not a shell: no command string is parsed, no shell is invoked, and arguments are confined to the resolved directory.
 - Provider binaries and binding configuration are trusted local admin configuration. Execute argv directly without a shell, under a least-privilege account; bound child lifetime and output and clean up exact owned processes.
 - Journal/audit references and payload hashes, not full prompts, secrets or complete stdout by default. Restrict output access, encrypt stored sensitive payloads and use bounded retention.
 - Treat stdout and provider metadata as untrusted: strip terminal control sequences for TUI rendering, cap frame/text size and nesting, and redact sensitive local metadata from fleet listings.
@@ -163,7 +163,7 @@ Proposed initial budgets: cached first TUI page under 1 second, command durable 
 
 ## Discussion decisions
 
-Recommended defaults: Endpoint-initiated transport; capability-based adapters; one active Server; required start/resume/stop lifecycle management; machine-scoped Endpoint; explicit delivery uncertainty; no periodic stdout snapshot refresh; no arbitrary remote shell.
+Recommended defaults: Endpoint-initiated transport; capability-based adapters; one active Server; required start/resume/stop lifecycle management; machine-scoped Endpoint; explicit delivery uncertainty; no periodic stdout snapshot refresh; no arbitrary remote shell. Command execution is limited to the standard `command.exec` operation: one argv array matched against an Endpoint-global allowlist, confined to the session working directory, with a minimal environment, bounded lifetime and bounded output. Provider control is limited to the advertised `ctl.<action>` family, each with a fixed payload schema and an explicit permission scope.
 
 Open decisions and rollout acceptance are in the Adapter document. These drafts require human discussion before implementation. No agent lifecycle behavior, public interface or deployment has been changed.
 

@@ -89,6 +89,40 @@ Removed spellings must stay rejected rather than silently reinterpreted: `table`
 returns an explicit removal message pointing at `list --clean`, and `use` is
 rejected as unknown in favour of `cd`.
 
+## Planned additions: provider control and allowlisted command execution
+
+Two command families are designed but not yet implemented. They are recorded here so
+the surface contract is fixed before code exists. They MUST NOT be added to the audit
+table above until each one is executable and verified, because that table records
+observed state, not intent.
+
+| Command | Standalone spelling | Interactive spelling | Status |
+|---|---|---|---|
+| `ctl.<action>` | `ctl <action> [--payload JSON]` | `ctl`, `ctl <action>`, `ctl <action> <json>` | planned |
+| `command.exec` | `exec <session> -- <argv...>` | `!<argv...>` | planned |
+
+`ctl` follows the non-interactive-first rule directly. The standalone form carries the
+action name and an explicit payload; the interactive form is a convenience layer that
+prompts for the action when it is omitted. The prompt MUST render its action list from
+the advertised capabilities rather than from a hardcoded list, so it cannot offer an
+action the Endpoint does not support. A bare `ctl` in non-interactive mode is a usage
+error, not a prompt.
+
+`!` is an input-prefix form, not a command word. It is recognised before the command
+word is split, so `!git status` never reaches the dispatcher as a command named `!git`.
+Its behaviour is reachable non-interactively through `exec`, which is the contract
+surface.
+
+This is deliberately NOT an exception like `cd` and `quit`. Those navigate state that
+exists only inside the interactive loop, so they have no standalone meaning. `!`
+performs a remote operation that is fully meaningful without a terminal, so declaring
+it an exception would leave its behaviour unpinned by automated tests and reachable
+only by scraping terminal output.
+
+Both families are one-shot: a single bounded snapshot carrying its observation time,
+never a stream, a follow or a durable subscription. Neither may silently degrade; an
+unavailable capability returns an explicit error rather than cached or partial data.
+
 ## Global presentation flags
 
 Presentation flags are global: they are parsed before the command word and apply

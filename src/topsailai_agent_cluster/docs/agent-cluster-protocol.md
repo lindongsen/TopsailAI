@@ -42,8 +42,51 @@ Suggested semantic operations:
 - `agent.start`, `agent.resume`, `agent.stop`: required MVP lifecycle operations, with standard agent/session linkage and execution-generation evidence.
 - `agent.drive.start`, `agent.drive.stop`: controller operations, distinct from the agent lifecycle; see the drive semantics section.
 - `output.snapshot`, `output.follow`: independent capabilities; the former never implies the latter.
+- `ctl.<action>`: one advertised provider control action per capability, with a fixed payload schema; see the provider control channel section.
+- `command.exec`: one allowlisted argv array executed in a session working directory; see the allowlisted command execution section.
 
-Only operations and input/result fields defined by the negotiated standard API are exposed. No provider namespaces, raw control actions, adapter routing selectors or arbitrary provider execution schemas are accepted in commands. Inventory may carry adapter IDs and standard descriptive summaries as report data. A new common semantic operation requires an explicit versioned protocol amendment; provider-only controls remain local to Endpoint. Server validates standard schemas, not dynamically supplied provider instructions.
+Only operations and input/result fields defined by the negotiated standard API are exposed. No provider namespaces, adapter routing selectors or arbitrary provider execution schemas are accepted in commands. Two standard operation families are defined for provider control and for allowlisted command execution: `ctl.<action>` and `command.exec`. Both are versioned standard operations with fixed payload schemas, not a passthrough for provider-specific instructions. Inventory may carry adapter IDs and standard descriptive summaries as report data. A new common semantic operation requires an explicit versioned protocol amendment; provider-only controls that are not advertised as `ctl.<action>` remain local to Endpoint. Server validates standard schemas, not dynamically supplied provider instructions.
+
+## Provider control channel
+
+The `ctl.<action>` family exposes the provider control actions an Endpoint actually supports. Each
+advertised action is a separate versioned capability with a fixed payload schema, so the Server
+validates a standard shape and never forwards an unvalidated provider instruction.
+
+- The action inventory is derived from the Endpoint's live provider registry, not from a hardcoded
+  Server list. Adding a provider action requires no Server code, table or public schema change.
+- The Endpoint advertises only actions it can actually execute. An action that is absent from the
+  advertised capabilities is rejected at admission rather than attempted and failed.
+- Payloads are validated against the advertised schema before dispatch. A payload that does not match
+  the schema is rejected; it is never passed through as an opaque provider instruction.
+- Actions that read conversation content are sensitive. They require an explicit permission scope and
+  must not be reachable with an unscoped credential.
+- The Server treats the action name as an opaque standard identifier. It does not interpret provider
+  semantics, select code by action name, or route by adapter.
+
+## Allowlisted command execution
+
+`command.exec` runs one configured local command at the Endpoint in a session working directory. It is
+a bounded, allowlisted operation, not a remote shell.
+
+- The request carries an argv array, never a command string. The Endpoint does not parse or split a
+  string, because doing so would reintroduce shell semantics.
+- The Endpoint matches the argv array against an Endpoint-global allowlist by prefix. An entry is a
+  token sequence, so `git status` matches `git status --short` and does not match `git -c ...`.
+- The allowlist is Endpoint-local administrative configuration. The Server validates the standard
+  payload shape and never interprets the allowlist.
+- The working directory is the session `project_workspace`, falling back to the session `pwd`. When
+  neither resolves to an existing directory the operation fails closed; it never falls back to the
+  Endpoint process working directory.
+- Arguments are confined to the resolved directory. Absolute argument paths and parent traversal are
+  rejected, and confinement is checked on the resolved path rather than on the argument text alone.
+- Execution uses a minimal environment, a bounded lifetime, a bounded output read with truncation
+  evidence, and process-group termination on timeout.
+- The result is one bounded snapshot with its observation time. It is not a stream, not a follow, and
+  not a durable subscription.
+- The allowlist supports reload without restarting the Endpoint. A reload parses the new list
+  completely before swapping it atomically; a parse failure keeps the previous list and is logged, and
+  a reload never leaves an empty list in force.
 
 ## Required agent lifecycle semantics
 
