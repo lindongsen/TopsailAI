@@ -67,6 +67,13 @@ see the effect.
   reads a newer persisted document. The snapshot runs first because it uses the
   generation validated before the send, while a refresh can replace that
   generation.
+- `send` asks for confirmation only when the payload is not already on screen. An
+  explicit `send <text>`, `send {"text":"..."}` or `> <text>` submits directly,
+  because the command word and the text are both visible. A bare `send` reads a
+  multi-line block and asks once, because the assembled block is never echoed as a
+  whole and the question is the only place the operator can see it before it is
+  admitted. The confirmation gate stays on every operation that cannot be undone:
+  `stop`, `resume`, `inject`, `interrupt`, `ctl` and `drive start`.
 
 ## Audit
 
@@ -83,7 +90,7 @@ was dispatched rather than rejected as unknown.
 | `info` | `info` | `info` | yes |
 | `logs` | `logs` | `logs` | yes |
 | `status` | `status` | `status` | yes |
-| `send` | `send` | `send`, `>` | yes |
+| `send` | `send` | `send`, `>` | yes (explicit text submits directly; a bare `send` asks once) |
 | `context.inject` | `btw`, `inject` | `inject`, `btw` | yes |
 | `execution.interrupt` | `control` | `interrupt`, `control` | yes |
 | `ctl.<action>` | `ctl` | `ctl` | yes |
@@ -113,8 +120,10 @@ surface, where `>` is a shell redirect. It is resolved before tokenisation, so
 `>hello world` and `> hello world` both send `hello world`. Because the prefix is
 disjoint from every command word, a message can never be read as a command and a
 typo can never be read as a message; an unprefixed unknown word still returns the
-unknown-command diagnostic. The alias keeps the confirmation gate and the
-session-only scope rule of `send`.
+unknown-command diagnostic. The alias keeps the session-only scope rule of
+`send` and submits directly, exactly like an explicit `send <text>`: the prefix
+already states both the action and the text, so a second question could only
+repeat what the operator typed.
 
 The `l` alias is interactive-only and resolves to `list` through the same alias
 registry as `r` and `q`. It is absent from the standalone surface, which accepts
@@ -278,6 +287,8 @@ hello world
   silently change what is sent.
 - Accepting runs the normal `send` flow with that text and does not ask the send
   confirmation again, because the offer already named the exact text and action.
+  This is the same rule that lets an explicit `send <text>` submit directly: a
+  question is asked only when the action or the payload is not already on screen.
   Declining, an empty answer, a partial answer or an unreadable answer keeps the
   unknown-command diagnostic, so a typo is never swallowed and no mutating action
   is inferred from silence.

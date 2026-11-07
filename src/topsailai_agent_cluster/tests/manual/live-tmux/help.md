@@ -36,7 +36,7 @@ For **each** of list, endpoints, cd, show, info, start, resume, stop, inject, in
 | ctl | `ctl [action] [json]`; bare `ctl` renders the action list from the capabilities the endpoint advertises and accepts a number or a name, so no action has to be typed; an unadvertised action must be refused before admission; the payload is an optional JSON object and an empty payload sends `{}`; confirmation is required; verify the durable receipt, not just admission |
 | drive | `drive [start\|stop\|status]`; omitted action reports status; `drive stop` stops only the driver controller and must leave the agent running |
 | logs | `logs [session]`; selected session by default; a bare row number or the displayed provider session ID is accepted; bounded stdout body, not just metadata |
-| send | `send <text>`; literal message text, confirmation; no JSON is required |
+| send | `send <text>`; literal message text, no confirmation because the text is on screen; a bare `send` reads a multi-line block and asks once; no JSON is required |
 | status | `status [command-id]`; explicit result, otherwise the last command submitted in this CLI, otherwise selected session state; with no retained command it explains the short form instead of demanding an identifier |
 | refresh | `refresh`; reload server inventory, not a promise of synchronous provider discovery |
 | watch | `watch [interval] [--force]`; re-renders on a timer until any key is pressed; `--force` needs at least 10s because each tick launches one provider discovery per endpoint; unavailable in session scope |

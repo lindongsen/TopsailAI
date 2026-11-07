@@ -12,7 +12,7 @@ author: DawsonLin
 | ERR-03 | malformed JSON/quotes, unsupported option, unknown command | useful error, usage and next help guidance where supported; CLI continues | PASS |
 | ERR-04 | `logs --json`, `list --json`, action --json in REPL | explicit non-interactive-only/rejected-option message, no mutation | PASS |
 | ERR-05 | unsupported capability | explicit refusal before confirmation/admission; no invented success | BLOCKED |
-| ERR-06 | selected generation changed while confirmation open | fail closed; replacement worker never operated upon | PASS |
+| ERR-06 | selected generation changed while a bare `send` confirmation is open | fail closed; replacement worker never operated upon | PASS |
 | ERR-07 | stop owned endpoint transport, list/refresh | disconnected/failed/stale data visibly distinct from successful empty inventory; restore service before dependent cases | PASS |
 | ERR-08 | logs empty actual stdout, malformed provider response | genuine empty array allowed; provider error/missing lines fails explicitly; never silently reinterpret as success | BLOCKED |
 | ERR-09 | ambiguous command admission or local timeout | preserve command ID, query status, no blind retry, distinguish local wait from actual outcome | PASS |
