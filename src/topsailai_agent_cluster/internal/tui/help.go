@@ -363,6 +363,7 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 			"Entering a session renders one bounded output snapshot immediately; run logs again to re-read it.\n" +
 			"Session selectors use internal resource IDs or unique names, not necessarily the provider SESSION_ID shown in list.\n" +
 			"Text that matches no command is offered as a send message; declining keeps the unknown-command diagnostic.\n" +
+			"A line beginning with ! runs one allowlisted command in the session working directory; the endpoint decides the allowlist.\n" +
 			"Actions require adapter capability support and fresh session data; scope availability alone does not guarantee support."
 	}
 	example := "Start example: start <endpoint> <resource> --profile <id> --profile-revision <revision>"
