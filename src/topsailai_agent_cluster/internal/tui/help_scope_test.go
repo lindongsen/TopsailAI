@@ -19,7 +19,9 @@ func helpText(t *testing.T, target string) string {
 	return out.String()
 }
 
-// scopeGroup returns the command lines of one scope group in the overview.
+// scopeGroup returns the command lines of one scope group in the overview. The
+// leading indent is preserved, so a hung description line stays distinguishable
+// from a command line.
 func scopeGroup(t *testing.T, overview, scope string) []string {
 	t.Helper()
 	marker := "\n" + scope + ":\n"
@@ -33,16 +35,25 @@ func scopeGroup(t *testing.T, overview, scope string) []string {
 		if strings.TrimSpace(line) == "" {
 			break
 		}
-		lines = append(lines, strings.TrimSpace(line))
+		lines = append(lines, strings.TrimRight(line, " "))
 	}
 	return lines
 }
 
-// groupCommandNames extracts the leading command name of each group line.
+// groupCommandNames extracts the leading command name of each group line. A
+// command line starts at the block indent; a hung description line is indented to
+// the description column, so it is skipped instead of being read as a command.
 func groupCommandNames(lines []string) []string {
 	names := make([]string, 0, len(lines))
 	for _, line := range lines {
-		fields := strings.Fields(line)
+		if !strings.HasPrefix(line, helpLineIndent) {
+			continue
+		}
+		rest := strings.TrimPrefix(line, helpLineIndent)
+		if rest == "" || strings.HasPrefix(rest, " ") {
+			continue
+		}
+		fields := strings.Fields(rest)
 		if len(fields) == 0 {
 			continue
 		}
@@ -191,16 +202,37 @@ func TestHelpCDListsEveryNavigationForm(t *testing.T) {
 	}
 }
 
+// TestCommandHelpLinesStayNonInteractiveCompatible verifies that every command
+// line keeps its syntax and description and that all descriptions in the block
+// start at one column, so the interactive list stays readable and never leaks
+// scope grouping.
 func TestCommandHelpLinesStayNonInteractiveCompatible(t *testing.T) {
 	lines := CommandHelpLines()
 	if len(lines) != len(commandHelpOrder) {
 		t.Fatalf("CommandHelpLines returned %d lines, want %d", len(lines), len(commandHelpOrder))
 	}
+	column := -1
 	for index, name := range commandHelpOrder {
 		entry := commandHelpCatalog[name]
-		want := entry.syntax + "   " + entry.description
-		if lines[index] != want {
-			t.Fatalf("line %d = %q, want %q", index, lines[index], want)
+		line := lines[index]
+		if !strings.HasPrefix(line, helpLineIndent+entry.syntax) {
+			t.Fatalf("line %d = %q, want syntax prefix %q", index, line, helpLineIndent+entry.syntax)
+		}
+		descriptionLine := line
+		if strings.Contains(line, "\n") {
+			parts := strings.SplitN(line, "\n", 2)
+			descriptionLine = parts[1]
+		}
+		start := strings.Index(descriptionLine, entry.description)
+		if start < 0 {
+			t.Fatalf("line %d = %q, want description %q", index, line, entry.description)
+		}
+		if column < 0 {
+			column = start
+			continue
+		}
+		if start != column {
+			t.Fatalf("line %d description starts at column %d, want %d: %q", index, start, column, line)
 		}
 	}
 	for _, line := range lines {

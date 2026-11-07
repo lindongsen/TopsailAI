@@ -46,7 +46,7 @@ func refreshScopeStub() *refreshStub {
 // every Endpoint for a fresh collection before rendering.
 func TestRefreshForcesEveryEndpointInWorkspaceScope(t *testing.T) {
 	stub := refreshScopeStub()
-	output, diagnostics := runScope(t, stub, "refresh\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "refresh\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -63,7 +63,7 @@ func TestRefreshForcesEveryEndpointInWorkspaceScope(t *testing.T) {
 func TestRefreshRendersTheFreshlyCollectedDocument(t *testing.T) {
 	stub := refreshScopeStub()
 	stub.fresh["endpoint-1"] = scopeInventory("fresh-session", "fresh-generation")
-	output, diagnostics := runScope(t, stub, "refresh\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "refresh\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -82,7 +82,7 @@ func TestRefreshRendersTheFreshlyCollectedDocument(t *testing.T) {
 // forces only the current Endpoint.
 func TestRefreshNarrowsForcedCollectionToCurrentEndpoint(t *testing.T) {
 	stub := refreshScopeStub()
-	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nrefresh\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nrefresh\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -100,7 +100,7 @@ func TestRefreshNarrowsForcedCollectionToCurrentEndpoint(t *testing.T) {
 func TestRefreshEndpointScopeFailsHard(t *testing.T) {
 	stub := refreshScopeStub()
 	stub.refreshErrors["endpoint-1"] = errors.New("forced collection failed")
-	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nrefresh\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nrefresh\nexit\n", ColorPolicy{})
 	assertActionableError(t, diagnostics, "error: forced collection failed")
 }
 
@@ -109,7 +109,7 @@ func TestRefreshEndpointScopeFailsHard(t *testing.T) {
 func TestRefreshWorkspaceScopeDegrades(t *testing.T) {
 	stub := refreshScopeStub()
 	stub.refreshErrors["endpoint-2"] = errors.New("forced collection failed")
-	output, diagnostics := runScope(t, stub, "refresh\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "refresh\nexit\n", ColorPolicy{})
 	if !strings.Contains(diagnostics, "endpoint endpoint-2 unavailable: forced collection failed") {
 		t.Fatalf("missing per-endpoint failure diagnostic: %q", diagnostics)
 	}
@@ -123,7 +123,7 @@ func TestRefreshWorkspaceScopeDegrades(t *testing.T) {
 // reloaded rows instead of only a confirmation line.
 func TestRefreshSessionScopeForcesThenRenders(t *testing.T) {
 	stub := refreshScopeStub()
-	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nrefresh\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nrefresh\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -144,7 +144,7 @@ func TestRefreshSessionScopeForcesThenRenders(t *testing.T) {
 func TestRefreshSessionScopeReportsForcedCollectionFailure(t *testing.T) {
 	stub := refreshScopeStub()
 	stub.refreshErrors["endpoint-1"] = errors.New("forced collection failed")
-	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nrefresh\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nrefresh\nexit\n", ColorPolicy{})
 	assertActionableError(t, diagnostics, "error: forced collection failed")
 }
 
@@ -152,7 +152,7 @@ func TestRefreshSessionScopeReportsForcedCollectionFailure(t *testing.T) {
 // keeps the previous read-only behaviour instead of failing.
 func TestRefreshWithoutSeamStaysReadOnly(t *testing.T) {
 	stub := scopeStub()
-	output, diagnostics := runScope(t, stub, "refresh\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "refresh\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -164,7 +164,7 @@ func TestRefreshWithoutSeamStaysReadOnly(t *testing.T) {
 // TestListNeverForcesCollection proves list keeps its read-only contract.
 func TestListNeverForcesCollection(t *testing.T) {
 	stub := refreshScopeStub()
-	_, diagnostics := runScope(t, stub, "list\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "list\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}

@@ -39,18 +39,19 @@ var commandHelpCatalog = map[string]commandHelp{
 	"start":     {"start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--task <text>]", "start an agent through the selected endpoint; interactive mode executes directly and does not support --json", []string{"endpoint: endpoint ID", "resource: compatibility resource identifier", "--profile: launch profile ID (required)", "--profile-revision: launch profile revision (required)", "--folder: optional working folder; empty value is treated as omitted", "--task: optional literal initial task text; no JSON is required", "without --task and without a positional task: read a multi-line task and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the task, and the accepted task is echoed verbatim with colour so it can be verified before submission", "an empty multi-line task is rejected instead of submitting nothing", "--json: rejected in interactive mode"}, []string{"start", "start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1", `start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1 --task "summarize the open issues"`}},
 	"resume":    {"resume", "resume the selected session", []string{"--json: rejected in interactive mode"}, []string{"resume"}},
 	"stop":      {"stop [session]", "stop a session after confirmation; session scope stops the selected session", []string{"session: optional session/resource ID, provider session ID, or a bare list row number; required outside session scope and rejected inside it", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID", "workspace scope resolves the row's own endpoint; a token matching sessions on several endpoints is rejected", "--json: rejected in interactive mode"}, []string{"stop", "stop 1", "stop res_abc"}},
-	"inject":    {"inject <text>", "inject context into the selected session", []string{"text: literal context text; no JSON is required", "--json: rejected in interactive mode"}, []string{"inject the deployment notes are in docs/", `inject {"text":"context"}`}},
+	"inject":    {"inject [text]", "inject context into the selected session; a bare inject reads a multi-line context block", []string{"text: literal context text; no JSON is required", "without text: read a multi-line context block and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the context", "an empty multi-line context block is rejected instead of submitting nothing", "--json: rejected in interactive mode"}, []string{"inject the deployment notes are in docs/", `inject {"text":"context"}`}},
 	"interrupt": {"interrupt [soft|hard] [message]", "request a soft or hard execution interrupt for the selected session", []string{"soft: soft interrupt, optionally followed by a literal message; empty input prompts for the action", "hard: hard interrupt; accepts no message", "--json: rejected in interactive mode"}, []string{"interrupt", "interrupt soft stop and summarize now", "interrupt hard"}},
 	"ctl":       {"ctl [action] [json]", "send one provider control action to the selected session; the action list is rendered from the capabilities the endpoint advertises, so an unsupported action is never offered", []string{"action: advertised control action name, or its number in the rendered list; empty prompts for the action", "json: optional JSON object payload; empty sends the empty object", "the action is a mutating request and needs explicit confirmation", "--json: rejected in interactive mode"}, []string{"ctl", "ctl heartbeat", `ctl pause {"reason":"maintenance"}`}},
 	"drive":     {"drive [start|stop|status]", "manage the resident driver of the selected session; a driver injects input on the operator's behalf and is not the agent, so drive stop leaves the agent running", []string{"start: start a driver for the selected session; the driver runs autonomously and needs explicit confirmation", "stop: stop only the driver controller; the agent keeps running", "status: report the standard drive state from the persisted inventory; it never probes the provider", "an omitted action reports status", "--json: rejected in interactive mode"}, []string{"drive", "drive status", "drive start", "drive stop"}},
 	"logs":      {"logs [-n <lines>] [session]", "show bounded output for a session in the current endpoint", []string{"-n, --lines: maximum number of trailing output lines to show; defaults to 0100", "session: optional session/resource ID, provider session ID, or a bare list row number; defaults to the current session", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID"}, []string{"logs", "logs -n 0250", "logs 1", "logs res_abc"}},
-	"send":      {"send [text]", "send a message to the selected session; a bare send reads a multi-line message", []string{"text: message text, or a JSON object with a text field", "without text: read a multi-line message and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the message", "an empty multi-line message is rejected instead of submitting nothing", "after a completed send: render one bounded output snapshot, then force one collection for the selected endpoint and revalidate only the selected session, so a later list reads a newer document; both steps are reported as diagnostics and never turn the accepted send into a failure"}, []string{`send hello world`, `send {"text":"hello"}`}},
+	"send":      {"send [text]", "send a message to the selected session; an explicit text submits directly, and only a bare send reads a multi-line message and asks for confirmation", []string{"text: message text, or a JSON object with a text field; an explicit text is submitted without a confirmation question, because the command word and the payload are already stated", "without text: read a multi-line message and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the message", "a bare send asks Confirm send? before submitting, because the assembled block was never shown as a whole; an empty multi-line message is rejected instead of submitting nothing", "after a completed send: render one bounded output snapshot, then force one collection for the selected endpoint and revalidate only the selected session, so a later list reads a newer document; both steps are reported as diagnostics and never turn the accepted send into a failure"}, []string{`send hello world`, `send {"text":"hello"}`}},
 	"endpoints": {"endpoints [endpoint-id]", "list every registered endpoint with its connection state, observation time and capability revision; JSON output (--json) is available only in the standalone non-interactive command", []string{"endpoint-id: optional endpoint ID filter; an unknown filter renders an empty table", "read-only: it never forces provider discovery and never changes the list row numbers"}, []string{"endpoints", "endpoints endpoint-1"}},
 	"status":    {"status <command-id>", "show the durable result of a command", []string{"command-id: submitted command identifier"}, []string{"status cmd_123"}},
 	"refresh":   {"refresh", "force a fresh Endpoint collection and wait for it to be committed, then render the committed inventory", nil, []string{"refresh"}},
 	"watch":     {"watch [interval] [--force]", "re-render the list on a timer until any key is pressed; the default re-reads the persisted inventory every 5s, and --force performs a forced collection with a 10s floor", []string{"interval: optional positive duration, such as 5s or 500ms; the projection mode requires at least 1s", "--force: perform a forced Endpoint collection on every tick instead of re-reading the persisted inventory; requires at least 10s because each tick launches one provider discovery per endpoint", "any keypress stops the loop before the key is applied", "a refresh that changes the row set prints one rebinding diagnostic, so a row number never changes silently", "unavailable in session scope, because a forced refresh can invalidate the pinned session", "--json: rejected in interactive mode"}, []string{"watch", "watch 2s", "watch --force", "watch 10s --force"}},
 	"help":      {"help [command]", "show the command overview or detailed help for one command", []string{"command: optional command name, or scope for the scope model"}, []string{"help", "help list", "help scope"}},
-	"quit":      {"quit", "leave interactive mode", nil, []string{"quit"}},
+	"quit":      {"quit", "leave interactive mode; outside workspace scope it returns to workspace scope instead", nil, []string{"quit", "q"}},
+	"exit":      {"exit", "leave interactive mode from every scope", nil, []string{"exit"}},
 }
 
 var commandHelpOrder = registeredCommandNames()
@@ -94,7 +95,8 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"refresh": "refresh the current endpoint",
 		"watch":   "re-render the endpoint table on a timer until any key is pressed",
 		"help":    "show help",
-		"quit":    "q: back to workspace; quit or exit: leave interactive mode",
+		"quit":    "q: same command; outside workspace scope both return to workspace scope",
+		"exit":    "leave interactive mode from every scope",
 	},
 	ScopeSession: {
 		"list":      "list sessions in the current endpoint; an explicit endpoint must match it",
@@ -102,7 +104,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"show":      "show the current session, or an explicit endpoint/session target",
 		"info":      "show the current session detail, or another session in this endpoint",
 		"logs":      "show current session output, or another session in this endpoint; -n <lines> bounds the trailing lines",
-		"send":      "send a message to the current session after confirmation; unrecognized text offers this action",
+		"send":      "send a message to the current session; an explicit text submits directly, and a bare send asks for confirmation; unrecognized text offers this action",
 		"resume":    "resume the current session",
 		"stop":      "stop the current session",
 		"inject":    "inject context into the current session",
@@ -111,18 +113,112 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"status":    "explicit ID: command result; omitted: last submitted command, otherwise current session state",
 		"refresh":   "reload the current endpoint table and revalidate the current session",
 		"help":      "show help",
-		"quit":      "q: back to workspace; quit or exit: leave interactive mode",
+		"quit":      "q: same command; outside workspace scope both return to workspace scope",
+		"exit":      "leave interactive mode from every scope",
 	},
+}
+
+const (
+	// helpLineIndent is the leading indent of one command line in a help block.
+	helpLineIndent = "  "
+	// helpDescriptionGap separates the syntax cell from its description.
+	helpDescriptionGap = "   "
+	// helpSyntaxColumn caps the aligned description column, so one long syntax
+	// never pushes every other description far to the right.
+	helpSyntaxColumn = 40
+)
+
+// helpColumnWidth returns the description column for one block. A cell wider than
+// the cap hangs its description on the next line, so it never widens the column.
+// Hanging is only worth it when the over-cap cells are a minority: when most cells
+// exceed the cap, hanging would double the block height without aligning anything,
+// so the widest cell wins and every description stays inline.
+func helpColumnWidth(cells []string) int {
+	width := 0
+	widest := 0
+	overCap := 0
+	for _, cell := range cells {
+		cellWidth := displayWidth(cell)
+		if cellWidth > widest {
+			widest = cellWidth
+		}
+		if cellWidth > helpSyntaxColumn {
+			overCap++
+			continue
+		}
+		if cellWidth > width {
+			width = cellWidth
+		}
+	}
+	if width == 0 || overCap*2 > len(cells) {
+		width = widest
+	}
+	return width
+}
+
+// formatHelpLine renders one aligned help line. A cell that fits the block column
+// keeps its description on the same line. A cell wider than the cap keeps the
+// description on the next line, indented to the same description column, so one
+// long syntax never pushes every other description to the right and every
+// description in the block still starts at one column.
+func formatHelpLine(cell, description string, width int) string {
+	column := helpLineIndent + strings.Repeat(" ", width) + helpDescriptionGap
+	if displayWidth(cell) <= width {
+		return helpLineIndent + cell + strings.Repeat(" ", width-displayWidth(cell)) + helpDescriptionGap + description
+	}
+	return helpLineIndent + cell + "\n" + column + description
+}
+
+// formatHelpBlock renders one aligned block from parallel cell and description
+// slices, so every help surface shares the same column policy.
+func formatHelpBlock(cells, descriptions []string) []string {
+	return formatHelpBlockAt(cells, descriptions, helpColumnWidth(cells))
+}
+
+// formatHelpBlockAt renders one aligned block at an explicit description column,
+// so several blocks printed together can share one column instead of each
+// choosing its own.
+func formatHelpBlockAt(cells, descriptions []string, width int) []string {
+	lines := make([]string, 0, len(cells))
+	for index, cell := range cells {
+		lines = append(lines, formatHelpLine(cell, descriptions[index], width))
+	}
+	return lines
+}
+
+// formatHelpBlockColumns renders one aligned block with an optional middle column,
+// such as the scope list in help all. The middle column is padded to its own shared
+// width, so the trailing description starts at one column on every line instead of
+// shifting with the length of the scope list.
+func formatHelpBlockColumns(cells, middles, descriptions []string) []string {
+	width := helpColumnWidth(cells)
+	middleWidth := 0
+	for _, middle := range middles {
+		if middleWidth < displayWidth(middle) {
+			middleWidth = displayWidth(middle)
+		}
+	}
+	lines := make([]string, 0, len(cells))
+	for index, cell := range cells {
+		description := descriptions[index]
+		if middles[index] != "" {
+			description = middles[index] + strings.Repeat(" ", middleWidth-displayWidth(middles[index])) + helpDescriptionGap + description
+		}
+		lines = append(lines, formatHelpLine(cell, description, width))
+	}
+	return lines
 }
 
 // CommandHelpLines returns the interactive command descriptions in registration order.
 func CommandHelpLines() []string {
-	lines := make([]string, 0, len(commandHelpOrder))
+	cells := make([]string, 0, len(commandHelpOrder))
+	descriptions := make([]string, 0, len(commandHelpOrder))
 	for _, name := range commandHelpOrder {
 		entry := commandHelpCatalog[name]
-		lines = append(lines, entry.syntax+"   "+entry.description)
+		cells = append(cells, entry.syntax)
+		descriptions = append(descriptions, entry.description)
 	}
-	return lines
+	return formatHelpBlock(cells, descriptions)
 }
 
 var nonInteractiveHelpOrder = []string{"list", "refresh", "endpoints", "show", "info", "logs", "status", "send", "btw", "control", "ctl", "exec", "start", "resume", "stop", "drive", "help"}
@@ -134,12 +230,14 @@ var nonInteractiveHelpAliases = map[string]string{"inject": "btw"}
 
 // NonInteractiveCommandHelpLines returns only commands dispatched by the standalone CLI.
 func NonInteractiveCommandHelpLines() []string {
-	lines := make([]string, 0, len(nonInteractiveHelpOrder))
+	cells := make([]string, 0, len(nonInteractiveHelpOrder))
+	descriptions := make([]string, 0, len(nonInteractiveHelpOrder))
 	for _, name := range nonInteractiveHelpOrder {
 		entry := nonInteractiveHelpEntry(name)
-		lines = append(lines, entry.syntax+"   "+entry.description)
+		cells = append(cells, entry.syntax)
+		descriptions = append(descriptions, entry.description)
 	}
-	return lines
+	return formatHelpBlock(cells, descriptions)
 }
 
 // PrintNonInteractiveCommandHelp renders help matching standalone CLI dispatch and flag placement.
@@ -211,7 +309,10 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.syntax = "agent-cluster-cli [options] send <endpoint> <resource> [text] [generation]"
 		entry.description = "send a message to one session; without text it reads a multi-line message from stdin"
 		entry.parameters = append(entry.parameters, "without text: read a multi-line message from stdin and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the message")
-	case "btw", "control":
+	case "btw":
+		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [text] [generation]"
+		entry.parameters = append(entry.parameters, "without text: read a multi-line context block from stdin and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the context")
+	case "control":
 		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [text] [generation]"
 	case "ctl":
 		entry.syntax = "agent-cluster-cli [options] ctl <endpoint> <resource> <action> [json] [generation]"
@@ -230,19 +331,28 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 	return entry
 }
 
-// scopeCommandLines derives one scope group from the availability matrix.
-func scopeCommandLines(kind ScopeKind) []string {
+// scopeCommandCells derives one scope group's syntax cells and descriptions from
+// the availability matrix, so several groups can share one description column.
+func scopeCommandCells(kind ScopeKind) ([]string, []string) {
 	names := availableCommands(kind)
-	lines := make([]string, 0, len(names))
+	cells := make([]string, 0, len(names))
+	descriptions := make([]string, 0, len(names))
 	for _, name := range names {
 		entry := scopedHelpEntry(name, kind)
 		description := scopeCommandDescriptions[kind][name]
 		if description == "" {
 			description = entry.description
 		}
-		lines = append(lines, entry.syntax+"   "+description)
+		cells = append(cells, entry.syntax)
+		descriptions = append(descriptions, description)
 	}
-	return lines
+	return cells, descriptions
+}
+
+// scopeCommandLines derives one scope group from the availability matrix.
+func scopeCommandLines(kind ScopeKind) []string {
+	cells, descriptions := scopeCommandCells(kind)
+	return formatHelpBlock(cells, descriptions)
 }
 
 // commandScopes lists the scopes that may run one command, in stable order.
@@ -361,13 +471,20 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 	if _, err := fmt.Fprintf(out, "Current scope: %s\n\nCommands:\n", kind); err != nil {
 		return err
 	}
-	for _, name := range availableCommands(kind) {
+	names := availableCommands(kind)
+	cells := make([]string, 0, len(names))
+	descriptions := make([]string, 0, len(names))
+	for _, name := range names {
 		entry := interactiveHelpEntry(name, kind)
 		description := scopeCommandDescriptions[kind][name]
 		if description == "" {
 			description = entry.description
 		}
-		if _, err := fmt.Fprintf(out, "  %s   %s\n", entry.syntax, description); err != nil {
+		cells = append(cells, entry.syntax)
+		descriptions = append(descriptions, description)
+	}
+	for _, line := range formatHelpBlock(cells, descriptions) {
+		if _, err := fmt.Fprintln(out, line); err != nil {
 			return err
 		}
 	}
@@ -404,9 +521,17 @@ func printAllCommandHelp(out io.Writer) error {
 	if _, err := fmt.Fprintln(out, commandPrefixHelp); err != nil {
 		return err
 	}
+	cells := make([]string, 0, len(commandHelpOrder))
+	middles := make([]string, 0, len(commandHelpOrder))
+	descriptions := make([]string, 0, len(commandHelpOrder))
 	for _, name := range commandHelpOrder {
 		entry := commandHelpCatalog[name]
-		if _, err := fmt.Fprintf(out, "  %s   scopes: %s   %s\n", entry.syntax, strings.Join(commandScopes(name), ", "), entry.description); err != nil {
+		cells = append(cells, entry.syntax)
+		middles = append(middles, "scopes: "+strings.Join(commandScopes(name), ", "))
+		descriptions = append(descriptions, entry.description)
+	}
+	for _, line := range formatHelpBlockColumns(cells, middles, descriptions) {
+		if _, err := fmt.Fprintln(out, line); err != nil {
 			return err
 		}
 	}
@@ -426,17 +551,29 @@ func commandAliasHelp() string {
 	return strings.Join(aliases, ", ")
 }
 
-// printScopeHelpOverview renders one command group per scope.
+// printScopeHelpOverview renders one command group per scope. All groups share one
+// description column, so the overview reads as a single aligned document instead
+// of three blocks that each pick their own column.
 func printScopeHelpOverview(out io.Writer) error {
 	if _, err := fmt.Fprintln(out, "Commands by scope:"); err != nil {
 		return err
 	}
+	groupCells := make([][]string, 0, len(scopeHelpOrder))
+	groupDescriptions := make([][]string, 0, len(scopeHelpOrder))
+	allCells := make([]string, 0)
 	for _, kind := range scopeHelpOrder {
+		cells, descriptions := scopeCommandCells(kind)
+		groupCells = append(groupCells, cells)
+		groupDescriptions = append(groupDescriptions, descriptions)
+		allCells = append(allCells, cells...)
+	}
+	width := helpColumnWidth(allCells)
+	for index, kind := range scopeHelpOrder {
 		if _, err := fmt.Fprintf(out, "\n%s:\n", kind); err != nil {
 			return err
 		}
-		for _, line := range scopeCommandLines(kind) {
-			if _, err := fmt.Fprintf(out, "  %s\n", line); err != nil {
+		for _, line := range formatHelpBlockAt(groupCells[index], groupDescriptions[index], width) {
+			if _, err := fmt.Fprintln(out, line); err != nil {
 				return err
 			}
 		}
@@ -461,7 +598,8 @@ func printScopeModelHelp(out io.Writer) error {
 		"  cd <hostname>/<id>    enter a specific endpoint",
 		"  cd <session>          enter a session inside the current endpoint",
 		"  cd <hostname>/<id>/<session>  enter a session directly",
-		"  q                     return to workspace scope outside workspace scope; in workspace scope it leaves interactive mode",
+		"  quit, q               outside workspace scope: return to workspace scope; in workspace scope: leave interactive mode",
+		"  exit                  leave interactive mode from every scope",
 		"",
 		"Commands differ by scope; run help to see the commands available in each scope.",
 	}
@@ -484,10 +622,10 @@ func HelpCommandNames() []string {
 func scopedHelpEntry(name string, kind ScopeKind) commandHelp {
 	entry := commandHelpCatalog[name]
 	if name == "quit" && kind != ScopeWorkspace {
-		// Outside workspace scope the q spelling navigates back instead of
-		// leaving the REPL, so the scoped help must not advertise q as a quit.
-		entry.description = "leave interactive mode; the q spelling returns to workspace scope"
-		entry.parameters = []string{"q: return to workspace scope and re-render the list", "quit and exit: leave interactive mode from every scope"}
+		// Outside workspace scope quit and its q alias navigate back instead of
+		// leaving the REPL, so the scoped help must not advertise them as a quit.
+		entry.description = "return to workspace scope and re-render the list; in workspace scope it leaves interactive mode"
+		entry.parameters = []string{"q: the same command, so it behaves identically in every scope", "use exit to leave interactive mode from any scope"}
 		entry.examples = []string{"quit", "q"}
 	}
 	if name == "status" && kind == ScopeSession {

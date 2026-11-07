@@ -248,17 +248,20 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if err := rejectJSONFlagPayload(payloadText, "send"); err != nil {
 		return err
 	}
-	// A bare send enters multi-line input mode, so the operator can compose a
-	// message without quoting newlines into one command line.
-	if payloadText == "" {
-		block, err := readInteractiveMultiLine(parent, lineSource, out, options)
-		if err != nil {
-			return err
-		}
-		payloadText = block.Text
-	} else if len(payloadText) > options.LineLimit {
-		return fmt.Errorf("payload exceeds the maximum length")
+	// An explicit text states both the action and the payload, so a confirmation
+	// could only repeat what the operator just typed. Submitting directly keeps the
+	// gate meaningful for the operations that cannot be undone.
+	if payloadText != "" {
+		return sendSessionMessage(parent, api, state, payloadText, out, trustedOut, options)
 	}
+	// A bare send enters multi-line input mode, so the operator can compose a
+	// message without quoting newlines into one command line. The assembled block
+	// is never echoed as a whole, so this is the one form that still asks.
+	block, err := readInteractiveMultiLine(parent, lineSource, out, options)
+	if err != nil {
+		return err
+	}
+	payloadText = block.Text
 	sendPayload, err := MessagePayload(payloadText)
 	if err != nil {
 		return err
@@ -315,9 +318,10 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	return submitSessionMessage(parent, api, state, session, sendPayload, out, trustedOut, options)
 }
 
-// sendSessionMessage submits one message whose text the operator has already
-// confirmed. The caller owns the confirmation, so this path performs one
-// capability preflight and never asks the same question again.
+// sendSessionMessage submits one message whose text the caller already stated.
+// An explicit send command word and the unknown-input offer both reach this
+// path, so it performs one capability preflight and never asks a question the
+// caller has already answered.
 func sendSessionMessage(parent context.Context, api InteractiveAPI, state *interactiveState, text string, out, trustedOut io.Writer, options InteractiveOptions) error {
 	if err := state.requireUsable(); err != nil {
 		return err
@@ -738,7 +742,8 @@ func validateResumeSelectionAbsent(ctx context.Context, api InteractiveAPI, stat
 // interactiveSessionPayload executes context injection or interruption with confirmation.
 // Selection authority is resolved under the command deadline; the confirmation itself is
 // read with the cancel-only parent context. Context injection takes literal text, and a
-// bare interrupt guides the operator through the action choice instead of demanding JSON.
+// bare inject or btw reads a multi-line context block instead of demanding JSON. A bare
+// interrupt guides the operator through the action choice.
 func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, rest string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
 	payloadText := strings.TrimSpace(rest)
 	// A bare --json option or a JSON object followed by a stray --json option is rejected,
@@ -750,7 +755,18 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	var err error
 	if op == protocol.OperationContextInject {
 		if payloadText == "" {
-			return fmt.Errorf("usage: %s <text>", name)
+			// A bare inject or btw enters multi-line input mode, so context text
+			// never has to be quoted into one command line. The selection is
+			// validated first, because reading a whole block only to reject the
+			// invocation would waste the operator's input.
+			if err := state.requireUsable(); err != nil {
+				return err
+			}
+			block, readErr := readInteractiveContextMultiLine(parent, lines, out, options)
+			if readErr != nil {
+				return readErr
+			}
+			payloadText = block.Text
 		}
 		payload, err = MessagePayload(payloadText)
 	} else if payloadText == "" {

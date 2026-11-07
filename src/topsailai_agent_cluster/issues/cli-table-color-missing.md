@@ -156,3 +156,127 @@ Verification (2026-11-07):
 | Live REPL: `watch 2s` | **226** SGR, styled `NO` header |
 | `gofmt -l`, `go vet ./...`, `go build ./...` | clean |
 | `go test ./... -count=1` | all packages pass, including `tests/bdd` and `tests/packaging` |
+
+## Recurrence report: the deployed binary was stale, not the source
+
+Human report (verbatim):
+
+> cli中的endpoints指令会显示表格，怎么没有颜色呢？要加颜色
+
+The source already coloured the `endpoints` table, so this report was not a new code defect. The
+installed commands `/usr/local/sbin/topsailai2` and `/usr/local/bin/topsailai_agent_cluster` are
+symlinks to `bin/agent-cluster-cli`, and that file was built at 14:45, before commit `6fbad888`
+(18:28) resolved the colour policy from the output boundary. The operator therefore ran the
+pre-fix REPL, where `endpoints` was routed through the sanitizing writer.
+
+Evidence (2026-11-07, real pty via tmux, `TERM=xterm-256color`):
+
+| Probe | Result |
+|---|---|
+| Stale `bin/agent-cluster-cli`, REPL `endpoints` | **0** SGR: plain header, plain rows, plain `online(3)` |
+| Stale `bin/agent-cluster-cli`, REPL `list` | coloured, so only `endpoints` looked wrong |
+| Stale `bin/agent-cluster-cli`, non-interactive `endpoints` | **5** SGR, because that path never used the sanitizing writer |
+| Fresh build, REPL `endpoints` | styled `ENDPOINT_ID` header, green rows, green `online(3)` |
+| Fresh build, redirected stdout | **0** SGR, so a pipe still receives no escape byte |
+| Fresh build, `--no-color` in a pty | **0** SGR |
+
+Resolution: `make build` rebuilt `bin/agent-cluster-cli`, and `topsailai2 -i` then rendered the
+coloured table. No source change was required. `go test ./internal/tui/ -run 'Endpoints|ColorPolicy'`
+passes, and `TestInteractiveEndpointsKeepsColour` already crosses the REPL writer boundary.
+
+Prevention: a colour report must be reproduced against a freshly built binary before any source
+change is considered, because `bin/` is a gitignored build output and can lag the committed source.
+
+## Interactive-mode report: a long-running REPL keeps the binary it started with
+
+Human report (verbatim):
+
+> 交互模式里没颜色，你看看
+
+The interactive REPL was not a separate defect. The operator's REPL process (pid 4060408) started on
+2026-11-06 23:11 and its executable was already `(deleted)` in `/proc`, because `make build` replaced
+`bin/agent-cluster-cli` underneath it. A running process keeps the image it was started with, so that
+session kept rendering with the pre-fix code even after the file on disk was corrected.
+
+Evidence (2026-11-07, real pty via tmux):
+
+| Probe | Result |
+|---|---|
+| Operator REPL pid 4060408, `/proc/4060408/exe` | `bin/agent-cluster-cli (deleted)`, started Nov 6 23:11 |
+| Operator REPL environment | `TERM=screen`, no `NO_COLOR`, so colour is eligible |
+| Fresh REPL, `TERM=screen`, `endpoints` | **23** SGR, styled header and green rows |
+| Fresh REPL, `TERM=screen`, `list` | **33** SGR |
+| Fresh REPL, `TERM=screen`, `refresh` | **41** SGR |
+| Fresh REPL, `TERM=screen`, `logs` | **23** SGR |
+| Fresh REPL, `TERM=screen`, startup banner / `help` / `cd` | **17** / **18** / **22** SGR |
+| Fresh REPL, `TERM=dumb`, `endpoints` | **0** SGR, by design |
+| Fresh REPL, `show` | **2** SGR, only the prompt: `show` is a key-value listing, not a table |
+
+Resolution: restart the REPL. No source change was required; `go test ./internal/tui/ -run
+'Color|Endpoints|List'` passes and `gofmt`/`go vet` are clean.
+
+Prevention: after rebuilding, an already-open REPL must be restarted, because a running process never
+picks up a replaced executable. A colour report from an interactive session must be checked against
+`/proc/<pid>/exe` before the source is suspected.
+
+Separate observation, not a colour defect: at endpoint scope the REPL rejects `endpoints` with
+`unknown command "endpoints"`, because that command is workspace-scoped only. This is a scope rule,
+not a missing colour, and is recorded here only so the two reports are not confused.
+
+## Deployment report: the ai-dev container CLI was upgraded to the colour fix
+
+Human report, verbatim:
+
+> ai-dev 这个容器实例的cli你也更新一下
+
+The `ai-dev` container ran the packaged layout under `/opt/agent-cluster/bin/`, installed by
+`dpkg` as `agent-cluster-endpoint` and `agent-cluster-node` at `1:1.0.0+2305+g411bc484-1`. That
+commit predates the colour fix `6fbad888`, so the container CLI showed the same uncoloured
+`endpoints` table as the stale host binary. The container was updated through the supported
+packaging path, not by copying a binary over a `dpkg`-managed file.
+
+Build inputs, all verified before the build:
+
+| Input | Value |
+|---|---|
+| Source | Clean detached worktree at `HEAD` = `e919d417`, which contains `6fbad888` |
+| Site config | `.tmp/deb-site/node.endpoint.conf` (`ENDPOINT_ID=ai-dev`, `INSTANCE_ID=ai-dev-1`) |
+| Certificate | `.tmp/ai-dev-bundle-v2/certs/node.pem`, `CN=ai-dev`, md5 `c64bb60e…` |
+| Private key | `.tmp/ai-dev-bundle-v2/certs/node-key.pem`, public key matches the certificate |
+| CA | `.tmp/ai-dev-bundle-v2/certs/ca.pem`, md5 `4efb3b29…` |
+
+All three certificate files matched the container's `/etc/agent-cluster/certs/` byte for byte, so
+the upgrade kept the same endpoint identity. The build ran from a clean worktree because the main
+working tree carried another agent's unrelated in-progress changes; building from it would have
+baked that work into the container.
+
+The endpoint package declares `Depends: agent-cluster-node (= <same version>)`, so both packages
+were rebuilt and installed together. Installation used `dpkg -i --force-confold`, because the
+container's `/etc/agent-cluster/node.conf` carries an extra `COMMAND_ALLOWLIST_FILE` line that the
+site template does not, and that local value had to survive the upgrade.
+
+Verification inside the container:
+
+| Probe | Result |
+|---|---|
+| `dpkg -l` versions | both packages advanced to `1:1.0.0+2309+ge919d417-1` |
+| `/opt/agent-cluster/bin/agent-cluster-cli` | replaced, md5 `a0c42a75…` |
+| REPL `endpoints` in a real pty | **460** SGR, bold cyan header, green rows, green `online(3)` |
+| Redirected stdout | **0** SGR |
+| `--no-color` in a pty | **0** SGR |
+| `node.conf` | `COMMAND_ALLOWLIST_FILE` preserved |
+| Certificates | md5 unchanged, identity intact |
+| CLI env file | `/root/.topsailai/.topsailai_agent_cluster.env` unchanged |
+
+The endpoint daemon (pid 786008) still runs the pre-upgrade image, which `/proc/786008/exe`
+reports as `(deleted)`. It was deliberately not restarted: `git log 411bc484..HEAD` shows only
+TUI, test and packaging commits, and `git diff --stat` over `internal/endpoint`, `internal/server`,
+`internal/adapter`, `internal/storage`, `internal/protocol`, `internal/channel` and both daemon
+entry points is empty. The running daemon is therefore functionally identical to the new binary,
+and restarting it would drop the endpoint's channel for no behavioural gain. A restart is only
+required when a future upgrade actually changes daemon code.
+
+Prevention: a packaged node is upgraded with `dpkg -i` from a package built at a commit that
+contains the fix, never by copying a binary into `/opt/agent-cluster/bin/`, because a bare copy
+leaves the package metadata claiming the old version. Confirm the new package version is greater
+than the installed one before installing, and keep `--force-confold` so local site values survive.

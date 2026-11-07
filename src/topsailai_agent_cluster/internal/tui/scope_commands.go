@@ -48,6 +48,7 @@ var commandScopeMatrix = []commandScopeRule{
 	{Name: "watch", Workspace: true, Endpoint: true},
 	{Name: "help", Workspace: true, Endpoint: true, Session: true},
 	{Name: "quit", Workspace: true, Endpoint: true, Session: true},
+	{Name: "exit", Workspace: true, Endpoint: true, Session: true},
 }
 
 // sendPrefix is the one-character alias of send. It is disjoint from every
@@ -56,9 +57,10 @@ var commandScopeMatrix = []commandScopeRule{
 const sendPrefix = ">"
 
 // commandAliases maps accepted short or compatibility names to canonical commands.
+// "exit" is deliberately absent: it is its own canonical command that always
+// leaves the process, so it must never inherit the scope-aware "quit" behaviour.
 var commandAliases = map[string]string{
 	"?":        "help",
-	"exit":     "quit",
 	"q":        "quit",
 	"r":        "refresh",
 	"l":        "list",
@@ -76,14 +78,16 @@ func canonicalCommandName(name string) string {
 	return name
 }
 
-// qReturnsToWorkspace reports whether the accepted spelling "q" must navigate
-// back to workspace scope instead of leaving the REPL. It is a dispatch rule, not
-// a scope-availability rule: "q" stays an alias of "quit", so the alias and its
-// canonical command keep identical scope availability. Only the single-letter
-// spelling is scope-aware; "quit" and "exit" always leave the REPL, so an
-// operator never loses an unambiguous way out of any scope.
-func qReturnsToWorkspace(rawName string, kind ScopeKind) bool {
-	return rawName == "q" && kind != ScopeWorkspace
+// quitReturnsToWorkspace reports whether the canonical command "quit" must
+// navigate back to workspace scope instead of leaving the REPL. It is a dispatch
+// rule, not a scope-availability rule, and it keys on the canonical command, so
+// "q" and "quit" are one behaviour rather than two: "q" is only an alias of
+// "quit" and never carries a rule of its own. Outside workspace scope both
+// navigate back; in workspace scope both leave the REPL. "exit" is a separate
+// canonical command that always leaves the process, so an operator never loses an
+// unambiguous way out of any scope.
+func quitReturnsToWorkspace(canonical string, kind ScopeKind) bool {
+	return canonical == "quit" && kind != ScopeWorkspace
 }
 
 // alwaysAvailableCommands must stay usable even if the matrix is misconfigured.

@@ -92,7 +92,7 @@ func TestLegacyActionAndInteractiveSendShareIntentFields(t *testing.T) {
 	}
 	interactive := &actionPathStub{}
 	var interactiveOut, interactiveErr strings.Builder
-	input := "cd ep/session\nsend {\"text\":\"hi\"}\ny\nquit\n"
+	input := "cd ep/session\nsend {\"text\":\"hi\"}\nquit\n"
 	if err := tui.RunInteractive(context.Background(), interactive, strings.NewReader(input), &interactiveOut, &interactiveErr, tui.InteractiveOptions{WaitTimeoutMS: 100}); err != nil {
 		t.Fatal(err)
 	}
@@ -756,22 +756,104 @@ func (s *allCapabilityStub) GetCapabilities(context.Context, string) (protocol.C
 	}}, nil
 }
 
-// TestStandaloneNonSendCommandsDoNotEnterMultiLineMode proves only send gains
-// multi-line input; the other text-carrying commands keep their grammar.
-func TestStandaloneNonSendCommandsDoNotEnterMultiLineMode(t *testing.T) {
-	for _, operation := range []string{"btw", "inject", "control"} {
+// TestStandaloneControlKeepsItsGrammar proves control keeps its previous
+// grammar: only send, btw and inject gain multi-line input.
+func TestStandaloneControlKeepsItsGrammar(t *testing.T) {
+	stub := &allCapabilityStub{}
+	var out strings.Builder
+	input := &unreadableInput{}
+	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"control", "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
+		t.Fatalf("control: %v", err)
+	}
+	if input.reads != 0 {
+		t.Fatalf("control read the input stream %d times", input.reads)
+	}
+	if len(stub.intents) != 1 {
+		t.Fatalf("control intent count=%d", len(stub.intents))
+	}
+}
+
+// TestStandaloneContextInjectMultiLineReadsBlock proves a bare btw or inject
+// reads a multi-line context block from the command input, so context text never
+// has to be quoted into one line.
+func TestStandaloneContextInjectMultiLineReadsBlock(t *testing.T) {
+	for _, operation := range []string{"btw", "inject"} {
 		stub := &allCapabilityStub{}
 		var out strings.Builder
-		input := &unreadableInput{}
+		input := strings.NewReader("first line\n  indented line\nEOF\n")
 		if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{operation, "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
 			t.Fatalf("%s: %v", operation, err)
-		}
-		if input.reads != 0 {
-			t.Fatalf("%s read the input stream %d times", operation, input.reads)
 		}
 		if len(stub.intents) != 1 {
 			t.Fatalf("%s intent count=%d", operation, len(stub.intents))
 		}
+		if got, want := string(stub.intents[0].Payload), `{"text":"first line\n  indented line"}`; got != want {
+			t.Fatalf("%s payload=%s want=%s", operation, got, want)
+		}
+	}
+}
+
+// TestStandaloneContextInjectMultiLineRejectsEmptyBlock proves an immediately
+// terminated context block submits nothing instead of an empty context.
+func TestStandaloneContextInjectMultiLineRejectsEmptyBlock(t *testing.T) {
+	for _, operation := range []string{"btw", "inject"} {
+		for _, input := range []string{"EOF\n", "", "\n\nEOF\n"} {
+			stub := &allCapabilityStub{}
+			var out strings.Builder
+			err := action(context.Background(), stub, &out, strings.NewReader(input), io.Discard, tui.ColorPolicy{}, []string{operation, "ep", "session"}, true, false, 100, "", "", "", "", "gen")
+			if err == nil || err.Error() != "payload must not be empty" {
+				t.Fatalf("%s input=%q error=%v", operation, input, err)
+			}
+			if len(stub.intents) != 0 {
+				t.Fatalf("%s input=%q admitted %d intents", operation, input, len(stub.intents))
+			}
+		}
+	}
+}
+
+// TestStandaloneContextInjectMultiLineEndsAtEndOfInput proves Ctrl+D finishes
+// the context block, so a piped stream needs no terminator line.
+func TestStandaloneContextInjectMultiLineEndsAtEndOfInput(t *testing.T) {
+	stub := &allCapabilityStub{}
+	var out strings.Builder
+	if err := action(context.Background(), stub, &out, strings.NewReader("only line\n"), io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
+		t.Fatalf("btw: %v", err)
+	}
+	if got, want := string(stub.intents[0].Payload), `{"text":"only line"}`; got != want {
+		t.Fatalf("payload=%s want=%s", got, want)
+	}
+}
+
+// TestStandaloneContextInjectWithTextDoesNotReadInput proves an explicit text
+// argument keeps its previous behaviour and never consumes the command input.
+func TestStandaloneContextInjectWithTextDoesNotReadInput(t *testing.T) {
+	for _, operation := range []string{"btw", "inject"} {
+		stub := &allCapabilityStub{}
+		var out strings.Builder
+		input := &unreadableInput{}
+		if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{operation, "ep", "session", "hello context", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+			t.Fatalf("%s: %v", operation, err)
+		}
+		if input.reads != 0 {
+			t.Fatalf("%s explicit text read the input stream %d times", operation, input.reads)
+		}
+		if got, want := string(stub.intents[0].Payload), `{"text":"hello context"}`; got != want {
+			t.Fatalf("%s payload=%s want=%s", operation, got, want)
+		}
+	}
+}
+
+// TestStandaloneContextInjectMultiLineRejectsUnreadableInput proves a missing
+// stream is reported instead of silently submitting an empty context.
+func TestStandaloneContextInjectMultiLineRejectsUnreadableInput(t *testing.T) {
+	stub := &allCapabilityStub{}
+	var out strings.Builder
+	err := action(context.Background(), stub, &out, nil, io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session"}, true, false, 100, "", "", "", "", "gen")
+	if err == nil || err.Error() != "multi-line input requires a readable stream" {
+		t.Fatalf("error=%v", err)
+	}
+	if len(stub.intents) != 0 {
+		t.Fatalf("admitted %d intents", len(stub.intents))
 	}
 }
 
@@ -832,7 +914,7 @@ func TestInteractiveSendAcceptsProseContainingJSONFlag(t *testing.T) {
 		t.Run(text, func(t *testing.T) {
 			stub := &actionPathStub{}
 			var out, diagnostics strings.Builder
-			input := "cd ep/session\nsend " + text + "\ny\nquit\n"
+			input := "cd ep/session\nsend " + text + "\nquit\n"
 			if err := tui.RunInteractive(context.Background(), stub, strings.NewReader(input), &out, &diagnostics, tui.InteractiveOptions{WaitTimeoutMS: 100}); err != nil {
 				t.Fatal(err)
 			}
@@ -855,7 +937,7 @@ func TestInteractiveSendAcceptsProseContainingJSONFlag(t *testing.T) {
 func TestInteractiveSendRejectsBareJSONFlag(t *testing.T) {
 	stub := &actionPathStub{}
 	var out, diagnostics strings.Builder
-	input := "cd ep/session\nsend --json\ny\nquit\n"
+	input := "cd ep/session\nsend --json\nquit\n"
 	if err := tui.RunInteractive(context.Background(), stub, strings.NewReader(input), &out, &diagnostics, tui.InteractiveOptions{WaitTimeoutMS: 100}); err != nil {
 		t.Fatal(err)
 	}

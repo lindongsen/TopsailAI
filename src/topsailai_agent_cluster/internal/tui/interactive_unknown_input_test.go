@@ -17,7 +17,7 @@ const sessionScopeInput = "cd host-one/endpoint-1/res-1\n"
 // as a message and that accepting the offer admits exactly one send command.
 func TestUnknownInputOffersSendInSessionScope(t *testing.T) {
 	stub := scopeStub()
-	output, diagnostics := runScope(t, stub, sessionScopeInput+"hello world\ny\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, sessionScopeInput+"hello world\ny\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -43,7 +43,7 @@ func TestUnknownInputOffersSendInSessionScope(t *testing.T) {
 // silently drops text the operator typed.
 func TestUnknownInputKeepsFirstWordInPayload(t *testing.T) {
 	stub := scopeStub()
-	_, diagnostics := runScope(t, stub, sessionScopeInput+"deploy the release now\nyes\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, sessionScopeInput+"deploy the release now\nyes\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -61,7 +61,7 @@ func TestUnknownInputDeclinedKeepsDiagnostic(t *testing.T) {
 	for _, answer := range []string{"n", "", "no"} {
 		t.Run("answer="+answer, func(t *testing.T) {
 			stub := scopeStub()
-			_, diagnostics := runScope(t, stub, sessionScopeInput+"hello world\n"+answer+"\nquit\n", ColorPolicy{})
+			_, diagnostics := runScope(t, stub, sessionScopeInput+"hello world\n"+answer+"\nexit\n", ColorPolicy{})
 			if stub.admit != 0 {
 				t.Fatalf("declined offer admitted %d commands", stub.admit)
 			}
@@ -89,8 +89,8 @@ func TestUnknownInputOutsideSessionScopeKeepsDiagnostic(t *testing.T) {
 		name  string
 		input string
 	}{
-		{name: "workspace", input: "hello world\nquit\n"},
-		{name: "endpoint", input: "cd host-one/endpoint-1\nhello world\nquit\n"},
+		{name: "workspace", input: "hello world\nexit\n"},
+		{name: "endpoint", input: "cd host-one/endpoint-1\nhello world\nexit\n"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -111,7 +111,7 @@ func TestUnknownInputOutsideSessionScopeKeepsDiagnostic(t *testing.T) {
 // payload the send command itself rejects, so the diagnostic is reported instead.
 func TestUnknownInputOfferRejectsJSONFlagPayload(t *testing.T) {
 	stub := scopeStub()
-	output, diagnostics := runScope(t, stub, sessionScopeInput+"--json\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, sessionScopeInput+"--json\nexit\n", ColorPolicy{})
 	if stub.admit != 0 {
 		t.Fatalf("rejected payload admitted %d commands", stub.admit)
 	}
@@ -125,7 +125,7 @@ func TestUnknownInputOfferRejectsJSONFlagPayload(t *testing.T) {
 // terminal control sequences into the trusted question writer.
 func TestUnknownInputOfferSanitizesQuestion(t *testing.T) {
 	stub := scopeStub()
-	output, _ := runScope(t, stub, sessionScopeInput+"hello \x1b[31mred\x1b[0m\ny\nquit\n", ColorPolicy{})
+	output, _ := runScope(t, stub, sessionScopeInput+"hello \x1b[31mred\x1b[0m\ny\nexit\n", ColorPolicy{})
 	if strings.Contains(output, "\x1b[31m") {
 		t.Fatalf("offer question leaked a control sequence: %q", output)
 	}
@@ -134,19 +134,20 @@ func TestUnknownInputOfferSanitizesQuestion(t *testing.T) {
 	}
 }
 
-// TestSendCommandStillAsksOnce proves the offer does not change the send command
-// itself: one question, one admission.
-func TestSendCommandStillAsksOnce(t *testing.T) {
+// TestSendCommandAsksNothing proves an explicit send command word states both the
+// action and the text, so it submits without repeating the question the operator
+// already answered by typing the command.
+func TestSendCommandAsksNothing(t *testing.T) {
 	stub := scopeStub()
-	output, diagnostics := runScope(t, stub, sessionScopeInput+"send hello world\ny\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, sessionScopeInput+"send hello world\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
 	if stub.admit != 1 {
 		t.Fatalf("admitted %d commands, want 1", stub.admit)
 	}
-	if count := strings.Count(output, "Confirm send?"); count != 1 {
-		t.Fatalf("send asked %d confirmations, want 1: %q", count, output)
+	if count := strings.Count(output, "Confirm send?"); count != 0 {
+		t.Fatalf("send asked %d confirmations, want 0: %q", count, output)
 	}
 }
 
@@ -154,7 +155,7 @@ func TestSendCommandStillAsksOnce(t *testing.T) {
 // confirmation the operator already gave.
 func TestUnknownInputOfferAsksOnce(t *testing.T) {
 	stub := scopeStub()
-	output, diagnostics := runScope(t, stub, sessionScopeInput+"hello world\ny\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, sessionScopeInput+"hello world\ny\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -171,7 +172,7 @@ func TestUnknownInputOfferAsksOnce(t *testing.T) {
 func TestUnknownInputOfferRevalidatesSelection(t *testing.T) {
 	stub := refreshScopeStub()
 	stub.fresh["endpoint-1"] = scopeInventory("res-1", "generation-2")
-	_, diagnostics := runScope(t, stub, sessionScopeInput+"refresh\nhello world\ny\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, sessionScopeInput+"refresh\nhello world\ny\nexit\n", ColorPolicy{})
 	if stub.admit != 0 {
 		t.Fatalf("changed generation admitted %d commands", stub.admit)
 	}
@@ -258,7 +259,7 @@ func offerRows(t *testing.T, output, message string) (messageRow, questionRow st
 // what would be sent before reading the question.
 func TestUnknownInputOfferRendersMessageBeforeQuestion(t *testing.T) {
 	stub := scopeStub()
-	output, diagnostics := runScope(t, stub, sessionScopeInput+"hello world\ny\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, sessionScopeInput+"hello world\ny\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -279,7 +280,7 @@ func TestUnknownInputOfferRendersMessageBeforeQuestion(t *testing.T) {
 // question row already say what would happen.
 func TestUnknownInputOfferDropsUnknownCommandPrefix(t *testing.T) {
 	stub := scopeStub()
-	output, _ := runScope(t, stub, sessionScopeInput+"hello world\ny\nquit\n", ColorPolicy{})
+	output, _ := runScope(t, stub, sessionScopeInput+"hello world\ny\nexit\n", ColorPolicy{})
 	if strings.Contains(output, "unknown command hello;") {
 		t.Fatalf("offer still carries the unknown-command prefix: %q", output)
 	}
@@ -293,7 +294,7 @@ func TestUnknownInputOfferDropsUnknownCommandPrefix(t *testing.T) {
 // application's own question.
 func TestUnknownInputOfferUsesDistinctColours(t *testing.T) {
 	stub := scopeStub()
-	output, _ := runScope(t, stub, sessionScopeInput+"hello world\ny\nquit\n", ColorPolicy{Enabled: true})
+	output, _ := runScope(t, stub, sessionScopeInput+"hello world\ny\nexit\n", ColorPolicy{Enabled: true})
 	messageRow, questionRow := offerRows(t, output, "hello world")
 	if !strings.Contains(messageRow, ansiMagenta) {
 		t.Fatalf("message row is not magenta: %q", messageRow)
@@ -314,9 +315,9 @@ func TestUnknownInputOfferUsesDistinctColours(t *testing.T) {
 // and carries no escape sequence.
 func TestUnknownInputOfferPlainFormMatchesColouredForm(t *testing.T) {
 	plainStub := scopeStub()
-	plain, _ := runScope(t, plainStub, sessionScopeInput+"hello world\ny\nquit\n", ColorPolicy{})
+	plain, _ := runScope(t, plainStub, sessionScopeInput+"hello world\ny\nexit\n", ColorPolicy{})
 	coloredStub := scopeStub()
-	colored, _ := runScope(t, coloredStub, sessionScopeInput+"hello world\ny\nquit\n", ColorPolicy{Enabled: true})
+	colored, _ := runScope(t, coloredStub, sessionScopeInput+"hello world\ny\nexit\n", ColorPolicy{Enabled: true})
 	plainMessage, plainQuestion := offerRows(t, plain, "hello world")
 	coloredMessage, coloredQuestion := offerRows(t, colored, "hello world")
 	if strings.Contains(plainMessage+plainQuestion, "\x1b") {
@@ -334,7 +335,7 @@ func TestUnknownInputOfferPlainFormMatchesColouredForm(t *testing.T) {
 // styling into the message row, which is written through the trusted writer.
 func TestUnknownInputOfferSanitizesMessageRow(t *testing.T) {
 	stub := scopeStub()
-	output, _ := runScope(t, stub, sessionScopeInput+"hello \x1b[31mred\x1b[0m\ny\nquit\n", ColorPolicy{Enabled: true})
+	output, _ := runScope(t, stub, sessionScopeInput+"hello \x1b[31mred\x1b[0m\ny\nexit\n", ColorPolicy{Enabled: true})
 	messageRow, _ := offerRows(t, output, "hello red")
 	if strings.Contains(messageRow, "\x1b[31m") {
 		t.Fatalf("message row leaked a payload sequence: %q", messageRow)
@@ -348,7 +349,7 @@ func TestUnknownInputOfferSanitizesMessageRow(t *testing.T) {
 // before the receipt, so the offer never shares a row with the command evidence.
 func TestUnknownInputOfferTerminatesQuestionRow(t *testing.T) {
 	stub := scopeStub()
-	output, _ := runScope(t, stub, sessionScopeInput+"hello world\ny\nquit\n", ColorPolicy{})
+	output, _ := runScope(t, stub, sessionScopeInput+"hello world\ny\nexit\n", ColorPolicy{})
 	_, questionRow := offerRows(t, output, "hello world")
 	if strings.Contains(questionRow, "command submitted:") {
 		t.Fatalf("receipt shares the question row: %q", questionRow)

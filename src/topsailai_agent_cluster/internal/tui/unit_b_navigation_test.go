@@ -10,8 +10,8 @@ import (
 )
 
 func TestUnitBBareNumberMatchesExplicitCD(t *testing.T) {
-	bareOutput, bareDiagnostics := runNav(t, scopeStub(), "1\nquit\n")
-	cdOutput, cdDiagnostics := runNav(t, scopeStub(), "cd 1\nquit\n")
+	bareOutput, bareDiagnostics := runNav(t, scopeStub(), "1\nexit\n")
+	cdOutput, cdDiagnostics := runNav(t, scopeStub(), "cd 1\nexit\n")
 	if bareDiagnostics != cdDiagnostics {
 		t.Fatalf("diagnostics differ: bare=%q cd=%q", bareDiagnostics, cdDiagnostics)
 	}
@@ -110,7 +110,7 @@ func (s *unitBDiagnosticAPI) GetInventory(ctx context.Context, id string) (proto
 
 // TestUnitBNumericDiagnosticsUseCDForSpaceAndTabSurplus checks the whole-line recognizer.
 func TestUnitBNumericDiagnosticsUseCDForSpaceAndTabSurplus(t *testing.T) {
-	for _, input := range []string{"1 foo\nquit\n", "1\tfoo\nquit\n"} {
+	for _, input := range []string{"1 foo\nexit\n", "1\tfoo\nexit\n"} {
 		t.Run(strings.ReplaceAll(input, "\t", "tab"), func(t *testing.T) {
 			_, diagnostics := runNav(t, scopeStub(), input)
 			want := "error: invalid arguments\nusage: cd [target]\nnext: Run help cd for valid syntax.\n"
@@ -123,7 +123,7 @@ func TestUnitBNumericDiagnosticsUseCDForSpaceAndTabSurplus(t *testing.T) {
 
 // TestUnitBOverflowDoesNotFallBackToEndpointName verifies numeric classification precedes conversion.
 func TestUnitBOverflowDoesNotFallBackToEndpointName(t *testing.T) {
-	_, diagnostics := runNav(t, scopeStub(), strings.Repeat("9", 64)+"\nquit\n")
+	_, diagnostics := runNav(t, scopeStub(), strings.Repeat("9", 64)+"\nexit\n")
 	want := "error: row number exceeds the supported integer range\nusage: cd [target]\nnext: Run help cd for valid syntax.\n"
 	if diagnostics != want {
 		t.Fatalf("diagnostics=%q want=%q", diagnostics, want)
@@ -306,15 +306,15 @@ func TestUnitBB3NumericNamedEndpointOverflowDoesNotQueryName(t *testing.T) {
 // TestUnitBB5SessionScopeAndQualifiedPathsPreserveBaseline verifies numeric row
 // rejection in session scope and the existing parent/root/qualified navigation.
 func TestUnitBB5SessionScopeAndQualifiedPathsPreserveBaseline(t *testing.T) {
-	_, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1/res-1\ncd 1\nquit\n")
+	_, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1/res-1\ncd 1\nexit\n")
 	assertActionableError(t, diagnostics, "error: row-number navigation is unavailable in session scope; use cd .. or cd <session>")
-	for _, input := range []string{"cd ai-dev/endpoint-1/res-1\ncd ..\nquit\n", "cd ai-dev/endpoint-1/res-1\ncd /\nquit\n", "cd ai-dev/endpoint-1\ncd res-1\nquit\n"} {
+	for _, input := range []string{"cd ai-dev/endpoint-1/res-1\ncd ..\nexit\n", "cd ai-dev/endpoint-1/res-1\ncd /\nexit\n", "cd ai-dev/endpoint-1\ncd res-1\nexit\n"} {
 		output, diagnostics := runNav(t, singleHostStub(), input)
 		if diagnostics != "" || !(strings.Contains(output, "endpoint[") || strings.Contains(output, "session[")) {
 			t.Fatalf("baseline path failed for %q: output=%q diagnostics=%q", input, output, diagnostics)
 		}
 	}
-	output, diagnostics := runNav(t, conflictStub(), "cd ai-dev\nai-dev/endpoint-2\nquit\n")
+	output, diagnostics := runNav(t, conflictStub(), "cd ai-dev\nai-dev/endpoint-2\nexit\n")
 	if diagnostics != "" || !strings.Contains(output, "endpoint[ai-dev/endpoint-2]>") {
 		t.Fatalf("hostname conflict path failed: output=%q diagnostics=%q", output, diagnostics)
 	}
@@ -420,15 +420,15 @@ func TestUnitBB3ZeroQueryMatrixAcrossScopes(t *testing.T) {
 // TestUnitBB5SessionScopeRejectsNumericNavigation is the independent session
 // scope restriction assertion.
 func TestUnitBB5SessionScopeRejectsNumericNavigation(t *testing.T) {
-	_, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1/res-1\ncd 1\nquit\n")
+	_, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1/res-1\ncd 1\nexit\n")
 	assertActionableError(t, diagnostics, "error: row-number navigation is unavailable in session scope; use cd .. or cd <session>")
 }
 
 // TestUnitBB5ParentAndRootNavigation are independent parent and root assertions.
 func TestUnitBB5ParentAndRootNavigation(t *testing.T) {
 	for _, tc := range []struct{ name, input, want string }{
-		{"parent", "cd ai-dev/endpoint-1/res-1\ncd ..\nquit\n", "endpoint[ai-dev/endpoint-1]>"},
-		{"root", "cd ai-dev/endpoint-1/res-1\ncd /\nquit\n", "workspace>"},
+		{"parent", "cd ai-dev/endpoint-1/res-1\ncd ..\nexit\n", "endpoint[ai-dev/endpoint-1]>"},
+		{"root", "cd ai-dev/endpoint-1/res-1\ncd /\nexit\n", "workspace>"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			output, diagnostics := runNav(t, singleHostStub(), tc.input)
@@ -442,11 +442,11 @@ func TestUnitBB5ParentAndRootNavigation(t *testing.T) {
 // TestUnitBB5HostnameConflictAndEndpointIDSelection independently checks the
 // conflict prompt and the qualified endpoint/session path.
 func TestUnitBB5HostnameConflictAndEndpointIDSelection(t *testing.T) {
-	output, diagnostics := runNav(t, conflictStub(), "cd ai-dev\nai-dev/endpoint-2\nquit\n")
+	output, diagnostics := runNav(t, conflictStub(), "cd ai-dev\nai-dev/endpoint-2\nexit\n")
 	if diagnostics != "" || lastPrompt(output) != "endpoint[ai-dev/endpoint-2]>" {
 		t.Fatalf("conflict selection prompt=%q diagnostics=%q", lastPrompt(output), diagnostics)
 	}
-	output, diagnostics = runNav(t, singleHostStub(), "cd endpoint-1/res-1\nquit\n")
+	output, diagnostics = runNav(t, singleHostStub(), "cd endpoint-1/res-1\nexit\n")
 	if diagnostics != "" || lastPrompt(output) != "session[ai-dev/provider-res-1]>" {
 		t.Fatalf("endpoint-id path prompt=%q diagnostics=%q", lastPrompt(output), diagnostics)
 	}
@@ -523,19 +523,19 @@ func TestUnitBB3InteractiveCallCountMatrix(t *testing.T) {
 		}
 		return stub
 	}
-	startup := baseline("quit\n")
-	numeric := baseline("1\nquit\n")
+	startup := baseline("exit\n")
+	numeric := baseline("1\nexit\n")
 	if numeric.listCalls-startup.listCalls != 1 || numeric.inventoryByID["endpoint-1"]-startup.inventoryByID["endpoint-1"] != 1 || numeric.inventoryByID["endpoint-2"] != startup.inventoryByID["endpoint-2"] || numeric.outputCalls != 1 || numeric.admit != 0 {
 		t.Fatalf("numeric call counts unexpected: startup=%+v numeric=%+v", startup, numeric)
 	}
 	if len(numeric.outputRequests) != 1 || numeric.outputRequests[0].resourceID != "res-1" || numeric.outputRequests[0].generation != "generation-1" {
 		t.Fatalf("numeric entry snapshot requests=%+v", numeric.outputRequests)
 	}
-	name := baseline("cd endpoint-1\nquit\n")
+	name := baseline("cd endpoint-1\nexit\n")
 	if name.listCalls <= startup.listCalls || name.inventoryCalls <= startup.inventoryCalls || name.outputCalls != 0 || name.admit != 0 {
 		t.Fatalf("name path call counts unexpected: startup=%+v name=%+v", startup, name)
 	}
-	local := baseline("0\nquit\n")
+	local := baseline("0\nexit\n")
 	if local.listCalls != startup.listCalls || local.inventoryCalls != startup.inventoryCalls || local.outputCalls != 0 || local.admit != 0 {
 		t.Fatalf("local rejection performed incremental calls: startup=%+v local=%+v", startup, local)
 	}
@@ -547,7 +547,7 @@ func TestUnitBB5NumericQualifiedEndpointPath(t *testing.T) {
 	stub := scopeStub()
 	stub.endpoints = append([]protocol.Endpoint{{EndpointID: "1", Hostname: "numeric-host"}}, stub.endpoints...)
 	stub.reports["1"] = scopeInventory("2", "generation-2")
-	output, diagnostics := runNav(t, stub, "cd 1/2\nquit\n")
+	output, diagnostics := runNav(t, stub, "cd 1/2\nexit\n")
 	if diagnostics != "" || !strings.Contains(output, "session[numeric-host/provider-2]>") {
 		t.Fatalf("numeric qualified path failed: output=%q diagnostics=%q", output, diagnostics)
 	}

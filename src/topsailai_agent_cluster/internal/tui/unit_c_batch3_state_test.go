@@ -70,7 +70,7 @@ func TestUnitCBatch3SessionRejection(t *testing.T) {
 	api := newUnitCAPI()
 	var out strings.Builder
 	exit, err := executeInteractiveLine(context.Background(), api, &state, "start", make(chan lineReadResult), &out, &out, &out, InteractiveOptions{})
-	want := `command "start" is unavailable in session scope; available commands: list, cd, show, info, resume, stop, inject, interrupt, ctl, drive, logs, send, status, refresh, help, quit`
+	want := `command "start" is unavailable in session scope; available commands: list, cd, show, info, resume, stop, inject, interrupt, ctl, drive, logs, send, status, refresh, help, quit, exit`
 	if exit || err == nil || err.Error() != want || out.Len() != 0 || !reflect.DeepEqual(state, before) {
 		t.Fatalf("C6 session: exit=%v err=%v output=%q", exit, err, out.String())
 	}
@@ -88,7 +88,7 @@ func TestUnitCBatch3CancelRepl(t *testing.T) {
 			d.assertUnchanged(t)
 			d.reply(t, d.next(t), "1\n", nil)
 			d.reply(t, d.next(t), "show\n", nil)
-			d.reply(t, d.next(t), "quit\n", nil)
+			d.reply(t, d.next(t), "exit\n", nil)
 			unitC19Finish(t, d)
 			got := d.output.String()
 			if !strings.Contains(got, "session[host-1/provider-session-1]> ") || !strings.Contains(got, "session: res_session-1") || d.errors.String() != "" {

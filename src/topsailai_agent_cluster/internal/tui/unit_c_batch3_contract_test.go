@@ -97,7 +97,7 @@ func TestUnitCBatch3LiveAuthority(t *testing.T) {
 			d.api.descriptor.Revision = "cap-live-2"
 			d.api.mu.Unlock()
 			d.reply(t, *d.pending, "revision-1\n", nil)
-			d.reply(t, d.next(t), "quit\n", nil)
+			d.reply(t, d.next(t), "exit\n", nil)
 			unitC19Finish(t, d)
 			after, intents := d.api.snapshot()
 			delta := unitCAPIAdd(d.baseline, after)

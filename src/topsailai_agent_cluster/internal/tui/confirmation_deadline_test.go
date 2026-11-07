@@ -23,10 +23,13 @@ func TestConfirmationReadHasNoCommandDeadline(t *testing.T) {
 	cases := []struct {
 		name    string
 		command string
+		block   []string
 		op      string
 	}{
 		{name: "stop", command: "stop", op: protocol.OperationAgentStop},
-		{name: "send", command: `send {"text":"hi"}`, op: protocol.OperationMessageSend},
+		// A bare send is the only form that still asks, so it is the form that
+		// exercises the confirmation read.
+		{name: "send", command: "send", block: []string{"hi", "EOF"}, op: protocol.OperationMessageSend},
 		{name: "inject", command: `inject {"text":"hi"}`, op: protocol.OperationContextInject},
 		{name: "interrupt", command: `interrupt {"action":"soft_interrupt"}`, op: protocol.OperationExecutionInterrupt},
 	}
@@ -37,12 +40,16 @@ func TestConfirmationReadHasNoCommandDeadline(t *testing.T) {
 			calls := 0
 			read := func(ctx context.Context, prompt string, history bool, limit int) (string, bool, error) {
 				calls++
-				switch calls {
-				case 1:
+				if calls == 1 {
 					return "cd endpoint-1/session-1", false, nil
-				case 2:
+				}
+				if calls == 2 {
 					return testCase.command, false, nil
-				case 3:
+				}
+				if blockIndex := calls - 3; blockIndex < len(testCase.block) {
+					return testCase.block[blockIndex], false, nil
+				}
+				if calls == 3+len(testCase.block) {
 					if history {
 						t.Fatalf("confirmation read must not use history: prompt=%q", prompt)
 					}
@@ -53,9 +60,8 @@ func TestConfirmationReadHasNoCommandDeadline(t *testing.T) {
 						t.Fatalf("confirmation read context already failed: %v", err)
 					}
 					return "y", false, nil
-				default:
-					return "quit", false, nil
 				}
+				return "quit", false, nil
 			}
 			err := RunInteractive(context.Background(), stub, noPromptStream{t}, &out, &diagnostics, InteractiveOptions{ReadLine: read, WaitTimeoutMS: 100})
 			if err != nil {

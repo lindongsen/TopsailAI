@@ -397,14 +397,16 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	if err := requireCommandScope(rawName, state.Scope.Kind); err != nil {
 		return false, err
 	}
-	// "q" outside workspace scope navigates back to workspace scope instead of
-	// leaving the REPL. It reuses the bare-cd path, so the pinned session
-	// selection is cleared and the workspace table is re-rendered exactly like
-	// "cd". A surplus argument stays a usage error, so "q foo" can never be read
-	// as a navigation target.
-	if qReturnsToWorkspace(rawName, state.Scope.Kind) {
+	// "quit" outside workspace scope navigates back to workspace scope instead of
+	// leaving the REPL, and "q" is only an alias of "quit", so both spellings share
+	// this one rule rather than carrying separate behaviour. It reuses the bare-cd
+	// path, so the pinned session selection is cleared and the workspace table is
+	// re-rendered exactly like "cd". A surplus argument stays a usage error, so
+	// "quit foo" can never be read as a navigation target. "exit" is a separate
+	// canonical command and is not affected, so it always leaves the process.
+	if quitReturnsToWorkspace(name, state.Scope.Kind) {
 		if strings.TrimSpace(rest) != "" {
-			return false, fmt.Errorf("usage: %s", rawName)
+			return false, fmt.Errorf("usage: %s", name)
 		}
 		return false, interactiveCD(ctx, api, state, "", lineResults, out, trustedOut, options.Color, options)
 	}
@@ -412,6 +414,13 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "help":
 		return false, printHelp(out, strings.TrimSpace(rest), state.Scope.Kind)
 	case "quit":
+		if strings.TrimSpace(rest) != "" {
+			return false, fmt.Errorf("usage: %s", name)
+		}
+		return true, nil
+	case "exit":
+		// "exit" always leaves the process from every scope, so it never navigates
+		// and never inherits the scope-aware "quit" behaviour.
 		if strings.TrimSpace(rest) != "" {
 			return false, fmt.Errorf("usage: %s", name)
 		}

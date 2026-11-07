@@ -60,7 +60,7 @@ func TestResolveRowSelectionInEndpointRejectsForeignRow(t *testing.T) {
 // instead of a provider session identifier.
 func TestLogsAcceptsRowNumberInEndpointScope(t *testing.T) {
 	stub := scopeStub()
-	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nlist\nlogs 1\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nlist\nlogs 1\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -107,7 +107,7 @@ func TestLogsRowNumberWithoutListExplainsTheShortForm(t *testing.T) {
 
 // TestShowAcceptsRowNumberInWorkspaceScope proves show reuses the rendered numbering.
 func TestShowAcceptsRowNumberInWorkspaceScope(t *testing.T) {
-	output, diagnostics := runScope(t, scopeStub(), "list\nshow 1\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, scopeStub(), "list\nshow 1\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -126,7 +126,7 @@ func TestShowRowNumberWithoutListExplainsTheShortForm(t *testing.T) {
 
 // TestShowRowNumberOutOfRangeReportsTheValidRange proves the range is actionable.
 func TestShowRowNumberOutOfRangeReportsTheValidRange(t *testing.T) {
-	_, diagnostics := runScope(t, scopeStub(), "list\nshow 99\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, scopeStub(), "list\nshow 99\nexit\n", ColorPolicy{})
 	assertActionableError(t, diagnostics, "error: row 99 is out of range; valid rows are 1-2")
 }
 
@@ -140,7 +140,7 @@ func TestShowRowNumberRejectsPlaceholderRow(t *testing.T) {
 			Adapters:         []protocol.AdapterSummary{{AdapterID: "adapter-1", DataKnown: true, CollectionStatus: protocol.CollectionSucceeded}},
 		}},
 	}
-	_, diagnostics := runScope(t, stub, "list\nshow 1\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "list\nshow 1\nexit\n", ColorPolicy{})
 	assertActionableError(t, diagnostics, "error: row 1 does not identify a session; choose a session row")
 }
 
@@ -149,7 +149,7 @@ func TestShowRowNumberRejectsPlaceholderRow(t *testing.T) {
 func TestStatusWithoutArgumentReusesTheLastSubmittedCommand(t *testing.T) {
 	stub := scopeStub()
 	stub.admittedCommandID = "cmd-42"
-	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\ny\nstatus\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\nstatus\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -183,7 +183,7 @@ func TestInteractiveStatusHelpOmitsTheMandatoryID(t *testing.T) {
 // TestRowSelectionDoesNotAdmitCommands proves row selection is read-only.
 func TestRowSelectionDoesNotAdmitCommands(t *testing.T) {
 	stub := scopeStub()
-	runScope(t, stub, "list\nshow 1\ncd host-one/endpoint-1\nlist\nlogs 1\nquit\n", ColorPolicy{})
+	runScope(t, stub, "list\nshow 1\ncd host-one/endpoint-1\nlist\nlogs 1\nexit\n", ColorPolicy{})
 	if stub.admit != 0 {
 		t.Fatalf("row selection admitted %d commands", stub.admit)
 	}

@@ -23,19 +23,23 @@ const (
 	MultiLineHint = "Enter message; finish with a standalone EOF line or Ctrl+D"
 	// MultiLineTaskHint tells the operator how to finish a multi-line task block.
 	MultiLineTaskHint = "Enter task; finish with a standalone EOF line or Ctrl+D"
+	// MultiLineContextHint tells the operator how to finish a multi-line context block.
+	MultiLineContextHint = "Enter context; finish with a standalone EOF line or Ctrl+D"
 	// TaskEchoHeader labels the verbatim echo of an accepted multi-line task.
 	TaskEchoHeader = "task:"
 	// multiLinePrompt is the continuation prompt of an interactive message block.
 	multiLinePrompt = "send> "
 	// taskMultiLinePrompt is the continuation prompt of an interactive task block.
 	taskMultiLinePrompt = "task> "
+	// contextMultiLinePrompt is the continuation prompt of an interactive context block.
+	contextMultiLinePrompt = "context> "
 	// defaultLineLimit is the per-line bound used when a caller supplies none.
 	defaultLineLimit = 8192
 )
 
 // multiLineForm carries the surface-specific hint, continuation prompt, body
-// bound and body noun of one multi-line block, so the message and task forms
-// stay distinguishable and each reports its own limit.
+// bound and body noun of one multi-line block, so the message, task and context
+// forms stay distinguishable and each reports its own limit.
 type multiLineForm struct {
 	hint   string
 	prompt string
@@ -50,6 +54,11 @@ var messageMultiLineForm = multiLineForm{hint: MultiLineHint, prompt: multiLineP
 // bound is smaller than the message bound, so the block fails early with the
 // task limit instead of failing later during payload validation.
 var taskMultiLineForm = multiLineForm{hint: MultiLineTaskHint, prompt: taskMultiLinePrompt, limit: protocol.MaxInitialTaskBytes, noun: "task"}
+
+// contextMultiLineForm is the multi-line context form used by inject and its btw
+// alias. Context injection carries the same message payload as send, so it keeps
+// the message bound and reports its own noun.
+var contextMultiLineForm = multiLineForm{hint: MultiLineContextHint, prompt: contextMultiLinePrompt, limit: MultiLineLimit, noun: "context"}
 
 var (
 	// errMultiLineEmpty rejects a block that carries no usable text.
@@ -78,6 +87,13 @@ func ReadMultiLineBlock(reader io.Reader, limit int) (MultiLineBlock, error) {
 // limit, so an oversized task fails here instead of during payload validation.
 func ReadTaskMultiLineBlock(reader io.Reader, limit int) (MultiLineBlock, error) {
 	return readMultiLineBlockFrom(reader, limit, taskMultiLineForm)
+}
+
+// ReadContextMultiLineBlock reads one context block from reader until a
+// standalone terminator line or the end of input. Context injection carries the
+// same message payload as send, so the block keeps the message bound.
+func ReadContextMultiLineBlock(reader io.Reader, limit int) (MultiLineBlock, error) {
+	return readMultiLineBlockFrom(reader, limit, contextMultiLineForm)
 }
 
 // readMultiLineBlockFrom reads one block of the given form from reader.
@@ -165,6 +181,12 @@ func readInteractiveMultiLine(ctx context.Context, source <-chan lineReadResult,
 // readInteractiveTaskMultiLine reads one task block from the REPL line source.
 func readInteractiveTaskMultiLine(ctx context.Context, source <-chan lineReadResult, out io.Writer, options InteractiveOptions) (MultiLineBlock, error) {
 	return readInteractiveMultiLineForm(ctx, source, out, options, taskMultiLineForm)
+}
+
+// readInteractiveContextMultiLine reads one context block from the REPL line
+// source. It is used by inject and its btw alias when no text is supplied.
+func readInteractiveContextMultiLine(ctx context.Context, source <-chan lineReadResult, out io.Writer, options InteractiveOptions) (MultiLineBlock, error) {
+	return readInteractiveMultiLineForm(ctx, source, out, options, contextMultiLineForm)
 }
 
 // readInteractiveMultiLineForm reads one block of the given form from the REPL

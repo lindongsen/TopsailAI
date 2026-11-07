@@ -225,10 +225,10 @@ func TestLogsForwardsParsedLineCountToAPI(t *testing.T) {
 		input string
 		want  int
 	}{
-		{name: "short flag", input: "cd host-one/endpoint-1/res-1\nlogs -n 250\nquit\n", want: 250},
-		{name: "long flag", input: "cd host-one/endpoint-1/res-1\nlogs --lines 7\nquit\n", want: 7},
-		{name: "equals form", input: "cd host-one/endpoint-1/res-1\nlogs --lines=33\nquit\n", want: 33},
-		{name: "absent keeps interactive default", input: "cd host-one/endpoint-1/res-1\nlogs\nquit\n", want: 100},
+		{name: "short flag", input: "cd host-one/endpoint-1/res-1\nlogs -n 250\nexit\n", want: 250},
+		{name: "long flag", input: "cd host-one/endpoint-1/res-1\nlogs --lines 7\nexit\n", want: 7},
+		{name: "equals form", input: "cd host-one/endpoint-1/res-1\nlogs --lines=33\nexit\n", want: 33},
+		{name: "absent keeps interactive default", input: "cd host-one/endpoint-1/res-1\nlogs\nexit\n", want: 100},
 	}
 
 	for _, testCase := range cases {

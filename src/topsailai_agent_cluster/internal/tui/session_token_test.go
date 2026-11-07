@@ -43,7 +43,7 @@ func providerIDStub() *interactiveStub {
 // TestShowAcceptsTheDisplayedProviderSessionID proves the identifier an operator
 // reads in the SESSION_ID column is usable as input.
 func TestShowAcceptsTheDisplayedProviderSessionID(t *testing.T) {
-	output, diagnostics := runScope(t, providerIDStub(), "list\nshow 20261027152208\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, providerIDStub(), "list\nshow 20261027152208\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -55,7 +55,7 @@ func TestShowAcceptsTheDisplayedProviderSessionID(t *testing.T) {
 // TestLogsAcceptsTheDisplayedProviderSessionID proves logs resolves the same way.
 func TestLogsAcceptsTheDisplayedProviderSessionID(t *testing.T) {
 	stub := providerIDStub()
-	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nlist\nlogs 20261027152209\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nlist\nlogs 20261027152209\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -105,7 +105,7 @@ func TestRowNumberWinsOverAProviderSessionID(t *testing.T) {
 		endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1", Hostname: "host-one"}},
 		reports:   map[string]protocol.InventoryReport{"endpoint-1": report},
 	}
-	output, diagnostics := runScope(t, stub, "list\nshow 2\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "list\nshow 2\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -130,7 +130,7 @@ func TestNumericTokenBeyondTheRowsFallsBackToTheProviderSessionID(t *testing.T) 
 		endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1", Hostname: "host-one"}},
 		reports:   map[string]protocol.InventoryReport{"endpoint-1": report},
 	}
-	output, diagnostics := runScope(t, stub, "list\nshow 7\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "list\nshow 7\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -142,7 +142,7 @@ func TestNumericTokenBeyondTheRowsFallsBackToTheProviderSessionID(t *testing.T) 
 // TestUnknownNumericTokenKeepsTheRowRangeError proves an unresolvable numeric
 // token still reports the actionable range instead of a bare not-found.
 func TestUnknownNumericTokenKeepsTheRowRangeError(t *testing.T) {
-	_, diagnostics := runScope(t, providerIDStub(), "list\nshow 99\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, providerIDStub(), "list\nshow 99\nexit\n", ColorPolicy{})
 	assertActionableError(t, diagnostics, "error: row 99 is out of range; valid rows are 1-2")
 }
 
@@ -216,7 +216,7 @@ func TestResolveSessionTokenInEndpointRejectsAForeignProviderID(t *testing.T) {
 // TestProviderSessionIDSelectionDoesNotAdmitCommands proves the new path is read-only.
 func TestProviderSessionIDSelectionDoesNotAdmitCommands(t *testing.T) {
 	stub := providerIDStub()
-	runScope(t, stub, "list\nshow 20261027152208\ncd host-one/endpoint-1\nlist\nlogs 20261027152209\nquit\n", ColorPolicy{})
+	runScope(t, stub, "list\nshow 20261027152208\ncd host-one/endpoint-1\nlist\nlogs 20261027152209\nexit\n", ColorPolicy{})
 	if stub.admit != 0 {
 		t.Fatalf("provider identifier selection admitted %d commands", stub.admit)
 	}

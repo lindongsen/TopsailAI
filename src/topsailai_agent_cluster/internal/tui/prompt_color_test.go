@@ -88,8 +88,14 @@ func TestInteractiveSendConfirmationIsStyled(t *testing.T) {
 				case 1:
 					return "cd endpoint-1/session-1", false, nil
 				case 2:
-					return `send {"text":"hi"}`, false, nil
+					// A bare send is the only form that still asks, because the
+					// assembled block is never echoed as a whole.
+					return "send", false, nil
 				case 3:
+					return "hi", false, nil
+				case 4:
+					return "EOF", false, nil
+				case 5:
 					if history {
 						t.Fatalf("confirmation read must not use history")
 					}

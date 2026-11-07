@@ -25,7 +25,7 @@ func stopScopeStub() *interactiveStub {
 // the endpoint scope with an explicit notice instead of leaving a dead selection behind.
 func TestStopLeavesTheRemovedSessionScope(t *testing.T) {
 	stub := stopScopeStub()
-	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nstop\ny\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nstop\ny\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -44,7 +44,7 @@ func TestStopLeavesTheRemovedSessionScope(t *testing.T) {
 // the removal from a later inventory-backed command.
 func TestStopScopeRecoveryKeepsTheNextCommandUsable(t *testing.T) {
 	stub := stopScopeStub()
-	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nstop\ny\nrefresh\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nstop\ny\nrefresh\nexit\n", ColorPolicy{})
 	if strings.Contains(diagnostics, "was not found") {
 		t.Fatalf("refresh still reported the removed session: %q", diagnostics)
 	}
@@ -60,7 +60,7 @@ func TestStopScopeRecoveryKeepsTheNextCommandUsable(t *testing.T) {
 // after the scope moved, because the command identifier is not part of the selection.
 func TestStopScopeRecoveryKeepsTheCommandIDQueryable(t *testing.T) {
 	stub := stopScopeStub()
-	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nstop\ny\nstatus\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nstop\ny\nstatus\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -76,7 +76,7 @@ func TestStopScopeRecoveryKeepsTheCommandIDQueryable(t *testing.T) {
 // operator out of a session that was not stopped.
 func TestCancelledStopKeepsTheSessionScope(t *testing.T) {
 	stub := stopScopeStub()
-	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nstop\nn\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nstop\nn\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -139,10 +139,10 @@ func TestNonRemovingOperationsKeepTheSessionScope(t *testing.T) {
 		name  string
 		input string
 	}{
-		{name: "resume", input: "cd host-one/endpoint-1/res-1\nresume\ny\nquit\n"},
-		{name: "inject", input: "cd host-one/endpoint-1/res-1\ninject {\"text\":\"hi\"}\ny\nquit\n"},
-		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nquit\n"},
-		{name: "send", input: "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\ny\nquit\n"},
+		{name: "resume", input: "cd host-one/endpoint-1/res-1\nresume\ny\nexit\n"},
+		{name: "inject", input: "cd host-one/endpoint-1/res-1\ninject {\"text\":\"hi\"}\ny\nexit\n"},
+		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nexit\n"},
+		{name: "send", input: "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\nexit\n"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -198,7 +198,7 @@ func (s *postSubmitBudgetStub) GetInventory(ctx context.Context, id string) (pro
 // deadline, and reusing it would report an unavailable inventory for a healthy endpoint.
 func TestStopScopeRecoveryUsesItsOwnBudget(t *testing.T) {
 	stub := &postSubmitBudgetStub{interactiveStub: stopScopeStub()}
-	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nstop\ny\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nstop\ny\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}

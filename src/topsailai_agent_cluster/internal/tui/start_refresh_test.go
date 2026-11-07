@@ -28,7 +28,7 @@ func newStartRefreshStub() *startRefreshStub {
 	}
 }
 
-const startRefreshInput = "start endpoint-1 compatibility --profile p --profile-revision r\nquit\n"
+const startRefreshInput = "start endpoint-1 compatibility --profile p --profile-revision r\nexit\n"
 
 // TestStartRefreshesOnlyTheStartedEndpoint proves a successful start forces one
 // collection for the Endpoint that accepted it, so the next list already contains

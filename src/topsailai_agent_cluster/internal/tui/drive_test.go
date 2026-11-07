@@ -49,13 +49,13 @@ func TestDriveIsUnavailableOutsideSessionScope(t *testing.T) {
 	}{
 		{
 			name:  "workspace",
-			input: "drive status\nquit\n",
-			want:  `command "drive" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, stop, status, refresh, watch, help, quit`,
+			input: "drive status\nexit\n",
+			want:  `command "drive" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, stop, status, refresh, watch, help, quit, exit`,
 		},
 		{
 			name:  "endpoint",
-			input: "cd host-one/endpoint-1\ndrive status\nquit\n",
-			want:  `command "drive" is unavailable in endpoint scope; available commands: list, cd, show, info, start, stop, logs, status, refresh, watch, help, quit`,
+			input: "cd host-one/endpoint-1\ndrive status\nexit\n",
+			want:  `command "drive" is unavailable in endpoint scope; available commands: list, cd, show, info, start, stop, logs, status, refresh, watch, help, quit, exit`,
 		},
 	}
 	for _, testCase := range cases {
@@ -157,7 +157,7 @@ func TestDriveStatusJSONCarriesTheRequestIdentity(t *testing.T) {
 // controller by accident.
 func TestInteractiveDriveDefaultsToTheReadProjection(t *testing.T) {
 	stub := driveStub()
-	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\ndrive\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\ndrive\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -173,7 +173,7 @@ func TestInteractiveDriveDefaultsToTheReadProjection(t *testing.T) {
 // is never submitted without an explicit operator confirmation.
 func TestInteractiveDriveStartRequiresConfirmation(t *testing.T) {
 	stub := driveCapabilityStub{interactiveStub: driveStub()}
-	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\ndrive start\nn\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\ndrive start\nn\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -189,7 +189,7 @@ func TestInteractiveDriveStartRequiresConfirmation(t *testing.T) {
 // submits the standard drive operation against the exact selected generation.
 func TestInteractiveDriveStartAdmitsTheDriveOperation(t *testing.T) {
 	stub := driveCapabilityStub{interactiveStub: driveStub()}
-	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\ndrive start\ny\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\ndrive start\ny\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -213,7 +213,7 @@ func TestInteractiveDriveStartAdmitsTheDriveOperation(t *testing.T) {
 // agent that the driver was driving.
 func TestInteractiveDriveStopIsNotAgentStop(t *testing.T) {
 	stub := driveCapabilityStub{interactiveStub: driveStub()}
-	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\ndrive stop\ny\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\ndrive stop\ny\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -237,8 +237,8 @@ func TestInteractiveDriveRejectsUnknownActionsAndOptions(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "unknown action", input: "cd host-one/endpoint-1/res-1\ndrive bogus\nquit\n", want: "usage: drive [start|stop|status]"},
-		{name: "non-interactive option", input: "cd host-one/endpoint-1/res-1\ndrive --json\nquit\n", want: `option "--json" is available only in non-interactive mode; JSON output is available only with the standalone command`},
+		{name: "unknown action", input: "cd host-one/endpoint-1/res-1\ndrive bogus\nexit\n", want: "usage: drive [start|stop|status]"},
+		{name: "non-interactive option", input: "cd host-one/endpoint-1/res-1\ndrive --json\nexit\n", want: `option "--json" is available only in non-interactive mode; JSON output is available only with the standalone command`},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

@@ -13,12 +13,12 @@ func TestRefreshKeepsTableColors(t *testing.T) {
 		name, input string
 		tables      int
 	}{
-		{"workspace", "refresh\nquit\n", 2},
-		{"alias", "r\nquit\n", 2},
-		{"endpoint", "cd ai-dev/endpoint-1\nrefresh\nquit\n", 3},
+		{"workspace", "refresh\nexit\n", 2},
+		{"alias", "r\nexit\n", 2},
+		{"endpoint", "cd ai-dev/endpoint-1\nrefresh\nexit\n", 3},
 		// Entering session scope renders no table, so the startup table plus the
 		// refreshed one prove the session-scope refresh is styled like list.
-		{"session", "cd ai-dev/endpoint-1/res-1\nr\nquit\n", 2},
+		{"session", "cd ai-dev/endpoint-1/res-1\nr\nexit\n", 2},
 	}
 	for _, c := range cases {
 		for _, enabled := range []bool{true, false} {
@@ -54,7 +54,7 @@ func TestRefreshStillFiltersProviderANSI(t *testing.T) {
 	stub.endpoints[0].DisplayName = "host\x1b[31mRED\x1b[0m"
 	stub.reports["endpoint-1"] = navInventory("sess\x1b[31mRED\x1b[0m", "generation-1")
 	var out, diagnostics strings.Builder
-	err := RunInteractive(context.Background(), stub, strings.NewReader("refresh\nquit\n"), &out, &diagnostics, InteractiveOptions{Color: ColorPolicy{Enabled: true}})
+	err := RunInteractive(context.Background(), stub, strings.NewReader("refresh\nexit\n"), &out, &diagnostics, InteractiveOptions{Color: ColorPolicy{Enabled: true}})
 	if err != nil || diagnostics.Len() != 0 {
 		t.Fatalf("err=%v diagnostics=%q", err, diagnostics.String())
 	}
