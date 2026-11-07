@@ -272,6 +272,25 @@ function write_role_config() {
 
     add_file "${template}" "/etc/agent-cluster/node.conf" 0640
 
+    # The endpoint package ships command-allowlist.conf, so the packaged
+    # configuration must reference it. A site configuration replaces the template
+    # wholesale and may not carry the key, and an empty path makes the Endpoint
+    # skip loading the allowlist entirely, which permits every command instead of
+    # failing closed. Append the relative path only when the configuration does
+    # not already set one, so a site that points elsewhere keeps its own value.
+    if [ "${ROLE}" = "endpoint" ]; then
+        if ! grep -qE '^[[:space:]]*COMMAND_ALLOWLIST_FILE=' \
+            "${PKG_ROOT}/etc/agent-cluster/node.conf"; then
+            {
+                echo ""
+                echo "# The package ships this conffile; conf/ resolves through the"
+                echo "# /opt/agent-cluster layout to /etc/agent-cluster."
+                echo "COMMAND_ALLOWLIST_FILE=conf/command-allowlist.conf"
+            } >>"${PKG_ROOT}/etc/agent-cluster/node.conf" ||
+                die "cannot append the allowlist path"
+        fi
+    fi
+
     # An adapter override is appended because the last assignment wins and the
     # value must stay single-quoted for the shell that sources it.
     if [ -n "${ADAPTERS}" ]; then
