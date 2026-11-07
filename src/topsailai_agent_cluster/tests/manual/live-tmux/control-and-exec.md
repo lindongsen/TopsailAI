@@ -196,6 +196,11 @@ HEAD into `.tmp/live-tmux-audit/bin/` and the isolated cluster started by
 PID 100053) was never restarted: its uptime advanced from 6h04m to 6h30m across the run,
 which is the isolation proof.
 
+Note: the deployment path above reflects the layout in use when the run was recorded. The
+payload now lives under `/opt/agent-cluster`, so the same endpoint is reached through the
+entry-point symlink `/usr/local/sbin/agent-cluster-endpoint` ->
+`/opt/agent-cluster/bin/agent-cluster-endpoint`. The recorded observation is unchanged.
+
 Preconditions observed before any case: Endpoint log line
 `loaded command allowlist ... entries=3`, all ten `ctl.*` actions plus `command.exec`
 advertised, and one live session in the persisted inventory.

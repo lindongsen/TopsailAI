@@ -23,7 +23,7 @@ set -uo pipefail
 CONFIG_FILE="/etc/agent-cluster/node.conf"
 TARGET_HOME="${HOME:-}"
 FORCE=0
-CLI_ENV_LIB="/usr/lib/agent-cluster/lib/cli-env.sh"
+CLI_ENV_LIB="/opt/agent-cluster/lib/cli-env.sh"
 
 function die() {
     echo "ERROR: $*" >&2

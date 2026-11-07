@@ -159,11 +159,10 @@ function status_container_endpoint() {
     container_ctl status | sed 's/^/ai-dev /'
 }
 
-# Installs the container bundle into system paths: the endpoint binary, the CLI
-# as /usr/local/sbin/agent-cluster-cli with /usr/local/sbin/topsailai_agent_cluster
-# as a symlink to it, and the per-user CLI env file that points the CLI at the
-# Server API. Re-running with identical configuration is a no-op, so this is safe
-# after a bundle refresh.
+# Installs the container bundle into system paths: the endpoint binary and the CLI
+# as real files under /opt/agent-cluster/bin, linked from /usr/local/sbin, and the
+# per-user CLI env file that points the CLI at the Server API. Re-running with
+# identical configuration is a no-op, so this is safe after a bundle refresh.
 function install_container_node() {
     docker exec "${CONTAINER_NAME}" bash -c \
         "cd '${CONTAINER_BUNDLE_GUEST}' && ./install-node.sh" ||

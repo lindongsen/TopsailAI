@@ -13,14 +13,21 @@
 #
 # Installing an endpoint also installs the CLI, because the CLI is how an
 # operator on that machine reaches the Server. The CLI keeps its native name
-# /usr/local/sbin/agent-cluster-cli, and /usr/local/sbin/topsailai_agent_cluster
-# is a symlink to it, so both spellings reach the same binary. It reads its
-# Server address and token from ${HOME}/.topsailai/.topsailai_agent_cluster.env,
-# which this script writes.
+# agent-cluster-cli, and topsailai_agent_cluster is a symlink to it, so both
+# spellings reach the same binary. It reads its Server address and token from
+# ${HOME}/.topsailai/.topsailai_agent_cluster.env, which this script writes.
 #
-# Usage: install-node.sh [--install-dir <dir>] [--force]
+# The binaries are installed as real files under /opt/agent-cluster/bin and
+# linked from /usr/local/sbin, which is the same entry-point shape the Debian
+# package produces. The controller, configuration and TLS material stay in the
+# bundle, which is run in place; only the package installs them into system
+# paths. A bundle install therefore adds the same commands to PATH without
+# replacing the bundle as the node's configuration source.
 #
-#   --install-dir  destination directory for the binaries (default /usr/local/sbin)
+# Usage: install-node.sh [--install-dir <dir>] [--payload-dir <dir>] [--force]
+#
+#   --install-dir  directory that receives the entry-point symlinks (default /usr/local/sbin)
+#   --payload-dir  directory that receives the binaries (default /opt/agent-cluster)
 #   --force        replace an existing per-user env file whose content differs
 #
 # Re-running with identical configuration is a no-op, so the script is safe to
@@ -29,6 +36,7 @@
 set -uo pipefail
 
 INSTALL_DIR="/usr/local/sbin"
+PAYLOAD_DIR="/opt/agent-cluster"
 FORCE=0
 CLI_NAME="agent-cluster-cli"
 CLI_ALIAS="topsailai_agent_cluster"
@@ -43,7 +51,7 @@ function die() {
 }
 
 function usage() {
-    echo "usage: $(basename "$0") [--install-dir <dir>] [--force]" >&2
+    echo "usage: $(basename "$0") [--install-dir <dir>] [--payload-dir <dir>] [--force]" >&2
     exit 2
 }
 
@@ -52,6 +60,11 @@ while [ $# -gt 0 ]; do
         --install-dir)
             [ $# -ge 2 ] || usage
             INSTALL_DIR="$2"
+            shift 2
+            ;;
+        --payload-dir)
+            [ $# -ge 2 ] || usage
+            PAYLOAD_DIR="$2"
             shift 2
             ;;
         --force) FORCE=1; shift ;;
@@ -81,21 +94,33 @@ function load_config() {
     esac
 }
 
-# Installs one binary from the bundle into the destination directory.
+# Installs one binary from the bundle into the payload directory and links it
+# from the entry-point directory. The payload is a real file so the bundle and the
+# Debian package produce the same layout: a package cannot ship a real file where
+# it ships a symlink, and `install` would follow such a symlink and overwrite the
+# payload instead of replacing the link.
 function install_binary() {
     local source="$1"
-    local target="$2"
+    local name="$2"
+    local payload="${PAYLOAD_DIR}/bin/${name}"
+    local link="${INSTALL_DIR}/${name}"
     [ -f "${source}" ] || die "missing binary ${source}"
-    install -m 0755 "${source}" "${target}" ||
-        die "cannot install ${target}"
-    echo "installed ${target}"
+    install -m 0755 "${source}" "${payload}" ||
+        die "cannot install ${payload}"
+    echo "installed ${payload}"
+    # A regular file left by an older layout is replaced, and the replacement is
+    # reported because it removes a file.
+    if [ -f "${link}" ] && [ ! -L "${link}" ]; then
+        rm -f "${link}" || die "cannot remove the old ${link}"
+        echo "removed the old regular file ${link}"
+    fi
+    ln -sfn "${payload}" "${link}" || die "cannot link ${link}"
+    echo "linked ${link} -> ${payload}"
 }
 
 # Points the product-facing alias at the CLI that was just installed. The alias
 # is a relative symlink because both names live in the same directory, so the
-# link keeps working when the install directory is relocated. A regular file left
-# by an older layout is replaced, and the replacement is reported because it
-# removes a file.
+# link keeps working when the entry-point directory is relocated.
 function install_cli_alias() {
     local target="${INSTALL_DIR}/${CLI_ALIAS}"
     if [ -f "${target}" ] && [ ! -L "${target}" ]; then
@@ -119,18 +144,20 @@ function write_cli_env() {
 
 load_config
 
+[ -d "${PAYLOAD_DIR}/bin" ] || mkdir -p "${PAYLOAD_DIR}/bin" ||
+    die "cannot create ${PAYLOAD_DIR}/bin"
 [ -d "${INSTALL_DIR}" ] || mkdir -p "${INSTALL_DIR}" || die "cannot create ${INSTALL_DIR}"
 
-install_binary "${SCRIPT_DIR}/bin/agent-cluster-${ROLE}" "${INSTALL_DIR}/agent-cluster-${ROLE}"
+install_binary "${SCRIPT_DIR}/bin/agent-cluster-${ROLE}" "agent-cluster-${ROLE}"
 
 # Only an endpoint bundle carries the CLI, and only an endpoint needs it: the
 # operator on that machine uses it to reach the Server.
 if [ "${ROLE}" = "endpoint" ]; then
-    install_binary "${SCRIPT_DIR}/bin/agent-cluster-cli" "${INSTALL_DIR}/${CLI_NAME}"
+    install_binary "${SCRIPT_DIR}/bin/agent-cluster-cli" "${CLI_NAME}"
     install_cli_alias
     write_cli_env
 else
     echo "skipped CLI install: the ${ROLE} role does not carry the operator CLI"
 fi
 
-echo "node install complete: role=${ROLE} dir=${INSTALL_DIR}"
+echo "node install complete: role=${ROLE} payload=${PAYLOAD_DIR} links=${INSTALL_DIR}"

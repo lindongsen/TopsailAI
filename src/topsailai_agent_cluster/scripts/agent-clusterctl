@@ -20,9 +20,9 @@
 # outside this script because they differ per site.
 #
 # The same script is installed by the Debian package, where the controller lives
-# in /usr/lib/agent-cluster and the configuration is the conffile
-# /etc/agent-cluster/node.conf. The bundle path is tried first, so one script
-# serves both layouts; -c still overrides either default.
+# in /opt/agent-cluster and conf/ is a symlink to the conffile directory
+# /etc/agent-cluster. Because the configuration is found beside the controller in
+# both layouts, one path rule serves both; -c still overrides it.
 #
 # Actions: start, stop, restart, status, doctor.
 # Usage:   agent-clusterctl [-c <config>] <action>
@@ -31,15 +31,10 @@ set -uo pipefail
 
 CTL_DIR=$(dirname "$(readlink -f "$0")")
 
-# The bundle layout keeps the configuration beside the controller. A Debian
-# package cannot: the controller lives in /usr/lib while the configuration is a
-# conffile in /etc. Resolve the bundle path first so a copied bundle behaves
-# exactly as before, then fall back to the packaged conffile.
-PACKAGED_CONFIG_FILE="/etc/agent-cluster/node.conf"
+# The configuration is always beside the controller: a copied bundle keeps
+# conf/node.conf in the bundle, and the package makes conf a symlink to
+# /etc/agent-cluster. One rule therefore serves both layouts.
 CONFIG_FILE="${CTL_DIR}/conf/node.conf"
-if [ ! -f "${CONFIG_FILE}" ] && [ -f "${PACKAGED_CONFIG_FILE}" ]; then
-    CONFIG_FILE="${PACKAGED_CONFIG_FILE}"
-fi
 ACTION=""
 
 function die() {
@@ -180,7 +175,7 @@ function doctor() {
     fi
 
     echo "role       : ${ROLE}"
-    echo "bundle     : ${CTL_DIR}"
+    echo "layout     : ${CTL_DIR}"
     echo "config     : ${CONFIG_FILE}"
     echo "binary     : ${binary}"
     echo "certificate: ${TLS_CERTIFICATE_FILE}"
@@ -191,6 +186,23 @@ function doctor() {
         echo "channel    : ${CHANNEL_ADDRESS}"
         echo "allowlist  : ${COMMAND_ALLOWLIST_FILE:-<disabled>}"
     fi
+}
+
+# Creates one directory that a configured path needs.
+#
+# A packaged node keeps data, logs and run inside /opt/agent-cluster as symlinks
+# to /var/lib, /var/log and /run. /run is a tmpfs, so its link dangles after every
+# reboot, and `mkdir -p` on a dangling symlink fails with "File exists" instead of
+# creating the target. Resolve the link first and create the directory it names;
+# a path that does not exist yet resolves to itself, so the bundle layout is
+# unaffected.
+function ensure_dir() {
+    local path="$1"
+    [ -n "${path}" ] || return 0
+    local resolved
+    resolved=$(readlink -m "${path}") || resolved="${path}"
+    [ -d "${resolved}" ] && return 0
+    mkdir -p "${resolved}" || die "cannot create ${resolved}"
 }
 
 # Starts the configured role in the background and records its pid.
@@ -204,8 +216,10 @@ function start_node() {
     binary=$(role_binary)
     [ -x "${binary}" ] || die "missing executable ${binary}; run doctor"
 
-    mkdir -p "$(dirname "${DATABASE_PATH}")" "$(dirname "${LOG_PATH}")" \
-        "$(dirname "${PID_FILE}")" "$(dirname "${STDOUT_LOG}")"
+    ensure_dir "$(dirname "${DATABASE_PATH}")"
+    ensure_dir "$(dirname "${LOG_PATH}")"
+    ensure_dir "$(dirname "${PID_FILE}")"
+    ensure_dir "$(dirname "${STDOUT_LOG}")"
 
     local -a args=(
         --database-path "${DATABASE_PATH}"

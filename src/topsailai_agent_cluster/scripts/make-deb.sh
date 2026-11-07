@@ -2,12 +2,28 @@
 # Author: DawsonLin
 # Purpose: Build a Debian package for one Agent Cluster node role.
 #
-# The package carries the same payload as a node bundle, laid out according to
-# Debian policy instead of inside one directory:
+# The package carries the same payload as a node bundle, laid out so the whole
+# product is visible in one directory:
 #
-#   agent-cluster-node      controller, shared env writer, setup command
-#   agent-cluster-server    server binary, configuration, TLS material
-#   agent-cluster-endpoint  endpoint binary, CLI, configuration, TLS material
+#   /opt/agent-cluster/            program payload, one directory per node
+#     agent-clusterctl             controller
+#     bin/agent-cluster-<role>     role binary
+#     bin/agent-cluster-cli        operator CLI (endpoint only)
+#     bin/agent-cluster-node-setup env-file regenerator
+#     lib/cli-env.sh               shared env writer
+#     conf -> /etc/agent-cluster   configuration conffiles
+#     certs -> /etc/agent-cluster/certs
+#     data -> /var/lib/agent-cluster
+#     logs -> /var/log/agent-cluster
+#     run -> /run/agent-cluster
+#   /usr/local/sbin/agent-clusterctl, agent-cluster-<role>, agent-cluster-cli,
+#   topsailai_agent_cluster, agent-cluster-node-setup
+#                                  symlinks to the payload above
+#
+# Configuration, TLS material, state, logs and pid files stay in /etc, /var/lib,
+# /var/log and /run: conffiles must live in /etc to survive an upgrade, and
+# mutable state must not share a directory with immutable payload. They appear
+# inside /opt/agent-cluster as symlinks, so the operator still sees one folder.
 #
 # A machine has one role, so the two role packages conflict: they both own
 # /etc/agent-cluster/node.conf and the single agent-clusterctl entry point. A
@@ -37,6 +53,13 @@ set -uo pipefail
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 PROJECT_DIR=$(dirname "${SCRIPT_DIR}")
 LOCAL_CERTS="${PROJECT_DIR}/.tmp/local-cluster/certs"
+
+# The program payload lives in one directory so a node can be inspected, backed
+# up or removed as a unit. Entry points are symlinks in /usr/local/sbin, which is
+# on the default PATH. Configuration, state, logs and pid files stay in /etc,
+# /var/lib, /var/log and /run, and appear inside OPT_DIR as symlinks.
+OPT_DIR="/opt/agent-cluster"
+SBIN_DIR="/usr/local/sbin"
 
 ROLE=""
 DEST=""
@@ -168,6 +191,23 @@ function add_link() {
     ln -sfn "${destination}" "${PKG_ROOT}${target}" || die "cannot link ${target}"
 }
 
+# Adds the /opt layout links that make one directory show the whole product.
+#
+# The program payload lives under /opt/agent-cluster. Configuration, TLS material,
+# state, logs and pid files stay where Debian policy puts them, and appear inside
+# /opt/agent-cluster as symlinks. The controller resolves every relative path
+# against its own directory, so conf/node.conf, certs/, data/, logs/ and run/ all
+# resolve through these links without any absolute override in the configuration.
+#
+# The links are absolute because their targets are outside /opt/agent-cluster.
+function add_layout_links() {
+    add_link "${OPT_DIR}/conf" "/etc/agent-cluster"
+    add_link "${OPT_DIR}/certs" "/etc/agent-cluster/certs"
+    add_link "${OPT_DIR}/data" "/var/lib/agent-cluster"
+    add_link "${OPT_DIR}/logs" "/var/log/agent-cluster"
+    add_link "${OPT_DIR}/run" "/run/agent-cluster"
+}
+
 # Builds one static binary into the package tree.
 function build_binary() {
     local pkg="$1"
@@ -222,48 +262,18 @@ function write_control() {
     chmod 0644 "${PKG_ROOT}/DEBIAN/control"
 }
 
-# Appends the packaged layout to the role configuration. The controller sources
-# the file, so a later assignment wins and the template stays readable as the
-# documented default. Absolute values are used because the packaged controller
-# lives in /usr/lib while state belongs in /var.
+# Installs the role configuration as the conffile. The template's relative paths
+# are kept unchanged: the packaged controller resolves them against
+# /opt/agent-cluster, where conf, certs, data, logs and run are symlinks to the
+# policy locations. One configuration shape therefore serves both the bundle and
+# the package, and no absolute override has to be appended.
 function write_role_config() {
     local template="$1"
-    local binary="/usr/local/sbin/agent-cluster-${ROLE}"
-    local database="/var/lib/agent-cluster/${ROLE}.sqlite"
-    local log="/var/log/agent-cluster/${ROLE}.log"
-    local stdout_log="/var/log/agent-cluster/${ROLE}.stdout.log"
-    local pid="/run/agent-cluster/${ROLE}.pid"
 
     add_file "${template}" "/etc/agent-cluster/node.conf" 0640
-    {
-        echo ""
-        echo "# Packaged layout, appended by make-deb.sh. Later assignments win, so"
-        echo "# these values override the bundle-relative defaults above."
-        echo "BINARY=${binary}"
-        echo "TLS_CA_FILE=/etc/agent-cluster/certs/ca.pem"
-        echo "TLS_CERTIFICATE_FILE=/etc/agent-cluster/certs/node.pem"
-        echo "TLS_KEY_FILE=/etc/agent-cluster/certs/node-key.pem"
-        echo "DATABASE_PATH=${database}"
-        echo "LOG_PATH=${log}"
-        echo "STDOUT_LOG=${stdout_log}"
-        echo "PID_FILE=${pid}"
-    } >>"${PKG_ROOT}/etc/agent-cluster/node.conf" ||
-        die "cannot append the packaged layout"
-    chmod 0640 "${PKG_ROOT}/etc/agent-cluster/node.conf"
 
-    # The endpoint template names conf/command-allowlist.conf, which the controller
-    # would resolve against /usr/lib/agent-cluster and never find. The packaged
-    # layout therefore overrides it with the conffile path, exactly as the TLS and
-    # database paths above are overridden.
-    if [ "${ROLE}" = "endpoint" ]; then
-        {
-            echo "COMMAND_ALLOWLIST_FILE=/etc/agent-cluster/command-allowlist.conf"
-        } >>"${PKG_ROOT}/etc/agent-cluster/node.conf" ||
-            die "cannot append the packaged allowlist path"
-    fi
-
-    # An adapter override is appended for the same reason: the last assignment
-    # wins, and the value must stay single-quoted for the shell that sources it.
+    # An adapter override is appended because the last assignment wins and the
+    # value must stay single-quoted for the shell that sources it.
     if [ -n "${ADAPTERS}" ]; then
         [ "${ROLE}" = "endpoint" ] || die "--adapters only applies to the endpoint role"
         case "${ADAPTERS}" in
@@ -323,10 +333,12 @@ function resolve_tls() {
 
 # Builds the role-independent controller package.
 function build_node_package() {
-    add_file "${SCRIPT_DIR}/agent-clusterctl" "/usr/lib/agent-cluster/agent-clusterctl" 0755
-    add_file "${SCRIPT_DIR}/lib/cli-env.sh" "/usr/lib/agent-cluster/lib/cli-env.sh" 0644
-    add_file "${SCRIPT_DIR}/agent-cluster-node-setup" "/usr/sbin/agent-cluster-node-setup" 0755
-    add_link "/usr/local/sbin/agent-clusterctl" "/usr/lib/agent-cluster/agent-clusterctl"
+    add_file "${SCRIPT_DIR}/agent-clusterctl" "${OPT_DIR}/agent-clusterctl" 0755
+    add_file "${SCRIPT_DIR}/lib/cli-env.sh" "${OPT_DIR}/lib/cli-env.sh" 0644
+    add_file "${SCRIPT_DIR}/agent-cluster-node-setup" \
+        "${OPT_DIR}/bin/agent-cluster-node-setup" 0755
+    add_link "${SBIN_DIR}/agent-clusterctl" "${OPT_DIR}/agent-clusterctl"
+    add_link "${SBIN_DIR}/agent-cluster-node-setup" "${OPT_DIR}/bin/agent-cluster-node-setup"
     add_copyright
 
     write_control "bash (>= 4.0), coreutils, dpkg" "" \
@@ -342,21 +354,23 @@ function build_role_package() {
     warn_placeholders "${template}"
     resolve_tls
 
-    build_binary "./src/main/agent-cluster-${ROLE}" "/usr/local/sbin/agent-cluster-${ROLE}"
+    build_binary "./src/main/agent-cluster-${ROLE}" "${OPT_DIR}/bin/agent-cluster-${ROLE}"
+    add_link "${SBIN_DIR}/agent-cluster-${ROLE}" "${OPT_DIR}/bin/agent-cluster-${ROLE}"
     if [ "${ROLE}" = "endpoint" ]; then
         # The CLI keeps its native name, which is also the name it prints in its
         # own usage text. The product-facing alias is a symlink to it, so both
         # spellings reach the same binary and neither is a second copy.
-        build_binary "./src/main/agent-cluster-cli" "/usr/local/sbin/agent-cluster-cli"
-        add_link "/usr/local/sbin/topsailai_agent_cluster" "agent-cluster-cli"
+        build_binary "./src/main/agent-cluster-cli" "${OPT_DIR}/bin/agent-cluster-cli"
+        add_link "${SBIN_DIR}/agent-cluster-cli" "${OPT_DIR}/bin/agent-cluster-cli"
+        add_link "${SBIN_DIR}/topsailai_agent_cluster" "agent-cluster-cli"
     fi
 
     write_role_config "${template}"
     add_file "${CA}" "/etc/agent-cluster/certs/ca.pem" 0644
     add_file "${CERT}" "/etc/agent-cluster/certs/node.pem" 0644
     add_file "${KEY}" "/etc/agent-cluster/certs/node-key.pem" 0600
-    # The endpoint configuration names /etc/agent-cluster/command-allowlist.conf,
-    # so the package must ship that conffile. Without it the Endpoint refuses to
+    # The endpoint configuration names conf/command-allowlist.conf, which resolves
+    # through the /opt layout to this conffile. Without it the Endpoint refuses to
     # start, because a missing allowlist is a configuration error rather than an
     # implicit unrestricted policy.
     if [ "${ROLE}" = "endpoint" ]; then
@@ -365,6 +379,7 @@ function build_role_package() {
     fi
     add_dir "/var/lib/agent-cluster" 0750
     add_dir "/var/log/agent-cluster" 0750
+    add_layout_links
     add_copyright
 
     if [ "${ROLE}" = "endpoint" ]; then

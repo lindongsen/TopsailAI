@@ -18,7 +18,7 @@
 set -uo pipefail
 
 CONFIG_FILE="/etc/agent-cluster/node.conf"
-CLI_ENV_LIB="/usr/lib/agent-cluster/lib/cli-env.sh"
+CLI_ENV_LIB="/opt/agent-cluster/lib/cli-env.sh"
 
 function warn() {
     echo "agent-cluster-endpoint: WARNING: $*" >&2

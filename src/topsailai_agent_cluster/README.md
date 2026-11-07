@@ -16,6 +16,32 @@ material. Three packages exist because a machine has one role.
 | `agent-cluster-server` | `agent-cluster-server` | Server daemon |
 | `agent-cluster-endpoint` | `agent-cluster-endpoint`, `agent-cluster-cli`, `topsailai_agent_cluster` (symlink) | Endpoint daemon and operator CLI |
 
+Every installed file is visible in one directory. The program payload lives under
+`/opt/agent-cluster`, and each entry point is a symlink in `/usr/local/sbin`, which is on the
+default `PATH`:
+
+```text
+/opt/agent-cluster/
+  agent-clusterctl              controller
+  bin/agent-cluster-<role>      role binary
+  bin/agent-cluster-cli         operator CLI (endpoint only)
+  bin/agent-cluster-node-setup  env-file regenerator
+  lib/cli-env.sh                shared env writer
+  conf  -> /etc/agent-cluster
+  certs -> /etc/agent-cluster/certs
+  data  -> /var/lib/agent-cluster
+  logs  -> /var/log/agent-cluster
+  run   -> /run/agent-cluster
+```
+
+Configuration, TLS material, state, logs and pid files stay in `/etc`, `/var/lib`, `/var/log`
+and `/run`. A conffile must live in `/etc` to survive an upgrade, and mutable state must not share
+a directory with immutable payload. They appear inside `/opt/agent-cluster` as symlinks, so the
+operator still sees one folder while `dpkg` and backup tooling see the policy locations.
+
+Because `conf` is a symlink, the controller finds its configuration beside itself in both the
+bundle and the package layout, and the configuration keeps the same relative paths in both.
+
 Build the packages with the Makefile:
 
 ```bash
@@ -44,10 +70,11 @@ Install on the target node:
 dpkg -i agent-cluster-node_<version>_amd64.deb agent-cluster-endpoint_<version>_amd64.deb
 ```
 
-The endpoint package also installs the operator CLI as `/usr/local/sbin/agent-cluster-cli`, with
-`/usr/local/sbin/topsailai_agent_cluster` as a symlink to it, and writes
-`${HOME}/.topsailai/.topsailai_agent_cluster.env`, which is how the CLI learns the Server address
-and token. Re-generate that file after a token rotation with `agent-cluster-node-setup`.
+The endpoint package also installs the operator CLI as `/opt/agent-cluster/bin/agent-cluster-cli`,
+with `/usr/local/sbin/agent-cluster-cli` and `/usr/local/sbin/topsailai_agent_cluster` as symlinks
+to it, and writes `${HOME}/.topsailai/.topsailai_agent_cluster.env`, which is how the CLI learns
+the Server address and token. Re-generate that file after a token rotation with
+`agent-cluster-node-setup`.
 
 Operate the node with the controller:
 
