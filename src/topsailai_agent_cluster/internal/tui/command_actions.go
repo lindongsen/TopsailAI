@@ -58,7 +58,14 @@ func (r CommandRunner) PrepareAction(ctx context.Context, request ActionRequest)
 	if r.NewID != nil {
 		id = r.NewID()
 	}
-	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: id, IssuerID: "operator", Scope: "operator", EndpointID: request.EndpointID, Operation: request.Operation, OperationVersion: "v1", CapabilityRevision: descriptor.Revision, PayloadSchemaVersion: "v1", Folder: request.Folder, Payload: request.Payload, Budget: protocol.Budget{WaitTimeoutMS: request.WaitTimeoutMS}, ExecuteBeforeAtMS: now.UnixMilli() + 5*60*1000}
+	// The Endpoint matches a capability on both name and version, so the intent
+	// must carry the advertised version. A hardcoded default would make an
+	// advertised operation such as command.exec (version "1") unreachable.
+	operationVersion, err := CapabilityVersion(descriptor, request.Operation)
+	if err != nil {
+		return protocol.ImmutableIntent{}, err
+	}
+	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: id, IssuerID: "operator", Scope: "operator", EndpointID: request.EndpointID, Operation: request.Operation, OperationVersion: operationVersion, CapabilityRevision: descriptor.Revision, PayloadSchemaVersion: "v1", Folder: request.Folder, Payload: request.Payload, Budget: protocol.Budget{WaitTimeoutMS: request.WaitTimeoutMS}, ExecuteBeforeAtMS: now.UnixMilli() + 5*60*1000}
 	if request.Operation != "agent.start" {
 		intent.Target = &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}
 	}

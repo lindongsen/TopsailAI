@@ -86,7 +86,30 @@ Distinguish an ignorable keystroke from a fatal read failure:
 4. Add a unit test that feeds `0x15`, `0x07` and a truncated escape sequence through the real editor and
    asserts the REPL continues with the buffer unchanged.
 
+## Resolution
+
+Fixed in this change. An unhandled control rune is now classified as an ignorable keystroke instead of
+a read failure:
+
+- `internal/tui/line_keys.go` adds `errIgnoredKey` and returns it from the `unicode.IsControl` branch,
+  so an ignorable key is distinguishable from a malformed sequence.
+- `internal/tui/terminal_editor.go` continues the read loop on `errIgnoredKey`, keeping the current
+  line, instead of returning the error to the REPL.
+
+Malformed escape sequences still return `errLineKey` and remain fatal, because a truncated or oversized
+escape sequence leaves the input stream in an unknown position. Only a decoded control rune is
+ignorable.
+
 ## Verification
 
-Not yet fixed. The defect is recorded here so the behaviour is traceable; the `watch` feature itself is
-verified independently and does not depend on this fix.
+- `TestLineKeysIgnoreUnhandledControlRunes` asserts `0x15`, `0x07`, `0x0f`, `0x19` and `0x1a` yield
+  `errIgnoredKey` and are not classified as malformed.
+- `TestTerminalEditorIgnoresUnhandledControlKeys` feeds `ab\x15\x07\x0f\x19cd\r` through the real editor
+  and asserts the line resolves to `abcd`.
+- Both tests were confirmed to FAIL with the fix reverted (`err=unsupported or malformed terminal key`),
+  so they guard the behaviour rather than passing trivially.
+- `go test ./internal/tui/ -count=1` passes (109.7 s); `go test -race ./internal/tui/ -run
+  'Editor|LineKey|Watch|watch'` passes; `go test ./src/main/agent-cluster-cli/ -count=1` passes.
+- Live PTY probe against the rebuilt binary: typing `lis`, then Ctrl-U, then `t` and Enter leaves the
+  REPL alive (`alive_after_ctrl_u=1`), the prompt intact and the `list` table rendered, proving the
+  session survived the control byte and kept reading.

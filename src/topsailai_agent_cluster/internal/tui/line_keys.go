@@ -13,6 +13,12 @@ const maxLineKeySequence = 32
 
 var errLineKey = errors.New("unsupported or malformed terminal key")
 
+// errIgnoredKey marks a decoded key that carries no editing meaning, such as an
+// unhandled control character. It is not a read failure: the caller keeps the
+// current line and continues reading, because a stray control byte must never
+// destroy the operator's session.
+var errIgnoredKey = errors.New("ignorable terminal key")
+
 type lineKeyKind uint8
 
 const (
@@ -73,7 +79,7 @@ func readLineKey(reader *bufio.Reader) (lineKey, error) {
 		return lineKey{kind: lineKeyEOF}, nil
 	}
 	if unicode.IsControl(r) {
-		return lineKey{}, errLineKey
+		return lineKey{}, errIgnoredKey
 	}
 	return lineKey{kind: lineKeyText, text: r}, nil
 }

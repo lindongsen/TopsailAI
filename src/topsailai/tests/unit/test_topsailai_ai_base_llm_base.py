@@ -1768,6 +1768,61 @@ class TestLLMModelErrorHandling(unittest.TestCase):
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_reraises_attribute_error_without_retrying(
+            self, mock_base_init, mock_logger, mock_format, mock_sleep):
+        """An internal AttributeError must surface at once instead of retrying.
+
+        A malformed step such as a bare string violates an internal contract.
+        Retrying the identical request cannot repair a local programming defect,
+        so the bounded retry loop must not spend its attempts and sleeps before
+        reporting a misleading provider failure.
+        """
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "unused"
+
+        mock_format.side_effect = AttributeError(
+            "'str' object has no attribute 'get'"
+        )
+
+        model = self._create_mock_model()
+        model.model.create.return_value = mock_response
+
+        with self.assertRaises(AttributeError):
+            model.chat(self.messages)
+
+        self.assertEqual(mock_sleep, [])
+        self.assertEqual(mock_format.call_count, 1)
+        self.assertEqual(model.model.create.call_count, 1)
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_attribute_error_is_logged_with_traceback(
+            self, mock_base_init, mock_logger, mock_format, mock_sleep):
+        """The internal defect must be logged with a traceback for diagnosis."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "unused"
+
+        mock_format.side_effect = AttributeError("internal contract violation")
+
+        model = self._create_mock_model()
+        model.model.create.return_value = mock_response
+
+        with self.assertRaises(AttributeError):
+            model.chat(self.messages)
+
+        mock_logger.exception.assert_called_once()
+        logged_message = mock_logger.exception.call_args[0][0]
+        self.assertIn("internal attribute error", logged_message)
+
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_chat_handles_api_connection_error(self, mock_base_init, mock_logger, mock_format, mock_sleep):
         """Test chat handles APIConnectionError and retries."""
         import openai

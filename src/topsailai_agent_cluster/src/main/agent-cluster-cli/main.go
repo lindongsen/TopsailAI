@@ -191,6 +191,10 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		}
 		color := tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)
 		return action(ctx, api, output, input, errors, color, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
+	case "ctl":
+		return ctlCommand(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
+	case "exec":
+		return execCommand(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
 	}

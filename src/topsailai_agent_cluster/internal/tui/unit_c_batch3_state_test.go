@@ -70,7 +70,7 @@ func TestUnitCBatch3SessionRejection(t *testing.T) {
 	api := newUnitCAPI()
 	var out strings.Builder
 	exit, err := executeInteractiveLine(context.Background(), api, &state, "start", make(chan lineReadResult), &out, &out, &out, InteractiveOptions{})
-	want := `command "start" is unavailable in session scope; available commands: list, cd, show, info, resume, stop, inject, interrupt, drive, logs, send, status, refresh, help, quit`
+	want := `command "start" is unavailable in session scope; available commands: list, cd, show, info, resume, stop, inject, interrupt, ctl, drive, logs, send, status, refresh, help, quit`
 	if exit || err == nil || err.Error() != want || out.Len() != 0 || !reflect.DeepEqual(state, before) {
 		t.Fatalf("C6 session: exit=%v err=%v output=%q", exit, err, out.String())
 	}

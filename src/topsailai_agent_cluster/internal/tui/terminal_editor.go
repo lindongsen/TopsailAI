@@ -104,6 +104,12 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 		byteReader.escapeDeadline = time.Time{}
 		key, keyErr := readLineKey(reader)
 		if keyErr != nil {
+			// An ignorable key carries no editing meaning, so the line is kept
+			// and the loop continues. Treating it as a read failure would let a
+			// stray control byte destroy the operator's session.
+			if errors.Is(keyErr, errIgnoredKey) {
+				continue
+			}
 			if _, writeErr := io.WriteString(t.output, "\r\n"); writeErr != nil {
 				keyErr = errors.Join(keyErr, writeErr)
 			}

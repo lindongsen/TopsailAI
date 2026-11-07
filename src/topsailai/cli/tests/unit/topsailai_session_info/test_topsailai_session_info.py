@@ -88,29 +88,6 @@ class TestIsPidAlive:
         assert si._is_pid_alive(99999999) is False
 
 
-class TestFindSessionPid:
-    def test_no_task_dir(self, tmp_path: Path):
-        assert si._find_session_pid(str(tmp_path), "s1") is None
-
-    def test_no_matching_session(self, tmp_path: Path):
-        task_dir = tmp_path / si.TASK_SUBDIR
-        task_dir.mkdir(parents=True)
-        (task_dir / "other.123.session.stdout").write_text("")
-        assert si._find_session_pid(str(tmp_path), "s1") is None
-
-    def test_finds_most_recent_pid(self, tmp_path: Path):
-        task_dir = tmp_path / si.TASK_SUBDIR
-        task_dir.mkdir(parents=True)
-        old_file = task_dir / "s1.100.session.stdout"
-        old_file.write_text("")
-        old_stat = old_file.stat()
-        os.utime(old_file, (old_stat.st_atime - 100, old_stat.st_mtime - 100))
-
-        new_file = task_dir / "s1.200.session.stdout"
-        new_file.write_text("")
-        assert si._find_session_pid(str(tmp_path), "s1") == 200
-
-
 class TestIsSessionRunning:
     def test_running_session(self, tmp_path: Path):
         task_dir = tmp_path / si.TASK_SUBDIR

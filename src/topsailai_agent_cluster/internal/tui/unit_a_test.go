@@ -52,7 +52,10 @@ func TestUnitAPrimaryHelpHidesCompatibilityAliases(t *testing.T) {
 	if err := PrintScopedCommandHelp(&output, "", ScopeSession); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(output.String(), "btw") || strings.Contains(output.String(), "control") {
+	// The compatibility aliases must not be advertised as commands. The check is
+	// anchored to the rendered command line, because a canonical description may
+	// legitimately contain the word "control" (ctl sends a provider control action).
+	if strings.Contains(output.String(), "\n  btw ") || strings.Contains(output.String(), "\n  control ") {
 		t.Fatalf("primary session help exposed compatibility aliases: %q", output.String())
 	}
 	if err := PrintScopedCommandHelp(&output, "all", ScopeSession); err != nil {

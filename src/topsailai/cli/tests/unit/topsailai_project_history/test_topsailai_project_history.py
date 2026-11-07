@@ -191,29 +191,6 @@ class TestIsPidAlive:
         assert ph._is_pid_alive(99999999) is False
 
 
-class TestFindSessionPid:
-    def test_no_task_dir(self, tmp_path: Path):
-        assert ph._find_session_pid(str(tmp_path), "s1") is None
-
-    def test_no_matching_session(self, tmp_path: Path):
-        task_dir = tmp_path / ph.TASK_SUBDIR
-        task_dir.mkdir(parents=True)
-        (task_dir / "other.123.session.stdout").write_text("")
-        assert ph._find_session_pid(str(tmp_path), "s1") is None
-
-    def test_finds_most_recent_pid(self, tmp_path: Path):
-        task_dir = tmp_path / ph.TASK_SUBDIR
-        task_dir.mkdir(parents=True)
-        old_file = task_dir / "s1.100.session.stdout"
-        old_file.write_text("")
-        old_stat = old_file.stat()
-        os.utime(old_file, (old_stat.st_atime - 100, old_stat.st_mtime - 100))
-
-        new_file = task_dir / "s1.200.session.stdout"
-        new_file.write_text("")
-        assert ph._find_session_pid(str(tmp_path), "s1") == 200
-
-
 class TestIsSessionRunning:
     def test_no_task_dir(self, tmp_path: Path):
         assert ph._is_session_running(str(tmp_path), "s1") is False
@@ -236,7 +213,8 @@ class TestIsSessionRunning:
         (task_dir / "s1.99999999.session.stdout").write_text("")
         assert ph._is_session_running(str(tmp_path), "s1") is False
 
-    def test_uses_most_recent_file(self, tmp_path: Path):
+    def test_older_live_file_is_not_hidden_by_newer_dead_file(self, tmp_path: Path):
+        """A newer dead file must not hide an older live process."""
         task_dir = tmp_path / ph.TASK_SUBDIR
         task_dir.mkdir(parents=True)
         old_file = task_dir / f"s1.{os.getpid()}.session.stdout"
@@ -246,7 +224,7 @@ class TestIsSessionRunning:
 
         new_file = task_dir / "s1.99999999.session.stdout"
         new_file.write_text("")
-        assert ph._is_session_running(str(tmp_path), "s1") is False
+        assert ph._is_session_running(str(tmp_path), "s1") is True
 
     def test_recorded_pid_used_when_alive_and_file_exists(self, tmp_path: Path):
         task_dir = tmp_path / ph.TASK_SUBDIR
