@@ -479,7 +479,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "send":
 		return false, interactiveSend(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	default:
-		return false, fmt.Errorf("unknown command %q (try help)", name)
+		return false, offerSendForUnknownInput(ctx, api, state, line, name, lineResults, out, trustedOut, options)
 	}
 }
 

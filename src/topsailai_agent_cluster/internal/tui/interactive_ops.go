@@ -307,8 +307,41 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if afterCapability.Revision != beforeCapability.Revision {
 		return fmt.Errorf("capability changed after confirmation; send cancelled")
 	}
+	return submitSessionMessage(ctx, api, state, session, sendPayload, out, options)
+}
+
+// sendSessionMessage submits one message whose text the operator has already
+// confirmed. The caller owns the confirmation, so this path performs one
+// capability preflight and never asks the same question again.
+func sendSessionMessage(parent context.Context, api InteractiveAPI, state *interactiveState, text string, out io.Writer, options InteractiveOptions) error {
+	if err := state.requireUsable(); err != nil {
+		return err
+	}
+	if len(text) > options.LineLimit {
+		return fmt.Errorf("payload exceeds the maximum length")
+	}
+	payload, err := MessagePayload(text)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	if _, err := PreflightCapability(ctx, api, state.EndpointID, protocol.OperationMessageSend); err != nil {
+		return err
+	}
+	_, _, session, err := findSelected(ctx, api, state)
+	if err != nil {
+		return err
+	}
+	return submitSessionMessage(ctx, api, state, session, payload, out, options)
+}
+
+// submitSessionMessage prepares, admits and renders one message intent for an
+// already validated session, so both the send command and the unknown-input
+// offer share one submission path.
+func submitSessionMessage(ctx context.Context, api InteractiveAPI, state *interactiveState, session *protocol.Session, payload json.RawMessage, out io.Writer, options InteractiveOptions) error {
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: sendPayload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
+	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
 	if err != nil {
 		return err
 	}

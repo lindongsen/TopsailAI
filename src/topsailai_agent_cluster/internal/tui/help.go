@@ -96,7 +96,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"cd":        "bare cd or cd /: workspace; cd ..: endpoint; cd <target>: navigate",
 		"show":      "show the current session, or an explicit endpoint/session target",
 		"logs":      "show current session output, or another session in this endpoint; -n <lines> bounds the trailing lines",
-		"send":      "send a message to the current session after confirmation",
+		"send":      "send a message to the current session after confirmation; unrecognized text offers this action",
 		"resume":    "resume the current session",
 		"stop":      "stop the current session",
 		"inject":    "inject context into the current session",
@@ -350,6 +350,7 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 		workflow = "Bare cd or cd / returns to workspace; cd .. returns to endpoint. Numeric row navigation is unavailable in session scope.\n" +
 			"Entering a session renders one bounded output snapshot immediately; run logs again to re-read it.\n" +
 			"Session selectors use internal resource IDs or unique names, not necessarily the provider SESSION_ID shown in list.\n" +
+			"Text that matches no command is offered as a send message; declining keeps the unknown-command diagnostic.\n" +
 			"Actions require adapter capability support and fresh session data; scope availability alone does not guarantee support."
 	}
 	example := "Start example: start <endpoint> <resource> --profile <id> --profile-revision <revision>"

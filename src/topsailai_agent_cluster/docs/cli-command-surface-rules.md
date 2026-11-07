@@ -180,6 +180,36 @@ from the command word because it carries nothing. Neither is an alias entry: an
 alias maps one word to another, while a prefix changes the accepted spelling of
 every command at once.
 
+## Unrecognized input in session scope
+
+In session scope the common mistake is typing a message without the command word.
+Such a line is offered as a `send` instead of only being rejected:
+
+```text
+session[ai-dev/fixture-session]> hello world
+unknown command hello; send hello world as a message? [y/N]
+```
+
+- The offer applies only in session scope. `send` is unavailable in workspace and
+  endpoint scope, so an offer there could never be honoured and the plain
+  unknown-command diagnostic is kept.
+- The whole literal line is the message, not the words after the unrecognized
+  word. The operator typed one piece of text, and dropping its first word would
+  silently change what is sent.
+- Accepting runs the normal `send` flow with that text and does not ask the send
+  confirmation again, because the offer already named the exact text and action.
+  Declining, an empty answer, a partial answer or an unreadable answer keeps the
+  unknown-command diagnostic, so a typo is never swallowed and no mutating action
+  is inferred from silence.
+- The offer is a question, not a capability claim. The `send` flow keeps the
+  authoritative capability preflight, so an unsupported operation is still
+  reported precisely and the capability decision has one implementation.
+- A payload the `send` command itself rejects, such as a `--json` flag payload, is
+  rejected before the question is asked, so the offer never promises a send that
+  cannot be admitted.
+- The offer is interactive-only. A non-interactive caller passes the command word
+  explicitly, so no prompt can appear where no human is present.
+
 ## Global presentation flags
 
 Presentation flags are global: they are parsed before the command word and apply
