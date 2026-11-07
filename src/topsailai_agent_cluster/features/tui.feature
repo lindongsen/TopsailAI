@@ -85,3 +85,10 @@ Feature: non-interactive TUI
     And a session with provider output larger than 32768 bytes
     When I run the tui logs command with max bytes 65536
     Then the output length is greater than 32768
+
+  Scenario: interactive auto-refresh stops on the first keypress
+    Given a real cluster with a healthy provider for the TUI
+    When the interactive REPL runs watch in a real terminal
+    Then the auto-refresh loop reports its interval and mode
+    And the first keypress stops the auto-refresh loop
+    And the REPL keeps running after the loop stops

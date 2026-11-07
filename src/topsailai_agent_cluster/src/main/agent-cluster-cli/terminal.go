@@ -38,7 +38,11 @@ func (out terminalOutput) TableLayout() tui.TableLayout {
 }
 
 // interactiveEditor enables editing only for actual terminals with cancellable reads.
-func interactiveEditor(input io.Reader, output io.Writer) (tui.InteractiveLineReader, func() error, error) {
+// It returns the editor itself rather than only its ReadLine method, because the
+// auto-refresh loop needs the tick-capable reader from the same editor. Returning
+// a nil editor means editing is unavailable, and the caller must fall back to the
+// plain prompt reader.
+func interactiveEditor(input io.Reader, output io.Writer) (*tui.TerminalEditor, func() error, error) {
 	file, ok := input.(*os.File)
 	if !ok || !term.IsTerminal(int(file.Fd())) {
 		return nil, func() error { return nil }, nil
@@ -68,5 +72,19 @@ func interactiveEditor(input io.Reader, output io.Writer) (tui.InteractiveLineRe
 		}
 		return func() error { return term.Restore(fd, state) }, nil
 	})
-	return editor.ReadLine, owned.Close, nil
+	return editor, owned.Close, nil
+}
+
+// wireEditorReaders attaches both readers from one editor. A nil editor keeps the
+// plain prompt reader, so watch refuses explicitly instead of silently degrading
+// to a single read. This is a separate function so a test can prove the shipped
+// wiring provides the tick-capable reader, which unit tests that inject the reader
+// directly cannot prove.
+func wireEditorReaders(options tui.InteractiveOptions, editor *tui.TerminalEditor) tui.InteractiveOptions {
+	if editor == nil {
+		return options
+	}
+	options.ReadLine = editor.ReadLine
+	options.WatchReader = editor
+	return options
 }

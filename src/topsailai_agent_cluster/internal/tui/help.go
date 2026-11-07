@@ -45,6 +45,7 @@ var commandHelpCatalog = map[string]commandHelp{
 	"endpoints": {"endpoints [endpoint-id]", "list every registered endpoint with its connection state, observation time and capability revision; JSON output (--json) is available only in the standalone non-interactive command", []string{"endpoint-id: optional endpoint ID filter; an unknown filter renders an empty table", "read-only: it never forces provider discovery and never changes the list row numbers"}, []string{"endpoints", "endpoints endpoint-1"}},
 	"status":    {"status <command-id>", "show the durable result of a command", []string{"command-id: submitted command identifier"}, []string{"status cmd_123"}},
 	"refresh":   {"refresh", "force a fresh Endpoint collection and wait for it to be committed, then render the committed inventory", nil, []string{"refresh"}},
+	"watch":     {"watch [interval] [--force]", "re-render the list on a timer until any key is pressed; the default re-reads the persisted inventory every 5s, and --force performs a forced collection with a 10s floor", []string{"interval: optional positive duration, such as 5s or 500ms; the projection mode requires at least 1s", "--force: perform a forced Endpoint collection on every tick instead of re-reading the persisted inventory; requires at least 10s because each tick launches one provider discovery per endpoint", "any keypress stops the loop before the key is applied", "a refresh that changes the row set prints one rebinding diagnostic, so a row number never changes silently", "unavailable in session scope, because a forced refresh can invalidate the pinned session", "--json: rejected in interactive mode"}, []string{"watch", "watch 2s", "watch --force", "watch 10s --force"}},
 	"help":      {"help [command]", "show the command overview or detailed help for one command", []string{"command: optional command name, or scope for the scope model"}, []string{"help", "help list", "help scope"}},
 	"quit":      {"quit", "leave interactive mode", nil, []string{"quit"}},
 }
@@ -74,6 +75,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"stop":      "stop a session by row number or session ID",
 		"status":    "show command result",
 		"refresh":   "refresh inventories",
+		"watch":     "re-render the list on a timer until any key is pressed",
 		"help":      "show help",
 		"quit":      "exit",
 	},
@@ -85,6 +87,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"stop":    "stop a session in this endpoint by row number or session ID",
 		"status":  "show command result",
 		"refresh": "refresh the current endpoint",
+		"watch":   "re-render the endpoint table on a timer until any key is pressed",
 		"help":    "show help",
 		"quit":    "exit",
 	},

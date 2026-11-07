@@ -119,12 +119,13 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if !terminal {
 			return fmt.Errorf("interactive mode requires a terminal on stdin")
 		}
-		readLine, closeEditor, editorErr := interactiveEditor(input, output)
+		editor, closeEditor, editorErr := interactiveEditor(input, output)
 		if editorErr != nil {
 			return editorErr
 		}
 		defer closeEditor()
-		return tui.RunInteractive(ctx, api, input, output, errors, tui.InteractiveOptions{ReadLine: readLine, MaxBytes: *maxBytes, MaxLines: *lines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)})
+		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: *lines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)}
+		return tui.RunInteractive(ctx, api, input, output, errors, wireEditorReaders(options, editor))
 	}
 	switch flags.Arg(0) {
 	case "help":

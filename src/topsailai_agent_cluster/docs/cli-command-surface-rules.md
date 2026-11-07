@@ -69,6 +69,7 @@ was dispatched rather than rejected as unknown.
 | `agent.drive.start` | `drive start` | `drive start` | yes |
 | `agent.drive.stop` | `drive stop` | `drive stop` | yes |
 | `drive status` | `drive status` | `drive status`, `drive` | yes |
+| `watch` | not applicable | `watch`, `w` | yes |
 | `help` | `help` | `help`, `?` | yes |
 | `cd` | not applicable | `cd` | not applicable |
 | `quit` | not applicable | `quit`, `exit`, `q` | not applicable |
@@ -84,6 +85,28 @@ Two spellings are intentionally asymmetric:
 
 `cd` and `quit` navigate a session that only exists inside the interactive loop, so
 they have no standalone meaning and are not gaps.
+
+`watch` is interactive-only for a different reason, and it is not a gap either. It
+adds no behaviour: every tick performs exactly `list` (re-read the persisted
+projection) or `refresh` (forced collection), and both of those are fully
+reachable standalone with `--json`. What `watch` adds is a presentation cadence —
+re-rendering a table on a timer while a prompt sits idle, and stopping on the first
+keypress. A non-interactive caller that wants repeated reads writes its own loop
+around `list`, which is strictly more expressive because it controls the exit
+condition and the output format. The loop therefore has no standalone contract to
+pin, and inventing one would duplicate `list` behind a second name.
+
+Two consequences follow, and both are enforced:
+
+- `watch` rejects `--json` in interactive mode instead of silently ignoring it, so
+  a caller cannot believe it received a machine-readable stream.
+- The standalone surface rejects `watch` as an unknown command rather than
+  accepting it and degrading to a single read, which would violate the
+  failure-semantics rule above.
+
+The behaviour `watch` drives is pinned by the standalone tests for `list` and
+`refresh`; the loop itself is pinned by the editor-level tests that inject a tick
+channel, so no part of it depends on manual keystrokes for verification.
 
 Removed spellings must stay rejected rather than silently reinterpreted: `table`
 returns an explicit removal message pointing at `list --clean`, and `use` is

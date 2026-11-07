@@ -412,6 +412,18 @@ func (c *Cluster) RunTUI(args ...string) (stdout string, stderr string, exitCode
 // The combined terminal output is returned because the REPL writes prompts and
 // results to the same terminal stream.
 func (c *Cluster) RunTUIInteractive(stdin string, args ...string) (stdout string, stderr string, exitCode int, err error) {
+	return c.runTUIInteractiveWithTerm(stdin, "dumb", args...)
+}
+
+// RunTUIInteractiveEditor drives the REPL through a PTY with a real TERM, so the
+// raw-mode editor is active. Auto-refresh needs that editor, because TERM=dumb
+// selects the plain reader and watch then refuses explicitly.
+func (c *Cluster) RunTUIInteractiveEditor(stdin string, args ...string) (stdout string, stderr string, exitCode int, err error) {
+	return c.runTUIInteractiveWithTerm(stdin, "xterm-256color", args...)
+}
+
+// runTUIInteractiveWithTerm runs the REPL under one terminal type.
+func (c *Cluster) runTUIInteractiveWithTerm(stdin string, termType string, args ...string) (stdout string, stderr string, exitCode int, err error) {
 	if c.TUIPath == "" {
 		return "", "", -1, fmt.Errorf("TUI binary has not been built; call BuildTUI first")
 	}
@@ -430,7 +442,7 @@ func (c *Cluster) RunTUIInteractive(stdin string, args ...string) (stdout string
 		"AGENT_CLUSTER_TLS_CA_FILE="+c.Certs.CA,
 		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+c.Certs.ClientCert,
 		"AGENT_CLUSTER_TLS_KEY_FILE="+c.Certs.ClientKey,
-		"TERM=dumb",
+		"TERM="+termType,
 	)
 	cmd.Stdin = strings.NewReader(stdin)
 	var out, stderrBuffer bytes.Buffer

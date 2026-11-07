@@ -58,6 +58,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	registerU22Steps(ctx)
 	registerU24Steps(ctx)
 	registerProviderResponseSteps(ctx)
+	registerWatchSteps(ctx)
 	ctx.After(func(goCtx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if activeScenario != nil && activeScenario.commandDone != nil {
 			<-activeScenario.commandDone
