@@ -102,6 +102,26 @@ def is_pid_alive(pid: object) -> bool:
     return pid_state(pid) is ProcessState.ALIVE
 
 
+#: On-disk identity of a temporary session. ``log_files`` parses
+#: ``topsailai.{pid}.session.stdout`` as ``None``, while the display layer uses
+#: the literal sentinel ``topsailai``. Both name the same session.
+_TEMP_SESSION_ID = "topsailai"
+
+
+def _matches_session(parsed_session_id: Optional[str], session_id: str) -> bool:
+    """Return whether a parsed filename identity names *session_id*.
+
+    The display layer and the storage layer use different identifiers for a
+    temporary session, so the display sentinel is translated to the on-disk
+    identity before comparing.
+    """
+    if parsed_session_id == session_id:
+        return True
+    if session_id == _TEMP_SESSION_ID and parsed_session_id is None:
+        return True
+    return False
+
+
 def _session_stdout_candidates(task_dir: str, session_id: str) -> List[str]:
     """Return every session stdout file belonging to *session_id*.
 
@@ -117,7 +137,7 @@ def _session_stdout_candidates(task_dir: str, session_id: str) -> List[str]:
         if not entry.endswith(".session.stdout"):
             continue
         parsed_session_id, _pid = _parse_stdout_filename(entry)
-        if parsed_session_id == session_id:
+        if _matches_session(parsed_session_id, session_id):
             candidates.append(os.path.join(task_dir, entry))
     return candidates
 

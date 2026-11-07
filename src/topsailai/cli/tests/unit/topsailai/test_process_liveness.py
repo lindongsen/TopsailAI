@@ -236,6 +236,21 @@ class TestSessionLiveness(unittest.TestCase):
         self.assertEqual(session_liveness("sess-1", home=self.home), "idle")
         os.makedirs(self.task_dir)
 
+    def test_temp_session_sentinel_matches_on_disk_identity(self):
+        """The ``topsailai`` sentinel must resolve the on-disk temp identity.
+
+        ``log_files`` parses ``topsailai.{pid}.session.stdout`` as ``None``
+        while the display layer uses the literal ``topsailai``, so the two
+        identifiers must be treated as the same session.
+        """
+        self._touch(f"topsailai.{os.getpid()}.session.stdout", 1000)
+        self.assertEqual(session_liveness("topsailai", home=self.home), "live")
+
+    def test_temp_session_sentinel_does_not_match_named_session(self):
+        """A named session must not absorb a temporary session's file."""
+        self._touch(f"topsailai.{os.getpid()}.session.stdout", 1000)
+        self.assertEqual(session_liveness("sess-1", home=self.home), "idle")
+
 
 if __name__ == "__main__":
     unittest.main()
