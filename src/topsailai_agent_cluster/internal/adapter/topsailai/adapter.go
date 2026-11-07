@@ -97,6 +97,8 @@ func (a *Adapter) Describe(context.Context) (adapter.Descriptor, error) {
 			{Name: protocol.OperationOutputRead, Version: "v1", TargetKinds: []string{"session"}},
 			{Name: protocol.OperationAgentStart, Version: "v1", TargetKinds: []string{"endpoint"}},
 			{Name: protocol.OperationAgentResume, Version: "v1", TargetKinds: []string{"session"}},
+			{Name: protocol.OperationAgentDriveStart, Version: "v1", TargetKinds: []string{"session"}},
+			{Name: protocol.OperationAgentDriveStop, Version: "v1", TargetKinds: []string{"session"}},
 		}},
 	}
 	if a.platformStop {
@@ -118,6 +120,73 @@ type workspaceItem struct {
 	State             string          `json:"state"`
 	Status            string          `json:"status"`
 	AgentID           string          `json:"agent_id"`
+	// Driver is the provider's own controller observation. It is null when the
+	// provider reported no observation for this row, which is not the same as a
+	// confirmed absence of a controller.
+	Driver *workspaceDriver `json:"driver"`
+}
+
+// workspaceDriver mirrors the provider's driver observation document.
+type workspaceDriver struct {
+	State         string `json:"state"`
+	Reason        string `json:"reason"`
+	DriverPID     int64  `json:"driver_pid"`
+	RunID         string `json:"run_id"`
+	Verification  string `json:"verification"`
+	MetadataState string `json:"metadata_status"`
+}
+
+// driveSummary maps the provider's driver vocabulary onto the standard states.
+//
+// The provider distinguishes a verified controller from an unverified record, so
+// STALE and "?" must never be reported as running: an operator who believes a
+// controller is active when it is not would stop supervising the session.
+func driveSummary(driver *workspaceDriver, observedAtMS int64) *protocol.DriveSummary {
+	if driver == nil {
+		return nil
+	}
+	summary := &protocol.DriveSummary{
+		Reason:        boundedDriveReason(driver.Reason),
+		ControllerPID: driver.DriverPID,
+		RunID:         driver.RunID,
+		Verified:      driver.Verification == "verified",
+		ObservedAtMS:  observedAtMS,
+	}
+	switch driver.State {
+	case "ON":
+		summary.State = protocol.DriveStateRunning
+	case "STALE":
+		summary.State = protocol.DriveStateStale
+	case "EXIT":
+		summary.State = protocol.DriveStateExited
+	case "FAIL":
+		summary.State = protocol.DriveStateFailed
+	case "-":
+		summary.State = protocol.DriveStateNone
+	default:
+		// "?" and any unrecognized value stay unknown rather than defaulting to
+		// a state that would imply a verified controller.
+		summary.State = protocol.DriveStateUnknown
+	}
+	if summary.State != protocol.DriveStateRunning {
+		summary.Verified = false
+	}
+	return summary
+}
+
+// boundedDriveReason keeps a provider reason code short enough to store and
+// render. Provider diagnostics stay local; only a bounded code is published.
+func boundedDriveReason(reason string) string {
+	const limit = 64
+	reason = strings.TrimSpace(reason)
+	if len(reason) <= limit {
+		return reason
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(reason[cut]) {
+		cut--
+	}
+	return reason[:cut]
 }
 
 func workspaceGeneration(raw json.RawMessage) (string, error) {
@@ -186,7 +255,8 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 		if state == "" {
 			state = item.Status
 		}
-		result.Sessions = append(result.Sessions, protocol.Session{SessionID: resourceID, ProviderSessionID: item.SessionID, DisplayName: item.SessionName, AgentID: item.AgentID, Generation: generation, AdapterID: a.config.AdapterID, State: state, ObservedAtMS: time.Now().UnixMilli()})
+		observedAtMS := time.Now().UnixMilli()
+		result.Sessions = append(result.Sessions, protocol.Session{SessionID: resourceID, ProviderSessionID: item.SessionID, DisplayName: item.SessionName, AgentID: item.AgentID, Generation: generation, AdapterID: a.config.AdapterID, State: state, ObservedAtMS: observedAtMS, Drive: driveSummary(item.Driver, observedAtMS)})
 	}
 	if response.Total != nil && *response.Total > len(response.Items) {
 		result.Complete = false
@@ -292,11 +362,27 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "generation_required")}, errors.New("generation is required for stop")
 		}
 		args = []string{"workspace", "kill", providerKey, "-g", intent.Target.Generation, "--json"}
+	case protocol.OperationAgentDriveStart:
+		// The provider selects the unique live row for the session and rejects an
+		// ambiguous target itself. The adapter passes no PID: a cluster generation
+		// is not a provider PID, and inventing one would address a different
+		// process than the one the Endpoint just revalidated.
+		args = []string{"workspace", "driver", "start", "-s", providerKey, "--json"}
+	case protocol.OperationAgentDriveStop:
+		// Stop addresses the recorded controller, including a residual record whose
+		// process is already gone, so it must not require a live target.
+		args = []string{"workspace", "driver", "stop", "-s", providerKey, "--json"}
 	default:
 		return adapter.ExecuteResult{Receipt: failedReceipt(intent, "unsupported")}, adapter.ErrUnsupported
 	}
 	output, runErr := a.run(ctx, args, stdin)
 	if runErr != nil {
+		// A non-zero exit still carries the provider's structured outcome document
+		// for a rejected, failed or unconfirmed result. Decoding it preserves the
+		// real effect certainty instead of flattening every failure to unknown.
+		if receipt, ok := decodedFailureReceipt(intent, output); ok {
+			return adapter.ExecuteResult{Receipt: receipt}, runErr
+		}
 		receipt := failedReceipt(intent, "provider_failed")
 		receipt.EffectCertainty = protocol.EffectUnknown
 		// The provider's own diagnostic is the only evidence of why the call
@@ -307,6 +393,32 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 	receipt := receiptFromJSON(intent, output)
 	receipt.ProviderResponse, receipt.ProviderResponseTruncated = boundedProviderResponse(string(output))
 	return adapter.ExecuteResult{Receipt: receipt}, nil
+}
+
+// decodedFailureReceipt decodes the provider's own outcome document from a
+// non-zero exit. It reports false when stdout carries no provider document, so
+// the caller can fall back to the stderr diagnostic instead of losing it.
+func decodedFailureReceipt(intent protocol.ImmutableIntent, output []byte) (protocol.ExecutionReceipt, bool) {
+	trimmed := bytes.TrimSpace(output)
+	if len(trimmed) == 0 {
+		return protocol.ExecutionReceipt{}, false
+	}
+	// Only a document that actually carries a provider outcome is evidence. Any
+	// other stdout content must not mask the stderr diagnostic.
+	var probe map[string]json.RawMessage
+	if json.Unmarshal(trimmed, &probe) != nil {
+		return protocol.ExecutionReceipt{}, false
+	}
+	if _, ok := probe["delivery_state"]; !ok {
+		if _, ok := probe["delivery_boundary"]; !ok {
+			if _, ok := probe["error_code"]; !ok {
+				return protocol.ExecutionReceipt{}, false
+			}
+		}
+	}
+	receipt := receiptFromJSON(intent, trimmed)
+	receipt.ProviderResponse, receipt.ProviderResponseTruncated = boundedProviderResponse(string(trimmed))
+	return receipt, true
 }
 
 // boundedProviderResponse applies the receipt bound to one provider document.
@@ -401,13 +513,13 @@ func (a *Adapter) providerTarget(target *protocol.CommandTarget) (string, error)
 
 func (a *Adapter) run(ctx context.Context, args []string, stdin []byte) ([]byte, error) {
 	output, err := a.runner.Run(ctx, a.config.Executable, args, stdin)
-	if err != nil {
-		return nil, err
-	}
 	if len(output) > a.config.MaxOutput {
 		return nil, fmt.Errorf("provider output exceeds limit")
 	}
-	return output, nil
+	// A non-zero provider exit still carries its structured outcome document on
+	// stdout, so the captured bytes must reach the caller that decodes them.
+	// Callers that treat any error as a plain failure simply ignore the output.
+	return output, err
 }
 
 // ReadOutput returns one bounded runtime log snapshot.
@@ -488,6 +600,29 @@ func receiptFromJSON(intent protocol.ImmutableIntent, output []byte) protocol.Ex
 	case "signal_sent":
 		receipt.DeliveryBoundary = protocol.DeliverySignalSent
 		receipt.EffectCertainty = protocol.EffectAcknowledged
+	case "launched", "already_running", "status_read":
+		// The provider verified the controller publication or read its state, so the
+		// request itself is acknowledged. This is not a claim about agent work.
+		receipt.DeliveryBoundary = protocol.DeliverySubmitted
+		receipt.EffectCertainty = protocol.EffectAcknowledged
+		receipt.Outcome = "succeeded"
+	case "stopped", "already_stopped":
+		// The provider confirmed the recorded controller process is absent, so the
+		// signal is both sent and its exit confirmed.
+		receipt.DeliveryBoundary = protocol.DeliverySignalSent
+		receipt.EffectCertainty = protocol.EffectAcknowledged
+		receipt.Outcome = "succeeded"
+		receipt.ExitConfirmed = true
+	case "rejected":
+		receipt.Outcome = "rejected"
+		receipt.EffectCertainty = protocol.EffectNotApplied
+		receipt.ErrorCode = response.ErrorCode
+	case "unconfirmed":
+		// The provider delivered the request but could not confirm the outcome, so the
+		// effect stays unknown instead of being reported as a definite failure.
+		receipt.Outcome = "unconfirmed"
+		receipt.EffectCertainty = protocol.EffectUnknown
+		receipt.ErrorCode = response.ErrorCode
 	case "failed":
 		receipt.Outcome = "failed"
 		receipt.EffectCertainty = protocol.EffectNotApplied

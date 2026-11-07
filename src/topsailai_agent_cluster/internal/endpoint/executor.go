@@ -146,8 +146,16 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 	}
 	receipt.Phase = protocol.PhaseReceiptRecorded
 	if executeErr != nil {
-		receipt.Outcome = "failed"
-		receipt.EffectCertainty = protocol.EffectUnknown
+		// An adapter may return a decoded provider document together with the error,
+		// for example a rejected or unconfirmed outcome reported on a non-zero exit.
+		// Only fill in what the adapter did not determine, so that evidence is not
+		// flattened into a generic failure.
+		if receipt.Outcome == "" {
+			receipt.Outcome = "failed"
+		}
+		if receipt.EffectCertainty == "" {
+			receipt.EffectCertainty = protocol.EffectUnknown
+		}
 		receipt.ErrorMessage = executeErr.Error()
 		if receipt.DeliveryBoundary == "" {
 			receipt.DeliveryBoundary = protocol.DeliveryNotStarted

@@ -7,6 +7,8 @@ const (
 	OperationAgentStart         = "agent.start"
 	OperationAgentResume        = "agent.resume"
 	OperationAgentStop          = "agent.stop"
+	OperationAgentDriveStart    = "agent.drive.start"
+	OperationAgentDriveStop     = "agent.drive.stop"
 	OperationOutputRead         = "output.read"
 	OperationDiscover           = "discover"
 )
