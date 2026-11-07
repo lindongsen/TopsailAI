@@ -1,9 +1,10 @@
 # Compiled command entry points built into the workspace bin folder
 /bin/
 
-# Binary dropped in the project root by `go build ./tests/fixtures/topsailai`.
+# Binaries dropped in the project root by `go build ./tests/fixtures/<name>`.
 #
-# Root-anchored on purpose: a bare `topsailai` pattern also matches the fixture
-# source directory `tests/fixtures/topsailai/` at any depth, which would
-# silently exclude that source tree from version control.
-/topsailai
+# Root-anchored on purpose: `go build` names the output after the package
+# directory, so a bare pattern also matches the fixture source directory at any
+# depth and would silently exclude that source tree from version control.
+/topsailai_fixture
+/topsailai_session_info_fixture

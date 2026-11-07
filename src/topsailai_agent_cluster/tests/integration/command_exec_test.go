@@ -110,8 +110,11 @@ func startExecClusterWithScopes(t *testing.T, allowlist, scopes string) *execClu
 	providerDir := filepath.Join(root, "provider")
 	build(t, serverBinary, "./src/main/agent-cluster-server")
 	build(t, endpointBinary, "./src/main/agent-cluster-endpoint")
-	build(t, filepath.Join(providerDir, "topsailai"), "./tests/fixtures/topsailai")
-	build(t, filepath.Join(providerDir, "topsailai_session_info"), "./tests/fixtures/topsailai_session_info")
+	// The source directories carry a _fixture suffix so they never collide with
+	// the real provider tree, while the built binaries keep the provider names
+	// the adapter resolves.
+	build(t, filepath.Join(providerDir, "topsailai"), "./tests/fixtures/topsailai_fixture")
+	build(t, filepath.Join(providerDir, "topsailai_session_info"), "./tests/fixtures/topsailai_session_info_fixture")
 	c := &execCluster{
 		root: root, api: free(t),
 		serverDB:   filepath.Join(root, "server.db"),
