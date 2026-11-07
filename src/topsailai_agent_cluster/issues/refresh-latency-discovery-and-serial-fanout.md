@@ -41,24 +41,25 @@ additive.
 1.354 s. Stage timings: `discover_workspace_log_files` 0.047 s, `enrich_files_with_session_names`
 1.362 s, `_workspace_json_item` loop 1.571 s, `uv` + import 0.53-0.62 s.
 
-Dead-PID liveness probing is the dominant provider defect: 8 dead rows cost **1.413 s** while 7 alive
-rows cost **0.007 s**, a 200x difference. One `refresh` spawned **14 `lsof` + 7 `fuser` = 21
-subprocesses**.
+Dead-PID liveness probing was the dominant provider defect when this issue was first
+measured: 8 dead rows cost **1.413 s** while 7 alive rows cost **0.007 s**, a 200x
+difference, and one `refresh` spawned **14 `lsof` + 7 `fuser` = 21 subprocesses**.
+
+**This layer is already fixed.** Commit `6427f977 fix: resolve file holders from the
+process table before external tools` (2026-11-07 11:15:50) added `_proc_available` and
+`_proc_holds_file` and made `is_file_in_use` consult the process table first. It is an
+ancestor of HEAD. Re-measured on 2026-11-07: 20 dead PIDs spawn **0** subprocesses, and
+one dead-PID probe costs mean **0.0417 s** (max 0.0520 s over 10 runs, 80 `/proc`
+entries). Full discovery is now **1.79-1.91 s** for 10 rows, not 5.42 s.
 
 ## Root cause
 
-Three additive layers:
+Two additive layers remain:
 
-1. **Provider discovery cost.** `_workspace_json_item` calls `is_process_holding_file` per row.
-   `is_process_holding_file` (`cli/cli_topsailai/log_files.py:453`) reads `/proc/<pid>/fd` and falls back
-   to `is_file_in_use` when that directory is absent. A dead PID has no `/proc/<pid>/fd`, so every dead
-   row triggers a system-wide `lsof -t` scan and then a `fuser` scan (~0.3 s per row). On Linux the
-   fallback is logically unnecessary: a missing `/proc/<pid>` already proves the process cannot hold the
-   file.
-2. **Serial Endpoint fan-out.** `forceCollection` (`internal/tui/refresh.go`) awaits each
+1. **Serial Endpoint fan-out.** `forceCollection` (`internal/tui/refresh.go`) awaits each
    `RefreshInventory` before starting the next Endpoint, so workspace scope costs the sum instead of the
    maximum. Endpoints are independent.
-3. **Inline collection on the channel read loop.** `publishRefresh`
+2. **Inline collection on the channel read loop.** `publishRefresh`
    (`internal/endpoint/service.go:304`) calls `Collect` inline in `channelLoop`, blocking command,
    receipt, launch, output and heartbeat frames for the whole collection. `Collector.Collect` also has no
    cycle-level mutex (only `apply`/`compose` are guarded), so the 10 s `collectionLoop` and a forced
@@ -66,7 +67,7 @@ Three additive layers:
    serialization; the implementation does not provide it.
 
 This is not a timeout: Endpoint collection 30 s, Server `refreshTimeout` 30 s, TUI
-`refreshCommandTimeout` 35 s are all above the observed 10-11 s. The 409 `not_committed` freshness guard
+`refreshCommandTimeout` 35 s are all above the observed latency. The 409 `not_committed` freshness guard
 is not involved; refreshes returned HTTP 200 with fresh `DATA_STATUS` timestamps.
 
 Unlike `issues/done/logs-latency-redundant-discovery.md` and `issues/done/send-latency-redundant-discovery.md`,
@@ -75,19 +76,24 @@ make the command a lie.
 
 ## Proposed resolution
 
-Not implemented. Ordered by measured benefit and risk:
+Ordered by measured benefit and risk:
 
-1. Provider: skip the `lsof`/`fuser` fallback when `/proc/<pid>` is absent on a `/proc`-capable host
-   (~1.4 s per discovery, ~40%). Belongs to the provider project.
+1. Provider: skip the `lsof`/`fuser` fallback when `/proc/<pid>` is absent on a `/proc`-capable host.
+   **DONE** in `6427f977`, which resolves holders from the process table before any external tool.
 2. Cluster: parallelize `forceCollection` with a bounded worker pool, preserving per-Endpoint error
-   isolation (~10.5 s to ~6 s for workspace scope).
-3. Cluster: move `publishRefresh` off the channel read loop.
-4. Cluster: serialize and coalesce `Collect` cycles as the protocol already requires.
-5. Provider: batch liveness probing into one pass.
+   isolation. Not implemented; deferred by the human on 2026-11-07.
+3. Cluster: move `publishRefresh` off the channel read loop. Not implemented; same deferral.
+4. Cluster: serialize and coalesce `Collect` cycles as the protocol already requires. Not implemented;
+   same deferral.
+5. Provider: batch liveness probing into one pass. Not implemented. The residual cost is a full `/proc`
+   scan per dead row (mean 0.0417 s), which is negligible at the measured scale, so this is not
+   recommended without a larger process count.
 
 ## Prevention
 
-- Regression test asserting zero `lsof`/`fuser` spawns for dead PIDs on Linux.
+- Regression test asserting no external tool is spawned when the process table can answer. **DONE** in
+  `6427f977`: `test_no_holder_does_not_spawn_a_tool` in
+  `cli/tests/unit/topsailai/test_log_file_use.py` asserts `subprocess.Popen` is never called.
 - Regression test asserting workspace-scope refresh latency tracks the slowest Endpoint, not the sum.
 - Regression test asserting two overlapping refresh requests produce one provider discovery.
 - Regression test asserting command and heartbeat frames are served during a forced collection.
