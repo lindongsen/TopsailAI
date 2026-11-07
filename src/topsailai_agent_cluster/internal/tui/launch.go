@@ -137,8 +137,83 @@ func launchAnswerValueOrControl(ctx context.Context, lines <-chan lineReadResult
 	}
 }
 
+// launchTaskAnswer reads the initial task of a project launch. An empty answer
+// enters multi-line task mode, so a task never has to be squeezed into one line;
+// the accepted multi-line body is echoed verbatim with colour so the operator can
+// verify exactly what will be sent. The word "cancel" still cancels, because an
+// empty answer now means "compose a multi-line task" rather than "abort".
+func launchTaskAnswer(ctx context.Context, lines <-chan lineReadResult, out, trustedOut io.Writer, state *interactiveState, options InteractiveOptions) (string, error) {
+	prompt := "start.task> "
+	for {
+		if _, err := io.WriteString(out, prompt); err != nil {
+			return "", &startPromptTermination{kind: startPromptFatal, cause: err}
+		}
+		line, err := readStartAnswer(ctx, lines, prompt)
+		if errors.Is(err, errStartPromptOverflow) {
+			if writeErr := writeInteractiveError(out, "start", fmt.Errorf("input line exceeds the maximum length")); writeErr != nil {
+				return "", &startPromptTermination{kind: startPromptFatal, cause: writeErr}
+			}
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "cancel" {
+			if _, writeErr := fmt.Fprintln(out, "start cancelled"); writeErr != nil {
+				return "", &startPromptTermination{kind: startPromptFatal, cause: writeErr}
+			}
+			return "", nil
+		}
+		if trimmed == "" {
+			return launchMultiLineTask(ctx, lines, out, trustedOut, options)
+		}
+		outcome, value := classifyLaunchAnswer(line)
+		if outcome != launchAnswerValue {
+			return "", launchOutcomeSignal(outcome)
+		}
+		if handled, handleErr := handleLaunchAnswerControl(out, state, line); handleErr != nil {
+			return "", handleErr
+		} else if handled {
+			continue
+		}
+		return value, nil
+	}
+}
+
+// launchOutcomeSignal converts a non-value launch outcome into the REPL signal.
+func launchOutcomeSignal(outcome launchAnswerOutcome) error {
+	switch outcome {
+	case launchAnswerQuit:
+		return errLaunchQuit
+	case launchAnswerRefresh:
+		return errLaunchRefresh
+	default:
+		return nil
+	}
+}
+
+// launchMultiLineTask reads one multi-line task block and echoes the accepted
+// body verbatim. The echo is written through the trusted writer, because the
+// safe writer strips the styling the operator asked for.
+func launchMultiLineTask(ctx context.Context, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) (string, error) {
+	block, err := readInteractiveTaskMultiLine(ctx, lines, out, options)
+	if errors.Is(err, errMultiLineEmpty) {
+		return "", fmt.Errorf("task must not be empty; enter a task or cancel")
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := writeMultiLineEcho(trustedOut, TaskEchoHeader, block.Text, options.Color); err != nil {
+		return "", &startPromptTermination{kind: startPromptFatal, cause: err}
+	}
+	return block.Text, nil
+}
+
 // projectLaunch collects a complete draft before submitting exactly one durable start.
-func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier, state *interactiveState, rest string, lines <-chan lineReadResult, out io.Writer, options InteractiveOptions) error {
+// The trusted writer carries the verbatim multi-line task echo, because the safe
+// writer strips the styling the operator asked for.
+func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier, state *interactiveState, rest string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
 	endpointID := state.Scope.EndpointID
 	args, err := splitInteractiveArguments(rest)
 	if err != nil || len(args) > 1 {
@@ -213,7 +288,7 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 	if err := protocol.ValidateFolder(folder); err != nil {
 		return err
 	}
-	task, err := launchAnswerValueOrControl(ctx, lines, out, state, "task")
+	task, err := launchTaskAnswer(ctx, lines, out, trustedOut, state, options)
 	if err != nil || task == "" {
 		return err
 	}

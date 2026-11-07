@@ -87,7 +87,7 @@ func TestLegacyAndInteractiveShowUseSharedRunnerMethods(t *testing.T) {
 func TestLegacyActionAndInteractiveSendShareIntentFields(t *testing.T) {
 	legacy := &actionPathStub{}
 	var legacyOut strings.Builder
-	if err := action(context.Background(), legacy, &legacyOut, strings.NewReader(""), []string{"send", "ep", "session", `{"text":"hi"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), legacy, &legacyOut, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", `{"text":"hi"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	interactive := &actionPathStub{}
@@ -322,12 +322,12 @@ func TestStandalonePlainTextPayloadsNeedNoJSON(t *testing.T) {
 func TestStandalonePlainTextMessageReachesIntent(t *testing.T) {
 	plain := &actionPathStub{}
 	var plainOut strings.Builder
-	if err := action(context.Background(), plain, &plainOut, strings.NewReader(""), []string{"send", "ep", "session", "hello world", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), plain, &plainOut, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello world", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	jsonForm := &actionPathStub{}
 	var jsonOut strings.Builder
-	if err := action(context.Background(), jsonForm, &jsonOut, strings.NewReader(""), []string{"send", "ep", "session", `{"text":"hello world"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), jsonForm, &jsonOut, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", `{"text":"hello world"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(plain.intents) != 1 || len(jsonForm.intents) != 1 {
@@ -678,7 +678,7 @@ func TestStandaloneSendWithoutTextReadsMultiLineBlock(t *testing.T) {
 	stub := &actionPathStub{}
 	var out strings.Builder
 	input := strings.NewReader("first line\nsecond line\nEOF\n")
-	if err := action(context.Background(), stub, &out, input, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
+	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
 		t.Fatal(err)
 	}
 	if len(stub.intents) != 1 {
@@ -698,7 +698,7 @@ func TestStandaloneSendMultiLineEndsAtEndOfInput(t *testing.T) {
 	stub := &actionPathStub{}
 	var out strings.Builder
 	input := strings.NewReader("first\nsecond\n")
-	if err := action(context.Background(), stub, &out, input, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(stub.intents) != 1 {
@@ -715,7 +715,7 @@ func TestStandaloneSendMultiLineRejectsEmptyBlock(t *testing.T) {
 	for _, input := range []string{"EOF\n", "", "\n\nEOF\n"} {
 		stub := &actionPathStub{}
 		var out strings.Builder
-		err := action(context.Background(), stub, &out, strings.NewReader(input), []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "")
+		err := action(context.Background(), stub, &out, strings.NewReader(input), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "")
 		if err == nil || err.Error() != "payload must not be empty" {
 			t.Fatalf("input=%q error=%v", input, err)
 		}
@@ -731,7 +731,7 @@ func TestStandaloneSendWithTextDoesNotReadInput(t *testing.T) {
 	stub := &actionPathStub{}
 	var out strings.Builder
 	input := &unreadableInput{}
-	if err := action(context.Background(), stub, &out, input, []string{"send", "ep", "session", "hello world", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello world", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if input.reads != 0 {
@@ -763,7 +763,7 @@ func TestStandaloneNonSendCommandsDoNotEnterMultiLineMode(t *testing.T) {
 		stub := &allCapabilityStub{}
 		var out strings.Builder
 		input := &unreadableInput{}
-		if err := action(context.Background(), stub, &out, input, []string{operation, "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
+		if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{operation, "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
 			t.Fatalf("%s: %v", operation, err)
 		}
 		if input.reads != 0 {
@@ -780,7 +780,7 @@ func TestStandaloneNonSendCommandsDoNotEnterMultiLineMode(t *testing.T) {
 func TestStandaloneSendMultiLineRejectsUnreadableInput(t *testing.T) {
 	stub := &actionPathStub{}
 	var out strings.Builder
-	err := action(context.Background(), stub, &out, nil, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "")
+	err := action(context.Background(), stub, &out, nil, io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "")
 	if err == nil || err.Error() != "multi-line input requires a readable stream" {
 		t.Fatalf("error=%v", err)
 	}

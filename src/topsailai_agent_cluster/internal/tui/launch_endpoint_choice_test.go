@@ -37,7 +37,7 @@ func TestProjectLaunchEndpointNumberSelectsEndpoint(t *testing.T) {
 	lines, done, stop := startInputReader(strings.NewReader("2\n1\ndo work\n"), 8192)
 	defer func() { stop(); done.Wait() }()
 	var out strings.Builder
-	if err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, "", lines, &out, InteractiveOptions{}); err != nil {
+	if err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, "", lines, &out, &out, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if stub.admit != 1 || stub.calls != 2 {
@@ -66,7 +66,7 @@ func TestProjectLaunchEndpointNumberRejectsOutOfRange(t *testing.T) {
 	}
 	lines, done, stop := startInputReader(strings.NewReader("9\n"), 8192)
 	defer func() { stop(); done.Wait() }()
-	err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, "", lines, io.Discard, InteractiveOptions{})
+	err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, "", lines, io.Discard, io.Discard, InteractiveOptions{})
 	if err == nil || !strings.Contains(err.Error(), "endpoint number 9 is out of range; valid numbers are 1-1") {
 		t.Fatalf("err=%v", err)
 	}
@@ -83,7 +83,7 @@ func TestProjectLaunchEndpointIdentifierStillAccepted(t *testing.T) {
 	}
 	lines, done, stop := startInputReader(strings.NewReader("endpoint-1\n1\ndo work\n"), 8192)
 	defer func() { stop(); done.Wait() }()
-	if err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, "", lines, io.Discard, InteractiveOptions{}); err != nil {
+	if err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, "", lines, io.Discard, io.Discard, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if stub.admit != 1 || len(stub.intents) != 1 || stub.intents[0].EndpointID != "endpoint-1" {
@@ -100,7 +100,7 @@ func TestProjectLaunchEndpointListFailureKeepsIdentifierPath(t *testing.T) {
 	lines, done, stop := startInputReader(strings.NewReader("endpoint-1\n1\ndo work\n"), 8192)
 	defer func() { stop(); done.Wait() }()
 	var out strings.Builder
-	if err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, "", lines, &out, InteractiveOptions{}); err != nil {
+	if err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, "", lines, &out, &out, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "Endpoint list unavailable (inventory unavailable); enter an endpoint ID.") {
@@ -119,7 +119,7 @@ func TestProjectLaunchEndpointNumberWithoutListRejects(t *testing.T) {
 	}
 	lines, done, stop := startInputReader(strings.NewReader("1\n"), 8192)
 	defer func() { stop(); done.Wait() }()
-	err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, "", lines, io.Discard, InteractiveOptions{})
+	err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, "", lines, io.Discard, io.Discard, InteractiveOptions{})
 	if err == nil || !strings.Contains(err.Error(), "endpoint list is unavailable; enter an endpoint ID") {
 		t.Fatalf("err=%v", err)
 	}
@@ -139,7 +139,7 @@ func TestProjectLaunchEndpointScopeSkipsNumberedList(t *testing.T) {
 	lines, done, stop := startInputReader(strings.NewReader("1\ndo work\n"), 8192)
 	defer func() { stop(); done.Wait() }()
 	var out strings.Builder
-	if err := projectLaunch(context.Background(), stub, stub, state, "", lines, &out, InteractiveOptions{}); err != nil {
+	if err := projectLaunch(context.Background(), stub, stub, state, "", lines, &out, &out, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "Choose an endpoint number") {

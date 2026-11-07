@@ -44,7 +44,7 @@ func TestProjectLaunchWizard(t *testing.T) {
 			lines, done, stop := startInputReader(strings.NewReader(item.input), 8192)
 			defer func() { stop(); done.Wait() }()
 			var out strings.Builder
-			err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, "endpoint-1", lines, &out, InteractiveOptions{})
+			err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, "endpoint-1", lines, &out, &out, InteractiveOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -118,7 +118,7 @@ func TestProjectLaunchErrors(t *testing.T) {
 				return protocol.LaunchOptions{Handlers: handlers, ErrorCode: item.code, Projects: []protocol.Project{{Path: "/work/one"}}}, nil
 			})
 			lines, done, stop := startInputReader(strings.NewReader(item.input), 8192)
-			err := projectLaunch(context.Background(), stub, query, &interactiveState{}, "endpoint-1", lines, io.Discard, InteractiveOptions{})
+			err := projectLaunch(context.Background(), stub, query, &interactiveState{}, "endpoint-1", lines, io.Discard, io.Discard, InteractiveOptions{})
 			stop()
 			done.Wait()
 			if item.name == "multiple" {
@@ -189,7 +189,7 @@ func TestProjectLaunchControlWords(t *testing.T) {
 			lines, done, stop := startInputReader(strings.NewReader(item.input), 8192)
 			defer func() { stop(); done.Wait() }()
 			var out strings.Builder
-			err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, item.rest, lines, &out, InteractiveOptions{})
+			err := projectLaunch(context.Background(), stub, stub, &interactiveState{}, item.rest, lines, &out, &out, InteractiveOptions{})
 			if item.wantErr != nil {
 				if !errors.Is(err, item.wantErr) {
 					t.Fatalf("err=%v want %v", err, item.wantErr)

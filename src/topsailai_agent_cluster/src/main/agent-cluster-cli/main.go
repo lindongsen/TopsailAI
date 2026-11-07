@@ -173,16 +173,17 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		}
 		return status(ctx, api, output, flags.Arg(1), *jsonMode)
 	case "send", "btw", "inject", "control", "start", "resume", "stop":
-		// A bare send reads a multi-line block from the command input. On a
-		// terminal nothing else would prompt, so the operator would face a
+		// A bare send or start reads a multi-line block from the command input.
+		// On a terminal nothing else would prompt, so the operator would face a
 		// silent wait; the hint goes to the diagnostics stream to keep the
 		// machine-readable output clean.
-		if flags.Arg(0) == "send" && flags.NArg() == 3 && terminal {
-			if _, err := fmt.Fprintln(errors, tui.MultiLineHint); err != nil {
+		if hint := multiLineHint(flags.Arg(0), flags.NArg(), *task, terminal); hint != "" {
+			if _, err := fmt.Fprintln(errors, hint); err != nil {
 				return err
 			}
 		}
-		return action(ctx, api, output, input, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
+		color := tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)
+		return action(ctx, api, output, input, errors, color, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
 	}
@@ -376,7 +377,11 @@ func resolveActionPayload(operation, value string) (json.RawMessage, error) {
 	return json.RawMessage(`{}`), nil
 }
 
-func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.Reader, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision, folder, task, generationFlag string) error {
+// action executes one non-interactive command. The diagnostics stream carries
+// operator-facing guidance and the verbatim multi-line task echo, so the
+// machine-readable output stream stays clean under --json. The colour policy is
+// resolved by the caller, because only it knows whether the output is a terminal.
+func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.Reader, diagnostics io.Writer, color tui.ColorPolicy, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision, folder, task, generationFlag string) error {
 	operation := args[0]
 	if operation == "stop" && len(args) < 4 && generationFlag == "" {
 		return fmt.Errorf("usage: stop <endpoint-id> <resource-id> <generation>")
@@ -403,6 +408,28 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 			// command input, so a message never has to be quoted into one line.
 			block, err := tui.ReadMultiLineBlock(input, 0)
 			if err != nil {
+				return err
+			}
+			resolved, err := resolveActionPayload(operation, block.Text)
+			if err != nil {
+				return err
+			}
+			payload = resolved
+		} else if operation == "start" && task == "" {
+			// A start without a task reads a multi-line task block, so a task
+			// never has to be quoted into one line. The accepted task is echoed
+			// verbatim with colour, so the operator can verify exactly what will
+			// be sent before the command is admitted. The launch profile is
+			// validated first, because reading a whole task block only to reject
+			// the invocation would waste the operator's input.
+			if profile == "" || profileRevision == "" {
+				return fmt.Errorf("start requires --profile and --profile-revision")
+			}
+			block, err := tui.ReadTaskMultiLineBlock(input, 0)
+			if err != nil {
+				return err
+			}
+			if err := tui.WriteTaskEcho(taskEchoWriter(output, diagnostics, jsonMode), block.Text, color); err != nil {
 				return err
 			}
 			resolved, err := resolveActionPayload(operation, block.Text)
@@ -476,3 +503,34 @@ func envOr(name, fallback string) string {
 }
 
 func noColorPresent() bool { _, ok := os.LookupEnv("NO_COLOR"); return ok }
+
+// multiLineHint reports how to finish a multi-line block, or an empty string
+// when the invocation carries its text explicitly. Only a terminal needs the
+// hint, because a piped stream already ends at the end of input.
+func multiLineHint(operation string, narg int, task string, terminal bool) string {
+	if !terminal {
+		return ""
+	}
+	switch operation {
+	case "send":
+		if narg == 3 {
+			return tui.MultiLineHint
+		}
+	case "start":
+		// A positional task or --task supplies the text, so no block is read.
+		if narg == 3 && task == "" {
+			return tui.MultiLineTaskHint
+		}
+	}
+	return ""
+}
+
+// taskEchoWriter selects the stream that carries the verbatim task echo. Under
+// --json the output stream must stay machine-readable, so the echo goes to the
+// diagnostics stream instead of corrupting the JSON document.
+func taskEchoWriter(output, diagnostics io.Writer, jsonMode bool) io.Writer {
+	if jsonMode {
+		return diagnostics
+	}
+	return output
+}

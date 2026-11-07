@@ -431,11 +431,11 @@ func (d *unitCBatch2Driver) interruptContinuation(t *testing.T) {
 func unitCBatch2HelpText() string {
 	first, _ := c10ExpectedWrite("help")
 	return first + "Parameters:\n" +
-		"  endpoint: endpoint ID\n  resource: compatibility resource identifier\n  --profile: launch profile ID (required)\n  --profile-revision: launch profile revision (required)\n  --folder: optional working folder; empty value is treated as omitted\n  --task: optional literal initial task text; no JSON is required\n  --json: rejected in interactive mode\nExamples:\n" +
+		"  endpoint: endpoint ID\n  resource: compatibility resource identifier\n  --profile: launch profile ID (required)\n  --profile-revision: launch profile revision (required)\n  --folder: optional working folder; empty value is treated as omitted\n  --task: optional literal initial task text; no JSON is required\n  without --task and without a positional task: read a multi-line task and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the task, and the accepted task is echoed verbatim with colour so it can be verified before submission\n  an empty multi-line task is rejected instead of submitting nothing\n  --json: rejected in interactive mode\nExamples:\n" +
 		"  start\n" +
 		"  start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1\n" +
 		`  start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1 --task "summarize the open issues"` + "\n" +
-		"Project launch: start [endpoint] selects a live adapter and project (or manual folder), then asks for the initial task. Without an endpoint argument it prints a numbered endpoint list and accepts a bare number, so no endpoint identifier has to be typed. Empty/cancel cancels. Legacy explicit --profile syntax and clients without launch queries use the endpoint/resource/profile/revision prompts; q quits, r refreshes, and help repeats guidance.\n"
+		"Project launch: start [endpoint] selects a live adapter and project (or manual folder), then asks for the initial task. Without an endpoint argument it prints a numbered endpoint list and accepts a bare number, so no endpoint identifier has to be typed. An empty task answer enters multi-line task mode: type the task, then finish it with a standalone EOF line or Ctrl+D, and the accepted task is echoed verbatim with colour so it can be verified before submission. Empty/cancel cancels. Legacy explicit --profile syntax and clients without launch queries use the endpoint/resource/profile/revision prompts; q quits, r refreshes, and help repeats guidance.\n"
 }
 
 // waitRun reads the cached result after the runner publication barrier.

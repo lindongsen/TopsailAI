@@ -413,7 +413,8 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		if query, ok := api.(LaunchQuerier); ok && !strings.Contains(rest, "--") {
 			recorder := &startOutputRecorder{}
 			startOut := newRecordingWriter(out, recorder)
-			err := projectLaunch(ctx, api, query, state, rest, lineResults, startOut, options)
+			startTrustedOut := newRecordingWriter(trustedOut, recorder)
+			err := projectLaunch(ctx, api, query, state, rest, lineResults, startOut, startTrustedOut, options)
 			if stderrors.Is(err, errLaunchQuit) {
 				return true, startOutputError(nil, recorder, startOut)
 			}
