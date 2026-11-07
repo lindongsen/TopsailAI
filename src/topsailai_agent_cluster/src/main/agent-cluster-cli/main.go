@@ -101,9 +101,11 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	if err := flags.Parse(hoistTrailingFlags(args)); err != nil {
 		return err
 	}
-	// The output boundary owns the truncation policy, so every render path
-	// inherits the flag without threading it through each command.
-	output = terminalOutput{Writer: output, full: *noTruncate}
+	// The output boundary owns the truncation and colour policy, so every render
+	// path inherits the flags without threading them through each command.
+	// Colour eligibility follows the output stream: a redirected stdout cannot
+	// render escape sequences even when stdin is an interactive terminal.
+	output = terminalOutput{Writer: output, full: *noTruncate, color: resolveOutputColor(output, *noColor)}
 	interactiveSelected, err := resolveInteractiveSelection(*interactiveShort, flags.Args())
 	if err != nil {
 		return err
@@ -125,7 +127,9 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return editorErr
 		}
 		defer closeEditor()
-		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: *lines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)}
+		// Colour follows the output boundary, so a REPL whose stdout is redirected
+		// stays plain even though interactive mode requires a terminal on stdin.
+		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: *lines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output)}
 		return tui.RunInteractive(ctx, api, input, output, errors, wireEditorReaders(options, editor))
 	}
 	switch flags.Arg(0) {
@@ -143,18 +147,18 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if err != nil {
 			return err
 		}
-		return list(ctx, api, output, errors, *filter, listClean, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
+		return list(ctx, api, output, errors, *filter, listClean, *jsonMode, tui.OutputColorPolicy(output))
 	case "refresh":
 		if err := parseRefreshArgs(flags.Args()[1:]); err != nil {
 			return err
 		}
-		return refresh(ctx, api, output, errors, *filter, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
+		return refresh(ctx, api, output, errors, *filter, *jsonMode, tui.OutputColorPolicy(output))
 	case "endpoints":
 		endpointFilter, err := parseEndpointsArgs(flags.Args()[1:], *filter)
 		if err != nil {
 			return err
 		}
-		return endpoints(ctx, api, output, endpointFilter, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
+		return endpoints(ctx, api, output, endpointFilter, *jsonMode, tui.OutputColorPolicy(output))
 	case "table":
 		return fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "show":
@@ -171,7 +175,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if flags.NArg() != 3 {
 			return fmt.Errorf("usage: logs <endpoint-id> <session-id>")
 		}
-		return logs(ctx, api, output, flags.Arg(1), flags.Arg(2), *maxBytes, *lines, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
+		return logs(ctx, api, output, flags.Arg(1), flags.Arg(2), *maxBytes, *lines, *jsonMode, tui.OutputColorPolicy(output))
 	case "status":
 		if flags.NArg() != 2 {
 			return fmt.Errorf("usage: status <command-id>")
@@ -189,7 +193,9 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 				return err
 			}
 		}
-		color := tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)
+		// Colour follows the output boundary, so a redirected stdout stays plain
+		// even when stdin is an interactive terminal.
+		color := tui.OutputColorPolicy(output)
 		return action(ctx, api, output, input, errors, color, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
 	case "ctl":
 		return ctlCommand(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)

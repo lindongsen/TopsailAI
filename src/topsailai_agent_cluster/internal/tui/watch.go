@@ -100,6 +100,18 @@ type watchResult struct {
 	err    error
 }
 
+// watchWriter sanitizes trusted table output while reporting the real output
+// boundary's layout. The auto-refresh table is rendered into a buffer, so
+// without this seam the renderer would see no terminal width and never fit the
+// table to the terminal the operator is actually watching.
+type watchWriter struct {
+	*safeWriter
+	layout TableLayout
+}
+
+// TableLayout reports the layout of the real output boundary, not the buffer.
+func (w *watchWriter) TableLayout() TableLayout { return w.layout }
+
 // watchController collects on a tick and publishes rendered output for the
 // editor thread. It never touches interactiveState or the terminal, so the
 // editor stays the only writer and REPL state needs no lock.
@@ -110,8 +122,11 @@ type watchController struct {
 	ticks   <-chan time.Time
 	release func()
 	color   ColorPolicy
-	ctx     context.Context
-	cancel  context.CancelFunc
+	// layout is the real output boundary's presentation policy, so a rendered
+	// table is fitted to the terminal instead of to the internal buffer.
+	layout TableLayout
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	mu      sync.Mutex
 	pending *watchResult
@@ -123,7 +138,7 @@ type watchController struct {
 
 // newWatchController starts one loop. The ticker is injected so tests can drive
 // ticks deterministically; nil selects the real ticker.
-func newWatchController(parent context.Context, api InteractiveAPI, filter string, request watchRequest, ticker WatchTicker, color ColorPolicy) *watchController {
+func newWatchController(parent context.Context, api InteractiveAPI, filter string, request watchRequest, ticker WatchTicker, color ColorPolicy, layout TableLayout) *watchController {
 	if ticker == nil {
 		ticker = realWatchTicker
 	}
@@ -136,6 +151,7 @@ func newWatchController(parent context.Context, api InteractiveAPI, filter strin
 		ticks:   ticks,
 		release: release,
 		color:   color,
+		layout:  layout,
 		ctx:     ctx,
 		cancel:  cancel,
 		done:    make(chan struct{}),
@@ -227,10 +243,13 @@ func (c *watchController) load(ctx context.Context) (reportLoad, error) {
 }
 
 // render produces the table bytes through the shared renderer, so sanitization
-// and layout stay identical to a manual list.
+// and layout stay identical to a manual list. The writer keeps trusted SGR when
+// the colour policy allows it, because the table renderer's styling is trusted
+// application output; provider-derived cell text is already sanitized by
+// escapeCell, so no untrusted escape can survive this seam.
 func (c *watchController) render(loaded reportLoad) ([]SessionRow, []byte, error) {
 	var buffer bytes.Buffer
-	safe := newSafeWriter(&buffer)
+	safe := &watchWriter{safeWriter: &safeWriter{target: &buffer, keepSGR: c.color.Enabled}, layout: c.layout}
 	var rows []SessionRow
 	options := tableOptionsFor(safe, c.color, false, func(rendered []SessionRow) {
 		rows = append(rows, rendered...)
@@ -370,7 +389,9 @@ func interactiveWatch(api InteractiveAPI, state *interactiveState, rest string, 
 // It consumes the intent, so a keypress that stops the loop cannot silently
 // re-arm it on the following prompt. It returns nil when no watch was requested
 // or the reader cannot observe one, so the plain read path stays byte-identical.
-func startWatch(parent context.Context, api InteractiveAPI, state *interactiveState, options InteractiveOptions) WatchSession {
+// out is the real output boundary, so the rendered table is fitted to the
+// terminal the operator is watching instead of to the internal buffer.
+func startWatch(parent context.Context, api InteractiveAPI, state *interactiveState, out io.Writer, options InteractiveOptions) WatchSession {
 	if state.watch == nil {
 		return nil
 	}
@@ -383,6 +404,6 @@ func startWatch(parent context.Context, api InteractiveAPI, state *interactiveSt
 	if err != nil {
 		return nil
 	}
-	controller := newWatchController(parent, api, filter, request, options.Ticks, options.Color)
+	controller := newWatchController(parent, api, filter, request, options.Ticks, options.Color, OutputLayout(out))
 	return &replWatch{controller: controller, state: state}
 }

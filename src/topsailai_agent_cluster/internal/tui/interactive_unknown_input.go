@@ -70,5 +70,5 @@ func offerSendForUnknownInput(parent context.Context, api InteractiveAPI, state 
 	}
 	// The accepted offer already named this exact text and action, so the send flow
 	// runs with that confirmation instead of asking the same question twice.
-	return sendSessionMessage(parent, api, state, text, out, options)
+	return sendSessionMessage(parent, api, state, text, out, trustedOut, options)
 }

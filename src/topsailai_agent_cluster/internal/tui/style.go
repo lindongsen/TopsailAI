@@ -24,6 +24,25 @@ func ResolveColorPolicy(outputTTY, noColorPresent, noColorFlag, termDumb, platfo
 	return ColorPolicy{Enabled: outputTTY && !noColorPresent && !noColorFlag && !termDumb && platformSupported}
 }
 
+// ColorPolicyProvider lets an output boundary report the colour policy it was
+// resolved with, so a renderer reached through a generic writer still honours
+// --no-color and a redirected stream. It mirrors TableLayoutProvider: the
+// boundary owns the presentation decision, and a renderer never probes global
+// terminal state.
+type ColorPolicyProvider interface {
+	ColorPolicy() ColorPolicy
+}
+
+// OutputColorPolicy obtains the boundary-provided colour policy. A writer that
+// does not report one keeps colour disabled, so an unknown boundary never
+// receives escape sequences it did not ask for.
+func OutputColorPolicy(out io.Writer) ColorPolicy {
+	if provider, ok := out.(ColorPolicyProvider); ok {
+		return provider.ColorPolicy()
+	}
+	return ColorPolicy{}
+}
+
 // writeStyled writes text with one ANSI style. An empty style means the text
 // carries no colour, so it is written plain instead of emitting a bare reset.
 func writeStyled(w io.Writer, style, text string, policy ColorPolicy) error {

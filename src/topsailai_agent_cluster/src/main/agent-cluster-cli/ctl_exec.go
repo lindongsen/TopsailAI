@@ -132,7 +132,9 @@ func submitAction(ctx context.Context, api tui.CommandAPI, output io.Writer, req
 		return runner.RenderAction(output, result)
 	}
 	if request.Operation == protocol.OperationCommandExec {
-		return tui.RenderCommandExecResult(output, result, tui.ResolveColorPolicy(false, true, true, true, true))
+		// The output boundary owns the colour decision, so a terminal run keeps
+		// the provider's SGR colour and a redirected run stays plain.
+		return tui.RenderCommandExecResult(output, result, tui.OutputColorPolicy(output))
 	}
 	return runner.RenderAction(output, result)
 }

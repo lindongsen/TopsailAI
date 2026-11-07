@@ -240,7 +240,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			// An armed auto-refresh loop starts before the read, because a blocking
 			// read cannot be interrupted from outside. The reader stops it on the
 			// first keypress, so the loop never outlives the prompt it serves.
-			watch := startWatch(readCtx, api, &state, options)
+			watch := startWatch(readCtx, api, &state, output, options)
 			if watch != nil && options.WatchReader != nil {
 				line, overflow, err = options.WatchReader.ReadLineWithWatch(readCtx, prompt.String(), true, options.LineLimit, watch)
 			} else {
@@ -412,7 +412,9 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		}
 		return false, interactiveList(ctx, api, state, filter, clean, trustedOut, errOut, options.Color)
 	case "endpoints":
-		return false, interactiveEndpoints(ctx, api, rest, out, options.Color)
+		// The endpoint table is trusted application styling over sanitized cells,
+		// so it renders through the trusted writer like list and refresh.
+		return false, interactiveEndpoints(ctx, api, rest, trustedOut, options.Color)
 	case "table":
 		return false, fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "use":
@@ -482,7 +484,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 			if err := ctx.Err(); err != nil {
 				return false, err
 			}
-			commandErr = interactiveStart(ctx, api, state, request, startOut, options)
+			commandErr = interactiveStart(ctx, api, state, request, startOut, startTrustedOut, options)
 		}
 		return false, startOutputError(commandErr, recorder, startOut, startTrustedOut, startErrOut)
 	case "resume":

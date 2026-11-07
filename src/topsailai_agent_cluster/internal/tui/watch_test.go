@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -180,7 +181,7 @@ func TestParseWatchArgumentsForceFloorNamesTheReason(t *testing.T) {
 func TestWatchControllerCollectsOncePerTick(t *testing.T) {
 	stub := newWatchStub()
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
 	defer controller.Stop()
 	ticks.tick(t)
 	result := waitForResult(t, controller)
@@ -205,7 +206,7 @@ func TestWatchControllerSkipsTickWhileCollecting(t *testing.T) {
 	gate := make(chan struct{})
 	stub.gate = gate
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
 	defer controller.Stop()
 	ticks.tick(t)
 	// The first collection is blocked, so the tick channel has no receiver and
@@ -227,7 +228,7 @@ func TestWatchControllerStopCancelsInFlightCollection(t *testing.T) {
 	stub := newWatchStub()
 	stub.gate = make(chan struct{})
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
 	ticks.tick(t)
 	stopped := make(chan struct{})
 	go func() {
@@ -250,7 +251,7 @@ func TestWatchControllerReportsRepeatedFailureOnce(t *testing.T) {
 	stub := newWatchStub()
 	stub.setFail(errors.New("endpoint unreachable"))
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
 	defer controller.Stop()
 	ticks.tick(t)
 	first := waitForResult(t, controller)
@@ -272,7 +273,7 @@ func TestWatchControllerReportsRecoveryAfterFailure(t *testing.T) {
 	stub := newWatchStub()
 	stub.setFail(errors.New("endpoint unreachable"))
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
 	defer controller.Stop()
 	ticks.tick(t)
 	if result := waitForResult(t, controller); result.err == nil {
@@ -294,7 +295,7 @@ func TestWatchControllerLeavesNoGoroutine(t *testing.T) {
 	before := runtime.NumGoroutine()
 	stub := newWatchStub()
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
 	controller.Stop()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -313,7 +314,7 @@ func TestWatchControllerRejectsPartialCollection(t *testing.T) {
 	stub := newWatchStub()
 	stub.inventoryErrors = map[string]error{"endpoint-2": errors.New("adapter failed")}
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
 	defer controller.Stop()
 	ticks.tick(t)
 	result := waitForResult(t, controller)
@@ -330,7 +331,7 @@ func TestWatchControllerRejectsPartialCollection(t *testing.T) {
 func TestWatchControllerForcedModeUsesForcedCollection(t *testing.T) {
 	stub := refreshScopeStub()
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: 10 * time.Second, Force: true}, ticks.ticker, ColorPolicy{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: 10 * time.Second, Force: true}, ticks.ticker, ColorPolicy{}, TableLayout{})
 	defer controller.Stop()
 	ticks.tick(t)
 	result := waitForResult(t, controller)
@@ -347,7 +348,7 @@ func TestWatchControllerForcedModeUsesForcedCollection(t *testing.T) {
 func TestWatchControllerProjectionModeDoesNotForce(t *testing.T) {
 	stub := refreshScopeStub()
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
 	defer controller.Stop()
 	ticks.tick(t)
 	if result := waitForResult(t, controller); result.err != nil {
@@ -850,5 +851,147 @@ func TestWatchHelpDocumentsTheStopRule(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("help missing %q: %q", want, text)
 		}
+	}
+}
+
+// layoutBuffer is a test output boundary that reports a fixed layout, so a
+// render can be compared against the watch path without a real terminal.
+type layoutBuffer struct {
+	bytes.Buffer
+	layout TableLayout
+}
+
+// TableLayout reports the fixed layout this test boundary was built with.
+func (b *layoutBuffer) TableLayout() TableLayout { return b.layout }
+
+// renderListBoundary renders the list exactly as the REPL does: straight into
+// the output boundary, so trusted styling is never filtered.
+func renderListBoundary(t *testing.T, stub *watchStub, filter string, color ColorPolicy, layout TableLayout) []byte {
+	t.Helper()
+	loaded, err := loadReports(context.Background(), stub, filter)
+	if err != nil {
+		t.Fatalf("loadReports: %v", err)
+	}
+	boundary := &layoutBuffer{layout: layout}
+	if err := renderListRows(boundary, io.Discard, loaded, filter, false, tableOptionsFor(boundary, color, false, nil)); err != nil {
+		t.Fatalf("renderListRows: %v", err)
+	}
+	return boundary.Bytes()
+}
+
+// watchRender drives one collection through the controller and returns the
+// rendered bytes, so a test observes the real auto-refresh path.
+func watchRender(t *testing.T, color ColorPolicy, layout TableLayout) []byte {
+	t.Helper()
+	stub := newWatchStub()
+	ticks := newWatchManualTicks()
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, color, layout)
+	defer controller.Stop()
+	ticks.tick(t)
+	result := waitForResult(t, controller)
+	if result.err != nil {
+		t.Fatalf("collection failed: %v", result.err)
+	}
+	return result.output
+}
+
+// TestWatchRenderKeepsColorWhenEnabled proves the auto-refresh table keeps the
+// styling a manual list shows. The watch table is rendered into a buffer, so a
+// sanitizing writer that drops SGR silently strips every colour and leaves the
+// operator with an uncoloured table.
+func TestWatchRenderKeepsColorWhenEnabled(t *testing.T) {
+	color := ColorPolicy{Enabled: true}
+	output := watchRender(t, color, TableLayout{})
+	if !bytes.Contains(output, []byte(ansiReset)) {
+		t.Fatalf("watch output carries no SGR reset: %q", output)
+	}
+	want := renderListBoundary(t, newWatchStub(), "", color, TableLayout{})
+	if !bytes.Equal(output, want) {
+		t.Fatalf("watch output differs from the list render\nwatch=%q\nlist =%q", output, want)
+	}
+}
+
+// TestWatchRenderStripsColorWhenDisabled proves a colourless policy still
+// produces plain text, so redirected output carries no escape sequence.
+func TestWatchRenderStripsColorWhenDisabled(t *testing.T) {
+	output := watchRender(t, ColorPolicy{}, TableLayout{})
+	if bytes.Contains(output, []byte("\x1b")) {
+		t.Fatalf("watch output carries an escape sequence: %q", output)
+	}
+}
+
+// TestWatchRenderKeepsStateVisible proves the state signal survives the watch
+// path. Colour replaces the SESSION_STATUS column, so a watch table that loses
+// colour while also omitting the column would hide the state completely.
+func TestWatchRenderKeepsStateVisible(t *testing.T) {
+	colored := watchRender(t, ColorPolicy{Enabled: true}, TableLayout{})
+	if bytes.Contains(colored, []byte("SESSION_STATUS")) {
+		t.Fatalf("coloured watch output keeps the redundant state column: %q", colored)
+	}
+	if !bytes.Contains(colored, []byte(ansiReset)) {
+		t.Fatalf("coloured watch output lost both the state column and its colour: %q", colored)
+	}
+	plain := watchRender(t, ColorPolicy{}, TableLayout{})
+	if !bytes.Contains(plain, []byte("SESSION_STATUS")) {
+		t.Fatalf("colourless watch output dropped the only state signal: %q", plain)
+	}
+}
+
+// TestWatchRenderHonoursTerminalWidth proves the auto-refresh table is fitted to
+// the terminal the operator watches. The table is rendered into a buffer, so a
+// renderer that reads the buffer's layout would never bound the width.
+func TestWatchRenderHonoursTerminalWidth(t *testing.T) {
+	const width = 40
+	bounded := watchRender(t, ColorPolicy{}, TableLayout{Width: width})
+	for _, line := range strings.Split(strings.TrimSuffix(string(bounded), "\n"), "\n") {
+		if got := displayWidth(line); got > width {
+			t.Fatalf("line width=%d exceeds %d: %q", got, width, line)
+		}
+	}
+	unbounded := watchRender(t, ColorPolicy{}, TableLayout{})
+	widest := 0
+	for _, line := range strings.Split(strings.TrimSuffix(string(unbounded), "\n"), "\n") {
+		if got := displayWidth(line); got > widest {
+			widest = got
+		}
+	}
+	if widest <= width {
+		t.Fatalf("fixture widest line=%d never needed fitting, so the bound is unproven", widest)
+	}
+}
+
+// TestWatchWriterReportsTheBoundaryLayout proves the render seam reports the
+// real output layout instead of the internal buffer's, which is what lets the
+// table fit the terminal.
+func TestWatchWriterReportsTheBoundaryLayout(t *testing.T) {
+	var buffer bytes.Buffer
+	writer := &watchWriter{safeWriter: &safeWriter{target: &buffer, keepSGR: true}, layout: TableLayout{Width: 72, Full: true}}
+	if got := writer.TableLayout(); got != (TableLayout{Width: 72, Full: true}) {
+		t.Fatalf("layout=%+v, want the configured boundary layout", got)
+	}
+	if _, err := writer.Write([]byte(ansiBoldCyan + "x" + ansiReset)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := writer.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got := buffer.String(); got != ansiBoldCyan+"x"+ansiReset {
+		t.Fatalf("kept=%q, want the trusted SGR sequence preserved", got)
+	}
+}
+
+// TestWatchWriterStillStripsNonStylingEscapes proves keeping SGR does not widen
+// the allow list, so a cursor or title sequence can never reach the terminal.
+func TestWatchWriterStillStripsNonStylingEscapes(t *testing.T) {
+	var buffer bytes.Buffer
+	writer := &watchWriter{safeWriter: &safeWriter{target: &buffer, keepSGR: true}, layout: TableLayout{}}
+	if _, err := writer.Write([]byte("\x1b[2J\x1b]0;title\x07" + ansiGreen + "ok" + ansiReset)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := writer.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got := buffer.String(); got != ansiGreen+"ok"+ansiReset {
+		t.Fatalf("kept=%q, want only the styling sequence", got)
 	}
 }

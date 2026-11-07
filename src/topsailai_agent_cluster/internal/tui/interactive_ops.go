@@ -312,13 +312,13 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if afterCapability.Revision != beforeCapability.Revision {
 		return fmt.Errorf("capability changed after confirmation; send cancelled")
 	}
-	return submitSessionMessage(parent, api, state, session, sendPayload, out, options)
+	return submitSessionMessage(parent, api, state, session, sendPayload, out, trustedOut, options)
 }
 
 // sendSessionMessage submits one message whose text the operator has already
 // confirmed. The caller owns the confirmation, so this path performs one
 // capability preflight and never asks the same question again.
-func sendSessionMessage(parent context.Context, api InteractiveAPI, state *interactiveState, text string, out io.Writer, options InteractiveOptions) error {
+func sendSessionMessage(parent context.Context, api InteractiveAPI, state *interactiveState, text string, out, trustedOut io.Writer, options InteractiveOptions) error {
 	if err := state.requireUsable(); err != nil {
 		return err
 	}
@@ -338,13 +338,16 @@ func sendSessionMessage(parent context.Context, api InteractiveAPI, state *inter
 	if err != nil {
 		return err
 	}
-	return submitSessionMessage(parent, api, state, session, payload, out, options)
+	return submitSessionMessage(parent, api, state, session, payload, out, trustedOut, options)
 }
 
 // submitSessionMessage prepares, admits and renders one message intent for an
 // already validated session, so both the send command and the unknown-input
-// offer share one submission path.
-func submitSessionMessage(parent context.Context, api InteractiveAPI, state *interactiveState, session *protocol.Session, payload json.RawMessage, out io.Writer, options InteractiveOptions) error {
+// offer share one submission path. The receipt stays on out because it carries
+// the provider's own return document verbatim, while the automatic snapshot is
+// trusted application styling and is written through trustedOut so its colour
+// survives the REPL boundary.
+func submitSessionMessage(parent context.Context, api InteractiveAPI, state *interactiveState, session *protocol.Session, payload json.RawMessage, out, trustedOut io.Writer, options InteractiveOptions) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
@@ -373,7 +376,7 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	// The read gets its own bounded budget because the local wait may already have
 	// exhausted the command deadline, and a failed read is reported as a
 	// diagnostic instead of turning the accepted send into a failure.
-	if err := renderAutomaticSnapshot(parent, api, state, out, options.Color, options, "send completed"); err != nil {
+	if err := renderAutomaticSnapshot(parent, api, state, trustedOut, options.Color, options, "send completed"); err != nil {
 		return err
 	}
 	// The send changed the provider's state, so the persisted inventory is now
@@ -503,7 +506,10 @@ func parseInteractiveStartTokens(args []string, allowMissing bool) (interactiveS
 }
 
 // interactiveStart submits and renders an agent.start action using shared action logic.
-func interactiveStart(parent context.Context, api InteractiveAPI, state *interactiveState, request interactiveStartRequest, out io.Writer, options InteractiveOptions) error {
+// The receipt is written through out because it carries the provider's own return
+// document verbatim, while the post-start table is trusted application styling and
+// is written through trustedOut so its colour survives the REPL boundary.
+func interactiveStart(parent context.Context, api InteractiveAPI, state *interactiveState, request interactiveStartRequest, out, trustedOut io.Writer, options InteractiveOptions) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
@@ -538,22 +544,25 @@ func interactiveStart(parent context.Context, api InteractiveAPI, state *interac
 	if err := renderInteractiveStartResult(out, action.CommandID, result); err != nil {
 		return err
 	}
-	return refreshAfterStart(parent, api, request.EndpointID, result, out, options)
+	return refreshAfterStart(parent, api, request.EndpointID, result, out, trustedOut, options)
 }
 
 // refreshAfterStart forces one fresh collection for the Endpoint that accepted the
 // start, so the operator's next list already contains the launched session instead
 // of waiting for the periodic collection. The shared runner implementation owns the
 // scoping, the pending-visibility decision and the failure handling; this wrapper
-// only supplies the interactive writers and budget. Both streams are the trusted
-// output because the interactive REPL reports refresh diagnostics inline, and the
-// render is informational: it leaves the row-number index untouched so navigation
-// to other Endpoints keeps working.
-func refreshAfterStart(parent context.Context, api InteractiveAPI, endpointID string, result map[string]any, out io.Writer, options InteractiveOptions) error {
+// only supplies the interactive writers and budget.
+//
+// The table is written through trustedOut and derives its layout from that same
+// boundary, because the sanitizing writer neither keeps colour nor reports a table
+// layout. Diagnostics stay on out so provider-derived error text is still stripped.
+// The render is informational: it leaves the row-number index untouched so
+// navigation to other Endpoints keeps working.
+func refreshAfterStart(parent context.Context, api InteractiveAPI, endpointID string, result map[string]any, out, trustedOut io.Writer, options InteractiveOptions) error {
 	ctx, cancel := context.WithTimeout(parent, refreshCommandTimeout)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy}
-	return runner.RefreshAfterStart(ctx, out, out, endpointID, result, false, tableOptionsFor(out, options.Color, false, nil))
+	return runner.RefreshAfterStart(ctx, trustedOut, out, endpointID, result, false, tableOptionsFor(trustedOut, options.Color, false, nil))
 }
 
 // sessionIDs reads the committed projection and returns its standard session IDs.

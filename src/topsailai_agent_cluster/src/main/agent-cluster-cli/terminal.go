@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 	"topsailai_agent_cluster/internal/tui"
 
@@ -12,10 +13,17 @@ import (
 
 // terminalOutput exposes the actual output terminal size, including after resize.
 // full disables table truncation, so a narrow terminal wraps instead of clipping.
+// color is the colour policy resolved from this output stream, so a renderer
+// reached through this boundary honours --no-color and a redirected stream
+// without probing global terminal state.
 type terminalOutput struct {
 	io.Writer
-	full bool
+	full  bool
+	color tui.ColorPolicy
 }
+
+// ColorPolicy reports the colour policy of this output boundary.
+func (out terminalOutput) ColorPolicy() tui.ColorPolicy { return out.color }
 
 // TerminalWidth leaves files and pipes unchanged when no terminal size is known.
 func (out terminalOutput) TerminalWidth() int {
@@ -35,6 +43,25 @@ func (out terminalOutput) TerminalWidth() int {
 // the interactive line editor keeps its prompt budget.
 func (out terminalOutput) TableLayout() tui.TableLayout {
 	return tui.TableLayout{Width: out.TerminalWidth(), Full: out.full}
+}
+
+// outputIsTerminal reports whether this boundary writes to a real terminal.
+// Colour eligibility follows the output stream, because a redirected stdout
+// cannot render escape sequences even when stdin is an interactive terminal.
+func (out terminalOutput) outputIsTerminal() bool {
+	file, ok := out.Writer.(interface{ Fd() uintptr })
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(file.Fd()))
+}
+
+// resolveOutputColor resolves the colour policy from the output stream. The
+// output stream decides eligibility, because escape sequences are written there;
+// stdin being a terminal says nothing about whether stdout can render them.
+func resolveOutputColor(output io.Writer, noColorFlag bool) tui.ColorPolicy {
+	boundary := terminalOutput{Writer: output}
+	return tui.ResolveColorPolicy(boundary.outputIsTerminal(), noColorPresent(), noColorFlag, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)
 }
 
 // interactiveEditor enables editing only for actual terminals with cancellable reads.
