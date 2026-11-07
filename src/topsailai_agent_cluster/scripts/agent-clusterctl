@@ -234,6 +234,20 @@ function start_node() {
     [ -n "${LOG_MAX_AGE_DAYS:-}" ] && args+=(--log-max-age-days "${LOG_MAX_AGE_DAYS}")
     [ -n "${LOG_OUTPUT:-}" ] && args+=(--log-output "${LOG_OUTPUT}")
 
+    # Both logs are appended across runs, so their sizes are recorded before the
+    # launch: a failure message must quote what this launch wrote, otherwise a
+    # stale line from an earlier run is reported as the current cause. The role
+    # log carries the structured reason when the binary logs to a file, and the
+    # stdout log carries it when the binary fails before logging is configured.
+    local stdout_offset=0
+    if [ -f "${STDOUT_LOG}" ]; then
+        stdout_offset=$(wc -c <"${STDOUT_LOG}")
+    fi
+    local role_log_offset=0
+    if [ -f "${LOG_PATH}" ]; then
+        role_log_offset=$(wc -c <"${LOG_PATH}")
+    fi
+
     nohup "${binary}" "${args[@]}" >>"${STDOUT_LOG}" 2>&1 &
     local pid=$!
     echo "${pid}" >"${PID_FILE}"
@@ -252,9 +266,19 @@ function start_node() {
     if ! kill -0 "${pid}" 2>/dev/null; then
         rm -f "${PID_FILE}"
         echo "ERROR: ${ROLE} exited immediately after launch" >&2
-        if [ -s "${STDOUT_LOG}" ]; then
-            echo "last output from ${STDOUT_LOG}:" >&2
-            tail -n 5 "${STDOUT_LOG}" >&2
+        # The role log is quoted first because a binary that reaches logging
+        # configuration writes the structured reason there, while the stdout log
+        # only holds output from before logging was configured.
+        local fresh
+        fresh=$(tail -c "+$((role_log_offset + 1))" "${LOG_PATH}" 2>/dev/null | tail -n 5)
+        if [ -n "${fresh}" ]; then
+            echo "output from this launch (${LOG_PATH}):" >&2
+            echo "${fresh}" >&2
+        fi
+        fresh=$(tail -c "+$((stdout_offset + 1))" "${STDOUT_LOG}" 2>/dev/null | tail -n 5)
+        if [ -n "${fresh}" ]; then
+            echo "output from this launch (${STDOUT_LOG}):" >&2
+            echo "${fresh}" >&2
         fi
         return 1
     fi
