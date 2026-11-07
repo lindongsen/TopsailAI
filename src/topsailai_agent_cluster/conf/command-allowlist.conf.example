@@ -1,0 +1,32 @@
+# Agent Cluster command allowlist
+#
+# Author: DawsonLin
+#
+# This file gates the `command.exec` operation, which backs the operator `!`
+# command. It is read by the Endpoint at startup and reloaded on SIGHUP.
+#
+# Each line is one entry, matched as a prefix of the argv array. An entry
+# `git status` therefore permits `git status --short` and rejects `git push`.
+# Blank lines and lines starting with `#` are ignored.
+#
+# Programs that can execute other programs require at least two tokens, because
+# a single-token entry would authorise the whole program. The rejected set is
+# git, find, awk, sed, xargs, env, make, docker, kubectl, sh, bash, python,
+# python3, perl, ruby and node. Such an entry is refused when the file is
+# loaded, so a mistake fails at startup rather than at the first execution.
+#
+# The default below is deliberately read-only: it lets an operator inspect the
+# session workspace without granting any way to modify it or to run a shell.
+# Extend it for your site, and keep in mind that every entry is reachable by
+# anyone holding the `control` scope.
+#
+# To disable command execution entirely, remove this file and unset
+# COMMAND_ALLOWLIST_FILE in the node configuration. An Endpoint with no
+# allowlist file refuses `command.exec` with an explicit error rather than
+# falling back to an unrestricted shell.
+
+ls
+pwd
+git status
+git log
+git diff

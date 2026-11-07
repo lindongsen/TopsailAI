@@ -251,6 +251,17 @@ function write_role_config() {
         die "cannot append the packaged layout"
     chmod 0640 "${PKG_ROOT}/etc/agent-cluster/node.conf"
 
+    # The endpoint template names conf/command-allowlist.conf, which the controller
+    # would resolve against /usr/lib/agent-cluster and never find. The packaged
+    # layout therefore overrides it with the conffile path, exactly as the TLS and
+    # database paths above are overridden.
+    if [ "${ROLE}" = "endpoint" ]; then
+        {
+            echo "COMMAND_ALLOWLIST_FILE=/etc/agent-cluster/command-allowlist.conf"
+        } >>"${PKG_ROOT}/etc/agent-cluster/node.conf" ||
+            die "cannot append the packaged allowlist path"
+    fi
+
     # An adapter override is appended for the same reason: the last assignment
     # wins, and the value must stay single-quoted for the shell that sources it.
     if [ -n "${ADAPTERS}" ]; then
@@ -268,6 +279,12 @@ function write_role_config() {
 
     echo "/etc/agent-cluster/node.conf" >"${PKG_ROOT}/DEBIAN/conffiles" ||
         die "cannot write conffiles"
+    # The allowlist is a conffile too: an operator edits it in place, so an upgrade
+    # must not silently replace the policy in force with the shipped default.
+    if [ "${ROLE}" = "endpoint" ]; then
+        echo "/etc/agent-cluster/command-allowlist.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
+            die "cannot register the allowlist conffile"
+    fi
     chmod 0644 "${PKG_ROOT}/DEBIAN/conffiles"
 }
 
@@ -338,6 +355,14 @@ function build_role_package() {
     add_file "${CA}" "/etc/agent-cluster/certs/ca.pem" 0644
     add_file "${CERT}" "/etc/agent-cluster/certs/node.pem" 0644
     add_file "${KEY}" "/etc/agent-cluster/certs/node-key.pem" 0600
+    # The endpoint configuration names /etc/agent-cluster/command-allowlist.conf,
+    # so the package must ship that conffile. Without it the Endpoint refuses to
+    # start, because a missing allowlist is a configuration error rather than an
+    # implicit unrestricted policy.
+    if [ "${ROLE}" = "endpoint" ]; then
+        add_file "${PROJECT_DIR}/conf/command-allowlist.conf.example" \
+            "/etc/agent-cluster/command-allowlist.conf" 0640
+    fi
     add_dir "/var/lib/agent-cluster" 0750
     add_dir "/var/log/agent-cluster" 0750
     add_copyright

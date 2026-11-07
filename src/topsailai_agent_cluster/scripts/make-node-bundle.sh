@@ -119,6 +119,14 @@ install -m 0644 "${CONFIG}" "${DEST}/conf/node.conf" ||
 install -m 0644 "${CA}" "${DEST}/certs/ca.pem" || die "cannot install CA"
 install -m 0644 "${CERT}" "${DEST}/certs/node.pem" || die "cannot install certificate"
 install -m 0600 "${KEY}" "${DEST}/certs/node-key.pem" || die "cannot install key"
+# The endpoint configuration names conf/command-allowlist.conf, so the bundle must
+# carry that file. Without it the Endpoint refuses to start, because a missing
+# allowlist is a configuration error rather than an implicit unrestricted policy.
+if [ "${ROLE}" = "endpoint" ]; then
+    install -m 0644 "${PROJECT_DIR}/conf/command-allowlist.conf.example" \
+        "${DEST}/conf/command-allowlist.conf" ||
+        die "cannot install the command allowlist"
+fi
 
 # An adapter override is appended rather than substituted: the controller sources
 # the configuration, so a later assignment wins and the template stays readable.
