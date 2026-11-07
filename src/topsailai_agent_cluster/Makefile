@@ -17,6 +17,31 @@ TESTHOOKS_DIR := .tmp/artifacts
 DEB_DIR := .tmp/deb
 LAUNCHER := scripts/start-local-cluster.sh
 DEB_BUILDER := scripts/make-deb.sh
+# Container image for the server. The tag defaults to the commit the image was
+# built from, so an image always identifies its source; `latest` is added as a
+# convenience alias for the same build.
+#
+# The build uses the host network because this host's containers have no outbound
+# route: the default bridge resolves nothing and even a direct IP connection
+# times out, so `go mod download` cannot reach a module proxy. The host network
+# borrows the host's resolver and route, which is the only path that works here.
+IMAGE_REPO := agent-cluster-server
+IMAGE_TAG := $(shell git rev-parse --short HEAD)
+IMAGE_DOCKERFILE := docker/Dockerfile
+IMAGE_NETWORK := host
+IMAGE_NAME := $(IMAGE_REPO):$(IMAGE_TAG)
+
+# Runtime wiring for `make image-run`. The container publishes both ports on the
+# host so endpoints reach it through a bridge gateway address instead of the
+# container IP, which changes on every recreate. TLS material and the SQLite
+# database are mounted from the workspace so the image stays deployment-neutral.
+IMAGE_CONTAINER := agent-cluster-server
+IMAGE_NET := bind9-net
+IMAGE_API_PORT := 53680
+IMAGE_CHANNEL_PORT := 53943
+IMAGE_CERTS_DIR := .tmp/docker/certs
+IMAGE_DATA_DIR := .tmp/docker/data
+IMAGE_TOKEN := $(shell sed -n 's/^AUTH_TOKEN=//p' .tmp/local-cluster/conf/endpoint.conf 2>/dev/null | head -1)
 
 SERVER_PKG := ./src/main/agent-cluster-server
 ENDPOINT_PKG := ./src/main/agent-cluster-endpoint
@@ -57,6 +82,7 @@ DEB_SITE_ARGS = $(call deb_arg,--config,$(DEB_CONFIG)) \
 
 .PHONY: help build build-testhooks vet test test-packaging bdd integration fmt \
         deb deb-node deb-server deb-endpoint deb-inspect deb-clean \
+        image image-build image-run image-stop image-inspect image-clean \
         server-start server-stop server-restart server-status \
         endpoint-start endpoint-stop endpoint-restart endpoint-status \
         cluster-start cluster-stop cluster-restart cluster-status
@@ -86,6 +112,17 @@ help:
 	@echo ""
 	@echo "  Site values: DEB_VERSION DEB_REVISION DEB_ARCH DEB_CONFIG DEB_CERT"
 	@echo "               DEB_KEY DEB_CA DEB_ADAPTERS"
+	@echo ""
+	@echo "Container image (server)"
+	@echo "  image             build the server image as $(IMAGE_NAME)"
+	@echo "  image-build       build the image only"
+	@echo "  image-run         run the image on $(IMAGE_NET) with published ports"
+	@echo "  image-stop        stop and remove the running container"
+	@echo "  image-inspect     report the image id, size and health"
+	@echo "  image-clean       remove the image built from this commit"
+	@echo ""
+	@echo "  Overrides: IMAGE_TAG IMAGE_NET IMAGE_API_PORT IMAGE_CHANNEL_PORT"
+	@echo "             IMAGE_CERTS_DIR IMAGE_DATA_DIR IMAGE_TOKEN"
 	@echo ""
 	@echo "Cluster lifecycle (both roles)"
 	@echo "  cluster-start     start server then endpoint"
@@ -195,6 +232,57 @@ deb-clean:
 	rm -rf $(DEB_DIR)/build
 	rm -f $(DEB_DIR)/agent-cluster-*.deb
 	@echo "removed $(DEB_DIR)/build and $(DEB_DIR)/*.deb"
+
+# Builds the server image. The context is the project directory and .dockerignore
+# keeps the 183 MB .tmp tree, the databases and the TLS private keys out of it.
+# Both the commit tag and `latest` point at the same build so a run command can
+# use either name without silently picking a different image.
+image: image-build
+
+image-build:
+	docker build --network $(IMAGE_NETWORK) -f $(IMAGE_DOCKERFILE) \
+		-t $(IMAGE_NAME) -t $(IMAGE_REPO):latest .
+
+# Runs the image with the ports published on the host. Publishing is what makes
+# the container address-independent: endpoints dial a bridge gateway address, so
+# a new container IP after a recreate changes nothing on their side. The state
+# directory is chowned to the image's unprivileged uid because SQLite reports a
+# permission failure as "out of memory (14)", which hides the real cause.
+image-run:
+	@test -n "$(IMAGE_TOKEN)" || { echo "ERROR: no AUTH_TOKEN found; set IMAGE_TOKEN"; exit 1; }
+	@mkdir -p $(IMAGE_CERTS_DIR) $(IMAGE_DATA_DIR)
+	@chown -R 10001:10001 $(IMAGE_DATA_DIR)
+	docker run -d --name $(IMAGE_CONTAINER) --network $(IMAGE_NET) \
+		-p $(IMAGE_API_PORT):53680 -p $(IMAGE_CHANNEL_PORT):53943 \
+		-e AGENT_CLUSTER_AUTH_TOKEN=$(IMAGE_TOKEN) \
+		-v $(CURDIR)/$(IMAGE_CERTS_DIR):/etc/agent-cluster/certs:ro \
+		-v $(CURDIR)/$(IMAGE_DATA_DIR):/var/lib/agent-cluster \
+		--restart unless-stopped \
+		$(IMAGE_NAME)
+	@echo "waiting for the health probe"
+	@for i in $$(seq 1 20); do \
+		status=$$(docker inspect $(IMAGE_CONTAINER) --format '{{.State.Health.Status}}' 2>/dev/null); \
+		[ "$$status" = "healthy" ] && { echo "container is healthy"; exit 0; }; \
+		sleep 1; \
+	done; \
+	echo "ERROR: container did not become healthy"; docker logs $(IMAGE_CONTAINER) 2>&1 | tail -20; exit 1
+
+image-stop:
+	@docker rm -f $(IMAGE_CONTAINER) 2>/dev/null || echo "no container named $(IMAGE_CONTAINER)"
+
+# Reports the facts that matter before trusting an image: which commit it came
+# from, its size, and whether the binary is static and runs as a non-root user.
+image-inspect:
+	@echo "=== $(IMAGE_NAME) ==="
+	@docker image inspect $(IMAGE_NAME) --format 'id={{.Id}} size={{.Size}} created={{.Created}}'
+	@echo "--- binary ---"
+	@docker run --rm --entrypoint sh $(IMAGE_NAME) -c \
+		'ls -l /opt/agent-cluster/bin/agent-cluster-server; id'
+	@echo "--- healthcheck ---"
+	@docker image inspect $(IMAGE_NAME) --format '{{json .Config.Healthcheck}}'
+
+image-clean:
+	@docker image rm $(IMAGE_NAME) 2>/dev/null || echo "no image named $(IMAGE_NAME)"
 
 cluster-start:
 	bash $(LAUNCHER) start
