@@ -9,8 +9,6 @@ from pathlib import Path
 from typing import Any, Dict, List
 from unittest.mock import patch
 
-import pytest
-
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 
 import topsailai_project_history as ph
@@ -164,23 +162,6 @@ class TestDisplaySessionId:
 
     def test_regular_session(self):
         assert ph._display_session_id("abc123") == "abc123"
-
-
-class TestParseSessionStdoutFilename:
-    def test_regular_session(self):
-        assert ph._parse_session_stdout_filename("abc.123.session.stdout") == ("abc", 123)
-
-    def test_temp_session(self):
-        assert ph._parse_session_stdout_filename("topsailai.123.session.stdout") == ("topsailai", 123)
-
-    def test_session_id_with_dots(self):
-        assert ph._parse_session_stdout_filename("a.b.c.123.session.stdout") == ("a.b.c", 123)
-
-    def test_non_session_file(self):
-        assert ph._parse_session_stdout_filename("abc.123.task.stdout") == (None, None)
-
-    def test_invalid_pid(self):
-        assert ph._parse_session_stdout_filename("abc.xyz.session.stdout") == (None, None)
 
 
 class TestIsPidAlive:

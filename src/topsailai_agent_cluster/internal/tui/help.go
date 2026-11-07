@@ -378,6 +378,7 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 			"Session selectors use internal resource IDs or unique names, not necessarily the provider SESSION_ID shown in list.\n" +
 			"Type > <text> to send a message to the current session without spelling the command; the prefix is disjoint from every command word.\n" +
 			"Text that matches no command is offered as a send message; declining keeps the unknown-command diagnostic.\n" +
+			"A line beginning with ! runs one allowlisted command in the session working directory; the endpoint decides the allowlist.\n" +
 			"Actions require adapter capability support and fresh session data; scope availability alone does not guarantee support."
 	}
 	example := "Start example: start <endpoint> <resource> --profile <id> --profile-revision <revision>"
