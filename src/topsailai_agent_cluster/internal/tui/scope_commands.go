@@ -47,14 +47,20 @@ var commandScopeMatrix = []commandScopeRule{
 	{Name: "quit", Workspace: true, Endpoint: true, Session: true},
 }
 
+// sendPrefix is the one-character alias of send. It is disjoint from every
+// command word, so a message can never be mistaken for a command and a typo can
+// never be mistaken for a message.
+const sendPrefix = ">"
+
 // commandAliases maps accepted short or compatibility names to canonical commands.
 var commandAliases = map[string]string{
-	"?":       "help",
-	"exit":    "quit",
-	"q":       "quit",
-	"r":       "refresh",
-	"btw":     "inject",
-	"control": "interrupt",
+	"?":        "help",
+	"exit":     "quit",
+	"q":        "quit",
+	"r":        "refresh",
+	"btw":      "inject",
+	"control":  "interrupt",
+	sendPrefix: "send",
 }
 
 // canonicalCommandName returns the registered command for an accepted spelling.

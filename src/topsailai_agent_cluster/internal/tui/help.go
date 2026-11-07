@@ -347,11 +347,12 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 		workflow = "Bare cd or cd / returns to workspace; cd .. returns to endpoint. Numeric row navigation is unavailable in session scope.\n" +
 			"Entering a session renders one bounded output snapshot immediately; run logs again to re-read it.\n" +
 			"Session selectors use internal resource IDs or unique names, not necessarily the provider SESSION_ID shown in list.\n" +
+			"Type > <text> to send a message to the current session without spelling the command; the prefix is disjoint from every command word.\n" +
 			"Actions require adapter capability support and fresh session data; scope availability alone does not guarantee support."
 	}
 	example := "Start example: start <endpoint> <resource> --profile <id> --profile-revision <revision>"
 	if kind == ScopeSession {
-		example = "Session example: show or logs; use cd .. before starting another agent."
+		example = "Session example: show or logs; type > <text> to send a message; use cd .. before starting another agent."
 	}
 	for _, line := range []string{"", workflow, example, "Run help all for every command and scope."} {
 		if _, err := fmt.Fprintln(out, line); err != nil {

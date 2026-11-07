@@ -354,7 +354,13 @@ const maxConsecutivePromptFailures = 3
 
 func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *interactiveState, line string, lineResults <-chan lineReadResult, out, trustedOut, errOut io.Writer, options InteractiveOptions) (bool, error) {
 	rawName, rest := splitCommand(line)
-	if candidate, token, surplus := numericInput(line); candidate {
+	// The send prefix is resolved before tokenisation: splitCommand splits on the
+	// first literal space, so ">hello world" would otherwise yield the token
+	// ">hello". The prefix is disjoint from every command word, so this branch can
+	// never reinterpret a command or a typo as a message.
+	if strings.HasPrefix(line, sendPrefix) {
+		rawName, rest = sendPrefix, strings.TrimPrefix(line, sendPrefix)
+	} else if candidate, token, surplus := numericInput(line); candidate {
 		if surplus {
 			return false, fmt.Errorf("usage: cd [target]")
 		}

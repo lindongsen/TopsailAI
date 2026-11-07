@@ -61,7 +61,7 @@ was dispatched rather than rejected as unknown.
 | `info` | `info` | `info` | yes |
 | `logs` | `logs` | `logs` | yes |
 | `status` | `status` | `status` | yes |
-| `send` | `send` | `send` | yes |
+| `send` | `send` | `send`, `>` | yes |
 | `context.inject` | `btw`, `inject` | `inject`, `btw` | yes |
 | `execution.interrupt` | `control` | `interrupt`, `control` | yes |
 | `agent.start` | `start` | `start` | yes |
@@ -79,6 +79,14 @@ Two spellings are intentionally asymmetric:
   does not accept the interactive word.
 - `inject` is accepted standalone as an alias of `btw`; both map to
   `context.inject`.
+
+The `>` prefix is interactive-only and is deliberately absent from the standalone
+surface, where `>` is a shell redirect. It is resolved before tokenisation, so
+`>hello world` and `> hello world` both send `hello world`. Because the prefix is
+disjoint from every command word, a message can never be read as a command and a
+typo can never be read as a message; an unprefixed unknown word still returns the
+unknown-command diagnostic. The alias keeps the confirmation gate and the
+session-only scope rule of `send`.
 
 `cd` and `quit` navigate a session that only exists inside the interactive loop, so
 they have no standalone meaning and are not gaps.
