@@ -46,6 +46,32 @@ func ValidateCapability(descriptor protocol.CapabilityDescriptor, operation stri
 	return fmt.Errorf("unsupported capability %q", operation)
 }
 
+// CapabilityVersion returns the advertised version of one operation, so an
+// intent carries the version the Endpoint actually publishes instead of a
+// hardcoded default. The Endpoint matches a capability on both name and
+// version, so a mismatched intent is rejected as unsupported even though the
+// operation is advertised.
+//
+// An Endpoint that advertises no version falls back to the historical default.
+// Such a descriptor could never be admitted with an empty version, because an
+// immutable intent requires a non-empty operation version, so the fallback
+// preserves the previous behaviour instead of inventing a new failure.
+func CapabilityVersion(descriptor protocol.CapabilityDescriptor, operation string) (string, error) {
+	for _, capability := range descriptor.Capabilities {
+		if capability.Name == operation {
+			if capability.Version == "" {
+				return defaultOperationVersion, nil
+			}
+			return capability.Version, nil
+		}
+	}
+	return "", fmt.Errorf("unsupported capability %q", operation)
+}
+
+// defaultOperationVersion is the operation version used when an Endpoint
+// advertises a capability without one.
+const defaultOperationVersion = "v1"
+
 // PreflightCapability retrieves and validates one operation before command submission.
 func PreflightCapability(ctx context.Context, querier CapabilityQuerier, endpointID, operation string) (protocol.CapabilityDescriptor, error) {
 	if querier == nil {
