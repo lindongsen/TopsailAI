@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -170,6 +171,34 @@ func TestTerminalEditorGreenPrompt(t *testing.T) {
 		stripped := strings.ReplaceAll(strings.ReplaceAll(green.String(), ansiBoldGreen, ""), ansiReset, "")
 		if stripped != plain.String() {
 			t.Fatalf("width=%d colored cursor/layout differs", width)
+		}
+	}
+}
+
+// TestTerminalEditorIgnoresUnhandledControlKeys proves a stray control byte keeps
+// the session alive. Before this guard, an unhandled control rune returned a read
+// failure, which the REPL treated as fatal and exited on.
+func TestTerminalEditorIgnoresUnhandledControlKeys(t *testing.T) {
+	// Ctrl-U, Ctrl-G, Ctrl-O and Ctrl-Y carry no editing meaning here.
+	input := &editorTestInput{Reader: strings.NewReader("ab\x15\x07\x0f\x19cd\r")}
+	var out strings.Builder
+	editor := NewTerminalEditor(input, &out, func() int { return 40 }, func() (func() error, error) { return func() error { return nil }, nil })
+	got, bad, err := editor.ReadLine(context.Background(), "workspace> ", false, 32)
+	if err != nil || bad || got != "abcd" {
+		t.Fatalf("got=%q bad=%v err=%v", got, bad, err)
+	}
+}
+
+// TestLineKeysIgnoreUnhandledControlRunes pins the sentinel so an ignorable key is
+// never reclassified as a malformed sequence.
+func TestLineKeysIgnoreUnhandledControlRunes(t *testing.T) {
+	for _, r := range []rune{0x15, 0x07, 0x0f, 0x19, 0x1a} {
+		_, err := readLineKey(bufio.NewReader(strings.NewReader(string(r))))
+		if !errors.Is(err, errIgnoredKey) {
+			t.Fatalf("rune=%#x err=%v", r, err)
+		}
+		if errors.Is(err, errLineKey) {
+			t.Fatalf("rune=%#x classified as malformed", r)
 		}
 	}
 }
