@@ -38,8 +38,6 @@ from cli_topsailai.paths import get_topsailai_home
 from cli_topsailai.process_liveness import (
     ProcessState,
     _TEMP_SESSION_ID,
-    _session_stdout_candidates as _liveness_session_stdout_candidates,
-    is_pid_alive,
     pid_state,
     session_liveness as _liveness_session_liveness,
 )
@@ -82,11 +80,6 @@ _LOOKUP_CAPTURE_MARGIN = 1024 * 1024
 _LOOKUP_POLL_INTERVAL = 0.01
 _LOOKUP_DRAIN_SECONDS = 5.0
 _LOOKUP_REAP_SECONDS = 5.0
-
-
-def _is_pid_alive(pid: int) -> bool:
-    """Return True if *pid* is a live, non-zombie process."""
-    return is_pid_alive(pid)
 
 
 def _build_stdout_index(task_dir: str) -> Dict[str, List[tuple]]:
@@ -1178,25 +1171,6 @@ class ResumeLookupError(RuntimeError):
 
 class ResumeNotFoundError(ResumeLookupError):
     """Raised when no unique persisted session matches the requested identity."""
-
-
-def _pid_state(pid: int) -> str:
-    """Classify a PID as ``alive``, ``dead`` or ``unknown``.
-
-    ``unknown`` is returned when the OS refuses to answer, so callers can fail
-    closed instead of treating an unverifiable process as idle. A zombie is
-    ``dead`` because it has already terminated.
-    """
-    return pid_state(pid).value
-
-
-def _session_stdout_candidates(task_dir: str, session_id: str) -> List[str]:
-    """Return every session stdout file belonging to *session_id*.
-
-    All candidates are inspected because a newer dead file must not hide an
-    older live process for the same session.
-    """
-    return _liveness_session_stdout_candidates(task_dir, session_id)
 
 
 def session_liveness(session_id: str, *, home: Optional[str] = None) -> str:

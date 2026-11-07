@@ -80,14 +80,6 @@ class TestParseSessionStdoutFilename:
         assert si._parse_session_stdout_filename("abc.xyz.session.stdout") == (None, None)
 
 
-class TestIsPidAlive:
-    def test_current_process_is_alive(self):
-        assert si._is_pid_alive(os.getpid()) is True
-
-    def test_nonexistent_pid(self):
-        assert si._is_pid_alive(99999999) is False
-
-
 class TestIsSessionRunning:
     def test_running_session(self, tmp_path: Path):
         task_dir = tmp_path / si.TASK_SUBDIR

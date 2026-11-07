@@ -23,6 +23,7 @@ import cli_topsailai.state as cli_state
 from cli_topsailai import core, project_scope
 from cli_topsailai.colors import Colors
 from cli_topsailai.core import prompt_selection
+from cli_topsailai.process_liveness import ProcessState, is_pid_alive, pid_state
 
 class MockCompletedProcess:
     """Minimal mock for subprocess.CompletedProcess."""
@@ -2144,36 +2145,36 @@ class TestProjectScopeLiveness(unittest.TestCase):
             self.assertFalse(project_scope._check_session_running(tmp, "s-zero"))
 
     def test_pid_state_negative_is_unknown(self):
-        """``_pid_state`` must refuse to classify a non-positive PID."""
-        self.assertEqual(project_scope._pid_state(-1), "unknown")
-        self.assertEqual(project_scope._pid_state(0), "unknown")
+        """The shared probe must refuse to classify a non-positive PID."""
+        self.assertEqual(pid_state(-1), ProcessState.UNKNOWN)
+        self.assertEqual(pid_state(0), ProcessState.UNKNOWN)
 
     def test_pid_state_zombie_is_dead(self):
-        """``_pid_state`` must classify a zombie as dead."""
+        """The shared probe must classify a zombie as dead."""
         pid = _spawn_zombie()
         try:
-            self.assertEqual(project_scope._pid_state(pid), "dead")
+            self.assertEqual(pid_state(pid), ProcessState.DEAD)
         finally:
             _reap(pid)
 
     def test_pid_state_absent_is_dead(self):
-        """``_pid_state`` must classify a reaped PID as dead."""
-        self.assertEqual(project_scope._pid_state(_absent_pid()), "dead")
+        """The shared probe must classify a reaped PID as dead."""
+        self.assertEqual(pid_state(_absent_pid()), ProcessState.DEAD)
 
     def test_pid_state_live_is_alive(self):
-        """``_pid_state`` must classify the current process as alive."""
-        self.assertEqual(project_scope._pid_state(os.getpid()), "alive")
+        """The shared probe must classify the current process as alive."""
+        self.assertEqual(pid_state(os.getpid()), ProcessState.ALIVE)
 
     def test_is_pid_alive_rejects_zombie_and_non_positive(self):
-        """``_is_pid_alive`` must agree with the shared primitive."""
+        """The shared probe must reject a zombie and a non-positive PID."""
         pid = _spawn_zombie()
         try:
-            self.assertFalse(project_scope._is_pid_alive(pid))
+            self.assertFalse(is_pid_alive(pid))
         finally:
             _reap(pid)
-        self.assertFalse(project_scope._is_pid_alive(-1))
-        self.assertFalse(project_scope._is_pid_alive(0))
-        self.assertTrue(project_scope._is_pid_alive(os.getpid()))
+        self.assertFalse(is_pid_alive(-1))
+        self.assertFalse(is_pid_alive(0))
+        self.assertTrue(is_pid_alive(os.getpid()))
 
 
 if __name__ == "__main__":

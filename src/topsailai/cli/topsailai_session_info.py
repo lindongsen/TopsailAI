@@ -23,7 +23,7 @@ import _import_topsailai
 
 from cli_topsailai.colors import Colors, colored
 from cli_topsailai.paths import get_topsailai_home
-from cli_topsailai.process_liveness import is_pid_alive, session_liveness
+from cli_topsailai.process_liveness import session_liveness
 from topsailai.context.ctx_manager import get_session_manager
 from topsailai.context.session_manager import SessionData
 
@@ -66,15 +66,6 @@ def _relative_time(create_time: Optional[datetime]) -> str:
         return f"{months} month{'s' if months != 1 else ''} ago"
     years = months // 12
     return f"{years} year{'s' if years != 1 else ''} ago"
-
-
-def _is_pid_alive(pid: int) -> bool:
-    """Return True if *pid* is a live, non-zombie process.
-
-    Delegates to the shared probe so a zombie or a non-positive PID is never
-    reported as a running session.
-    """
-    return is_pid_alive(pid)
 
 
 def _parse_session_stdout_filename(filename: str) -> tuple[Optional[str], Optional[int]]:

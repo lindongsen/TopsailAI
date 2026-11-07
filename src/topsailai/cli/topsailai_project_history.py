@@ -185,33 +185,6 @@ def _display_session_id(session_id: Any, fallback: str = "-") -> str:
     return text if text else fallback
 
 
-def _parse_session_stdout_filename(filename: str) -> tuple[Optional[str], Optional[int]]:
-    """Parse a ``*.session.stdout`` filename into (session_id, pid).
-
-    Supports ``{session_id}.{pid}.session.stdout`` and the temporary session
-    form ``topsailai.{pid}.session.stdout``.
-    """
-    if not filename.endswith(".session.stdout"):
-        return None, None
-    base = filename[: -len(".session.stdout")]
-    if not base:
-        return None, None
-
-    parts = base.split(".")
-    if len(parts) == 2 and parts[0] == "topsailai":
-        try:
-            return "topsailai", int(parts[1])
-        except ValueError:
-            return None, None
-
-    try:
-        pid = int(parts[-1])
-    except ValueError:
-        return None, None
-    session_id = ".".join(parts[:-1])
-    return session_id, pid
-
-
 def _is_pid_alive(pid: int) -> bool:
     """Return True if *pid* is a live, non-zombie process.
 
