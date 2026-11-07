@@ -11,20 +11,29 @@ import (
 
 // BearerAuthenticator validates one pre-provisioned management credential.
 type BearerAuthenticator struct {
-	Token string
+	Token  string
+	Scopes ScopeSet
 }
 
 // Authenticate verifies the Authorization header and returns a stable request identity.
 func (a BearerAuthenticator) Authenticate(r *http.Request) (string, bool) {
+	identity, _, ok := a.AuthenticateScopes(r)
+	return identity, ok
+}
+
+// AuthenticateScopes verifies the Authorization header and returns the request
+// identity together with the scopes granted to that credential. An empty scope
+// set means the credential is unrestricted.
+func (a BearerAuthenticator) AuthenticateScopes(r *http.Request) (string, ScopeSet, bool) {
 	if a.Token == "" {
-		return "", false
+		return "", nil, false
 	}
 	value := r.Header.Get("Authorization")
 	const prefix = "Bearer "
 	if !strings.HasPrefix(value, prefix) || value[len(prefix):] != a.Token {
-		return "", false
+		return "", nil, false
 	}
-	return "operator", true
+	return "operator", a.Scopes, true
 }
 
 type identityContextKey struct{}

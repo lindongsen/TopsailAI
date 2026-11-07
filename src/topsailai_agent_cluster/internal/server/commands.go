@@ -209,6 +209,11 @@ func (h *Handler) admitCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	intent.IssuerID = identity
+	requiredPermission, declared := h.declaredPermission(r.Context(), intent.EndpointID, intent.Operation)
+	if err := security.AuthorizeOperation(security.AuthenticatedScopes(r.Context()), intent.Operation, requiredPermission, declared); err != nil {
+		h.writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+		return
+	}
 	hash, err := protocol.CanonicalHash(intent)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_intent", err.Error())
@@ -250,6 +255,29 @@ func (h *Handler) admitCommand(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusAccepted
 	}
 	h.write(w, status, 0, "success", record)
+}
+
+// declaredPermission returns the permission an operation declares in the latest
+// reported inventory. The second result reports whether the operation was found
+// at all, so a caller can distinguish "declared no permission" from "not
+// advertised". A missing inventory yields no declaration rather than an error,
+// because admission must not depend on a successful inventory read.
+func (h *Handler) declaredPermission(ctx context.Context, endpointID, operation string) (string, bool) {
+	if h.Store == nil || endpointID == "" || operation == "" {
+		return "", false
+	}
+	report, err := h.Store.GetInventory(ctx, endpointID)
+	if err != nil {
+		return "", false
+	}
+	for _, summary := range report.Adapters {
+		for _, capability := range summary.Capabilities.Capabilities {
+			if capability.Name == operation {
+				return capability.RequiredPermission, true
+			}
+		}
+	}
+	return "", false
 }
 
 func parseCommandLimit(value string) int {
