@@ -284,3 +284,58 @@ func TestWriteInteractiveErrorOmitsUsageForNonSyntaxFailure(t *testing.T) {
 		t.Fatalf("remedy missing: %q", text)
 	}
 }
+
+// TestResolveLaunchEndpointTargetForwardsIdentifierOnInventoryFailure proves the
+// degraded path: when the inventory cannot be read, an explicit identifier is
+// forwarded unchanged so an identifier-only caller keeps working, and a hostname
+// is not silently rejected as unknown.
+func TestResolveLaunchEndpointTargetForwardsIdentifierOnInventoryFailure(t *testing.T) {
+	stub := &launchEndpointStub{
+		launchStub: &launchStub{interactiveStub: startupStub()},
+		listErr:    errors.New("inventory unavailable"),
+	}
+	got, err := resolveLaunchEndpointTarget(context.Background(), stub, "local-endpoint")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if got != "local-endpoint" {
+		t.Fatalf("got=%q", got)
+	}
+}
+
+// TestResolveLaunchEndpointTargetResolvesHostname proves the target helper reads
+// the inventory and maps a hostname onto the endpoint identifier.
+func TestResolveLaunchEndpointTargetResolvesHostname(t *testing.T) {
+	stub := &launchEndpointStub{
+		launchStub: &launchStub{interactiveStub: startupStub()},
+		endpoints: []protocol.Endpoint{
+			{EndpointID: "local-endpoint", Hostname: "topsail"},
+		},
+	}
+	got, err := resolveLaunchEndpointTarget(context.Background(), stub, "topsail")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if got != "local-endpoint" {
+		t.Fatalf("got=%q", got)
+	}
+}
+
+// TestResolveLaunchEndpointTargetRejectsUnknownValue proves an unknown value is
+// refused before any launch query is sent.
+func TestResolveLaunchEndpointTargetRejectsUnknownValue(t *testing.T) {
+	stub := &launchEndpointStub{
+		launchStub: &launchStub{interactiveStub: startupStub()},
+		endpoints: []protocol.Endpoint{
+			{EndpointID: "local-endpoint", Hostname: "topsail"},
+		},
+	}
+	_, err := resolveLaunchEndpointTarget(context.Background(), stub, "no-such-host")
+	if err == nil || !strings.Contains(err.Error(), `endpoint "no-such-host" was not found`) {
+		t.Fatalf("err=%v", err)
+	}
+	var notSyntax nonSyntaxError
+	if !errors.As(err, &notSyntax) {
+		t.Fatalf("unknown endpoint is not a non-syntax error: %v", err)
+	}
+}
