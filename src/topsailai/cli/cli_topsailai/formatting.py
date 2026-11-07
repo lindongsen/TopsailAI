@@ -1,7 +1,6 @@
 """Output formatting helpers for the TopsailAI CLI."""
 
 import io
-import os
 import re
 import sys
 import unicodedata
@@ -11,6 +10,7 @@ from typing import List
 
 from cli_topsailai.colors import Colors
 from cli_topsailai.log_files import _display_session_id, is_session_pipe_open
+from cli_topsailai.process_liveness import ProcessState, pid_state
 
 # Match CSI/OSC escape sequences so remote text cannot recolor or clear the
 # terminal, and match control characters other than newline and tab.
@@ -167,11 +167,10 @@ def enrich_workspace_rows(files: List[dict], topsailai_home: str, *, driver_entr
         valid_pid = type(pid) is int and pid > 0
         if not valid_pid:
             pid = None
-        else:
-            try:
-                os.kill(pid, 0)
-            except (ProcessLookupError, PermissionError, OSError):
-                pid = None
+        elif pid_state(pid) is not ProcessState.ALIVE:
+            # A zombie has already terminated, and an unverifiable PID must not
+            # be presented as running: this value also gates ``/kill``.
+            pid = None
         file_info["workspace_pid"] = pid
         # Display-only fallback: an exited session keeps the PID recorded in its
         # exact metadata record, while ``workspace_pid`` stays liveness-gated so

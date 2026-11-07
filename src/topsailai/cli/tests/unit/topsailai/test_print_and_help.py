@@ -27,6 +27,7 @@ from cli_topsailai.formatting import (
     print_table,
 )
 from cli_topsailai.help_text import print_help
+from cli_topsailai.process_liveness import ProcessState
 
 
 class TestPrintHelpers(unittest.TestCase):
@@ -96,9 +97,8 @@ class TestPrintTablePidDetection(unittest.TestCase):
         return next(line for line in output.splitlines() if session_id in line)
 
     @patch("cli_topsailai.formatting.is_session_pipe_open", return_value=False)
-    @patch("cli_topsailai.formatting.os.kill")
-    def test_live_pid_shows_run_status(self, mock_kill, mock_pipe_open):
-        mock_kill.return_value = None
+    @patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.ALIVE)
+    def test_live_pid_shows_run_status(self, mock_pid_state, mock_pipe_open):
         output = self._capture_print_table(
             [
                 {
@@ -119,13 +119,12 @@ class TestPrintTablePidDetection(unittest.TestCase):
         self.assertNotIn("INPUT", data_line)
         self.assertNotIn("WAIT", data_line)
         self.assertIn(Colors.GREEN, data_line)
-        mock_kill.assert_called_once_with(1234, 0)
+        mock_pid_state.assert_called_once_with(1234)
         mock_pipe_open.assert_called_once()
 
     @patch("cli_topsailai.formatting.is_session_pipe_open", return_value=True)
-    @patch("cli_topsailai.formatting.os.kill")
-    def test_open_pipe_shows_input_status_in_yellow(self, mock_kill, mock_pipe_open):
-        mock_kill.return_value = None
+    @patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.ALIVE)
+    def test_open_pipe_shows_input_status_in_yellow(self, mock_pid_state, mock_pipe_open):
         output = self._capture_print_table(
             [{
                 "filename": "s1.1234.session.stdout",
@@ -146,9 +145,8 @@ class TestPrintTablePidDetection(unittest.TestCase):
         mock_pipe_open.assert_called_once()
 
     @patch("cli_topsailai.formatting.is_session_pipe_open")
-    @patch("cli_topsailai.formatting.os.kill")
-    def test_dead_pid_shows_idle_status(self, mock_kill, mock_pipe_open):
-        mock_kill.side_effect = ProcessLookupError(1234)
+    @patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.DEAD)
+    def test_dead_pid_shows_idle_status(self, mock_pid_state, mock_pipe_open):
         output = self._capture_print_table(
             [
                 {
@@ -206,9 +204,8 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
             print_table(files)
         return captured.getvalue()
 
-    @patch("cli_topsailai.formatting.os.kill")
-    def test_project_workspace_column_in_header(self, mock_kill):
-        mock_kill.return_value = None
+    @patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.ALIVE)
+    def test_project_workspace_column_in_header(self, mock_pid_state):
         output = self._capture_print_table(
             [
                 {
@@ -281,8 +278,8 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
         self.assertIn("...", row)
 
     @patch("cli_topsailai.formatting.is_session_pipe_open", return_value=True)
-    @patch("cli_topsailai.formatting.os.kill")
-    def test_no_pid_and_status_expand_without_truncation(self, mock_kill, mock_pipe_open):
+    @patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.ALIVE)
+    def test_no_pid_and_status_expand_without_truncation(self, mock_pid_state, mock_pipe_open):
         """No, PID, and Status widths grow to fit all rendered values."""
         file_info = {
             "filename": "session-id.123456789.session.stdout",
@@ -309,12 +306,11 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
         self.assertNotIn("...", row_columns[0])
         self.assertNotIn("...", row_columns[3])
         self.assertNotIn("...", row_columns[5])
-        mock_kill.assert_called_once_with(123456789, 0)
+        mock_pid_state.assert_called_once_with(123456789)
         mock_pipe_open.assert_called_once_with(file_info)
 
-    @patch("cli_topsailai.formatting.os.kill")
-    def test_project_workspace_value_rendered(self, mock_kill):
-        mock_kill.return_value = None
+    @patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.ALIVE)
+    def test_project_workspace_value_rendered(self, mock_pid_state):
         output = self._capture_print_table(
             [
                 {
@@ -331,9 +327,8 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
         )
         self.assertIn("/work/project-a", output)
 
-    @patch("cli_topsailai.formatting.os.kill")
-    def test_missing_project_workspace_shows_placeholder(self, mock_kill):
-        mock_kill.return_value = None
+    @patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.ALIVE)
+    def test_missing_project_workspace_shows_placeholder(self, mock_pid_state):
         output = self._capture_print_table(
             [
                 {
@@ -353,9 +348,8 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
         self.assertEqual(len(data_lines), 1)
         self.assertIn("-", data_lines[0])
 
-    @patch("cli_topsailai.formatting.os.kill")
-    def test_long_project_workspace_preserves_tail(self, mock_kill):
-        mock_kill.return_value = None
+    @patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.ALIVE)
+    def test_long_project_workspace_preserves_tail(self, mock_pid_state):
         long_workspace = "/very/long/中文/workspace/path/project-tail"
         output = self._capture_print_table(
             [

@@ -5,7 +5,6 @@ Author: DawsonLin
 
 import json
 import re
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -19,12 +18,13 @@ from cli_topsailai import (
     session_info,
     session_meta,
 )
+from cli_topsailai.process_liveness import ProcessState
 
 
 @pytest.fixture(autouse=True)
 def isolate(monkeypatch):
     """Keep liveness, driver and cache state isolated from the live host."""
-    monkeypatch.setattr(formatting, "os", SimpleNamespace(kill=Mock()))
+    monkeypatch.setattr(formatting, "pid_state", Mock(return_value=ProcessState.ALIVE))
     monkeypatch.setattr(formatting, "is_session_pipe_open", Mock(return_value=False))
     monkeypatch.setattr(session_driver, "observe_driver", Mock(return_value=None))
     monkeypatch.setattr(session_info, "_SESSION_INFO_CACHE", session_info._SessionInfoCache())
@@ -131,7 +131,7 @@ def test_mismatched_or_unusable_record_is_rejected(tmp_path, monkeypatch, fields
 
 def test_exited_session_renders_meta_pid(tmp_path, monkeypatch):
     """An exited session shows the PID recorded in its exact record."""
-    formatting.os.kill.side_effect = ProcessLookupError()
+    formatting.pid_state.return_value = ProcessState.DEAD
     write_meta(tmp_path)
     rows = make_rows(tmp_path, ["sample.123.session.stdout"])
 
@@ -145,7 +145,7 @@ def test_exited_session_renders_meta_pid(tmp_path, monkeypatch):
 
 def test_exited_session_keeps_no_signal_authority(tmp_path, monkeypatch):
     """The display PID never grants kill authority or a process generation."""
-    formatting.os.kill.side_effect = ProcessLookupError()
+    formatting.pid_state.return_value = ProcessState.DEAD
     # A dead process cannot hold its session stdout file, so the relation probe
     # reports the truth and no generation can be minted from the display PID.
     relation = Mock(return_value=False)
@@ -197,7 +197,7 @@ def test_temporary_row_reads_reserved_prefix_record(tmp_path):
 def test_absent_or_corrupt_record_renders_empty(tmp_path, monkeypatch, content):
     """Missing or corrupt records never abort the table."""
     fail_lookup(monkeypatch)
-    formatting.os.kill.side_effect = ProcessLookupError()
+    formatting.pid_state.return_value = ProcessState.DEAD
     if content is not None:
         write_meta(tmp_path).write_text(content)
     rows = make_rows(tmp_path, ["sample.123.session.stdout"])
@@ -213,7 +213,7 @@ def test_absent_or_corrupt_record_renders_empty(tmp_path, monkeypatch, content):
 def test_completed_filter_and_json_fields_are_unchanged(tmp_path, monkeypatch):
     """Completed filtering, the DONE marker and the JSON field set stay stable."""
     fail_lookup(monkeypatch)
-    formatting.os.kill.side_effect = ProcessLookupError()
+    formatting.pid_state.return_value = ProcessState.DEAD
     write_meta(tmp_path, status="completed", session_name="Done Session")
     write_meta(tmp_path, pid=789, sid="live", session_name="Live Session")
     rows = make_rows(tmp_path, ["sample.123.session.stdout", "live.789.session.stdout"])

@@ -4,20 +4,21 @@ Author: DawsonLin
 """
 
 import json
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
-from cli_topsailai import formatting, session_driver, session_meta
+from cli_topsailai import formatting
+from cli_topsailai import session_driver, session_meta
 from cli_topsailai.colors import Colors
+from cli_topsailai.process_liveness import ProcessState
 from cli_topsailai.core import _workspace_json_item
 
 
 @pytest.fixture
 def session_row(tmp_path, monkeypatch):
     """Isolate process probes and driver observations from the real host."""
-    monkeypatch.setattr(formatting, "os", SimpleNamespace(kill=Mock()))
+    monkeypatch.setattr(formatting, "pid_state", Mock(return_value=ProcessState.ALIVE))
     monkeypatch.setattr(formatting, "is_session_pipe_open", Mock(return_value=False))
     monkeypatch.setattr(session_driver, "observe_driver", Mock(return_value=None))
     return {
@@ -105,7 +106,7 @@ def test_invalid_encoding_falls_back(session_row, tmp_path, caplog):
 def test_dead_process_is_not_revived(session_row, tmp_path):
     """A stale running record cannot override a failed process probe."""
     write_meta(tmp_path, completed(status="running"))
-    formatting.os.kill.side_effect = ProcessLookupError()
+    formatting.pid_state.return_value = ProcessState.DEAD
     formatting.enrich_workspace_rows([session_row], str(tmp_path))
     assert session_row["workspace_status"] == "idle"
     assert session_row["workspace_pid"] is None

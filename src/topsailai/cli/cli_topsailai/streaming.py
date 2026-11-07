@@ -41,6 +41,7 @@ from cli_topsailai.log_files import (
     get_file_pid,
 )
 from cli_topsailai.paths import get_topsailai_home
+from cli_topsailai.process_liveness import is_pid_alive
 from cli_topsailai.runtime_pipe import PipeDeliveryError, format_pipe_payload, send_to_pipe
 from cli_topsailai.shell_commands import execute_shell_command
 from cli_topsailai.process import register_process, unregister_process
@@ -109,21 +110,16 @@ def _is_session_alive(
     """Return True if the watched session still appears to be alive.
 
     A session is considered alive when its stdout file still exists (if
-    provided) and its PID is still running (if provided).  If neither
-    identifier is available we cannot make a determination and return True.
+    provided) and its PID is still running (if provided). A zombie has already
+    terminated, so it is not alive. When no identifier is available, or the OS
+    refuses to answer, the answer is False: an unverifiable session must not
+    keep the viewer waiting forever.
     """
     if stdout_path is not None and not os.path.exists(stdout_path):
         return False
-    if pid is not None and pid > 0:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        except Exception:
-            return False
-    return True
+    if pid is not None:
+        return is_pid_alive(pid)
+    return stdout_path is not None
 
 
 def _maybe_exit_on_dead_session(

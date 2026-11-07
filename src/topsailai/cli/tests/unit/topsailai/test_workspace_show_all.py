@@ -4,13 +4,13 @@ Author: DawsonLin
 """
 
 import json
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from cli_topsailai import core, formatting, log_files, session_driver, session_info, state
 from cli_topsailai.colors import Colors
+from cli_topsailai.process_liveness import ProcessState
 
 
 @pytest.fixture
@@ -44,7 +44,7 @@ def isolated_state(monkeypatch):
     monkeypatch.setattr(state, "yaml_commands", [])
     monkeypatch.setattr(session_info, "_SESSION_INFO_CACHE", session_info._SessionInfoCache())
     monkeypatch.setattr(session_info, "load_project_workspace_lookup", Mock(return_value={}))
-    monkeypatch.setattr(formatting, "os", SimpleNamespace(kill=Mock()))
+    monkeypatch.setattr(formatting, "pid_state", Mock(return_value=ProcessState.ALIVE))
     monkeypatch.setattr(formatting, "is_session_pipe_open", Mock(return_value=False))
     monkeypatch.setattr(session_driver, "observe_driver", Mock(return_value=None))
     return state
@@ -118,8 +118,7 @@ def test_completed_row_renders_done_marker(task_dir, capsys):
 
 def test_exited_completed_row_is_still_marked(task_dir, monkeypatch, capsys):
     """A completed row whose process exited must still show DONE, not idle."""
-    monkeypatch.setattr(formatting, "os", SimpleNamespace(kill=Mock(
-        side_effect=ProcessLookupError())))
+    monkeypatch.setattr(formatting, "pid_state", Mock(return_value=ProcessState.DEAD))
     rows = log_files.discover_workspace_log_files(str(task_dir), include_completed=True)
     formatting.enrich_workspace_rows(rows, str(task_dir.parent.parent))
     completed = next(row for row in rows if row["filename"] == "done.123.session.stdout")
