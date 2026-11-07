@@ -63,6 +63,8 @@ was dispatched rather than rejected as unknown.
 | `send` | `send` | `send` | yes |
 | `context.inject` | `btw`, `inject` | `inject`, `btw` | yes |
 | `execution.interrupt` | `control` | `interrupt`, `control` | yes |
+| `ctl.<action>` | `ctl` | `ctl` | yes |
+| `command.exec` | `exec` | `!<argv...>` | yes |
 | `agent.start` | `start` | `start` | yes |
 | `agent.resume` | `resume` | `resume` | yes |
 | `agent.stop` | `stop` | `stop` | yes |
@@ -116,24 +118,32 @@ Every interactive spelling in the table also accepts the optional `/` command-wo
 prefix described below, so the table lists command words rather than every accepted
 input form.
 
-## Planned additions: provider control and allowlisted command execution
+## Provider control and allowlisted command execution
 
-Two command families are designed but not yet implemented. They are recorded here so
-the surface contract is fixed before code exists. They MUST NOT be added to the audit
-table above until each one is executable and verified, because that table records
-observed state, not intent.
+Both families are implemented and appear in the audit table above. The verified
+standalone behaviour, executed against an unreachable Server so the message proves
+dispatch rather than rejection:
 
-| Command | Standalone spelling | Interactive spelling | Status |
-|---|---|---|---|
-| `ctl.<action>` | `ctl <action> [--payload JSON]` | `ctl`, `ctl <action>`, `ctl <action> <json>` | planned |
-| `command.exec` | `exec <session> -- <argv...>` | `!<argv...>` | planned |
+```text
+$ agent-cluster-cli ctl ep-1 res-1 heartbeat
+confirmation required for ctl heartbeat target=res-1 parameters={}; rerun with --yes
+
+$ agent-cluster-cli exec ep-1 res-1 gen-1 -- git status
+confirmation required for exec target=res-1 parameters={"argv":["git","status"]}; rerun with --yes
+
+$ agent-cluster-cli ctl ep-1 res-1
+usage: ctl <endpoint-id> <resource-id> <action> [json] [generation]
+
+$ agent-cluster-cli exec ep-1 res-1 gen-1
+usage: exec <endpoint-id> <resource-id> <generation> -- <argv...>
+```
 
 `ctl` follows the non-interactive-first rule directly. The standalone form carries the
 action name and an explicit payload; the interactive form is a convenience layer that
-prompts for the action when it is omitted. The prompt MUST render its action list from
-the advertised capabilities rather than from a hardcoded list, so it cannot offer an
-action the Endpoint does not support. A bare `ctl` in non-interactive mode is a usage
-error, not a prompt.
+prompts for the action when it is omitted. The prompt renders its action list from the
+advertised capabilities rather than from a hardcoded list, so it cannot offer an action
+the Endpoint does not support. A bare `ctl` in non-interactive mode is a usage error,
+not a prompt, as the fourth command above shows.
 
 `!` is an input-prefix form, not a command word. It is recognised before the command
 word is split, so `!git status` never reaches the dispatcher as a command named `!git`.
@@ -149,6 +159,17 @@ only by scraping terminal output.
 Both families are one-shot: a single bounded snapshot carrying its observation time,
 never a stream, a follow or a durable subscription. Neither may silently degrade; an
 unavailable capability returns an explicit error rather than cached or partial data.
+
+Two properties are worth stating because they are easy to get wrong:
+
+- `exec` takes its argv array from the shell's own word splitting and never
+  re-tokenizes it. Re-splitting a string at the Endpoint would reintroduce the shell
+  semantics the allowlist cannot reason about, so `exec ep res gen -- ls -la` passes
+  `-la` as an argument rather than as a misplaced option.
+- The allowlist decision belongs to the Endpoint policy hook, not to the client. A
+  denied command therefore surfaces as a durable `rejected` receipt with
+  `policy_denied`, which is the same evidence an operator sees for any other
+  admission refusal. The client never decides policy locally.
 
 ## Command-word prefix
 
