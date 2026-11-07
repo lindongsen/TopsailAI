@@ -127,7 +127,7 @@ func resolveLaunchEndpointValue(endpoints []protocol.Endpoint, answer string) (s
 	case 1:
 		return matches[0].EndpointID, nil
 	case 0:
-		return "", nonSyntaxError{message: fmt.Sprintf("endpoint %q was not found; run endpoints to list valid identifiers", trimmed)}
+		return "", nonSyntaxError{message: fmt.Sprintf("endpoint %q was not found", trimmed)}
 	default:
 		return "", nonSyntaxError{message: fmt.Sprintf("hostname %q matches %d endpoints; enter an endpoint identifier instead", trimmed, len(matches))}
 	}
