@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -386,6 +387,52 @@ func (c *Cluster) RunTUI(args ...string) (stdout string, stderr string, exitCode
 		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+c.Certs.ClientCert,
 		"AGENT_CLUSTER_TLS_KEY_FILE="+c.Certs.ClientKey,
 	)
+	var out, stderrBuffer bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderrBuffer
+	runErr := cmd.Run()
+	if ctx.Err() != nil {
+		return out.String(), stderrBuffer.String(), -1, ctx.Err()
+	}
+	exitCode = 0
+	if runErr != nil {
+		exitCode = 1
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+	}
+	return out.String(), stderrBuffer.String(), exitCode, runErr
+}
+
+// RunTUIInteractive drives the interactive REPL through a pseudo-terminal.
+// Interactive mode refuses a non-TTY stdin, so the scripted input is delivered
+// through "script", which allocates a PTY. TERM=dumb keeps the plain line reader
+// instead of the raw-mode editor, so the scripted lines are read verbatim.
+// The combined terminal output is returned because the REPL writes prompts and
+// results to the same terminal stream.
+func (c *Cluster) RunTUIInteractive(stdin string, args ...string) (stdout string, stderr string, exitCode int, err error) {
+	if c.TUIPath == "" {
+		return "", "", -1, fmt.Errorf("TUI binary has not been built; call BuildTUI first")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	// The command string is passed to a shell, so the binary path is quoted.
+	command := "'" + c.TUIPath + "' -i"
+	for _, argument := range args {
+		command += " '" + argument + "'"
+	}
+	cmd := exec.CommandContext(ctx, "script", "-qec", command, "/dev/null")
+	cmd.Dir = ModuleRootForRun()
+	cmd.Env = append(os.Environ(),
+		"AGENT_CLUSTER_SERVER_URL="+c.URL(""),
+		"AGENT_CLUSTER_TOKEN=secret",
+		"AGENT_CLUSTER_TLS_CA_FILE="+c.Certs.CA,
+		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+c.Certs.ClientCert,
+		"AGENT_CLUSTER_TLS_KEY_FILE="+c.Certs.ClientKey,
+		"TERM=dumb",
+	)
+	cmd.Stdin = strings.NewReader(stdin)
 	var out, stderrBuffer bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &stderrBuffer

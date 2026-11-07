@@ -21,6 +21,7 @@ func TestFeatures(t *testing.T) {
 			"../../features/timeouts.feature",
 			"../../features/real_boundary.feature",
 			"../../features/command_recovery.feature",
+			"../../features/provider_response.feature",
 			"../../features/tui.feature",
 			"../../features/lifecycle.feature",
 			"../../features/commands.feature",
@@ -56,6 +57,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	registerU21Steps(ctx)
 	registerU22Steps(ctx)
 	registerU24Steps(ctx)
+	registerProviderResponseSteps(ctx)
 	ctx.After(func(goCtx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if activeScenario != nil && activeScenario.commandDone != nil {
 			<-activeScenario.commandDone
