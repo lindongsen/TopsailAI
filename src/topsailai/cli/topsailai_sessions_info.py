@@ -27,6 +27,7 @@ import topsailai_session_info as session_info
 
 from cli_topsailai.colors import Colors, colored
 from cli_topsailai.paths import get_topsailai_home
+from cli_topsailai.process_liveness import ProcessState, pid_state
 from topsailai.context.ctx_manager import get_session_manager
 from topsailai.context.session_manager import SessionData
 
@@ -104,10 +105,13 @@ def _running_status_map(home: str) -> dict[str, bool]:
 
     The reference command resolves running status per session, and each
     resolution lists the whole task directory.  A batch must not pay that cost
-    once per session, so the directory is listed once here and the newest
-    stdout file per session is selected with the same rules as
-    ``topsailai_session_info._find_session_pid``: newest modification time
-    wins, and the first entry encountered wins a tie.
+    once per session, so the directory is listed once here.
+
+    Every stdout file of a session is collected, not only the newest one,
+    because a newer dead file must not hide an older live process. This is the
+    same rule ``topsailai_session_info._is_session_running`` applies, so both
+    commands answer identically for the same session and the same on-disk
+    state. A zombie or a non-positive PID is never reported as running.
 
     A session with no stdout file is absent from the returned mapping, which
     callers must read as "not running" rather than "unknown".
@@ -121,7 +125,7 @@ def _running_status_map(home: str) -> dict[str, bool]:
     except OSError:
         return {}
 
-    newest: dict[str, tuple[float, int]] = {}
+    pids_by_session: dict[str, list[int]] = {}
     for entry in entries:
         if not entry.endswith(".session.stdout"):
             continue
@@ -131,17 +135,11 @@ def _running_status_map(home: str) -> dict[str, bool]:
         full_path = os.path.join(task_dir, entry)
         if not os.path.isfile(full_path):
             continue
-        try:
-            mtime = os.path.getmtime(full_path)
-        except OSError:
-            continue
-        current = newest.get(session_id)
-        if current is None or mtime > current[0]:
-            newest[session_id] = (mtime, pid)
+        pids_by_session.setdefault(session_id, []).append(pid)
 
     return {
-        session_id: session_info._is_pid_alive(pid)
-        for session_id, (_mtime, pid) in newest.items()
+        session_id: any(pid_state(pid) is ProcessState.ALIVE for pid in pids)
+        for session_id, pids in pids_by_session.items()
     }
 
 

@@ -18,6 +18,7 @@ sys.path.insert(0, CLI_ROOT)
 
 import topsailai_session_info as si
 import topsailai_sessions_info as ssi
+from cli_topsailai.process_liveness import ProcessState
 from topsailai.context.ctx_manager import get_session_manager
 from topsailai.context.session_manager import SessionData
 
@@ -171,7 +172,8 @@ class TestRunningStatusMap:
         assert len(running_by_id) == 50
         assert all(value is False for value in running_by_id.values())
 
-    def test_newest_stdout_file_wins(self, tmp_path: Path):
+    def test_every_stdout_file_is_probed(self, tmp_path: Path):
+        """A dead candidate must not stop the search for a live one."""
         task_dir = tmp_path / "workspace" / "task"
         task_dir.mkdir(parents=True)
         old = task_dir / "s1.111111111.session.stdout"
@@ -181,11 +183,31 @@ class TestRunningStatusMap:
         os.utime(old, (1000, 1000))
         os.utime(new, (2000, 2000))
 
-        with patch.object(ssi.session_info, "_is_pid_alive", return_value=True) as alive:
+        with patch.object(ssi, "pid_state", return_value=ProcessState.DEAD) as probe:
+            running_by_id = ssi._running_status_map(str(tmp_path))
+
+        assert running_by_id == {"s1": False}
+        probed = sorted(call.args[0] for call in probe.call_args_list)
+        assert probed == [111111111, 222222222]
+
+    def test_newer_dead_file_does_not_hide_older_live_file(self, tmp_path: Path):
+        """A live older candidate keeps the session running."""
+        task_dir = tmp_path / "workspace" / "task"
+        task_dir.mkdir(parents=True)
+        old = task_dir / "s1.111111111.session.stdout"
+        new = task_dir / "s1.222222222.session.stdout"
+        old.write_text("x")
+        new.write_text("x")
+        os.utime(old, (1000, 1000))
+        os.utime(new, (2000, 2000))
+
+        def probe(pid):
+            return ProcessState.ALIVE if pid == 111111111 else ProcessState.DEAD
+
+        with patch.object(ssi, "pid_state", side_effect=probe):
             running_by_id = ssi._running_status_map(str(tmp_path))
 
         assert running_by_id == {"s1": True}
-        alive.assert_called_once_with(222222222)
 
     def test_missing_directory_is_empty_map(self, tmp_path: Path):
         assert ssi._running_status_map(str(tmp_path)) == {}
@@ -206,7 +228,7 @@ class TestRunningStatusMap:
         (task_dir / "s1.notapid.session.stdout").write_text("x")
         (task_dir / "s2.333333333.session.stdout").write_text("x")
 
-        with patch.object(ssi.session_info, "_is_pid_alive", return_value=False):
+        with patch.object(ssi, "pid_state", return_value=ProcessState.DEAD):
             running_by_id = ssi._running_status_map(str(tmp_path))
 
         assert running_by_id == {"s2": False}
@@ -311,7 +333,7 @@ class TestMain:
         task_dir.mkdir(parents=True)
         (task_dir / "s1.424242.session.stdout").write_text("x")
 
-        with patch.object(ssi.session_info, "_is_pid_alive", return_value=True):
+        with patch.object(ssi, "pid_state", return_value=ProcessState.ALIVE):
             code = ssi.main(
                 ["s1", "s2", "--db-conn", db_conn, "--home", str(tmp_path), "--json"]
             )

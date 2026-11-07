@@ -100,35 +100,6 @@ def _parse_session_stdout_filename(filename: str) -> tuple[Optional[str], Option
     return session_id, pid
 
 
-def _find_session_pid(home: str, session_id: str) -> Optional[int]:
-    """Return the PID from the most recent stdout file for *session_id*."""
-    task_dir = os.path.join(home, TASK_SUBDIR)
-    if not os.path.isdir(task_dir):
-        return None
-
-    candidates = []
-    for entry in os.listdir(task_dir):
-        if not entry.endswith(".session.stdout"):
-            continue
-        full_path = os.path.join(task_dir, entry)
-        if not os.path.isfile(full_path):
-            continue
-        sid, pid = _parse_session_stdout_filename(entry)
-        if sid != session_id or pid is None:
-            continue
-        try:
-            mtime = os.path.getmtime(full_path)
-        except OSError:
-            continue
-        candidates.append((mtime, pid))
-
-    if not candidates:
-        return None
-
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    return candidates[0][1]
-
-
 def _is_session_running(home: str, session_id: str) -> bool:
     """Return True if *session_id* has a live session process.
 

@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from cli_topsailai.colors import Colors
 from cli_topsailai.paths import get_topsailai_home
+from cli_topsailai.process_liveness import is_pid_alive, session_liveness
 
 
 DEFAULT_LIMIT = 20
@@ -212,56 +213,23 @@ def _parse_session_stdout_filename(filename: str) -> tuple[Optional[str], Option
 
 
 def _is_pid_alive(pid: int) -> bool:
-    """Return True if *pid* is currently running."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
+    """Return True if *pid* is a live, non-zombie process.
 
-
-def _find_session_pid(home: str, session_id: str) -> Optional[int]:
-    """Return the PID from the most recent stdout file for *session_id*.
-
-    Prefers the PID recorded in the history entry when it matches a live
-    process and a corresponding stdout file exists. Otherwise falls back to
-    scanning ``workspace/task/`` for the most recent matching
-    ``{session_id}.{pid}.session.stdout`` file.
+    Delegates to the shared probe so a zombie or a non-positive PID is never
+    reported as a running session.
     """
-    task_dir = os.path.join(home, TASK_SUBDIR)
-    if not os.path.isdir(task_dir):
-        return None
-
-    candidates = []
-    for entry in os.listdir(task_dir):
-        if not entry.endswith(".session.stdout"):
-            continue
-        full_path = os.path.join(task_dir, entry)
-        if not os.path.isfile(full_path):
-            continue
-        sid, pid = _parse_session_stdout_filename(entry)
-        if sid != session_id or pid is None:
-            continue
-        try:
-            mtime = os.path.getmtime(full_path)
-        except OSError:
-            continue
-        candidates.append((mtime, pid))
-
-    if not candidates:
-        return None
-
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    return candidates[0][1]
+    return is_pid_alive(pid)
 
 
 def _is_session_running(home: str, session_id: str, recorded_pid: Optional[int] = None) -> bool:
     """Return True if *session_id* has a live session process.
 
-    When *recorded_pid* is provided and the PID is alive and a matching
-    stdout file exists, it is used directly. Otherwise the most recent
-    ``{session_id}.{pid}.session.stdout`` file in ``workspace/task/`` is
-    used.
+    When *recorded_pid* is provided and that exact PID is alive and its
+    matching stdout file exists, it is used directly. Otherwise every
+    ``{session_id}.{pid}.session.stdout`` candidate in ``workspace/task/`` is
+    inspected, because a newer dead file must not hide an older live process.
+    An unverifiable answer is reported as not running, which is the display
+    policy for this command.
     """
     if recorded_pid is not None and _is_pid_alive(recorded_pid):
         task_dir = os.path.join(home, TASK_SUBDIR)
@@ -269,10 +237,7 @@ def _is_session_running(home: str, session_id: str, recorded_pid: Optional[int] 
         if os.path.isfile(os.path.join(task_dir, expected)):
             return True
 
-    pid = _find_session_pid(home, session_id)
-    if pid is None:
-        return False
-    return _is_pid_alive(pid)
+    return session_liveness(session_id, home=home) == "live"
 
 
 def _print_table(entries: List[Dict[str, Any]], home: str) -> None:
