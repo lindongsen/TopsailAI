@@ -100,12 +100,28 @@ The invariant is now: every step returned by `format_response()` is a dict.
   the original `AttributeError`, proving the tests guard the defect.
 - Target file: 109 passed. Related LLM/agent modules: 567 passed.
 
-## Remaining, deliberately out of scope
+## Retry classification of internal errors
 
-`ai_base/llm_base.py` still classifies `AttributeError`/`TypeError` as retryable
-provider failures through `except (KeyError, Exception)`; `KeyError` is already a
-subclass of `Exception`, so the tuple is redundant. Changing that alters retry
-semantics and needs a separate decision.
+`ai_base/llm_base.py` previously classified `AttributeError` as a retryable
+provider failure through `except (KeyError, Exception)`. Because the bounded
+retry loop runs 18 attempts with sleeps of up to 120 seconds, an internal
+programming defect appeared as roughly 765 seconds of hanging and then surfaced
+as a misleading `LLMRetryExhaustedError`.
+
+Resolution: `AttributeError` now logs the traceback and re-raises immediately,
+so an internal contract violation surfaces at once with one provider call. The
+redundant `KeyError` in the tuple was removed because it is already a subclass of
+`Exception`.
+
+`TypeError` deliberately keeps its existing retry behavior. An empty LLM
+response raises `TypeError` while parsing, and retrying that case is designed
+behavior covered by `test_chat_handles_type_error` and the `retry_reason ==
+"type_error"` assertions. Re-raising `TypeError` immediately would break it.
+
+Regression tests: `test_chat_reraises_attribute_error_without_retrying` asserts a
+single provider call and no sleep, and `test_chat_attribute_error_is_logged_with_traceback`
+asserts the diagnostic log. Removing the new branch makes both fail with
+`LLMRetryExhaustedError`, proving they guard the defect.
 
 ## Discovered while
 

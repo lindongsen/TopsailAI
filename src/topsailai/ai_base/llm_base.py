@@ -848,7 +848,17 @@ class LLMModel(
                 # These signals control a higher-level flow and must never
                 # be mistaken for retryable provider failures.
                 raise
-            except (KeyError, Exception) as e:
+            except AttributeError as e:
+                # An AttributeError means this process received a value whose
+                # shape violates an internal contract, for example a step that
+                # is not an object. Retrying the same request cannot repair a
+                # local programming defect, and the bounded retry loop would
+                # otherwise spend up to 18 attempts with long sleeps before
+                # reporting a misleading provider failure. Surface it at once.
+                print_error(f"!!! [{i}] AttributeError, {e}")
+                logger.exception("internal attribute error: %s", e)
+                raise
+            except Exception as e:
                 last_error = e
                 if self._is_special_response_for_retry(e):
                     retry_reason = "special_response"
