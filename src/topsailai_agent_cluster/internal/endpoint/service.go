@@ -186,6 +186,28 @@ func (s *Service) resendRecordedReceipts(ctx context.Context) {
 	s.resendPendingReceipts(ctx)
 }
 
+// waitForAttachedChannel blocks until the channel reports an attached
+// connection, or the context is cancelled. It is used in the server-initiated
+// direction, where the Endpoint cannot dial and must wait for the Server.
+func (s *Service) waitForAttachedChannel(ctx context.Context) bool {
+	readyChannel, ok := s.channel.(ReadyChannel)
+	if !ok {
+		return false
+	}
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if readyChannel.Ready() {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
 func (s *Service) resendPendingReceipts(ctx context.Context) {
 	receipts, err := s.storage.ListRecordedReceipts(ctx)
 	if err != nil {
@@ -286,6 +308,16 @@ func (s *Service) channelLoop(ctx context.Context) {
 				}
 				if reconnectErr := reconnecting.Reconnect(ctx); reconnectErr == nil {
 					s.loggerInfo("endpoint channel reconnected")
+					s.resendPendingReceipts(ctx)
+					break
+				} else if errors.Is(reconnectErr, channel.ErrAwaitingServerDial) {
+					// The Server dials in this direction, so the Endpoint cannot
+					// reconnect by itself. It waits for the acceptor to attach a
+					// new connection instead of logging a failure it cannot fix.
+					s.loggerInfo("endpoint waits for a server-initiated connection")
+					if !s.waitForAttachedChannel(ctx) {
+						return
+					}
 					s.resendPendingReceipts(ctx)
 					break
 				} else {

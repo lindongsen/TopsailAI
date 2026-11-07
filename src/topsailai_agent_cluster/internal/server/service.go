@@ -55,13 +55,16 @@ func NewService(deps ServiceDeps) (*Service, error) {
 	if deps.APIHandler == nil || deps.ChannelServer == nil || deps.Storage == nil {
 		return nil, errors.New("API handler, channel server, and storage are required")
 	}
-	if deps.APIListenAddress == "" || deps.ChannelListenAddress == "" || deps.ChannelTLSConfig == nil {
-		return nil, errors.New("both listen addresses and channel TLS configuration are required")
+	if deps.APIListenAddress == "" || deps.ChannelTLSConfig == nil {
+		return nil, errors.New("API listen address and channel TLS configuration are required")
 	}
 	return &Service{apiHandler: deps.APIHandler, channel: deps.ChannelServer, storage: deps.Storage, logger: deps.Logger, apiAddress: deps.APIListenAddress, channelAddr: deps.ChannelListenAddress, channelTLS: deps.ChannelTLSConfig, onFrame: deps.OnChannelFrame, onReceipt: deps.OnReceipt}, nil
 }
 
-// Run starts both listeners and waits until the context is cancelled.
+// Run starts the API listener, plus the channel listener when one is
+// configured, and waits until the context is cancelled. A server-initiated
+// deployment configures no channel listen address because the Server dials every
+// Endpoint, so the channel listener is optional while the API listener is not.
 func (s *Service) Run(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("context is required")
@@ -70,10 +73,13 @@ func (s *Service) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	channelListener, err := tls.Listen("tcp", s.channelAddr, s.channelTLS)
-	if err != nil {
-		_ = apiListener.Close()
-		return err
+	var channelListener net.Listener
+	if s.channelAddr != "" {
+		channelListener, err = tls.Listen("tcp", s.channelAddr, s.channelTLS)
+		if err != nil {
+			_ = apiListener.Close()
+			return err
+		}
 	}
 	if s.onFrame != nil {
 		s.channel.OnFrame = s.onFrame
@@ -85,11 +91,16 @@ func (s *Service) Run(ctx context.Context) error {
 	s.mu.Lock()
 	s.apiListener, s.chanListener, s.cancel = apiListener, channelListener, cancel
 	s.apiHTTP = &http.Server{Handler: s.apiHandler, ReadHeaderTimeout: 10 * time.Second}
-	s.chanHTTP = &http.Server{Handler: http.HandlerFunc(s.channel.Handler), ReadHeaderTimeout: 10 * time.Second}
 	s.mu.Unlock()
-	s.wg.Add(2)
+	s.wg.Add(1)
 	go s.serve(runCtx, s.apiHTTP, apiListener)
-	go s.serve(runCtx, s.chanHTTP, channelListener)
+	if channelListener != nil {
+		s.mu.Lock()
+		s.chanHTTP = &http.Server{Handler: http.HandlerFunc(s.channel.Handler), ReadHeaderTimeout: 10 * time.Second}
+		s.mu.Unlock()
+		s.wg.Add(1)
+		go s.serve(runCtx, s.chanHTTP, channelListener)
+	}
 	<-runCtx.Done()
 	cancel()
 	s.shutdown()

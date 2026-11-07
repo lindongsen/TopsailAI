@@ -48,7 +48,7 @@ type pendingRefreshRequest struct {
 	response   chan Frame
 }
 
-// Peer is one currently connected Endpoint.
+// channelReadLimit bounds one channel frame so a hostile peer cannot exhaust memory.
 const channelReadLimit int64 = 2 << 20
 
 // maxPendingRefresh bounds concurrent forced collections so discovery cannot amplify.
@@ -60,6 +60,7 @@ type Peer struct {
 	InstanceID           string
 	Hostname             string
 	ConnectionGeneration int64
+	Initiator            string
 	Conn                 *websocket.Conn
 	LastSeen             time.Time
 }
@@ -104,8 +105,15 @@ func (s *Server) Handler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// An explicit server initiator means the peer dialed the wrong side: this
+	// handler only accepts Endpoint-initiated connections. An empty initiator is
+	// the legacy handshake and is treated as Endpoint-initiated.
+	if hello.Initiator == InitiatorServer {
+		s.sendHelloRejection(r.Context(), conn, hello, "wrong_initiator", "handler requires an endpoint-initiated connection", certificate)
+		return
+	}
 	generation := s.Fence.Acquire(hello.EndpointID)
-	peer := &Peer{EndpointID: hello.EndpointID, InstanceID: hello.InstanceID, Hostname: hello.Hostname, ConnectionGeneration: generation, Conn: conn, LastSeen: time.Now()}
+	peer := &Peer{EndpointID: hello.EndpointID, InstanceID: hello.InstanceID, Hostname: hello.Hostname, ConnectionGeneration: generation, Initiator: InitiatorEndpoint, Conn: conn, LastSeen: time.Now()}
 	s.Mu.Lock()
 	if old := s.Active[hello.EndpointID]; old != nil {
 		_ = old.Conn.CloseNow()

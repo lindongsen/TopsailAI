@@ -32,6 +32,10 @@ const (
 	FrameLaunchResponse = "launch_response"
 	// FrameOutputResponse returns a bounded provider output snapshot.
 	FrameOutputResponse = "output_response"
+	// InitiatorEndpoint marks a connection dialed by the Endpoint.
+	InitiatorEndpoint = "endpoint"
+	// InitiatorServer marks a connection dialed by the Server.
+	InitiatorServer = "server"
 )
 
 // Frame is the bounded JSON envelope exchanged over the persistent channel.
@@ -42,6 +46,7 @@ type Frame struct {
 	ProtocolVersion      string                           `json:"protocol_version"`
 	FrameID              string                           `json:"frame_id,omitempty"`
 	ConnectionGeneration string                           `json:"connection_generation"`
+	Initiator            string                           `json:"initiator,omitempty"`
 	EndpointID           string                           `json:"endpoint_id,omitempty"`
 	InstanceID           string                           `json:"instance_id,omitempty"`
 	Hostname             string                           `json:"hostname,omitempty"`

@@ -39,10 +39,19 @@ func main() {
 		logger.Error("open endpoint storage", "error", err)
 		os.Exit(1)
 	}
-	if cfg.ChannelAddress == "" {
+	// The direction decides which side dials. In the server-initiated direction
+	// the Endpoint has no dial address and instead listens for the Server, so a
+	// deployment can match whichever network path is actually reachable.
+	serverInitiated := cfg.ChannelDirection == config.DirectionServerInitiated
+	if !serverInitiated && cfg.ChannelAddress == "" {
 		_ = store.Close()
 		<-ctx.Done()
 		return
+	}
+	if serverInitiated && cfg.EndpointChannelListen == "" {
+		logger.Error("endpoint channel listen address is required for the server-initiated direction", "error", "AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR is empty")
+		_ = store.Close()
+		os.Exit(1)
 	}
 	var tlsConfig *tls.Config
 	if cfg.TLSCertificateFile != "" && cfg.TLSKeyFile != "" {
@@ -58,7 +67,25 @@ func main() {
 		logger.Warn("resolve endpoint hostname", "error", hostnameErr)
 	}
 	client := &channel.EndpointClient{EndpointID: cfg.EndpointID, InstanceID: cfg.InstanceID, Hostname: hostname, TLSConfig: tlsConfig, Address: cfg.ChannelAddress}
-	if err := client.Dial(ctx, cfg.ChannelAddress); err != nil {
+	if serverInitiated {
+		// The Endpoint accepts the Server connection, so it must verify the
+		// Server certificate itself and reject a revoked one.
+		revokedSerials, revokedErr := security.LoadRevokedSerials(cfg.TLSRevokedSerialsFile)
+		if revokedErr != nil {
+			logger.Error("load revoked certificate serials", "error", revokedErr)
+			_ = store.Close()
+			os.Exit(1)
+		}
+		acceptor := &channel.EndpointAcceptor{EndpointID: cfg.EndpointID, ServerName: cfg.ServerName, TLSConfig: tlsConfig, RevokedSerials: revokedSerials, Client: client, OnReject: func(rejectErr error) {
+			logger.Warn("reject server-initiated connection", "error", rejectErr)
+		}}
+		go func() {
+			if serveErr := acceptor.Serve(ctx, cfg.EndpointChannelListen, tlsConfig); serveErr != nil && ctx.Err() == nil {
+				logger.Error("endpoint channel listener stopped", "error", serveErr)
+			}
+		}()
+		logger.Info("endpoint accepting server-initiated connections", "listen_address", cfg.EndpointChannelListen)
+	} else if err := client.Dial(ctx, cfg.ChannelAddress); err != nil {
 		logger.Error("connect endpoint channel; reconnecting", "error", err)
 	}
 	if len(cfg.Adapters) == 0 {

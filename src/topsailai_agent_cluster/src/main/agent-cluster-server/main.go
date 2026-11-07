@@ -48,6 +48,19 @@ func main() {
 		_ = store.Close()
 		os.Exit(1)
 	}
+	// The direction decides which side dials. In the server-initiated direction
+	// the Server dials every configured Endpoint and opens no inbound channel
+	// listener, so a deployment can match whichever network path is reachable.
+	serverInitiated := cfg.ChannelDirection == config.DirectionServerInitiated
+	if serverInitiated && len(cfg.EndpointDialAddresses) == 0 {
+		logger.Error("endpoint dial addresses are required for the server-initiated direction", "error", "AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES is empty")
+		_ = store.Close()
+		os.Exit(1)
+	}
+	channelListenAddress := cfg.ChannelListenAddress
+	if serverInitiated {
+		channelListenAddress = ""
+	}
 	channelService := channel.NewServer(tlsConfig)
 	channelService.OnDisconnect = func(peer channel.Peer, observedAtMS int64) {
 		applied, err := store.MarkEndpointOffline(context.Background(), peer.EndpointID, peer.InstanceID, observedAtMS)
@@ -107,7 +120,7 @@ func main() {
 		Storage:              store,
 		Logger:               logger,
 		APIListenAddress:     cfg.APIListenAddress,
-		ChannelListenAddress: cfg.ChannelListenAddress,
+		ChannelListenAddress: channelListenAddress,
 		ChannelTLSConfig:     tlsConfig,
 		OnChannelFrame:       onFrame,
 		OnReceipt:            onReceipt,
@@ -120,7 +133,12 @@ func main() {
 	// Record the resolved addresses before serving: without this line a healthy
 	// start leaves no trace in the log, so a silent death cannot be told apart
 	// from a start that never happened.
-	logger.Info("server service starting", "api_listen_address", cfg.APIListenAddress, "channel_listen_address", cfg.ChannelListenAddress, "database_path", cfg.DatabasePath)
+	if serverInitiated {
+		// The dialer runs before serving so the first connection attempt happens
+		// during startup rather than after the API is already accepting traffic.
+		runEndpointDialer(ctx, logger, channelService, cfg)
+	}
+	logger.Info("server service starting", "api_listen_address", cfg.APIListenAddress, "channel_listen_address", channelListenAddress, "channel_direction", cfg.ChannelDirection, "database_path", cfg.DatabasePath)
 	if err := service.Run(ctx); err != nil {
 		// Run returns nil on a graceful shutdown and the listen error when a port
 		// cannot be bound, so a non-zero exit is what lets a supervisor or launcher

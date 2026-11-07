@@ -15,16 +15,27 @@ import (
 	"github.com/coder/websocket/wsjson"
 )
 
-// EndpointClient is an Endpoint-initiated channel client.
+// ErrAwaitingServerDial reports that the Endpoint cannot reconnect by itself
+// because the Server dials in this direction. The caller must wait for the
+// acceptor to attach a new connection instead of dialing.
+var ErrAwaitingServerDial = errors.New("endpoint waits for a server-initiated connection")
+
+// EndpointClient is the Endpoint-side channel transport. It supports both
+// directions: the Endpoint may dial the Server, or it may accept a connection
+// the Server dialed. Initiator records which direction produced the active
+// connection so reconnect logic can repeat the same direction.
 type EndpointClient struct {
-	EndpointID string
-	InstanceID string
-	Hostname   string
-	TLSConfig  *tls.Config
-	Address    string
-	Conn       *websocket.Conn
-	Generation int64
-	mu         sync.Mutex
+	EndpointID     string
+	InstanceID     string
+	Hostname       string
+	TLSConfig      *tls.Config
+	Address        string
+	ServerName     string
+	RevokedSerials map[string]bool
+	Initiator      string
+	Conn           *websocket.Conn
+	Generation     int64
+	mu             sync.Mutex
 }
 
 // Dial establishes the Endpoint-initiated WebSocket connection and handshake.
@@ -52,7 +63,7 @@ func (c *EndpointClient) Dial(ctx context.Context, address string) error {
 	if previous != nil && previous != conn {
 		_ = previous.Close(websocket.StatusNormalClosure, "reconnecting")
 	}
-	if err := wsjson.Write(ctx, conn, Frame{Type: FrameHello, ProtocolVersion: ProtocolVersion, EndpointID: c.EndpointID, InstanceID: c.InstanceID, Hostname: c.Hostname}); err != nil {
+	if err := wsjson.Write(ctx, conn, Frame{Type: FrameHello, ProtocolVersion: ProtocolVersion, EndpointID: c.EndpointID, InstanceID: c.InstanceID, Hostname: c.Hostname, Initiator: InitiatorEndpoint}); err != nil {
 		_ = conn.Close(websocket.StatusInternalError, "hello failed")
 		return err
 	}
@@ -76,8 +87,24 @@ func (c *EndpointClient) Dial(ctx context.Context, address string) error {
 	}
 	c.mu.Lock()
 	c.Generation = generation
+	c.Initiator = InitiatorEndpoint
 	c.mu.Unlock()
 	return nil
+}
+
+// Attach adopts a connection the Server dialed. The Server allocated the
+// generation, so the Endpoint records it rather than minting its own; fencing
+// therefore behaves identically in both directions.
+func (c *EndpointClient) Attach(conn *websocket.Conn, generation int64, initiator string) {
+	c.mu.Lock()
+	previous := c.Conn
+	c.Conn = conn
+	c.Generation = generation
+	c.Initiator = initiator
+	c.mu.Unlock()
+	if previous != nil && previous != conn {
+		_ = previous.Close(websocket.StatusNormalClosure, "replaced")
+	}
 }
 
 // Ready reports whether the client has an authenticated active connection.
@@ -91,7 +118,14 @@ func (c *EndpointClient) Ready() bool {
 func (c *EndpointClient) Reconnect(ctx context.Context) error {
 	c.mu.Lock()
 	address := c.Address
+	initiator := c.Initiator
 	c.mu.Unlock()
+	// In the server-initiated direction the Endpoint has no address to dial, so
+	// it must wait for the acceptor to attach a new connection instead of
+	// repeatedly failing a dial that can never succeed.
+	if initiator == InitiatorServer {
+		return ErrAwaitingServerDial
+	}
 	if address == "" {
 		return errors.New("channel address is not configured")
 	}

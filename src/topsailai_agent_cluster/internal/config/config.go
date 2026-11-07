@@ -25,20 +25,25 @@ type AdapterConfig struct {
 
 // Config contains configuration shared by the command entry points.
 type Config struct {
-	Role                  string
-	LogOutput             string
-	LogPath               string
-	LogMaxSize            int
-	LogBackups            int
-	LogMaxAge             int
-	ListenAddress         string
-	APIListenAddress      string
-	ChannelListenAddress  string
-	DatabasePath          string
-	AuthToken             string
-	AuthScopes            []string
-	CommandAllowlistFile  string
+	Role                 string
+	LogOutput            string
+	LogPath              string
+	LogMaxSize           int
+	LogBackups           int
+	LogMaxAge            int
+	ListenAddress        string
+	APIListenAddress     string
+	ChannelListenAddress string
+	DatabasePath         string
+	AuthToken            string
+	AuthScopes           []string
+	CommandAllowlistFile string
 	ChannelAddress        string
+	ChannelDirection      string
+	EndpointChannelListen string
+	EndpointChannelAddr   string
+	EndpointDialAddresses map[string]string
+	ServerName            string
 	EndpointID            string
 	InstanceID            string
 	TLSCAFile             string
@@ -48,9 +53,18 @@ type Config struct {
 	Adapters              []AdapterConfig
 }
 
+// Channel direction values. The direction names which side dials, so a
+// deployment can match whichever network path is actually reachable.
+const (
+	// DirectionEndpointInitiated means the Endpoint dials the Server.
+	DirectionEndpointInitiated = "endpoint-initiated"
+	// DirectionServerInitiated means the Server dials the Endpoint.
+	DirectionServerInitiated = "server-initiated"
+)
+
 // Defaults returns safe defaults for a command role.
 func Defaults(role string) Config {
-	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, ListenAddress: ":8080", APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: ".tmp/server.sqlite", AuthToken: "development-token", InstanceID: "default"}
+	return Config{Role: role, LogOutput: "stderr", LogMaxSize: 100, LogBackups: 10, LogMaxAge: 30, ListenAddress: ":8080", APIListenAddress: ":8080", ChannelListenAddress: ":8443", DatabasePath: ".tmp/server.sqlite", AuthToken: "development-token", InstanceID: "default", ChannelDirection: DirectionEndpointInitiated, ServerName: "agent-cluster-server"}
 }
 
 // Load parses command-line flags and applies environment configuration.
@@ -80,6 +94,25 @@ func Load(args []string, role string) (Config, error) {
 	}
 	if value := os.Getenv("AGENT_CLUSTER_CHANNEL_ADDRESS"); value != "" {
 		cfg.ChannelAddress = value
+	}
+	if value := os.Getenv("AGENT_CLUSTER_CHANNEL_DIRECTION"); value != "" {
+		cfg.ChannelDirection = value
+	}
+	if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR"); value != "" {
+		cfg.EndpointChannelListen = value
+	}
+	if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_CHANNEL_ADDRESS"); value != "" {
+		cfg.EndpointChannelAddr = value
+	}
+	if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES"); value != "" {
+		addresses, err := ParseDialAddresses(value)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.EndpointDialAddresses = addresses
+	}
+	if value := os.Getenv("AGENT_CLUSTER_SERVER_NAME"); value != "" {
+		cfg.ServerName = value
 	}
 	if value := os.Getenv("AGENT_CLUSTER_ENDPOINT_ID"); value != "" {
 		cfg.EndpointID = value
@@ -129,6 +162,18 @@ func Load(args []string, role string) (Config, error) {
 	})
 	flags.StringVar(&cfg.CommandAllowlistFile, "command-allowlist-file", cfg.CommandAllowlistFile, "Endpoint-global command allowlist file")
 	flags.StringVar(&cfg.ChannelAddress, "channel-address", cfg.ChannelAddress, "Endpoint WSS address")
+	flags.StringVar(&cfg.ChannelDirection, "channel-direction", cfg.ChannelDirection, "channel direction: endpoint-initiated or server-initiated")
+	flags.StringVar(&cfg.EndpointChannelListen, "endpoint-channel-listen-addr", cfg.EndpointChannelListen, "Endpoint mTLS channel listen address for server-initiated connections")
+	flags.Func("endpoint-dial-addresses", "comma-separated endpoint_id=wss://address pairs the Server dials", func(value string) error {
+		addresses, err := ParseDialAddresses(value)
+		if err != nil {
+			return err
+		}
+		cfg.EndpointDialAddresses = addresses
+		return nil
+	})
+	flags.StringVar(&cfg.EndpointChannelAddr, "endpoint-channel-address", cfg.EndpointChannelAddr, "Endpoint WSS address the Server dials")
+	flags.StringVar(&cfg.ServerName, "server-name", cfg.ServerName, "expected Server certificate identity when the Endpoint accepts a connection")
 	flags.StringVar(&cfg.EndpointID, "endpoint-id", cfg.EndpointID, "Endpoint identity")
 	flags.StringVar(&cfg.InstanceID, "instance-id", cfg.InstanceID, "Endpoint instance identity")
 	flags.StringVar(&cfg.TLSCAFile, "tls-ca-file", cfg.TLSCAFile, "TLS CA file")
@@ -146,10 +191,31 @@ func Load(args []string, role string) (Config, error) {
 	if cfg.APIListenAddress == "" {
 		cfg.APIListenAddress = cfg.ListenAddress
 	}
+
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// ParseDialAddresses parses endpoint_id=wss://address pairs the Server dials in
+// the server-initiated direction. The address is operator configuration, never a
+// remote payload, so a command can never choose where the Server connects.
+func ParseDialAddresses(value string) (map[string]string, error) {
+	result := make(map[string]string)
+	for _, pair := range splitList(value) {
+		endpointID, address, found := strings.Cut(pair, "=")
+		endpointID = strings.TrimSpace(endpointID)
+		address = strings.TrimSpace(address)
+		if !found || endpointID == "" || address == "" {
+			return nil, fmt.Errorf("dial address %q must be endpoint_id=address", pair)
+		}
+		if _, ok := result[endpointID]; ok {
+			return nil, fmt.Errorf("dial address for endpoint %q is duplicated", endpointID)
+		}
+		result[endpointID] = address
+	}
+	return result, nil
 }
 
 // ParseAdapters validates the JSON adapter configuration supplied at the process boundary.
@@ -191,6 +257,11 @@ func (c Config) Validate() error {
 	}
 	if c.LogMaxSize <= 0 || c.LogBackups < 0 || c.LogMaxAge < 0 {
 		return fmt.Errorf("log rotation limits must be positive or zero where allowed")
+	}
+	switch c.ChannelDirection {
+	case DirectionEndpointInitiated, DirectionServerInitiated:
+	default:
+		return fmt.Errorf("invalid channel direction %q", c.ChannelDirection)
 	}
 	for _, scope := range c.AuthScopes {
 		if !knownScope(scope) {
