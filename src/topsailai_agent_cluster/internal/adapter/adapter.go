@@ -77,6 +77,28 @@ type OutputResult struct {
 	ObservedAtMS int64
 }
 
+// ErrFollowStopped reports that the consumer ended the follow on purpose, for
+// example because the operator pressed a key. It is a normal termination, not a
+// provider failure, so a caller must not report it as an error.
+var ErrFollowStopped = errors.New("output follow stopped by consumer")
+
+// OutputFollower is an optional adapter capability that streams output records.
+//
+// It is deliberately separate from Adapter rather than a method on it: a
+// provider that cannot stream keeps compiling and reports the capability as
+// unsupported, instead of silently degrading a follow request into a snapshot
+// that never updates. The callback receives each chunk as it arrives and returns
+// ErrFollowStopped to end the stream early; any other returned error is a real
+// failure. FollowOutput returns only after the stream ended, so the caller knows
+// the provider child has been reaped.
+//
+// The request and chunk types are the protocol types rather than adapter-local
+// copies, so the Endpoint can forward a frame to this method without translating
+// it and without the adapter package depending on the Endpoint.
+type OutputFollower interface {
+	FollowOutput(context.Context, protocol.OutputFollowRequest, func(protocol.OutputChunk) error) error
+}
+
 // CommandQuery requests provider-side status for an opaque request reference.
 type CommandQuery struct {
 	ProviderRequestRef string

@@ -51,6 +51,7 @@ type Adapter struct {
 	mapper       adapter.ResourceMapper
 	runner       commandRunner
 	execRunner   commandExecRunner
+	followRunner followRunner
 	platformStop bool
 }
 
@@ -79,7 +80,7 @@ func New(config Config) (*Adapter, error) {
 	if err != nil {
 		capabilities = PlatformCapabilities{}
 	}
-	return &Adapter{config: config, mapper: config.ResourceMapper, runner: execRunner{timeout: config.Timeout}, execRunner: execCommandRunner{timeout: config.Timeout}, platformStop: capabilities.ProcAvailable && capabilities.PidfdAvailable}, nil
+	return &Adapter{config: config, mapper: config.ResourceMapper, runner: execRunner{timeout: config.Timeout}, execRunner: execCommandRunner{timeout: config.Timeout}, followRunner: execFollowRunner{timeout: config.Timeout}, platformStop: capabilities.ProcAvailable && capabilities.PidfdAvailable}, nil
 }
 
 func newWithRunner(config Config, runner commandRunner) (*Adapter, error) {
@@ -101,6 +102,11 @@ func (a *Adapter) Describe(context.Context) (adapter.Descriptor, error) {
 			{Name: protocol.OperationContextInject, Version: "v1", TargetKinds: []string{"session"}},
 			{Name: protocol.OperationExecutionInterrupt, Version: "v1", TargetKinds: []string{"session"}},
 			{Name: protocol.OperationOutputRead, Version: "v1", TargetKinds: []string{"session"}},
+			// output.follow is advertised only because this adapter can stream
+			// provider records. A provider without a streaming entry point must
+			// omit it so the Endpoint reports the gap instead of degrading a
+			// follow into a snapshot that never updates.
+			{Name: protocol.OperationOutputFollow, Version: "v1", TargetKinds: []string{"session"}},
 			{Name: protocol.OperationAgentStart, Version: "v1", TargetKinds: []string{"endpoint"}},
 			{Name: protocol.OperationAgentResume, Version: "v1", TargetKinds: []string{"session"}},
 			{Name: protocol.OperationAgentDriveStart, Version: "v1", TargetKinds: []string{"session"}},
@@ -588,6 +594,28 @@ func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest)
 	}
 	response := envelope.Response
 	return adapter.OutputResult{Lines: response.Lines, Truncated: response.Truncated || response.ScanLimited, ScanLimited: response.ScanLimited, ObservedAtMS: time.Now().UnixMilli()}, nil
+}
+
+// FollowOutput streams runtime log records until the consumer stops or the
+// provider stream ends.
+//
+// The provider rejects --json together with --follow, so this path passes plain
+// text arguments and never decodes a document. Records are delivered as complete
+// lines, and the runner sets PYTHONUNBUFFERED so they arrive as they are written
+// instead of only at process exit.
+func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollowRequest, emit func(protocol.OutputChunk) error) error {
+	key, err := a.providerTarget(&protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation})
+	if err != nil {
+		return err
+	}
+	lines := request.MaxLines
+	if lines <= 0 || lines > 10000 {
+		lines = 20
+	}
+	args := []string{"runtime", "logs", "-s", key, "-n", fmt.Sprint(lines), "--follow"}
+	return a.followRunner.Follow(ctx, a.config.Executable, args, func(line string) error {
+		return emit(protocol.OutputChunk{Lines: []string{line}, ObservedAtMS: time.Now().UnixMilli()})
+	})
 }
 
 // QueryCommand reports that TopsailAI has no supported command reconciliation API.
