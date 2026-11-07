@@ -55,7 +55,7 @@ DEB_SITE_ARGS = $(call deb_arg,--config,$(DEB_CONFIG)) \
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build build-testhooks vet test bdd integration fmt \
+.PHONY: help build build-testhooks vet test test-packaging bdd integration fmt \
         deb deb-node deb-server deb-endpoint deb-inspect deb-clean \
         server-start server-stop server-restart server-status \
         endpoint-start endpoint-stop endpoint-restart endpoint-status \
@@ -70,7 +70,8 @@ help:
 	@echo ""
 	@echo "Verify"
 	@echo "  vet               run go vet over all packages"
-	@echo "  test              run the unit test suite"
+	@echo "  test              run the default suite, including the packaging tests"
+	@echo "  test-packaging    run only the Debian packaging tests"
 	@echo "  bdd               run the BDD feature suite"
 	@echo "  integration       run the integration suite with test hooks"
 	@echo "  fmt               format Go sources in place"
@@ -121,6 +122,11 @@ vet:
 
 test:
 	go test -count=1 ./...
+
+# The packaging tests live in an untagged package so the default suite above
+# discovers them. This target runs them alone while iterating on the packager.
+test-packaging:
+	go test -count=1 ./tests/packaging
 
 bdd:
 	go test ./tests/bdd -count=1 -v
