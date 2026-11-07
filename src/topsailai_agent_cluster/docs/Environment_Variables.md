@@ -103,6 +103,13 @@ An unset value disables command execution entirely. The Endpoint refuses
 `command.exec` with an explicit error rather than falling back to an unrestricted
 shell.
 
+Both deployment paths install a default policy, so a fresh node starts with a
+read-only allowlist in force rather than refusing to start. The bundle installs
+`conf/command-allowlist.conf.example` as `conf/command-allowlist.conf`; the Debian
+package installs it as `/etc/agent-cluster/command-allowlist.conf` and registers it
+as a conffile, so an upgrade does not replace the operator's policy. The shipped
+default permits `ls`, `pwd`, `git status`, `git log` and `git diff` only.
+
 The file is reloaded on `SIGHUP`. A reload parses the whole file before replacing
 the active set, so a malformed edit keeps the previous entries in force and is
 logged. A reload that would remove every entry is refused unless the file contains
