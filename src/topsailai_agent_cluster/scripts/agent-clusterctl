@@ -104,6 +104,15 @@ function load_config() {
         '' | *[!0-9]*) die "STOP_TIMEOUT_SECONDS must be a whole number" ;;
     esac
 
+    # How long a freshly launched process must stay alive before the start is
+    # reported as successful. A role that cannot bind its port or open its
+    # database exits within milliseconds, so a short confirmation window turns a
+    # silent failure into a reported one without delaying a healthy start.
+    START_CONFIRM_TENTHS="${START_CONFIRM_TENTHS:-10}"
+    case "${START_CONFIRM_TENTHS}" in
+        '' | *[!0-9]*) die "START_CONFIRM_TENTHS must be a whole number" ;;
+    esac
+
     # The pause after a completed collection cycle. Zero is rejected because it
     # would turn the Endpoint into a busy loop that relaunches the provider
     # continuously; the binary applies the same rule to its own environment.
@@ -228,6 +237,28 @@ function start_node() {
     nohup "${binary}" "${args[@]}" >>"${STDOUT_LOG}" 2>&1 &
     local pid=$!
     echo "${pid}" >"${PID_FILE}"
+
+    # A launch is not a start: the process can exit immediately, for example when
+    # another instance already holds the listen address or the database cannot be
+    # opened. Reporting success on the strength of the fork alone hides that
+    # failure until the next status call, so the pid is confirmed alive before the
+    # start is announced and the captured output is shown when it is not.
+    local waited=0
+    while [ "${waited}" -lt "${START_CONFIRM_TENTHS}" ]; do
+        kill -0 "${pid}" 2>/dev/null || break
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    if ! kill -0 "${pid}" 2>/dev/null; then
+        rm -f "${PID_FILE}"
+        echo "ERROR: ${ROLE} exited immediately after launch" >&2
+        if [ -s "${STDOUT_LOG}" ]; then
+            echo "last output from ${STDOUT_LOG}:" >&2
+            tail -n 5 "${STDOUT_LOG}" >&2
+        fi
+        return 1
+    fi
+
     echo "started ${ROLE} with pid ${pid}"
 }
 

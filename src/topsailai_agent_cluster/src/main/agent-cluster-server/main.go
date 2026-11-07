@@ -117,8 +117,17 @@ func main() {
 		_ = store.Close()
 		os.Exit(1)
 	}
+	// Record the resolved addresses before serving: without this line a healthy
+	// start leaves no trace in the log, so a silent death cannot be told apart
+	// from a start that never happened.
+	logger.Info("server service starting", "api_listen_address", cfg.APIListenAddress, "channel_listen_address", cfg.ChannelListenAddress, "database_path", cfg.DatabasePath)
 	if err := service.Run(ctx); err != nil {
+		// Run returns nil on a graceful shutdown and the listen error when a port
+		// cannot be bound, so a non-zero exit is what lets a supervisor or launcher
+		// distinguish a failed start from a clean stop.
 		logger.Error("server service stopped", "error", err)
+		_ = service.Close()
+		os.Exit(1)
 	}
 	if err := service.Close(); err != nil {
 		logger.Error("close server service", "error", err)
