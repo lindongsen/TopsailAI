@@ -584,8 +584,8 @@ func TestInteractivePlainTextActionsNeedNoJSON(t *testing.T) {
 		payload string
 	}{
 		{name: "send literal text", input: "cd endpoint-1/session-1\nsend hello world\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"hello world"}`},
-		{name: "send prose mentioning json flag", input: "cd endpoint-1/session-1\nsend please add --json to the config\ny\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"please add --json to the config"}`},
-		{name: "send prose ending with json flag", input: "cd endpoint-1/session-1\nsend the flag is --json\ny\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"the flag is --json"}`},
+		{name: "send prose mentioning json flag", input: "cd endpoint-1/session-1\nsend please add --json to the config\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"please add --json to the config"}`},
+		{name: "send prose ending with json flag", input: "cd endpoint-1/session-1\nsend the flag is --json\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"the flag is --json"}`},
 		{name: "inject prose ending with json flag", input: "cd endpoint-1/session-1\ninject remember the flag is --json\ny\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"remember the flag is --json"}`},
 		{name: "inject literal text", input: "cd endpoint-1/session-1\ninject the deployment notes are in docs/\ny\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"the deployment notes are in docs/"}`},
 		{name: "interrupt soft with message", input: "cd endpoint-1/session-1\ninterrupt soft stop and summarize now\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt","message":"stop and summarize now"}`},

@@ -19,7 +19,7 @@ func TestCommandPrefixIsOptionalOnCommandWord(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			stub := inputStub()
-			input := "cd endpoint-1/session-1\n" + testCase.command + "\ny\nquit\n"
+			input := "cd endpoint-1/session-1\n" + testCase.command + "\nquit\n"
 			_, diagnostics := runInputScenario(t, stub, input, 8192)
 			if diagnostics != "" {
 				t.Fatalf("unexpected diagnostics=%q", diagnostics)
@@ -38,7 +38,7 @@ func TestCommandPrefixIsOptionalOnCommandWord(t *testing.T) {
 // the command word only, so a payload that starts with a slash is unchanged.
 func TestCommandPrefixKeepsArgumentTextLiteral(t *testing.T) {
 	stub := inputStub()
-	_, diagnostics := runInputScenario(t, stub, "cd endpoint-1/session-1\nsend /help\ny\nquit\n", 8192)
+	_, diagnostics := runInputScenario(t, stub, "cd endpoint-1/session-1\nsend /help\nquit\n", 8192)
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics=%q", diagnostics)
 	}
