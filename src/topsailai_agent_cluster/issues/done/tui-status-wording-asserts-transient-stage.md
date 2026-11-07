@@ -74,3 +74,38 @@ live race.
 Intermittent full-suite failure only. No product behaviour is affected, and the
 drive command work is unrelated: the first failing run contains no drive-related
 failure, and the owned packages pass in both runs.
+
+## Resolution
+
+Fixed in commit `87cdb53b` (`test: assert a durable lifecycle stage in tui status
+scenario`).
+
+- `features/tui.feature:28` now reads `And the output shows a recognized lifecycle
+  stage` instead of pinning `request delivered`.
+- `tests/bdd/steps_tui.go` registers and implements
+  `assertRecognizedLifecycleStage`. It inspects only the first output line, the
+  status label, and requires an exact match against the full `StatusLabel`
+  vocabulary: `server received`, `request delivered`, `endpoint received`,
+  `executing`, `effect unknown`, `confirmed result`, `failed`, `delivery
+  unconfirmed, effect unknown`, plus the raw fall-through spellings `expired` and
+  `cancelled_before_execution`.
+- Matching the whole body was rejected because `renderReceiptDetails`
+  (`internal/tui/command_actions.go:104`) prints `outcome: failed` and similar
+  fields, so a substring match over the body would pass vacuously even when the
+  label were unrecognized. Anchoring to the label line keeps the assertion
+  meaningful.
+- The `Scenario Outline: tui renders each command state with distinct wording`
+  still pins every individual wording deterministically, so no per-stage coverage
+  was lost.
+
+Verification: `gofmt -l` clean, `go vet ./tests/bdd/` clean, and
+`go test ./tests/bdd -count=1 -v -run TestFeatures` -> `59 scenarios (59 passed)`,
+`225 steps (225 passed)`, with
+`--- PASS: TestFeatures/TUI_status_wording_preserves_lifecycle_evidence (10.30s)`.
+`go test ./internal/tui -count=1` -> `ok ... 119.375s`.
+
+Note: several intermediate runs failed with `build ./src/main/agent-cluster-cli:
+exit status 1` caused by a concurrent agent's in-progress edits to
+`internal/tui` (`executor.go`, `interactive.go`, `command_completion.go`,
+`help.go`, `watch.go`). Those failures never mentioned this step, and the suite
+passed once the tree compiled again.
