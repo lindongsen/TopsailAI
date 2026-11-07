@@ -80,9 +80,31 @@ func (a *EndpointAcceptor) Handler(w http.ResponseWriter, r *http.Request) {
 		a.rejectHello(r.Context(), conn, hello, "wrong_endpoint", "hello targets another endpoint")
 		return
 	}
-	generation, err := strconv.ParseInt(hello.ConnectionGeneration, 10, 64)
+	// The Endpoint validates identity and initiator, then acknowledges. It does
+	// not attach yet: the Server assigns the generation when it installs the
+	// connection and sends it in hello_confirm, so both sides agree on which link
+	// is authoritative. The acknowledgement carries the Endpoint identity because
+	// the dialing Server records it on the Peer; without it the Server would store
+	// an empty instance ID and a later disconnect could never be matched.
+	ack := Frame{Type: FrameHelloAck, ProtocolVersion: ProtocolVersion, EndpointID: a.EndpointID, InstanceID: a.Client.InstanceID, Hostname: a.Client.Hostname, Initiator: InitiatorServer}
+	if err := wsjson.Write(context.Background(), conn, ack); err != nil {
+		a.reject(err)
+		return
+	}
+	var confirm Frame
+	if err := wsjson.Read(r.Context(), conn, &confirm); err != nil {
+		a.reject(err)
+		return
+	}
+	if confirm.Type != FrameHelloConfirm || confirm.EndpointID != a.EndpointID {
+		a.reject(errors.New("invalid hello confirm"))
+		_ = conn.Close(websocket.StatusPolicyViolation, "invalid hello confirm")
+		return
+	}
+	generation, err := strconv.ParseInt(confirm.ConnectionGeneration, 10, 64)
 	if err != nil || generation < 1 {
-		a.rejectHello(r.Context(), conn, hello, "invalid_generation", "invalid connection generation")
+		a.reject(errors.New("invalid connection generation"))
+		_ = conn.Close(websocket.StatusPolicyViolation, "invalid connection generation")
 		return
 	}
 	a.mu.Lock()
@@ -92,16 +114,15 @@ func (a *EndpointAcceptor) Handler(w http.ResponseWriter, r *http.Request) {
 	if previous != nil && previous != conn {
 		_ = previous.Close(websocket.StatusNormalClosure, "replaced")
 	}
-	// The acknowledgement carries the Endpoint identity because the dialing
-	// Server records it on the Peer. Without it the Server would store an empty
-	// instance ID, and a later disconnect could never be matched to the row it
-	// must mark offline.
-	ack := Frame{Type: FrameHelloAck, ProtocolVersion: ProtocolVersion, ConnectionGeneration: strconv.FormatInt(generation, 10), EndpointID: a.EndpointID, InstanceID: a.Client.InstanceID, Hostname: a.Client.Hostname, Initiator: InitiatorServer}
-	if err := wsjson.Write(context.Background(), conn, ack); err != nil {
-		a.reject(err)
+	// A superseded connection must not confirm adoption: the Server would then
+	// treat a link the Endpoint discarded as successfully established.
+	if !a.Client.Attach(conn, generation, InitiatorServer) {
+		_ = conn.Close(websocket.StatusNormalClosure, "superseded")
 		return
 	}
-	a.Client.Attach(conn, generation, InitiatorServer)
+	// The Server waits for this frame before reporting success, so "successfully
+	// established" means both sides adopted the same link.
+	_ = wsjson.Write(context.Background(), conn, Frame{Type: FrameHelloAttached, ProtocolVersion: ProtocolVersion, EndpointID: a.EndpointID, ConnectionGeneration: strconv.FormatInt(generation, 10), Initiator: InitiatorServer})
 }
 
 // rejectHello explains a rejected handshake before closing the connection.

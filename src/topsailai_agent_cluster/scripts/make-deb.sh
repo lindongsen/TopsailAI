@@ -289,6 +289,19 @@ function write_role_config() {
             } >>"${PKG_ROOT}/etc/agent-cluster/node.conf" ||
                 die "cannot append the allowlist path"
         fi
+        # The control action catalog is the only source of ctl. actions. Without the
+        # key the Endpoint advertises no ctl. action, so the packaged configuration
+        # must reference the shipped catalog or the feature is silently absent.
+        if ! grep -qE '^[[:space:]]*CONTROL_ACTION_FILE=' \
+            "${PKG_ROOT}/etc/agent-cluster/node.conf"; then
+            {
+                echo ""
+                echo "# The package ships this conffile; conf/ resolves through the"
+                echo "# /opt/agent-cluster layout to /etc/agent-cluster."
+                echo "CONTROL_ACTION_FILE=conf/control-actions.conf"
+            } >>"${PKG_ROOT}/etc/agent-cluster/node.conf" ||
+                die "cannot append the control action catalog path"
+        fi
     fi
 
     # An adapter override is appended because the last assignment wins and the
@@ -313,6 +326,10 @@ function write_role_config() {
     if [ "${ROLE}" = "endpoint" ]; then
         echo "/etc/agent-cluster/command-allowlist.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
             die "cannot register the allowlist conffile"
+        # The catalog is a conffile for the same reason: an operator edits the
+        # action surface in place, so an upgrade must not replace it.
+        echo "/etc/agent-cluster/control-actions.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
+            die "cannot register the control action catalog conffile"
     fi
     chmod 0644 "${PKG_ROOT}/DEBIAN/conffiles"
 }
@@ -396,6 +413,11 @@ function build_role_package() {
     if [ "${ROLE}" = "endpoint" ]; then
         add_file "${PROJECT_DIR}/conf/command-allowlist.conf.example" \
             "/etc/agent-cluster/command-allowlist.conf" 0640
+        # The control action catalog is the only source of ctl. actions. A missing
+        # file fails closed by advertising no ctl. action, so the package ships the
+        # reviewed catalog to keep the feature available on a fresh install.
+        add_file "${PROJECT_DIR}/conf/control-actions.conf.example" \
+            "/etc/agent-cluster/control-actions.conf" 0640
     fi
     add_dir "/var/lib/agent-cluster" 0750
     add_dir "/var/log/agent-cluster" 0750

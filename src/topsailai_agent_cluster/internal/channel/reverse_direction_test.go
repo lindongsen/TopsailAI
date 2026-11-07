@@ -157,8 +157,11 @@ func TestAcceptorRejectsWrongEndpoint(t *testing.T) {
 	}
 }
 
-// TestAcceptorRejectsInvalidGeneration verifies the acceptor refuses a hello
-// without a usable connection generation.
+// TestAcceptorRejectsInvalidGeneration verifies the acceptor refuses a
+// hello_confirm frame without a usable connection generation. The generation is
+// no longer proposed in the hello: the Server assigns it when it installs the
+// connection and reports it in hello_confirm, so that frame is what the Endpoint
+// must validate before attaching.
 func TestAcceptorRejectsInvalidGeneration(t *testing.T) {
 	acceptorTLS, dialTLS, _ := reverseTLSMaterial(t)
 	client := &EndpointClient{EndpointID: "endpoint-1", InstanceID: "instance-1"}
@@ -174,16 +177,31 @@ func TestAcceptorRejectsInvalidGeneration(t *testing.T) {
 		t.Fatalf("dial acceptor: %v", err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "done")
-	hello := Frame{Type: FrameHello, ProtocolVersion: ProtocolVersion, EndpointID: "endpoint-1", ConnectionGeneration: "0", Initiator: InitiatorServer}
+	hello := Frame{Type: FrameHello, ProtocolVersion: ProtocolVersion, EndpointID: "endpoint-1", InstanceID: "instance-1", Initiator: InitiatorServer}
 	if err := wsjson.Write(ctx, conn, hello); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
-	var rejection Frame
-	if err := wsjson.Read(ctx, conn, &rejection); err != nil {
-		t.Fatalf("read rejection: %v", err)
+	var ack Frame
+	if err := wsjson.Read(ctx, conn, &ack); err != nil {
+		t.Fatalf("read ack: %v", err)
 	}
-	if rejection.Type != FrameHelloRejected || rejection.Reason != "invalid_generation" {
-		t.Fatalf("unexpected rejection: %+v", rejection)
+	if ack.Type != FrameHelloAck {
+		t.Fatalf("unexpected ack: %+v", ack)
+	}
+	// The Endpoint must not attach before a valid confirm arrives.
+	if client.Ready() {
+		t.Fatal("endpoint attached before hello_confirm")
+	}
+	confirm := Frame{Type: FrameHelloConfirm, ProtocolVersion: ProtocolVersion, EndpointID: "endpoint-1", ConnectionGeneration: "0"}
+	if err := wsjson.Write(ctx, conn, confirm); err != nil {
+		t.Fatalf("write confirm: %v", err)
+	}
+	var frame Frame
+	if err := wsjson.Read(ctx, conn, &frame); err == nil && frame.Type == FrameHelloAck {
+		t.Fatalf("acceptor accepted an invalid generation: %+v", frame)
+	}
+	if client.Ready() {
+		t.Fatal("endpoint attached a connection with an invalid generation")
 	}
 }
 
@@ -216,21 +234,30 @@ func TestHandlerRejectsServerInitiatedHello(t *testing.T) {
 	}
 }
 
-// TestPeekDoesNotCommitGeneration verifies a failed dial cannot fence a healthy
-// peer: Peek proposes a value but only Acquire makes it authoritative.
-func TestPeekDoesNotCommitGeneration(t *testing.T) {
-	fence := NewFence()
-	if got := fence.Peek("endpoint-1"); got != 1 {
-		t.Fatalf("peek = %d, want 1", got)
+// TestInstallPeerAssignsGenerationAtInstall verifies the generation is assigned
+// under the same lock that installs the peer, so install order and generation
+// order are identical and the newest connection always wins. Assigning the
+// generation before the handshake instead would let a slower handshake overwrite
+// a newer connection, which is the opposite of latest-wins.
+func TestInstallPeerAssignsGenerationAtInstall(t *testing.T) {
+	server := NewServer(nil)
+	if got := server.Fence.Current("endpoint-1"); got != 0 {
+		t.Fatalf("fresh fence = %d, want 0", got)
 	}
-	if got := fence.Current("endpoint-1"); got != 0 {
-		t.Fatalf("peek committed a generation: current = %d", got)
+	first := server.installPeer("endpoint-1", "instance-1", "host-1", InitiatorEndpoint, nil)
+	if first.ConnectionGeneration != 1 {
+		t.Fatalf("first generation = %d, want 1", first.ConnectionGeneration)
 	}
-	if got := fence.Acquire("endpoint-1"); got != 1 {
-		t.Fatalf("acquire = %d, want 1", got)
+	second := server.installPeer("endpoint-1", "instance-1", "host-1", InitiatorServer, nil)
+	if second.ConnectionGeneration != 2 {
+		t.Fatalf("second generation = %d, want 2", second.ConnectionGeneration)
 	}
-	if got := fence.Peek("endpoint-1"); got != 2 {
-		t.Fatalf("peek after acquire = %d, want 2", got)
+	// The newest install is authoritative, so the older generation is fenced.
+	if err := server.Fence.Check("endpoint-1", first.ConnectionGeneration); !errors.Is(err, ErrFenced) {
+		t.Fatalf("older generation check = %v, want ErrFenced", err)
+	}
+	if err := server.Fence.Check("endpoint-1", second.ConnectionGeneration); err != nil {
+		t.Fatalf("newest generation rejected: %v", err)
 	}
 }
 

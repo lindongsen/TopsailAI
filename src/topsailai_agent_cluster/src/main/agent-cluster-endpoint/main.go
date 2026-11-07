@@ -96,9 +96,11 @@ func main() {
 		os.Exit(1)
 	}
 	registry := adapter.NewRegistry()
-	// The control action file is Endpoint-local administrative configuration. It is
-	// loaded before any adapter is configured so a broken file fails startup rather
-	// than silently leaving a wider default set in force.
+	// The control action file is Endpoint-local administrative configuration and
+	// the only source of ctl. actions. It is loaded before any adapter is
+	// configured so a broken file fails startup rather than silently leaving a
+	// different action surface in force. An Endpoint without the file advertises
+	// no ctl. action at all, which is the fail-closed default.
 	var controlActions *topsailaiadapter.ControlActionSet
 	if cfg.ControlActionFile != "" {
 		controlActions, err = topsailaiadapter.LoadControlActionSet(cfg.ControlActionFile)
@@ -110,7 +112,7 @@ func main() {
 		}
 		logger.Info("loaded control action file", "path", cfg.ControlActionFile, "actions", controlActions.Len(), "names", controlActions.Names())
 	} else {
-		logger.Info("control action file is not configured; the reviewed default ctl. set is in force")
+		logger.Info("control action file is not configured; no ctl. action is advertised and every ctl. operation is refused")
 	}
 	if controlActions != nil {
 		stopControlReload, watchErr := controlActions.WatchReload(ctx, func(reloadErr error) {

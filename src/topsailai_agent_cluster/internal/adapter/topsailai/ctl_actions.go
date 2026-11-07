@@ -10,64 +10,18 @@ import (
 	"topsailai_agent_cluster/internal/security"
 )
 
-// providerControlAction is one reviewed provider control action.
-//
-// The provider exposes a live handler registry, but Describe runs once per
-// command, so querying the registry there would spawn a provider subprocess on
-// every command. The reviewed list is therefore declared here and a test asserts
-// it still matches the live registry, so drift is caught instead of silently
-// advertising an action the provider no longer serves.
-type providerControlAction struct {
-	// Name is the provider action name, appended to the ctl. operation prefix.
-	Name string
-	// Permission is the operator scope required to invoke the action.
-	Permission string
-}
-
-// providerControlActions is the reviewed set of provider control actions.
-//
-// Actions that return conversation content require read_output rather than
-// control: an operator allowed to interrupt a session is not thereby allowed to
-// read its messages.
-var providerControlActions = []providerControlAction{
-	{Name: "call_instruction", Permission: security.ScopeControl},
-	{Name: "clear_interrupt", Permission: security.ScopeControl},
-	{Name: "clear_pause", Permission: security.ScopeControl},
-	{Name: "get_runtime_messages", Permission: security.ScopeReadOutput},
-	{Name: "get_session_messages", Permission: security.ScopeReadOutput},
-	{Name: "hard_interrupt", Permission: security.ScopeControl},
-	{Name: "heartbeat", Permission: security.ScopeControl},
-	{Name: "llm_control", Permission: security.ScopeControl},
-	{Name: "pause", Permission: security.ScopeControl},
-	{Name: "soft_interrupt", Permission: security.ScopeControl},
-}
-
 // errControlActionUnreviewed reports that a ctl. operation names an action the
-// adapter does not serve. It is a definite failure: nothing was sent.
-var errControlActionUnreviewed = errors.New("provider control action is not reviewed")
+// Endpoint does not serve. It is a definite failure: nothing was sent.
+var errControlActionUnreviewed = errors.New("provider control action is not configured")
 
 // controlActionCapabilities returns one capability per enabled control action.
 //
-// A nil set means no control action file was configured, so the reviewed default
-// set stays in force and an existing deployment keeps working unchanged. A non-nil
-// set is authoritative: an action it omits is not advertised, and because the
-// Endpoint rejects an operation absent from the advertised capabilities, omitting
-// an action also makes it unreachable. An empty set therefore disables the whole
-// ctl. family, which is the fail-closed default once an operator configures it.
+// The catalog is the only source of actions. A nil set means no control action
+// file was configured, so no action is advertised and every ctl. operation is
+// refused: the Endpoint cannot serve an action it was never told about. That is
+// the fail-closed default, and it keeps the action surface a configuration
+// decision instead of a compiled-in list.
 func controlActionCapabilities(set *ControlActionSet) []protocol.Capability {
-	if set == nil {
-		capabilities := make([]protocol.Capability, 0, len(providerControlActions))
-		for _, action := range providerControlActions {
-			capabilities = append(capabilities, protocol.Capability{
-				Name:               security.ProviderControlPrefix + action.Name,
-				Version:            "v1",
-				TargetKinds:        []string{"session"},
-				SafetyClass:        "mutating",
-				RequiredPermission: action.Permission,
-			})
-		}
-		return capabilities
-	}
 	actions := set.Actions()
 	capabilities := make([]protocol.Capability, 0, len(actions))
 	for _, action := range actions {
@@ -81,16 +35,6 @@ func controlActionCapabilities(set *ControlActionSet) []protocol.Capability {
 		})
 	}
 	return capabilities
-}
-
-// controlActionPermission returns the reviewed permission for an action.
-func controlActionPermission(name string) (string, bool) {
-	for _, action := range providerControlActions {
-		if action.Name == name {
-			return action.Permission, true
-		}
-	}
-	return "", false
 }
 
 // controlActionPayload validates the operator payload of one ctl. operation.
@@ -118,46 +62,45 @@ func controlActionPayload(payload []byte) ([]byte, error) {
 
 // controlActionArgs builds the provider argv for one ctl. operation.
 //
-// The action is matched against the enabled set before any argv is built, so an
-// action the operator disabled never reaches the provider even if a caller submits
-// it directly instead of going through capability admission. A nil set keeps the
-// reviewed default set in force, matching controlActionCapabilities.
+// The action is matched against the configured catalog before any argv is built,
+// so an action the operator did not configure never reaches the provider even if a
+// caller submits it directly instead of going through capability admission. The
+// argv comes from the catalog's command template, so the provider invocation is a
+// configuration decision rather than a compiled-in switch.
 func controlActionArgs(set *ControlActionSet, operation, providerKey string, payload []byte) ([]string, error) {
 	if !strings.HasPrefix(operation, security.ProviderControlPrefix) {
 		return nil, errControlActionUnreviewed
 	}
-	action := strings.TrimPrefix(operation, security.ProviderControlPrefix)
-	if !controlActionEnabled(set, action) {
-		return nil, fmt.Errorf("%w: %q", errControlActionUnreviewed, action)
+	name := strings.TrimPrefix(operation, security.ProviderControlPrefix)
+	action, ok := set.Get(name)
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", errControlActionUnreviewed, name)
 	}
-	args, err := controlActionPayload(payload)
+	encoded, err := controlActionPayload(payload)
 	if err != nil {
 		return nil, err
 	}
-	args, err = controlActionTargetPayload(action, providerKey, args)
+	encoded, err = controlActionTargetPayload(action, providerKey, encoded)
 	if err != nil {
 		return nil, err
 	}
-	return []string{"runtime", "control", action, "-s", providerKey, "-a", string(args), "--json"}, nil
+	return controlActionCommand(action, providerKey, encoded)
 }
 
 // controlActionTargetPayload injects the target-derived selector an action needs.
 //
-// get_session_messages requires a provider session_id, and the Endpoint already
-// holds it: the resource mapping stores the provider session_id as the provider
-// key, which is the same value every -s selector uses. Deriving it from the
-// revalidated target therefore needs no provider change and no operator input.
-//
-// A supplied value that disagrees with the target is rejected instead of being
-// overwritten, because silently replacing it would read a different session than
-// the operator named, and silently honouring it would bypass the target the
-// Endpoint just revalidated.
-func controlActionTargetPayload(action, providerKey string, payload []byte) ([]byte, error) {
-	if action != "get_session_messages" {
+// An action whose payload carries the provider session key declares the field in
+// the catalog, so the Endpoint fills it from the revalidated target instead of
+// asking the operator. A supplied value that disagrees with the target is rejected
+// instead of being overwritten, because silently replacing it would read a
+// different session than the operator named, and silently honouring it would
+// bypass the target the Endpoint just revalidated.
+func controlActionTargetPayload(action ControlAction, providerKey string, payload []byte) ([]byte, error) {
+	if action.PayloadSessionField == "" {
 		return payload, nil
 	}
 	if providerKey == "" {
-		return nil, errors.New("get_session_messages requires a resolved provider session")
+		return nil, fmt.Errorf("%s requires a resolved provider session", action.Name)
 	}
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &envelope); err != nil {
@@ -166,20 +109,20 @@ func controlActionTargetPayload(action, providerKey string, payload []byte) ([]b
 	if envelope == nil {
 		envelope = make(map[string]json.RawMessage, 1)
 	}
-	if supplied, ok := envelope["session_id"]; ok {
+	if supplied, ok := envelope[action.PayloadSessionField]; ok {
 		var value string
 		if err := json.Unmarshal(supplied, &value); err != nil {
-			return nil, fmt.Errorf("session_id must be a string: %w", err)
+			return nil, fmt.Errorf("%s must be a string: %w", action.PayloadSessionField, err)
 		}
 		if value != providerKey {
-			return nil, fmt.Errorf("session_id %q does not match the selected session", value)
+			return nil, fmt.Errorf("%s %q does not match the selected session", action.PayloadSessionField, value)
 		}
 	}
 	encodedKey, err := json.Marshal(providerKey)
 	if err != nil {
-		return nil, fmt.Errorf("encode session_id: %w", err)
+		return nil, fmt.Errorf("encode %s: %w", action.PayloadSessionField, err)
 	}
-	envelope["session_id"] = encodedKey
+	envelope[action.PayloadSessionField] = encodedKey
 	encoded, err := json.Marshal(envelope)
 	if err != nil {
 		return nil, fmt.Errorf("encode control payload: %w", err)
@@ -187,15 +130,26 @@ func controlActionTargetPayload(action, providerKey string, payload []byte) ([]b
 	return encoded, nil
 }
 
-// controlActionEnabled reports whether an action may be invoked.
+// controlActionCommand expands the configured argv template.
 //
-// A nil set means no control action file was configured, so the reviewed default
-// set applies. A non-nil set is authoritative and an omitted action is disabled.
-func controlActionEnabled(set *ControlActionSet, name string) bool {
-	if set == nil {
-		_, ok := controlActionPermission(name)
-		return ok
+// Substitution is per token, so a placeholder never splits into several arguments
+// and an operator-supplied payload never becomes a token boundary. A template
+// without a {session} placeholder is allowed, because an action may address the
+// provider without a session selector.
+func controlActionCommand(action ControlAction, providerKey string, payload []byte) ([]string, error) {
+	args := make([]string, 0, len(action.Command))
+	for _, token := range action.Command {
+		expanded := token
+		if strings.Contains(expanded, controlSessionPlaceholder) {
+			if providerKey == "" {
+				return nil, fmt.Errorf("%s requires a resolved provider session", action.Name)
+			}
+			expanded = strings.ReplaceAll(expanded, controlSessionPlaceholder, providerKey)
+		}
+		if strings.Contains(expanded, controlPayloadPlaceholder) {
+			expanded = strings.ReplaceAll(expanded, controlPayloadPlaceholder, string(payload))
+		}
+		args = append(args, expanded)
 	}
-	_, ok := set.Get(name)
-	return ok
+	return args, nil
 }

@@ -95,11 +95,26 @@ func TestWorkspaceLeftClipInNarrowLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	rendered := out.String()
-	if !strings.Contains(rendered, "PROJECT_WORKSPACE: ") {
+	const prefix = "PROJECT_WORKSPACE: "
+	index := strings.Index(rendered, prefix)
+	if index < 0 {
 		t.Fatalf("expected narrow layout, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "PROJECT_WORKSPACE: ...ui") {
-		t.Fatalf("narrow layout lost the identifying tail: %q", rendered)
+	cell := rendered[index+len(prefix):]
+	if end := strings.IndexByte(cell, '\n'); end >= 0 {
+		cell = cell[:end]
+	}
+	// The exact tail length depends on how many columns the layout carries, so
+	// assert the property the rule exists for: the cell is clipped with a leading
+	// ellipsis and still ends with the real identifying tail of the path.
+	if !strings.HasPrefix(cell, "...") {
+		t.Fatalf("narrow layout did not clip with an ellipsis: %q", cell)
+	}
+	if cell == "..." {
+		t.Fatalf("narrow layout lost the identifying tail: %q", cell)
+	}
+	if !strings.HasSuffix(cell, "tui") || !strings.HasSuffix(workspace, strings.TrimPrefix(cell, "...")) {
+		t.Fatalf("narrow layout tail is not the real path tail: %q", cell)
 	}
 }
 

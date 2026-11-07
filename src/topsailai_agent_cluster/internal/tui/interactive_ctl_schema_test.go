@@ -223,3 +223,158 @@ func TestPromptCtlActionParametersFallsBackToGenericPrompt(t *testing.T) {
 		t.Fatalf("prompt output = %q, want the generic key=value prompt", out.String())
 	}
 }
+
+func TestPromptCtlFieldAnswerRendersMenuForEnum(t *testing.T) {
+	field := ctlField{Name: "operation", Type: "string", Required: true, Enum: []string{"force_retry"}}
+	var out bytes.Buffer
+	answer, err := promptCtlFieldAnswer(context.Background(), field, ctlLines("1"), &out)
+	if err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if answer != "force_retry" {
+		t.Fatalf("answer = %q, want force_retry", answer)
+	}
+	if !strings.Contains(out.String(), "1. force_retry") {
+		t.Fatalf("menu = %q, want a numbered entry", out.String())
+	}
+}
+
+func TestPromptCtlFieldAnswerAcceptsLiteralEnumValue(t *testing.T) {
+	// An operator who already knows the value should not have to count menu rows.
+	field := ctlField{Name: "default", Type: "string", Enum: []string{"continue", "interrupt"}}
+	var out bytes.Buffer
+	answer, err := promptCtlFieldAnswer(context.Background(), field, ctlLines("interrupt"), &out)
+	if err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if answer != "interrupt" {
+		t.Fatalf("answer = %q, want interrupt", answer)
+	}
+}
+
+func TestPromptCtlFieldAnswerRejectsNumberOutsideMenu(t *testing.T) {
+	// A number that names no entry must not be silently sent as a literal value,
+	// because the operator clearly meant to select a row.
+	field := ctlField{Name: "operation", Type: "string", Enum: []string{"force_retry"}}
+	var out bytes.Buffer
+	answer, err := promptCtlFieldAnswer(context.Background(), field, ctlLines("7"), &out)
+	if err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if _, err := ctlFieldValue(field, answer); err == nil {
+		t.Fatal("a number outside the menu was accepted as a value")
+	}
+}
+
+func TestPromptCtlSchemaParametersSendsEnumSelection(t *testing.T) {
+	fields := []ctlField{{Name: "operation", Type: "string", Required: true, Enum: []string{"force_retry"}}}
+	var out bytes.Buffer
+	payload, err := promptCtlSchemaParameters(context.Background(), "llm_control", fields, ctlLines("1"), &out)
+	if err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if !sameJSONObject(payload, `{"operation":"force_retry"}`) {
+		t.Fatalf("payload = %s, want the selected operation", payload)
+	}
+}
+
+func TestAdvertisedSchemaDrivesLlmControlEnumeration(t *testing.T) {
+	// llm_control accepts exactly one operation, so the advertised schema must
+	// carry that closed set and the prompt must offer it as a menu. The schema is
+	// read from the descriptor, which is the only channel the client has.
+	descriptor := protocol.CapabilityDescriptor{Capabilities: []protocol.Capability{
+		ctlSchemaCapability("llm_control", `{"type":"object","properties":{"operation":{"type":"string","enum":["force_retry"]}},"required":["operation"]}`),
+	}}
+	fields, err := ctlSchemaFields(ctlActionSchema(descriptor, "llm_control"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(fields) != 1 || fields[0].Name != "operation" {
+		t.Fatalf("fields = %+v, want one operation field", fields)
+	}
+	if len(fields[0].Enum) != 1 || fields[0].Enum[0] != "force_retry" {
+		t.Fatalf("enum = %v, want only force_retry", fields[0].Enum)
+	}
+	if !fields[0].Required {
+		t.Fatal("operation is not marked required")
+	}
+}
+
+func TestAdvertisedSchemaAsksNothingForPayloadFreeActions(t *testing.T) {
+	// An action that takes no payload advertises an object with no properties, so
+	// the prompt asks nothing and sends the empty object instead of falling back
+	// to the generic key=value line.
+	for _, action := range []string{"heartbeat", "clear_pause", "clear_interrupt", "hard_interrupt", "get_runtime_messages", "get_session_messages"} {
+		descriptor := protocol.CapabilityDescriptor{Capabilities: []protocol.Capability{
+			ctlSchemaCapability(action, `{"type":"object","properties":{}}`),
+		}}
+		fields, err := ctlSchemaFields(ctlActionSchema(descriptor, action))
+		if err != nil {
+			t.Fatalf("%s: %v", action, err)
+		}
+		if len(fields) != 0 {
+			t.Fatalf("%s yielded %d fields, want 0", action, len(fields))
+		}
+	}
+}
+
+func TestAdvertisedSchemaDocumentsPauseFields(t *testing.T) {
+	descriptor := protocol.CapabilityDescriptor{Capabilities: []protocol.Capability{
+		ctlSchemaCapability("pause", `{"type":"object","properties":{
+			"reason":{"type":"string"},
+			"prompt":{"type":"string"},
+			"timeout_seconds":{"type":"number"},
+			"default":{"type":"string","enum":["continue","interrupt"]}
+		}}`),
+	}}
+	fields, err := ctlSchemaFields(ctlActionSchema(descriptor, "pause"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	byName := make(map[string]ctlField, len(fields))
+	for _, field := range fields {
+		byName[field.Name] = field
+	}
+	for _, name := range []string{"reason", "prompt", "timeout_seconds", "default"} {
+		if _, ok := byName[name]; !ok {
+			t.Fatalf("pause schema is missing %q", name)
+		}
+	}
+	if byName["timeout_seconds"].Type != "number" {
+		t.Fatalf("timeout_seconds type = %q, want number", byName["timeout_seconds"].Type)
+	}
+	if len(byName["default"].Enum) != 2 {
+		t.Fatalf("default enum = %v, want continue and interrupt", byName["default"].Enum)
+	}
+}
+
+func TestAdvertisedEnumDrivesCallInstructionSelection(t *testing.T) {
+	// call_instruction is a factory layer, so its sub-instruction list is not
+	// known to the client. The Endpoint can enumerate the reviewed subset, and
+	// that enum becomes the first stage of the guided prompt: the operator selects
+	// an instruction instead of typing one.
+	descriptor := protocol.CapabilityDescriptor{Capabilities: []protocol.Capability{
+		ctlSchemaCapability("call_instruction", `{"type":"object","properties":{"instruction":{"type":"string","enum":["git.git_status","git.git_log","skill.show"]}},"required":["instruction"]}`),
+	}}
+	fields, err := ctlSchemaFields(ctlActionSchema(descriptor, "call_instruction"))
+	if err != nil {
+		t.Fatalf("parse schema: %v", err)
+	}
+	if len(fields) != 1 || fields[0].Name != "instruction" {
+		t.Fatalf("fields = %+v, want one instruction field", fields)
+	}
+	if len(fields[0].Enum) != 3 {
+		t.Fatalf("enum = %v, want the three advertised instructions", fields[0].Enum)
+	}
+	var out bytes.Buffer
+	payload, err := promptCtlSchemaParameters(context.Background(), "call_instruction", fields, ctlLines("2"), &out)
+	if err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if !sameJSONObject(payload, `{"instruction":"git.git_log"}`) {
+		t.Fatalf("payload = %s, want the second advertised instruction", payload)
+	}
+	if !strings.Contains(out.String(), "2. git.git_log") {
+		t.Fatalf("menu = %q, want the advertised instructions numbered", out.String())
+	}
+}

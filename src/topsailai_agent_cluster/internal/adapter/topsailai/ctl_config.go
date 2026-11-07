@@ -7,17 +7,35 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
+
+	"topsailai_agent_cluster/internal/security"
+)
+
+// Placeholders a configured command template may use.
+//
+// A template is a token array, never a shell string: the Endpoint substitutes
+// these tokens and executes the result directly, so no shell parses it and no
+// operator-supplied text can become a command. A token that is not one of these
+// placeholders is passed through literally.
+const (
+	// controlSessionPlaceholder is replaced by the provider session key the
+	// Endpoint resolved from the revalidated target.
+	controlSessionPlaceholder = "{session}"
+	// controlPayloadPlaceholder is replaced by the operator payload, encoded as
+	// one JSON object argument.
+	controlPayloadPlaceholder = "{payload}"
 )
 
 // ControlAction is one enabled provider control action.
 //
-// Permission is carried explicitly so an operator reading the file can see which
-// scope each action needs. It must equal the reviewed permission for that action:
-// the file selects actions, it never widens what an action requires.
+// Every field comes from the Endpoint-local catalog. Nothing about an action is
+// declared in code, so adding, renaming or retiring an action is a configuration
+// edit and never a rebuild.
 type ControlAction struct {
-	// Name is the provider action name, appended to the ctl. operation prefix.
+	// Name is the action name, appended to the ctl. operation prefix.
 	Name string
 	// Permission is the operator scope required to invoke the action.
 	Permission string
@@ -26,14 +44,22 @@ type ControlAction struct {
 	// forwarded verbatim into the advertised capability and is never interpreted
 	// by the Server.
 	PayloadSchema string
+	// Command is the provider argv template. It must contain at most one
+	// {session} and at most one {payload} placeholder.
+	Command []string
+	// PayloadSessionField names a payload field that must carry the provider
+	// session key. It is empty for an action that does not need the selector in
+	// its payload, which is the common case.
+	PayloadSessionField string
 }
 
 // ControlActionSet is the Endpoint-local set of enabled ctl. actions.
 //
 // The set is safe for concurrent use and can be replaced atomically, which is what
-// makes reload possible without restarting the Endpoint. A nil set means the file
-// was not configured, so the reviewed default set stays in force; a non-nil set
-// with no actions disables the whole ctl. family.
+// makes reload possible without restarting the Endpoint. A nil set, or a set with
+// no actions, disables the whole ctl. family: the catalog is the only source of
+// actions, so an Endpoint without one advertises none and refuses every ctl.
+// operation.
 type ControlActionSet struct {
 	// Path is the file this set was loaded from, used by ReloadFromDisk. It is
 	// empty for a set built directly from bytes.
@@ -50,9 +76,11 @@ type controlActionFile struct {
 
 // controlActionEntry is one configured action before validation.
 type controlActionEntry struct {
-	Name          string          `json:"name"`
-	Permission    string          `json:"permission"`
-	PayloadSchema json.RawMessage `json:"payload_schema"`
+	Name                string          `json:"name"`
+	Permission          string          `json:"permission"`
+	PayloadSchema       json.RawMessage `json:"payload_schema"`
+	Command             []string        `json:"command"`
+	PayloadSessionField string          `json:"payload_session_field"`
 }
 
 // LoadControlActionSet reads and validates the control action file at path.
@@ -74,14 +102,18 @@ func LoadControlActionSet(path string) (*ControlActionSet, error) {
 
 // ParseControlActionSet parses and validates a control action document.
 //
-// Every name must be a reviewed provider action, so a typo fails at load time
-// instead of at the first command. Every permission must equal the reviewed
-// permission, so the file cannot widen what an action requires. An empty action
+// The catalog is the only source of actions, so every entry is validated here and
+// a mistake fails at load time instead of at the first command. An empty action
 // list is accepted and disables the whole ctl. family, because a security default
-// must fail closed once an operator has explicitly configured the file.
+// must fail closed.
+//
+// A line whose first non-space character is '#' is dropped before decoding, so the
+// shipped example can explain itself in place. Only whole lines are dropped: a
+// JSON string cannot span lines, so this rule cannot corrupt a value, and a '#'
+// inside a string is preserved.
 func ParseControlActionSet(data []byte) (*ControlActionSet, error) {
 	var document controlActionFile
-	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder := json.NewDecoder(bytes.NewReader(stripControlActionComments(data)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&document); err != nil {
 		return nil, fmt.Errorf("decode control action document: %w", err)
@@ -101,26 +133,149 @@ func ParseControlActionSet(data []byte) (*ControlActionSet, error) {
 	return set, nil
 }
 
-// validateControlActionEntry checks one configured action against the reviewed set.
-func validateControlActionEntry(entry controlActionEntry) (ControlAction, error) {
-	if entry.Name == "" {
-		return ControlAction{}, fmt.Errorf("name is required")
+// stripControlActionComments removes whole-line '#' comments from a catalog.
+//
+// Only a line whose first non-space character is '#' is removed. A trailing
+// comment is deliberately not supported, because deciding whether a '#' sits
+// inside a string would require parsing JSON, and a wrong guess would silently
+// change a value.
+func stripControlActionComments(data []byte) []byte {
+	lines := bytes.Split(data, []byte("\n"))
+	kept := make([][]byte, 0, len(lines))
+	for _, line := range lines {
+		if bytes.HasPrefix(bytes.TrimSpace(line), []byte("#")) {
+			continue
+		}
+		kept = append(kept, line)
 	}
-	reviewed, ok := controlActionPermission(entry.Name)
-	if !ok {
-		return ControlAction{}, fmt.Errorf("%q is not a reviewed provider control action", entry.Name)
+	return bytes.Join(kept, []byte("\n"))
+}
+
+// validateControlActionEntry checks one configured action.
+func validateControlActionEntry(entry controlActionEntry) (ControlAction, error) {
+	name, err := validateControlActionName(entry.Name)
+	if err != nil {
+		return ControlAction{}, err
 	}
 	if entry.Permission == "" {
-		return ControlAction{}, fmt.Errorf("%q: permission is required", entry.Name)
+		return ControlAction{}, fmt.Errorf("%q: permission is required", name)
 	}
-	if entry.Permission != reviewed {
-		return ControlAction{}, fmt.Errorf("%q: permission %q does not match the reviewed permission %q", entry.Name, entry.Permission, reviewed)
+	if !security.KnownScope(entry.Permission) {
+		return ControlAction{}, fmt.Errorf("%q: permission %q is not a defined operator scope", name, entry.Permission)
 	}
 	schema, err := normalizePayloadSchema(entry.PayloadSchema)
 	if err != nil {
-		return ControlAction{}, fmt.Errorf("%q: %w", entry.Name, err)
+		return ControlAction{}, fmt.Errorf("%q: %w", name, err)
 	}
-	return ControlAction{Name: entry.Name, Permission: entry.Permission, PayloadSchema: schema}, nil
+	command, err := validateControlActionCommand(name, entry.Command)
+	if err != nil {
+		return ControlAction{}, err
+	}
+	field, err := validatePayloadSessionField(name, entry.PayloadSessionField, command)
+	if err != nil {
+		return ControlAction{}, err
+	}
+	return ControlAction{
+		Name:                name,
+		Permission:          entry.Permission,
+		PayloadSchema:       schema,
+		Command:             command,
+		PayloadSessionField: field,
+	}, nil
+}
+
+// validateControlActionName checks the action name.
+//
+// The name becomes the suffix of a ctl. operation, so it must not be empty, must
+// not contain whitespace, and must not repeat the ctl. prefix. Dots are allowed
+// because the operation is split only on the prefix, so a dotted name such as
+// pause.request stays one action.
+func validateControlActionName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	if strings.ContainsAny(name, " \t\r\n") {
+		return "", fmt.Errorf("%q: name must not contain whitespace", name)
+	}
+	if strings.HasPrefix(name, security.ProviderControlPrefix) {
+		return "", fmt.Errorf("%q: name must not repeat the %q prefix", name, security.ProviderControlPrefix)
+	}
+	return name, nil
+}
+
+// validateControlActionCommand checks the provider argv template.
+//
+// The template is a token array, so it cannot express a shell pipeline, a
+// redirection or a command substitution. Each placeholder may appear at most once,
+// and an unknown placeholder is rejected rather than passed through, because a
+// misspelled placeholder would otherwise reach the provider as literal text.
+func validateControlActionCommand(name string, raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("%q: command is required", name)
+	}
+	command := make([]string, 0, len(raw))
+	sessionCount := 0
+	payloadCount := 0
+	for index, token := range raw {
+		if token == "" {
+			return nil, fmt.Errorf("%q: command token %d is empty", name, index)
+		}
+		if err := validateCommandPlaceholders(name, token); err != nil {
+			return nil, err
+		}
+		sessionCount += strings.Count(token, controlSessionPlaceholder)
+		payloadCount += strings.Count(token, controlPayloadPlaceholder)
+		command = append(command, token)
+	}
+	if sessionCount > 1 {
+		return nil, fmt.Errorf("%q: command uses %s more than once", name, controlSessionPlaceholder)
+	}
+	if payloadCount > 1 {
+		return nil, fmt.Errorf("%q: command uses %s more than once", name, controlPayloadPlaceholder)
+	}
+	return command, nil
+}
+
+// validateCommandPlaceholders rejects an unknown placeholder in one token.
+func validateCommandPlaceholders(name, token string) error {
+	remaining := token
+	for {
+		start := strings.Index(remaining, "{")
+		if start < 0 {
+			return nil
+		}
+		end := strings.Index(remaining[start:], "}")
+		if end < 0 {
+			return fmt.Errorf("%q: command token %q has an unterminated placeholder", name, token)
+		}
+		placeholder := remaining[start : start+end+1]
+		if placeholder != controlSessionPlaceholder && placeholder != controlPayloadPlaceholder {
+			return fmt.Errorf("%q: command token %q uses unknown placeholder %q", name, token, placeholder)
+		}
+		remaining = remaining[start+end+1:]
+	}
+}
+
+// validatePayloadSessionField checks the payload field that carries the selector.
+//
+// Injecting the selector into the payload only makes sense when the command also
+// forwards the payload, so a field without a {payload} placeholder is rejected
+// instead of being silently ignored.
+func validatePayloadSessionField(name, raw string, command []string) (string, error) {
+	field := strings.TrimSpace(raw)
+	if field == "" {
+		return "", nil
+	}
+	if strings.ContainsAny(field, " \t\r\n") {
+		return "", fmt.Errorf("%q: payload_session_field must not contain whitespace", name)
+	}
+	for _, token := range command {
+		if strings.Contains(token, controlPayloadPlaceholder) {
+			return field, nil
+		}
+	}
+	return "", fmt.Errorf("%q: payload_session_field requires a %s placeholder in command", name, controlPayloadPlaceholder)
 }
 
 // normalizePayloadSchema validates a payload schema and returns it as a compact

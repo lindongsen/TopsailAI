@@ -31,9 +31,13 @@ type Server struct {
 	OnReject         func(error)
 	OnRejectReason   func(endpointID, certificateIdentity, reason, requestID string)
 	RevokedSerials   map[string]bool
-	pendingOutput    map[string]pendingOutputRequest
-	pendingLaunch    map[string]pendingLaunchRequest
-	pendingRefresh   map[string]pendingRefreshRequest
+	// SharedCertificate relaxes the certificate-to-Endpoint identity binding when
+	// every Endpoint presents the same Server certificate. It is opt-in because
+	// the binding is a real security property, not a formality.
+	SharedCertificate bool
+	pendingOutput     map[string]pendingOutputRequest
+	pendingLaunch     map[string]pendingLaunchRequest
+	pendingRefresh    map[string]pendingRefreshRequest
 }
 
 // pendingOutputRequest tracks one output request so read-limit failures can be reported.
@@ -98,7 +102,11 @@ func (s *Server) Handler(w http.ResponseWriter, r *http.Request) {
 		s.sendHelloRejection(r.Context(), conn, hello, "invalid_hello", "invalid hello", certificate)
 		return
 	}
-	if certificate != nil {
+	// A shared certificate cannot bind the peer to one Endpoint identity, because
+	// every Endpoint presents the same certificate name. The check is skipped only
+	// when the operator explicitly enabled the shared-certificate mode; the strict
+	// default still requires the certificate to name the claimed Endpoint.
+	if certificate != nil && !s.SharedCertificate {
 		if err := security.ValidateEndpointIdentity(certificate, hello.EndpointID); err != nil {
 			s.sendHelloRejection(r.Context(), conn, hello, "identity_mismatch", err.Error(), certificate)
 			s.reject(err)
@@ -112,20 +120,44 @@ func (s *Server) Handler(w http.ResponseWriter, r *http.Request) {
 		s.sendHelloRejection(r.Context(), conn, hello, "wrong_initiator", "handler requires an endpoint-initiated connection", certificate)
 		return
 	}
-	generation := s.Fence.Acquire(hello.EndpointID)
-	peer := &Peer{EndpointID: hello.EndpointID, InstanceID: hello.InstanceID, Hostname: hello.Hostname, ConnectionGeneration: generation, Initiator: InitiatorEndpoint, Conn: conn, LastSeen: time.Now()}
-	s.Mu.Lock()
-	if old := s.Active[hello.EndpointID]; old != nil {
-		_ = old.Conn.CloseNow()
-	}
-	s.Active[hello.EndpointID] = peer
-	s.Mu.Unlock()
-	ack := Frame{Type: FrameHelloAck, ProtocolVersion: ProtocolVersion, ConnectionGeneration: strconv.FormatInt(generation, 10), EndpointID: hello.EndpointID}
+	peer := s.installPeer(hello.EndpointID, hello.InstanceID, hello.Hostname, InitiatorEndpoint, conn)
+	ack := Frame{Type: FrameHelloAck, ProtocolVersion: ProtocolVersion, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), EndpointID: hello.EndpointID}
 	if err := wsjson.Write(context.Background(), conn, ack); err != nil {
 		s.remove(peer)
 		return
 	}
+	// The Endpoint confirms it adopted this generation. Waiting here means the
+	// Server only treats a link as established once both sides agree, which is the
+	// same rule the Server-initiated direction uses.
+	var attached Frame
+	if err := wsjson.Read(r.Context(), conn, &attached); err != nil {
+		s.remove(peer)
+		return
+	}
+	if attached.Type != FrameHelloAttached || attached.EndpointID != hello.EndpointID || attached.ConnectionGeneration != ack.ConnectionGeneration {
+		s.remove(peer)
+		_ = conn.Close(websocket.StatusPolicyViolation, "invalid hello attached")
+		return
+	}
 	go s.readLoop(context.Background(), peer)
+}
+
+// installPeer makes a connection authoritative and assigns its generation under
+// one lock, so install order and generation order are identical and the newest
+// connection always wins. Assigning the generation before the handshake instead
+// would let a slower handshake overwrite a newer connection, which is the
+// opposite of the required latest-wins behaviour.
+func (s *Server) installPeer(endpointID, instanceID, hostname, initiator string, conn *websocket.Conn) *Peer {
+	s.Mu.Lock()
+	generation := s.Fence.Acquire(endpointID)
+	peer := &Peer{EndpointID: endpointID, InstanceID: instanceID, Hostname: hostname, ConnectionGeneration: generation, Initiator: initiator, Conn: conn, LastSeen: time.Now()}
+	previous := s.Active[endpointID]
+	s.Active[endpointID] = peer
+	s.Mu.Unlock()
+	if previous != nil && previous.Conn != conn {
+		_ = previous.Conn.CloseNow()
+	}
+	return peer
 }
 
 func (s *Server) sendHelloRejection(ctx context.Context, conn *websocket.Conn, hello Frame, reason, message string, certificate *x509.Certificate) {

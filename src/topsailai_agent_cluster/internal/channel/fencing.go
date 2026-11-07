@@ -28,16 +28,6 @@ func (f *Fence) Acquire(endpointID string) int64 {
 	return f.generations[endpointID]
 }
 
-// Peek reports the generation a new connection would receive without committing
-// it. A dialer must propose a generation before the handshake completes, because
-// the peer needs it in the hello frame, but a failed dial must not fence a
-// healthy peer. Peek therefore reserves nothing and Acquire still decides.
-func (f *Fence) Peek(endpointID string) int64 {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	return f.generations[endpointID] + 1
-}
-
 // Current reports the current generation for one Endpoint.
 func (f *Fence) Current(endpointID string) int64 {
 	f.mu.RLock()

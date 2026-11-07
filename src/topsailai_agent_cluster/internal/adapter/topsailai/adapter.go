@@ -29,9 +29,10 @@ type Config struct {
 	MaxOutput      int
 	PlatformProbe  PlatformCapabilityProbe
 	ResourceMapper adapter.ResourceMapper
-	// ControlActions is the Endpoint-local set of enabled ctl. actions. A nil set
-	// keeps the reviewed default set in force, so an existing deployment that does
-	// not configure a control action file behaves exactly as before.
+	// ControlActions is the Endpoint-local catalog of ctl. actions. A nil set
+	// advertises no action and refuses every ctl. operation, because the catalog
+	// is the only source of actions and an Endpoint cannot serve an action it was
+	// never told about.
 	ControlActions *ControlActionSet
 }
 
@@ -419,14 +420,14 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 	default:
 		// The provider control family is addressed by a dynamic ctl.<action>
 		// operation, so it cannot be a constant case label. controlActionArgs
-		// matches the reviewed action list before building any argv, so an
-		// unreviewed action never reaches the provider.
+		// matches the configured catalog before building any argv, so an action
+		// the operator did not configure never reaches the provider.
 		if !strings.HasPrefix(operation, security.ProviderControlPrefix) {
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "unsupported")}, adapter.ErrUnsupported
 		}
 		controlArgs, controlErr := controlActionArgs(a.config.ControlActions, operation, providerKey, intent.Payload)
 		if controlErr != nil {
-			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "control_action_unreviewed")}, controlErr
+			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "control_action_unconfigured")}, controlErr
 		}
 		args = controlArgs
 	}

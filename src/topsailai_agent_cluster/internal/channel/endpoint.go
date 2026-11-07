@@ -55,14 +55,9 @@ func (c *EndpointClient) Dial(ctx context.Context, address string) error {
 		return err
 	}
 	conn.SetReadLimit(channelReadLimit)
-	c.mu.Lock()
-	previous := c.Conn
-	c.Conn = conn
-	c.Address = address
-	c.mu.Unlock()
-	if previous != nil && previous != conn {
-		_ = previous.Close(websocket.StatusNormalClosure, "reconnecting")
-	}
+	// The connection is adopted only after the handshake succeeds. Installing it
+	// first would leave a half-open connection as the active channel when the
+	// handshake fails, so the Endpoint would report ready while nothing works.
 	if err := wsjson.Write(ctx, conn, Frame{Type: FrameHello, ProtocolVersion: ProtocolVersion, EndpointID: c.EndpointID, InstanceID: c.InstanceID, Hostname: c.Hostname, Initiator: InitiatorEndpoint}); err != nil {
 		_ = conn.Close(websocket.StatusInternalError, "hello failed")
 		return err
@@ -86,17 +81,43 @@ func (c *EndpointClient) Dial(ctx context.Context, address string) error {
 		return errors.New("invalid channel connection generation")
 	}
 	c.mu.Lock()
-	c.Generation = generation
-	c.Initiator = InitiatorEndpoint
+	c.Address = address
 	c.mu.Unlock()
+	// A superseded connection must not confirm adoption, because the Server would
+	// then treat a link this Endpoint discarded as successfully established.
+	if !c.Attach(conn, generation, InitiatorEndpoint) {
+		_ = conn.Close(websocket.StatusNormalClosure, "superseded")
+		return errors.New("channel connection was superseded by a newer link")
+	}
+	// The Server waits for this frame before reporting success, so "successfully
+	// established" means both sides adopted the same link in both directions.
+	if err := wsjson.Write(ctx, conn, Frame{Type: FrameHelloAttached, ProtocolVersion: ProtocolVersion, EndpointID: c.EndpointID, ConnectionGeneration: strconv.FormatInt(generation, 10), Initiator: InitiatorEndpoint}); err != nil {
+		_ = conn.Close(websocket.StatusInternalError, "hello attached failed")
+		return err
+	}
 	return nil
 }
 
 // Attach adopts a connection the Server dialed. The Server allocated the
 // generation, so the Endpoint records it rather than minting its own; fencing
 // therefore behaves identically in both directions.
-func (c *EndpointClient) Attach(conn *websocket.Conn, generation int64, initiator string) {
+//
+// When a dial and an attach race, both sides must converge on the same link. The
+// Server assigns a higher generation to the connection it installed later, so the
+// Endpoint keeps the highest generation it has seen and closes the older
+// connection. Without this comparison the Endpoint could keep a link the Server
+// already fenced, and the two sides would disagree about which one is live.
+//
+// It reports whether this connection became the active link. A superseded
+// connection returns false, so the caller never confirms an adoption that did not
+// happen.
+func (c *EndpointClient) Attach(conn *websocket.Conn, generation int64, initiator string) bool {
 	c.mu.Lock()
+	if c.Conn != nil && c.Generation > generation {
+		c.mu.Unlock()
+		_ = conn.Close(websocket.StatusNormalClosure, "superseded")
+		return false
+	}
 	previous := c.Conn
 	c.Conn = conn
 	c.Generation = generation
@@ -105,6 +126,7 @@ func (c *EndpointClient) Attach(conn *websocket.Conn, generation int64, initiato
 	if previous != nil && previous != conn {
 		_ = previous.Close(websocket.StatusNormalClosure, "replaced")
 	}
+	return true
 }
 
 // Ready reports whether the client has an authenticated active connection.

@@ -42,6 +42,15 @@ COLLECTION_DELAY_MS=5000
 # to disable command execution entirely.
 COMMAND_ALLOWLIST_FILE=conf/command-allowlist.conf
 
+# Control action catalog for the `ctl` operator command. This file is the only
+# source of ctl. actions: the action names, their permission, their payload
+# schema and the provider command each one runs all come from here, so changing
+# the action surface never requires a code change. Paths are relative to the
+# bundle root. The deployment scripts install conf/control-actions.conf.example
+# under this name. Unset this value to advertise no ctl. action at all, which
+# refuses every ctl. operation; that is the fail-closed default, not an error.
+CONTROL_ACTION_FILE=conf/control-actions.conf
+
 # TLS material, relative to the bundle root.
 TLS_CA_FILE=certs/ca.pem
 TLS_CERTIFICATE_FILE=certs/node.pem

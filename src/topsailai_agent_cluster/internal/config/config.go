@@ -46,6 +46,10 @@ type Config struct {
 	EndpointChannelListen string
 	EndpointChannelAddr   string
 	EndpointDialAddresses map[string]string
+	// TLSSharedCertificate means every Endpoint presents the same Server
+	// certificate, so the certificate no longer proves which Endpoint is
+	// connecting. It is opt-in because that binding is a real security property.
+	TLSSharedCertificate  bool
 	ServerName            string
 	EndpointID            string
 	InstanceID            string
@@ -117,6 +121,13 @@ func Load(args []string, role string) (Config, error) {
 		}
 		cfg.EndpointDialAddresses = addresses
 	}
+	if value := os.Getenv("AGENT_CLUSTER_TLS_SHARED_CERTIFICATE"); value != "" {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse AGENT_CLUSTER_TLS_SHARED_CERTIFICATE: %w", err)
+		}
+		cfg.TLSSharedCertificate = parsed
+	}
 	if value := os.Getenv("AGENT_CLUSTER_SERVER_NAME"); value != "" {
 		cfg.ServerName = value
 	}
@@ -180,6 +191,7 @@ func Load(args []string, role string) (Config, error) {
 		return nil
 	})
 	flags.StringVar(&cfg.EndpointChannelAddr, "endpoint-channel-address", cfg.EndpointChannelAddr, "Endpoint WSS address the Server dials")
+	flags.BoolVar(&cfg.TLSSharedCertificate, "tls-shared-certificate", cfg.TLSSharedCertificate, "every Endpoint presents the same Server certificate; the certificate no longer proves Endpoint identity")
 	flags.StringVar(&cfg.ServerName, "server-name", cfg.ServerName, "expected Server certificate identity when the Endpoint accepts a connection")
 	flags.StringVar(&cfg.EndpointID, "endpoint-id", cfg.EndpointID, "Endpoint identity")
 	flags.StringVar(&cfg.InstanceID, "instance-id", cfg.InstanceID, "Endpoint instance identity")

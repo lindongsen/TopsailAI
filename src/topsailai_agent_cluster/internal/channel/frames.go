@@ -8,8 +8,17 @@ const (
 	ProtocolVersion = "v1"
 	// FrameHello starts an Endpoint connection registration.
 	FrameHello = "hello"
-	// FrameHelloAck confirms the active connection generation.
+	// FrameHelloAck confirms the handshake and carries the Endpoint identity.
 	FrameHelloAck = "hello_ack"
+	// FrameHelloConfirm carries the generation the Server assigned when it
+	// installed the connection. The Endpoint attaches only after this frame, so
+	// both sides agree on which link is authoritative.
+	FrameHelloConfirm = "hello_confirm"
+	// FrameHelloAttached confirms that the Endpoint adopted the generation from
+	// hello_confirm. The dialing Server waits for it before reporting success, so
+	// "successfully established" means both sides adopted the same link rather
+	// than only that the Server installed one.
+	FrameHelloAttached = "hello_attached"
 	// FrameHelloRejected explains an authenticated handshake rejection before closure.
 	FrameHelloRejected = "hello_rejected"
 	// FrameHeartbeat is an application-level liveness frame.

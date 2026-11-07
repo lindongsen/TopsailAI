@@ -413,14 +413,28 @@ func TestListDispatchMatchesAdvertisedSyntaxAgainstIsolatedServer(t *testing.T) 
 	}
 }
 
+// listSessionIDs extracts the SESSION_ID cell from a rendered table.
+//
+// The column index is resolved from the header row rather than hardcoded, so
+// adding or removing a column cannot silently make this helper read a different
+// field and report an empty or wrong ID set.
 func listSessionIDs(output string) []string {
+	idIndex := -1
 	var ids []string
 	for _, line := range strings.Split(output, "\n") {
 		cells := strings.Split(line, " │ ")
-		if len(cells) < 5 || cells[0] == "NO" || strings.Trim(cells[0], "─") == "" {
+		if idIndex < 0 {
+			for position, cell := range cells {
+				if strings.TrimSpace(cell) == "SESSION_ID" {
+					idIndex = position
+				}
+			}
 			continue
 		}
-		id := strings.TrimSpace(cells[3])
+		if len(cells) <= idIndex || cells[0] == "NO" || strings.Trim(cells[0], "─") == "" {
+			continue
+		}
+		id := strings.TrimSpace(cells[idIndex])
 		if id != "" {
 			ids = append(ids, id)
 		}

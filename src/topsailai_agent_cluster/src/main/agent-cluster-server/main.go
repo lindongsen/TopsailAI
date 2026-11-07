@@ -62,6 +62,9 @@ func main() {
 		channelListenAddress = ""
 	}
 	channelService := channel.NewServer(tlsConfig)
+	// A shared certificate cannot bind a connection to one Endpoint identity, so
+	// the Server skips that check only when the operator explicitly enabled it.
+	channelService.SharedCertificate = cfg.TLSSharedCertificate
 	channelService.OnDisconnect = func(peer channel.Peer, observedAtMS int64) {
 		applied, err := store.MarkEndpointOffline(context.Background(), peer.EndpointID, peer.InstanceID, observedAtMS)
 		if err != nil {

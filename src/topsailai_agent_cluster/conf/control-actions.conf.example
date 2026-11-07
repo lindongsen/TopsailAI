@@ -1,0 +1,153 @@
+# Agent Cluster control action catalog
+#
+# Author: DawsonLin
+#
+# This file defines the `ctl.` operation family, which backs the operator `ctl`
+# command. It is read by the Endpoint at startup and reloaded on SIGHUP.
+#
+# The file is JSON, not the shell-style KEY=VALUE used by the node
+# configuration, because the payload schemas are nested documents. Point the
+# Endpoint at it with CONTROL_ACTION_FILE in the node configuration, or with
+# --control-action-file on the command line.
+#
+# Everything about an action is defined here: its name, the permission it
+# requires, the payload schema the interactive prompt follows, and the provider
+# command it runs. Nothing is compiled in, so adding, renaming or retiring an
+# action is an edit to this file and never a rebuild.
+#
+# This file is an authorization surface, not a convenience switch. The Endpoint
+# checks the advertised capability list before it consults any other policy, so
+# an action that is absent here is refused before it can reach the provider.
+# Widening this file widens what the Endpoint will accept.
+#
+# An Endpoint with no catalog advertises no action and refuses every ctl.
+# operation. An empty `actions` array does the same. Both are the fail-closed
+# default: the Endpoint cannot serve an action it was never told about.
+#
+# Rules enforced when the file is loaded, so a mistake fails at startup rather
+# than at the first execution:
+#
+#   - `name` is required, must not contain whitespace, and must not repeat the
+#     `ctl.` prefix. A dotted name such as `pause.request` is allowed and stays
+#     one action, because the operation is split only on the prefix.
+#   - `permission` is required and must be one of the defined operator scopes:
+#     view, read_output, send_message, control, endpoint_admin.
+#   - `command` is required and is an argv array, never a shell string. The
+#     Endpoint executes it directly, so no shell parses it and no operator input
+#     can become a command.
+#   - `command` may use `{session}` and `{payload}` at most once each. Any other
+#     brace placeholder is refused rather than passed through as literal text.
+#   - `payload_session_field` names a payload field that must carry the provider
+#     session key. It requires a `{payload}` placeholder, because otherwise the
+#     injection would be silently ignored.
+#   - `payload_schema` must be a JSON object when present.
+#   - A name may appear only once, and an unknown field is refused rather than
+#     ignored.
+#
+# A reload parses the new file completely before it swaps the catalog. A parse
+# failure keeps the previous catalog and is logged, so a typo never leaves the
+# Endpoint with no actions in force.
+#
+# `payload_schema` is descriptive. The provider still validates the payload it
+# receives, and the Server stores and returns this document verbatim without
+# interpreting it. It exists so the interactive prompt asks for the documented
+# fields instead of a generic key=value line, and so an enumerated field such as
+# `llm_control.operation` can refuse an unsupported value before submission.
+# Omitting `payload_schema` falls back to the generic prompt.
+#
+# An action that takes no payload carries an object schema with no properties,
+# which tells the prompt to ask nothing and send the empty object. An action
+# whose payload is derived from the target carries the same empty schema plus
+# `payload_session_field`, because the adapter injects the selector and the
+# operator must not be asked for it.
+#
+# The catalog below lists the actions the TopsailAI provider serves. Trim it to
+# the actions your site needs, and keep in mind that every entry is reachable by
+# anyone holding the permission it declares.
+
+{
+  "actions": [
+    {
+      "name": "heartbeat",
+      "permission": "control",
+      "payload_schema": {"type": "object", "properties": {}},
+      "command": ["runtime", "control", "heartbeat", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "pause",
+      "permission": "control",
+      "payload_schema": {
+        "type": "object",
+        "properties": {
+          "reason": {"type": "string"},
+          "prompt": {"type": "string"},
+          "timeout_seconds": {"type": "number"},
+          "default": {"type": "string", "enum": ["continue", "interrupt"]}
+        }
+      },
+      "command": ["runtime", "control", "pause", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "clear_pause",
+      "permission": "control",
+      "payload_schema": {"type": "object", "properties": {}},
+      "command": ["runtime", "control", "clear_pause", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "hard_interrupt",
+      "permission": "control",
+      "payload_schema": {"type": "object", "properties": {}},
+      "command": ["runtime", "control", "hard_interrupt", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "clear_interrupt",
+      "permission": "control",
+      "payload_schema": {"type": "object", "properties": {}},
+      "command": ["runtime", "control", "clear_interrupt", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "soft_interrupt",
+      "permission": "control",
+      "payload_schema": {
+        "type": "object",
+        "properties": {"message": {"type": "string"}}
+      },
+      "command": ["runtime", "control", "soft_interrupt", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "get_runtime_messages",
+      "permission": "read_output",
+      "payload_schema": {"type": "object", "properties": {}},
+      "command": ["runtime", "control", "get_runtime_messages", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "get_session_messages",
+      "permission": "read_output",
+      "payload_schema": {"type": "object", "properties": {}},
+      "payload_session_field": "session_id",
+      "command": ["runtime", "control", "get_session_messages", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "call_instruction",
+      "permission": "control",
+      "payload_schema": {
+        "type": "object",
+        "properties": {"instruction": {"type": "string"}},
+        "required": ["instruction"]
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "llm_control",
+      "permission": "control",
+      "payload_schema": {
+        "type": "object",
+        "properties": {
+          "operation": {"type": "string", "enum": ["force_retry"]}
+        },
+        "required": ["operation"]
+      },
+      "command": ["runtime", "control", "llm_control", "-s", "{session}", "-a", "{payload}", "--json"]
+    }
+  ]
+}

@@ -158,14 +158,18 @@ func ctlFieldValue(field ctlField, answer string) (json.RawMessage, error) {
 // for a JSON document. An empty answer omits an optional field, which lets the
 // provider apply its own default, and is rejected for a required field so a
 // missing value fails before submission instead of at the provider.
+//
+// An enumerated field is rendered as a numbered menu instead of a free-text
+// prompt, because the accepted values are a closed set and the provider rejects
+// anything else. Offering the values as a menu means the operator cannot type an
+// unsupported value at all, which is the point of advertising the enum.
 func promptCtlSchemaParameters(parent context.Context, action string, fields []ctlField, lines <-chan lineReadResult, out io.Writer) (json.RawMessage, error) {
 	payload := make(map[string]json.RawMessage, len(fields))
 	for _, field := range fields {
 		if _, err := fmt.Fprintln(out, ctlFieldPrompt(field)); err != nil {
 			return nil, err
 		}
-		markRecoverablePromptFailure(parent)
-		answer, err := readStartAnswer(parent, lines, "ctl."+field.Name+"> ")
+		answer, err := promptCtlFieldAnswer(parent, field, lines, out)
 		if err != nil {
 			return nil, err
 		}
@@ -186,6 +190,40 @@ func promptCtlSchemaParameters(parent context.Context, action string, fields []c
 		return nil, fmt.Errorf("encode control parameters: %w", err)
 	}
 	return encoded, nil
+}
+
+// promptCtlFieldAnswer reads one field answer, rendering a menu for an enum.
+//
+// An enumerated field lists its accepted values with numbers, so the operator
+// selects one instead of typing it. A number selects that entry and the literal
+// value is also accepted, because an operator who already knows the value should
+// not have to count menu rows. An empty answer still means "skip" or "rejected",
+// so the caller keeps deciding that.
+func promptCtlFieldAnswer(parent context.Context, field ctlField, lines <-chan lineReadResult, out io.Writer) (string, error) {
+	if len(field.Enum) == 0 {
+		markRecoverablePromptFailure(parent)
+		return readStartAnswer(parent, lines, "ctl."+field.Name+"> ")
+	}
+	for index, allowed := range field.Enum {
+		if _, err := fmt.Fprintf(out, "  %d. %s\n", index+1, sanitizeInlineText(allowed)); err != nil {
+			return "", err
+		}
+	}
+	markRecoverablePromptFailure(parent)
+	answer, err := readStartAnswer(parent, lines, "ctl."+field.Name+"> ")
+	if err != nil {
+		return "", err
+	}
+	trimmed := strings.TrimSpace(answer)
+	if trimmed == "" {
+		return "", nil
+	}
+	for index, allowed := range field.Enum {
+		if trimmed == fmt.Sprintf("%d", index+1) {
+			return allowed, nil
+		}
+	}
+	return trimmed, nil
 }
 
 // promptCtlActionParameters collects the parameters of one action.

@@ -1,370 +1,438 @@
 package topsailai
 
 import (
-	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"topsailai_agent_cluster/internal/security"
 )
 
-// writeControlActionFile writes a control action document into a temporary file
-// and returns its path.
-func writeControlActionFile(t *testing.T, body string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "control-actions.json")
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatalf("write control action file: %v", err)
-	}
-	return path
-}
+// minimalCatalog is the smallest catalog that enables one action.
+const minimalCatalog = `{
+  "actions": [
+    {"name": "probe", "permission": "control", "command": ["runtime", "control", "probe", "-s", "{session}", "-a", "{payload}", "--json"]}
+  ]
+}`
 
-func TestLoadControlActionSetAcceptsReviewedSubset(t *testing.T) {
-	path := writeControlActionFile(t, `{"actions":[
-		{"name":"heartbeat","permission":"control"},
-		{"name":"pause","permission":"control","payload_schema":{"type":"object","properties":{"reason":{"type":"string"}}}}
-	]}`)
-	set, err := LoadControlActionSet(path)
-	if err != nil {
-		t.Fatalf("load: %v", err)
+// TestParseControlActionSetAcceptsACatalog proves a well-formed catalog loads and
+// keeps its fields.
+func TestParseControlActionSetAcceptsACatalog(t *testing.T) {
+	set := newTestControlSet(t, minimalCatalog)
+	if set.Len() != 1 {
+		t.Fatalf("actions = %d, want 1", set.Len())
 	}
-	if set.Len() != 2 {
-		t.Fatalf("len = %d, want 2", set.Len())
-	}
-	if got := set.Names(); len(got) != 2 || got[0] != "heartbeat" || got[1] != "pause" {
-		t.Fatalf("names = %v, want file order [heartbeat pause]", got)
-	}
-	if set.Path != path {
-		t.Fatalf("path = %q, want %q", set.Path, path)
-	}
-	action, ok := set.Get("pause")
+	action, ok := set.Get("probe")
 	if !ok {
-		t.Fatal("pause is not enabled")
+		t.Fatal("probe is not enabled")
 	}
-	if action.Permission != security.ScopeControl {
-		t.Fatalf("pause permission = %q, want %q", action.Permission, security.ScopeControl)
+	if action.Permission != "control" {
+		t.Fatalf("permission = %q, want control", action.Permission)
 	}
-	if !strings.Contains(action.PayloadSchema, `"reason"`) {
-		t.Fatalf("pause payload schema = %q, want it to carry reason", action.PayloadSchema)
-	}
-}
-
-func TestLoadControlActionSetRejectsUnreviewedName(t *testing.T) {
-	path := writeControlActionFile(t, `{"actions":[{"name":"rm_rf","permission":"control"}]}`)
-	_, err := LoadControlActionSet(path)
-	if err == nil {
-		t.Fatal("unreviewed action was accepted")
-	}
-	if !strings.Contains(err.Error(), "not a reviewed provider control action") {
-		t.Fatalf("error = %v, want it to name the reviewed contract", err)
+	if len(action.Command) != 8 {
+		t.Fatalf("command = %v, want 8 tokens", action.Command)
 	}
 }
 
-func TestLoadControlActionSetRejectsPermissionWidening(t *testing.T) {
-	// get_session_messages returns conversation content, so control must not be
-	// accepted in place of read_output.
-	path := writeControlActionFile(t, `{"actions":[{"name":"get_session_messages","permission":"control"}]}`)
-	_, err := LoadControlActionSet(path)
-	if err == nil {
-		t.Fatal("permission widening was accepted")
-	}
-	if !strings.Contains(err.Error(), "does not match the reviewed permission") {
-		t.Fatalf("error = %v, want it to name the permission mismatch", err)
+// TestParseControlActionSetAcceptsAnyName proves the action name is configuration,
+// not a compiled-in list. A name the code has never seen must load, because the
+// catalog is the only source of actions.
+func TestParseControlActionSetAcceptsAnyName(t *testing.T) {
+	document := `{"actions": [{"name": "brand_new_action", "permission": "control", "command": ["runtime", "control", "brand_new_action", "--json"]}]}`
+	set := newTestControlSet(t, document)
+	if _, ok := set.Get("brand_new_action"); !ok {
+		t.Fatal("a catalog name the code has never seen must be accepted")
 	}
 }
 
-func TestLoadControlActionSetRejectsDuplicateName(t *testing.T) {
-	path := writeControlActionFile(t, `{"actions":[
-		{"name":"heartbeat","permission":"control"},
-		{"name":"heartbeat","permission":"control"}
-	]}`)
-	_, err := LoadControlActionSet(path)
-	if err == nil {
-		t.Fatal("duplicate action was accepted")
-	}
-	if !strings.Contains(err.Error(), "listed more than once") {
-		t.Fatalf("error = %v, want it to name the duplicate", err)
+// TestParseControlActionSetAcceptsADottedName proves a dotted name stays one
+// action. The operation is split only on the ctl. prefix, so a dotted name is not
+// reinterpreted as a nested path.
+func TestParseControlActionSetAcceptsADottedName(t *testing.T) {
+	document := `{"actions": [{"name": "pause.request", "permission": "control", "command": ["runtime", "control", "pause", "--json"]}]}`
+	set := newTestControlSet(t, document)
+	if _, ok := set.Get("pause.request"); !ok {
+		t.Fatal("a dotted name must stay one action")
 	}
 }
 
-func TestLoadControlActionSetRejectsUnknownField(t *testing.T) {
-	path := writeControlActionFile(t, `{"actions":[{"name":"heartbeat","permission":"control","enabled":true}]}`)
-	_, err := LoadControlActionSet(path)
-	if err == nil {
-		t.Fatal("unknown field was accepted")
-	}
-	if !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("error = %v, want it to name the unknown field", err)
+// TestParseControlActionSetRejectsAnEmptyName proves a nameless action is refused,
+// because it would advertise the bare ctl. operation.
+func TestParseControlActionSetRejectsAnEmptyName(t *testing.T) {
+	document := `{"actions": [{"name": "", "permission": "control", "command": ["runtime", "control", "x", "--json"]}]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("an empty name was accepted")
 	}
 }
 
-func TestLoadControlActionSetRejectsNonObjectPayloadSchema(t *testing.T) {
-	path := writeControlActionFile(t, `{"actions":[{"name":"pause","permission":"control","payload_schema":"nope"}]}`)
-	_, err := LoadControlActionSet(path)
-	if err == nil {
-		t.Fatal("non-object payload schema was accepted")
-	}
-	if !strings.Contains(err.Error(), "must be a JSON object") {
-		t.Fatalf("error = %v, want it to name the schema shape", err)
+// TestParseControlActionSetRejectsWhitespaceInName proves a name with whitespace is
+// refused, because it would produce an operation that cannot be addressed.
+func TestParseControlActionSetRejectsWhitespaceInName(t *testing.T) {
+	document := `{"actions": [{"name": "two words", "permission": "control", "command": ["runtime", "control", "x", "--json"]}]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("a name with whitespace was accepted")
 	}
 }
 
-func TestLoadControlActionSetAcceptsEmptyList(t *testing.T) {
-	// An explicitly configured empty list disables the whole ctl. family. It must
-	// load successfully, because a security default fails closed rather than
-	// silently falling back to the reviewed set.
-	path := writeControlActionFile(t, `{"actions":[]}`)
-	set, err := LoadControlActionSet(path)
-	if err != nil {
-		t.Fatalf("load: %v", err)
+// TestParseControlActionSetRejectsRepeatedPrefix proves a name that repeats the
+// ctl. prefix is refused, because the operation would read ctl.ctl.x.
+func TestParseControlActionSetRejectsRepeatedPrefix(t *testing.T) {
+	document := `{"actions": [{"name": "ctl.probe", "permission": "control", "command": ["runtime", "control", "x", "--json"]}]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("a name repeating the ctl. prefix was accepted")
 	}
+}
+
+// TestParseControlActionSetRejectsUnknownScope proves the permission vocabulary is
+// closed. A catalog may not invent a scope no credential can hold.
+func TestParseControlActionSetRejectsUnknownScope(t *testing.T) {
+	document := `{"actions": [{"name": "probe", "permission": "superuser", "command": ["runtime", "control", "x", "--json"]}]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("an undefined scope was accepted")
+	}
+}
+
+// TestParseControlActionSetRejectsMissingPermission proves a permission is
+// required, because an action without one would be unreachable.
+func TestParseControlActionSetRejectsMissingPermission(t *testing.T) {
+	document := `{"actions": [{"name": "probe", "command": ["runtime", "control", "x", "--json"]}]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("a missing permission was accepted")
+	}
+}
+
+// TestParseControlActionSetRejectsMissingCommand proves a command is required,
+// because the template is the only way an action reaches the provider.
+func TestParseControlActionSetRejectsMissingCommand(t *testing.T) {
+	document := `{"actions": [{"name": "probe", "permission": "control"}]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("a missing command was accepted")
+	}
+}
+
+// TestParseControlActionSetRejectsEmptyCommandToken proves an empty token is
+// refused, because it would reach the provider as an empty argument.
+func TestParseControlActionSetRejectsEmptyCommandToken(t *testing.T) {
+	document := `{"actions": [{"name": "probe", "permission": "control", "command": ["runtime", "", "--json"]}]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("an empty command token was accepted")
+	}
+}
+
+// TestParseControlActionSetRejectsUnknownPlaceholder proves a misspelled
+// placeholder is refused instead of reaching the provider as literal text.
+func TestParseControlActionSetRejectsUnknownPlaceholder(t *testing.T) {
+	document := `{"actions": [{"name": "probe", "permission": "control", "command": ["runtime", "{sesion}", "--json"]}]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("an unknown placeholder was accepted")
+	}
+}
+
+// TestParseControlActionSetRejectsUnterminatedPlaceholder proves a token with an
+// opening brace and no closing brace is refused.
+func TestParseControlActionSetRejectsUnterminatedPlaceholder(t *testing.T) {
+	document := `{"actions": [{"name": "probe", "permission": "control", "command": ["runtime", "{session", "--json"]}]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("an unterminated placeholder was accepted")
+	}
+}
+
+// TestParseControlActionSetRejectsRepeatedPlaceholder proves a placeholder may
+// appear at most once, because a second occurrence would silently duplicate the
+// selector or the payload.
+func TestParseControlActionSetRejectsRepeatedPlaceholder(t *testing.T) {
+	cases := map[string]string{
+		"session": `{"actions": [{"name": "probe", "permission": "control", "command": ["runtime", "-s", "{session}", "-s", "{session}", "--json"]}]}`,
+		"payload": `{"actions": [{"name": "probe", "permission": "control", "command": ["runtime", "-a", "{payload}", "-a", "{payload}", "--json"]}]}`,
+	}
+	for name, document := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseControlActionSet([]byte(document)); err == nil {
+				t.Fatalf("a repeated %s placeholder was accepted", name)
+			}
+		})
+	}
+}
+
+// TestParseControlActionSetRejectsPayloadSessionFieldWithoutPayload proves a
+// payload field is refused when the command never forwards the payload, because
+// the injection would be silently ignored.
+func TestParseControlActionSetRejectsPayloadSessionFieldWithoutPayload(t *testing.T) {
+	document := `{"actions": [{"name": "probe", "permission": "control", "payload_session_field": "session_id", "command": ["runtime", "control", "probe", "--json"]}]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("a payload_session_field without a payload placeholder was accepted")
+	}
+}
+
+// TestParseControlActionSetRejectsDuplicateName proves a repeated name is refused,
+// because the second entry would silently replace the first.
+func TestParseControlActionSetRejectsDuplicateName(t *testing.T) {
+	document := `{"actions": [
+	  {"name": "probe", "permission": "control", "command": ["runtime", "control", "a", "--json"]},
+	  {"name": "probe", "permission": "read_output", "command": ["runtime", "control", "b", "--json"]}
+	]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("a duplicate name was accepted")
+	}
+}
+
+// TestParseControlActionSetRejectsUnknownField proves an unknown field is refused
+// rather than ignored, so a misspelled key fails at load time.
+func TestParseControlActionSetRejectsUnknownField(t *testing.T) {
+	document := `{"actions": [{"name": "probe", "permission": "control", "command": ["runtime", "control", "x", "--json"], "extra": true}]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("an unknown field was accepted")
+	}
+}
+
+// TestParseControlActionSetRejectsNonObjectPayloadSchema proves a schema must be a
+// JSON object, because the interactive surface reads it as a property map.
+func TestParseControlActionSetRejectsNonObjectPayloadSchema(t *testing.T) {
+	document := `{"actions": [{"name": "probe", "permission": "control", "payload_schema": ["not", "an", "object"], "command": ["runtime", "control", "x", "--json"]}]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("a non-object payload_schema was accepted")
+	}
+}
+
+// TestParseControlActionSetAcceptsEmptyList proves an empty catalog is accepted and
+// disables the whole family, which is the fail-closed default.
+func TestParseControlActionSetAcceptsEmptyList(t *testing.T) {
+	set := newTestControlSet(t, `{"actions": []}`)
 	if set.Len() != 0 {
-		t.Fatalf("len = %d, want 0", set.Len())
+		t.Fatalf("actions = %d, want 0", set.Len())
 	}
 	if capabilities := controlActionCapabilities(set); len(capabilities) != 0 {
-		t.Fatalf("capabilities = %d, want 0 so the family is unreachable", len(capabilities))
-	}
-	if _, err := controlActionArgs(set, security.ProviderControlPrefix+"heartbeat", "s-1", nil); err == nil {
-		t.Fatal("a disabled action still built provider argv")
+		t.Fatalf("capabilities = %v, want none", capabilities)
 	}
 }
 
-func TestControlActionCapabilitiesKeepReviewedDefaultWhenUnconfigured(t *testing.T) {
-	capabilities := controlActionCapabilities(nil)
-	if len(capabilities) != len(providerControlActions) {
-		t.Fatalf("capabilities = %d, want %d", len(capabilities), len(providerControlActions))
-	}
-	for _, capability := range capabilities {
-		if capability.PayloadSchema != "" {
-			t.Fatalf("capability %q payload schema = %q, want empty for the reviewed default", capability.Name, capability.PayloadSchema)
-		}
-	}
-}
-
+// TestControlActionCapabilitiesCarryConfiguredPayloadSchema proves the advertised
+// schema comes from the catalog, so the interactive prompt follows the file.
 func TestControlActionCapabilitiesCarryConfiguredPayloadSchema(t *testing.T) {
-	path := writeControlActionFile(t, `{"actions":[{"name":"pause","permission":"control","payload_schema":{"type":"object","properties":{"reason":{"type":"string"}}}}]}`)
-	set, err := LoadControlActionSet(path)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
+	document := `{"actions": [{"name": "probe", "permission": "control", "payload_schema": {"type": "object", "properties": {"detail": {"type": "boolean"}}}, "command": ["runtime", "control", "probe", "-a", "{payload}", "--json"]}]}`
+	set := newTestControlSet(t, document)
 	capabilities := controlActionCapabilities(set)
 	if len(capabilities) != 1 {
 		t.Fatalf("capabilities = %d, want 1", len(capabilities))
 	}
-	if capabilities[0].Name != security.ProviderControlPrefix+"pause" {
-		t.Fatalf("name = %q, want %q", capabilities[0].Name, security.ProviderControlPrefix+"pause")
-	}
-	if !strings.Contains(capabilities[0].PayloadSchema, `"reason"`) {
-		t.Fatalf("payload schema = %q, want it to carry reason", capabilities[0].PayloadSchema)
+	if !strings.Contains(capabilities[0].PayloadSchema, `"detail"`) {
+		t.Fatalf("payload schema = %q, want it to document detail", capabilities[0].PayloadSchema)
 	}
 }
 
+// TestControlActionArgsRejectDisabledAction proves an action absent from the
+// catalog is refused even when submitted directly.
 func TestControlActionArgsRejectDisabledAction(t *testing.T) {
-	path := writeControlActionFile(t, `{"actions":[{"name":"heartbeat","permission":"control"}]}`)
-	set, err := LoadControlActionSet(path)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if _, err := controlActionArgs(set, security.ProviderControlPrefix+"pause", "s-1", nil); err == nil {
-		t.Fatal("a disabled action built provider argv")
-	}
-	args, err := controlActionArgs(set, security.ProviderControlPrefix+"heartbeat", "s-1", nil)
-	if err != nil {
-		t.Fatalf("enabled action: %v", err)
-	}
-	want := []string{"runtime", "control", "heartbeat", "-s", "s-1", "-a", "{}", "--json"}
-	if len(args) != len(want) {
-		t.Fatalf("args = %v, want %v", args, want)
-	}
-	for index := range want {
-		if args[index] != want[index] {
-			t.Fatalf("args = %v, want %v", args, want)
-		}
+	document := `{"actions": [{"name": "probe", "permission": "control", "command": ["runtime", "control", "probe", "-s", "{session}", "--json"]}]}`
+	set := newTestControlSet(t, document)
+	if _, err := controlActionArgs(set, "ctl.inspect", "sess1", nil); err == nil {
+		t.Fatal("a disabled action was accepted")
 	}
 }
 
+// TestControlActionSetReloadKeepsPreviousSetOnParseFailure proves a broken edit
+// cannot disable or widen the policy.
 func TestControlActionSetReloadKeepsPreviousSetOnParseFailure(t *testing.T) {
-	path := writeControlActionFile(t, `{"actions":[{"name":"heartbeat","permission":"control"}]}`)
-	set, err := LoadControlActionSet(path)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if err := set.Reload([]byte(`{"actions":[{"name":"not_reviewed","permission":"control"}]}`)); err == nil {
-		t.Fatal("invalid reload was accepted")
+	set := newTestControlSet(t, minimalCatalog)
+	if err := set.Reload([]byte(`{"actions": [`)); err == nil {
+		t.Fatal("a broken document was accepted")
 	}
 	if set.Len() != 1 {
-		t.Fatalf("len = %d, want the previous set to stay in force", set.Len())
+		t.Fatalf("actions = %d, want the previous 1", set.Len())
 	}
-	if _, ok := set.Get("heartbeat"); !ok {
-		t.Fatal("heartbeat was dropped by a failed reload")
+	if _, ok := set.Get("probe"); !ok {
+		t.Fatal("the previous action was lost")
 	}
 }
 
+// TestControlActionSetReloadSwapsAtomically proves a valid reload replaces the set.
 func TestControlActionSetReloadSwapsAtomically(t *testing.T) {
-	path := writeControlActionFile(t, `{"actions":[{"name":"heartbeat","permission":"control"}]}`)
-	set, err := LoadControlActionSet(path)
-	if err != nil {
-		t.Fatalf("load: %v", err)
+	set := newTestControlSet(t, minimalCatalog)
+	document := `{"actions": [{"name": "inspect", "permission": "read_output", "command": ["runtime", "control", "inspect", "--json"]}]}`
+	if err := set.Reload([]byte(document)); err != nil {
+		t.Fatalf("Reload: %v", err)
 	}
-	if err := set.Reload([]byte(`{"actions":[{"name":"pause","permission":"control"}]}`)); err != nil {
-		t.Fatalf("reload: %v", err)
+	if _, ok := set.Get("probe"); ok {
+		t.Fatal("the replaced action is still enabled")
 	}
-	if _, ok := set.Get("heartbeat"); ok {
-		t.Fatal("heartbeat survived a reload that omitted it")
-	}
-	if _, ok := set.Get("pause"); !ok {
-		t.Fatal("pause was not enabled by reload")
+	if _, ok := set.Get("inspect"); !ok {
+		t.Fatal("the new action is not enabled")
 	}
 }
 
+// TestControlActionSetReloadFromDiskReadsTheFile proves the reload path reads the
+// configured file.
 func TestControlActionSetReloadFromDiskReadsTheFile(t *testing.T) {
-	path := writeControlActionFile(t, `{"actions":[{"name":"heartbeat","permission":"control"}]}`)
+	path := filepath.Join(t.TempDir(), "control-actions.json")
+	if err := os.WriteFile(path, []byte(minimalCatalog), 0o600); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
 	set, err := LoadControlActionSet(path)
 	if err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatalf("LoadControlActionSet: %v", err)
 	}
-	if err := os.WriteFile(path, []byte(`{"actions":[{"name":"pause","permission":"control"}]}`), 0o600); err != nil {
-		t.Fatalf("rewrite: %v", err)
+	document := `{"actions": [{"name": "inspect", "permission": "read_output", "command": ["runtime", "control", "inspect", "--json"]}]}`
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatalf("rewrite catalog: %v", err)
 	}
 	if err := set.ReloadFromDisk(); err != nil {
-		t.Fatalf("reload from disk: %v", err)
+		t.Fatalf("ReloadFromDisk: %v", err)
 	}
-	if _, ok := set.Get("pause"); !ok {
-		t.Fatal("pause was not enabled by reload from disk")
+	if _, ok := set.Get("inspect"); !ok {
+		t.Fatal("the reloaded action is not enabled")
 	}
 }
 
+// TestControlActionSetReloadFromDiskKeepsPreviousSetOnBrokenFile proves a broken
+// file on disk keeps the previous set in force.
 func TestControlActionSetReloadFromDiskKeepsPreviousSetOnBrokenFile(t *testing.T) {
-	path := writeControlActionFile(t, `{"actions":[{"name":"heartbeat","permission":"control"}]}`)
+	path := filepath.Join(t.TempDir(), "control-actions.json")
+	if err := os.WriteFile(path, []byte(minimalCatalog), 0o600); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
 	set, err := LoadControlActionSet(path)
 	if err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatalf("LoadControlActionSet: %v", err)
 	}
-	if err := os.WriteFile(path, []byte(`{"actions":[`), 0o600); err != nil {
-		t.Fatalf("rewrite: %v", err)
+	if err := os.WriteFile(path, []byte(`{"actions": [`), 0o600); err != nil {
+		t.Fatalf("break catalog: %v", err)
 	}
 	if err := set.ReloadFromDisk(); err == nil {
-		t.Fatal("broken file was accepted")
+		t.Fatal("a broken file was accepted")
 	}
-	if _, ok := set.Get("heartbeat"); !ok {
-		t.Fatal("a broken edit disabled the policy")
+	if set.Len() != 1 {
+		t.Fatalf("actions = %d, want the previous 1", set.Len())
 	}
 }
 
+// TestControlActionSetWatchReloadRequiresConfiguration proves a nil set cannot be
+// watched.
 func TestControlActionSetWatchReloadRequiresConfiguration(t *testing.T) {
 	var set *ControlActionSet
-	if _, err := set.WatchReload(context.Background(), nil); err == nil {
-		t.Fatal("a nil set started a watcher")
+	if _, err := set.WatchReload(t.Context(), nil); err == nil {
+		t.Fatal("a nil set was watchable")
 	}
 }
 
+// TestControlActionSetWatchReloadStopsCleanly proves the watcher releases its
+// signal handler.
 func TestControlActionSetWatchReloadStopsCleanly(t *testing.T) {
-	path := writeControlActionFile(t, `{"actions":[{"name":"heartbeat","permission":"control"}]}`)
-	set, err := LoadControlActionSet(path)
+	set := newTestControlSet(t, minimalCatalog)
+	stop, err := set.WatchReload(t.Context(), nil)
 	if err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatalf("WatchReload: %v", err)
 	}
-	stop, err := set.WatchReload(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("watch: %v", err)
-	}
-	done := make(chan struct{})
-	go func() {
-		stop()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("stop did not return")
-	}
+	stop()
+	stop()
 }
 
+// TestControlActionSetNilAccessorsAreSafe proves every accessor tolerates a nil
+// set, so an Endpoint without a catalog never panics.
 func TestControlActionSetNilAccessorsAreSafe(t *testing.T) {
 	var set *ControlActionSet
 	if set.Actions() != nil {
-		t.Fatal("nil Actions returned entries")
+		t.Fatal("Actions on a nil set must be nil")
 	}
-	if _, ok := set.Get("heartbeat"); ok {
-		t.Fatal("nil Get reported an action")
+	if _, ok := set.Get("probe"); ok {
+		t.Fatal("Get on a nil set must report absence")
 	}
 	if set.Len() != 0 {
-		t.Fatal("nil Len was non-zero")
+		t.Fatal("Len on a nil set must be 0")
 	}
 	if set.Names() != nil {
-		t.Fatal("nil Names returned entries")
+		t.Fatal("Names on a nil set must be nil")
+	}
+	if err := set.ReloadFromDisk(); err == nil {
+		t.Fatal("ReloadFromDisk on a nil set must fail")
 	}
 }
 
+// TestControlActionTargetPayloadInjectsSessionID proves the configured payload
+// field is filled from the revalidated target.
 func TestControlActionTargetPayloadInjectsSessionID(t *testing.T) {
-	// get_session_messages needs a provider session_id, and the Endpoint already
-	// holds it as the provider key, so the operator never supplies it.
-	payload, err := controlActionTargetPayload("get_session_messages", "sess-42", []byte(`{}`))
+	action := ControlAction{Name: "read_messages", PayloadSessionField: "session_id"}
+	payload, err := controlActionTargetPayload(action, "sess-42", []byte(`{}`))
 	if err != nil {
-		t.Fatalf("inject: %v", err)
+		t.Fatalf("controlActionTargetPayload: %v", err)
 	}
-	var decoded map[string]string
-	if err := json.Unmarshal(payload, &decoded); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if decoded["session_id"] != "sess-42" {
-		t.Fatalf("session_id = %q, want sess-42", decoded["session_id"])
+	if !strings.Contains(string(payload), `"session_id":"sess-42"`) {
+		t.Fatalf("payload = %s, want the injected session_id", payload)
 	}
 }
 
+// TestControlActionTargetPayloadKeepsOtherActionsUntouched proves an action without
+// a declared field is not modified.
 func TestControlActionTargetPayloadKeepsOtherActionsUntouched(t *testing.T) {
-	payload, err := controlActionTargetPayload("pause", "sess-42", []byte(`{"reason":"x"}`))
+	action := ControlAction{Name: "probe"}
+	payload, err := controlActionTargetPayload(action, "sess-42", []byte(`{"reason":"x"}`))
 	if err != nil {
-		t.Fatalf("inject: %v", err)
+		t.Fatalf("controlActionTargetPayload: %v", err)
 	}
 	if string(payload) != `{"reason":"x"}` {
 		t.Fatalf("payload = %s, want it unchanged", payload)
 	}
 }
 
+// TestControlActionTargetPayloadRejectsMismatchedSessionID proves a supplied value
+// that disagrees with the target is refused instead of being overwritten.
 func TestControlActionTargetPayloadRejectsMismatchedSessionID(t *testing.T) {
-	// Honouring a supplied value would bypass the target the Endpoint just
-	// revalidated, so a disagreement is a definite failure.
-	_, err := controlActionTargetPayload("get_session_messages", "sess-42", []byte(`{"session_id":"other"}`))
-	if err == nil {
+	action := ControlAction{Name: "read_messages", PayloadSessionField: "session_id"}
+	if _, err := controlActionTargetPayload(action, "sess-42", []byte(`{"session_id":"other"}`)); err == nil {
 		t.Fatal("a mismatched session_id was accepted")
 	}
-	if !strings.Contains(err.Error(), "does not match the selected session") {
-		t.Fatalf("error = %v, want it to name the mismatch", err)
-	}
 }
 
+// TestControlActionTargetPayloadAcceptsMatchingSessionID proves a supplied value
+// that agrees with the target is accepted.
 func TestControlActionTargetPayloadAcceptsMatchingSessionID(t *testing.T) {
-	payload, err := controlActionTargetPayload("get_session_messages", "sess-42", []byte(`{"session_id":"sess-42"}`))
-	if err != nil {
-		t.Fatalf("inject: %v", err)
-	}
-	var decoded map[string]string
-	if err := json.Unmarshal(payload, &decoded); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if decoded["session_id"] != "sess-42" {
-		t.Fatalf("session_id = %q, want sess-42", decoded["session_id"])
+	action := ControlAction{Name: "read_messages", PayloadSessionField: "session_id"}
+	if _, err := controlActionTargetPayload(action, "sess-42", []byte(`{"session_id":"sess-42"}`)); err != nil {
+		t.Fatalf("controlActionTargetPayload: %v", err)
 	}
 }
 
+// TestControlActionTargetPayloadRequiresResolvedSession proves an unresolved target
+// is refused rather than producing a payload with an empty selector.
 func TestControlActionTargetPayloadRequiresResolvedSession(t *testing.T) {
-	if _, err := controlActionTargetPayload("get_session_messages", "", []byte(`{}`)); err == nil {
-		t.Fatal("an empty provider key was accepted")
+	action := ControlAction{Name: "read_messages", PayloadSessionField: "session_id"}
+	if _, err := controlActionTargetPayload(action, "", []byte(`{}`)); err == nil {
+		t.Fatal("an unresolved session was accepted")
 	}
 }
 
-func TestControlActionArgsInjectSessionIDForGetSessionMessages(t *testing.T) {
-	args, err := controlActionArgs(nil, security.ProviderControlPrefix+"get_session_messages", "sess-42", nil)
-	if err != nil {
-		t.Fatalf("args: %v", err)
+// TestControlActionCommandRequiresResolvedSession proves a template using the
+// session placeholder is refused when the target did not resolve.
+func TestControlActionCommandRequiresResolvedSession(t *testing.T) {
+	action := ControlAction{Name: "probe", Command: []string{"runtime", "-s", "{session}", "--json"}}
+	if _, err := controlActionCommand(action, "", []byte(`{}`)); err == nil {
+		t.Fatal("an unresolved session was accepted")
 	}
-	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, `"session_id":"sess-42"`) {
-		t.Fatalf("args = %v, want the injected session_id", args)
+}
+
+// TestControlActionCommandSubstitutesPerToken proves substitution happens inside a
+// token, so a placeholder never splits into several arguments.
+func TestControlActionCommandSubstitutesPerToken(t *testing.T) {
+	action := ControlAction{Name: "probe", Command: []string{"runtime", "--session={session}", "--json"}}
+	args, err := controlActionCommand(action, "sess-42", []byte(`{}`))
+	if err != nil {
+		t.Fatalf("controlActionCommand: %v", err)
+	}
+	if len(args) != 3 {
+		t.Fatalf("argv = %v, want 3 tokens", args)
+	}
+	if args[1] != "--session=sess-42" {
+		t.Fatalf("argv[1] = %q, want --session=sess-42", args[1])
+	}
+}
+
+// TestControlActionCommandAllowsATemplateWithoutSession proves an action may address
+// the provider without a session selector.
+func TestControlActionCommandAllowsATemplateWithoutSession(t *testing.T) {
+	action := ControlAction{Name: "probe", Command: []string{"runtime", "control", "probe", "--json"}}
+	args, err := controlActionCommand(action, "", []byte(`{}`))
+	if err != nil {
+		t.Fatalf("controlActionCommand: %v", err)
+	}
+	if len(args) != 4 {
+		t.Fatalf("argv = %v, want 4 tokens", args)
 	}
 }

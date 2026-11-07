@@ -112,3 +112,58 @@ erases the previously rendered block first, so a shrinking block leaves no stale
 row, and submit/interrupt/EOF move the cursor to the block end before writing the
 newline. A Tab completion candidate list is printed below the erased block so the
 next redraw cannot erase it. Unsafe runes are dropped, matching `sanitizeTerminal`.
+
+## Session list driver column
+
+`internal/tui/table.go` adds a `DRIVER` column to the session list so the
+controller state is visible without running a separate `drive` command. The
+column is a read projection of the persisted inventory: `driveCell` renders `-`
+when the provider reported no driver observation, `unverified` when a running
+state was not verified alive, `unknown` for an empty state, and otherwise the
+reported standard state. `SessionRow.Drive` carries the summary from
+`protocol.Session.Drive`, which the adapter already populated, so no protocol,
+Server, storage or adapter change was needed. The column sits directly after
+`SESSION_STATUS`, which makes it the first data column after `NO` whenever colour
+mode drops `SESSION_STATUS`. A dash is deliberately distinct from `none`: `none`
+is a confirmed absence of a controller, while a dash only means the provider said
+nothing.
+
+## Config-file-driven ctl catalog
+
+`internal/adapter/topsailai/ctl_config.go` makes the `ctl.<action>` surface entirely
+configuration-driven. The catalog file named by `AGENT_CLUSTER_CONTROL_ACTION_FILE`
+is the only source of control actions: each entry defines the action name, the
+permission scope, the payload schema and the provider argv template, so adding,
+changing or removing an action requires no adapter rebuild and no Server change.
+`ctl_actions.go` no longer carries a compiled-in action list, permission map or
+schema map; `controlActionCapabilities` iterates the catalog and
+`controlActionArgs` builds argv from the configured template.
+
+The template is an argv array executed directly, never a shell string. Two
+placeholders are substituted per token so a placeholder never splits into several
+arguments: `{session}` becomes the provider session key and `{payload}` becomes the
+JSON payload. Each may appear at most once, and an unknown or unterminated
+placeholder is rejected at load time. `payload_session_field` replaces the previous
+hardcoded `get_session_messages` special case, so the Endpoint fills the provider
+session key from the revalidated target instead of asking the operator for a
+selector it already holds.
+
+A nil or empty catalog advertises no action and refuses every `ctl.` operation,
+which reverses the earlier "nil means reviewed default set" behaviour: an Endpoint
+cannot be talked into running an action nobody configured. The catalog is reloaded
+on `SIGHUP`; a malformed document keeps the previous actions in force and is logged.
+Whole-line `#` comments are accepted so the shipped example can explain itself.
+
+Because the catalog decides which provider command runs, it is an authorization
+surface. The Endpoint validates the configured capability list before its policy
+hook runs, so an action absent from the catalog is rejected before any allowlist or
+policy check. Both deployment paths install `conf/control-actions.conf.example` as
+`control-actions.conf` and register it as a conffile, and
+`conf/node.endpoint.conf.example` names it, so a fresh node keeps the feature.
+
+The interactive surface renders guided prompts from the advertised
+`payload_schema` (`internal/tui/interactive_ctl_schema.go`): fields are asked one at
+a time in name order, optional fields accept an empty answer, required fields reject
+one, enum values are offered as choices, and an action without a schema falls back
+to the generic `key=value` prompt so an older Endpoint still works. No interactive
+path requires hand-written JSON.

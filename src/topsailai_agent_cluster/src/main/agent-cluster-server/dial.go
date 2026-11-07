@@ -28,9 +28,15 @@ func runEndpointDialer(ctx context.Context, logger *slog.Logger, channelService 
 		endpointID, address := endpointID, address
 		go func() {
 			// The Server dials the Endpoint, so it must verify the Endpoint
-			// certificate. The expected name is the Endpoint identity, which is
-			// what the Endpoint certificate carries.
-			dialTLS, err := security.LoadMTLSConfig(security.MTLSConfig{CAFile: cfg.TLSCAFile, CertificateFile: cfg.TLSCertificateFile, KeyFile: cfg.TLSKeyFile, RevokedSerialsFile: cfg.TLSRevokedSerialsFile, ServerName: endpointID}, false)
+			// certificate. With per-Endpoint certificates the expected name is the
+			// Endpoint identity. With one shared Server certificate the Endpoint
+			// presents the Server's own name, so that is what must be verified;
+			// using the Endpoint identity there would reject every connection.
+			expectedName := endpointID
+			if cfg.TLSSharedCertificate {
+				expectedName = cfg.ServerName
+			}
+			dialTLS, err := security.LoadMTLSConfig(security.MTLSConfig{CAFile: cfg.TLSCAFile, CertificateFile: cfg.TLSCertificateFile, KeyFile: cfg.TLSKeyFile, RevokedSerialsFile: cfg.TLSRevokedSerialsFile, ServerName: expectedName}, false)
 			if err != nil {
 				logger.Error("load endpoint dial TLS configuration", "endpoint_id", endpointID, "error", err)
 				return

@@ -53,9 +53,10 @@ The `ctl.<action>` family exposes the provider control actions an Endpoint actua
 advertised action is a separate versioned capability with a fixed payload schema, so the Server
 validates a standard shape and never forwards an unvalidated provider instruction.
 
-- The action inventory is derived from the Endpoint's live provider registry, not from a hardcoded
-  Server list. Adding a provider action requires no Server code, table or public schema change.
-- The Endpoint advertises only actions it can actually execute. An action that is absent from the
+- The action inventory comes from the Endpoint-local control action catalog, not from a hardcoded
+  Server list and not from compiled-in adapter code. Adding, changing or removing a provider action
+  requires no Server code, table or public schema change, and no adapter rebuild.
+- The Endpoint advertises only actions its catalog defines. An action that is absent from the
   advertised capabilities is rejected at admission rather than attempted and failed.
 - Payloads are validated against the advertised schema before dispatch. A payload that does not match
   the schema is rejected; it is never passed through as an opaque provider instruction.
@@ -63,6 +64,38 @@ validates a standard shape and never forwards an unvalidated provider instructio
   must not be reachable with an unscoped credential.
 - The Server treats the action name as an opaque standard identifier. It does not interpret provider
   semantics, select code by action name, or route by adapter.
+
+### Control action catalog
+
+The catalog is Endpoint-local administrative configuration, loaded at startup and reloaded on
+`SIGHUP`. It is the only source of control actions, so the action surface is an operational decision
+rather than a code change. Each entry defines:
+
+| Field | Meaning |
+|---|---|
+| `name` | Action name after the `ctl.` prefix. A dotted name stays one action. |
+| `permission` | Scope required to invoke it, from the closed scope vocabulary. |
+| `payload_schema` | JSON Schema object describing the payload. Descriptive only; the Server stores and returns it verbatim. |
+| `command` | Provider argv template, executed directly and never through a shell. |
+| `payload_session_field` | Optional payload field filled from the revalidated target. |
+
+Two placeholders are substituted per token, so a placeholder never splits into several arguments:
+`{session}` becomes the provider session key and `{payload}` becomes the JSON payload. Each may appear
+at most once; an unknown or unterminated placeholder is rejected when the file is loaded.
+
+An Endpoint without a catalog advertises no `ctl.` action and refuses every `ctl.` operation. That is
+the fail-closed default: an Endpoint cannot be talked into running an action nobody configured. An
+empty `actions` list is accepted and disables the family the same way.
+
+Because the catalog decides which provider command runs, it is an authorization surface. The Endpoint
+validates the configured capability list before its policy hook runs, so an action absent from the
+catalog is rejected before any allowlist or policy check. The file must not be remotely writable.
+
+The catalog is descriptive for the Server and authoritative for the Endpoint. The Server never
+interprets `command`, `payload_schema` or `payload_session_field`; it only carries the advertised
+capability so the operator surface can render the right prompt. A catalog edit reaches the operator
+only after the Endpoint re-describes, republishes and the Server commits, so a forced collection is
+the only path that makes the next view fresh.
 
 ## Allowlisted command execution
 
