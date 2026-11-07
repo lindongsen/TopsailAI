@@ -503,56 +503,27 @@ class TestEnrichFilesWithProjectWorkspace(unittest.TestCase):
 
 
 class TestIsPidAlive(unittest.TestCase):
-    """Tests for _is_pid_alive."""
+    """Tests for _is_pid_alive.
 
-    @patch("cli_topsailai.session_info.os.path.isdir")
-    @patch("cli_topsailai.session_info.os.kill")
-    @patch.object(session_info.sys, "platform", "linux")
-    def test_linux_prefers_proc_directory(self, mock_kill, mock_isdir):
-        """On Linux, /proc/{pid} existence is checked first."""
-        mock_isdir.side_effect = lambda path: path in ("/proc", "/proc/1234")
-        self.assertTrue(session_info._is_pid_alive(1234))
-        mock_isdir.assert_any_call("/proc")
-        mock_isdir.assert_any_call("/proc/1234")
-        mock_kill.assert_not_called()
+    These assert behaviour, not mechanism: the probe must agree with the
+    shared liveness primitive on live, absent, zombie and non-positive PIDs.
+    """
 
-    @patch("cli_topsailai.session_info.os.path.isdir")
-    @patch("cli_topsailai.session_info.os.kill")
-    @patch.object(session_info.sys, "platform", "linux")
-    def test_linux_proc_missing_falls_back_to_os_kill(
-        self, mock_kill, mock_isdir
-    ):
-        """When /proc/{pid} does not exist, os.kill is not called on Linux."""
-        mock_isdir.side_effect = lambda path: path == "/proc"
-        self.assertFalse(session_info._is_pid_alive(1234))
-        mock_kill.assert_not_called()
+    def test_current_process_is_alive(self):
+        """The running test process must be reported alive."""
+        self.assertTrue(session_info._is_pid_alive(os.getpid()))
 
-    @patch("cli_topsailai.session_info.os.path.isdir")
-    @patch("cli_topsailai.session_info.os.kill")
-    @patch.object(session_info.sys, "platform", "linux")
-    def test_linux_proc_unavailable_falls_back_to_os_kill(
-        self, mock_kill, mock_isdir
-    ):
-        """When /proc is not a directory, fall back to os.kill(pid, 0)."""
-        mock_isdir.return_value = False
-        mock_kill.side_effect = None
-        self.assertTrue(session_info._is_pid_alive(1234))
-        mock_kill.assert_called_once_with(1234, 0)
+    def test_absent_process_is_dead(self):
+        """A reaped PID must be reported as not alive."""
+        self.assertFalse(session_info._is_pid_alive(_absent_pid()))
 
-    @patch("cli_topsailai.session_info.os.kill")
-    @patch.object(session_info.sys, "platform", "darwin")
-    def test_non_linux_uses_os_kill(self, mock_kill):
-        """Non-Linux platforms use os.kill directly."""
-        mock_kill.side_effect = None
-        self.assertTrue(session_info._is_pid_alive(1234))
-        mock_kill.assert_called_once_with(1234, 0)
-
-    @patch("cli_topsailai.session_info.os.kill")
-    @patch.object(session_info.sys, "platform", "darwin")
-    def test_os_kill_failure_means_dead(self, mock_kill):
-        """os.kill raising OSError means the process is not alive."""
-        mock_kill.side_effect = ProcessLookupError()
-        self.assertFalse(session_info._is_pid_alive(1234))
+    def test_zombie_is_dead(self):
+        """A zombie has terminated and must not be reported alive."""
+        pid = _spawn_zombie()
+        try:
+            self.assertFalse(session_info._is_pid_alive(pid))
+        finally:
+            _reap(pid)
 
     def test_none_pid_is_dead(self):
         """None PID is treated as not alive."""
@@ -1043,6 +1014,72 @@ class TestKillProcessGroup(unittest.TestCase):
             self._is_alive(grandchild_pid),
             "grandchild survived the timeout kill",
         )
+
+
+def _spawn_zombie():
+    """Fork a child that exits immediately without being reaped.
+
+    Returns the child PID, which the caller must reap. The helper waits until
+    the OS actually reports state ``Z``, because a freshly forked child is
+    still running for a few milliseconds and probing it early would test the
+    race instead of the zombie contract.
+    """
+    from cli_topsailai.agent_launch_process import _process_state
+
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - child process
+        os._exit(0)
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if _process_state(pid) == "Z":
+            return pid
+        time.sleep(0.01)
+    raise AssertionError(f"child {pid} never reached zombie state")
+
+
+def _reap(pid):
+    """Reap a child PID, ignoring an already-reaped or non-child PID."""
+    try:
+        os.waitpid(pid, 0)
+    except (ChildProcessError, OSError):
+        pass
+
+
+class TestSessionInfoLiveness(unittest.TestCase):
+    """Pin the liveness contract of the session-info status path.
+
+    ``session_info`` previously probed ``/proc/{pid}`` existence, which reports
+    a zombie as alive. These tests assert the behaviour every status path must
+    share so one command cannot call a session Running while another calls it
+    Idle.
+    """
+
+    def test_zombie_pid_is_not_alive(self):
+        """A zombie must not be reported as a live session process."""
+        pid = _spawn_zombie()
+        try:
+            self.assertFalse(session_info._is_pid_alive(pid))
+        finally:
+            _reap(pid)
+
+    def test_current_process_is_alive(self):
+        """The running test process must be reported alive."""
+        self.assertTrue(session_info._is_pid_alive(os.getpid()))
+
+    def test_non_positive_pid_is_not_alive(self):
+        """Non-positive PIDs must never be probed as one process."""
+        self.assertFalse(session_info._is_pid_alive(-1))
+        self.assertFalse(session_info._is_pid_alive(0))
+
+
+def _absent_pid():
+    """Return a PID that the OS authoritatively reports as absent."""
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - child process
+        os._exit(0)
+    _reap(pid)
+    return pid
+
 
 if __name__ == "__main__":
     unittest.main()

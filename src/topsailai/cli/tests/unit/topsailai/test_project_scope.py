@@ -11,6 +11,7 @@ import shlex
 from types import SimpleNamespace
 import sys
 import tempfile
+import time
 import unicodedata
 import unittest
 from pathlib import Path
@@ -203,17 +204,15 @@ class TestRunningStatusDetection(unittest.TestCase):
 
     @patch("cli_topsailai.project_scope.subprocess.run")
     @patch("cli_topsailai.project_scope.get_topsailai_home")
-    @patch("cli_topsailai.project_scope.os.kill")
-    def test_marks_running_when_pid_alive(self, mock_kill, mock_home, mock_run):
+    def test_marks_running_when_pid_alive(self, mock_home, mock_run):
         """A session with a live PID is marked Running."""
         session = self._make_session("s-alive")
         mock_run.return_value = MockCompletedProcess(stdout=json.dumps([session]))
-        mock_kill.side_effect = lambda pid, sig: None
 
         with tempfile.TemporaryDirectory() as tmp:
             task_dir = os.path.join(tmp, "workspace", "task")
             os.makedirs(task_dir)
-            self._write_stdout(task_dir, "s-alive", 1234)
+            self._write_stdout(task_dir, "s-alive", os.getpid())
             mock_home.return_value = tmp
 
             entries = project_scope.build_project_list(limit=10)
@@ -223,17 +222,15 @@ class TestRunningStatusDetection(unittest.TestCase):
 
     @patch("cli_topsailai.project_scope.subprocess.run")
     @patch("cli_topsailai.project_scope.get_topsailai_home")
-    @patch("cli_topsailai.project_scope.os.kill")
-    def test_marks_idle_when_pid_dead(self, mock_kill, mock_home, mock_run):
+    def test_marks_idle_when_pid_dead(self, mock_home, mock_run):
         """A session whose PID no longer exists is marked Idle."""
         session = self._make_session("s-dead")
         mock_run.return_value = MockCompletedProcess(stdout=json.dumps([session]))
-        mock_kill.side_effect = ProcessLookupError("no such process")
 
         with tempfile.TemporaryDirectory() as tmp:
             task_dir = os.path.join(tmp, "workspace", "task")
             os.makedirs(task_dir)
-            self._write_stdout(task_dir, "s-dead", 5678)
+            self._write_stdout(task_dir, "s-dead", _absent_pid())
             mock_home.return_value = tmp
 
             entries = project_scope.build_project_list(limit=10)
@@ -243,8 +240,7 @@ class TestRunningStatusDetection(unittest.TestCase):
 
     @patch("cli_topsailai.project_scope.subprocess.run")
     @patch("cli_topsailai.project_scope.get_topsailai_home")
-    @patch("cli_topsailai.project_scope.os.kill")
-    def test_marks_idle_when_no_stdout_file(self, mock_kill, mock_home, mock_run):
+    def test_marks_idle_when_no_stdout_file(self, mock_home, mock_run):
         """A session with no stdout file is marked Idle."""
         session = self._make_session("s-missing")
         mock_run.return_value = MockCompletedProcess(stdout=json.dumps([session]))
@@ -258,12 +254,10 @@ class TestRunningStatusDetection(unittest.TestCase):
 
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["status"], "Idle")
-        mock_kill.assert_not_called()
 
     @patch("cli_topsailai.project_scope.subprocess.run")
     @patch("cli_topsailai.project_scope.get_topsailai_home")
-    @patch("cli_topsailai.project_scope.os.kill")
-    def test_marks_mixed_sessions_correctly(self, mock_kill, mock_home, mock_run):
+    def test_marks_mixed_sessions_correctly(self, mock_home, mock_run):
         """Multiple sessions are checked concurrently with correct results."""
         sessions = [
             self._make_session("s-running", "2026-07-06T12:00:00"),
@@ -272,19 +266,11 @@ class TestRunningStatusDetection(unittest.TestCase):
         ]
         mock_run.return_value = MockCompletedProcess(stdout=json.dumps(sessions))
 
-        alive_pids = {1111}
-
-        def fake_kill(pid, sig):
-            if pid not in alive_pids:
-                raise ProcessLookupError("dead")
-
-        mock_kill.side_effect = fake_kill
-
         with tempfile.TemporaryDirectory() as tmp:
             task_dir = os.path.join(tmp, "workspace", "task")
             os.makedirs(task_dir)
-            self._write_stdout(task_dir, "s-running", 1111)
-            self._write_stdout(task_dir, "s-idle", 2222)
+            self._write_stdout(task_dir, "s-running", os.getpid())
+            self._write_stdout(task_dir, "s-idle", _absent_pid())
             # s-no-file intentionally has no stdout file
             mock_home.return_value = tmp
 
@@ -298,25 +284,16 @@ class TestRunningStatusDetection(unittest.TestCase):
 
     @patch("cli_topsailai.project_scope.subprocess.run")
     @patch("cli_topsailai.project_scope.get_topsailai_home")
-    @patch("cli_topsailai.project_scope.os.kill")
-    def test_uses_most_recent_stdout_file(self, mock_kill, mock_home, mock_run):
-        """When multiple stdout files exist, the most recent PID is checked."""
+    def test_uses_most_recent_stdout_file(self, mock_home, mock_run):
+        """When multiple stdout files exist, the most recent live PID wins."""
         session = self._make_session("s-multi")
         mock_run.return_value = MockCompletedProcess(stdout=json.dumps([session]))
-
-        alive_pids = {9999}
-
-        def fake_kill(pid, sig):
-            if pid not in alive_pids:
-                raise ProcessLookupError("dead")
-
-        mock_kill.side_effect = fake_kill
 
         with tempfile.TemporaryDirectory() as tmp:
             task_dir = os.path.join(tmp, "workspace", "task")
             os.makedirs(task_dir)
-            old_path = self._write_stdout(task_dir, "s-multi", 1111)
-            new_path = self._write_stdout(task_dir, "s-multi", 9999)
+            old_path = self._write_stdout(task_dir, "s-multi", _absent_pid())
+            new_path = self._write_stdout(task_dir, "s-multi", os.getpid())
             # Ensure mtime ordering even on fast filesystems.
             os.utime(old_path, (1000, 1000))
             os.utime(new_path, (2000, 2000))
@@ -2053,6 +2030,150 @@ class ResumeBackgroundMechanismTests(unittest.TestCase):
             scope.resume_session_result("session-1", background=True, agent_mode="tmux")
         printed = " ".join(str(call) for call in output.call_args_list)
         self.assertIn("mode: tmux", printed)
+
+
+def _spawn_zombie():
+    """Fork a child that exits immediately without being reaped.
+
+    Returns the child PID, which the caller must reap. The helper waits until
+    the OS actually reports state ``Z``, because a freshly forked child is
+    still running for a few milliseconds and probing it early would test the
+    race instead of the zombie contract.
+    """
+    from cli_topsailai.agent_launch_process import _process_state
+
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - child process
+        os._exit(0)
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if _process_state(pid) == "Z":
+            return pid
+        time.sleep(0.01)
+    raise AssertionError(f"child {pid} never reached zombie state")
+
+
+def _reap(pid):
+    """Reap a child PID, ignoring an already-reaped or non-child PID."""
+    try:
+        os.waitpid(pid, 0)
+    except (ChildProcessError, OSError):
+        pass
+
+
+def _absent_pid():
+    """Return a PID that the OS authoritatively reports as absent."""
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - child process
+        os._exit(0)
+    _reap(pid)
+    return pid
+
+
+class TestProjectScopeLiveness(unittest.TestCase):
+    """Pin the liveness contract of the project-scope status path.
+
+    These tests assert behaviour, not mechanism: the status path must agree
+    with the shared primitive on zombies, non-positive PIDs and multiple
+    stdout candidates, so a session cannot be reported Running by one command
+    and Idle by another.
+    """
+
+    def _write_stdout(self, task_dir, session_id, pid):
+        """Create a session stdout file for testing."""
+        path = os.path.join(task_dir, f"{session_id}.{pid}.session.stdout")
+        with open(path, "w") as fh:
+            fh.write("log line\n")
+        return path
+
+    def test_zombie_session_is_not_running(self):
+        """A zombie process must not keep a session Running."""
+        pid = _spawn_zombie()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                task_dir = os.path.join(tmp, "workspace", "task")
+                os.makedirs(task_dir)
+                self._write_stdout(task_dir, "s-zombie", pid)
+                self.assertFalse(project_scope._check_session_running(tmp, "s-zombie"))
+        finally:
+            _reap(pid)
+
+    def test_absent_session_is_not_running(self):
+        """A reaped PID must report the session as not running."""
+        pid = _absent_pid()
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = os.path.join(tmp, "workspace", "task")
+            os.makedirs(task_dir)
+            self._write_stdout(task_dir, "s-dead", pid)
+            self.assertFalse(project_scope._check_session_running(tmp, "s-dead"))
+
+    def test_live_session_is_running(self):
+        """The current process must keep its session Running."""
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = os.path.join(tmp, "workspace", "task")
+            os.makedirs(task_dir)
+            self._write_stdout(task_dir, "s-live", os.getpid())
+            self.assertTrue(project_scope._check_session_running(tmp, "s-live"))
+
+    def test_older_live_file_beats_newer_dead_file(self):
+        """A newer dead file must not hide an older live process."""
+        dead_pid = _absent_pid()
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = os.path.join(tmp, "workspace", "task")
+            os.makedirs(task_dir)
+            live_path = self._write_stdout(task_dir, "s-multi", os.getpid())
+            dead_path = self._write_stdout(task_dir, "s-multi", dead_pid)
+            os.utime(live_path, (1000, 1000))
+            os.utime(dead_path, (2000, 2000))
+            self.assertTrue(project_scope._check_session_running(tmp, "s-multi"))
+
+    def test_negative_pid_is_not_running(self):
+        """A negative PID must never be probed as a process."""
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = os.path.join(tmp, "workspace", "task")
+            os.makedirs(task_dir)
+            self._write_stdout(task_dir, "s-neg", -1)
+            self.assertFalse(project_scope._check_session_running(tmp, "s-neg"))
+
+    def test_zero_pid_is_not_running(self):
+        """A zero PID addresses the process group, not one process."""
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = os.path.join(tmp, "workspace", "task")
+            os.makedirs(task_dir)
+            self._write_stdout(task_dir, "s-zero", 0)
+            self.assertFalse(project_scope._check_session_running(tmp, "s-zero"))
+
+    def test_pid_state_negative_is_unknown(self):
+        """``_pid_state`` must refuse to classify a non-positive PID."""
+        self.assertEqual(project_scope._pid_state(-1), "unknown")
+        self.assertEqual(project_scope._pid_state(0), "unknown")
+
+    def test_pid_state_zombie_is_dead(self):
+        """``_pid_state`` must classify a zombie as dead."""
+        pid = _spawn_zombie()
+        try:
+            self.assertEqual(project_scope._pid_state(pid), "dead")
+        finally:
+            _reap(pid)
+
+    def test_pid_state_absent_is_dead(self):
+        """``_pid_state`` must classify a reaped PID as dead."""
+        self.assertEqual(project_scope._pid_state(_absent_pid()), "dead")
+
+    def test_pid_state_live_is_alive(self):
+        """``_pid_state`` must classify the current process as alive."""
+        self.assertEqual(project_scope._pid_state(os.getpid()), "alive")
+
+    def test_is_pid_alive_rejects_zombie_and_non_positive(self):
+        """``_is_pid_alive`` must agree with the shared primitive."""
+        pid = _spawn_zombie()
+        try:
+            self.assertFalse(project_scope._is_pid_alive(pid))
+        finally:
+            _reap(pid)
+        self.assertFalse(project_scope._is_pid_alive(-1))
+        self.assertFalse(project_scope._is_pid_alive(0))
+        self.assertTrue(project_scope._is_pid_alive(os.getpid()))
 
 
 if __name__ == "__main__":

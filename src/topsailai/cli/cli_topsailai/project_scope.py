@@ -30,12 +30,14 @@ from cli_topsailai.driver_ownership import (
     stop_owned_driver,
 )
 from cli_topsailai.formatting import _fit_table_cell
-from cli_topsailai.log_files import (
-    _find_session_stdout_file,
-    _get_pid_from_stdout_path,
-    _parse_stdout_filename,
-)
+from cli_topsailai.log_files import _find_session_stdout_file
 from cli_topsailai.paths import get_topsailai_home
+from cli_topsailai.process_liveness import (
+    _session_stdout_candidates as _liveness_session_stdout_candidates,
+    is_pid_alive,
+    pid_state,
+    session_liveness as _liveness_session_liveness,
+)
 from cli_topsailai.projects import (
     build_managed_project_list as _build_managed_project_list,
     print_project_table as _print_managed_project_table,
@@ -81,31 +83,21 @@ _LOOKUP_REAP_SECONDS = 5.0
 
 
 def _is_pid_alive(pid: int) -> bool:
-    """Return True if *pid* is currently running."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
+    """Return True if *pid* is a live, non-zombie process."""
+    return is_pid_alive(pid)
 
 
 def _check_session_running(home: str, session_id: str) -> bool:
     """Check whether *session_id* has a live session process.
 
-    Scans ``{home}/workspace/task/`` for the most recent
-    ``{session_id}.{pid}.session.stdout`` file and checks whether the embedded
-    PID is still alive.
+    Every ``{session_id}.{pid}.session.stdout`` candidate is inspected, because
+    a newer dead file must not hide an older live process. An unverifiable
+    candidate is reported as not running: this is a display path, so it must
+    never claim a session is running when the OS refuses to answer.
     """
     if not session_id:
         return False
-    task_dir = os.path.join(home, "workspace", "task")
-    stdout_path = _find_session_stdout_file(task_dir, session_id)
-    if not stdout_path:
-        return False
-    pid = _get_pid_from_stdout_path(stdout_path)
-    if pid is None:
-        return False
-    return _is_pid_alive(pid)
+    return session_liveness(session_id, home=home) == "live"
 
 
 def _resolve_session_mtime(task_dir: str, session_id: str) -> Optional[float]:
@@ -1105,17 +1097,10 @@ def _pid_state(pid: int) -> str:
     """Classify a PID as ``alive``, ``dead`` or ``unknown``.
 
     ``unknown`` is returned when the OS refuses to answer, so callers can fail
-    closed instead of treating an unverifiable process as idle.
+    closed instead of treating an unverifiable process as idle. A zombie is
+    ``dead`` because it has already terminated.
     """
-    try:
-        os.kill(pid, 0)
-        return "alive"
-    except ProcessLookupError:
-        return "dead"
-    except PermissionError:
-        return "unknown"
-    except OSError:
-        return "unknown"
+    return pid_state(pid).value
 
 
 def _session_stdout_candidates(task_dir: str, session_id: str) -> List[str]:
@@ -1124,19 +1109,7 @@ def _session_stdout_candidates(task_dir: str, session_id: str) -> List[str]:
     All candidates are inspected because a newer dead file must not hide an
     older live process for the same session.
     """
-    candidates: List[str] = []
-    try:
-        entries = os.listdir(task_dir)
-    except FileNotFoundError:
-        return []
-    for entry in entries:
-        if not entry.endswith(".session.stdout"):
-            continue
-        full_path = os.path.join(task_dir, entry)
-        sid, _pid = _parse_stdout_filename(entry)
-        if sid == session_id:
-            candidates.append(full_path)
-    return candidates
+    return _liveness_session_stdout_candidates(task_dir, session_id)
 
 
 def session_liveness(session_id: str, *, home: Optional[str] = None) -> str:
@@ -1146,29 +1119,7 @@ def session_liveness(session_id: str, *, home: Optional[str] = None) -> str:
     proves the session is running; an unverifiable candidate makes the answer
     ``unknown`` so the caller fails closed rather than resuming a live session.
     """
-    if not session_id:
-        return "unknown"
-    base = home or get_topsailai_home()
-    task_dir = os.path.join(base, "workspace", "task")
-    try:
-        candidates = _session_stdout_candidates(task_dir, session_id)
-    except OSError as error:
-        print(f"[ERROR] Cannot inspect session task directory {task_dir}: {error}")
-        return "unknown"
-    if not candidates:
-        return "idle"
-    unknown = False
-    for path in candidates:
-        pid = _get_pid_from_stdout_path(path)
-        if pid is None:
-            unknown = True
-            continue
-        state = _pid_state(pid)
-        if state == "alive":
-            return "live"
-        if state == "unknown":
-            unknown = True
-    return "unknown" if unknown else "idle"
+    return _liveness_session_liveness(session_id, home=home)
 
 
 def lookup_persisted_session(

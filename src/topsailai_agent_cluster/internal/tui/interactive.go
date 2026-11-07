@@ -393,7 +393,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		}
 		return false, interactiveShow(ctx, api, state, strings.TrimSpace(rest), out)
 	case "logs":
-		return false, interactiveLogs(ctx, api, state, strings.TrimSpace(rest), options.MaxBytes, options.MaxLines, trustedOut, options.Color)
+		return false, interactiveLogs(ctx, api, state, strings.TrimSpace(rest), options.MaxBytes, options.MaxLines, out)
 	case "status":
 		return false, interactiveStatus(ctx, api, state, strings.TrimSpace(rest), out)
 	case "refresh":

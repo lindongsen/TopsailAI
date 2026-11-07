@@ -4,10 +4,10 @@ import json
 import os
 import signal
 import subprocess
-import sys
 import threading
 from typing import List, Optional, Tuple
 
+from cli_topsailai.process_liveness import is_pid_alive
 from cli_topsailai.project_scope import load_project_workspace_lookup
 
 # Timeout for each external session-info lookup, in seconds.
@@ -391,33 +391,13 @@ def enrich_files_with_session_names(files: List[dict]) -> None:
 
 
 def _is_pid_alive(pid: Optional[int]) -> bool:
-    """Return True if *pid* refers to a currently running process.
+    """Return True if *pid* refers to a live, non-zombie process.
 
-    On Linux, the existence of ``/proc/{pid}`` is checked first because it
-    is the authoritative, signal-free way to determine whether a process is
-    alive.  ``os.kill(pid, 0)`` is used only as a fallback when ``/proc`` is
-    unavailable or is not a directory.  On non-Linux platforms ``os.kill`` is
-    used directly.
+    Delegates to the shared liveness primitive so every status path agrees on
+    zombies, reused PIDs and non-positive PIDs. A zombie has already
+    terminated and must never keep a session looking alive.
     """
-    if pid is None:
-        return False
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if pid <= 0:
-        return False
-
-    if sys.platform.startswith("linux"):
-        if os.path.isdir("/proc"):
-            return os.path.isdir(f"/proc/{pid}")
-        # /proc is unavailable; fall back to os.kill.
-
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError):
-        return False
+    return is_pid_alive(pid)
 
 
 def _has_real_session_id(file_info: dict) -> bool:
