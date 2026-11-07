@@ -152,6 +152,33 @@ command that already reached a terminal state.
 Cancellation succeeds only before dispatch. A command that was already dispatched returns
 `409 too_late_to_cancel`, because a cancellation request cannot claim that provider effects stopped.
 
+### Operation families
+
+Admission validates the requested operation against the permission the Endpoint advertises for it.
+Two standard families are defined; both are versioned operations with fixed payload schemas, not a
+passthrough for provider-specific instructions.
+
+| Family | Operation | Payload | Required permission |
+|---|---|---|---|
+| Provider control | `ctl.<action>` | JSON object forwarded as the action arguments | `read_output` for actions that return conversation content, otherwise `control` |
+| Command execution | `command.exec` | `{"argv": ["..."]}` | `control` |
+
+`ctl.<action>` is advertised one capability per action, so an action the Endpoint does not serve is
+absent from the inventory and is refused at admission with `403 permission_denied`. The action name is
+an opaque standard identifier: the Server never interprets provider semantics or routes by adapter.
+
+`command.exec` carries an argv array and never a command string, because the Endpoint must not parse
+or split a string. `argv` is required, is limited to 64 tokens, each token is limited to 4096 bytes,
+and no token may be empty or contain a control character. The Endpoint matches the array against an
+Endpoint-global allowlist by prefix and executes it in the session `project_workspace`, falling back
+to the session `pwd`. When neither resolves, or when no allowlist is configured, the operation fails
+closed with `policy_denied` rather than falling back to an unrestricted or inherited directory.
+
+The result document carries `argv`, `exit_code`, `stdout`, `stderr`, `truncated`, `observed_at_ms`
+and an optional `error_code`. It is one bounded snapshot, not a stream: `truncated` marks output that
+exceeded the capture limit, and a non-zero `exit_code` is a legitimate result rather than a transport
+failure.
+
 ## Output snapshots
 
 | Method | Path | Purpose |
