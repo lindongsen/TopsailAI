@@ -218,6 +218,14 @@ func (s *Service) collectionLoop(ctx context.Context) {
 			s.logError("publish inventory", err)
 		}
 	}
+	// The initial publish waits for the authenticated transport, because a publish
+	// attempted before the connection is established fails with ErrOffline and logs
+	// an ERROR that is indistinguishable from a real publish failure. The sibling
+	// recoverAcceptedCommands loop gates on the same readiness signal.
+	if !s.waitForChannelReady(ctx) {
+		s.loggerInfo("inventory collection stopped before channel ready")
+		return
+	}
 	publish()
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
