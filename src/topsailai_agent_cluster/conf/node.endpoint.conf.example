@@ -25,6 +25,14 @@ SERVER_API_URL=http://127.0.0.1:53680
 # must be an absolute path that exists on this node.
 ADAPTERS='[{"adapter_id":"topsailai-local","provider_type":"topsailai","command":"/TopsailAI/src/topsailai/bin/topsailai","timeout_ms":120000}]'
 
+# Optional command allowlist for the `!` operator command. Paths are relative to
+# the bundle root. Each line is one entry matched as a prefix of the argv array,
+# so `git status` permits `git status --short` but not `git push`. Programs that
+# can execute other programs (git, find, awk, sed, xargs, env, make, docker,
+# kubectl, sh, bash, python, python3, perl, ruby, node) require at least two
+# tokens. An unset value disables command execution entirely.
+COMMAND_ALLOWLIST_FILE=conf/command-allowlist.conf
+
 # TLS material, relative to the bundle root.
 TLS_CA_FILE=certs/ca.pem
 TLS_CERTIFICATE_FILE=certs/node.pem

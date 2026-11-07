@@ -111,6 +111,9 @@ function load_config() {
     LOG_PATH=$(resolve_path "${LOG_PATH:-logs/${ROLE}.log}")
     PID_FILE=$(resolve_path "${PID_FILE:-run/${ROLE}.pid}")
     STDOUT_LOG=$(resolve_path "${STDOUT_LOG:-logs/${ROLE}.stdout.log}")
+    # The command allowlist is optional. An unset value disables command.exec
+    # entirely, so it is resolved only when the configuration names a file.
+    COMMAND_ALLOWLIST_FILE=$(resolve_path "${COMMAND_ALLOWLIST_FILE:-}")
 }
 
 # Reports the binary serving the configured role.
@@ -167,6 +170,7 @@ function doctor() {
     if [ "${ROLE}" = "endpoint" ]; then
         echo "endpoint   : ${ENDPOINT_ID} (${INSTANCE_ID})"
         echo "channel    : ${CHANNEL_ADDRESS}"
+        echo "allowlist  : ${COMMAND_ALLOWLIST_FILE:-<disabled>}"
     fi
 }
 
@@ -203,6 +207,9 @@ function start_node() {
         args+=(--instance-id "${INSTANCE_ID}")
         args+=(--channel-address "${CHANNEL_ADDRESS}")
         args+=(--auth-token "${AUTH_TOKEN}")
+        # The allowlist is optional. Without it the endpoint refuses command.exec
+        # rather than falling back to an unrestricted shell.
+        [ -n "${COMMAND_ALLOWLIST_FILE:-}" ] && args+=(--command-allowlist-file "${COMMAND_ALLOWLIST_FILE}")
         # Adapters are supplied through the environment; no flag exists for them.
         export AGENT_CLUSTER_ADAPTERS="${ADAPTERS}"
     fi
