@@ -42,6 +42,13 @@ operator still sees one folder while `dpkg` and backup tooling see the policy lo
 Because `conf` is a symlink, the controller finds its configuration beside itself in both the
 bundle and the package layout, and the configuration keeps the same relative paths in both.
 
+A bundle install is not the same file set. `install-node.sh` copies only the role binary and, for
+an endpoint, the operator CLI into `/opt/agent-cluster/bin`, then links them from
+`/usr/local/sbin`. The controller, `lib/cli-env.sh`, `agent-cluster-node-setup` and the five
+layout symlinks stay in the bundle, which is run in place. A bundle install therefore adds the
+commands to `PATH` without replacing the bundle as the node's configuration source, and
+`agent-clusterctl` is not on `PATH` until the node package is installed.
+
 Build the packages with the Makefile:
 
 ```bash
@@ -76,6 +83,11 @@ with `/usr/local/sbin/agent-cluster-cli`, `/usr/local/sbin/topsailai_agent_clust
 `${HOME}/.topsailai/.topsailai_agent_cluster.env`, which is how the CLI learns
 the Server address and token. Re-generate that file after a token rotation with
 `agent-cluster-node-setup`.
+
+Removing a package does not remove its state. `dpkg --purge` deletes the shipped files and the
+conffiles, but `/var/lib/agent-cluster` (the SQLite database) and `/var/log/agent-cluster` are
+left in place, because deleting a node's state during a package purge is destructive and cannot
+be undone. Remove those two directories by hand when a node is decommissioned.
 
 Operate the node with the controller:
 
