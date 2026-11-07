@@ -34,11 +34,11 @@ COLLECTION_DELAY_MS=5000
 
 # Command allowlist for the `!` operator command. Paths are relative to the
 # bundle root. Each line is one entry matched as a prefix of the argv array, so
-# `git status` permits `git status --short` but not `git push`. Programs that can
+# `git status` permits `git status --short` but not `git commit`. Programs that can
 # execute other programs (git, find, awk, sed, xargs, env, make, docker, kubectl,
 # sh, bash, python, python3, perl, ruby, node) require at least two tokens.
 # The deployment scripts install conf/command-allowlist.conf.example under this
-# name, so the Endpoint starts with a read-only policy in force. Unset this value
+# name, so the Endpoint starts with the shipped policy in force. Unset this value
 # to disable command execution entirely.
 COMMAND_ALLOWLIST_FILE=conf/command-allowlist.conf
 

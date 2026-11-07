@@ -6,7 +6,7 @@
 # command. It is read by the Endpoint at startup and reloaded on SIGHUP.
 #
 # Each line is one entry, matched as a prefix of the argv array. An entry
-# `git status` therefore permits `git status --short` and rejects `git push`.
+# `git status` therefore permits `git status --short` and rejects `git commit`.
 # Blank lines and lines starting with `#` are ignored.
 #
 # Programs that can execute other programs require at least two tokens, because
@@ -15,10 +15,13 @@
 # python3, perl, ruby and node. Such an entry is refused when the file is
 # loaded, so a mistake fails at startup rather than at the first execution.
 #
-# The default below is deliberately read-only: it lets an operator inspect the
-# session workspace without granting any way to modify it or to run a shell.
-# Extend it for your site, and keep in mind that every entry is reachable by
-# anyone holding the `control` scope.
+# The default below is mostly read-only, but it is not a sandbox. `git push`
+# and `git show` are included because operators need to publish work and to
+# inspect arbitrary revisions. Both are more powerful than they look: `git push`
+# accepts `--receive-pack`, which runs a local command, and `git show` honours
+# `--output` and textconv filters declared in `.gitattributes`. Prefix matching
+# cannot distinguish those forms, so every entry here is reachable by anyone
+# holding the `control` scope and must be treated as local code execution.
 #
 # To disable command execution entirely, remove this file and unset
 # COMMAND_ALLOWLIST_FILE in the node configuration. An Endpoint with no
@@ -30,3 +33,5 @@ pwd
 git status
 git log
 git diff
+git show
+git push
