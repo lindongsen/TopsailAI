@@ -12,9 +12,11 @@
 #     lib/cli-env.sh            shared per-user env-file writer
 #
 # Installing an endpoint also installs the CLI, because the CLI is how an
-# operator on that machine reaches the Server. The CLI is installed as
-# /usr/local/sbin/topsailai_agent_cluster and reads its Server address and token
-# from ${HOME}/.topsailai/.topsailai_agent_cluster.env, which this script writes.
+# operator on that machine reaches the Server. The CLI keeps its native name
+# /usr/local/sbin/agent-cluster-cli, and /usr/local/sbin/topsailai_agent_cluster
+# is a symlink to it, so both spellings reach the same binary. It reads its
+# Server address and token from ${HOME}/.topsailai/.topsailai_agent_cluster.env,
+# which this script writes.
 #
 # Usage: install-node.sh [--install-dir <dir>] [--force]
 #
@@ -28,7 +30,8 @@ set -uo pipefail
 
 INSTALL_DIR="/usr/local/sbin"
 FORCE=0
-CLI_NAME="topsailai_agent_cluster"
+CLI_NAME="agent-cluster-cli"
+CLI_ALIAS="topsailai_agent_cluster"
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 CONFIG_FILE="${SCRIPT_DIR}/conf/node.conf"
@@ -88,6 +91,21 @@ function install_binary() {
     echo "installed ${target}"
 }
 
+# Points the product-facing alias at the CLI that was just installed. The alias
+# is a relative symlink because both names live in the same directory, so the
+# link keeps working when the install directory is relocated. A regular file left
+# by an older layout is replaced, and the replacement is reported because it
+# removes a file.
+function install_cli_alias() {
+    local target="${INSTALL_DIR}/${CLI_ALIAS}"
+    if [ -f "${target}" ] && [ ! -L "${target}" ]; then
+        rm -f "${target}" || die "cannot remove the old ${target}"
+        echo "removed the old regular file ${target}"
+    fi
+    ln -sfn "${CLI_NAME}" "${target}" || die "cannot link ${target}"
+    echo "linked ${target} -> ${CLI_NAME}"
+}
+
 # Writes the per-user CLI env file, replacing it only when forced. The writer is
 # shared with the Debian package postinst so both deployment paths produce the
 # same file with the same permissions.
@@ -109,6 +127,7 @@ install_binary "${SCRIPT_DIR}/bin/agent-cluster-${ROLE}" "${INSTALL_DIR}/agent-c
 # operator on that machine uses it to reach the Server.
 if [ "${ROLE}" = "endpoint" ]; then
     install_binary "${SCRIPT_DIR}/bin/agent-cluster-cli" "${INSTALL_DIR}/${CLI_NAME}"
+    install_cli_alias
     write_cli_env
 else
     echo "skipped CLI install: the ${ROLE} role does not carry the operator CLI"
