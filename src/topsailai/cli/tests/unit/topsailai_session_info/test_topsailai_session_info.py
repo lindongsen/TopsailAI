@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -18,6 +19,7 @@ sys.path.insert(0, SRC_ROOT)
 sys.path.insert(0, CLI_ROOT)
 
 import topsailai_session_info as si
+from cli_topsailai.agent_launch_process import _process_state
 from topsailai.context.ctx_manager import get_session_manager
 from topsailai.context.session_manager import SessionData
 
@@ -120,6 +122,53 @@ class TestIsSessionRunning:
         task_dir = tmp_path / si.TASK_SUBDIR
         task_dir.mkdir(parents=True)
         (task_dir / "s1.99999999.session.stdout").write_text("")
+        assert si._is_session_running(str(tmp_path), "s1") is False
+
+    def test_zombie_session_is_not_running(self, tmp_path: Path):
+        """An unreaped zombie has exited, so the session must be idle."""
+        task_dir = tmp_path / si.TASK_SUBDIR
+        task_dir.mkdir(parents=True)
+        pid = os.fork()
+        if pid == 0:  # pragma: no cover - child process
+            os._exit(0)
+        try:
+            deadline = time.time() + 5.0
+            while time.time() < deadline:
+                if _process_state(pid) == "Z":
+                    break
+                time.sleep(0.01)
+            (task_dir / f"s1.{pid}.session.stdout").write_text("")
+            assert si._is_session_running(str(tmp_path), "s1") is False
+        finally:
+            try:
+                os.waitpid(pid, 0)
+            except (ChildProcessError, OSError):
+                pass
+
+    def test_older_live_file_beats_newer_dead_file(self, tmp_path: Path):
+        """A newer dead stdout file must not hide an older live process."""
+        task_dir = tmp_path / si.TASK_SUBDIR
+        task_dir.mkdir(parents=True)
+        live = task_dir / f"s1.{os.getpid()}.session.stdout"
+        live.write_text("")
+        os.utime(live, (1000, 1000))
+        dead = task_dir / "s1.99999999.session.stdout"
+        dead.write_text("")
+        os.utime(dead, (2000, 2000))
+        assert si._is_session_running(str(tmp_path), "s1") is True
+
+    def test_negative_pid_is_not_running(self, tmp_path: Path):
+        """A negative PID must never be probed as a live process."""
+        task_dir = tmp_path / si.TASK_SUBDIR
+        task_dir.mkdir(parents=True)
+        (task_dir / "s1.-1.session.stdout").write_text("")
+        assert si._is_session_running(str(tmp_path), "s1") is False
+
+    def test_zero_pid_is_not_running(self, tmp_path: Path):
+        """PID 0 addresses the process group, so it is not a session."""
+        task_dir = tmp_path / si.TASK_SUBDIR
+        task_dir.mkdir(parents=True)
+        (task_dir / "s1.0.session.stdout").write_text("")
         assert si._is_session_running(str(tmp_path), "s1") is False
 
 
