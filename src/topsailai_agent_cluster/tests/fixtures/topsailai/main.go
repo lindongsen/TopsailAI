@@ -64,12 +64,16 @@ func control(args []string) {
 	if action == "" {
 		fail("missing control action")
 	}
+	// The provider reports control delivery as control_acknowledged, which the
+	// adapter maps to an acknowledged submitted boundary. Emitting a bare
+	// "acknowledged" would fall through the adapter's switch to unknown, so the
+	// fixture would silently disagree with the contract it stands in for.
 	emit(map[string]any{
-		"ok":               true,
-		"action":           action,
-		"session_id":       session,
-		"delivery_state":   "acknowledged",
-		"effect_certainty": "acknowledged",
+		"ok":             true,
+		"action":         action,
+		"session_id":     session,
+		"delivery_state": "control_acknowledged",
+		"request_id":     "fixture-request",
 	})
 }
 

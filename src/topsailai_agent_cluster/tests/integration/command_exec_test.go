@@ -88,8 +88,17 @@ func TestCommandExecRejectsWithoutAllowlist(t *testing.T) {
 }
 
 // startExecCluster builds the Server, the Endpoint and both provider fixtures, then
-// waits for the fixture inventory to be committed.
+// waits for the fixture inventory to be committed. The Server credential is left
+// unrestricted, which is the single-administrator deployment.
 func startExecCluster(t *testing.T, allowlist string) *execCluster {
+	t.Helper()
+	return startExecClusterWithScopes(t, allowlist, "")
+}
+
+// startExecClusterWithScopes starts the same cluster with an explicit Server
+// operator scope list, so a test can prove admission honours a restricted
+// credential instead of only the unrestricted default.
+func startExecClusterWithScopes(t *testing.T, allowlist, scopes string) *execCluster {
 	t.Helper()
 	root := t.TempDir()
 	certs := makeIntegrationCerts(t, root)
@@ -121,7 +130,7 @@ func startExecCluster(t *testing.T, allowlist string) *execCluster {
 	channel := free(t)
 	c.server = exec.Command(serverBinary)
 	c.server.Dir = moduleRoot(t)
-	c.server.Env = append(os.Environ(),
+	serverEnv := append(os.Environ(),
 		"AGENT_CLUSTER_API_LISTEN_ADDR=127.0.0.1:"+c.api,
 		"AGENT_CLUSTER_CHANNEL_LISTEN_ADDR=127.0.0.1:"+channel,
 		"AGENT_CLUSTER_DATABASE_PATH="+c.serverDB,
@@ -130,6 +139,10 @@ func startExecCluster(t *testing.T, allowlist string) *execCluster {
 		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+certs.serverCert,
 		"AGENT_CLUSTER_TLS_KEY_FILE="+certs.serverKey,
 	)
+	if scopes != "" {
+		serverEnv = append(serverEnv, "AGENT_CLUSTER_AUTH_SCOPES="+scopes)
+	}
+	c.server.Env = serverEnv
 	c.server.Stdout, c.server.Stderr = os.Stdout, os.Stderr
 	if err := c.server.Start(); err != nil {
 		t.Fatal(err)
