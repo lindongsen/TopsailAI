@@ -327,7 +327,11 @@ function build_role_package() {
 
     build_binary "./src/main/agent-cluster-${ROLE}" "/usr/local/sbin/agent-cluster-${ROLE}"
     if [ "${ROLE}" = "endpoint" ]; then
-        build_binary "./src/main/agent-cluster-cli" "/usr/local/sbin/topsailai_agent_cluster"
+        # The CLI keeps its native name, which is also the name it prints in its
+        # own usage text. The product-facing alias is a symlink to it, so both
+        # spellings reach the same binary and neither is a second copy.
+        build_binary "./src/main/agent-cluster-cli" "/usr/local/sbin/agent-cluster-cli"
+        add_link "/usr/local/sbin/topsailai_agent_cluster" "agent-cluster-cli"
     fi
 
     write_role_config "${template}"

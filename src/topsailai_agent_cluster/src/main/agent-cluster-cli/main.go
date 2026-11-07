@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 
 	"github.com/mattn/go-isatty"
@@ -68,7 +69,6 @@ func runWithSignals(args []string, input io.Reader, output, errorOutput io.Write
 }
 
 func runWithIO(args []string, input io.Reader, output, errors io.Writer, terminal bool, interrupts <-chan os.Signal) error {
-	output = terminalOutput{Writer: output}
 	flags := flag.NewFlagSet("agent-cluster-cli", flag.ContinueOnError)
 	flags.SetOutput(errors)
 	flags.Usage = func() {
@@ -91,6 +91,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	maxBytes := flags.Int("max-bytes", 64<<10, "maximum output snapshot size in bytes")
 	lines := flags.Int("lines", 100, "maximum number of output lines returned by logs")
 	noColor := flags.Bool("no-color", false, "disable terminal colors")
+	noTruncate := flags.Bool("no-truncate", false, "disable table truncation; a narrow terminal wraps instead of clipping")
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
 	folder := flags.String("folder", "", "working folder for start")
@@ -100,6 +101,9 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	if err := flags.Parse(hoistTrailingFlags(args)); err != nil {
 		return err
 	}
+	// The output boundary owns the truncation policy, so every render path
+	// inherits the flag without threading it through each command.
+	output = terminalOutput{Writer: output, full: *noTruncate}
 	interactiveSelected, err := resolveInteractiveSelection(*interactiveShort, flags.Args())
 	if err != nil {
 		return err
@@ -172,6 +176,8 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return fmt.Errorf("usage: status <command-id>")
 		}
 		return status(ctx, api, output, flags.Arg(1), *jsonMode)
+	case "drive":
+		return drive(ctx, api, output, flags.Args()[1:], *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	case "send", "btw", "inject", "control", "start", "resume", "stop":
 		// A bare send or start reads a multi-line block from the command input.
 		// On a terminal nothing else would prompt, so the operator would face a
@@ -332,7 +338,10 @@ func legacyRunner(api tui.CommandAPI) tui.CommandRunner {
 }
 
 func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, jsonMode bool, color tui.ColorPolicy) error {
-	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, tui.TableOptions{Width: tui.OutputWidth(output), Color: color, Clean: clean})
+	options := tui.TableOptionsFor(output)
+	options.Color = color
+	options.Clean = clean
+	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, options)
 }
 
 // refresh forces one fresh Endpoint collection and renders the committed
@@ -340,12 +349,16 @@ func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, fil
 func refresh(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, jsonMode bool, color tui.ColorPolicy) error {
 	refreshCtx, cancel := context.WithTimeout(ctx, tui.RefreshCommandTimeout())
 	defer cancel()
-	return legacyRunner(api).Refresh(refreshCtx, output, errors, filter, jsonMode, tui.TableOptions{Width: tui.OutputWidth(output), Color: color})
+	options := tui.TableOptionsFor(output)
+	options.Color = color
+	return legacyRunner(api).Refresh(refreshCtx, output, errors, filter, jsonMode, options)
 }
 
 // endpoints renders the endpoint projection for the standalone CLI.
 func endpoints(ctx context.Context, api tui.CommandAPI, output io.Writer, filter string, jsonMode bool, color tui.ColorPolicy) error {
-	return legacyRunner(api).Endpoints(ctx, output, filter, jsonMode, tui.TableOptions{Width: tui.OutputWidth(output), Color: color})
+	options := tui.TableOptionsFor(output)
+	options.Color = color
+	return legacyRunner(api).Endpoints(ctx, output, filter, jsonMode, options)
 }
 
 func show(ctx context.Context, api tui.CommandAPI, output io.Writer, id string, jsonMode bool) error {
@@ -359,6 +372,73 @@ func status(ctx context.Context, api tui.CommandAPI, output io.Writer, commandID
 
 func logs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID, resourceID string, maxBytes, maxLines int, jsonMode bool) error {
 	return legacyRunner(api).Logs(ctx, output, endpointID, resourceID, maxBytes, maxLines, jsonMode)
+}
+
+// drive dispatches the standalone drive surface. status is a read projection of
+// the persisted inventory; start and stop admit one durable command through the
+// same runner the interactive surface uses, so the two cannot diverge.
+func drive(ctx context.Context, api tui.CommandAPI, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: drive <start|stop|status> <endpoint> <session> [generation]")
+	}
+	action := strings.ToLower(args[0])
+	if _, known := driveOperation(action); !known {
+		return fmt.Errorf("usage: drive <start|stop|status> <endpoint> <session> [generation]")
+	}
+	if len(args) < 3 {
+		return fmt.Errorf("usage: drive %s <endpoint> <session> [generation]", action)
+	}
+	if err := rejectMisplacedFlags("drive", args); err != nil {
+		return err
+	}
+	if len(args) > 4 {
+		return fmt.Errorf("unexpected arguments %q; run help drive for valid syntax", strings.Join(args[4:], " "))
+	}
+	endpointID, resourceID := args[1], args[2]
+	operation, _ := driveOperation(action)
+	if operation == "" {
+		if generationFlag != "" || len(args) == 4 {
+			return fmt.Errorf("drive status takes no generation; it reads the persisted inventory")
+		}
+		return legacyRunner(api).DriveStatus(ctx, output, endpointID, resourceID, jsonMode)
+	}
+	generation := generationFlag
+	if generation == "" && len(args) == 4 {
+		generation = args[3]
+	}
+	if generation == "" {
+		return fmt.Errorf("drive %s requires a generation", action)
+	}
+	request := tui.ActionRequest{Operation: operation, OperationLabel: "drive " + action, EndpointID: endpointID, ResourceID: resourceID, Generation: generation, Payload: json.RawMessage(`{}`), Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS}
+	runner := legacyRunner(api)
+	intent, err := runner.PrepareAction(ctx, request)
+	if err != nil {
+		return err
+	}
+	actionResult, err := runner.SubmitAction(ctx, intent)
+	if err != nil {
+		return err
+	}
+	result, err := runner.WaitAction(ctx, actionResult, intent.Budget)
+	if err != nil {
+		return err
+	}
+	return runner.RenderAction(output, result)
+}
+
+// driveOperation maps one accepted drive action onto the standard operation.
+// An empty operation means the action is a read, which is why the caller must
+// check the known flag before treating the result as a command.
+func driveOperation(action string) (string, bool) {
+	switch action {
+	case "start":
+		return protocol.OperationAgentDriveStart, true
+	case "stop":
+		return protocol.OperationAgentDriveStop, true
+	case "status":
+		return "", true
+	}
+	return "", false
 }
 
 // resolveActionPayload converts one positional payload argument into the
@@ -390,6 +470,31 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 		return fmt.Errorf("usage: %s <endpoint-id> <resource-id> [text] [generation]", operation)
 	}
 	endpointID, resourceID := args[1], args[2]
+	// flag.Parse stops at the first positional, so a flag written after the command stays
+	// positional and would silently become a payload or a target generation. Reject it
+	// explicitly instead of corrupting the target.
+	if err := rejectMisplacedFlags(args[0], args); err != nil {
+		return err
+	}
+	// The documented syntax accepts at most one text and one generation positional. A
+	// value supplied by a flag removes its positional slot, so an unquoted multi-word
+	// message is rejected instead of being silently truncated to its first word.
+	positionalLimit := 5
+	textStart := 3
+	if operation == "stop" {
+		positionalLimit = 4
+		textStart = 0
+	}
+	if generationFlag != "" {
+		positionalLimit--
+	}
+	if operation == "start" && task != "" {
+		positionalLimit--
+		textStart = 0
+	}
+	if err := rejectExtraPositionals(operation, args, positionalLimit, textStart); err != nil {
+		return err
+	}
 	generation := generationFlag
 	payload := json.RawMessage(`{}`)
 	if operation == "stop" {
@@ -474,6 +579,42 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 		return err
 	}
 	return runner.RenderAction(output, result)
+}
+
+// rejectMisplacedFlags fails when a flag appears after the command name. flag.Parse stops
+// at the first positional, so a flag written after the command stays positional and would
+// silently become a payload or a target generation. The caller passes the command name
+// explicitly because a command with an action word keeps that word in args[0].
+func rejectMisplacedFlags(command string, args []string) error {
+	for _, arg := range args[1:] {
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			continue
+		}
+		if _, err := strconv.ParseFloat(arg, 64); err == nil {
+			continue
+		}
+		return fmt.Errorf("option %q must be written before the command; run help %s for valid syntax", arg, command)
+	}
+	return nil
+}
+
+// rejectExtraPositionals fails when more positional arguments are supplied than the
+// documented syntax accepts. Without this check an unquoted multi-word message is silently
+// truncated: only the first word becomes the payload and the next word becomes the target
+// generation, so the operator believes the whole message was sent. The caller passes the
+// exact accepted count because it depends on the operation and on which flags were used,
+// and the index where the message text begins so the error can echo the whole intended
+// message instead of only the words that overflowed. A zero textStart means the operation
+// has no positional text slot, so the message must not suggest quoting text.
+func rejectExtraPositionals(operation string, args []string, limit, textStart int) error {
+	if len(args) <= limit {
+		return nil
+	}
+	overflow := args[limit:]
+	if textStart > 0 && textStart < len(args) {
+		return fmt.Errorf("unexpected arguments %q; quote the message text so it stays one argument, or run help %s for valid syntax", strings.Join(args[textStart:], " "), operation)
+	}
+	return fmt.Errorf("unexpected arguments %q; run help %s for valid syntax", strings.Join(overflow, " "), operation)
 }
 
 func operationName(value string) string {

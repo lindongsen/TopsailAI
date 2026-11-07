@@ -101,3 +101,37 @@ Server has no adapter table, adapter execution selector or provider-specific ope
 ## Controller-only collection contract
 
 Endpoint invokes the configured Adapter CLI and formats its returned data. It does not decide which provider records exist, scan processes/files independently, adopt Agent processes or implement automatic restarts. Adapter commands determine collection scope and facts, including running/exited/resumable entries; preserve evidence and unknown fields under the agreed formatting contract without inventing readiness or progress. Standard resource mapping is a controller reference, not Agent ownership. Agent lifecycle is independent of Endpoint; explicit start/resume/stop are requests sent through the corresponding CLI only. Collection failures have isolated budgets and never block other Adapter publication.
+
+## TopsailAI drive mapping
+
+The provider exposes a resident session driver that submits input on the
+operator's behalf. The adapter maps it onto the standard drive operations and the
+standard Session `drive` summary; Server never parses a provider driver field.
+
+| Standard need | Provider entry | Constraint |
+|---|---|---|
+| Start a controller | `workspace driver start -s SESSION --json` | The provider selects the unique live row and rejects an ambiguous target itself; the adapter passes no PID because a cluster generation is not a provider PID |
+| Stop a controller | `workspace driver stop -s SESSION --json` | Addresses the recorded controller, including a residual record whose process is gone, so it does not require a live target |
+| Observe controller state | the `driver` object in `workspace --format json` | `null` means no observation, not a confirmed absence |
+
+Provider state mapping: `ON` becomes `running`, `STALE` becomes `stale`, `EXIT`
+becomes `exited`, `FAIL` becomes `failed`, `-` becomes `none`, and `?` or any
+unrecognized value becomes `unknown`. A state other than `running` is never
+reported as verified, so an unverified record can never be presented as an active
+controller.
+
+Provider outcome mapping: `launched`, `already_running` and `status_read` are an
+acknowledged submission; `stopped` and `already_stopped` are an acknowledged
+signal with a confirmed exit; `rejected` and `failed` are not applied;
+`unconfirmed` keeps unknown effect certainty and is never retried automatically.
+The provider prints its outcome document on stdout even when it exits non-zero, so
+the adapter preserves that document instead of flattening every failure to a
+generic error.
+
+Explicit gaps: `drive log` and `drive meta` exist only in the provider's
+interactive loop, so a cluster command cannot reach them without a provider
+non-interactive surface; the adapter must not read provider record files instead.
+The driver task goal is provider-environment-only with no `--task-goal` flag, so
+MVP accepts no goal and the provider default applies; smuggling an
+operator-supplied goal through a process environment variable would let a remote
+payload control provider execution through an implicit channel.

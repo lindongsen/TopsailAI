@@ -259,3 +259,19 @@ Trigger: with `TOPSAILAI_INPUT_PIPE_ENABLED=1` and stdin not a TTY, `input_from_
 Action: echo the prompt with a plain `print(prompt, flush=True)` in the `elif prompt:` branch of `input_from_pipe()` (after the helper-spawn block), and echo it in the `ask_decision` degradation guards after moving `_build_prompt()` above them. Never use `print_info()` for this: it routes through `print_with_time` and returns early when `env_tool.is_print_enabled()` is false, which is exactly the non-interactive case being fixed.
 
 Why this prevents recurrence: fixing only `workspace/input_tool.py` would have left the lock and approval prompts invisible, because all three callers funnel through `utils/input_tool.input_from_pipe()`. The echo belongs at that shared layer so every caller inherits it, and the `print_info()` gate is the trap that makes an apparently correct fix produce no output at all.
+
+## A control-plane handler must deliver intent, never block on a human answer
+
+Trigger: the pause feature was first considered as a handler that waits for the operator's continue answer. The control transport requires a correlated response frame within a short default budget, the handler runs on the shared control thread, and the protocol has no channel to return a human answer, so a blocking handler would time out the CLI, starve `heartbeat` and `hard_interrupt`, and lose the answer.
+
+Action: split delivery from execution. The handler atomically writes a session-scoped JSON marker and returns `pause_requested`; the agent main thread consumes the marker at a safe point and blocks on the existing runtime input channel. Keep the same contract as `hard_interrupt`: acceptance never means the agent has already reacted.
+
+Why this prevents recurrence: any future control action that needs a human decision must follow the same two-stage shape, and the marker must carry the prompt, wait budget and timeout policy because those values cannot travel back through the response frame.
+
+## A new session-scoped file must be registered in the ownership whitelist
+
+Trigger: the pause marker `{session_id}.{pid}.session.agent2llm_pause.flag` would have been treated as malformed evidence by `context/session_activity.py::_OWNER_SUFFIXES`, making `can_clean()` return UNKNOWN and blocking session cleanup permanently.
+
+Action: register every new `*.session.*` suffix in `_OWNER_SUFFIXES` in the same logical unit that introduces the file, and extend `workspace/agent_shell.py::_cleanup_stale_interrupt_flag` so a restarted process never inherits the leftover state.
+
+Why this prevents recurrence: the whitelist is a regex of known suffixes, so an unregistered file is not merely ignored — it actively prevents cleanup of the whole session. Adding the file and its ownership registration together keeps the two lists from drifting.

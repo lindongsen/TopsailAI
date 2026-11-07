@@ -40,9 +40,53 @@ Suggested semantic operations:
 - `session.read_messages`: read permitted conversation context.
 - `runtime.health`: control-channel health, not model progress.
 - `agent.start`, `agent.resume`, `agent.stop`: required MVP lifecycle operations, with standard agent/session linkage and execution-generation evidence.
+- `agent.drive.start`, `agent.drive.stop`: controller operations, distinct from the agent lifecycle; see the drive semantics section.
 - `output.snapshot`, `output.follow`: independent capabilities; the former never implies the latter.
+- `ctl.<action>`: one advertised provider control action per capability, with a fixed payload schema; see the provider control channel section.
+- `command.exec`: one allowlisted argv array executed in a session working directory; see the allowlisted command execution section.
 
-Only operations and input/result fields defined by the negotiated standard API are exposed. No provider namespaces, raw control actions, adapter routing selectors or arbitrary provider execution schemas are accepted in commands. Inventory may carry adapter IDs and standard descriptive summaries as report data. A new common semantic operation requires an explicit versioned protocol amendment; provider-only controls remain local to Endpoint. Server validates standard schemas, not dynamically supplied provider instructions.
+Only operations and input/result fields defined by the negotiated standard API are exposed. No provider namespaces, adapter routing selectors or arbitrary provider execution schemas are accepted in commands. Two standard operation families are defined for provider control and for allowlisted command execution: `ctl.<action>` and `command.exec`. Both are versioned standard operations with fixed payload schemas, not a passthrough for provider-specific instructions. Inventory may carry adapter IDs and standard descriptive summaries as report data. A new common semantic operation requires an explicit versioned protocol amendment; provider-only controls that are not advertised as `ctl.<action>` remain local to Endpoint. Server validates standard schemas, not dynamically supplied provider instructions.
+
+## Provider control channel
+
+The `ctl.<action>` family exposes the provider control actions an Endpoint actually supports. Each
+advertised action is a separate versioned capability with a fixed payload schema, so the Server
+validates a standard shape and never forwards an unvalidated provider instruction.
+
+- The action inventory is derived from the Endpoint's live provider registry, not from a hardcoded
+  Server list. Adding a provider action requires no Server code, table or public schema change.
+- The Endpoint advertises only actions it can actually execute. An action that is absent from the
+  advertised capabilities is rejected at admission rather than attempted and failed.
+- Payloads are validated against the advertised schema before dispatch. A payload that does not match
+  the schema is rejected; it is never passed through as an opaque provider instruction.
+- Actions that read conversation content are sensitive. They require an explicit permission scope and
+  must not be reachable with an unscoped credential.
+- The Server treats the action name as an opaque standard identifier. It does not interpret provider
+  semantics, select code by action name, or route by adapter.
+
+## Allowlisted command execution
+
+`command.exec` runs one configured local command at the Endpoint in a session working directory. It is
+a bounded, allowlisted operation, not a remote shell.
+
+- The request carries an argv array, never a command string. The Endpoint does not parse or split a
+  string, because doing so would reintroduce shell semantics.
+- The Endpoint matches the argv array against an Endpoint-global allowlist by prefix. An entry is a
+  token sequence, so `git status` matches `git status --short` and does not match `git -c ...`.
+- The allowlist is Endpoint-local administrative configuration. The Server validates the standard
+  payload shape and never interprets the allowlist.
+- The working directory is the session `project_workspace`, falling back to the session `pwd`. When
+  neither resolves to an existing directory the operation fails closed; it never falls back to the
+  Endpoint process working directory.
+- Arguments are confined to the resolved directory. Absolute argument paths and parent traversal are
+  rejected, and confinement is checked on the resolved path rather than on the argument text alone.
+- Execution uses a minimal environment, a bounded lifetime, a bounded output read with truncation
+  evidence, and process-group termination on timeout.
+- The result is one bounded snapshot with its observation time. It is not a stream, not a follow, and
+  not a durable subscription.
+- The allowlist supports reload without restarting the Endpoint. A reload parses the new list
+  completely before swapping it atomically; a parse failure keeps the previous list and is logged, and
+  a reload never leaves an empty list in force.
 
 ## Required agent lifecycle semantics
 
@@ -52,6 +96,40 @@ Only operations and input/result fields defined by the negotiated standard API a
 - Endpoint restart affects controller connections/collection, not Agent lifetime. It can rediscover returned resources through Adapter CLI and recover command delivery records; it never reparents, reattaches supervision or automatically restarts Agents.
 - A crash after a CLI invocation can leave effects unknown. Query through Adapter CLI if a correlated query exists; otherwise report uncertainty without replaying side effects. The journal tracks controller intent/delivery, not ownership of Agent processes.
 - Freeze public resource/profile revision and command identity. Endpoint-local mapping selects the CLI; Server retains only standard API semantics.
+
+## Drive controller semantics
+
+A drive controller is a resident process that acts on the operator's behalf by
+submitting input to one session when that session is waiting for input. It is a
+controller, not a parent: it does not own, supervise or restart the agent, and
+stopping it leaves the agent running. The concept is provider-neutral; the
+protocol never names a provider script, environment variable or record path.
+
+- `agent.drive.start` targets one session and asks the Endpoint to start a
+  controller for it. The Endpoint validates the standard intent and invokes its
+  configured Adapter CLI; the provider runtime decides how the controller runs.
+  Starting a controller authorizes autonomous, repeated input submission, so it
+  requires a control-class permission and an explicit operator confirmation.
+- `agent.drive.stop` stops only the controller for the selected target. It is
+  never `agent.stop`: the agent keeps running, and the confirmation text must
+  state that difference. It addresses the recorded controller, including a
+  residual record whose process is already gone, so it does not require a live
+  target.
+- Controller state is a read, not a command. It is reported as a bounded
+  descriptive `drive` summary on the standard Session resource and served from
+  the persisted inventory like any other projection, so a status read never
+  enters the command journal and never claims to be a live probe.
+- Standard drive states are `none`, `running`, `stale`, `exited`, `failed` and
+  `unknown`. A record whose liveness was not verified is `stale` or `unknown`,
+  never `running`: an operator who believes a controller is active when it is
+  not would stop supervising the session. An absent summary means the provider
+  reported no observation, which is not a confirmed absence of a controller.
+- A provider that cannot confirm the outcome reports `unconfirmed` with unknown
+  effect certainty. It is never retried automatically and never reported as a
+  definite failure.
+- The Endpoint never supervises, adopts, restarts or kills the controller, and
+  never reads provider record files. A controller that survives an Endpoint
+  restart is expected, not a leak.
 
 ## Endpoint-private Adapter service boundary
 
@@ -110,6 +188,8 @@ executing -> unconfirmed (deadline passed with delivery sent and exit unconfirme
 ```
 
 Evidence fields include delivery boundary, effect certainty (`not_applied`, `acknowledged`, `unknown`), provider outcome (`succeeded`, `failed`, `not_reported`), and response details. Finished execution of a CLI call does not mean successful agent work. An acknowledged FIFO write can finish the transport command while provider outcome remains not_reported. An execution timeout may have unknown effects.
+
+The receipt also carries the provider's own return document as `provider_response`, an opaque bounded string of at most 64 KiB, with `provider_response_truncated` set when that bound was reached. It is the provider's raw answer, not a normalized standard field: Server stores and returns it verbatim and never parses it, so adding or changing a provider requires no Server code, schema or API change. A truncated document is always labelled, because a shortened provider answer must never be presented as complete evidence. On a failed invocation the document carries the provider's own stderr, which is the only evidence of why the call failed. Session-scope surfaces print this document as a separate section after this service's own receipt, so the operator can distinguish the two parts.
 
 `unconfirmed` is terminal and always carries `unknown` effect certainty. It is written when a command is still `executing` after its immutable deadline, because delivery already happened and the exit was never confirmed. Reporting such a command as `not_applied` would deny a signal that was actually sent, and leaving it `executing` forever would hide the terminal outcome from the operator. Reads converge these rows idempotently and never overwrite a command that already reached `finished`, `rejected` or `failed`.
 

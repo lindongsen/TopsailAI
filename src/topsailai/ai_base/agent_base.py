@@ -5,6 +5,7 @@
   Purpose:
 '''
 
+import json
 import os
 
 from topsailai.logger.log_chat import logger
@@ -13,8 +14,10 @@ from topsailai.utils.print_tool import (
     print_info,
 )
 from topsailai.utils.thread_local_tool import (
+    KEY_AGENT_DEEP,
     ctxm_give_agent_name,
     ctxm_set_agent,
+    get_thread_var,
 )
 from topsailai.utils import (
     env_tool,
@@ -247,6 +250,14 @@ class AgentRun(AgentBase):
     # A value of N means we check the flag at most once every N chunks.
     STREAM_INTERRUPT_CHECK_INTERVAL = 50
 
+    # Per-slice wait budget used while a pause request blocks the agent loop.
+    # Every slice is followed by a hard-interrupt check so a pause stays
+    # interruptible even when the overall wait is unbounded.
+    PAUSE_POLL_INTERVAL_SECONDS = 1.0
+
+    # Prompt used when a pause marker does not carry its own prompt text.
+    DEFAULT_PAUSE_PROMPT = "Agent paused by control request. Continue? [yes/no] "
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._stream_chunk_counter = 0
@@ -299,7 +310,136 @@ class AgentRun(AgentBase):
             logger.warning("Failed to remove hard interrupt flag %s: %s", flag_path, e)
             # Even if cleanup fails, the flag exists; raise anyway so the
             # loop terminates rather than continuing under an interrupt.
+        # A hard interrupt wins over a pending pause request, so any
+        # unconsumed pause marker is discarded to avoid pausing the next turn.
+        self._clear_pause_marker()
         raise HardInterruptError("Hard interrupt requested via control channel")
+
+    def _get_pause_flag_path(self) -> str:
+        """Return the pause-request marker path for the current process/session.
+
+        The path follows the same session-scoped convention as the hard
+        interrupt flag:
+        ``{FOLDER_WORKSPACE_TASK}/{session_id}.{pid}.session.agent2llm_pause.flag``.
+        """
+        from topsailai.workspace.folder_constants import (
+            FOLDER_WORKSPACE_TASK,
+        )
+        from topsailai.workspace.folder_utils import (
+            get_pause_flag_path,
+        )
+        session_id = env_tool.get_session_id() or "topsailai"
+        pid = os.getpid()
+        return get_pause_flag_path(FOLDER_WORKSPACE_TASK, session_id, pid)
+
+    def _clear_pause_marker(self) -> bool:
+        """Remove an unconsumed pause marker, returning True when removed.
+
+        Removal is best effort: a failure is logged and never interrupts the
+        agent loop, because the marker is only an advisory request.
+        """
+        marker_path = self._get_pause_flag_path()
+        if not os.path.exists(marker_path):
+            return False
+        try:
+            os.remove(marker_path)
+            logger.warning("Pause marker removed: %s", marker_path)
+            return True
+        except OSError as error:
+            logger.warning("Failed to remove pause marker %s: %s", marker_path, error)
+            return False
+
+    def _consume_pause_marker(self) -> dict | None:
+        """Read and delete the pause marker so it is consumed exactly once.
+
+        The marker is removed before the caller starts prompting, so a repeated
+        pause request can never stack a second prompt. A malformed marker is
+        still consumed and reported as an empty payload, which makes the agent
+        fall back to the default prompt and default answer policy.
+
+        Returns:
+            The decoded marker payload, or None when no marker exists.
+        """
+        marker_path = self._get_pause_flag_path()
+        if not os.path.exists(marker_path):
+            return None
+
+        payload: dict = {}
+        try:
+            with open(marker_path, "r", encoding="utf-8") as file_obj:
+                decoded = json.load(file_obj)
+            if isinstance(decoded, dict):
+                payload = decoded
+            else:
+                logger.warning(
+                    "Pause marker payload is not an object, using defaults: %s",
+                    marker_path,
+                )
+        except (OSError, ValueError) as error:
+            logger.warning(
+                "Failed to read pause marker %s, using defaults: %s", marker_path, error
+            )
+
+        try:
+            os.remove(marker_path)
+            logger.warning("Pause marker consumed: %s", marker_path)
+        except OSError as error:
+            logger.warning("Failed to remove pause marker %s: %s", marker_path, error)
+        return payload
+
+    def _check_pause_request(self) -> None:
+        """Block on a continue prompt when a pause marker is present.
+
+        Only the outermost agent consumes the marker. Nested subagents share the
+        same session and pid path but have no usable interactive input, so they
+        would degrade to the default answer and leave the parent unable to
+        pause.
+
+        The wait is sliced by ``input_yes_or_no_with_timeout`` and every slice is
+        followed by a hard-interrupt check, so a pause stays interruptible.
+
+        Raises:
+            HardInterruptError: When the answer is no, or when a hard interrupt
+                arrives while waiting.
+        """
+        if (get_thread_var(KEY_AGENT_DEEP, 0) or 0) != 1:
+            return
+
+        payload = self._consume_pause_marker()
+        if payload is None:
+            return
+
+        prompt = payload.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            prompt = self.DEFAULT_PAUSE_PROMPT
+        timeout = payload.get("timeout_seconds")
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+            timeout = 0.0
+        default = payload.get("default")
+        default_answer = "no" if default == "interrupt" else "yes"
+
+        from topsailai.utils.input_tool import input_yes_or_no_with_timeout
+        from topsailai.utils.thread_local_tool import (
+            get_agent_runtime_input_with_timeout,
+        )
+
+        logger.warning(
+            "Pause request consumed; waiting for a continue answer (timeout=%s, default=%s)",
+            timeout,
+            default_answer,
+        )
+        should_continue = input_yes_or_no_with_timeout(
+            prompt,
+            timeout=timeout,
+            default=default_answer,
+            input_func=get_agent_runtime_input_with_timeout(),
+            poll_interval=self.PAUSE_POLL_INTERVAL_SECONDS,
+            on_poll=self._check_hard_interrupt,
+        )
+        if not should_continue:
+            logger.warning("Pause request answered no; interrupting the agent loop")
+            raise HardInterruptError("Pause request answered no")
+        logger.warning("Pause request answered yes; resuming the agent loop")
 
     def _run(self, step_call:StepCallBase, user_input:str):
         """
@@ -337,12 +477,18 @@ class AgentRun(AgentBase):
         while True:
             # Check for hard interrupt at the start of each iteration.
             self._check_hard_interrupt()
+            # Honour a pause request at the start of each iteration. The hard
+            # interrupt check above already ran, so an interrupt wins.
+            self._check_pause_request()
 
             # Inject runtime messages before each LLM call
             self._inject_runtime_messages()
 
             # Check again right before the LLM call.
             self._check_hard_interrupt()
+            # Honour a pause request right before the LLM call. The hard
+            # interrupt check above already ran, so an interrupt wins.
+            self._check_pause_request()
 
             # LLM chat retries remain inside this one call. They resend these
             # same messages and must never restart this Agent loop.
@@ -417,6 +563,9 @@ class AgentRun(AgentBase):
 
             # Check for hard interrupt after tool calls have returned.
             self._check_hard_interrupt()
+            # A pause request is honoured only after the hard interrupt check,
+            # so an interrupt always wins over a pending pause.
+            self._check_pause_request()
 
             if len(self.messages) == ctx_count and last_message == self.messages[-1]:
                 print_critical("No progress made in this iteration, exiting.")

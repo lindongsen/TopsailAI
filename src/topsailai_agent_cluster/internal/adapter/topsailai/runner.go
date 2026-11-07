@@ -34,7 +34,11 @@ func (r execRunner) Run(parent context.Context, executable string, args []string
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("run TopsailAI command: %w", err)
+		// The provider reports a rejected, failed or unconfirmed outcome as a
+		// structured document on stdout with a non-zero exit code, so the captured
+		// document must survive the failure instead of being discarded. Callers that
+		// treat any error as a plain failure still ignore it.
+		return output, fmt.Errorf("run TopsailAI command: %w", err)
 	}
 	return output, nil
 }

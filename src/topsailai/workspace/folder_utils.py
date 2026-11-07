@@ -52,6 +52,16 @@ def get_interrupt_flag_path(task_folder: str, session_id: str, pid: int) -> str:
     )
 
 
+def get_pause_flag_path(task_folder: str, session_id: str, pid: int) -> str:
+    """Return the absolute pause-request marker path for a session process."""
+    return os.path.abspath(
+        os.path.join(
+            task_folder,
+            f"{session_id}.{pid}.session.agent2llm_pause.flag",
+        )
+    )
+
+
 def get_control_socket_path(task_folder: str, session_id: str, pid: int) -> str:
     """Return the absolute UDS control socket path for a session process."""
     return os.path.abspath(

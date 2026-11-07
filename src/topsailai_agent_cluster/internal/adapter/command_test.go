@@ -79,6 +79,18 @@ func TestMain(m *testing.M) {
 				fmt.Fprintf(os.Stderr, "write helper discovery output: %v\n", err)
 				os.Exit(1)
 			}
+		case "execute-fail":
+			// A failing provider reports its own diagnostic on stderr and exits
+			// non-zero, which is the only evidence of why the call failed.
+			fmt.Fprintln(os.Stderr, "helper provider diagnostic")
+			os.Exit(2)
+		case "execute-garbage":
+			// A provider that answers with a non-JSON document is still the
+			// provider's own answer, so it must survive as evidence.
+			if _, err := os.Stdout.WriteString("not a json document"); err != nil {
+				fmt.Fprintf(os.Stderr, "write helper garbage output: %v\n", err)
+				os.Exit(1)
+			}
 		default:
 			if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"command_id": "cmd-1", "outcome": "accepted", "effect_certainty": "acknowledged", "delivery_boundary": "submitted"}); err != nil {
 				fmt.Fprintf(os.Stderr, "write helper response: %v\n", err)

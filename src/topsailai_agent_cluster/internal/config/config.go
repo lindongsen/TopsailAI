@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"topsailai_agent_cluster/internal/protocol"
 )
@@ -35,6 +36,8 @@ type Config struct {
 	ChannelListenAddress  string
 	DatabasePath          string
 	AuthToken             string
+	AuthScopes            []string
+	CommandAllowlistFile  string
 	ChannelAddress        string
 	EndpointID            string
 	InstanceID            string
@@ -68,6 +71,12 @@ func Load(args []string, role string) (Config, error) {
 	}
 	if value := os.Getenv("AGENT_CLUSTER_AUTH_TOKEN"); value != "" {
 		cfg.AuthToken = value
+	}
+	if value := os.Getenv("AGENT_CLUSTER_AUTH_SCOPES"); value != "" {
+		cfg.AuthScopes = splitList(value)
+	}
+	if value := os.Getenv("AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE"); value != "" {
+		cfg.CommandAllowlistFile = value
 	}
 	if value := os.Getenv("AGENT_CLUSTER_CHANNEL_ADDRESS"); value != "" {
 		cfg.ChannelAddress = value
@@ -114,6 +123,11 @@ func Load(args []string, role string) (Config, error) {
 	flags.StringVar(&cfg.ListenAddress, "listen-address", cfg.ListenAddress, "deprecated API listen address")
 	flags.StringVar(&cfg.DatabasePath, "database-path", cfg.DatabasePath, "SQLite database path")
 	flags.StringVar(&cfg.AuthToken, "auth-token", cfg.AuthToken, "pre-provisioned bearer token")
+	flags.Func("auth-scopes", "comma-separated operator scopes granted to the bearer token", func(value string) error {
+		cfg.AuthScopes = splitList(value)
+		return nil
+	})
+	flags.StringVar(&cfg.CommandAllowlistFile, "command-allowlist-file", cfg.CommandAllowlistFile, "Endpoint-global command allowlist file")
 	flags.StringVar(&cfg.ChannelAddress, "channel-address", cfg.ChannelAddress, "Endpoint WSS address")
 	flags.StringVar(&cfg.EndpointID, "endpoint-id", cfg.EndpointID, "Endpoint identity")
 	flags.StringVar(&cfg.InstanceID, "instance-id", cfg.InstanceID, "Endpoint instance identity")
@@ -178,7 +192,36 @@ func (c Config) Validate() error {
 	if c.LogMaxSize <= 0 || c.LogBackups < 0 || c.LogMaxAge < 0 {
 		return fmt.Errorf("log rotation limits must be positive or zero where allowed")
 	}
+	for _, scope := range c.AuthScopes {
+		if !knownScope(scope) {
+			return fmt.Errorf("unknown operator scope %q", scope)
+		}
+	}
 	return nil
+}
+
+// knownScope reports whether the scope is one of the defined operator scopes.
+// An unknown scope is rejected at startup rather than silently ignored, because
+// a typo would otherwise grant less authority than the operator intended.
+func knownScope(scope string) bool {
+	switch scope {
+	case "view", "read_output", "send_message", "control", "endpoint_admin":
+		return true
+	}
+	return false
+}
+
+// splitList splits a comma-separated value and drops empty entries.
+func splitList(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 func applyIntEnv(name string, target *int) {

@@ -23,6 +23,11 @@ type Executor struct {
 	now              func() time.Time
 	BeforeInvocation func()
 	AdmissionHook    func(context.Context, protocol.ImmutableIntent, string) error
+	// PolicyHook authorizes an intent before the journal records an invocation.
+	// It must run before MarkInvocationStarted, because a rejection recorded after
+	// that point would be indistinguishable from a crash mid-invocation and would
+	// surface as a false "unknown" effect for a command that was never applied.
+	PolicyHook func(context.Context, protocol.ImmutableIntent) error
 }
 
 // NewExecutor constructs an Endpoint command executor.
@@ -119,6 +124,11 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_generation_mismatch"))
 		}
 	}
+	if e.PolicyHook != nil {
+		if policyErr := e.PolicyHook(ctx, intent); policyErr != nil {
+			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "policy_denied"))
+		}
+	}
 	if e.BeforeInvocation != nil {
 		e.BeforeInvocation()
 	}
@@ -161,8 +171,16 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 	}
 	receipt.Phase = protocol.PhaseReceiptRecorded
 	if executeErr != nil {
-		receipt.Outcome = "failed"
-		receipt.EffectCertainty = protocol.EffectUnknown
+		// An adapter may return a decoded provider document together with the error,
+		// for example a rejected or unconfirmed outcome reported on a non-zero exit.
+		// Only fill in what the adapter did not determine, so that evidence is not
+		// flattened into a generic failure.
+		if receipt.Outcome == "" {
+			receipt.Outcome = "failed"
+		}
+		if receipt.EffectCertainty == "" {
+			receipt.EffectCertainty = protocol.EffectUnknown
+		}
 		receipt.ErrorMessage = executeErr.Error()
 		if receipt.DeliveryBoundary == "" {
 			receipt.DeliveryBoundary = protocol.DeliveryNotStarted

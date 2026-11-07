@@ -240,7 +240,7 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, command := range []string{"list", "refresh", "show", "info", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "help"} {
+	for _, command := range []string{"list", "refresh", "show", "info", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "drive", "help"} {
 		if !strings.Contains(text, " "+command) {
 			t.Fatalf("help missing dispatched command %q: %q", command, text)
 		}
@@ -822,5 +822,172 @@ func TestStandaloneSendHintOnlyForBareSendOnTerminal(t *testing.T) {
 				t.Fatalf("diagnostics=%q must not carry the multi-line hint", diagnostics.String())
 			}
 		})
+	}
+}
+
+// TestInteractiveSendAcceptsProseContainingJSONFlag guards the regression where a substring
+// match on "--json" rejected ordinary message text before admission.
+func TestInteractiveSendAcceptsProseContainingJSONFlag(t *testing.T) {
+	for _, text := range []string{"please add --json to the config", "the flag is --json-output", "hello world"} {
+		t.Run(text, func(t *testing.T) {
+			stub := &actionPathStub{}
+			var out, diagnostics strings.Builder
+			input := "cd ep/session\nsend " + text + "\ny\nquit\n"
+			if err := tui.RunInteractive(context.Background(), stub, strings.NewReader(input), &out, &diagnostics, tui.InteractiveOptions{WaitTimeoutMS: 100}); err != nil {
+				t.Fatal(err)
+			}
+			if diagnostics.Len() != 0 {
+				t.Fatalf("diagnostics=%q", diagnostics.String())
+			}
+			if len(stub.intents) != 1 {
+				t.Fatalf("intents=%d, want 1", len(stub.intents))
+			}
+			want := `{"text":"` + text + `"}`
+			if got := string(stub.intents[0].Payload); got != want {
+				t.Fatalf("payload=%q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestInteractiveSendRejectsBareJSONFlag keeps the original guard for a payload that is
+// itself the flag token.
+func TestInteractiveSendRejectsBareJSONFlag(t *testing.T) {
+	stub := &actionPathStub{}
+	var out, diagnostics strings.Builder
+	input := "cd ep/session\nsend --json\ny\nquit\n"
+	if err := tui.RunInteractive(context.Background(), stub, strings.NewReader(input), &out, &diagnostics, tui.InteractiveOptions{WaitTimeoutMS: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.intents) != 0 {
+		t.Fatalf("intents=%d, want 0", len(stub.intents))
+	}
+	if !strings.Contains(diagnostics.String(), "does not support --json") {
+		t.Fatalf("diagnostics=%q", diagnostics.String())
+	}
+}
+
+// TestActionRejectsMisplacedFlag keeps a trailing flag from becoming a target generation.
+func TestActionRejectsMisplacedFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"send", "ep", "session", "hello", "--json"},
+		{"send", "ep", "session", "--json"},
+		{"stop", "ep", "session", "--json"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			stub := &actionPathStub{}
+			err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, args, true, false, 100, "", "", "", "", "")
+			if err == nil || !strings.Contains(err.Error(), "must be written before the command") {
+				t.Fatalf("err=%v", err)
+			}
+			if len(stub.intents) != 0 {
+				t.Fatalf("intents=%d, want 0", len(stub.intents))
+			}
+		})
+	}
+}
+
+// TestActionAcceptsDashLeadingTextThroughJSONPayload confirms the documented escape hatch:
+// a message that is itself a flag token is still deliverable as a JSON object payload.
+func TestActionAcceptsDashLeadingTextThroughJSONPayload(t *testing.T) {
+	stub := &actionPathStub{}
+	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", `{"text":"--json"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.intents) != 1 {
+		t.Fatalf("intents=%d, want 1", len(stub.intents))
+	}
+	if got := string(stub.intents[0].Payload); got != `{"text":"--json"}` {
+		t.Fatalf("payload=%q", got)
+	}
+	if stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "gen" {
+		t.Fatalf("target=%+v", stub.intents[0].Target)
+	}
+}
+
+// TestActionAcceptsNegativeGeneration keeps a negative numeric generation usable, because a
+// leading dash alone does not make a token a flag.
+func TestActionAcceptsNegativeGeneration(t *testing.T) {
+	stub := &actionPathStub{}
+	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello", "-1"}, true, false, 100, "", "", "", "", ""); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "-1" {
+		t.Fatalf("intents=%+v", stub.intents)
+	}
+}
+
+// TestActionRejectsUnquotedMultiWordText proves an unquoted message is rejected instead of
+// being silently truncated to its first word, which previously became the payload while the
+// second word became the target generation.
+func TestActionRejectsUnquotedMultiWordText(t *testing.T) {
+	stub := &actionPathStub{}
+	err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "please", "add", "to", "the", "config"}, true, false, 100, "", "", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "quote the message text") {
+		t.Fatalf("err=%v", err)
+	}
+	if !strings.Contains(err.Error(), "please add to the config") {
+		t.Fatalf("error must echo the whole intended message: %v", err)
+	}
+	if len(stub.intents) != 0 {
+		t.Fatalf("intents=%d, want 0", len(stub.intents))
+	}
+}
+
+// TestActionAcceptsQuotedMultiWordText keeps the documented quoted form working.
+func TestActionAcceptsQuotedMultiWordText(t *testing.T) {
+	stub := &actionPathStub{}
+	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "please add to the config"}, true, false, 100, "", "", "", "", ""); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.intents) != 1 {
+		t.Fatalf("intents=%d, want 1", len(stub.intents))
+	}
+	if got := string(stub.intents[0].Payload); got != `{"text":"please add to the config"}` {
+		t.Fatalf("payload=%q", got)
+	}
+}
+
+// TestActionAcceptsTextAndGeneration keeps the full documented positional form working.
+func TestActionAcceptsTextAndGeneration(t *testing.T) {
+	stub := &actionPathStub{}
+	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello", "gen-1"}, true, false, 100, "", "", "", "", ""); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "gen-1" {
+		t.Fatalf("intents=%+v", stub.intents)
+	}
+	if got := string(stub.intents[0].Payload); got != `{"text":"hello"}` {
+		t.Fatalf("payload=%q", got)
+	}
+}
+
+// TestActionAcceptsGenerationFlagWithText proves the flag form frees the generation slot.
+func TestActionAcceptsGenerationFlagWithText(t *testing.T) {
+	stub := &actionPathStub{}
+	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello"}, true, false, 100, "", "", "", "", "gen-1"); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "gen-1" {
+		t.Fatalf("intents=%+v", stub.intents)
+	}
+}
+
+// TestActionRejectsExtraStopPositionals keeps stop from accepting a stray text argument and
+// proves the error does not suggest quoting a message, because stop carries no message text.
+func TestActionRejectsExtraStopPositionals(t *testing.T) {
+	stub := &actionPathStub{}
+	err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"stop", "ep", "session", "gen-1", "extra"}, true, false, 100, "", "", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "unexpected arguments") {
+		t.Fatalf("err=%v", err)
+	}
+	if strings.Contains(err.Error(), "quote the message text") {
+		t.Fatalf("stop has no message text, so the error must not suggest quoting it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "extra") {
+		t.Fatalf("error must echo the unexpected argument: %v", err)
+	}
+	if len(stub.intents) != 0 {
+		t.Fatalf("intents=%d, want 0", len(stub.intents))
 	}
 }

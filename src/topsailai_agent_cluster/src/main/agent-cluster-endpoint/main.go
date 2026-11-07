@@ -108,12 +108,53 @@ func main() {
 		os.Exit(1)
 	}
 	runtime := newRuntimeHooks(logger, cfg.DatabasePath)
+	var commandAllowlist *endpointservice.AllowlistFile
+	if cfg.CommandAllowlistFile != "" {
+		commandAllowlist, err = endpointservice.LoadAllowlistFile(cfg.CommandAllowlistFile)
+		if err != nil {
+			logger.Error("load command allowlist", "error", err)
+			_ = client.Close()
+			_ = store.Close()
+			os.Exit(1)
+		}
+		stopReload, watchErr := commandAllowlist.WatchReload(ctx, func(reloadErr error) {
+			if reloadErr != nil {
+				logger.Error("reload command allowlist", "error", reloadErr)
+				return
+			}
+			logger.Info("reloaded command allowlist", "entries", commandAllowlist.Allowlist.Len())
+		})
+		if watchErr != nil {
+			logger.Error("watch command allowlist", "error", watchErr)
+			_ = client.Close()
+			_ = store.Close()
+			os.Exit(1)
+		}
+		defer stopReload()
+		logger.Info("loaded command allowlist", "path", cfg.CommandAllowlistFile, "entries", commandAllowlist.Allowlist.Len())
+	}
 	executor, err := endpointservice.NewExecutor(store, registry, func() {
 		if runtime.BeforeInvocation != nil {
 			runtime.BeforeInvocation()
 		}
 	})
 	if err == nil {
+		executor.PolicyHook = func(_ context.Context, intent protocol.ImmutableIntent) error {
+			if intent.Operation != protocol.OperationCommandExec {
+				return nil
+			}
+			if commandAllowlist == nil {
+				return fmt.Errorf("command.exec is not configured: no allowlist file is set")
+			}
+			var payload protocol.CommandExecRequest
+			if unmarshalErr := json.Unmarshal(intent.Payload, &payload); unmarshalErr != nil {
+				return fmt.Errorf("decode command.exec payload: %w", unmarshalErr)
+			}
+			if validateErr := payload.Validate(); validateErr != nil {
+				return validateErr
+			}
+			return commandAllowlist.Allowlist.Permit(payload.Argv)
+		}
 		executor.AdmissionHook = func(hookCtx context.Context, intent protocol.ImmutableIntent, requestHash string) error {
 			receipt := protocol.ExecutionReceipt{CommandID: intent.CommandID, RequestHash: requestHash, Phase: protocol.PhaseInvocationStarted, DeliveryBoundary: protocol.DeliveryNotStarted, EffectCertainty: protocol.EffectUnknown, Outcome: "endpoint_admitted"}
 			data, marshalErr := json.Marshal(receipt)

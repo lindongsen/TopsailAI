@@ -154,6 +154,24 @@ func MessagePayload(text string) (json.RawMessage, error) {
 	return json.RawMessage(wrapped), nil
 }
 
+// rejectJSONFlagPayload rejects a payload that is only the --json option, or a JSON object
+// followed by a stray --json option. Ordinary prose that merely contains or ends with the
+// text --json is literal message content and stays deliverable, because the interactive
+// commands have no --json option to honour.
+func rejectJSONFlagPayload(text, name string) error {
+	if text == "--json" {
+		return fmt.Errorf("interactive %s does not support --json", name)
+	}
+	if !strings.HasSuffix(text, " --json") {
+		return nil
+	}
+	head := strings.TrimSpace(strings.TrimSuffix(text, " --json"))
+	if !strings.HasPrefix(head, "{") || !json.Valid([]byte(head)) {
+		return nil
+	}
+	return fmt.Errorf("interactive %s does not support --json", name)
+}
+
 // interruptActions maps every accepted plain spelling to the standard action name.
 var interruptActions = map[string]string{
 	"soft":           "soft_interrupt",
@@ -222,8 +240,10 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 		return err
 	}
 	payloadText := strings.TrimSpace(rest)
-	if !json.Valid([]byte(payloadText)) && strings.Contains(payloadText, "--json") {
-		return fmt.Errorf("interactive send does not support --json")
+	// A bare --json option or a JSON object followed by a stray --json option is rejected,
+	// while ordinary prose that merely mentions --json stays literal message text.
+	if err := rejectJSONFlagPayload(payloadText, "send"); err != nil {
+		return err
 	}
 	// A bare send enters multi-line input mode, so the operator can compose a
 	// message without quoting newlines into one command line.
@@ -481,11 +501,14 @@ func interactiveStart(parent context.Context, api InteractiveAPI, state *interac
 }
 
 // renderInteractiveStartResult writes the durable start result without JSON formatting.
+// The provider's own return document is printed as a separate section so the
+// operator sees both this service's receipt and the provider's raw answer.
 func renderInteractiveStartResult(out io.Writer, commandID string, result map[string]any) error {
 	if _, err := fmt.Fprintf(out, "CommandID: %s\nStatus: %s\nDeliveryBoundary: %s\nEffectCertainty: %s\nErrorCode: %s\n", commandID, valueString(result, "status", "Status"), valueString(result, "delivery_boundary", "DeliveryBoundary"), valueString(result, "effect_certainty", "EffectCertainty"), valueString(result, "error_code", "ErrorCode")); err != nil {
 		return err
 	}
-	return nil
+	receipt := ReceiptForStatus(result)
+	return renderProviderResponse(out, receipt.ProviderResponse, receipt.ProviderResponseTruncated)
 }
 
 // parseInteractivePayload rejects every argument for a lifecycle command that takes none.
@@ -620,8 +643,10 @@ func validateResumeSelectionAbsent(ctx context.Context, api InteractiveAPI, stat
 // bare interrupt guides the operator through the action choice instead of demanding JSON.
 func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, rest string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
 	payloadText := strings.TrimSpace(rest)
-	if !json.Valid([]byte(payloadText)) && strings.Contains(payloadText, "--json") {
-		return fmt.Errorf("interactive %s does not support --json", name)
+	// A bare --json option or a JSON object followed by a stray --json option is rejected,
+	// while prose that mentions --json stays literal text for context injection.
+	if err := rejectJSONFlagPayload(payloadText, name); err != nil {
+		return err
 	}
 	var payload json.RawMessage
 	var err error

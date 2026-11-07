@@ -23,6 +23,7 @@ import _import_topsailai
 
 from cli_topsailai.colors import Colors, colored
 from cli_topsailai.paths import get_topsailai_home
+from cli_topsailai.process_liveness import is_pid_alive, session_liveness
 from topsailai.context.ctx_manager import get_session_manager
 from topsailai.context.session_manager import SessionData
 
@@ -68,12 +69,12 @@ def _relative_time(create_time: Optional[datetime]) -> str:
 
 
 def _is_pid_alive(pid: int) -> bool:
-    """Return True if *pid* is currently running."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
+    """Return True if *pid* is a live, non-zombie process.
+
+    Delegates to the shared probe so a zombie or a non-positive PID is never
+    reported as a running session.
+    """
+    return is_pid_alive(pid)
 
 
 def _parse_session_stdout_filename(filename: str) -> tuple[Optional[str], Optional[int]]:
@@ -129,11 +130,13 @@ def _find_session_pid(home: str, session_id: str) -> Optional[int]:
 
 
 def _is_session_running(home: str, session_id: str) -> bool:
-    """Return True if *session_id* has a live session process."""
-    pid = _find_session_pid(home, session_id)
-    if pid is None:
-        return False
-    return _is_pid_alive(pid)
+    """Return True if *session_id* has a live session process.
+
+    Every stdout candidate is inspected, because a newer dead file must not
+    hide an older live process for the same session. An unverifiable answer is
+    reported as not running, which is the display policy for this command.
+    """
+    return session_liveness(session_id, home=home) == "live"
 
 
 def _session_to_dict(

@@ -19,7 +19,10 @@ type EndpointFailure struct {
 // TableOptions controls table presentation without changing query semantics.
 type TableOptions struct {
 	// Width bounds terminal columns; zero preserves the full table.
-	Width  int
+	Width int
+	// Full disables every truncation: the width bound and the per-column caps.
+	// A narrow terminal then wraps instead of losing data.
+	Full   bool
 	Color  ColorPolicy
 	Clean  bool
 	OnRows func([]SessionRow)
@@ -98,6 +101,43 @@ func columnWidths(columns []tableColumn) []int {
 	return widths
 }
 
+// measureColumns derives every column width from the header and the rendered
+// cells. A full layout ignores the per-column caps, so a long value is never
+// shortened; a bounded layout keeps the cap that stops one field from consuming
+// the whole terminal.
+func measureColumns(cells [][]string, columns []tableColumn, full bool) []int {
+	widths := columnWidths(columns)
+	for _, row := range cells {
+		for j, cell := range row {
+			n := displayWidth(cell)
+			if n <= widths[j] {
+				continue
+			}
+			if full || columns[j].wide {
+				// A full layout and a wide column keep the complete value.
+				widths[j] = n
+				continue
+			}
+			widths[j] = minInt(n, columns[j].cap)
+		}
+	}
+	return widths
+}
+
+// writeTable renders one measured table. A full layout never applies the
+// terminal bound, so a narrow terminal wraps the complete values instead of
+// clipping them; a bounded layout keeps the existing fitting and narrow rules.
+func writeTable(out io.Writer, headers []string, cells, states [][]string, rowStyles []string, widths []int, columns []tableColumn, options TableOptions) error {
+	if options.Full {
+		return writeFramedTable(out, headers, cells, states, rowStyles, widths, columns, options.Color)
+	}
+	fitTableWidths(widths, options.Width)
+	if options.Width > 0 && options.Width < minimumTableWidth(len(widths)) {
+		return writeNarrowTable(out, cells, states, rowStyles, columns, options.Width, options.Color)
+	}
+	return writeFramedTable(out, headers, cells, states, rowStyles, widths, columns, options.Color)
+}
+
 // tableHeaders lists the plain layout headers, used by callers that render
 // without colour such as help and redirected output.
 var tableHeaders = columnHeaders(allColumns)
@@ -112,7 +152,6 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 	assignRowNumbers(rows)
 	columns := columnsFor(options.Color)
 	headers := columnHeaders(columns)
-	widths := columnWidths(columns)
 	cells := make([][]string, len(rows))
 	states := make([][]string, len(rows))
 	rowStyles := make([]string, len(rows))
@@ -120,26 +159,9 @@ func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFa
 		cells[i] = projectCells(tableCells(row, options.Location), columns)
 		states[i] = tableStates(row, columns)
 		rowStyles[i] = stateStyle(rowState(row))
-		for j, cell := range cells[i] {
-			n := displayWidth(cell)
-			if columns[j].wide {
-				// Session names are shown in full so a long name is never truncated.
-				if n > widths[j] {
-					widths[j] = n
-				}
-				continue
-			}
-			if n > widths[j] {
-				widths[j] = minInt(n, columns[j].cap)
-			}
-		}
 	}
-	fitTableWidths(widths, options.Width)
-	if options.Width > 0 && options.Width < minimumTableWidth(len(widths)) {
-		if err := writeNarrowTable(out, cells, states, rowStyles, columns, options.Width, options.Color); err != nil {
-			return err
-		}
-	} else if err := writeFramedTable(out, headers, cells, states, rowStyles, widths, columns, options.Color); err != nil {
+	widths := measureColumns(cells, columns, options.Full)
+	if err := writeTable(out, headers, cells, states, rowStyles, widths, columns, options); err != nil {
 		return err
 	}
 	if len(rows) > 0 {

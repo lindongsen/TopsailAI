@@ -353,7 +353,7 @@ var ErrInteractiveInterrupt = fmt.Errorf("interactive interrupted")
 const maxConsecutivePromptFailures = 3
 
 func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *interactiveState, line string, lineResults <-chan lineReadResult, out, trustedOut, errOut io.Writer, options InteractiveOptions) (bool, error) {
-	rawName, rest := splitCommand(line)
+	rawName, rest := commandToken(line)
 	// The send prefix is resolved before tokenisation: splitCommand splits on the
 	// first literal space, so ">hello world" would otherwise yield the token
 	// ">hello". The prefix is disjoint from every command word, so this branch can
@@ -465,6 +465,8 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		return false, interactiveSessionPayload(ctx, api, state, protocol.OperationContextInject, name, rest, lineResults, out, trustedOut, options)
 	case "interrupt", "control":
 		return false, interactiveSessionPayload(ctx, api, state, protocol.OperationExecutionInterrupt, name, rest, lineResults, out, trustedOut, options)
+	case "drive":
+		return false, interactiveDrive(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	case "send":
 		return false, interactiveSend(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	default:
@@ -486,7 +488,26 @@ func diagnosticCommandName(line string) string {
 	if candidate, _, _ := numericInput(line); candidate {
 		return "cd"
 	}
-	name, _ := splitCommand(line)
+	name, _ := commandToken(line)
+	return name
+}
+
+// commandToken splits a REPL line and strips the optional leading command
+// prefix from the command word only. The prefix is a form, not an alias: it is
+// removed before alias and scope resolution, and never from the argument text,
+// so a payload such as "send /help" keeps its literal slash.
+func commandToken(line string) (string, string) {
+	name, rest := splitCommand(line)
+	return trimCommandPrefix(name), rest
+}
+
+// trimCommandPrefix removes one leading slash from a non-empty command word.
+// A bare "/" is left intact so it stays an unknown command instead of silently
+// becoming an empty line.
+func trimCommandPrefix(name string) string {
+	if len(name) > 1 && strings.HasPrefix(name, "/") {
+		return name[1:]
+	}
 	return name
 }
 
@@ -602,7 +623,7 @@ func interactiveList(parent context.Context, api InteractiveAPI, state *interact
 	staged := make([]SessionRow, 0)
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	err = (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, scoped, false, TableOptions{Width: OutputWidth(out), Color: color, Clean: clean, OnRows: func(rows []SessionRow) { staged = append(staged, rows...) }})
+	err = (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, scoped, false, tableOptionsFor(out, color, clean, func(rows []SessionRow) { staged = append(staged, rows...) }))
 	if err != nil {
 		state.Rows = nil
 		return err
@@ -753,7 +774,7 @@ func interactiveRefresh(parent context.Context, api InteractiveAPI, state *inter
 			return err
 		}
 	}
-	err = renderListRows(out, errors, loaded, scoped, false, TableOptions{Width: OutputWidth(out), Color: color, OnRows: func(rows []SessionRow) { staged = append(staged, rows...) }})
+	err = renderListRows(out, errors, loaded, scoped, false, tableOptionsFor(out, color, false, func(rows []SessionRow) { staged = append(staged, rows...) }))
 	if err != nil {
 		state.Rows = nil
 		return err

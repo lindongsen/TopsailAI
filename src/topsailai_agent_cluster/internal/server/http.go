@@ -77,12 +77,14 @@ func (h *Handler) authenticated(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		identity, ok := h.Authenticator.Authenticate(r)
+		identity, scopes, ok := h.Authenticator.AuthenticateScopes(r)
 		if !ok {
 			h.writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(security.WithAuthenticatedIdentity(r.Context(), identity)))
+		ctx := security.WithAuthenticatedIdentity(r.Context(), identity)
+		ctx = security.WithAuthenticatedScopes(ctx, scopes)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -353,6 +355,13 @@ func NewHandlerWithCommandsAndBrokerAndOutput(store *serverstorage.Store, token 
 // NewHandlerWithCommandsAndBrokerAndOutputAndRefresh returns an authenticated handler
 // with output forwarding and forced Endpoint collection.
 func NewHandlerWithCommandsAndBrokerAndOutputAndRefresh(store *serverstorage.Store, token string, commands *CommandService, broker *EventBroker, output OutputRequester, refresh RefreshRequester) http.Handler {
-	h := &Handler{Store: store, Authenticator: security.BearerAuthenticator{Token: token}, CommandService: commands, MaxBodyBytes: 4 << 20, Broker: broker, Output: output, Refresh: refresh}
+	return NewHandlerWithScopes(store, token, nil, commands, broker, output, refresh)
+}
+
+// NewHandlerWithScopes returns an authenticated handler that restricts the bearer
+// token to the supplied operator scopes. An empty scope list leaves the credential
+// unrestricted, which is the single-administrator deployment.
+func NewHandlerWithScopes(store *serverstorage.Store, token string, scopes []string, commands *CommandService, broker *EventBroker, output OutputRequester, refresh RefreshRequester) http.Handler {
+	h := &Handler{Store: store, Authenticator: security.BearerAuthenticator{Token: token, Scopes: security.NewScopeSet(scopes...)}, CommandService: commands, MaxBodyBytes: 4 << 20, Broker: broker, Output: output, Refresh: refresh}
 	return h.authenticated(h.routes())
 }

@@ -140,7 +140,11 @@ func (a *commandAdapter) Execute(parent context.Context, request ExecuteRequest)
 	args = append(args, "--payload", string(request.Intent.Payload))
 	output, err := exec.CommandContext(ctx, a.config.Command, args...).Output()
 	if err != nil {
-		return ExecuteResult{Receipt: protocol.ExecutionReceipt{CommandID: request.Intent.CommandID, Outcome: "unknown", EffectCertainty: protocol.EffectUnknown}}, fmt.Errorf("execute adapter %q: %w", a.config.AdapterID, err)
+		receipt := protocol.ExecutionReceipt{CommandID: request.Intent.CommandID, Outcome: "unknown", EffectCertainty: protocol.EffectUnknown}
+		// The provider's own diagnostic is the only evidence of why the call
+		// failed, so carry it verbatim instead of discarding it.
+		receipt.ProviderResponse, receipt.ProviderResponseTruncated = BoundedProviderResponse(ProviderFailureText(err))
+		return ExecuteResult{Receipt: receipt}, fmt.Errorf("execute adapter %q: %w", a.config.AdapterID, err)
 	}
 	var receipt struct {
 		protocol.ExecutionReceipt
@@ -148,7 +152,11 @@ func (a *commandAdapter) Execute(parent context.Context, request ExecuteRequest)
 		SignalSent    bool   `json:"signal_sent"`
 	}
 	if err := json.Unmarshal(output, &receipt); err != nil {
-		return ExecuteResult{Receipt: protocol.ExecutionReceipt{CommandID: request.Intent.CommandID, Outcome: "unknown", EffectCertainty: protocol.EffectUnknown}}, fmt.Errorf("decode adapter %q execution response: %w", a.config.AdapterID, err)
+		decoded := protocol.ExecutionReceipt{CommandID: request.Intent.CommandID, Outcome: "unknown", EffectCertainty: protocol.EffectUnknown}
+		// A document that cannot be decoded is still the provider's own answer,
+		// so keep it as evidence instead of reporting only a decode error.
+		decoded.ProviderResponse, decoded.ProviderResponseTruncated = BoundedProviderResponse(string(output))
+		return ExecuteResult{Receipt: decoded}, fmt.Errorf("decode adapter %q execution response: %w", a.config.AdapterID, err)
 	}
 	if receipt.DeliveryState != "" {
 		receipt.DeliveryBoundary = protocol.DeliveryBoundary(receipt.DeliveryState)
@@ -156,6 +164,7 @@ func (a *commandAdapter) Execute(parent context.Context, request ExecuteRequest)
 	if receipt.SignalSent && !receipt.ExitConfirmed {
 		receipt.DeliveryBoundary = protocol.DeliverySignalSent
 	}
+	receipt.ProviderResponse, receipt.ProviderResponseTruncated = BoundedProviderResponse(string(output))
 	return ExecuteResult{Receipt: receipt.ExecutionReceipt}, nil
 }
 
