@@ -67,6 +67,10 @@ const (
 	DirectionEndpointInitiated = "endpoint-initiated"
 	// DirectionServerInitiated means the Server dials the Endpoint.
 	DirectionServerInitiated = "server-initiated"
+	// DirectionBidirectional means both sides dial at the same time. It covers a
+	// deployment where neither side can be assumed reachable from the other, and
+	// the two connections converge on the link installed last.
+	DirectionBidirectional = "bidirectional"
 )
 
 // Defaults returns safe defaults for a command role.
@@ -180,7 +184,7 @@ func Load(args []string, role string) (Config, error) {
 	flags.StringVar(&cfg.CommandAllowlistFile, "command-allowlist-file", cfg.CommandAllowlistFile, "Endpoint-global command allowlist file")
 	flags.StringVar(&cfg.ControlActionFile, "control-action-file", cfg.ControlActionFile, "Endpoint-local file selecting which ctl. actions are served")
 	flags.StringVar(&cfg.ChannelAddress, "channel-address", cfg.ChannelAddress, "Endpoint WSS address")
-	flags.StringVar(&cfg.ChannelDirection, "channel-direction", cfg.ChannelDirection, "channel direction: endpoint-initiated or server-initiated")
+	flags.StringVar(&cfg.ChannelDirection, "channel-direction", cfg.ChannelDirection, "channel direction: endpoint-initiated, server-initiated or bidirectional")
 	flags.StringVar(&cfg.EndpointChannelListen, "endpoint-channel-listen-addr", cfg.EndpointChannelListen, "Endpoint mTLS channel listen address for server-initiated connections")
 	flags.Func("endpoint-dial-addresses", "comma-separated endpoint_id=wss://address pairs the Server dials", func(value string) error {
 		addresses, err := ParseDialAddresses(value)
@@ -278,7 +282,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("log rotation limits must be positive or zero where allowed")
 	}
 	switch c.ChannelDirection {
-	case DirectionEndpointInitiated, DirectionServerInitiated:
+	case DirectionEndpointInitiated, DirectionServerInitiated, DirectionBidirectional:
 	default:
 		return fmt.Errorf("invalid channel direction %q", c.ChannelDirection)
 	}

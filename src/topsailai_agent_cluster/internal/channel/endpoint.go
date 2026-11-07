@@ -33,9 +33,13 @@ type EndpointClient struct {
 	ServerName     string
 	RevokedSerials map[string]bool
 	Initiator      string
-	Conn           *websocket.Conn
-	Generation     int64
-	mu             sync.Mutex
+	// Bidirectional means both sides dial at the same time. The Endpoint then
+	// always has an address to dial, so a lost connection is recovered by
+	// dialing instead of waiting for the Server to dial again.
+	Bidirectional bool
+	Conn          *websocket.Conn
+	Generation    int64
+	mu            sync.Mutex
 }
 
 // Dial establishes the Endpoint-initiated WebSocket connection and handshake.
@@ -141,11 +145,14 @@ func (c *EndpointClient) Reconnect(ctx context.Context) error {
 	c.mu.Lock()
 	address := c.Address
 	initiator := c.Initiator
+	bidirectional := c.Bidirectional
 	c.mu.Unlock()
 	// In the server-initiated direction the Endpoint has no address to dial, so
 	// it must wait for the acceptor to attach a new connection instead of
-	// repeatedly failing a dial that can never succeed.
-	if initiator == InitiatorServer {
+	// repeatedly failing a dial that can never succeed. In the bidirectional
+	// direction the Endpoint does have an address, so it recovers by dialing and
+	// the two sides converge again on whichever link is installed last.
+	if initiator == InitiatorServer && !bidirectional {
 		return ErrAwaitingServerDial
 	}
 	if address == "" {

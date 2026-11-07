@@ -50,10 +50,14 @@ func main() {
 	}
 	// The direction decides which side dials. In the server-initiated direction
 	// the Server dials every configured Endpoint and opens no inbound channel
-	// listener, so a deployment can match whichever network path is reachable.
+	// listener, so a deployment can match whichever network path is reachable. In
+	// the bidirectional direction it both listens and dials, so neither side has
+	// to be reachable from the other for the cluster to converge.
 	serverInitiated := cfg.ChannelDirection == config.DirectionServerInitiated
-	if serverInitiated && len(cfg.EndpointDialAddresses) == 0 {
-		logger.Error("endpoint dial addresses are required for the server-initiated direction", "error", "AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES is empty")
+	bidirectional := cfg.ChannelDirection == config.DirectionBidirectional
+	dials := serverInitiated || bidirectional
+	if dials && len(cfg.EndpointDialAddresses) == 0 {
+		logger.Error("endpoint dial addresses are required when the server dials", "error", "AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES is empty")
 		_ = store.Close()
 		os.Exit(1)
 	}
@@ -136,7 +140,7 @@ func main() {
 	// Record the resolved addresses before serving: without this line a healthy
 	// start leaves no trace in the log, so a silent death cannot be told apart
 	// from a start that never happened.
-	if serverInitiated {
+	if dials {
 		// The dialer runs before serving so the first connection attempt happens
 		// during startup rather than after the API is already accepting traffic.
 		runEndpointDialer(ctx, logger, channelService, cfg)

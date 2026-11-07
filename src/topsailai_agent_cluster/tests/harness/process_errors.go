@@ -70,7 +70,13 @@ func CertificatesE(dir string) (CertFiles, error) {
 	if err != nil {
 		return CertFiles{}, fmt.Errorf("generate client key: %w", err)
 	}
-	clientDER, err := x509.CreateCertificate(rand.Reader, certificateTemplateE("endpoint-1", false), caTemplate, &clientKey.PublicKey, caKey)
+	// The Endpoint certificate carries a DNS SAN equal to the Endpoint identity.
+	// Go ignores the legacy Common Name for hostname verification, so a
+	// certificate with only a CN cannot be verified when the Server dials the
+	// Endpoint and expects the Endpoint identity as the peer name.
+	clientTemplate := certificateTemplateE("endpoint-1", false)
+	clientTemplate.DNSNames = []string{"endpoint-1"}
+	clientDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, caTemplate, &clientKey.PublicKey, caKey)
 	if err != nil {
 		return CertFiles{}, fmt.Errorf("create client certificate: %w", err)
 	}
@@ -82,7 +88,9 @@ func CertificatesE(dir string) (CertFiles, error) {
 	if err != nil {
 		return CertFiles{}, fmt.Errorf("generate second client key: %w", err)
 	}
-	clientDER2, err := x509.CreateCertificate(rand.Reader, certificateTemplateE("endpoint-2", false), caTemplate, &clientKey2.PublicKey, caKey)
+	clientTemplate2 := certificateTemplateE("endpoint-2", false)
+	clientTemplate2.DNSNames = []string{"endpoint-2"}
+	clientDER2, err := x509.CreateCertificate(rand.Reader, clientTemplate2, caTemplate, &clientKey2.PublicKey, caKey)
 	if err != nil {
 		return CertFiles{}, fmt.Errorf("create second client certificate: %w", err)
 	}

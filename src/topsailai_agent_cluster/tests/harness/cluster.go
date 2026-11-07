@@ -22,6 +22,12 @@ type ClusterOptions struct {
 	Environment map[string]string
 	DelayMS     int
 	Faults      FaultInjection
+	// ChannelDirection selects which side dials. An empty value keeps the
+	// default endpoint-initiated direction, so existing scenarios are unchanged.
+	ChannelDirection string
+	// SharedCertificate makes the Endpoint present the Server certificate, so the
+	// certificate no longer proves which Endpoint is connecting.
+	SharedCertificate bool
 }
 
 // FaultInjection contains test-only process-composition controls shared by integration and BDD tests.
@@ -93,7 +99,26 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		return nil, fmt.Errorf("allocate channel port: %w", err)
 	}
 	cluster := &Cluster{Root: root, API: apiPort, Channel: channelPort, ServerDB: filepath.Join(root, "server.db"), EndpointDB: filepath.Join(root, "endpoint.db"), Record: filepath.Join(root, "records.jsonl"), Certs: certs}
+	// The Endpoint only listens when the Server dials, so its channel port is
+	// allocated on demand and stays empty for the default direction.
+	endpointChannelPort := ""
+	if options.ChannelDirection == "server-initiated" || options.ChannelDirection == "bidirectional" {
+		endpointChannelPort, err = FreePortE()
+		if err != nil {
+			return nil, fmt.Errorf("allocate endpoint channel port: %w", err)
+		}
+		cluster.EndpointChannel = endpointChannelPort
+	}
 	serverEnv := []string{"AGENT_CLUSTER_API_LISTEN_ADDR=127.0.0.1:" + cluster.API, "AGENT_CLUSTER_CHANNEL_LISTEN_ADDR=127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_DATABASE_PATH=" + cluster.ServerDB, "AGENT_CLUSTER_AUTH_TOKEN=secret", "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + certs.ServerCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + certs.ServerKey}
+	if options.ChannelDirection != "" {
+		serverEnv = append(serverEnv, "AGENT_CLUSTER_CHANNEL_DIRECTION="+options.ChannelDirection)
+	}
+	if endpointChannelPort != "" {
+		serverEnv = append(serverEnv, "AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES=endpoint-1=wss://127.0.0.1:"+endpointChannelPort)
+	}
+	if options.SharedCertificate {
+		serverEnv = append(serverEnv, "AGENT_CLUSTER_TLS_SHARED_CERTIFICATE=true")
+	}
 	serverEnv = appendFaultEnvironment(serverEnv, options.Faults)
 	for key, value := range options.Environment {
 		serverEnv = append(serverEnv, key+"="+value)
@@ -145,7 +170,23 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		return nil, fmt.Errorf("marshal adapter configuration: %w", err)
 	}
 	args := "AGENT_CLUSTER_ADAPTERS=" + string(adapterJSON)
-	endpointEnv := []string{"AGENT_CLUSTER_CHANNEL_ADDRESS=wss://127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH=" + cluster.EndpointDB, "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + certs.ClientCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + certs.ClientKey, args}
+	// With one shared certificate the Endpoint presents the Server certificate as
+	// its own client certificate, so the certificate no longer proves which
+	// Endpoint is connecting.
+	endpointCert, endpointKey := certs.ClientCert, certs.ClientKey
+	if options.SharedCertificate {
+		endpointCert, endpointKey = certs.ServerCert, certs.ServerKey
+	}
+	endpointEnv := []string{"AGENT_CLUSTER_CHANNEL_ADDRESS=wss://127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH=" + cluster.EndpointDB, "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + endpointCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + endpointKey, args}
+	if options.ChannelDirection != "" {
+		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_CHANNEL_DIRECTION="+options.ChannelDirection)
+	}
+	if endpointChannelPort != "" {
+		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR=127.0.0.1:"+endpointChannelPort)
+	}
+	if options.SharedCertificate {
+		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_TLS_SHARED_CERTIFICATE=true")
+	}
 	endpointEnv = appendFaultEnvironment(endpointEnv, options.Faults)
 	cluster.EndpointPath = endpointBin
 	cluster.EndpointEnv = append([]string(nil), endpointEnv...)

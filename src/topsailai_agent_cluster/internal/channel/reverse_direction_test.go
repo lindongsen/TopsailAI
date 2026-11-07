@@ -329,3 +329,104 @@ func TestValidateServerIdentity(t *testing.T) {
 		t.Fatal("empty expected name accepted")
 	}
 }
+
+// TestReconnectDialsInBidirectionalDirection verifies the Endpoint recovers by
+// dialing when both sides dial. In this direction the Endpoint does have an
+// address, so waiting for the Server would leave the cluster without a link
+// whenever the Server-initiated attempt is the one that failed.
+func TestReconnectDialsInBidirectionalDirection(t *testing.T) {
+	client := &EndpointClient{EndpointID: "endpoint-1", InstanceID: "instance-1", Initiator: InitiatorServer, Bidirectional: true, Address: "ws://127.0.0.1:1/channel"}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err := client.Reconnect(ctx)
+	if errors.Is(err, ErrAwaitingServerDial) {
+		t.Fatalf("reconnect waited for the server dial in the bidirectional direction")
+	}
+	if err == nil {
+		t.Fatalf("reconnect to an unreachable address succeeded")
+	}
+}
+
+// TestAttachKeepsNewestGeneration verifies the Endpoint converges on the link
+// installed last. The Server assigns a higher generation to the later install,
+// so a lower generation arriving afterwards must not replace the active link.
+func TestAttachKeepsNewestGeneration(t *testing.T) {
+	server := NewServer(nil)
+	httpServer := httptest.NewServer(http.HandlerFunc(server.Handler))
+	defer httpServer.Close()
+	address := websocketAddress(httpServer.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client := &EndpointClient{EndpointID: "endpoint-1", InstanceID: "instance-1"}
+	if err := client.Dial(ctx, address); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	active := client.Generation
+	if active <= 0 {
+		t.Fatalf("generation = %d, want a positive value", active)
+	}
+	// A second real connection stands in for the link the other side dialed, so
+	// the supersede path closes a real socket instead of a nil handle.
+	other := &EndpointClient{EndpointID: "endpoint-1", InstanceID: "instance-2"}
+	if err := other.Dial(ctx, address); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = other.Close() }()
+	// A lower generation must not replace the active link, because the Server
+	// already fenced it and the Endpoint would then talk over a dead connection.
+	if client.Attach(other.Conn, active-1, InitiatorServer) {
+		t.Fatalf("older generation replaced the active link")
+	}
+	if client.Generation != active {
+		t.Fatalf("generation = %d, want %d", client.Generation, active)
+	}
+	// A higher generation is the newer link and must win.
+	if !client.Attach(other.Conn, active+1, InitiatorServer) {
+		t.Fatalf("newer generation rejected")
+	}
+	if client.Generation != active+1 || client.Initiator != InitiatorServer {
+		t.Fatalf("generation=%d initiator=%q, want %d and %q", client.Generation, client.Initiator, active+1, InitiatorServer)
+	}
+}
+
+// TestAcceptorServeRequiresConfiguration verifies the listener refuses to start
+// without an address or TLS configuration. A listener that silently started
+// without mTLS would accept unauthenticated Server connections.
+func TestAcceptorServeRequiresConfiguration(t *testing.T) {
+	acceptor := &EndpointAcceptor{EndpointID: "endpoint-1", Client: &EndpointClient{EndpointID: "endpoint-1"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := acceptor.Serve(ctx, "", nil); err == nil {
+		t.Fatalf("serve accepted an empty listen address")
+	}
+	if err := acceptor.Serve(ctx, "127.0.0.1:0", nil); err == nil {
+		t.Fatalf("serve accepted a nil TLS configuration")
+	}
+}
+
+// TestAcceptorServeStopsOnContextCancel verifies the listener returns cleanly
+// when the context is cancelled, so a shutdown is not reported as a fatal error.
+func TestAcceptorServeStopsOnContextCancel(t *testing.T) {
+	material := newChannelTLSMaterial(t)
+	serverCert, err := tls.LoadX509KeyPair(material.serverCert, material.serverKey)
+	if err != nil {
+		t.Fatalf("load server certificate: %v", err)
+	}
+	acceptorTLS := &tls.Config{Certificates: []tls.Certificate{serverCert}, ClientCAs: material.pool(t), ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS13}
+	acceptor := &EndpointAcceptor{EndpointID: "endpoint-1", ServerName: "agent-cluster-server", TLSConfig: acceptorTLS, Client: &EndpointClient{EndpointID: "endpoint-1"}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- acceptor.Serve(ctx, "127.0.0.1:0", acceptorTLS) }()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case serveErr := <-done:
+		if serveErr != nil {
+			t.Fatalf("serve returned %v after cancellation, want nil", serveErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve did not return after cancellation")
+	}
+}
