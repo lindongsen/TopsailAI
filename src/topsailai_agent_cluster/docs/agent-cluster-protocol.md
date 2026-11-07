@@ -40,6 +40,7 @@ Suggested semantic operations:
 - `session.read_messages`: read permitted conversation context.
 - `runtime.health`: control-channel health, not model progress.
 - `agent.start`, `agent.resume`, `agent.stop`: required MVP lifecycle operations, with standard agent/session linkage and execution-generation evidence.
+- `agent.drive.start`, `agent.drive.stop`: controller operations, distinct from the agent lifecycle; see the drive semantics section.
 - `output.snapshot`, `output.follow`: independent capabilities; the former never implies the latter.
 
 Only operations and input/result fields defined by the negotiated standard API are exposed. No provider namespaces, raw control actions, adapter routing selectors or arbitrary provider execution schemas are accepted in commands. Inventory may carry adapter IDs and standard descriptive summaries as report data. A new common semantic operation requires an explicit versioned protocol amendment; provider-only controls remain local to Endpoint. Server validates standard schemas, not dynamically supplied provider instructions.
@@ -52,6 +53,40 @@ Only operations and input/result fields defined by the negotiated standard API a
 - Endpoint restart affects controller connections/collection, not Agent lifetime. It can rediscover returned resources through Adapter CLI and recover command delivery records; it never reparents, reattaches supervision or automatically restarts Agents.
 - A crash after a CLI invocation can leave effects unknown. Query through Adapter CLI if a correlated query exists; otherwise report uncertainty without replaying side effects. The journal tracks controller intent/delivery, not ownership of Agent processes.
 - Freeze public resource/profile revision and command identity. Endpoint-local mapping selects the CLI; Server retains only standard API semantics.
+
+## Drive controller semantics
+
+A drive controller is a resident process that acts on the operator's behalf by
+submitting input to one session when that session is waiting for input. It is a
+controller, not a parent: it does not own, supervise or restart the agent, and
+stopping it leaves the agent running. The concept is provider-neutral; the
+protocol never names a provider script, environment variable or record path.
+
+- `agent.drive.start` targets one session and asks the Endpoint to start a
+  controller for it. The Endpoint validates the standard intent and invokes its
+  configured Adapter CLI; the provider runtime decides how the controller runs.
+  Starting a controller authorizes autonomous, repeated input submission, so it
+  requires a control-class permission and an explicit operator confirmation.
+- `agent.drive.stop` stops only the controller for the selected target. It is
+  never `agent.stop`: the agent keeps running, and the confirmation text must
+  state that difference. It addresses the recorded controller, including a
+  residual record whose process is already gone, so it does not require a live
+  target.
+- Controller state is a read, not a command. It is reported as a bounded
+  descriptive `drive` summary on the standard Session resource and served from
+  the persisted inventory like any other projection, so a status read never
+  enters the command journal and never claims to be a live probe.
+- Standard drive states are `none`, `running`, `stale`, `exited`, `failed` and
+  `unknown`. A record whose liveness was not verified is `stale` or `unknown`,
+  never `running`: an operator who believes a controller is active when it is
+  not would stop supervising the session. An absent summary means the provider
+  reported no observation, which is not a confirmed absence of a controller.
+- A provider that cannot confirm the outcome reports `unconfirmed` with unknown
+  effect certainty. It is never retried automatically and never reported as a
+  definite failure.
+- The Endpoint never supervises, adopts, restarts or kills the controller, and
+  never reads provider record files. A controller that survives an Endpoint
+  restart is expected, not a leak.
 
 ## Endpoint-private Adapter service boundary
 
