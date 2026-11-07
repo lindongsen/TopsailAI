@@ -307,7 +307,23 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if err != nil {
 		return err
 	}
-	return runner.RenderAction(out, actionResultData)
+	if err := runner.RenderAction(out, actionResultData); err != nil {
+		return err
+	}
+	// The message is delivered and the durable receipt is the authority for what
+	// happened, so the operator should not have to type logs to see the effect.
+	// The read gets its own bounded budget because the local wait may already have
+	// exhausted the command deadline, and a failed read is reported as a
+	// diagnostic instead of turning the accepted send into a failure.
+	if err := renderAutomaticSnapshot(parent, api, state, out, options, "send completed"); err != nil {
+		return err
+	}
+	// The send changed the provider's state, so the persisted inventory is now
+	// older than the session the operator is looking at. Force one collection for
+	// this Endpoint and revalidate only the pinned session, so a later list reads
+	// a newer document. This runs after the logs read because that read uses the
+	// generation validated before the send, while a refresh can replace it.
+	return refreshSelectedSession(parent, api, state, out, "send completed")
 }
 
 func nextLine(source <-chan lineReadResult) (lineReadResult, bool) {

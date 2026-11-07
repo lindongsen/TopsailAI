@@ -46,6 +46,28 @@ A non-interactive command MUST NOT silently degrade to a weaker behaviour.
 - Interactive surfaces may degrade with a visible diagnostic, because a human is
   present to read it. Non-interactive surfaces must fail, because no human is.
 
+## Automatic follow-up steps
+
+An interactive command MAY perform bounded follow-up steps after its own action
+has already succeeded, so the operator does not have to type a second command to
+see the effect.
+
+- A follow-up step runs only after the primary action returned successfully. A
+  rejected, cancelled or failed action performs no follow-up.
+- A follow-up step never changes the outcome of the primary action. Its failure is
+  reported as a diagnostic that names the primary action, and the prompt stays
+  usable, because the durable receipt of the primary action is already the
+  authority for what happened.
+- A follow-up step gets its own bounded budget. It must not reuse a deadline the
+  primary action may already have exhausted.
+- A follow-up step is interactive-only. The standalone surface keeps one command
+  per action, so a script never receives extra output it did not ask for.
+- `send` renders one bounded output snapshot and then forces one collection for the
+  selected endpoint and revalidates only the selected session, so a later `list`
+  reads a newer persisted document. The snapshot runs first because it uses the
+  generation validated before the send, while a refresh can replace that
+  generation.
+
 ## Audit
 
 The table records the verified state of every command. Each standalone entry was

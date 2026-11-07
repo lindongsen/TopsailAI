@@ -90,15 +90,63 @@ func autoLogsOnSessionEntry(parent context.Context, api InteractiveAPI, state *i
 	if state.Scope.Kind != ScopeSession || previous.Kind == ScopeSession {
 		return nil
 	}
+	return renderAutomaticSnapshot(parent, api, state, out, options, "session selected")
+}
+
+// renderAutomaticSnapshot renders one bounded output snapshot for the selected
+// session and reports a failed read as a diagnostic instead of an error. The
+// caller has already validated the selection, so a follow-up read must never
+// turn an accepted action into a failure. failurePrefix names the action that
+// triggered the read, so the operator can tell which step failed.
+func renderAutomaticSnapshot(parent context.Context, api InteractiveAPI, state *interactiveState, out io.Writer, options InteractiveOptions, failurePrefix string) error {
 	maxBytes, maxLines := interactiveOutputBounds(options)
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy}
 	if err := runner.RenderSessionSnapshot(ctx, out, state.EndpointID, state.SessionID, state.Generation, maxBytes, maxLines); err != nil {
-		_, writeErr := fmt.Fprintf(out, "session selected; automatic logs failed: %v\n", err)
-		return writeErr
+		return writeAutomaticDiagnostic(out, failurePrefix, "automatic logs failed: "+err.Error())
 	}
 	return nil
+}
+
+// refreshSelectedSession asks the selected session's Endpoint for one fresh
+// collection and revalidates only that session against the committed document,
+// so a later list reads a newer persisted inventory without rendering the table.
+// The Endpoint is the smallest unit the Server can make fresh, because it stores
+// one inventory document per Endpoint; the per-session part is the revalidation,
+// not a separate query. A client without the forced-collection seam degrades to
+// read-only behaviour, and every failure is reported as a diagnostic instead of
+// turning the accepted action into a failure.
+func refreshSelectedSession(parent context.Context, api InteractiveAPI, state *interactiveState, out io.Writer, failurePrefix string) error {
+	refresher, forced := api.(InventoryRefresher)
+	if !forced {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(parent, refreshCommandTimeout)
+	defer cancel()
+	if _, err := refresher.RefreshInventory(ctx, state.EndpointID); err != nil {
+		return writeAutomaticDiagnostic(out, failurePrefix, "automatic refresh failed: "+err.Error())
+	}
+	report, err := api.GetInventory(ctx, state.EndpointID)
+	if err != nil {
+		return writeAutomaticDiagnostic(out, failurePrefix, "automatic refresh failed: "+err.Error())
+	}
+	loaded := reportLoad{
+		endpoints: []protocol.Endpoint{{EndpointID: state.EndpointID}},
+		reports:   map[string]protocol.InventoryReport{state.EndpointID: report},
+	}
+	if _, _, _, err := findSelectedIn(loaded, state); err != nil {
+		return writeAutomaticDiagnostic(out, failurePrefix, err.Error())
+	}
+	return nil
+}
+
+// writeAutomaticDiagnostic reports a failed automatic step without failing the
+// command that triggered it, because that command's durable receipt is already
+// the authority for what happened.
+func writeAutomaticDiagnostic(out io.Writer, failurePrefix, detail string) error {
+	_, err := fmt.Fprintf(out, "%s; %s\n", failurePrefix, detail)
+	return err
 }
 
 // interactiveOutputBounds resolves the bounded output read limits used by an

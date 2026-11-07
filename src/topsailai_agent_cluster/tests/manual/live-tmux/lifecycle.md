@@ -13,7 +13,7 @@ From endpoint type `start`. Expect project choice or `Choose a project number or
 
 ## LIFE-02 Send cancel and delivery
 
-Select owned session. Enter `send Reply exactly LIVE_TMUX_SEND.`. Expect payload preview and `Confirm send? [y/N]`. Answer n; expect send cancelled, no command admitted, no LIVE_TMUX_SEND reply. Repeat and answer y. Expect command submitted and terminal command result; query explicit status. Independently poll logs for the actual assistant reply LIVE_TMUX_SEND. Delivery acknowledged alone does not prove consumption. Use a fresh observation baseline to avoid matching the user request echo as a reply.
+Select owned session. Enter `send Reply exactly LIVE_TMUX_SEND.`. Expect payload preview and `Confirm send? [y/N]`. Answer n; expect send cancelled, no command admitted, no LIVE_TMUX_SEND reply, and no automatic output read or forced collection. Repeat and answer y. Expect command submitted, terminal command result, then one bounded output snapshot rendered automatically without typing `logs`, then one forced collection for that endpoint. Query explicit status. Independently poll logs for the actual assistant reply LIVE_TMUX_SEND. Delivery acknowledged alone does not prove consumption. Use a fresh observation baseline to avoid matching the user request echo as a reply. If the automatic read or the forced collection fails, expect a `send completed; automatic logs failed:` or `send completed; automatic refresh failed:` diagnostic and a still-usable session prompt; the accepted send must not be reported as failed. After the automatic refresh, run `list` and confirm the rendered rows come from the newly committed document rather than the pre-send projection.
 
 ## LIFE-03 Injection and aliases
 
