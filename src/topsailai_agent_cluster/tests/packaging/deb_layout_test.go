@@ -1,6 +1,4 @@
-//go:build integration
-
-package integration_test
+package packaging_test
 
 import (
 	"os"
