@@ -372,6 +372,13 @@ var ErrInteractiveInterrupt = fmt.Errorf("interactive interrupted")
 const maxConsecutivePromptFailures = 3
 
 func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *interactiveState, line string, lineResults <-chan lineReadResult, out, trustedOut, errOut io.Writer, options InteractiveOptions) (bool, error) {
+	// The allowlisted-command prefix is recognised before the command word is
+	// split. commandAllowed returns true for an unknown name, so a later position
+	// would let "!git status" reach the dispatcher as a command named "!git" and
+	// report an unknown command instead of running the command.
+	if isShellLine(line) {
+		return false, runShellCommand(ctx, api, state, line, trustedOut, options)
+	}
 	rawName, rest := commandToken(line)
 	if candidate, token, surplus := numericInput(line); candidate {
 		if surplus {
