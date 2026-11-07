@@ -37,6 +37,7 @@ type Config struct {
 	DatabasePath          string
 	AuthToken             string
 	AuthScopes            []string
+	CommandAllowlistFile  string
 	ChannelAddress        string
 	EndpointID            string
 	InstanceID            string
@@ -73,6 +74,9 @@ func Load(args []string, role string) (Config, error) {
 	}
 	if value := os.Getenv("AGENT_CLUSTER_AUTH_SCOPES"); value != "" {
 		cfg.AuthScopes = splitList(value)
+	}
+	if value := os.Getenv("AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE"); value != "" {
+		cfg.CommandAllowlistFile = value
 	}
 	if value := os.Getenv("AGENT_CLUSTER_CHANNEL_ADDRESS"); value != "" {
 		cfg.ChannelAddress = value
@@ -123,6 +127,7 @@ func Load(args []string, role string) (Config, error) {
 		cfg.AuthScopes = splitList(value)
 		return nil
 	})
+	flags.StringVar(&cfg.CommandAllowlistFile, "command-allowlist-file", cfg.CommandAllowlistFile, "Endpoint-global command allowlist file")
 	flags.StringVar(&cfg.ChannelAddress, "channel-address", cfg.ChannelAddress, "Endpoint WSS address")
 	flags.StringVar(&cfg.EndpointID, "endpoint-id", cfg.EndpointID, "Endpoint identity")
 	flags.StringVar(&cfg.InstanceID, "instance-id", cfg.InstanceID, "Endpoint instance identity")

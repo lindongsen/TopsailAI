@@ -11,6 +11,9 @@ const (
 	OperationAgentDriveStop     = "agent.drive.stop"
 	OperationOutputRead         = "output.read"
 	OperationDiscover           = "discover"
+	// OperationCommandExec runs one allowlisted argv array in a session working
+	// directory. It is a bounded standard operation, not a remote shell.
+	OperationCommandExec = "command.exec"
 )
 
 // Capability describes one standard operation supported by an Endpoint.
