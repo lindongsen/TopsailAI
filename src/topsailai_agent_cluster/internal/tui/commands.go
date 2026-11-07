@@ -118,8 +118,9 @@ func (r CommandRunner) Show(ctx context.Context, out io.Writer, id string, jsonM
 	return nil
 }
 
-// Logs retrieves and renders a bounded output snapshot.
-func (r CommandRunner) Logs(ctx context.Context, out io.Writer, endpointID, resourceID string, maxBytes, maxLines int, jsonMode bool) error {
+// Logs retrieves and renders a bounded output snapshot. color decides whether
+// provider SGR colour survives; every other escape sequence is always stripped.
+func (r CommandRunner) Logs(ctx context.Context, out io.Writer, endpointID, resourceID string, maxBytes, maxLines int, jsonMode bool, color ColorPolicy) error {
 	report, err := r.API.GetInventory(ctx, endpointID)
 	if err != nil {
 		return err
@@ -138,22 +139,22 @@ func (r CommandRunner) Logs(ctx context.Context, out io.Writer, endpointID, reso
 		}
 		return RenderJSON(out, snapshot)
 	}
-	return r.RenderSessionSnapshot(ctx, out, endpointID, resourceID, generation, maxBytes, maxLines)
+	return r.RenderSessionSnapshot(ctx, out, endpointID, resourceID, generation, maxBytes, maxLines, color)
 }
 
 // RenderSessionSnapshot reads and renders one bounded output snapshot for an
 // already validated generation, so a caller that just validated the selection
 // does not repeat the inventory round trip.
-func (r CommandRunner) RenderSessionSnapshot(ctx context.Context, out io.Writer, endpointID, resourceID, generation string, maxBytes, maxLines int) error {
+func (r CommandRunner) RenderSessionSnapshot(ctx context.Context, out io.Writer, endpointID, resourceID, generation string, maxBytes, maxLines int, color ColorPolicy) error {
 	snapshot, err := r.API.GetOutput(ctx, endpointID, resourceID, generation, maxBytes, maxLines)
 	if err != nil {
 		return err
 	}
 	if snapshot.ErrorCode != "" {
-		_, err = fmt.Fprintln(out, snapshot.ErrorCode)
+		_, err = fmt.Fprintln(out, sanitizeTerminal([]byte(snapshot.ErrorCode)))
 		return err
 	}
-	RenderSnapshot(out, snapshot.ObservedAtMS, snapshot.Data, snapshot.Truncated, maxLines)
+	RenderSnapshotStyled(out, snapshot.ObservedAtMS, snapshot.Data, snapshot.Truncated, maxLines, color)
 	return nil
 }
 

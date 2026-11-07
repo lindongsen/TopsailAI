@@ -24,6 +24,13 @@ type safeWriter struct {
 	state        terminalSequenceState
 	utf8Pending  []byte
 	sequenceSize int
+	// keepSGR preserves colour-only SGR sequences instead of dropping every
+	// escape sequence. It never widens the allow list beyond SGR, so cursor
+	// movement, title changes and hyperlinks stay stripped.
+	keepSGR bool
+	// sequence buffers the escape sequence currently being consumed, so a
+	// completed SGR sequence can be replayed verbatim when keepSGR is set.
+	sequence []byte
 }
 
 func newSafeWriter(target io.Writer) *safeWriter { return &safeWriter{target: target} }
@@ -48,12 +55,13 @@ func (w *safeWriter) Flush() error {
 	}
 	w.state = terminalNormal
 	w.sequenceSize = 0
+	w.sequence = nil
 	return nil
 }
 
 func (w *safeWriter) consume(value byte, clean *strings.Builder) {
 	if w.state != terminalNormal {
-		w.consumeSequence(value)
+		w.consumeSequence(value, clean)
 		return
 	}
 	if len(w.utf8Pending) > 0 {
@@ -74,6 +82,7 @@ func (w *safeWriter) consume(value byte, clean *strings.Builder) {
 	if value == 0x1b {
 		w.state = terminalEscape
 		w.sequenceSize = 1
+		w.sequence = append(w.sequence[:0], value)
 		return
 	}
 	if value < utf8.RuneSelf {
@@ -85,13 +94,17 @@ func (w *safeWriter) consume(value byte, clean *strings.Builder) {
 		w.consumeRune(clean)
 	}
 }
-func (w *safeWriter) consumeSequence(value byte) {
+func (w *safeWriter) consumeSequence(value byte, clean *strings.Builder) {
 	if w.sequenceSize < maxTerminalSequenceBytes {
 		w.sequenceSize++
 	}
 	if w.sequenceSize >= maxTerminalSequenceBytes {
 		w.state = terminalDiscard
+		w.sequence = nil
 		return
+	}
+	if len(w.sequence) < maxTerminalSequenceBytes {
+		w.sequence = append(w.sequence, value)
 	}
 	switch w.state {
 	case terminalEscape:
@@ -103,16 +116,22 @@ func (w *safeWriter) consumeSequence(value byte) {
 		default:
 			w.state = terminalNormal
 			w.sequenceSize = 0
+			w.sequence = nil
 		}
 	case terminalCSI:
 		if value >= 0x40 && value <= 0x7e {
+			if w.keepSGR && isSGRSequence(w.sequence) {
+				clean.Write(w.sequence)
+			}
 			w.state = terminalNormal
 			w.sequenceSize = 0
+			w.sequence = nil
 		}
 	case terminalOSC:
 		if value == 0x07 {
 			w.state = terminalNormal
 			w.sequenceSize = 0
+			w.sequence = nil
 		} else if value == 0x1b {
 			w.state = terminalOSCEscape
 		}
@@ -120,6 +139,7 @@ func (w *safeWriter) consumeSequence(value byte) {
 		if value == '\\' || value == 0x07 {
 			w.state = terminalNormal
 			w.sequenceSize = 0
+			w.sequence = nil
 		} else {
 			w.state = terminalOSC
 		}
@@ -127,10 +147,34 @@ func (w *safeWriter) consumeSequence(value byte) {
 		if value == 0x07 {
 			w.state = terminalNormal
 			w.sequenceSize = 0
+			w.sequence = nil
 		} else if value == 0x1b {
 			w.state = terminalOSCEscape
 		}
 	}
+}
+
+// isSGRSequence reports whether sequence is a complete colour-only SGR
+// sequence of the form ESC [ <digits, ';' or ':'> m. Anything else, including
+// private modes and cursor controls, is rejected so the allow list stays
+// limited to styling.
+func isSGRSequence(sequence []byte) bool {
+	if len(sequence) < 3 || sequence[0] != 0x1b || sequence[1] != '[' {
+		return false
+	}
+	if sequence[len(sequence)-1] != 'm' {
+		return false
+	}
+	for _, value := range sequence[2 : len(sequence)-1] {
+		if value >= '0' && value <= '9' {
+			continue
+		}
+		if value == ';' || value == ':' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (w *safeWriter) consumeRune(clean *strings.Builder) {
@@ -196,6 +240,18 @@ func sanitizeTerminal(data []byte) string {
 	var output strings.Builder
 	writer := &safeWriter{target: &output}
 	_, _ = writer.Write(data)
+	_ = writer.Flush()
+	return output.String()
+}
+
+// filterProviderOutput sanitizes untrusted provider output for terminal display.
+// Dangerous sequences are always removed. SGR colour survives only when the
+// colour policy is enabled, so a redirected or --no-color run stays byte
+// identical to plain text.
+func filterProviderOutput(content string, policy ColorPolicy) string {
+	var output strings.Builder
+	writer := &safeWriter{target: &output, keepSGR: policy.Enabled}
+	_, _ = writer.Write([]byte(content))
 	_ = writer.Flush()
 	return output.String()
 }

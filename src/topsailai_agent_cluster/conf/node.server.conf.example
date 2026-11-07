@@ -14,6 +14,13 @@ CHANNEL_LISTEN_ADDR=127.0.0.1:53943
 # Pre-provisioned bearer token that endpoints must present.
 AUTH_TOKEN=replace-with-a-real-token
 
+# Operator scopes granted to the bearer token. Comma-separated. An empty value
+# grants every scope, which is the single-administrator deployment. Recognised
+# values: view, read_output, send_message, control, endpoint_admin. A command
+# whose advertised capability declares a permission is rejected with 403 when
+# the credential does not hold it, and every ctl.* operation must declare one.
+AUTH_SCOPES=
+
 # TLS material, relative to the bundle root.
 TLS_CA_FILE=certs/ca.pem
 TLS_CERTIFICATE_FILE=certs/node.pem

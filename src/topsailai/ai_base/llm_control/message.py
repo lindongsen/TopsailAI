@@ -196,7 +196,7 @@ def fix_llm_mistakes(response:list, rsp_obj=None):
         return new_response
 
     # case: only tool_call and tool_args, missing step_name
-    if len(response) == 1:
+    if len(response) == 1 and isinstance(response[0], dict):
         item = response[0]
         if len(item) == 2:
             if 'tool_call' in item and 'tool_args' in item:
@@ -307,6 +307,10 @@ def get_count_of_action(messages:list, tool_stat=None) -> int:
 
 def update_response_item(item:dict) -> dict:
     """ for item in response(list) """
+    if not isinstance(item, dict):
+        # Defensive: a step must be an object. Returning the value unchanged
+        # keeps this helper safe for callers that have not normalized yet.
+        return item
     if item.get("step_name") == "action" and item.get("raw_text"):
         item_extra = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", item["raw_text"])
         if not item_extra or isinstance(item_extra, str):
@@ -380,6 +384,43 @@ def maybe_convert_thought_to_final(item: dict, messages=None) -> bool:
     return True
 
 
+def _normalize_response_items(response):
+    """Coerce non-object step items into ``thought`` steps.
+
+    An LLM may answer with a JSON array of bare scalars, for example
+    ``["fix: wait for the channel"]``. Such an item carries no ``step_name``,
+    so any consumer that reads ``item["step_name"]`` or calls ``item.get(...)``
+    fails. Converting the scalar into a ``thought`` step keeps the model's text
+    instead of discarding it, and guarantees that every returned step is a dict.
+
+    Args:
+        response (list): Parsed LLM response list.
+
+    Returns:
+        list: The same list, mutated in place when a non-object item was found.
+    """
+    if not isinstance(response, list):
+        return response
+
+    converted_count = 0
+    for index, item in enumerate(response):
+        if isinstance(item, dict):
+            continue
+        response[index] = {
+            "step_name": STEP_NAME_THOUGHT,
+            "raw_text": "" if item is None else str(item),
+        }
+        converted_count += 1
+
+    if converted_count:
+        print_warning(
+            f"{LLM_KEYWORD_MISTAKE}: converted {converted_count} "
+            "non-object step(s) to thought because a step must be an object"
+        )
+
+    return response
+
+
 def format_response_finally(response, rsp_obj=None, messages=None):
     """ return new response """
     new_response = fix_llm_mistakes(response, rsp_obj)
@@ -388,6 +429,7 @@ def format_response_finally(response, rsp_obj=None, messages=None):
 
     # hook after chat
     if isinstance(response, list):
+        response = _normalize_response_items(response)
         if len(response) == 1:
             item = response[0]
             update_response_item(item)
@@ -416,8 +458,6 @@ def format_response_finally(response, rsp_obj=None, messages=None):
         else:
             # search step_name="action"
             for item in response:
-                if not isinstance(item, dict):
-                    continue
                 update_response_item(item)
     return response
 
@@ -522,7 +562,10 @@ def format_response(response, rsp_obj=None, messages=None):
         then falling back to standard JSON parsing.
     """
     if isinstance(response, (list, dict)):
-        return _to_list(response)
+        # Already-structured input still needs step normalization: a caller may
+        # pass a list containing bare scalars, which would otherwise reach the
+        # agent loop and fail on step["step_name"].
+        return _normalize_response_items(_to_list(response))
 
     if isinstance(response, str):
         response = response.strip()
@@ -582,8 +625,14 @@ def format_response(response, rsp_obj=None, messages=None):
                     response.clear()
                     if isinstance(new_response, list):
                         response.extend(new_response)
-                    else:
+                    elif isinstance(new_response, dict):
                         response.append(new_response)
+                    else:
+                        # A bare scalar must never enter the step list.
+                        response.append({
+                            "step_name": STEP_NAME_THOUGHT,
+                            "raw_text": str(new_response),
+                        })
                 else:
                     response = new_response
     # hook after chat
@@ -592,10 +641,10 @@ def format_response(response, rsp_obj=None, messages=None):
         print_warning(f"{LLM_KEYWORD_MISTAKE}: TOPSAILAI_HOOK_AFTER_LLM_CHAT")
         response = new_response
         if not isinstance(response, str):
-            return response
+            return _normalize_response_items(response)
 
     if not isinstance(response, str):
-        return response
+        return _normalize_response_items(response)
 
     # only thought
     # response is string

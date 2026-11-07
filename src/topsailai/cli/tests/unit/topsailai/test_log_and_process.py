@@ -100,25 +100,19 @@ class TestDiscoverLogFiles(unittest.TestCase):
         self.assertEqual(task["pid"], 5678)
         self.assertEqual(task["session_pid"], 1234)
 
-    @patch("cli_topsailai.log_files.subprocess.Popen")
-    def test_from_lsof(self, mock_popen):
-        mock_proc = MagicMock()
-        mock_proc.communicate.return_value = ("1234\n", "")
-        mock_proc.returncode = 0
-        mock_proc.poll.return_value = 0
-        mock_popen.return_value = mock_proc
-        pid = get_file_pid("/tmp/s1.1234.session.stdout")
+    def test_filename_pid_is_authoritative(self):
+        """A parseable filename yields its PID without any external tool."""
+        with patch("cli_topsailai.log_files.subprocess.Popen") as mock_popen:
+            pid = get_file_pid("/tmp/s1.1234.session.stdout")
         self.assertEqual(pid, 1234)
+        mock_popen.assert_not_called()
 
     def test_no_pid(self):
+        """A filename without a PID is never resolved by guessing a holder."""
         with patch("cli_topsailai.log_files.subprocess.Popen") as mock_popen:
-            mock_proc = MagicMock()
-            mock_proc.communicate.return_value = ("", "")
-            mock_proc.returncode = 0
-            mock_proc.poll.return_value = 0
-            mock_popen.return_value = mock_proc
             pid = get_file_pid("/tmp/s1.session.stdout")
         self.assertIsNone(pid)
+        mock_popen.assert_not_called()
 
 
 class TestSessionPipeDetection(unittest.TestCase):

@@ -44,6 +44,7 @@ var commandScopeMatrix = []commandScopeRule{
 	{Name: "send", Session: true},
 	{Name: "status", Workspace: true, Endpoint: true, Session: true},
 	{Name: "refresh", Workspace: true, Endpoint: true, Session: true},
+	{Name: "watch", Workspace: true, Endpoint: true},
 	{Name: "help", Workspace: true, Endpoint: true, Session: true},
 	{Name: "quit", Workspace: true, Endpoint: true, Session: true},
 }
@@ -60,6 +61,7 @@ var commandAliases = map[string]string{
 	"q":        "quit",
 	"r":        "refresh",
 	"l":        "list",
+	"w":        "watch",
 	"btw":      "inject",
 	"control":  "interrupt",
 	sendPrefix: "send",

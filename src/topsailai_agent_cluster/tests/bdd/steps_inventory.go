@@ -310,7 +310,7 @@ func registerRealInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 		return activeScenario.world.StartRealCluster(harness.FaultInjection{TwoAdapters: true, ProviderFailAdapterID: "adapter-b", CollectionDelayMS: 100})
 	})
 	ctx.Step(`^the real Endpoint publishes the isolated adapter inventory$`, func() error {
-		inventory, err := waitRealInventory(5*time.Second, func(report protocol.InventoryReport) bool { return len(report.Adapters) == 2 })
+		inventory, err := waitRealInventory(realInventoryWait, func(report protocol.InventoryReport) bool { return len(report.Adapters) == 2 })
 		if err != nil {
 			return err
 		}
@@ -341,14 +341,14 @@ func registerRealInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 		return activeScenario.world.StartRealCluster(harness.FaultInjection{ProviderFailAfterN: 1, CollectionDelayMS: 100})
 	})
 	ctx.Step(`^the real Endpoint refreshes inventory after provider failure$`, func() error {
-		first, err := waitRealInventory(5*time.Second, func(report protocol.InventoryReport) bool {
+		first, err := waitRealInventory(realInventoryWait, func(report protocol.InventoryReport) bool {
 			return len(report.Adapters) == 1 && report.Adapters[0].DataKnown && !report.Adapters[0].Stale && len(report.Sessions) > 0
 		})
 		if err != nil {
 			return err
 		}
 		activeScenario.firstInventory = first
-		_, err = waitRealInventory(5*time.Second, func(report protocol.InventoryReport) bool {
+		_, err = waitRealInventory(realInventoryWait, func(report protocol.InventoryReport) bool {
 			return len(report.Adapters) == 1 && report.Adapters[0].Stale
 		})
 		return err
@@ -381,7 +381,7 @@ func registerRealInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 		return activeScenario.world.StartRealCluster(harness.FaultInjection{ProviderAlwaysFail: true, CollectionDelayMS: 100, ProviderFailAdapterID: "fixture-main"})
 	})
 	ctx.Step(`^the real Endpoint publishes the failed first inventory$`, func() error {
-		_, err := waitRealInventory(5*time.Second, func(report protocol.InventoryReport) bool {
+		_, err := waitRealInventory(realInventoryWait, func(report protocol.InventoryReport) bool {
 			return len(report.Adapters) == 1 && !report.Adapters[0].DataKnown
 		})
 		return err
@@ -403,18 +403,43 @@ func registerRealInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 	})
 }
 
+// realInventoryWait bounds how long a real-cluster scenario waits for the Endpoint
+// collection cycle to reach an expected state. The Endpoint collects on its own
+// interval and the provider fault injection adds a discovery round, so under
+// full-parallel package load the cycle can take several seconds. A short fixed
+// budget expired before the expected state appeared and produced a flaky failure
+// that was not a logic defect. The budget is generous because the poll returns as
+// soon as the condition holds, so a healthy run is not slowed down.
+const realInventoryWait = 30 * time.Second
+
+// waitRealInventory polls the persisted inventory until match accepts it or the
+// budget expires. The timeout error reports the elapsed time and the last observed
+// document so a failure can be diagnosed without re-running the suite.
 func waitRealInventory(timeout time.Duration, match func(protocol.InventoryReport) bool) (protocol.InventoryReport, error) {
-	deadline := time.Now().Add(timeout)
+	started := time.Now()
+	deadline := started.Add(timeout)
+	var last protocol.InventoryReport
+	var lastErr error
+	observed := false
 	for time.Now().Before(deadline) {
 		value, err := activeScenario.world.RealInventory()
 		if err == nil {
 			data, _ := json.Marshal(value)
 			var report protocol.InventoryReport
-			if json.Unmarshal(data, &report) == nil && match(report) {
-				return report, nil
+			if json.Unmarshal(data, &report) == nil {
+				last, observed, lastErr = report, true, nil
+				if match(report) {
+					return report, nil
+				}
 			}
+		} else {
+			lastErr = err
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return protocol.InventoryReport{}, fmt.Errorf("real inventory did not reach expected state")
+	if !observed {
+		return protocol.InventoryReport{}, fmt.Errorf("real inventory did not reach expected state within %s: no readable inventory, last error: %v", timeout, lastErr)
+	}
+	return protocol.InventoryReport{}, fmt.Errorf("real inventory did not reach expected state within %s: last observed adapters=%#v collection_status=%q report_complete=%t sessions=%d",
+		timeout, last.Adapters, last.CollectionStatus, last.ReportComplete, len(last.Sessions))
 }

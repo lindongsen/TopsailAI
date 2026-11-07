@@ -1396,3 +1396,139 @@ class TestLlmMistakeWarningSuppressionNativeToolCalls:
                    return_value=(False, "")):
             format_response("just some text", rsp_obj=None, messages=[])
         assert any("maybe only thought" in str(call.args[0]) for call in mpw.call_args_list)
+
+
+class TestNonObjectStepNormalization:
+    """Regression suite for LLM responses whose steps are bare scalars.
+
+    A model may answer with a JSON array of plain strings, for example
+    ``["fix: wait for the channel"]``. Such an item has no ``step_name``, so
+    ``update_response_item()`` used to raise
+    ``AttributeError: 'str' object has no attribute 'get'`` and the whole agent
+    turn failed. Every step returned by ``format_response()`` must be a dict.
+    """
+
+    BARE_PAYLOAD = '["fix: wait for the channel before the first inventory publish"]'
+
+    def test_format_response_bare_string_array_does_not_raise(self):
+        """A JSON array of one bare string must not crash format_response."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        result = format_response(self.BARE_PAYLOAD)
+
+        assert isinstance(result, list)
+        assert result == [{
+            "step_name": "thought",
+            "raw_text": "fix: wait for the channel before the first inventory publish",
+        }]
+
+    def test_format_response_bare_string_array_keeps_model_text(self):
+        """The model's text must be preserved instead of being discarded."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        result = format_response(self.BARE_PAYLOAD)
+
+        assert "fix: wait for the channel" in result[0]["raw_text"]
+
+    def test_format_response_multiple_bare_strings(self):
+        """Every bare string in a multi-element array becomes a thought step."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        result = format_response('["first", "second"]')
+
+        assert result == [
+            {"step_name": "thought", "raw_text": "first"},
+            {"step_name": "thought", "raw_text": "second"},
+        ]
+
+    def test_format_response_non_string_scalars(self):
+        """Numbers and nulls are normalized too, never left as raw scalars."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        assert format_response("[42]") == [{"step_name": "thought", "raw_text": "42"}]
+        assert format_response("[null]") == [{"step_name": "thought", "raw_text": ""}]
+
+    def test_format_response_list_input_with_bare_scalars(self):
+        """An already-structured list input is normalized as well."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        result = format_response([{"step_name": "thought", "raw_text": "a"}, "bare", 42, None])
+
+        assert all(isinstance(item, dict) for item in result)
+        assert result[0] == {"step_name": "thought", "raw_text": "a"}
+        assert result[1] == {"step_name": "thought", "raw_text": "bare"}
+        assert result[2] == {"step_name": "thought", "raw_text": "42"}
+        assert result[3] == {"step_name": "thought", "raw_text": ""}
+
+    def test_format_response_never_returns_non_dict_items(self):
+        """Invariant: no consumer may receive a non-dict step."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        payloads = [
+            '["bare"]',
+            '["a", "b"]',
+            '[42]',
+            '[null]',
+            ["bare"],
+            [{"step_name": "thought", "raw_text": "a"}, "bare"],
+        ]
+        for payload in payloads:
+            result = format_response(payload)
+            assert isinstance(result, list), payload
+            assert all(isinstance(item, dict) for item in result), payload
+
+    def test_format_response_finally_bare_string_does_not_raise(self):
+        """format_response_finally must tolerate a bare-scalar step list."""
+        from topsailai.ai_base.llm_control.message import format_response_finally
+
+        result = format_response_finally(["bare"])
+
+        assert all(isinstance(item, dict) for item in result)
+        assert result[0]["step_name"] == "thought"
+
+    def test_update_response_item_returns_non_dict_unchanged(self):
+        """The defensive guard returns a non-dict item instead of raising."""
+        from topsailai.ai_base.llm_control.message import update_response_item
+
+        assert update_response_item("bare") == "bare"
+        assert update_response_item(42) == 42
+        assert update_response_item(None) is None
+
+    def test_fix_llm_mistakes_bare_string_does_not_raise(self):
+        """fix_llm_mistakes must not index into a bare-scalar step."""
+        from topsailai.ai_base.llm_control.message import fix_llm_mistakes
+
+        result = fix_llm_mistakes(["bare"])
+
+        assert result == ["bare"]
+
+    def test_normalize_response_items_warns_once(self):
+        """Normalization is observable through one warning per call."""
+        from topsailai.ai_base.llm_control.message import _normalize_response_items
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning") as mpw:
+            _normalize_response_items(["a", "b"])
+
+        assert mpw.call_count == 1
+        assert "non-object step" in str(mpw.call_args.args[0])
+
+    def test_normalize_response_items_leaves_dicts_untouched(self):
+        """Valid steps keep their identity and no warning is emitted."""
+        from topsailai.ai_base.llm_control.message import _normalize_response_items
+
+        item = {"step_name": "thought", "raw_text": "a"}
+        response = [item]
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning") as mpw:
+            result = _normalize_response_items(response)
+
+        assert result is response
+        assert result[0] is item
+        mpw.assert_not_called()
+
+    def test_normalize_response_items_passes_through_non_list(self):
+        """Non-list input is returned unchanged so callers stay safe."""
+        from topsailai.ai_base.llm_control.message import _normalize_response_items
+
+        assert _normalize_response_items("text") == "text"
+        assert _normalize_response_items(None) is None

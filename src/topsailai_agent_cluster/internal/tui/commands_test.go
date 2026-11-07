@@ -294,7 +294,7 @@ func TestCommandRunnerShowAndLogs(t *testing.T) {
 		t.Fatalf("show=%q", out.String())
 	}
 	out.Reset()
-	if err := (CommandRunner{API: api}).Logs(context.Background(), &out, "ep", "session", 128, 128, false); err != nil {
+	if err := (CommandRunner{API: api}).Logs(context.Background(), &out, "ep", "session", 128, 128, false, ColorPolicy{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "log") {

@@ -120,12 +120,13 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if !terminal {
 			return fmt.Errorf("interactive mode requires a terminal on stdin")
 		}
-		readLine, closeEditor, editorErr := interactiveEditor(input, output)
+		editor, closeEditor, editorErr := interactiveEditor(input, output)
 		if editorErr != nil {
 			return editorErr
 		}
 		defer closeEditor()
-		return tui.RunInteractive(ctx, api, input, output, errors, tui.InteractiveOptions{ReadLine: readLine, MaxBytes: *maxBytes, MaxLines: *lines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)})
+		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: *lines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)}
+		return tui.RunInteractive(ctx, api, input, output, errors, wireEditorReaders(options, editor))
 	}
 	switch flags.Arg(0) {
 	case "help":
@@ -170,7 +171,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if flags.NArg() != 3 {
 			return fmt.Errorf("usage: logs <endpoint-id> <session-id>")
 		}
-		return logs(ctx, api, output, flags.Arg(1), flags.Arg(2), *maxBytes, *lines, *jsonMode)
+		return logs(ctx, api, output, flags.Arg(1), flags.Arg(2), *maxBytes, *lines, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
 	case "status":
 		if flags.NArg() != 2 {
 			return fmt.Errorf("usage: status <command-id>")
@@ -370,8 +371,8 @@ func status(ctx context.Context, api tui.CommandAPI, output io.Writer, commandID
 	return legacyRunner(api).Status(ctx, output, commandID, jsonMode)
 }
 
-func logs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID, resourceID string, maxBytes, maxLines int, jsonMode bool) error {
-	return legacyRunner(api).Logs(ctx, output, endpointID, resourceID, maxBytes, maxLines, jsonMode)
+func logs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID, resourceID string, maxBytes, maxLines int, jsonMode bool, color tui.ColorPolicy) error {
+	return legacyRunner(api).Logs(ctx, output, endpointID, resourceID, maxBytes, maxLines, jsonMode, color)
 }
 
 // drive dispatches the standalone drive surface. status is a read projection of
@@ -578,7 +579,22 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 	if err != nil {
 		return err
 	}
-	return runner.RenderAction(output, result)
+	if err := runner.RenderAction(output, result); err != nil {
+		return err
+	}
+	if operation != "start" {
+		return nil
+	}
+	// A successful start forces one fresh collection for the Endpoint that accepted
+	// it, so the operator's next list already contains the launched session instead
+	// of waiting for the periodic collection. The refresh is scoped to that single
+	// Endpoint, and its failure is reported on stderr without changing the exit
+	// status, because the admission already succeeded.
+	refreshCtx, cancel := context.WithTimeout(ctx, tui.RefreshCommandTimeout())
+	defer cancel()
+	options := tui.TableOptionsFor(output)
+	options.Color = color
+	return runner.RefreshAfterStart(refreshCtx, output, diagnostics, endpointID, result, jsonMode, options)
 }
 
 // rejectMisplacedFlags fails when a flag appears after the command name. flag.Parse stops

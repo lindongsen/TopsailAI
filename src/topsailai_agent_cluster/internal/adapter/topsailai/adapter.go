@@ -12,6 +12,7 @@ import (
 
 	"topsailai_agent_cluster/internal/adapter"
 	"topsailai_agent_cluster/internal/protocol"
+	"topsailai_agent_cluster/internal/security"
 )
 
 const (
@@ -105,6 +106,10 @@ func (a *Adapter) Describe(context.Context) (adapter.Descriptor, error) {
 			{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion, TargetKinds: []string{"session"}, SafetyClass: "mutating", RequiredPermission: "control"},
 		}},
 	}
+	// The provider control family is advertised per reviewed action so an operator
+	// sees exactly the actions this adapter serves, and each action carries the
+	// scope it requires instead of inheriting one blanket permission.
+	descriptor.Capabilities.Capabilities = append(descriptor.Capabilities.Capabilities, controlActionCapabilities()...)
 	if a.platformStop {
 		descriptor.Capabilities.Capabilities = append(descriptor.Capabilities.Capabilities, protocol.Capability{Name: protocol.OperationAgentStop, Version: "v1", TargetKinds: []string{"session"}})
 	}
@@ -406,7 +411,18 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 		// process is already gone, so it must not require a live target.
 		args = []string{"workspace", "driver", "stop", "-s", providerKey, "--json"}
 	default:
-		return adapter.ExecuteResult{Receipt: failedReceipt(intent, "unsupported")}, adapter.ErrUnsupported
+		// The provider control family is addressed by a dynamic ctl.<action>
+		// operation, so it cannot be a constant case label. controlActionArgs
+		// matches the reviewed action list before building any argv, so an
+		// unreviewed action never reaches the provider.
+		if !strings.HasPrefix(operation, security.ProviderControlPrefix) {
+			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "unsupported")}, adapter.ErrUnsupported
+		}
+		controlArgs, controlErr := controlActionArgs(operation, providerKey, intent.Payload)
+		if controlErr != nil {
+			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "control_action_unreviewed")}, controlErr
+		}
+		args = controlArgs
 	}
 	output, runErr := a.run(ctx, args, stdin)
 	if runErr != nil {

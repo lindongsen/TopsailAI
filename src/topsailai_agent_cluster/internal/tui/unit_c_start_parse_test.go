@@ -181,7 +181,7 @@ func TestUnitCStartStandaloneHelpMatchesCurrentPreCContract(t *testing.T) {
 		target, digest string
 		size           int
 	}{
-		{"", "3b62e1897343b514d6489471badd7199c8fcf4386493f23ab61dc3fcff8fa819", 2687},
+		{"", "68dbdca1879139f00bfd84d1dc3a6f3b8e5f33c4f7b0abec5fd7370fd0df7ae5", 2907},
 		{"list", "0fc390aa89e1e351aa49974d5a5337c960f2d6ef011f4f00dbcc5e3a2055d17b", 1636},
 		{"start", "6aac03c01fec470e6be86de823e2950f99f167aa6f41da76331a39465c665943", 1205},
 		{"btw", "c0e4ae508c716488feeafd031490c9930e90ba244fbfd3afb80b3bc6d10ab97c", 288},

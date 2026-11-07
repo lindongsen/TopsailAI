@@ -630,7 +630,7 @@ func TestInteractiveGuidedInterruptRejectsUnknownAction(t *testing.T) {
 
 func TestHelpCommandNamesReturnsStableSortedNames(t *testing.T) {
 	names := HelpCommandNames()
-	if len(names) == 0 || names[0] != "cd" || names[len(names)-1] != "stop" {
+	if len(names) == 0 || names[0] != "cd" || names[len(names)-1] != "watch" {
 		t.Fatalf("unexpected help names: %v", names)
 	}
 	for index := 1; index < len(names); index++ {

@@ -46,6 +46,7 @@ from cli_topsailai.log_files import (
     _parse_stdout_filename,
     discover_log_files,
     get_file_pid,
+    is_file_in_use,
 )
 from cli_topsailai.process import cleanup_children, run_external_command
 from cli_topsailai.retrieve import retrieve_session
@@ -388,11 +389,22 @@ class TestDiscoverLogFilesSkipNonFile(unittest.TestCase):
             self.assertEqual(result, [])
 
 
-class TestGetFilePidCleanup(unittest.TestCase):
-    """Tests for get_file_pid cleanup kill/wait paths."""
+class TestFileInUseCleanup(unittest.TestCase):
+    """Tests for is_file_in_use cleanup kill/wait paths."""
 
     def tearDown(self):
         cli_state._child_processes.clear()
+
+    def _probe_without_proc(self):
+        """Run the portable fallback with a stubbed process table."""
+        handle = tempfile.NamedTemporaryFile(delete=False)
+        path = handle.name
+        handle.close()
+        try:
+            with patch("cli_topsailai.log_files._proc_available", return_value=False):
+                return is_file_in_use(path)
+        finally:
+            os.unlink(path)
 
     @patch("cli_topsailai.log_files.subprocess.Popen")
     def test_lsof_kill_survivor(self, mock_popen):
@@ -402,8 +414,7 @@ class TestGetFilePidCleanup(unittest.TestCase):
         mock_proc.poll.side_effect = [None, 0]
         mock_popen.return_value = mock_proc
 
-        with patch("builtins.print"):
-            get_file_pid("/tmp/file")
+        self.assertFalse(self._probe_without_proc())
 
         mock_proc.kill.assert_called_once()
         mock_proc.wait.assert_called_once_with(timeout=1)
@@ -416,8 +427,7 @@ class TestGetFilePidCleanup(unittest.TestCase):
         mock_proc.poll.side_effect = [0, None, 0]
         mock_popen.return_value = mock_proc
 
-        with patch("builtins.print"):
-            get_file_pid("/tmp/file")
+        self.assertFalse(self._probe_without_proc())
 
         mock_proc.kill.assert_called_once()
         mock_proc.wait.assert_called_once_with(timeout=1)

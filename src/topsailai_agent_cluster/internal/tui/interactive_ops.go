@@ -16,7 +16,10 @@ import (
 // interactiveLogs resolves the session inside the current endpoint scope.
 // A bare ASCII row number selects the session from the most recently rendered
 // list, so the operator never has to type a provider session identifier.
-func interactiveLogs(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, maxBytes, maxLines int, out io.Writer) error {
+// The snapshot body is written through trustedOut because RenderSessionSnapshot
+// sanitizes it at the data boundary; writing it through the safe writer as well
+// would strip the SGR colour the colour policy just allowed.
+func interactiveLogs(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, maxBytes, maxLines int, trustedOut io.Writer, color ColorPolicy) error {
 	if state.Invalidated {
 		return state.requireUsable()
 	}
@@ -52,7 +55,7 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 	if err != nil {
 		return numericTokenHint(strings.TrimSpace(rest), err)
 	}
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, out, endpointID, session.SessionID, maxBytes, maxLines, false)
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, trustedOut, endpointID, session.SessionID, maxBytes, maxLines, false, color)
 }
 
 // parseLogsArgs splits an optional session token from an optional line limit.
@@ -309,8 +312,43 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if afterCapability.Revision != beforeCapability.Revision {
 		return fmt.Errorf("capability changed after confirmation; send cancelled")
 	}
+	return submitSessionMessage(parent, api, state, session, sendPayload, out, options)
+}
+
+// sendSessionMessage submits one message whose text the operator has already
+// confirmed. The caller owns the confirmation, so this path performs one
+// capability preflight and never asks the same question again.
+func sendSessionMessage(parent context.Context, api InteractiveAPI, state *interactiveState, text string, out io.Writer, options InteractiveOptions) error {
+	if err := state.requireUsable(); err != nil {
+		return err
+	}
+	if len(text) > options.LineLimit {
+		return fmt.Errorf("payload exceeds the maximum length")
+	}
+	payload, err := MessagePayload(text)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := commandContext(parent)
+	defer cancel()
+	if _, err := PreflightCapability(ctx, api, state.EndpointID, protocol.OperationMessageSend); err != nil {
+		return err
+	}
+	_, _, session, err := findSelected(ctx, api, state)
+	if err != nil {
+		return err
+	}
+	return submitSessionMessage(parent, api, state, session, payload, out, options)
+}
+
+// submitSessionMessage prepares, admits and renders one message intent for an
+// already validated session, so both the send command and the unknown-input
+// offer share one submission path.
+func submitSessionMessage(parent context.Context, api InteractiveAPI, state *interactiveState, session *protocol.Session, payload json.RawMessage, out io.Writer, options InteractiveOptions) error {
+	ctx, cancel := commandContext(parent)
+	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: sendPayload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
+	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
 	if err != nil {
 		return err
 	}
@@ -335,7 +373,7 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	// The read gets its own bounded budget because the local wait may already have
 	// exhausted the command deadline, and a failed read is reported as a
 	// diagnostic instead of turning the accepted send into a failure.
-	if err := renderAutomaticSnapshot(parent, api, state, out, options, "send completed"); err != nil {
+	if err := renderAutomaticSnapshot(parent, api, state, out, options.Color, options, "send completed"); err != nil {
 		return err
 	}
 	// The send changed the provider's state, so the persisted inventory is now
@@ -497,7 +535,58 @@ func interactiveStart(parent context.Context, api InteractiveAPI, state *interac
 	if err != nil {
 		return fmt.Errorf("command %s status unavailable; use status %s to query; %w", state.commandID, state.commandID, err)
 	}
-	return renderInteractiveStartResult(out, action.CommandID, result)
+	if err := renderInteractiveStartResult(out, action.CommandID, result); err != nil {
+		return err
+	}
+	return refreshAfterStart(parent, api, request.EndpointID, result, out, options)
+}
+
+// refreshAfterStart forces one fresh collection for the Endpoint that accepted the
+// start, so the operator's next list already contains the launched session instead
+// of waiting for the periodic collection. The shared runner implementation owns the
+// scoping, the pending-visibility decision and the failure handling; this wrapper
+// only supplies the interactive writers and budget. Both streams are the trusted
+// output because the interactive REPL reports refresh diagnostics inline, and the
+// render is informational: it leaves the row-number index untouched so navigation
+// to other Endpoints keeps working.
+func refreshAfterStart(parent context.Context, api InteractiveAPI, endpointID string, result map[string]any, out io.Writer, options InteractiveOptions) error {
+	ctx, cancel := context.WithTimeout(parent, refreshCommandTimeout)
+	defer cancel()
+	runner := CommandRunner{API: api, Policy: InteractivePolicy}
+	return runner.RefreshAfterStart(ctx, out, out, endpointID, result, false, tableOptionsFor(out, options.Color, false, nil))
+}
+
+// sessionIDs reads the committed projection and returns its standard session IDs.
+// The second result reports whether the baseline could be read at all, so an
+// unreadable projection never fabricates a not-yet-visible conclusion.
+func sessionIDs(ctx context.Context, api InteractiveAPI, endpointID string) (map[string]struct{}, bool) {
+	report, err := api.GetInventory(ctx, endpointID)
+	if err != nil {
+		return nil, false
+	}
+	ids := make(map[string]struct{}, len(report.Sessions))
+	for _, session := range report.Sessions {
+		ids[session.SessionID] = struct{}{}
+	}
+	return ids, true
+}
+
+// appearedSince reports whether the refreshed document contains a session that the
+// baseline did not, which is the only evidence that the launch became visible.
+func appearedSince(before map[string]struct{}, report protocol.InventoryReport) bool {
+	for _, session := range report.Sessions {
+		if _, known := before[session.SessionID]; !known {
+			return true
+		}
+	}
+	return false
+}
+
+// startRefreshDiagnostic reports a post-start collection failure without turning a
+// successful admission into a command error.
+func startRefreshDiagnostic(out io.Writer, err error) error {
+	_, _ = fmt.Fprintf(out, "refresh after start failed: %v\n", err)
+	return nil
 }
 
 // renderInteractiveStartResult writes the durable start result without JSON formatting.

@@ -54,7 +54,22 @@ Gate the initial publish on channel readiness, or classify `channel.ErrOffline` 
 non-error (retry on the next tick) instead of logging it at ERROR. The first option matches the existing
 `waitForChannelReady` pattern already used by `recoverAcceptedCommands`.
 
+## Resolution
+
+Fixed on 2026-11-07. `collectionLoop` now gates the initial publish on
+`waitForChannelReady`, the same readiness signal `recoverAcceptedCommands` already uses. The loop waits
+for the authenticated transport instead of collecting and sending into an offline channel, so startup no
+longer logs an `ErrOffline` ERROR that is indistinguishable from a real publish failure. Cancellation
+before readiness returns without publishing and without logging an ERROR. A transport without the
+`ReadyChannel` seam keeps the previous immediate-publish behaviour, so no existing caller changes.
+
+Regression tests in `internal/endpoint/collection_readiness_test.go` cover the suppressed initial
+publish, cancellation before readiness, the no-seam fallback and continued ticks after readiness. Two of
+the four tests were proven to fail against the unfixed code, so the guard is effective rather than
+vacuous.
+
 ## Status
 
-Open. Not fixed during the deployment unit: the task was installation, and `internal/endpoint/` was being
-edited concurrently by another agent in the same workspace.
+Resolved. Live confirmation on a deployed Endpoint restart remains a manual check and is not claimed as
+executed; the unit tests prove the gate and the absence of the ERROR line but do not reproduce a real TLS
+handshake delay.

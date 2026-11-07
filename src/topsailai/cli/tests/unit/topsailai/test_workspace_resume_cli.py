@@ -4,6 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
+from cli_topsailai import process_liveness
+from cli_topsailai.process_liveness import ProcessState
 from cli_topsailai.workspace_resume_cli import build_parser, run_workspace_resume_cli
 
 
@@ -165,7 +167,10 @@ def test_older_live_candidate_is_not_hidden(tmp_path):
     task.mkdir(parents=True)
     (task / "session-123.101.session.stdout").touch()
     (task / "session-123.102.session.stdout").touch()
-    with patch.object(scope, "_pid_state", side_effect=lambda pid: "alive" if pid == 101 else "dead"):
+    with patch.object(
+        process_liveness, "pid_state",
+        side_effect=lambda pid: ProcessState.ALIVE if pid == 101 else ProcessState.DEAD,
+    ):
         assert scope.session_liveness("session-123", home=str(tmp_path)) == "live"
 
 
@@ -519,9 +524,9 @@ def test_lookup_issues_exactly_one_query_and_bounded_candidates(tmp_path):
     def _pid_state(pid):
         """Record each liveness probe so the inspection count is observable."""
         probes.append(pid)
-        return "dead"
+        return ProcessState.DEAD
 
-    with patch.object(scope, "_pid_state", side_effect=_pid_state):
+    with patch.object(process_liveness, "pid_state", side_effect=_pid_state):
         with patch.object(scope, "launch_agent_driver", return_value=0):
             assert scope.resume_session_result(
                 "session-123", query=query, agent_mode="raw", home=str(tmp_path),

@@ -275,3 +275,11 @@ Trigger: the pause marker `{session_id}.{pid}.session.agent2llm_pause.flag` woul
 Action: register every new `*.session.*` suffix in `_OWNER_SUFFIXES` in the same logical unit that introduces the file, and extend `workspace/agent_shell.py::_cleanup_stale_interrupt_flag` so a restarted process never inherits the leftover state.
 
 Why this prevents recurrence: the whitelist is a regex of known suffixes, so an unregistered file is not merely ignored — it actively prevents cleanup of the whole session. Adding the file and its ownership registration together keeps the two lists from drifting.
+
+## A step list must be normalized at the parse boundary, not skipped at each consumer
+
+Trigger: the LLM answered with a JSON array of bare scalars, `["fix: wait for the channel before the first inventory publish"]`. `format_response_finally()` called `update_response_item(item)` on that `str`, raising `AttributeError: 'str' object has no attribute 'get'` and killing the whole User2Agent turn after the work was already finished.
+
+Action: add `_normalize_response_items()` in `ai_base/llm_control/message.py` and call it at every exit of `format_response()` plus at the top of `format_response_finally()`, converting each non-dict item into `{"step_name": "thought", "raw_text": <text>}`. Keep a defensive `isinstance` guard in `update_response_item()` and in the single-element branch of `fix_llm_mistakes()`.
+
+Why this prevents recurrence: the guard asymmetry was the real defect — the multi-element branch skipped non-dicts while the single-element branch did not, so the same malformed payload crashed or survived depending only on array length. Skipping is also the wrong repair: it moves the crash downstream into `pre_execute()` (`step["step_name"]` raises `TypeError`) and silently discards the model's text. Normalizing once at the parse boundary establishes the invariant "every step is a dict" for all consumers, and the negative control (removing the normalization re-introduces the original `AttributeError`) proves the tests actually guard it.

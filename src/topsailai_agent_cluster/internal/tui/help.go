@@ -47,6 +47,7 @@ var commandHelpCatalog = map[string]commandHelp{
 	"endpoints": {"endpoints [endpoint-id]", "list every registered endpoint with its connection state, observation time and capability revision; JSON output (--json) is available only in the standalone non-interactive command", []string{"endpoint-id: optional endpoint ID filter; an unknown filter renders an empty table", "read-only: it never forces provider discovery and never changes the list row numbers"}, []string{"endpoints", "endpoints endpoint-1"}},
 	"status":    {"status <command-id>", "show the durable result of a command", []string{"command-id: submitted command identifier"}, []string{"status cmd_123"}},
 	"refresh":   {"refresh", "force a fresh Endpoint collection and wait for it to be committed, then render the committed inventory", nil, []string{"refresh"}},
+	"watch":     {"watch [interval] [--force]", "re-render the list on a timer until any key is pressed; the default re-reads the persisted inventory every 5s, and --force performs a forced collection with a 10s floor", []string{"interval: optional positive duration, such as 5s or 500ms; the projection mode requires at least 1s", "--force: perform a forced Endpoint collection on every tick instead of re-reading the persisted inventory; requires at least 10s because each tick launches one provider discovery per endpoint", "any keypress stops the loop before the key is applied", "a refresh that changes the row set prints one rebinding diagnostic, so a row number never changes silently", "unavailable in session scope, because a forced refresh can invalidate the pinned session", "--json: rejected in interactive mode"}, []string{"watch", "watch 2s", "watch --force", "watch 10s --force"}},
 	"help":      {"help [command]", "show the command overview or detailed help for one command", []string{"command: optional command name, or scope for the scope model"}, []string{"help", "help list", "help scope"}},
 	"quit":      {"quit", "leave interactive mode", nil, []string{"quit"}},
 }
@@ -77,6 +78,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"stop":      "stop a session by row number or session ID",
 		"status":    "show command result",
 		"refresh":   "refresh inventories",
+		"watch":     "re-render the list on a timer until any key is pressed",
 		"help":      "show help",
 		"quit":      "exit",
 	},
@@ -89,6 +91,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"stop":    "stop a session in this endpoint by row number or session ID",
 		"status":  "show command result",
 		"refresh": "refresh the current endpoint",
+		"watch":   "re-render the endpoint table on a timer until any key is pressed",
 		"help":    "show help",
 		"quit":    "exit",
 	},
@@ -98,7 +101,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"show":      "show the current session, or an explicit endpoint/session target",
 		"info":      "show the current session detail, or another session in this endpoint",
 		"logs":      "show current session output, or another session in this endpoint; -n <lines> bounds the trailing lines",
-		"send":      "send a message to the current session after confirmation",
+		"send":      "send a message to the current session after confirmation; unrecognized text offers this action",
 		"resume":    "resume the current session",
 		"stop":      "stop the current session",
 		"inject":    "inject context into the current session",
@@ -362,6 +365,7 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 			"Entering a session renders one bounded output snapshot immediately; run logs again to re-read it.\n" +
 			"Session selectors use internal resource IDs or unique names, not necessarily the provider SESSION_ID shown in list.\n" +
 			"Type > <text> to send a message to the current session without spelling the command; the prefix is disjoint from every command word.\n" +
+			"Text that matches no command is offered as a send message; declining keeps the unknown-command diagnostic.\n" +
 			"Actions require adapter capability support and fresh session data; scope availability alone does not guarantee support."
 	}
 	example := "Start example: start <endpoint> <resource> --profile <id> --profile-revision <revision>"

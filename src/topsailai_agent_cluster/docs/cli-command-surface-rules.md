@@ -92,6 +92,7 @@ was dispatched rather than rejected as unknown.
 | `agent.drive.start` | `drive start` | `drive start` | yes |
 | `agent.drive.stop` | `drive stop` | `drive stop` | yes |
 | `drive status` | `drive status` | `drive status`, `drive` | yes |
+| `watch` | not applicable | `watch`, `w` | yes |
 | `help` | `help` | `help`, `?` | yes |
 | `cd` | not applicable | `cd` | not applicable |
 | `quit` | not applicable | `quit`, `exit`, `q` | not applicable |
@@ -121,6 +122,28 @@ diagnostics unchanged, and it does not shadow the longer `logs` spelling.
 
 `cd` and `quit` navigate a session that only exists inside the interactive loop, so
 they have no standalone meaning and are not gaps.
+
+`watch` is interactive-only for a different reason, and it is not a gap either. It
+adds no behaviour: every tick performs exactly `list` (re-read the persisted
+projection) or `refresh` (forced collection), and both of those are fully
+reachable standalone with `--json`. What `watch` adds is a presentation cadence —
+re-rendering a table on a timer while a prompt sits idle, and stopping on the first
+keypress. A non-interactive caller that wants repeated reads writes its own loop
+around `list`, which is strictly more expressive because it controls the exit
+condition and the output format. The loop therefore has no standalone contract to
+pin, and inventing one would duplicate `list` behind a second name.
+
+Two consequences follow, and both are enforced:
+
+- `watch` rejects `--json` in interactive mode instead of silently ignoring it, so
+  a caller cannot believe it received a machine-readable stream.
+- The standalone surface rejects `watch` as an unknown command rather than
+  accepting it and degrading to a single read, which would violate the
+  failure-semantics rule above.
+
+The behaviour `watch` drives is pinned by the standalone tests for `list` and
+`refresh`; the loop itself is pinned by the editor-level tests that inject a tick
+channel, so no part of it depends on manual keystrokes for verification.
 
 Removed spellings must stay rejected rather than silently reinterpreted: `table`
 returns an explicit removal message pointing at `list --clean`, and `use` is
@@ -193,6 +216,36 @@ before the command word is split because it carries an argv tail; `/` is strippe
 from the command word because it carries nothing. Neither is an alias entry: an
 alias maps one word to another, while a prefix changes the accepted spelling of
 every command at once.
+
+## Unrecognized input in session scope
+
+In session scope the common mistake is typing a message without the command word.
+Such a line is offered as a `send` instead of only being rejected:
+
+```text
+session[ai-dev/fixture-session]> hello world
+unknown command hello; send hello world as a message? [y/N]
+```
+
+- The offer applies only in session scope. `send` is unavailable in workspace and
+  endpoint scope, so an offer there could never be honoured and the plain
+  unknown-command diagnostic is kept.
+- The whole literal line is the message, not the words after the unrecognized
+  word. The operator typed one piece of text, and dropping its first word would
+  silently change what is sent.
+- Accepting runs the normal `send` flow with that text and does not ask the send
+  confirmation again, because the offer already named the exact text and action.
+  Declining, an empty answer, a partial answer or an unreadable answer keeps the
+  unknown-command diagnostic, so a typo is never swallowed and no mutating action
+  is inferred from silence.
+- The offer is a question, not a capability claim. The `send` flow keeps the
+  authoritative capability preflight, so an unsupported operation is still
+  reported precisely and the capability decision has one implementation.
+- A payload the `send` command itself rejects, such as a `--json` flag payload, is
+  rejected before the question is asked, so the offer never promises a send that
+  cannot be admitted.
+- The offer is interactive-only. A non-interactive caller passes the command word
+  explicitly, so no prompt can appear where no human is present.
 
 ## Global presentation flags
 

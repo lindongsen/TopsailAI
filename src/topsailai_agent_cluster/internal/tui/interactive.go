@@ -18,14 +18,20 @@ import (
 
 // InteractiveOptions controls bounded REPL behavior.
 type InteractiveOptions struct {
-	ReadLine          InteractiveLineReader
-	MaxBytes          int
-	MaxLines          int
-	WaitTimeoutMS     int64
-	LineLimit         int
-	Color             ColorPolicy
-	Interrupt         <-chan os.Signal
-	CloseInput        bool
+	ReadLine      InteractiveLineReader
+	MaxBytes      int
+	MaxLines      int
+	WaitTimeoutMS int64
+	LineLimit     int
+	Color         ColorPolicy
+	Interrupt     <-chan os.Signal
+	CloseInput    bool
+	// WatchReader is the tick-capable reader used by the auto-refresh loop. It is
+	// a separate seam because ReadLine is a function value and cannot be type
+	// asserted, and because a reader without it must refuse watch explicitly.
+	WatchReader WatchLineReader
+	// Ticks injects the auto-refresh tick source; nil selects the real ticker.
+	Ticks             WatchTicker
 	watcherExit       func(bool)
 	watcherBeforeDone func()
 }
@@ -40,6 +46,8 @@ type interactiveState struct {
 	interactiveSelection
 	Scope     ScopeState
 	commandID string
+	// watch is the armed auto-refresh intent; it is consumed by the next prompt.
+	watch *watchRequest
 }
 
 type interruptController struct {
@@ -229,7 +237,18 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			}
 			readCtx, cancelRead := context.WithCancel(parent)
 			stopPrompt := context.AfterFunc(promptContext(controller.promptDone), cancelRead)
-			line, overflow, err = options.ReadLine(readCtx, prompt.String(), true, options.LineLimit)
+			// An armed auto-refresh loop starts before the read, because a blocking
+			// read cannot be interrupted from outside. The reader stops it on the
+			// first keypress, so the loop never outlives the prompt it serves.
+			watch := startWatch(readCtx, api, &state, options)
+			if watch != nil && options.WatchReader != nil {
+				line, overflow, err = options.WatchReader.ReadLineWithWatch(readCtx, prompt.String(), true, options.LineLimit, watch)
+			} else {
+				line, overflow, err = options.ReadLine(readCtx, prompt.String(), true, options.LineLimit)
+			}
+			if watch != nil {
+				watch.Stop()
+			}
 			stopPrompt()
 			cancelRead()
 			if controller.promptWasInterrupted() {
@@ -404,11 +423,13 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		}
 		return false, interactiveInfo(ctx, api, state, rest, out)
 	case "logs":
-		return false, interactiveLogs(ctx, api, state, strings.TrimSpace(rest), options.MaxBytes, options.MaxLines, out)
+		return false, interactiveLogs(ctx, api, state, strings.TrimSpace(rest), options.MaxBytes, options.MaxLines, trustedOut, options.Color)
 	case "status":
 		return false, interactiveStatus(ctx, api, state, strings.TrimSpace(rest), out)
 	case "refresh":
 		return false, interactiveRefresh(ctx, api, state, trustedOut, errOut, options.Color)
+	case "watch":
+		return false, interactiveWatch(api, state, rest, trustedOut, options)
 	case "start":
 		if query, ok := api.(LaunchQuerier); ok && !strings.Contains(rest, "--") {
 			recorder := &startOutputRecorder{}
@@ -470,7 +491,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "send":
 		return false, interactiveSend(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	default:
-		return false, fmt.Errorf("unknown command %q (try help)", name)
+		return false, offerSendForUnknownInput(ctx, api, state, line, name, lineResults, out, trustedOut, options)
 	}
 }
 

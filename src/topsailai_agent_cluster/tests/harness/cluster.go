@@ -47,6 +47,25 @@ type FaultInjection struct {
 	UnsupportedCapability       string
 }
 
+// serverReadinessWait bounds how long StartCluster waits for the Server health
+// endpoint. The Server must open its database, load certificates and start the
+// channel listener before it answers, and under full-parallel package load the
+// machine is busy with several other clusters at once. A short fixed budget
+// expired before readiness and produced a flaky failure that was not a logic
+// defect. The budget is generous because the poll returns as soon as the Server
+// answers, so a healthy run is not slowed down.
+const serverReadinessWait = 60 * time.Second
+
+// waitServerReady waits for the Server health endpoint within the given budget.
+// The budget is a parameter rather than a package-level switch so a caller can
+// bound a diagnostic wait without mutating process-wide state.
+func waitServerReady(cluster *Cluster, budget time.Duration) error {
+	if err := WaitHTTPE(cluster.URL("/healthz"), "", http.StatusOK, budget); err != nil {
+		return fmt.Errorf("wait for server readiness: %w", err)
+	}
+	return nil
+}
+
 // StartCluster starts an isolated real Server and Endpoint connected over mTLS.
 func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	t.Helper()
@@ -91,7 +110,7 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 			t.Logf("stop server: %v", err)
 		}
 	})
-	if err := WaitHTTPE(cluster.URL("/healthz"), "", http.StatusOK, 15*time.Second); err != nil {
+	if err := waitServerReady(cluster, serverReadinessWait); err != nil {
 		return nil, err
 	}
 	mode := "one"
@@ -412,6 +431,18 @@ func (c *Cluster) RunTUI(args ...string) (stdout string, stderr string, exitCode
 // The combined terminal output is returned because the REPL writes prompts and
 // results to the same terminal stream.
 func (c *Cluster) RunTUIInteractive(stdin string, args ...string) (stdout string, stderr string, exitCode int, err error) {
+	return c.runTUIInteractiveWithTerm(stdin, "dumb", args...)
+}
+
+// RunTUIInteractiveEditor drives the REPL through a PTY with a real TERM, so the
+// raw-mode editor is active. Auto-refresh needs that editor, because TERM=dumb
+// selects the plain reader and watch then refuses explicitly.
+func (c *Cluster) RunTUIInteractiveEditor(stdin string, args ...string) (stdout string, stderr string, exitCode int, err error) {
+	return c.runTUIInteractiveWithTerm(stdin, "xterm-256color", args...)
+}
+
+// runTUIInteractiveWithTerm runs the REPL under one terminal type.
+func (c *Cluster) runTUIInteractiveWithTerm(stdin string, termType string, args ...string) (stdout string, stderr string, exitCode int, err error) {
 	if c.TUIPath == "" {
 		return "", "", -1, fmt.Errorf("TUI binary has not been built; call BuildTUI first")
 	}
@@ -430,7 +461,7 @@ func (c *Cluster) RunTUIInteractive(stdin string, args ...string) (stdout string
 		"AGENT_CLUSTER_TLS_CA_FILE="+c.Certs.CA,
 		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+c.Certs.ClientCert,
 		"AGENT_CLUSTER_TLS_KEY_FILE="+c.Certs.ClientKey,
-		"TERM=dumb",
+		"TERM="+termType,
 	)
 	cmd.Stdin = strings.NewReader(stdin)
 	var out, stderrBuffer bytes.Buffer

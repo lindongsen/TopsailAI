@@ -72,12 +72,12 @@ func TestSendPrefixIsRejectedOutsideSessionScope(t *testing.T) {
 		{
 			name:  "workspace",
 			input: "> hello world\nquit\n",
-			want:  `error: command "send" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, stop, status, refresh, help, quit`,
+			want:  `error: command "send" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, stop, status, refresh, watch, help, quit`,
 		},
 		{
 			name:  "endpoint",
 			input: "cd host-one/endpoint-1\n> hello world\nquit\n",
-			want:  `error: command "send" is unavailable in endpoint scope; available commands: list, cd, show, info, start, stop, logs, status, refresh, help, quit`,
+			want:  `error: command "send" is unavailable in endpoint scope; available commands: list, cd, show, info, start, stop, logs, status, refresh, watch, help, quit`,
 		},
 	}
 	for _, testCase := range cases {

@@ -5,20 +5,21 @@ Author: DawsonLin
 
 import json
 import re
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
-from cli_topsailai import formatting, log_files, runtime_control, session_driver
+from cli_topsailai import formatting
+from cli_topsailai import log_files, runtime_control, session_driver
 from cli_topsailai import session_info, session_meta
+from cli_topsailai.process_liveness import ProcessState
 from cli_topsailai.workspace_hostname import enrich_workspace_hostnames
 
 
 @pytest.fixture(autouse=True)
 def isolate(monkeypatch):
     """Disable unrelated observations and reject any control-channel work."""
-    monkeypatch.setattr(formatting, "os", SimpleNamespace(kill=Mock()))
+    monkeypatch.setattr(formatting, "pid_state", Mock(return_value=ProcessState.ALIVE))
     monkeypatch.setattr(formatting, "is_session_pipe_open", Mock(return_value=False))
     monkeypatch.setattr(session_driver, "observe_driver", Mock(return_value=None))
     monkeypatch.setattr(session_info, "_SESSION_INFO_CACHE", session_info._SessionInfoCache())
@@ -59,7 +60,7 @@ def test_hostname_present_independent_of_pid(tmp_path, alive):
     """Read origin hostname for both living and exited sessions."""
     write_meta(tmp_path, hostname="origin-host")
     if not alive:
-        formatting.os.kill.side_effect = ProcessLookupError()
+        formatting.pid_state.return_value = ProcessState.DEAD
     rows = [row()]
     formatting.enrich_workspace_rows(rows, str(tmp_path))
     header, rendered = cells(rows)

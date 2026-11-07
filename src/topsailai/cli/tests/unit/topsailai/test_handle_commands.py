@@ -27,6 +27,7 @@ from cli_topsailai.core import (
     prompt_selection,
 )
 from cli_topsailai.models import EffectiveModel, ModelConfig, ModelRegistry
+from cli_topsailai.process_liveness import ProcessState
 
 
 class TestHandleCommands(unittest.TestCase):
@@ -1794,7 +1795,7 @@ class TestWorkspaceFormat(unittest.TestCase):
 
     @patch("sys.stdout", new_callable=io.StringIO)
     @patch("cli_topsailai.formatting.is_session_pipe_open", return_value=False)
-    @patch("cli_topsailai.core.os.kill")
+    @patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.ALIVE)
     @patch("cli_topsailai.session_info.enrich_files_with_session_names")
     @patch("cli_topsailai.log_files.discover_log_files")
     @patch("cli_topsailai.paths.get_topsailai_home", return_value="/fake/home")
@@ -1803,7 +1804,7 @@ class TestWorkspaceFormat(unittest.TestCase):
         _mock_home: MagicMock,
         mock_discover: MagicMock,
         mock_enrich: MagicMock,
-        _mock_kill: MagicMock,
+        _mock_pid_state: MagicMock,
         _mock_pipe: MagicMock,
         mock_stdout: io.StringIO,
     ) -> None:
@@ -1861,10 +1862,10 @@ class TestWorkspaceFormat(unittest.TestCase):
         self.assertIsNone(item["created_at"])
 
     @patch("cli_topsailai.formatting.is_session_pipe_open", return_value=True)
-    @patch("cli_topsailai.core.os.kill")
+    @patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.ALIVE)
     def test_json_item_status_is_input_when_session_pipe_is_open(
         self,
-        mock_kill: MagicMock,
+        mock_pid_state: MagicMock,
         mock_pipe: MagicMock,
     ) -> None:
         """A live session with an open input pipe is reported as input."""
@@ -1874,25 +1875,25 @@ class TestWorkspaceFormat(unittest.TestCase):
 
         self.assertEqual(item["status"], "input")
         self.assertEqual(item["pid"], 1234)
-        mock_kill.assert_called_once_with(1234, 0)
+        mock_pid_state.assert_called_once_with(1234)
         mock_pipe.assert_called_once()
 
     @patch("cli_topsailai.formatting.is_session_pipe_open", return_value=False)
-    @patch("cli_topsailai.core.os.kill")
+    @patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.ALIVE)
     def test_json_item_status_is_idle_when_process_is_not_alive(
         self,
-        mock_kill: MagicMock,
+        mock_pid_state: MagicMock,
         mock_pipe: MagicMock,
     ) -> None:
         """A process-not-found probe is reported as idle."""
         from cli_topsailai.core import _workspace_json_item
 
-        mock_kill.side_effect = ProcessLookupError()
+        mock_pid_state.return_value = ProcessState.DEAD
         item = self._enriched_json_item({"pid": 1234}, 1)
 
         self.assertEqual(item["status"], "idle")
         self.assertIsNone(item["pid"])
-        mock_kill.assert_called_once_with(1234, 0)
+        mock_pid_state.assert_called_once_with(1234)
         mock_pipe.assert_not_called()
 
     def test_json_item_status_is_idle_without_a_pid(self) -> None:
@@ -1905,10 +1906,10 @@ class TestWorkspaceFormat(unittest.TestCase):
         self.assertIsNone(item["pid"])
 
     @patch("cli_topsailai.formatting.is_session_pipe_open")
-    @patch("cli_topsailai.core.os.kill", side_effect=PermissionError())
+    @patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.UNKNOWN)
     def test_json_item_status_is_idle_on_permission_error(
         self,
-        mock_kill: MagicMock,
+        mock_pid_state: MagicMock,
         mock_pipe: MagicMock,
     ) -> None:
         """A permission error during the PID probe is reported as idle."""
@@ -1921,10 +1922,10 @@ class TestWorkspaceFormat(unittest.TestCase):
         mock_pipe.assert_not_called()
 
     @patch("cli_topsailai.formatting.is_session_pipe_open")
-    @patch("cli_topsailai.core.os.kill", side_effect=OSError("probe failed"))
+    @patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.UNKNOWN)
     def test_json_item_status_is_idle_on_other_os_error(
         self,
-        mock_kill: MagicMock,
+        mock_pid_state: MagicMock,
         mock_pipe: MagicMock,
     ) -> None:
         """An unexpected OS error during the PID probe is reported as idle."""
@@ -2386,7 +2387,7 @@ def test_workspace_main_refresh_reobserves(tmp_path):
             stack.enter_context(patch("cli_topsailai.paths.get_topsailai_home", return_value=str(tmp_path)))
             stack.enter_context(patch("cli_topsailai.yaml_commands.load_yaml_commands", return_value=[]))
             stack.enter_context(patch("cli_topsailai.log_files.discover_log_files", return_value=rows))
-            stack.enter_context(patch("cli_topsailai.formatting.os.kill"))
+            stack.enter_context(patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.ALIVE))
             stack.enter_context(patch("cli_topsailai.formatting.is_session_pipe_open", return_value=False))
             observe = stack.enter_context(patch("cli_topsailai.session_driver.observe_driver",
                 side_effect=[DriverObservation("-", "first"), DriverObservation("?", "second")]))
@@ -2552,7 +2553,7 @@ def test_driver_authority_observation_injection(monkeypatch):
     from cli_topsailai.session_driver import DriverObservation
     row = dict(session_id="sample", pid=123, filename="sample.123.session.stdout")
     authority = DriverAuthority(Path("/installed/entry"), Path("/installed/python3"))
-    with patch("cli_topsailai.formatting.os.kill"), patch("cli_topsailai.formatting.is_session_pipe_open", return_value=False), patch("cli_topsailai.session_driver.observe_driver", return_value=DriverObservation("-", "missing")) as observe:
+    with patch("cli_topsailai.formatting.pid_state", return_value=ProcessState.ALIVE), patch("cli_topsailai.formatting.is_session_pipe_open", return_value=False), patch("cli_topsailai.session_driver.observe_driver", return_value=DriverObservation("-", "missing")) as observe:
         _enrich_driver_rows([row], "/home", authority)
         assert observe.call_args.kwargs["process_probe"].keywords["driver_entry"] == authority.entry
 
