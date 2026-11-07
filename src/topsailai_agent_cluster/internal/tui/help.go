@@ -39,6 +39,7 @@ var commandHelpCatalog = map[string]commandHelp{
 	"stop":      {"stop [session]", "stop a session after confirmation; session scope stops the selected session", []string{"session: optional session/resource ID, provider session ID, or a bare list row number; required outside session scope and rejected inside it", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID", "workspace scope resolves the row's own endpoint; a token matching sessions on several endpoints is rejected", "--json: rejected in interactive mode"}, []string{"stop", "stop 1", "stop res_abc"}},
 	"inject":    {"inject <text>", "inject context into the selected session", []string{"text: literal context text; no JSON is required", "--json: rejected in interactive mode"}, []string{"inject the deployment notes are in docs/", `inject {"text":"context"}`}},
 	"interrupt": {"interrupt [soft|hard] [message]", "request a soft or hard execution interrupt for the selected session", []string{"soft: soft interrupt, optionally followed by a literal message; empty input prompts for the action", "hard: hard interrupt; accepts no message", "--json: rejected in interactive mode"}, []string{"interrupt", "interrupt soft stop and summarize now", "interrupt hard"}},
+	"ctl":       {"ctl [action] [json]", "send one provider control action to the selected session; the action list is rendered from the capabilities the endpoint advertises, so an unsupported action is never offered", []string{"action: advertised control action name, or its number in the rendered list; empty prompts for the action", "json: optional JSON object payload; empty sends the empty object", "the action is a mutating request and needs explicit confirmation", "--json: rejected in interactive mode"}, []string{"ctl", "ctl heartbeat", `ctl pause {"reason":"maintenance"}`}},
 	"drive":     {"drive [start|stop|status]", "manage the resident driver of the selected session; a driver injects input on the operator's behalf and is not the agent, so drive stop leaves the agent running", []string{"start: start a driver for the selected session; the driver runs autonomously and needs explicit confirmation", "stop: stop only the driver controller; the agent keeps running", "status: report the standard drive state from the persisted inventory; it never probes the provider", "an omitted action reports status", "--json: rejected in interactive mode"}, []string{"drive", "drive status", "drive start", "drive stop"}},
 	"logs":      {"logs [-n <lines>] [session]", "show bounded output for a session in the current endpoint", []string{"-n, --lines: maximum number of trailing output lines to show; defaults to 0100", "session: optional session/resource ID, provider session ID, or a bare list row number; defaults to the current session", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID"}, []string{"logs", "logs -n 0250", "logs 1", "logs res_abc"}},
 	"send":      {"send <text>", "send a message to the selected session", []string{"text: message text, or a JSON object with a text field"}, []string{`send hello world`, `send {"text":"hello"}`}},
@@ -119,7 +120,7 @@ func CommandHelpLines() []string {
 	return lines
 }
 
-var nonInteractiveHelpOrder = []string{"list", "refresh", "endpoints", "show", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "drive", "help"}
+var nonInteractiveHelpOrder = []string{"list", "refresh", "endpoints", "show", "logs", "status", "send", "btw", "control", "ctl", "exec", "start", "resume", "stop", "drive", "help"}
 
 // nonInteractiveHelpAliases maps accepted standalone spellings to the advertised
 // command. The advertised list keeps one spelling per surface, while an accepted
@@ -198,6 +199,17 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] endpoints [endpoint-id]"
 	case "send", "btw", "control":
 		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [text] [generation]"
+	case "ctl":
+		entry.syntax = "agent-cluster-cli [options] ctl <endpoint> <resource> <action> [json] [generation]"
+	case "exec":
+		// exec is a standalone-only spelling: it has no interactive command word
+		// because the interactive form is the "!" input prefix. It therefore has
+		// no scope-matrix entry, and its description is supplied here instead of
+		// in the catalog, which must stay one-to-one with the matrix.
+		entry.syntax = "agent-cluster-cli [options] exec <endpoint> <resource> <generation> -- <argv...>"
+		entry.description = "run one allowlisted command in the session working directory; the argv array is taken from the shell's own word splitting and is never re-tokenized, and the allowlist decision is made by the endpoint"
+		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID", "generation: target generation", "--: separates the target from the argv array", "argv: program and arguments; the program must be allowlisted by the endpoint", "--json: write the structured receipt instead of the rendered one"}
+		entry.examples = []string{"exec endpoint-1 res_abc gen-1 -- git status", "exec endpoint-1 res_abc gen-1 -- ls -la"}
 	case "help":
 		entry.syntax = "agent-cluster-cli help [command]"
 	}

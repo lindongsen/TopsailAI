@@ -99,6 +99,15 @@ func commandExecPayload(argv []string) (json.RawMessage, error) {
 	return json.RawMessage(encoded), nil
 }
 
+// ExecPayload encodes one argv array for the standalone exec command.
+//
+// The standalone surface receives an already-split argv array from the shell, so
+// it never re-tokenizes: re-splitting a string would reintroduce the shell
+// semantics the allowlist cannot reason about.
+func ExecPayload(argv []string) (json.RawMessage, error) {
+	return commandExecPayload(argv)
+}
+
 // runShellCommand executes one allowlisted command in the selected session.
 //
 // The command is one-shot: it submits one command.exec intent, waits for the
@@ -197,4 +206,14 @@ func renderCommandExecResult(out io.Writer, result map[string]any, policy ColorP
 		}
 	}
 	return nil
+}
+
+// RenderCommandExecResult renders one command.exec receipt and its bounded output
+// snapshot for the standalone surface.
+//
+// The interactive form and the standalone form share this renderer, so the two
+// surfaces cannot disagree about which receipt fields are shown or how provider
+// output is sanitized.
+func RenderCommandExecResult(out io.Writer, result map[string]any, policy ColorPolicy) error {
+	return renderCommandExecResult(out, result, policy)
 }

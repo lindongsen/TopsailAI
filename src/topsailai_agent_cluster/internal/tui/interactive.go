@@ -485,6 +485,8 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		return false, interactiveDrive(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	case "send":
 		return false, interactiveSend(ctx, api, state, rest, lineResults, out, trustedOut, options)
+	case "ctl":
+		return false, interactiveCtl(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	default:
 		return false, offerSendForUnknownInput(ctx, api, state, line, name, lineResults, out, trustedOut, options)
 	}

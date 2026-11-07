@@ -340,7 +340,7 @@ func TestAvailableCommandsUseStableOrder(t *testing.T) {
 	}{
 		{kind: ScopeWorkspace, want: "list, endpoints, cd, show, start, stop, status, refresh, watch, help, quit"},
 		{kind: ScopeEndpoint, want: "list, cd, show, start, stop, logs, status, refresh, watch, help, quit"},
-		{kind: ScopeSession, want: "list, cd, show, resume, stop, inject, interrupt, drive, logs, send, status, refresh, help, quit"},
+		{kind: ScopeSession, want: "list, cd, show, resume, stop, inject, interrupt, ctl, drive, logs, send, status, refresh, help, quit"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.kind.String(), func(t *testing.T) {

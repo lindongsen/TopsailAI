@@ -175,6 +175,10 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		return drive(ctx, api, output, flags.Args()[1:], *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	case "send", "btw", "inject", "control", "start", "resume", "stop":
 		return action(ctx, api, output, errors, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
+	case "ctl":
+		return ctlCommand(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
+	case "exec":
+		return execCommand(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
 	}
