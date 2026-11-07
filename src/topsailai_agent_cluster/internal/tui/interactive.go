@@ -453,6 +453,8 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		return false, interactiveSessionPayload(ctx, api, state, protocol.OperationContextInject, name, rest, lineResults, out, trustedOut, options)
 	case "interrupt", "control":
 		return false, interactiveSessionPayload(ctx, api, state, protocol.OperationExecutionInterrupt, name, rest, lineResults, out, trustedOut, options)
+	case "drive":
+		return false, interactiveDrive(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	case "send":
 		return false, interactiveSend(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	default:

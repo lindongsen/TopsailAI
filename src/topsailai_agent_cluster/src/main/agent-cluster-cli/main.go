@@ -170,6 +170,8 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return fmt.Errorf("usage: status <command-id>")
 		}
 		return status(ctx, api, output, flags.Arg(1), *jsonMode)
+	case "drive":
+		return drive(ctx, api, output, flags.Args()[1:], *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	case "send", "btw", "inject", "control", "start", "resume", "stop":
 		return action(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
 	default:
@@ -275,6 +277,73 @@ func logs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID,
 	return legacyRunner(api).Logs(ctx, output, endpointID, resourceID, maxBytes, maxLines, jsonMode)
 }
 
+// drive dispatches the standalone drive surface. status is a read projection of
+// the persisted inventory; start and stop admit one durable command through the
+// same runner the interactive surface uses, so the two cannot diverge.
+func drive(ctx context.Context, api tui.CommandAPI, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: drive <start|stop|status> <endpoint> <session> [generation]")
+	}
+	action := strings.ToLower(args[0])
+	if _, known := driveOperation(action); !known {
+		return fmt.Errorf("usage: drive <start|stop|status> <endpoint> <session> [generation]")
+	}
+	if len(args) < 3 {
+		return fmt.Errorf("usage: drive %s <endpoint> <session> [generation]", action)
+	}
+	if err := rejectMisplacedFlags("drive", args); err != nil {
+		return err
+	}
+	if len(args) > 4 {
+		return fmt.Errorf("unexpected arguments %q; run help drive for valid syntax", strings.Join(args[4:], " "))
+	}
+	endpointID, resourceID := args[1], args[2]
+	operation, _ := driveOperation(action)
+	if operation == "" {
+		if generationFlag != "" || len(args) == 4 {
+			return fmt.Errorf("drive status takes no generation; it reads the persisted inventory")
+		}
+		return legacyRunner(api).DriveStatus(ctx, output, endpointID, resourceID, jsonMode)
+	}
+	generation := generationFlag
+	if generation == "" && len(args) == 4 {
+		generation = args[3]
+	}
+	if generation == "" {
+		return fmt.Errorf("drive %s requires a generation", action)
+	}
+	request := tui.ActionRequest{Operation: operation, OperationLabel: "drive " + action, EndpointID: endpointID, ResourceID: resourceID, Generation: generation, Payload: json.RawMessage(`{}`), Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS}
+	runner := legacyRunner(api)
+	intent, err := runner.PrepareAction(ctx, request)
+	if err != nil {
+		return err
+	}
+	actionResult, err := runner.SubmitAction(ctx, intent)
+	if err != nil {
+		return err
+	}
+	result, err := runner.WaitAction(ctx, actionResult, intent.Budget)
+	if err != nil {
+		return err
+	}
+	return runner.RenderAction(output, result)
+}
+
+// driveOperation maps one accepted drive action onto the standard operation.
+// An empty operation means the action is a read, which is why the caller must
+// check the known flag before treating the result as a command.
+func driveOperation(action string) (string, bool) {
+	switch action {
+	case "start":
+		return protocol.OperationAgentDriveStart, true
+	case "stop":
+		return protocol.OperationAgentDriveStop, true
+	case "status":
+		return "", true
+	}
+	return "", false
+}
+
 // resolveActionPayload converts one positional payload argument into the
 // standard operation payload. Plain text is accepted for every operation that
 // carries user text, so no caller has to write JSON; a JSON object is still
@@ -303,7 +372,7 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []st
 	// flag.Parse stops at the first positional, so a flag written after the command stays
 	// positional and would silently become a payload or a target generation. Reject it
 	// explicitly instead of corrupting the target.
-	if err := rejectMisplacedFlags(args); err != nil {
+	if err := rejectMisplacedFlags(args[0], args); err != nil {
 		return err
 	}
 	// The documented syntax accepts at most one text and one generation positional. A
@@ -378,10 +447,10 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []st
 }
 
 // rejectMisplacedFlags fails when a flag appears after the command name. flag.Parse stops
-// at the first positional, so such a token would otherwise be mapped to a payload or a
-// target generation and produce a misleading downstream error. A negative number is not a
-// flag, and a lone dash is a literal value, so both are accepted.
-func rejectMisplacedFlags(args []string) error {
+// at the first positional, so a flag written after the command stays positional and would
+// silently become a payload or a target generation. The caller passes the command name
+// explicitly because a command with an action word keeps that word in args[0].
+func rejectMisplacedFlags(command string, args []string) error {
 	for _, arg := range args[1:] {
 		if !strings.HasPrefix(arg, "-") || arg == "-" {
 			continue
@@ -389,7 +458,7 @@ func rejectMisplacedFlags(args []string) error {
 		if _, err := strconv.ParseFloat(arg, 64); err == nil {
 			continue
 		}
-		return fmt.Errorf("option %q must be written before the command; run help %s for valid syntax", arg, args[0])
+		return fmt.Errorf("option %q must be written before the command; run help %s for valid syntax", arg, command)
 	}
 	return nil
 }
