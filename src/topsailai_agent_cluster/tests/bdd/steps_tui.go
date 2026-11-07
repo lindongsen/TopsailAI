@@ -22,6 +22,7 @@ func registerTUISteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the TUI provider invocation count is zero$`, assertTUIProviderCountZero)
 	ctx.Step(`^the TUI stop command is run without a generation$`, runTUIStopWithoutGeneration)
 	ctx.Step(`^the TUI stop action is rejected because generation is required$`, assertTUIStopRejected)
+	ctx.Step(`^the output shows a recognized lifecycle stage$`, assertRecognizedLifecycleStage)
 	ctx.Step(`^the TUI status wording is evaluated$`, evaluateTUIStatusWording)
 	ctx.Step(`^submitted is not displayed as ready$`, assertSubmittedNotReady)
 	ctx.Step(`^signal sent without exit confirmation is displayed as stop request sent$`, assertSignalSentWording)
@@ -184,6 +185,40 @@ func assertSubmittedNotReady() error {
 		return fmt.Errorf("submitted status was overstated: %s", activeScenario.lastBody)
 	}
 	return nil
+}
+
+// assertRecognizedLifecycleStage accepts any stage at or after dispatch instead of
+// one exact transient stage. The status read races the live command lifecycle, so
+// pinning "request delivered" fails whenever the command advances past dispatch
+// before the read completes. The exact wording of each stage is already pinned
+// deterministically by the "tui renders each command state with distinct wording"
+// outline, so this scenario only needs to prove the live read renders a real stage.
+func assertRecognizedLifecycleStage() error {
+	// The status label is the first output line; receipt details follow it. Matching
+	// the whole body would pass vacuously because receipt fields such as
+	// "outcome: failed" repeat stage words, so only the label line is inspected.
+	lines := strings.SplitN(strings.TrimSpace(string(activeScenario.lastBody)), "\n", 2)
+	label := strings.ToLower(strings.TrimSpace(lines[0]))
+	stages := []string{
+		"server received",
+		"request delivered",
+		"endpoint received",
+		"executing",
+		"effect unknown",
+		"confirmed result",
+		"failed",
+		"delivery unconfirmed, effect unknown",
+		// StatusLabel falls through to the raw status for terminal states it does
+		// not map, so those spellings are legitimate output too.
+		"expired",
+		"cancelled_before_execution",
+	}
+	for _, stage := range stages {
+		if label == stage {
+			return nil
+		}
+	}
+	return fmt.Errorf("status label %q is not a recognized lifecycle stage: %s", label, activeScenario.lastBody)
 }
 
 func assertSignalSentWording() error {

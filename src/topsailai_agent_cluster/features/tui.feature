@@ -25,7 +25,7 @@ Feature: non-interactive TUI
     Given a real cluster with a healthy provider for the TUI
     When the TUI status wording is evaluated
     Then submitted is not displayed as ready
-    And the output contains "request delivered"
+    And the output shows a recognized lifecycle stage
 
   Scenario: non-interactive TUI works without a TTY
     Given a real cluster with a healthy provider for the TUI
