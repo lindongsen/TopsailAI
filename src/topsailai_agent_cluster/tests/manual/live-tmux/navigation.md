@@ -7,7 +7,7 @@ author: DawsonLin
 
 | Case | Input and precondition | Expected output/effect |
 | --- | --- | --- |
-| NAV-01 | workspace: `list`, `list --clean` | table with the documented columns (NO, DRIVER, SESSION_NAME, SESSION_ID, PROJECT_WORKSPACE, ENDPOINT, DATA_STATUS; SESSION_STATUS only when colour is disabled); healthy session retained; numbers correspond to latest rendered list |
+| NAV-01 | workspace: `list`, `list --clean` | table with the documented columns (NO, SESSION_STATUS, SESSION_NAME, SESSION_ID, DRIVER, PROJECT_WORKSPACE, ENDPOINT, DATA_STATUS; SESSION_STATUS only when colour is disabled); healthy session retained; numbers correspond to latest rendered list |
 | NAV-02 | `cd <hostname>/<endpoint>` | endpoint prompt; automatic sibling table; cyan header, whole data row coloured by session state, green prompt; no output snapshot because endpoint scope was entered |
 | NAV-03 | endpoint: `list <endpoint>` then `list other-endpoint` | matching filter accepted; other filter rejected without scope/valid row-map change |
 | NAV-04 | endpoint: `<row>` or `cd <row>` from current list | selected session prompt contains provider label; one bounded output snapshot is rendered immediately before the prompt; subsequent show identifies correct internal resource/generation |

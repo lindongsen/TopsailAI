@@ -83,10 +83,10 @@ func TestDriveCellEscapesProviderText(t *testing.T) {
 	}
 }
 
-// TestDriveColumnFollowsSessionStatus pins the column position. The column must
-// sit directly after SESSION_STATUS, which makes it the first data column after
-// NO whenever colour mode drops SESSION_STATUS.
-func TestDriveColumnFollowsSessionStatus(t *testing.T) {
+// TestDriveColumnFollowsSessionID pins the column position. The column must sit
+// directly after SESSION_ID, so the controller state is read next to the session
+// identity it belongs to.
+func TestDriveColumnFollowsSessionID(t *testing.T) {
 	index := -1
 	for position, column := range allColumns {
 		if column.key == columnDrive {
@@ -96,8 +96,8 @@ func TestDriveColumnFollowsSessionStatus(t *testing.T) {
 	if index < 0 {
 		t.Fatal("drive column is missing from allColumns")
 	}
-	if allColumns[index-1].key != columnState {
-		t.Fatalf("drive column follows %q, want %q", allColumns[index-1].key, columnState)
+	if allColumns[index-1].key != columnID {
+		t.Fatalf("drive column follows %q, want %q", allColumns[index-1].key, columnID)
 	}
 	if allColumns[index].header != "DRIVER" {
 		t.Fatalf("drive header=%q want=DRIVER", allColumns[index].header)

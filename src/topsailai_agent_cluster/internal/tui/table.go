@@ -64,9 +64,9 @@ type tableColumn struct {
 var allColumns = []tableColumn{
 	{key: columnNo, header: "NO", cap: 4},
 	{key: columnState, header: "SESSION_STATUS", cap: 14},
-	{key: columnDrive, header: "DRIVER", cap: 10},
 	{key: columnName, header: "SESSION_NAME", cap: 64, wide: true},
 	{key: columnID, header: "SESSION_ID", cap: 36},
+	{key: columnDrive, header: "DRIVER", cap: 10},
 	{key: columnWorkspace, header: "PROJECT_WORKSPACE", cap: 48, leftClip: true},
 	{key: columnEndpoint, header: "ENDPOINT", cap: 20},
 	{key: columnDataStatus, header: "DATA_STATUS", cap: 35, warn: true},
