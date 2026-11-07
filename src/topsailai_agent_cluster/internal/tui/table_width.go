@@ -5,12 +5,52 @@ import (
 	"strings"
 )
 
+// TableLayout is the presentation policy an output boundary reports: the
+// terminal width and whether truncation is disabled.
+type TableLayout struct {
+	Width int
+	Full  bool
+}
+
+// TableLayoutProvider lets an output boundary report its layout once, so a
+// renderer never has to probe global terminal state.
+type TableLayoutProvider interface {
+	TableLayout() TableLayout
+}
+
 // OutputWidth obtains a boundary-provided width without probing global streams.
 func OutputWidth(out io.Writer) int {
-	if terminal, ok := out.(interface{ TerminalWidth() int }); ok {
-		return terminal.TerminalWidth()
+	return OutputLayout(out).Width
+}
+
+// OutputLayout obtains the boundary-provided presentation policy. A writer that
+// only reports a width keeps truncation enabled, so existing callers are
+// unaffected.
+func OutputLayout(out io.Writer) TableLayout {
+	if provider, ok := out.(TableLayoutProvider); ok {
+		return provider.TableLayout()
 	}
-	return 0
+	if terminal, ok := out.(interface{ TerminalWidth() int }); ok {
+		return TableLayout{Width: terminal.TerminalWidth()}
+	}
+	return TableLayout{}
+}
+
+// TableOptionsFor builds the table options for one output boundary, so every
+// render path applies the same width and truncation policy.
+func TableOptionsFor(out io.Writer) TableOptions {
+	layout := OutputLayout(out)
+	return TableOptions{Width: layout.Width, Full: layout.Full}
+}
+
+// tableOptionsFor builds the table options for one REPL render, so the output
+// boundary decides both the width and whether truncation is disabled.
+func tableOptionsFor(out io.Writer, color ColorPolicy, clean bool, onRows func([]SessionRow)) TableOptions {
+	options := TableOptionsFor(out)
+	options.Color = color
+	options.Clean = clean
+	options.OnRows = onRows
+	return options
 }
 
 // fitTableWidths shrinks the widest data column first, preserving row numbers.

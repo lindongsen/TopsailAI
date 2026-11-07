@@ -54,7 +54,6 @@ func RenderEndpoints(out io.Writer, endpoints []protocol.Endpoint, filter string
 		return RenderJSON(out, selected)
 	}
 	headers := columnHeaders(endpointColumns)
-	widths := columnWidths(endpointColumns)
 	cells := make([][]string, len(selected))
 	states := make([][]string, len(selected))
 	rowStyles := make([]string, len(selected))
@@ -62,18 +61,9 @@ func RenderEndpoints(out io.Writer, endpoints []protocol.Endpoint, filter string
 		cells[i] = projectCells(endpointCells(endpoint, options.Location), endpointColumns)
 		states[i] = endpointStates(endpoint, endpointColumns)
 		rowStyles[i] = connectionStateStyle(endpoint.ConnectionState)
-		for j, cell := range cells[i] {
-			if n := displayWidth(cell); n > widths[j] {
-				widths[j] = minInt(n, endpointColumns[j].cap)
-			}
-		}
 	}
-	fitTableWidths(widths, options.Width)
-	if options.Width > 0 && options.Width < minimumTableWidth(len(widths)) {
-		if err := writeNarrowTable(out, cells, states, rowStyles, endpointColumns, options.Width, options.Color); err != nil {
-			return err
-		}
-	} else if err := writeFramedTable(out, headers, cells, states, rowStyles, widths, endpointColumns, options.Color); err != nil {
+	widths := measureColumns(cells, endpointColumns, options.Full)
+	if err := writeTable(out, headers, cells, states, rowStyles, widths, endpointColumns, options); err != nil {
 		return err
 	}
 	if len(selected) > 0 {
@@ -215,5 +205,5 @@ func interactiveEndpoints(parent context.Context, api InteractiveAPI, rest strin
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).Endpoints(ctx, out, strings.TrimSpace(rest), false, TableOptions{Width: OutputWidth(out), Color: color})
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).Endpoints(ctx, out, strings.TrimSpace(rest), false, tableOptionsFor(out, color, false, nil))
 }

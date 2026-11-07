@@ -11,7 +11,11 @@ import (
 )
 
 // terminalOutput exposes the actual output terminal size, including after resize.
-type terminalOutput struct{ io.Writer }
+// full disables table truncation, so a narrow terminal wraps instead of clipping.
+type terminalOutput struct {
+	io.Writer
+	full bool
+}
 
 // TerminalWidth leaves files and pipes unchanged when no terminal size is known.
 func (out terminalOutput) TerminalWidth() int {
@@ -24,6 +28,13 @@ func (out terminalOutput) TerminalWidth() int {
 		return 0
 	}
 	return width
+}
+
+// TableLayout reports the width and truncation policy of this output boundary.
+// The width stays the real terminal width even when truncation is disabled, so
+// the interactive line editor keeps its prompt budget.
+func (out terminalOutput) TableLayout() tui.TableLayout {
+	return tui.TableLayout{Width: out.TerminalWidth(), Full: out.full}
 }
 
 // interactiveEditor enables editing only for actual terminals with cancellable reads.

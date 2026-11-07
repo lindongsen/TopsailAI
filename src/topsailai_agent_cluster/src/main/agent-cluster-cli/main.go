@@ -69,7 +69,6 @@ func runWithSignals(args []string, input io.Reader, output, errorOutput io.Write
 }
 
 func runWithIO(args []string, input io.Reader, output, errors io.Writer, terminal bool, interrupts <-chan os.Signal) error {
-	output = terminalOutput{Writer: output}
 	flags := flag.NewFlagSet("agent-cluster-cli", flag.ContinueOnError)
 	flags.SetOutput(errors)
 	flags.Usage = func() {
@@ -91,6 +90,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	maxBytes := flags.Int("max-bytes", 64<<10, "maximum output snapshot size in bytes")
 	lines := flags.Int("lines", 100, "maximum number of output lines returned by logs")
 	noColor := flags.Bool("no-color", false, "disable terminal colors")
+	noTruncate := flags.Bool("no-truncate", false, "disable table truncation; a narrow terminal wraps instead of clipping")
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
 	folder := flags.String("folder", "", "working folder for start")
@@ -100,6 +100,9 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	// The output boundary owns the truncation policy, so every render path
+	// inherits the flag without threading it through each command.
+	output = terminalOutput{Writer: output, full: *noTruncate}
 	interactiveSelected, err := resolveInteractiveSelection(*interactiveShort, flags.Args())
 	if err != nil {
 		return err
@@ -236,7 +239,10 @@ func legacyRunner(api tui.CommandAPI) tui.CommandRunner {
 }
 
 func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, jsonMode bool, color tui.ColorPolicy) error {
-	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, tui.TableOptions{Width: tui.OutputWidth(output), Color: color, Clean: clean})
+	options := tui.TableOptionsFor(output)
+	options.Color = color
+	options.Clean = clean
+	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, options)
 }
 
 // refresh forces one fresh Endpoint collection and renders the committed
@@ -244,12 +250,16 @@ func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, fil
 func refresh(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, jsonMode bool, color tui.ColorPolicy) error {
 	refreshCtx, cancel := context.WithTimeout(ctx, tui.RefreshCommandTimeout())
 	defer cancel()
-	return legacyRunner(api).Refresh(refreshCtx, output, errors, filter, jsonMode, tui.TableOptions{Width: tui.OutputWidth(output), Color: color})
+	options := tui.TableOptionsFor(output)
+	options.Color = color
+	return legacyRunner(api).Refresh(refreshCtx, output, errors, filter, jsonMode, options)
 }
 
 // endpoints renders the endpoint projection for the standalone CLI.
 func endpoints(ctx context.Context, api tui.CommandAPI, output io.Writer, filter string, jsonMode bool, color tui.ColorPolicy) error {
-	return legacyRunner(api).Endpoints(ctx, output, filter, jsonMode, tui.TableOptions{Width: tui.OutputWidth(output), Color: color})
+	options := tui.TableOptionsFor(output)
+	options.Color = color
+	return legacyRunner(api).Endpoints(ctx, output, filter, jsonMode, options)
 }
 
 func show(ctx context.Context, api tui.CommandAPI, output io.Writer, id string, jsonMode bool) error {

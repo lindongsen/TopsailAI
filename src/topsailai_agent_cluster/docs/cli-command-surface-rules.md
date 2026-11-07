@@ -86,6 +86,29 @@ Removed spellings must stay rejected rather than silently reinterpreted: `table`
 returns an explicit removal message pointing at `list --clean`, and `use` is
 rejected as unknown in favour of `cd`.
 
+## Global presentation flags
+
+Presentation flags are global: they are parsed before the command word and apply
+to every table command and to the interactive REPL started by the same
+invocation. They never change query semantics or the data returned by the API.
+
+| Flag | Effect |
+|---|---|
+| `--no-color` | Disable terminal colors |
+| `--no-truncate` | Disable table truncation; a narrow terminal wraps instead of clipping |
+
+`--no-truncate` is the switch for a small terminal. Truncation stays the default,
+because a bounded table is what keeps a wide fleet readable. With the switch set,
+the renderer ignores both the terminal width bound and the per-column caps, so a
+long session ID, endpoint ID, hostname or capability revision is printed in full
+and the terminal wraps it. The switch does not weaken sanitization: terminal
+control sequences in provider data are still stripped.
+
+The output boundary owns the policy. The CLI writer reports a `TableLayout` of
+width plus truncation state, so every render path inherits the switch without
+threading a new parameter through each command, and the interactive prompt editor
+keeps the real terminal width as its editing budget.
+
 ## Verification
 
 - The standalone help order and the dispatch switch must list the same commands.
