@@ -39,7 +39,7 @@ The human confirmed:
 > 第一版需要有 启动/恢复/停止 agent； 第一版 stdout 不需要定时刷新快照；endpoint的边界是机器，操作系统里面有一个endpoint的进程，可以对接多个adapter（不同的agents）
 > 我同意，请更新设计文档。此外，要把设计文档保存到 docs/ 文件夹中。其它文档仍然在 .task/ 里面。
 
-The naming proposal was accepted: product **Agent Cluster**; project/repository `topsailai_agent_cluster`; three independent executable commands `agent-cluster-server`, `agent-cluster-endpoint` and `agent-cluster-tui`; service names match the Server/Endpoint commands; first adapter ID `topsailai`. Do not use an `agent-cluster` executable with role subcommands. Each command is independently launched; internal libraries may be shared. Adapters initially run inside the Endpoint process, not as separate services. SQLite support is now required; language and transport choices remain proposals.
+The naming proposal was accepted: product **Agent Cluster**; project/repository `topsailai_agent_cluster`; three independent executable commands `agent-cluster-server`, `agent-cluster-endpoint` and `agent-cluster-cli`; service names match the Server/Endpoint commands; first adapter ID `topsailai`. Do not use an `agent-cluster` executable with role subcommands. Each command is independently launched; internal libraries may be shared. Adapters initially run inside the Endpoint process, not as separate services. SQLite support is now required; language and transport choices remain proposals.
 
 Start/resume/stop are mandatory MVP platform capabilities. A provider that lacks a safe implementation must report the gap, but the first-release TopsailAI lifecycle gap cannot be deferred as an optional feature. No periodic stdout snapshot refresh is required; this does not decide between explicit reads and continuous subscriptions. Design documents live in `docs/`; planning, execution checklists and evidence remain in `.task/`.
 
@@ -128,6 +128,8 @@ Human direction:
 > endpoint应该需要定期上报session信息（对应topsailai的workspace 子命令的那个列表信息，类似如此），上报这些信息到server。
 > server应该处置这些信息，要支持sqlite，保存到数据库中，并且能够实时更新数据库。server端也要能主动去拉取endpoint的信息。
 > 这些session信息保存到一个字段就行，不用拆开去存，这样能保证每次更新后，表里面都是最新的数据，就不需要复杂的历史数据管理。
+
+Naming note: the third command was later implemented as `agent-cluster-cli`, because it serves both the interactive REPL/TUI and the noninteractive subcommands. The human quote above is preserved verbatim; the implemented name is `agent-cluster-cli`.
 
 Endpoint periodically collects and reports a complete current inventory, initially proposing a configurable 10-second interval with jitter. It reports after reconnect and can refresh after lifecycle changes. This concerns Session list information, NOT stdout polling. Endpoint merges its private adapter observations into one standard inventory document containing opaque resource IDs, normalized Agent/Session/Task summaries and aggregate collection health. The document may include standard adapter identity/type/version/health summaries and Session-to-adapter associations. These are descriptive report data, not provider-specific execution schemas or Server routing instructions. For TopsailAI the source is `topsailai workspace --format json`; do not store raw local paths or confidential metadata indiscriminately.
 

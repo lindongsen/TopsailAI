@@ -48,7 +48,7 @@ Platform distinction: network protocol and management services should be portabl
 
 ## TUI interaction design
 
-The operator runs a cluster CLI/TUI connected only to Server. Confirmed independent executable commands: `agent-cluster-server`, `agent-cluster-endpoint` and `agent-cluster-tui`; no role subcommands under a unified executable. Service names are `agent-cluster-server` and `agent-cluster-endpoint`; the product is Agent Cluster and the project is `topsailai_agent_cluster`.
+The operator runs a cluster CLI/TUI connected only to Server. Confirmed independent executable commands: `agent-cluster-server`, `agent-cluster-endpoint` and `agent-cluster-cli`; no role subcommands under a unified executable. Service names are `agent-cluster-server` and `agent-cluster-endpoint`; the product is Agent Cluster and the project is `topsailai_agent_cluster`. The third command is `agent-cluster-cli` rather than `agent-cluster-tui` because it serves both the interactive REPL/TUI and the noninteractive subcommands.
 
 Fleet view: Endpoint, connectivity/freshness, standard resource labels, active session count, waiting-input count if supported, error/degraded summary. Cached data renders immediately with freshness, not an implied live guarantee.
 
@@ -121,7 +121,7 @@ Implementation phases, verification plans and execution evidence are maintained 
 
 ## Confirmed Session synchronization
 
-Endpoint periodically reports the full standard Session list (internally collected from sources such as TopsailAI workspace inventory); Server validates and commits the latest list to one SQLite JSON TEXT field per Endpoint. Server can actively request a fresh list. Both paths share revision checks and atomic replacement; no Session history or per-Session SQL rows. TUI refreshes current inventory after post-commit notifications, independently of stdout. Independent entry points are `agent-cluster-server`, `agent-cluster-endpoint` and `agent-cluster-tui`.
+Endpoint periodically reports the full standard Session list (internally collected from sources such as TopsailAI workspace inventory); Server validates and commits the latest list to one SQLite JSON TEXT field per Endpoint. Server can actively request a fresh list. Both paths share revision checks and atomic replacement; no Session history or per-Session SQL rows. TUI refreshes current inventory after post-commit notifications, independently of stdout. Independent entry points are `agent-cluster-server`, `agent-cluster-endpoint` and `agent-cluster-cli`.
 
 ## Adapter privacy and resource routing
 
