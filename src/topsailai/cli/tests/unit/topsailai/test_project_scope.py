@@ -116,7 +116,7 @@ class TestBuildProjectList(unittest.TestCase):
             },
         ]
         # Even though create_time says otherwise, stdout mtime decides order.
-        mock_mtime.side_effect = lambda _task_dir, session_id: {
+        mock_mtime.side_effect = lambda _task_dir, session_id, index=None: {
             "newest": 1751454000.0,  # 2026-07-06 11:00:00
             "oldest": 1751446800.0,  # 2026-07-06 09:00:00
         }.get(session_id)

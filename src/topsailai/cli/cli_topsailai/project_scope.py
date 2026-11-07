@@ -15,7 +15,6 @@ import shlex
 import shutil
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import TYPE_CHECKING, Callable, List
 
@@ -30,9 +29,15 @@ from cli_topsailai.driver_ownership import (
     stop_owned_driver,
 )
 from cli_topsailai.formatting import _fit_table_cell
-from cli_topsailai.log_files import _find_session_stdout_file
+from cli_topsailai.log_files import (
+    _find_session_stdout_file,
+    _get_pid_from_stdout_path,
+    _parse_stdout_filename,
+)
 from cli_topsailai.paths import get_topsailai_home
 from cli_topsailai.process_liveness import (
+    ProcessState,
+    _TEMP_SESSION_ID,
     _session_stdout_candidates as _liveness_session_stdout_candidates,
     is_pid_alive,
     pid_state,
@@ -43,9 +48,6 @@ from cli_topsailai.projects import (
     print_project_table as _print_managed_project_table,
 )
 
-
-# Maximum number of concurrent running-status checks per refresh.
-_MAX_RUNNING_STATUS_WORKERS = 8
 
 # Built-in agent drivers offered when resuming a session.
 _RESUME_DEFAULT_DRIVER = "topsailai_agent_chats"
@@ -87,60 +89,143 @@ def _is_pid_alive(pid: int) -> bool:
     return is_pid_alive(pid)
 
 
-def _check_session_running(home: str, session_id: str) -> bool:
+def _build_stdout_index(task_dir: str) -> Dict[str, List[tuple]]:
+    """Return ``session_id -> [(path, mtime), ...]`` from one directory listing.
+
+    The refresh needs two facts per session: the newest stdout mtime and whether
+    any candidate process is alive. Resolving either fact per session lists the
+    whole task directory, so a refresh of N sessions paid 2N listings of M
+    entries. This index pays one listing and both consumers read it.
+
+    Entries keep the ``os.listdir`` order because the newest-file rule resolves
+    equal mtimes to the first entry in listing order. Non-file entries and
+    entries whose mtime cannot be read are skipped, matching
+    :func:`cli_topsailai.log_files._find_session_stdout_file`.
+
+    The key is the display identity, so a temporary session
+    (``topsailai.{pid}.session.stdout``) is keyed by ``_TEMP_SESSION_ID``. That
+    is exactly the equivalence :func:`cli_topsailai.process_liveness._matches_session`
+    defines, which keeps lookup a single dictionary access instead of a scan
+    over every session in the directory.
+    """
+    index: Dict[str, List[tuple]] = {}
+    try:
+        entries = os.listdir(task_dir)
+    except OSError:
+        return index
+
+    for entry in entries:
+        if not entry.endswith(".session.stdout"):
+            continue
+        full_path = os.path.join(task_dir, entry)
+        if not os.path.isfile(full_path):
+            continue
+        parsed_session_id, _pid = _parse_stdout_filename(entry)
+        try:
+            mtime = os.path.getmtime(full_path)
+        except OSError:
+            continue
+        key = parsed_session_id if parsed_session_id is not None else _TEMP_SESSION_ID
+        index.setdefault(key, []).append((full_path, mtime))
+    return index
+
+
+def _index_candidates(index: Dict[str, List[tuple]], session_id: str) -> List[tuple]:
+    """Return the indexed candidates that belong to *session_id*.
+
+    The index is keyed by display identity, so this is one dictionary lookup.
+    """
+    return index.get(session_id, [])
+
+
+def _check_session_running(
+    home: str,
+    session_id: str,
+    index: Optional[Dict[str, List[tuple]]] = None,
+) -> bool:
     """Check whether *session_id* has a live session process.
 
     Every ``{session_id}.{pid}.session.stdout`` candidate is inspected, because
     a newer dead file must not hide an older live process. An unverifiable
     candidate is reported as not running: this is a display path, so it must
     never claim a session is running when the OS refuses to answer.
+
+    When *index* is supplied the directory is not listed again, so a batch
+    caller pays one listing instead of one per session.
     """
     if not session_id:
         return False
-    return session_liveness(session_id, home=home) == "live"
+    if index is None:
+        return session_liveness(session_id, home=home) == "live"
+
+    candidates = _index_candidates(index, session_id)
+    if not candidates:
+        return False
+    for path, _mtime in candidates:
+        if pid_state(_get_pid_from_stdout_path(path)) is ProcessState.ALIVE:
+            return True
+    # An unverifiable candidate is not running: this is a display path, so it
+    # must never claim a session is running when the OS refuses to answer.
+    return False
 
 
-def _resolve_session_mtime(task_dir: str, session_id: str) -> Optional[float]:
+def _resolve_session_mtime(
+    task_dir: str,
+    session_id: str,
+    index: Optional[Dict[str, List[tuple]]] = None,
+) -> Optional[float]:
     """Return the modification time of the most recent session stdout file.
 
-    Uses :func:`cli_topsailai.log_files._find_session_stdout_file` to locate
-    the newest ``*.session.stdout`` file for *session_id* and returns its
-    ``st_mtime``.  If no stdout file exists, returns ``None`` so callers can
-    fall back to another timestamp (e.g. ``create_time``).
+    The newest ``*.session.stdout`` file for *session_id* decides the value. If
+    no stdout file exists, returns ``None`` so callers can fall back to another
+    timestamp (e.g. ``create_time``).
+
+    When *index* is supplied the directory is not listed again. The newest-file
+    rule is reproduced exactly: sort by mtime descending, and because the sort
+    is stable, an equal mtime resolves to the first entry in listing order.
     """
-    stdout_path = _find_session_stdout_file(task_dir, session_id)
-    if not stdout_path:
+    if index is None:
+        stdout_path = _find_session_stdout_file(task_dir, session_id)
+        if not stdout_path:
+            return None
+        try:
+            return os.path.getmtime(stdout_path)
+        except OSError:
+            return None
+
+    candidates = _index_candidates(index, session_id)
+    if not candidates:
         return None
-    try:
-        return os.path.getmtime(stdout_path)
-    except OSError:
-        return None
+    candidates.sort(key=lambda item: item[1], reverse=True)
+    return candidates[0][1]
 
 
-def _enrich_running_status(entries: List[Dict[str, Any]]) -> None:
-    """Add a ``status`` field to each entry by scanning stdout files.
+def _enrich_running_status(
+    entries: List[Dict[str, Any]],
+    index: Optional[Dict[str, List[tuple]]] = None,
+) -> None:
+    """Add a ``status`` field to each entry from one stdout directory listing.
 
-    Running status is determined by checking the embedded PID of the most
-    recent ``*.session.stdout`` file for each session.  Checks run in a
-    thread pool so filesystem scans do not block each other.
+    Running status is determined by probing the embedded PID of every
+    ``*.session.stdout`` candidate for the session. The directory is listed once
+    for the whole batch, so the cost does not grow with the number of entries.
     """
     if not entries:
         return
 
     home = get_topsailai_home()
-    max_workers = min(_MAX_RUNNING_STATUS_WORKERS, len(entries))
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_entry = {
-            executor.submit(_check_session_running, home, entry.get("session_id", "")): entry
-            for entry in entries
-        }
-        for future in as_completed(future_to_entry):
-            entry = future_to_entry[future]
-            try:
-                is_running = future.result()
-            except Exception:
-                is_running = False
-            entry["status"] = "Running" if is_running else "Idle"
+    if index is None:
+        task_dir = os.path.join(home, "workspace", "task")
+        index = _build_stdout_index(task_dir)
+
+    for entry in entries:
+        try:
+            is_running = _check_session_running(
+                home, entry.get("session_id", ""), index=index
+            )
+        except Exception:
+            is_running = False
+        entry["status"] = "Running" if is_running else "Idle"
 
 
 def _format_time(time_value: str) -> str:
@@ -277,12 +362,14 @@ def build_project_list(
 
     home = get_topsailai_home()
     task_dir = os.path.join(home, "workspace", "task")
+    # One listing serves both the mtime sort and the running-status enrichment.
+    stdout_index = _build_stdout_index(task_dir)
 
     entries = []
     for session in sessions:
         session_id_value = session.get("session_id") or ""
         create_time_raw = session.get("create_time") or ""
-        mtime = _resolve_session_mtime(task_dir, session_id_value)
+        mtime = _resolve_session_mtime(task_dir, session_id_value, index=stdout_index)
         if mtime is not None:
             modified_time_raw = datetime.fromtimestamp(mtime).isoformat()
         else:
@@ -317,7 +404,7 @@ def build_project_list(
         entry.pop("_mtime", None)
         entry.pop("_fallback_time", None)
 
-    _enrich_running_status(entries)
+    _enrich_running_status(entries, index=stdout_index)
     return entries
 
 
