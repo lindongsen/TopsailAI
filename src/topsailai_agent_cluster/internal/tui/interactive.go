@@ -353,7 +353,7 @@ var ErrInteractiveInterrupt = fmt.Errorf("interactive interrupted")
 const maxConsecutivePromptFailures = 3
 
 func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *interactiveState, line string, lineResults <-chan lineReadResult, out, trustedOut, errOut io.Writer, options InteractiveOptions) (bool, error) {
-	rawName, rest := splitCommand(line)
+	rawName, rest := commandToken(line)
 	if candidate, token, surplus := numericInput(line); candidate {
 		if surplus {
 			return false, fmt.Errorf("usage: cd [target]")
@@ -476,7 +476,26 @@ func diagnosticCommandName(line string) string {
 	if candidate, _, _ := numericInput(line); candidate {
 		return "cd"
 	}
-	name, _ := splitCommand(line)
+	name, _ := commandToken(line)
+	return name
+}
+
+// commandToken splits a REPL line and strips the optional leading command
+// prefix from the command word only. The prefix is a form, not an alias: it is
+// removed before alias and scope resolution, and never from the argument text,
+// so a payload such as "send /help" keeps its literal slash.
+func commandToken(line string) (string, string) {
+	name, rest := splitCommand(line)
+	return trimCommandPrefix(name), rest
+}
+
+// trimCommandPrefix removes one leading slash from a non-empty command word.
+// A bare "/" is left intact so it stays an unknown command instead of silently
+// becoming an empty line.
+func trimCommandPrefix(name string) string {
+	if len(name) > 1 && strings.HasPrefix(name, "/") {
+		return name[1:]
+	}
 	return name
 }
 

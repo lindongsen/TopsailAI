@@ -89,6 +89,10 @@ Removed spellings must stay rejected rather than silently reinterpreted: `table`
 returns an explicit removal message pointing at `list --clean`, and `use` is
 rejected as unknown in favour of `cd`.
 
+Every interactive spelling in the table also accepts the optional `/` command-word
+prefix described below, so the table lists command words rather than every accepted
+input form.
+
 ## Planned additions: provider control and allowlisted command execution
 
 Two command families are designed but not yet implemented. They are recorded here so
@@ -122,6 +126,36 @@ only by scraping terminal output.
 Both families are one-shot: a single bounded snapshot carrying its observation time,
 never a stream, a follow or a durable subscription. Neither may silently degrade; an
 unavailable capability returns an explicit error rather than cached or partial data.
+
+## Command-word prefix
+
+The interactive REPL accepts an optional `/` before the command word, so `send hi`
+and `/send hi` are the same command. The prefix is a form, not a command word: it is
+stripped from the first token only, before alias resolution and scope checks.
+
+- Only the command word is affected. Argument text stays literal, so `send /help`
+  sends the text `/help` and never opens help.
+- A bare `/` is still an unknown command. It is not silently treated as an empty
+  line, because swallowing input hides a mistake instead of reporting it.
+- `cd /` is unchanged: `/` in argument position still means the workspace root. The
+  two meanings never collide because the prefix is recognised only at the command
+  word.
+- The prefix is optional in both directions. Bare command words remain valid, so
+  existing scripts, recorded input and muscle memory keep working.
+- Completion and `help <command>` accept the prefix too, so `/se` completes and
+  `help /send` resolves like `help send`. A prefix that worked for dispatch but not
+  for completion would look unreliable.
+- The non-interactive surface does not accept `/`. There the first argument is a
+  command word and a leading `/` is a path, so accepting it would change path
+  semantics.
+- The wizard is not a REPL. Answers typed during `start` are literal values, so a
+  `/start` answer stays a folder or task value and is never dispatched as a command.
+
+`/` and `!` are the two registered command-word prefix forms. `!` is recognised
+before the command word is split because it carries an argv tail; `/` is stripped
+from the command word because it carries nothing. Neither is an alias entry: an
+alias maps one word to another, while a prefix changes the accepted spelling of
+every command at once.
 
 ## Global presentation flags
 

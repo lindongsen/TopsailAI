@@ -9,6 +9,9 @@ import (
 
 const (
 	ListHelpDescription = "list all sessions, including endpoints that failed to report; use --clean to omit failed endpoints; diagnostics still go to stderr"
+	// commandPrefixHelp documents the optional command-word prefix once, so the
+	// operator learns that "/send" and "send" are the same command.
+	commandPrefixHelp = "Command prefix: a leading / on the command word is optional, so /send and send are the same command; it never changes argument text, and cd / still means the workspace root."
 )
 
 type commandHelp struct {
@@ -224,9 +227,16 @@ func commandScopes(name string) []string {
 	return scopes
 }
 
+// helpTarget normalizes one help argument: case, surrounding space, and the
+// optional command prefix. The prefix is a form, so "help /send" must resolve
+// exactly like "help send".
+func helpTarget(target string) string {
+	return canonicalCommandName(trimCommandPrefix(strings.ToLower(strings.TrimSpace(target))))
+}
+
 // PrintCommandHelp renders overview or detailed help without ANSI styling.
 func PrintCommandHelp(out io.Writer, target string) error {
-	target = canonicalCommandName(strings.ToLower(strings.TrimSpace(target)))
+	target = helpTarget(target)
 	if target == "" {
 		return printScopeHelpOverview(out)
 	}
@@ -242,7 +252,7 @@ func PrintCommandHelp(out io.Writer, target string) error {
 
 // PrintScopedCommandHelp renders context help or complete canonical help.
 func PrintScopedCommandHelp(out io.Writer, target string, kind ScopeKind) error {
-	target = canonicalCommandName(strings.ToLower(strings.TrimSpace(target)))
+	target = helpTarget(target)
 	if target == "" {
 		return printContextHelp(out, kind)
 	}
@@ -343,7 +353,7 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 	if kind == ScopeSession {
 		example = "Session example: show or logs; use cd .. before starting another agent."
 	}
-	for _, line := range []string{"", workflow, example, "Run help all for every command and scope."} {
+	for _, line := range []string{"", workflow, example, commandPrefixHelp, "Run help all for every command and scope."} {
 		if _, err := fmt.Fprintln(out, line); err != nil {
 			return err
 		}
@@ -357,6 +367,9 @@ func printAllCommandHelp(out io.Writer) error {
 		return err
 	}
 	if _, err := fmt.Fprintln(out, "Bare ASCII numbers are shorthand for cd <number> in workspace and endpoint scopes; session scope does not support numeric row navigation."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(out, commandPrefixHelp); err != nil {
 		return err
 	}
 	for _, name := range commandHelpOrder {

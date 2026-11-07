@@ -25,9 +25,16 @@ func (t *TerminalEditor) completeCommand(prompt string) error {
 		return nil
 	}
 	prefix := string(e.text)
+	// The command prefix is a form, so completion matches the bare command word
+	// while the typed prefix stays in the buffer; the inserted suffix therefore
+	// appends to it instead of replacing it.
+	matchPrefix := trimCommandPrefix(prefix)
+	if matchPrefix == "/" {
+		matchPrefix = ""
+	}
 	matches := []string{}
 	for _, name := range availableCommands(kind) {
-		if strings.HasPrefix(name, prefix) {
+		if strings.HasPrefix(name, matchPrefix) {
 			matches = append(matches, name)
 		}
 	}
@@ -40,7 +47,7 @@ func (t *TerminalEditor) completeCommand(prompt string) error {
 			common = common[:len(common)-1]
 		}
 	}
-	suffix := strings.TrimPrefix(common, prefix)
+	suffix := strings.TrimPrefix(common, matchPrefix)
 	if len(matches) == 1 {
 		suffix += " "
 	}
