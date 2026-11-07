@@ -17,7 +17,7 @@
 #     logs -> /var/log/agent-cluster
 #     run -> /run/agent-cluster
 #   /usr/local/sbin/agent-clusterctl, agent-cluster-<role>, agent-cluster-cli,
-#   topsailai_agent_cluster, agent-cluster-node-setup
+#   topsailai_agent_cluster, topsailai2, agent-cluster-node-setup
 #                                  symlinks to the payload above
 #
 # Configuration, TLS material, state, logs and pid files stay in /etc, /var/lib,
@@ -377,11 +377,12 @@ function build_role_package() {
     add_link "${SBIN_DIR}/agent-cluster-${ROLE}" "${OPT_DIR}/bin/agent-cluster-${ROLE}"
     if [ "${ROLE}" = "endpoint" ]; then
         # The CLI keeps its native name, which is also the name it prints in its
-        # own usage text. The product-facing alias is a symlink to it, so both
-        # spellings reach the same binary and neither is a second copy.
+        # own usage text. The product-facing aliases are symlinks to it, so every
+        # spelling reaches the same binary and none is a second copy.
         build_binary "./src/main/agent-cluster-cli" "${OPT_DIR}/bin/agent-cluster-cli"
         add_link "${SBIN_DIR}/agent-cluster-cli" "${OPT_DIR}/bin/agent-cluster-cli"
         add_link "${SBIN_DIR}/topsailai_agent_cluster" "agent-cluster-cli"
+        add_link "${SBIN_DIR}/topsailai2" "agent-cluster-cli"
     fi
 
     write_role_config "${template}"

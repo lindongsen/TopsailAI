@@ -14,7 +14,7 @@ material. Three packages exist because a machine has one role.
 |---|---|---|
 | `agent-cluster-node` | `agent-clusterctl`, `agent-cluster-node-setup`, the shared env writer | controller, required by both role packages |
 | `agent-cluster-server` | `agent-cluster-server` | Server daemon |
-| `agent-cluster-endpoint` | `agent-cluster-endpoint`, `agent-cluster-cli`, `topsailai_agent_cluster` (symlink) | Endpoint daemon and operator CLI |
+| `agent-cluster-endpoint` | `agent-cluster-endpoint`, `agent-cluster-cli`, `topsailai_agent_cluster` and `topsailai2` (symlinks) | Endpoint daemon and operator CLI |
 
 Every installed file is visible in one directory. The program payload lives under
 `/opt/agent-cluster`, and each entry point is a symlink in `/usr/local/sbin`, which is on the
@@ -71,8 +71,9 @@ dpkg -i agent-cluster-node_<version>_amd64.deb agent-cluster-endpoint_<version>_
 ```
 
 The endpoint package also installs the operator CLI as `/opt/agent-cluster/bin/agent-cluster-cli`,
-with `/usr/local/sbin/agent-cluster-cli` and `/usr/local/sbin/topsailai_agent_cluster` as symlinks
-to it, and writes `${HOME}/.topsailai/.topsailai_agent_cluster.env`, which is how the CLI learns
+with `/usr/local/sbin/agent-cluster-cli`, `/usr/local/sbin/topsailai_agent_cluster` and
+`/usr/local/sbin/topsailai2` as symlinks to it, and writes
+`${HOME}/.topsailai/.topsailai_agent_cluster.env`, which is how the CLI learns
 the Server address and token. Re-generate that file after a token rotation with
 `agent-cluster-node-setup`.
 

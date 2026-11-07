@@ -13,9 +13,10 @@
 #
 # Installing an endpoint also installs the CLI, because the CLI is how an
 # operator on that machine reaches the Server. The CLI keeps its native name
-# agent-cluster-cli, and topsailai_agent_cluster is a symlink to it, so both
-# spellings reach the same binary. It reads its Server address and token from
-# ${HOME}/.topsailai/.topsailai_agent_cluster.env, which this script writes.
+# agent-cluster-cli, and topsailai_agent_cluster and topsailai2 are symlinks to
+# it, so every spelling reaches the same binary. It reads its Server address and
+# token from ${HOME}/.topsailai/.topsailai_agent_cluster.env, which this script
+# writes.
 #
 # The binaries are installed as real files under /opt/agent-cluster/bin and
 # linked from /usr/local/sbin, which is the same entry-point shape the Debian
@@ -39,7 +40,7 @@ INSTALL_DIR="/usr/local/sbin"
 PAYLOAD_DIR="/opt/agent-cluster"
 FORCE=0
 CLI_NAME="agent-cluster-cli"
-CLI_ALIAS="topsailai_agent_cluster"
+CLI_ALIASES="topsailai_agent_cluster topsailai2"
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 CONFIG_FILE="${SCRIPT_DIR}/conf/node.conf"
@@ -118,11 +119,12 @@ function install_binary() {
     echo "linked ${link} -> ${payload}"
 }
 
-# Points the product-facing alias at the CLI that was just installed. The alias
+# Points one product-facing alias at the CLI that was just installed. The alias
 # is a relative symlink because both names live in the same directory, so the
 # link keeps working when the entry-point directory is relocated.
 function install_cli_alias() {
-    local target="${INSTALL_DIR}/${CLI_ALIAS}"
+    local alias_name="$1"
+    local target="${INSTALL_DIR}/${alias_name}"
     if [ -f "${target}" ] && [ ! -L "${target}" ]; then
         rm -f "${target}" || die "cannot remove the old ${target}"
         echo "removed the old regular file ${target}"
@@ -154,7 +156,9 @@ install_binary "${SCRIPT_DIR}/bin/agent-cluster-${ROLE}" "agent-cluster-${ROLE}"
 # operator on that machine uses it to reach the Server.
 if [ "${ROLE}" = "endpoint" ]; then
     install_binary "${SCRIPT_DIR}/bin/agent-cluster-cli" "${CLI_NAME}"
-    install_cli_alias
+    for alias_name in ${CLI_ALIASES}; do
+        install_cli_alias "${alias_name}"
+    done
     write_cli_env
 else
     echo "skipped CLI install: the ${ROLE} role does not carry the operator CLI"
