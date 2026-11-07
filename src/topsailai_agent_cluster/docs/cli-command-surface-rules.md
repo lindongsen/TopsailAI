@@ -74,6 +74,13 @@ see the effect.
   whole and the question is the only place the operator can see it before it is
   admitted. The confirmation gate stays on every operation that cannot be undone:
   `stop`, `resume`, `inject`, `interrupt`, `ctl` and `drive start`.
+- A confirmation question names the provider session identifier first, followed by
+  the opaque cluster resource ID in parentheses, for example
+  `stop session provider-res-1 (res-1)? Confirm stop?`. The provider identifier is
+  the value the list renders in `SESSION_ID`, so the operator can match the question
+  against the selected row before answering; the opaque ID stays visible because
+  `status` and `info` accept it. A session with no reported provider identifier
+  falls back to the opaque ID alone, so the question never names an empty session.
 
 ## Audit
 

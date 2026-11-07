@@ -205,3 +205,37 @@ func TestStopReportsCommandIDForStatus(t *testing.T) {
 		t.Fatalf("state commandID=%q, want cmd-77", state.commandID)
 	}
 }
+
+// TestStopConfirmationNamesProviderSessionIDFirst proves the workspace-scope stop
+// question names the provider session identifier before the opaque cluster resource
+// ID, so the operator can match the question against the SESSION_ID column of the
+// rendered list before answering. The opaque ID stays available for status and info.
+func TestStopConfirmationNamesProviderSessionIDFirst(t *testing.T) {
+	stub := scopeStub()
+	output, diagnostics := runScope(t, stub, "list\nstop 1\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if !strings.Contains(output, "stop session provider-res-1 (res-1)? Confirm stop?") {
+		t.Fatalf("confirmation question does not name the provider session ID first: %q", output)
+	}
+	if strings.Index(output, "provider-res-1") > strings.Index(output, "stop session provider-res-1 (res-1)?") {
+		t.Fatalf("provider session ID is not the first identifier in the question: %q", output)
+	}
+}
+
+// TestStopConfirmationDeclinedAdmitsNothing proves the reworded question keeps the
+// confirmation gate: a declined answer still admits no command.
+func TestStopConfirmationDeclinedAdmitsNothing(t *testing.T) {
+	stub := scopeStub()
+	output, diagnostics := runScope(t, stub, "list\nstop 1\nn\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("declined stop admitted %d commands", stub.admit)
+	}
+	if !strings.Contains(output, "stop cancelled") {
+		t.Fatalf("missing cancellation notice: %q", output)
+	}
+}

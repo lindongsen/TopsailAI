@@ -148,7 +148,7 @@ func interactiveCtl(parent context.Context, api InteractiveAPI, state *interacti
 	if err != nil {
 		return err
 	}
-	return interactiveConfirmedAction(parent, api, state, ctlOperationPrefix+action, "ctl "+action, session.SessionID, session.Generation, payload, lines, out, trustedOut, options, nil, nil)
+	return interactiveConfirmedAction(parent, api, state, ctlOperationPrefix+action, "ctl "+action, confirmationTargetFor(*session), session.Generation, payload, lines, out, trustedOut, options, nil, nil)
 }
 
 // CtlPayload validates one non-interactive control payload.

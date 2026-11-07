@@ -12,11 +12,19 @@ import (
 
 // stopTarget is the exact endpoint-scoped session identity a stop request names.
 // The endpoint is carried explicitly because workspace scope has no current
-// endpoint, so the target cannot be derived from the navigation scope.
+// endpoint, so the target cannot be derived from the navigation scope. The
+// provider session identifier is carried so the confirmation question can name
+// the row the operator selected instead of only the opaque cluster resource ID.
 type stopTarget struct {
-	endpointID string
-	sessionID  string
-	generation string
+	endpointID        string
+	sessionID         string
+	providerSessionID string
+	generation        string
+}
+
+// confirmationTarget names this stop target for the confirmation question.
+func (t stopTarget) confirmationTarget() confirmationTarget {
+	return confirmationTarget{ProviderSessionID: t.providerSessionID, SessionID: t.sessionID}
 }
 
 // interactiveStop stops one session selected by the current scope.
@@ -43,7 +51,7 @@ func interactiveStop(parent context.Context, api InteractiveAPI, state *interact
 		postSubmit := func(postCtx context.Context, result map[string]any) error {
 			return reconcileStoppedSelection(postCtx, api, state, target.sessionID, out)
 		}
-		return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentStop, "stop", target.sessionID, target.generation, payload, lines, out, trustedOut, options, nil, postSubmit)
+		return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentStop, "stop", target.confirmationTarget(), target.generation, payload, lines, out, trustedOut, options, nil, postSubmit)
 	}
 	// Outside session scope the pinned selection is not the target, so the shared
 	// confirmation path receives a detached copy that pins exactly this target.
@@ -63,7 +71,7 @@ func interactiveStop(parent context.Context, api InteractiveAPI, state *interact
 		state.commandID = pinned.commandID
 		return invalidateStopRowBindings(state, out)
 	}
-	return interactiveConfirmedAction(parent, api, &pinned, protocol.OperationAgentStop, "stop", target.sessionID, target.generation, payload, lines, out, trustedOut, options, revalidate, postSubmit)
+	return interactiveConfirmedAction(parent, api, &pinned, protocol.OperationAgentStop, "stop", target.confirmationTarget(), target.generation, payload, lines, out, trustedOut, options, revalidate, postSubmit)
 }
 
 // resolveStopTarget maps the operator argument to one exact session identity.
@@ -78,7 +86,7 @@ func resolveStopTarget(ctx context.Context, api InteractiveAPI, state *interacti
 		if err != nil {
 			return stopTarget{}, err
 		}
-		return stopTarget{endpointID: state.EndpointID, sessionID: session.SessionID, generation: session.Generation}, nil
+		return stopTarget{endpointID: state.EndpointID, sessionID: session.SessionID, providerSessionID: session.ProviderSessionID, generation: session.Generation}, nil
 	}
 	var row SessionRow
 	var resolved bool
@@ -198,7 +206,7 @@ func stopTargetFromLoaded(loaded reportLoad, endpointID, sessionID, expectedGene
 		if expectedGeneration != "" && session.Generation != expectedGeneration {
 			return stopTarget{}, fmt.Errorf("session %q generation changed; run list again", sessionID)
 		}
-		return stopTarget{endpointID: endpointID, sessionID: sessionID, generation: session.Generation}, nil
+		return stopTarget{endpointID: endpointID, sessionID: sessionID, providerSessionID: session.ProviderSessionID, generation: session.Generation}, nil
 	}
 	return stopTarget{}, fmt.Errorf("session %q was not found on endpoint %q; run list again", sessionID, endpointID)
 }

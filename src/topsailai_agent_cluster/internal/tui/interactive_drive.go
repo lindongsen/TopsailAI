@@ -49,7 +49,7 @@ func interactiveDrive(parent context.Context, api InteractiveAPI, state *interac
 	// The confirmation text names the controller explicitly, because stopping a
 	// driver is not stopping the agent and the operator must not confuse them.
 	label := "drive " + action
-	return interactiveConfirmedAction(parent, api, state, operation, label, session.SessionID, session.Generation, json.RawMessage(`{}`), lines, out, trustedOut, options, nil, nil)
+	return interactiveConfirmedAction(parent, api, state, operation, label, confirmationTargetFor(*session), session.Generation, json.RawMessage(`{}`), lines, out, trustedOut, options, nil, nil)
 }
 
 // interactiveDriveStatus reports the standard drive state of the selected

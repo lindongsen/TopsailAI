@@ -662,7 +662,7 @@ func interactiveSessionLifecycle(parent context.Context, api InteractiveAPI, sta
 		revalidate := func(revalidateCtx context.Context) error {
 			return validateResumeSelectionAbsent(revalidateCtx, api, state)
 		}
-		return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentResume, name, state.SessionID, state.Generation, payload, lines, out, trustedOut, options, revalidate, nil)
+		return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentResume, name, confirmationTargetForSelection(state), state.Generation, payload, lines, out, trustedOut, options, revalidate, nil)
 	}
 	_, _, session, err := findSelected(ctx, api, state)
 	cancel()
@@ -672,7 +672,7 @@ func interactiveSessionLifecycle(parent context.Context, api InteractiveAPI, sta
 	postSubmit := func(postCtx context.Context, result map[string]any) error {
 		return reconcileStoppedSelection(postCtx, api, state, session.SessionID, out)
 	}
-	return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentStop, name, session.SessionID, session.Generation, payload, lines, out, trustedOut, options, nil, postSubmit)
+	return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentStop, name, confirmationTargetFor(*session), session.Generation, payload, lines, out, trustedOut, options, nil, postSubmit)
 }
 
 // reconcileStoppedSelection leaves the session scope once a fresh inventory proves the
@@ -787,7 +787,7 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	if err != nil {
 		return err
 	}
-	return interactiveConfirmedAction(parent, api, state, op, name, session.SessionID, session.Generation, payload, lines, out, trustedOut, options, nil, nil)
+	return interactiveConfirmedAction(parent, api, state, op, name, confirmationTargetFor(*session), session.Generation, payload, lines, out, trustedOut, options, nil, nil)
 }
 
 // promptInterruptPayload guides a bare interrupt through the action choice and, for a soft
@@ -830,9 +830,11 @@ func promptInterruptPayload(parent context.Context, name string, lines <-chan li
 // starts only after the answer has been accepted. postSubmit runs after the durable
 // receipt has been rendered and may reconcile the interactive scope with that receipt.
 // The question is written through trustedOut because it carries application styling;
-// the interpolated resource identifier is provider data and is sanitized first.
-func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, resource, generation string, payload json.RawMessage, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions, revalidate func(context.Context) error, postSubmit func(context.Context, map[string]any) error) error {
-	question := name + " " + sanitizeInlineText(resource) + "? Confirm " + name + "? " + confirmationHint + " "
+// the interpolated target label is provider data and is sanitized first. The label
+// names the provider session identifier before the opaque cluster resource ID, so the
+// operator can match the question against the SESSION_ID column of the rendered list.
+func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, state *interactiveState, op, name string, target confirmationTarget, generation string, payload json.RawMessage, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions, revalidate func(context.Context) error, postSubmit func(context.Context, map[string]any) error) error {
+	question := name + " " + sanitizeInlineText(target.label()) + "? Confirm " + name + "? " + confirmationHint + " "
 	if err := writeConfirmationQuestion(trustedOut, question, options.Color); err != nil {
 		return err
 	}
@@ -865,7 +867,7 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 		return err
 	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: resource, Generation: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
+	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.SessionID, Generation: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
 	if err != nil {
 		return err
 	}
