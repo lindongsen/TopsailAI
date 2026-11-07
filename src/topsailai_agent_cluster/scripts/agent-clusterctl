@@ -76,7 +76,16 @@ function resolve_path() {
 
 # Loads the role configuration and normalises every path against the bundle.
 function load_config() {
-    [ -f "${CONFIG_FILE}" ] || die "missing configuration ${CONFIG_FILE}"
+    if [ ! -f "${CONFIG_FILE}" ]; then
+        # The node package ships this controller without a role, so a missing
+        # conf/ directory means no role is installed rather than a broken
+        # install. Reporting the difference keeps the operator from hunting a
+        # configuration file that was never meant to exist on this node.
+        if [ ! -d "${CTL_DIR}/conf" ]; then
+            die "no role configuration on this node; install agent-cluster-server or agent-cluster-endpoint first"
+        fi
+        die "missing configuration ${CONFIG_FILE}"
+    fi
     # A node must not inherit stale cluster variables from its parent shell.
     while IFS='=' read -r key _; do
         case "${key}" in
