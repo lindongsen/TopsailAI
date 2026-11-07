@@ -87,7 +87,7 @@ func TestLegacyAndInteractiveShowUseSharedRunnerMethods(t *testing.T) {
 func TestLegacyActionAndInteractiveSendShareIntentFields(t *testing.T) {
 	legacy := &actionPathStub{}
 	var legacyOut strings.Builder
-	if err := action(context.Background(), legacy, &legacyOut, []string{"send", "ep", "session", `{"text":"hi"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), legacy, &legacyOut, io.Discard, []string{"send", "ep", "session", `{"text":"hi"}`, "gen"}, true, false, 100, "", "", "", "", "", tui.ColorPolicy{}); err != nil {
 		t.Fatal(err)
 	}
 	interactive := &actionPathStub{}
@@ -322,12 +322,12 @@ func TestStandalonePlainTextPayloadsNeedNoJSON(t *testing.T) {
 func TestStandalonePlainTextMessageReachesIntent(t *testing.T) {
 	plain := &actionPathStub{}
 	var plainOut strings.Builder
-	if err := action(context.Background(), plain, &plainOut, []string{"send", "ep", "session", "hello world", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), plain, &plainOut, io.Discard, []string{"send", "ep", "session", "hello world", "gen"}, true, false, 100, "", "", "", "", "", tui.ColorPolicy{}); err != nil {
 		t.Fatal(err)
 	}
 	jsonForm := &actionPathStub{}
 	var jsonOut strings.Builder
-	if err := action(context.Background(), jsonForm, &jsonOut, []string{"send", "ep", "session", `{"text":"hello world"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), jsonForm, &jsonOut, io.Discard, []string{"send", "ep", "session", `{"text":"hello world"}`, "gen"}, true, false, 100, "", "", "", "", "", tui.ColorPolicy{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(plain.intents) != 1 || len(jsonForm.intents) != 1 {
@@ -713,7 +713,7 @@ func TestActionRejectsMisplacedFlag(t *testing.T) {
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			stub := &actionPathStub{}
-			err := action(context.Background(), stub, &strings.Builder{}, args, true, false, 100, "", "", "", "", "")
+			err := action(context.Background(), stub, &strings.Builder{}, io.Discard, args, true, false, 100, "", "", "", "", "", tui.ColorPolicy{})
 			if err == nil || !strings.Contains(err.Error(), "must be written before the command") {
 				t.Fatalf("err=%v", err)
 			}
@@ -728,7 +728,7 @@ func TestActionRejectsMisplacedFlag(t *testing.T) {
 // a message that is itself a flag token is still deliverable as a JSON object payload.
 func TestActionAcceptsDashLeadingTextThroughJSONPayload(t *testing.T) {
 	stub := &actionPathStub{}
-	if err := action(context.Background(), stub, &strings.Builder{}, []string{"send", "ep", "session", `{"text":"--json"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &strings.Builder{}, io.Discard, []string{"send", "ep", "session", `{"text":"--json"}`, "gen"}, true, false, 100, "", "", "", "", "", tui.ColorPolicy{}); err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	if len(stub.intents) != 1 {
@@ -746,7 +746,7 @@ func TestActionAcceptsDashLeadingTextThroughJSONPayload(t *testing.T) {
 // leading dash alone does not make a token a flag.
 func TestActionAcceptsNegativeGeneration(t *testing.T) {
 	stub := &actionPathStub{}
-	if err := action(context.Background(), stub, &strings.Builder{}, []string{"send", "ep", "session", "hello", "-1"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &strings.Builder{}, io.Discard, []string{"send", "ep", "session", "hello", "-1"}, true, false, 100, "", "", "", "", "", tui.ColorPolicy{}); err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "-1" {
@@ -759,7 +759,7 @@ func TestActionAcceptsNegativeGeneration(t *testing.T) {
 // second word became the target generation.
 func TestActionRejectsUnquotedMultiWordText(t *testing.T) {
 	stub := &actionPathStub{}
-	err := action(context.Background(), stub, &strings.Builder{}, []string{"send", "ep", "session", "please", "add", "to", "the", "config"}, true, false, 100, "", "", "", "", "")
+	err := action(context.Background(), stub, &strings.Builder{}, io.Discard, []string{"send", "ep", "session", "please", "add", "to", "the", "config"}, true, false, 100, "", "", "", "", "", tui.ColorPolicy{})
 	if err == nil || !strings.Contains(err.Error(), "quote the message text") {
 		t.Fatalf("err=%v", err)
 	}
@@ -774,7 +774,7 @@ func TestActionRejectsUnquotedMultiWordText(t *testing.T) {
 // TestActionAcceptsQuotedMultiWordText keeps the documented quoted form working.
 func TestActionAcceptsQuotedMultiWordText(t *testing.T) {
 	stub := &actionPathStub{}
-	if err := action(context.Background(), stub, &strings.Builder{}, []string{"send", "ep", "session", "please add to the config"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &strings.Builder{}, io.Discard, []string{"send", "ep", "session", "please add to the config"}, true, false, 100, "", "", "", "", "", tui.ColorPolicy{}); err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	if len(stub.intents) != 1 {
@@ -788,7 +788,7 @@ func TestActionAcceptsQuotedMultiWordText(t *testing.T) {
 // TestActionAcceptsTextAndGeneration keeps the full documented positional form working.
 func TestActionAcceptsTextAndGeneration(t *testing.T) {
 	stub := &actionPathStub{}
-	if err := action(context.Background(), stub, &strings.Builder{}, []string{"send", "ep", "session", "hello", "gen-1"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &strings.Builder{}, io.Discard, []string{"send", "ep", "session", "hello", "gen-1"}, true, false, 100, "", "", "", "", "", tui.ColorPolicy{}); err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "gen-1" {
@@ -802,7 +802,7 @@ func TestActionAcceptsTextAndGeneration(t *testing.T) {
 // TestActionAcceptsGenerationFlagWithText proves the flag form frees the generation slot.
 func TestActionAcceptsGenerationFlagWithText(t *testing.T) {
 	stub := &actionPathStub{}
-	if err := action(context.Background(), stub, &strings.Builder{}, []string{"send", "ep", "session", "hello"}, true, false, 100, "", "", "", "", "gen-1"); err != nil {
+	if err := action(context.Background(), stub, &strings.Builder{}, io.Discard, []string{"send", "ep", "session", "hello"}, true, false, 100, "", "", "", "", "gen-1", tui.ColorPolicy{}); err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.Generation != "gen-1" {
@@ -814,7 +814,7 @@ func TestActionAcceptsGenerationFlagWithText(t *testing.T) {
 // proves the error does not suggest quoting a message, because stop carries no message text.
 func TestActionRejectsExtraStopPositionals(t *testing.T) {
 	stub := &actionPathStub{}
-	err := action(context.Background(), stub, &strings.Builder{}, []string{"stop", "ep", "session", "gen-1", "extra"}, true, false, 100, "", "", "", "", "")
+	err := action(context.Background(), stub, &strings.Builder{}, io.Discard, []string{"stop", "ep", "session", "gen-1", "extra"}, true, false, 100, "", "", "", "", "", tui.ColorPolicy{})
 	if err == nil || !strings.Contains(err.Error(), "unexpected arguments") {
 		t.Fatalf("err=%v", err)
 	}

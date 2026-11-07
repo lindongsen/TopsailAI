@@ -60,6 +60,35 @@ Command panel: show admitted, dispatched, endpoint accepted, execution evidence 
 
 MVP provides start/resume/stop actions in both TUI and noninteractive CLI, with target authorization and destructive-action confirmation where applicable. It can also provide noninteractive list/show/message/command-status/explicit-output-snapshot operations alongside TUI so automation does not scrape terminal output. These operations share Server APIs and auth, not alternate provider paths.
 
+## Post-start collection for immediate visibility
+
+A successful `agent.start` forces one fresh collection for the Endpoint that
+accepted it, in both the interactive REPL and the noninteractive CLI, so the
+operator's next list already contains the launched session instead of waiting for
+the periodic collection. The collection is scoped to that single Endpoint: a
+workspace-wide collection would multiply provider discovery cost by the fleet size
+for one launch. The client waits within the existing forced-collection budget, so
+no new timeout is introduced.
+
+The refresh is a convenience, not a readiness claim. Three outcomes are distinct:
+
+- The collection returns the launched session, and the table shows it.
+- The collection succeeds but omits the session. This is reported as
+  `session submitted but not yet visible`, because a background launch is reported
+  as submitted rather than started, and a session only becomes routable once its
+  process is observed holding the output file. An immediate collection can
+  therefore legitimately miss it. This is never reported as a launch failure and
+  never triggers polling; the next periodic collection picks it up.
+- The collection fails. The failure is a diagnostic on stderr and does not change
+  the exit status, because the admission already succeeded.
+
+A request the provider did not apply is not collected, since no session was
+created. A client without the forced-collection seam keeps its read-only
+behaviour. A `--json` caller receives the receipt alone, so the machine-readable
+document is never corrupted by an appended table. The pending-visibility decision
+compares standard session IDs before and after the collection, so it needs no
+provider-specific parsing and no additional protocol field.
+
 ## Questions for the next discussion
 
 ### Scope and topology

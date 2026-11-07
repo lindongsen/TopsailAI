@@ -47,6 +47,54 @@ func (r CommandRunner) Refresh(ctx context.Context, out, errors io.Writer, filte
 	return renderListRows(out, errors, loaded, filter, jsonMode, options)
 }
 
+// RefreshAfterStart forces one fresh collection for the Endpoint that accepted a
+// start, so the operator's next list already contains the launched session instead
+// of waiting for the periodic collection. The collection is scoped to that single
+// Endpoint because a workspace-wide collection would multiply provider discovery
+// cost by the fleet size for one launch.
+//
+// A request the provider did not apply is not collected, because no session was
+// created. A client without the forced-collection seam keeps its read-only
+// behaviour. A collection failure is written to diagnostics and never returned as
+// an error, because the admission already succeeded and reporting a failure would
+// deny a launch that happened.
+func (r CommandRunner) RefreshAfterStart(ctx context.Context, out, diagnostics io.Writer, endpointID string, result map[string]any, jsonMode bool, options TableOptions) error {
+	if ReceiptForStatus(result).EffectCertainty == protocol.EffectNotApplied {
+		return nil
+	}
+	if _, ok := r.API.(InventoryRefresher); !ok {
+		return nil
+	}
+	// The pre-refresh projection is read from the Server, so it costs no provider
+	// discovery. It is the baseline for deciding whether the launch became visible.
+	before, baselineKnown := sessionIDs(ctx, r.API, endpointID)
+	loaded, err := forceCollection(ctx, r.API, endpointID)
+	if err != nil {
+		return startRefreshDiagnostic(diagnostics, err)
+	}
+	if refreshErr, failed := loaded.errors[endpointID]; failed {
+		return startRefreshDiagnostic(diagnostics, refreshErr)
+	}
+	// Only the started Endpoint was collected, so the table is filtered to it.
+	// Rendering the whole fleet here would print every other Endpoint as having no
+	// sessions. A JSON caller receives the receipt alone, so the table is skipped
+	// rather than corrupting the machine-readable document.
+	if !jsonMode {
+		if err := renderListRows(out, diagnostics, loaded, endpointID, false, options); err != nil {
+			return startRefreshDiagnostic(diagnostics, err)
+		}
+	}
+	if baselineKnown && !appearedSince(before, loaded.reports[endpointID]) {
+		// The provider reports a background launch as submitted, not started, and a
+		// session only becomes routable once its process is observed holding the
+		// output file. A collection issued immediately after start can therefore
+		// legitimately omit the new session. Reporting that as a failure would deny a
+		// launch that did happen, so it is reported as pending visibility instead.
+		_, _ = fmt.Fprintf(diagnostics, "session submitted but not yet visible; the next collection will show it\n")
+	}
+	return nil
+}
+
 // forceCollection asks every Endpoint in scope to collect a fresh inventory and
 // returns the committed documents. A failed Endpoint keeps its last committed
 // document and is reported through the load errors, so one slow or offline

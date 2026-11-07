@@ -479,7 +479,58 @@ func interactiveStart(parent context.Context, api InteractiveAPI, state *interac
 	if err != nil {
 		return fmt.Errorf("command %s status unavailable; use status %s to query; %w", state.commandID, state.commandID, err)
 	}
-	return renderInteractiveStartResult(out, action.CommandID, result)
+	if err := renderInteractiveStartResult(out, action.CommandID, result); err != nil {
+		return err
+	}
+	return refreshAfterStart(parent, api, request.EndpointID, result, out, options)
+}
+
+// refreshAfterStart forces one fresh collection for the Endpoint that accepted the
+// start, so the operator's next list already contains the launched session instead
+// of waiting for the periodic collection. The shared runner implementation owns the
+// scoping, the pending-visibility decision and the failure handling; this wrapper
+// only supplies the interactive writers and budget. Both streams are the trusted
+// output because the interactive REPL reports refresh diagnostics inline, and the
+// render is informational: it leaves the row-number index untouched so navigation
+// to other Endpoints keeps working.
+func refreshAfterStart(parent context.Context, api InteractiveAPI, endpointID string, result map[string]any, out io.Writer, options InteractiveOptions) error {
+	ctx, cancel := context.WithTimeout(parent, refreshCommandTimeout)
+	defer cancel()
+	runner := CommandRunner{API: api, Policy: InteractivePolicy}
+	return runner.RefreshAfterStart(ctx, out, out, endpointID, result, false, tableOptionsFor(out, options.Color, false, nil))
+}
+
+// sessionIDs reads the committed projection and returns its standard session IDs.
+// The second result reports whether the baseline could be read at all, so an
+// unreadable projection never fabricates a not-yet-visible conclusion.
+func sessionIDs(ctx context.Context, api InteractiveAPI, endpointID string) (map[string]struct{}, bool) {
+	report, err := api.GetInventory(ctx, endpointID)
+	if err != nil {
+		return nil, false
+	}
+	ids := make(map[string]struct{}, len(report.Sessions))
+	for _, session := range report.Sessions {
+		ids[session.SessionID] = struct{}{}
+	}
+	return ids, true
+}
+
+// appearedSince reports whether the refreshed document contains a session that the
+// baseline did not, which is the only evidence that the launch became visible.
+func appearedSince(before map[string]struct{}, report protocol.InventoryReport) bool {
+	for _, session := range report.Sessions {
+		if _, known := before[session.SessionID]; !known {
+			return true
+		}
+	}
+	return false
+}
+
+// startRefreshDiagnostic reports a post-start collection failure without turning a
+// successful admission into a command error.
+func startRefreshDiagnostic(out io.Writer, err error) error {
+	_, _ = fmt.Fprintf(out, "refresh after start failed: %v\n", err)
+	return nil
 }
 
 // renderInteractiveStartResult writes the durable start result without JSON formatting.

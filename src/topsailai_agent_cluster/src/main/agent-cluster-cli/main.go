@@ -173,7 +173,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	case "drive":
 		return drive(ctx, api, output, flags.Args()[1:], *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	case "send", "btw", "inject", "control", "start", "resume", "stop":
-		return action(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
+		return action(ctx, api, output, errors, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
 	}
@@ -360,7 +360,7 @@ func resolveActionPayload(operation, value string) (json.RawMessage, error) {
 	return json.RawMessage(`{}`), nil
 }
 
-func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision, folder, task, generationFlag string) error {
+func action(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision, folder, task, generationFlag string, color tui.ColorPolicy) error {
 	operation := args[0]
 	if operation == "stop" && len(args) < 4 && generationFlag == "" {
 		return fmt.Errorf("usage: stop <endpoint-id> <resource-id> <generation>")
@@ -443,7 +443,22 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, args []st
 	if err != nil {
 		return err
 	}
-	return runner.RenderAction(output, result)
+	if err := runner.RenderAction(output, result); err != nil {
+		return err
+	}
+	if operation != "start" {
+		return nil
+	}
+	// A successful start forces one fresh collection for the Endpoint that accepted
+	// it, so the operator's next list already contains the launched session instead
+	// of waiting for the periodic collection. The refresh is scoped to that single
+	// Endpoint, and its failure is reported on stderr without changing the exit
+	// status, because the admission already succeeded.
+	refreshCtx, cancel := context.WithTimeout(ctx, tui.RefreshCommandTimeout())
+	defer cancel()
+	options := tui.TableOptionsFor(output)
+	options.Color = color
+	return runner.RefreshAfterStart(refreshCtx, output, errors, endpointID, result, jsonMode, options)
 }
 
 // rejectMisplacedFlags fails when a flag appears after the command name. flag.Parse stops
