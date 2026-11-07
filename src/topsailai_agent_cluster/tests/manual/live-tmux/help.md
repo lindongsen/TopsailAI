@@ -41,7 +41,7 @@ For **each** of list, endpoints, cd, show, info, start, resume, stop, inject, in
 | refresh | `refresh`; reload server inventory, not a promise of synchronous provider discovery |
 | watch | `watch [interval] [--force]`; re-renders on a timer until any key is pressed; `--force` needs at least 10s because each tick launches one provider discovery per endpoint; unavailable in session scope |
 | help | `help [command]`, all, scope/scopes and aliases |
-| quit | `quit`; restores terminal and exits without stopping agent |
+| quit | `quit`; restores terminal and exits without stopping agent; outside workspace scope the `q` spelling returns to workspace scope instead, and only in workspace scope does `q` exit |
 
 ## HELP-03 Global help and aliases
 

@@ -94,7 +94,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"refresh": "refresh the current endpoint",
 		"watch":   "re-render the endpoint table on a timer until any key is pressed",
 		"help":    "show help",
-		"quit":    "exit",
+		"quit":    "q: back to workspace; quit or exit: leave interactive mode",
 	},
 	ScopeSession: {
 		"list":      "list sessions in the current endpoint; an explicit endpoint must match it",
@@ -111,7 +111,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"status":    "explicit ID: command result; omitted: last submitted command, otherwise current session state",
 		"refresh":   "reload the current endpoint table and revalidate the current session",
 		"help":      "show help",
-		"quit":      "exit",
+		"quit":      "q: back to workspace; quit or exit: leave interactive mode",
 	},
 }
 
@@ -461,6 +461,7 @@ func printScopeModelHelp(out io.Writer) error {
 		"  cd <hostname>/<id>    enter a specific endpoint",
 		"  cd <session>          enter a session inside the current endpoint",
 		"  cd <hostname>/<id>/<session>  enter a session directly",
+		"  q                     return to workspace scope outside workspace scope; in workspace scope it leaves interactive mode",
 		"",
 		"Commands differ by scope; run help to see the commands available in each scope.",
 	}
@@ -482,6 +483,13 @@ func HelpCommandNames() []string {
 // scopedHelpEntry describes session status without changing standalone command help.
 func scopedHelpEntry(name string, kind ScopeKind) commandHelp {
 	entry := commandHelpCatalog[name]
+	if name == "quit" && kind != ScopeWorkspace {
+		// Outside workspace scope the q spelling navigates back instead of
+		// leaving the REPL, so the scoped help must not advertise q as a quit.
+		entry.description = "leave interactive mode; the q spelling returns to workspace scope"
+		entry.parameters = []string{"q: return to workspace scope and re-render the list", "quit and exit: leave interactive mode from every scope"}
+		entry.examples = []string{"quit", "q"}
+	}
 	if name == "status" && kind == ScopeSession {
 		entry.syntax = "status [command-id]"
 		entry.description = "show an explicit command result; without an ID, use the last command submitted in this CLI, otherwise show current session state"

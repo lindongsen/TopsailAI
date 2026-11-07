@@ -397,6 +397,17 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	if err := requireCommandScope(rawName, state.Scope.Kind); err != nil {
 		return false, err
 	}
+	// "q" outside workspace scope navigates back to workspace scope instead of
+	// leaving the REPL. It reuses the bare-cd path, so the pinned session
+	// selection is cleared and the workspace table is re-rendered exactly like
+	// "cd". A surplus argument stays a usage error, so "q foo" can never be read
+	// as a navigation target.
+	if qReturnsToWorkspace(rawName, state.Scope.Kind) {
+		if strings.TrimSpace(rest) != "" {
+			return false, fmt.Errorf("usage: %s", rawName)
+		}
+		return false, interactiveCD(ctx, api, state, "", lineResults, out, trustedOut, options.Color, options)
+	}
 	switch name {
 	case "help":
 		return false, printHelp(out, strings.TrimSpace(rest), state.Scope.Kind)

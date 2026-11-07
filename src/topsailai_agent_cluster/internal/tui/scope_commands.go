@@ -76,6 +76,16 @@ func canonicalCommandName(name string) string {
 	return name
 }
 
+// qReturnsToWorkspace reports whether the accepted spelling "q" must navigate
+// back to workspace scope instead of leaving the REPL. It is a dispatch rule, not
+// a scope-availability rule: "q" stays an alias of "quit", so the alias and its
+// canonical command keep identical scope availability. Only the single-letter
+// spelling is scope-aware; "quit" and "exit" always leave the REPL, so an
+// operator never loses an unambiguous way out of any scope.
+func qReturnsToWorkspace(rawName string, kind ScopeKind) bool {
+	return rawName == "q" && kind != ScopeWorkspace
+}
+
 // alwaysAvailableCommands must stay usable even if the matrix is misconfigured.
 var alwaysAvailableCommands = map[string]bool{
 	"help": true,

@@ -61,6 +61,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	registerProviderResponseSteps(ctx)
 	registerWatchSteps(ctx)
 	registerUnknownInputOfferSteps(ctx)
+	registerQReturnsToWorkspaceSteps(ctx)
 	ctx.After(func(goCtx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if activeScenario != nil && activeScenario.commandDone != nil {
 			<-activeScenario.commandDone
