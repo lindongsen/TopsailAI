@@ -82,7 +82,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"refresh":   "refresh inventories",
 		"watch":     "re-render the list on a timer until any key is pressed",
 		"help":      "show help",
-		"quit":      "exit",
+		"quit":      "leave interactive mode",
 	},
 	ScopeEndpoint: {
 		"list":    "list sessions in the current endpoint",

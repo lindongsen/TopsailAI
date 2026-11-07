@@ -11,15 +11,15 @@ In workspace, endpoint and session respectively type `help` then Enter. Expect `
 
 | Scope | Commands in display order |
 | --- | --- |
-| workspace | list, endpoints, cd, show, start, stop, status, refresh, watch, help, quit |
-| endpoint | list, cd, show, start, stop, logs, status, refresh, watch, help, quit |
-| session | list, cd, show, resume, stop, inject, interrupt, ctl, drive, logs, send, status, refresh, help, quit |
+| workspace | list, endpoints, cd, show, start, stop, status, refresh, watch, help, quit, exit |
+| endpoint | list, cd, show, start, stop, logs, status, refresh, watch, help, quit, exit |
+| session | list, cd, show, resume, stop, inject, interrupt, ctl, drive, logs, send, status, refresh, help, quit, exit |
 
 Workspace/endpoint help must explain starting a project and navigation; session help must explain bare cd/root, parent endpoint, internal selectors, adapter capability and freshness. A legacy start form may be documented but must not obscure supported wizard behavior.
 
 ## HELP-02 Detailed help
 
-For **each** of list, endpoints, cd, show, info, start, resume, stop, inject, interrupt, ctl, drive, logs, send, status, refresh, watch, help, quit, enter `help <command>` in all three scopes. Capture complete output, not only its first line. Expect command name, Syntax, Available in and Description; Parameters and Examples appear where applicable. An unavailable command may have detailed help but Available in must not authorize that scope. Verify every displayed example against actual parsing and provider contract; do not approve merely because help renders.
+For **each** of list, endpoints, cd, show, info, start, resume, stop, inject, interrupt, ctl, drive, logs, send, status, refresh, watch, help, quit, exit, enter `help <command>` in all three scopes. Capture complete output, not only its first line. Expect command name, Syntax, Available in and Description; Parameters and Examples appear where applicable. An unavailable command may have detailed help but Available in must not authorize that scope. Verify every displayed example against actual parsing and provider contract; do not approve merely because help renders.
 
 | Command | Required syntax/semantics |
 | --- | --- |
@@ -41,11 +41,12 @@ For **each** of list, endpoints, cd, show, info, start, resume, stop, inject, in
 | refresh | `refresh`; reload server inventory, not a promise of synchronous provider discovery |
 | watch | `watch [interval] [--force]`; re-renders on a timer until any key is pressed; `--force` needs at least 10s because each tick launches one provider discovery per endpoint; unavailable in session scope |
 | help | `help [command]`, all, scope/scopes and aliases |
-| quit | `quit`; restores terminal and exits without stopping agent; outside workspace scope the `q` spelling returns to workspace scope instead, and only in workspace scope does `q` exit |
+| quit | `quit`; restores terminal and exits without stopping agent; outside workspace scope `quit` and its `q` alias return to workspace scope instead, and only in workspace scope do they exit |
+| exit | `exit`; always restores terminal and exits without stopping agent, from every scope; it is a separate command rather than an alias of `quit`, so it never navigates |
 
 ## HELP-03 Global help and aliases
 
-Enter `help all`, `help scope`, `help scopes`, `?`, `help btw`, `help control`, `help q`, `help unknown-command`. Expect all 18 canonical commands with scope lists, seven aliases (`?=help`, `btw=inject`, `control=interrupt`, `exit=quit`, `q=quit`, `r=refresh`, `w=watch`), workspace/endpoint/session model and every cd form; aliases resolve to canonical detailed help. Unknown help reports error and leaves scope unchanged. Run `logs --help` and `start --help`: if REPL rejects option-style help, error must explicitly direct to `help logs`/`help start`; standalone --help support does not prove REPL support.
+Enter `help all`, `help scope`, `help scopes`, `?`, `help btw`, `help control`, `help q`, `help unknown-command`. Expect all 20 canonical commands with scope lists, six aliases (`?=help`, `btw=inject`, `control=interrupt`, `q=quit`, `r=refresh`, `w=watch`), workspace/endpoint/session model and every cd form; aliases resolve to canonical detailed help. `exit` is canonical, not an alias, so `help exit` must describe it directly. Unknown help reports error and leaves scope unchanged. Run `logs --help` and `start --help`: if REPL rejects option-style help, error must explicitly direct to `help logs`/`help start`; standalone --help support does not prove REPL support.
 
 Capture full actual help output as the run-specific reference. A discrepancy between prose, syntax, example and actual action is a defect even when all are separately printable.
 

@@ -104,7 +104,8 @@ was dispatched rather than rejected as unknown.
 | `watch` | not applicable | `watch`, `w` | yes |
 | `help` | `help` | `help`, `?` | yes |
 | `cd` | not applicable | `cd` | not applicable |
-| `quit` | not applicable | `quit`, `exit`, `q` (`q` navigates back outside workspace scope) | not applicable |
+| `quit` | not applicable | `quit`, `q` (both navigate back outside workspace scope) | not applicable |
+| `exit` | not applicable | `exit` (always leaves the loop) | not applicable |
 
 Two spellings are intentionally asymmetric:
 
@@ -134,16 +135,22 @@ diagnostics unchanged, and it does not shadow the longer `logs` spelling.
 `cd` and `quit` navigate a session that only exists inside the interactive loop, so
 they have no standalone meaning and are not gaps.
 
-The `q` spelling of `quit` is scope-aware, and this is a dispatch rule rather than a
-scope-availability rule. Outside workspace scope `q` navigates back to workspace
-scope and re-renders the list, exactly like a bare `cd`; in workspace scope it
-leaves the interactive loop. `quit` and `exit` always leave the loop from every
-scope, so an operator never loses an unambiguous way out. Because `q` stays an alias
-of `quit` in the alias registry, the two keep identical scope availability and the
-alias/canonical invariant is not weakened. A surplus argument is still a usage
-error, so `q foo` can never be read as a navigation target. The `q` spelling inside
-the start and launch prompts keeps abandoning the draft and leaving the loop,
-because those are prompt contexts rather than scope contexts.
+`quit` is scope-aware, and this is a dispatch rule rather than a scope-availability
+rule. Outside workspace scope `quit` navigates back to workspace scope and
+re-renders the list, exactly like a bare `cd`; in workspace scope it leaves the
+interactive loop. `q` is only an alias of `quit`, so it carries no rule of its own
+and the two are one behaviour rather than two: the dispatch rule keys on the
+canonical command name, so both spellings always agree. A surplus argument is still
+a usage error, so `quit foo` can never be read as a navigation target.
+
+`exit` is a separate canonical command, not an alias of `quit`, and it always
+leaves the loop from every scope. It is deliberately absent from the alias registry:
+if it were an alias it would inherit the scope-aware `quit` behaviour and stop being
+an unconditional way out. Keeping it separate means an operator always has one
+spelling that leaves the process no matter which scope they are in.
+
+The `q` spelling inside the start and launch prompts keeps abandoning the draft and
+leaving the loop, because those are prompt contexts rather than scope contexts.
 
 `watch` is interactive-only for a different reason, and it is not a gap either. It
 adds no behaviour: every tick performs exactly `list` (re-read the persisted

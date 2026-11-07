@@ -11,7 +11,11 @@ import (
 // Flags and placeholders are skipped so a syntax that places flags before the
 // command still yields the command word.
 func standaloneCommandName(line string) string {
-	rest := strings.TrimPrefix(line, "agent-cluster-cli ")
+	// The rendered help block indents every line, so the leading indent must be
+	// removed before the program name can be stripped. Without this the first
+	// field is the program name itself and every line looks like an unknown
+	// command.
+	rest := strings.TrimPrefix(strings.TrimSpace(line), "agent-cluster-cli ")
 	rest = strings.TrimPrefix(rest, "[options] ")
 	for _, field := range strings.Fields(rest) {
 		if strings.HasPrefix(field, "-") || strings.HasPrefix(field, "[") || strings.HasPrefix(field, "<") {
