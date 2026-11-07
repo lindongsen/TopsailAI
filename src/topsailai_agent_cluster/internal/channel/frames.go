@@ -41,6 +41,16 @@ const (
 	FrameLaunchResponse = "launch_response"
 	// FrameOutputResponse returns a bounded provider output snapshot.
 	FrameOutputResponse = "output_response"
+	// FrameOutputFollowRequest starts one streaming output follow. It is a
+	// separate frame type from FrameOutputRequest because a snapshot has exactly
+	// one response while a follow has many.
+	FrameOutputFollowRequest = "output_follow_request"
+	// FrameOutputChunk carries one bounded batch of followed output lines.
+	FrameOutputChunk = "output_chunk"
+	// FrameOutputEnd terminates one follow stream. It is always the last frame
+	// for its request ID, so a consumer that stops receiving chunks without it
+	// treats the stream as interrupted rather than complete.
+	FrameOutputEnd = "output_end"
 	// InitiatorEndpoint marks a connection dialed by the Endpoint.
 	InitiatorEndpoint = "endpoint"
 	// InitiatorServer marks a connection dialed by the Server.
@@ -67,4 +77,7 @@ type Frame struct {
 	Receipt              *protocol.ExecutionReceipt       `json:"receipt,omitempty"`
 	OutputRequest        *protocol.OutputSnapshotRequest  `json:"output_request,omitempty"`
 	OutputResponse       *protocol.OutputSnapshotResponse `json:"output_response,omitempty"`
+	OutputFollowRequest  *protocol.OutputFollowRequest    `json:"output_follow_request,omitempty"`
+	OutputChunk          *protocol.OutputChunk            `json:"output_chunk,omitempty"`
+	OutputEnd            *protocol.OutputEnd              `json:"output_end,omitempty"`
 }

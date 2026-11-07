@@ -166,6 +166,36 @@ type OutputSnapshotResponse struct {
 	ErrorCode    string `json:"error_code,omitempty"`
 }
 
+// OutputFollowRequest starts one streaming output follow for an exact resource
+// generation. It is a distinct capability from OutputSnapshotRequest: a snapshot
+// is one bounded read, while a follow stays open and delivers records as they are
+// written. MaxLines bounds the initial tail and MaxBytes bounds one chunk.
+type OutputFollowRequest struct {
+	EndpointID string `json:"endpoint_id"`
+	ResourceID string `json:"resource_id"`
+	Generation string `json:"generation"`
+	MaxLines   int    `json:"max_lines"`
+	MaxBytes   int    `json:"max_bytes"`
+}
+
+// OutputChunk carries one bounded batch of followed output lines. Lines are
+// already complete records, so a consumer never has to reassemble a partial line.
+type OutputChunk struct {
+	Lines        []string `json:"lines"`
+	ObservedAtMS int64    `json:"observed_at_ms"`
+	Truncated    bool     `json:"truncated,omitempty"`
+}
+
+// OutputEnd terminates one follow stream. It is always the last frame for a
+// request, so a consumer that stops receiving chunks without it must treat the
+// stream as interrupted rather than complete. ErrorCode is empty for a normal
+// termination.
+type OutputEnd struct {
+	ErrorCode    string `json:"error_code,omitempty"`
+	ObservedAtMS int64  `json:"observed_at_ms"`
+	Truncated    bool   `json:"truncated,omitempty"`
+}
+
 // CanonicalHash computes a versioned digest of the immutable intent fields.
 func CanonicalHash(intent ImmutableIntent) (string, error) {
 	if intent.HashVersion == "" || intent.CommandID == "" || intent.EndpointID == "" || intent.Operation == "" || intent.OperationVersion == "" || intent.CapabilityRevision == "" || intent.PayloadSchemaVersion == "" {
