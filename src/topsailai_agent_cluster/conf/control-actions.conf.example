@@ -64,6 +64,34 @@
 # The catalog below lists the actions the TopsailAI provider serves. Trim it to
 # the actions your site needs, and keep in mind that every entry is reachable by
 # anyone holding the permission it declares.
+#
+# What is deliberately absent: the provider CLI verbs `send`, `btw` and `logs`.
+# They are standard cluster operations (`message.send`, `context.inject`,
+# `output.snapshot`) with their own payload contracts, and they cannot be
+# expressed as a catalog template anyway, because `send` takes `-m TEXT` and
+# `logs` takes `-n N` while a template can only substitute `{session}` and
+# `{payload}`. Adding them here would duplicate a standard operation with a
+# weaker contract.
+#
+# The `call_instruction` entry carries the full instruction inventory in its
+# `instruction` enum, so the guided prompt offers a numbered menu instead of a
+# free-text field. Read `conf/control-actions.md` for what each instruction does.
+# Two limits of that enum are worth stating plainly:
+#
+#   - It is a prompt, not a gate. The interactive surface refuses a value that
+#     is not listed, but a caller that builds the payload itself can submit any
+#     name the provider's live registry accepts. The provider validates the name
+#     against that registry, so an unknown name still fails; a known name that is
+#     absent from this enum does not.
+#   - It is a snapshot. Plugin instructions arrive through
+#     TOPSAILAI_PLUGIN_INSTRUCTIONS at agent start and exist only in the live
+#     process, so this list cannot know them in advance.
+#
+# Because one entry carries one permission, every instruction reachable through
+# `call_instruction` shares the `control` scope. A site that must let an operator
+# read history without letting them clear it needs per-instruction enforcement,
+# which the Endpoint does not implement today; splitting this entry into several
+# entries would only move the enum, not the boundary.
 
 {
   "actions": [
@@ -133,7 +161,57 @@
       "payload_schema": {
         "type": "object",
         "properties": {
-          "instruction": {"type": "string"},
+          "instruction": {
+            "type": "string",
+            "enum": [
+              "help",
+              "agent.system_prompt",
+              "agent.env_prompt",
+              "agent.tool_prompt",
+              "agent.tools",
+              "agent.tools_observation",
+              "agent.set_llm",
+              "agent.models",
+              "agent.llm",
+              "agent.messages",
+              "agent.tokens",
+              "env.set",
+              "env.get",
+              "env.print_step_mode",
+              "git",
+              "git.git",
+              "git.git_status",
+              "git.git_log",
+              "git.git_diff",
+              "git.git_show",
+              "git.git_branch",
+              "git.git_tag",
+              "git.git_remote",
+              "skill.show",
+              "skill.load",
+              "skill.unload",
+              "skill.hooks",
+              "skill_repo.list",
+              "skill_repo.install",
+              "skill_repo.uninstall",
+              "stat.tool_call",
+              "stat.tool_call_errors",
+              "stat.tool_call_reset",
+              "stat.tool_call_log",
+              "ctx.clear",
+              "ctx.story",
+              "ctx.history",
+              "ctx.history2",
+              "ctx.del_msg",
+              "ctx.del_msgs",
+              "ctx.del_msg_ids",
+              "ctx.summarize",
+              "ctx.search",
+              "ctx.btw",
+              "session.rename",
+              "hosting"
+            ]
+          },
           "args": {"type": "array"},
           "kwargs": {"type": "object"}
         },

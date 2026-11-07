@@ -76,6 +76,7 @@ def main() -> int:
     parser.add_argument("--provider", required=True, type=Path)
     parser.add_argument("--role", choices=("both", "server", "endpoint"), default="both")
     parser.add_argument("--allowlist", type=Path, help="optional command allowlist file for the endpoint")
+    parser.add_argument("--control-actions", type=Path, help="optional ctl action catalog file for the endpoint")
     args = parser.parse_args()
     for value in (args.runtime, args.bin_dir, args.provider_home, args.project, args.provider):
         if not value.is_absolute():
@@ -126,6 +127,14 @@ def main() -> int:
         if not args.allowlist.is_file():
             parser.error("--allowlist must name an existing file")
         endpoint_env["AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE"] = str(args.allowlist)
+    # A control action catalog is optional for the same reason: without it the
+    # endpoint advertises no ctl. action and every ctl. operation is refused.
+    if args.control_actions is not None:
+        if not args.control_actions.is_absolute():
+            parser.error("--control-actions must be an absolute path")
+        if not args.control_actions.is_file():
+            parser.error("--control-actions must name an existing file")
+        endpoint_env["AGENT_CLUSTER_CONTROL_ACTION_FILE"] = str(args.control_actions)
     # The CLI loads .env.local from the directory of its own executable, so the
     # isolated configuration must live beside the binary rather than in runtime.
     cli_environment = args.bin_dir / ".env.local"

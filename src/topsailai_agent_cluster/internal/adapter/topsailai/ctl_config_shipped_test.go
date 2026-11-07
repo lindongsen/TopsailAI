@@ -1,6 +1,7 @@
 package topsailai
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,5 +187,50 @@ func TestDeploymentScriptsInstallTheCatalog(t *testing.T) {
 		if !strings.Contains(content, "control-actions.conf") {
 			t.Errorf("%s must install the catalog under the name the template uses", name)
 		}
+	}
+}
+
+// TestShippedControlActionCatalogListsInstructions proves the shipped
+// call_instruction entry carries the instruction inventory in its enum, so the
+// guided prompt offers a menu instead of a free-text field. The enum is a prompt
+// convenience rather than an authorization gate, but an empty or duplicated list
+// would still make the prompt unusable.
+func TestShippedControlActionCatalogListsInstructions(t *testing.T) {
+	data, err := os.ReadFile(shippedControlActionPath(t))
+	if err != nil {
+		t.Fatalf("read the shipped control action catalog: %v", err)
+	}
+	set, err := ParseControlActionSet(data)
+	if err != nil {
+		t.Fatalf("the shipped control action catalog must parse, got %v", err)
+	}
+	action, ok := set.Get("call_instruction")
+	if !ok {
+		t.Fatalf("the shipped catalog must document call_instruction")
+	}
+	var schema struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(action.PayloadSchema), &schema); err != nil {
+		t.Fatalf("decode the call_instruction schema: %v", err)
+	}
+	instruction, ok := schema.Properties["instruction"]
+	if !ok {
+		t.Fatalf("the call_instruction schema must document the instruction field")
+	}
+	if len(instruction.Enum) == 0 {
+		t.Fatalf("the instruction field must list the registered instructions, otherwise the prompt asks for free text")
+	}
+	seen := make(map[string]bool, len(instruction.Enum))
+	for _, name := range instruction.Enum {
+		if strings.TrimSpace(name) == "" {
+			t.Errorf("the instruction enum contains an empty entry")
+		}
+		if seen[name] {
+			t.Errorf("the instruction enum lists %q more than once", name)
+		}
+		seen[name] = true
 	}
 }
