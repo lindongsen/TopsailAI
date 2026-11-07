@@ -175,6 +175,14 @@ func (s *Service) waitForChannelReady(ctx context.Context) bool {
 
 func (s *Service) resendRecordedReceipts(ctx context.Context) {
 	defer s.wg.Done()
+	// Recorded receipts must not be resent before the connection exists: the
+	// send would fail with ErrOffline and every restart would log a spurious
+	// transport error. The sibling recoverAcceptedCommands loop gates on the
+	// same helper.
+	if !s.waitForChannelReady(ctx) {
+		s.loggerInfo("recorded receipt resend stopped before channel ready")
+		return
+	}
 	s.resendPendingReceipts(ctx)
 }
 
@@ -194,7 +202,7 @@ func (s *Service) resendPendingReceipts(ctx context.Context) {
 		s.pendingReceipts[receipt.CommandID] = receipt
 		s.receiptsMu.Unlock()
 		if err := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameReceipt, ProtocolVersion: channel.ProtocolVersion, FrameID: receipt.CommandID, Receipt: &receipt, Payload: json.RawMessage(data)}); err != nil {
-			s.logError("resend recorded receipt", err)
+			s.logTransportError("resend recorded receipt", err)
 		}
 	}
 }
@@ -220,8 +228,18 @@ func (s *Service) collectionLoop(ctx context.Context) {
 			return
 		}
 		if err := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameInventory, ProtocolVersion: channel.ProtocolVersion, Payload: json.RawMessage(payload), SnapshotRevision: report.SnapshotRevision}); err != nil {
-			s.logError("publish inventory", err)
+			// An offline channel is a connectivity state, not a publish failure:
+			// the next cycle retries and the Server keeps the last committed
+			// report. Logging it at ERROR made a healthy restart look broken.
+			s.logTransportError("publish inventory", err)
 		}
+	}
+	// The first publish must wait for the connection, otherwise every start and
+	// restart writes a spurious ERROR before the channel is established. The
+	// sibling recoverAcceptedCommands loop gates on the same helper.
+	if !s.waitForChannelReady(ctx) {
+		s.loggerInfo("inventory collection stopped before channel ready")
+		return
 	}
 	publish()
 	// Schedule the next cycle only after the previous one finished. A fixed
@@ -249,7 +267,7 @@ func (s *Service) channelLoop(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			s.logError("read channel frame", err)
+			s.logTransportError("read channel frame", err)
 			reconnecting, ok := s.channel.(ReconnectingChannel)
 			if !ok {
 				return
@@ -315,7 +333,7 @@ func (s *Service) publishRefresh(ctx context.Context, requestID string) {
 		return
 	}
 	if err := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameInventory, ProtocolVersion: channel.ProtocolVersion, RequestID: requestID, Payload: json.RawMessage(payload), SnapshotRevision: report.SnapshotRevision}); err != nil {
-		s.logError("publish refreshed inventory", err)
+		s.logTransportError("publish refreshed inventory", err)
 	}
 }
 
@@ -372,7 +390,7 @@ func (s *Service) executeFrame(ctx context.Context, frame channel.Frame) {
 	s.receiptsMu.Unlock()
 	for attempt := 0; attempt < 3; attempt++ {
 		if sendErr := s.channel.SendFrame(ctx, channel.Frame{Type: channel.FrameReceipt, ProtocolVersion: channel.ProtocolVersion, FrameID: receipt.CommandID, RequestID: frame.RequestID, Receipt: &receipt, Payload: json.RawMessage(data)}); sendErr != nil {
-			s.logError("publish command receipt", sendErr)
+			s.logTransportError("publish command receipt", sendErr)
 			return
 		}
 		select {
@@ -395,10 +413,28 @@ func (s *Service) loggerInfo(message string, args ...any) {
 	}
 }
 
+func (s *Service) loggerWarn(message string, args ...any) {
+	if s.logger != nil {
+		s.logger.Warn(message, args...)
+	}
+}
+
 func (s *Service) logError(message string, err error) {
 	if s.logger != nil {
 		s.logger.Error(message, "error", err)
 	}
+}
+
+// logTransportError reports a transport failure at WARN when the channel is
+// merely offline. An offline channel is a connectivity state, not a failure of
+// the operation: the Server keeps the last committed state and the next cycle
+// retries, so logging it at ERROR made a healthy restart look broken.
+func (s *Service) logTransportError(message string, err error) {
+	if errors.Is(err, channel.ErrOffline) {
+		s.loggerWarn(message+" deferred until the channel is ready", "error", err)
+		return
+	}
+	s.logError(message, err)
 }
 
 // Close cancels active loops, waits for them, and closes transport and storage.
