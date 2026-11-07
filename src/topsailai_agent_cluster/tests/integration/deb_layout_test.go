@@ -41,6 +41,8 @@ type debEntry struct {
 // debPackage is one built package and its parsed payload.
 type debPackage struct {
 	path      string
+	version   string
+	depends   string
 	entries   map[string]debEntry
 	conffiles []string
 }
@@ -249,6 +251,21 @@ func readDebPackage(dest, role string) (*debPackage, error) {
 		return nil, err
 	}
 	pkg.conffiles = readConffiles(control)
+
+	// The version and dependency fields are read separately because the epoch
+	// only exists in the control metadata, never in the file name.
+	fields, err := exec.Command("dpkg-deb", "-f", pkg.path, "Version", "Depends").Output()
+	if err != nil {
+		return nil, err
+	}
+	for _, line := range strings.Split(string(fields), "\n") {
+		switch {
+		case strings.HasPrefix(line, "Version:"):
+			pkg.version = strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
+		case strings.HasPrefix(line, "Depends:"):
+			pkg.depends = strings.TrimSpace(strings.TrimPrefix(line, "Depends:"))
+		}
+	}
 	return pkg, nil
 }
 
@@ -456,6 +473,62 @@ func TestDebPackagedConfigUsesRelativePaths(t *testing.T) {
 				t.Fatalf("the %s node.conf hardcodes %s; it must use a relative path that "+
 					"resolves through the /opt layout", role, absolute)
 			}
+		}
+	}
+}
+
+// TestDebPackagesCarryAMonotonicEpoch proves every package carries a Debian
+// epoch in its control Version field. Without an epoch, a tag-derived version
+// such as 1.0.0+2304+g8d653f5d sorts BELOW the hash-derived versions that were
+// installed before this convention (4e160caf-4), so dpkg reports a downgrade
+// and an operator cannot tell an upgrade from a rollback. The epoch is the only
+// component that outranks every earlier scheme, so it must be present and it
+// must be identical across the three packages that depend on each other.
+func TestDebPackagesCarryAMonotonicEpoch(t *testing.T) {
+	packages := buildDebPackages(t)
+
+	var epoch string
+	for _, role := range []string{"node", "server", "endpoint"} {
+		pkg := packages[role]
+		if pkg.version == "" {
+			t.Fatalf("the %s package reports no Version field", role)
+		}
+		index := strings.Index(pkg.version, ":")
+		if index <= 0 {
+			t.Fatalf("the %s package version %q carries no Debian epoch; a tag-derived "+
+				"version sorts below the hash-derived versions already installed, so dpkg "+
+				"reports a downgrade", role, pkg.version)
+		}
+		current := pkg.version[:index]
+		if epoch == "" {
+			epoch = current
+			continue
+		}
+		if current != epoch {
+			t.Fatalf("the %s package epoch %q differs from %q; the role packages pin the "+
+				"node version exactly, so a differing epoch makes the dependency "+
+				"unsatisfiable", role, current, epoch)
+		}
+	}
+
+	// The epoch must stay out of the file name: a colon in a path breaks scp and
+	// several artifact steps, even though dpkg reads the epoch from the package.
+	for _, role := range []string{"node", "server", "endpoint"} {
+		if strings.Contains(filepath.Base(packages[role].path), ":") {
+			t.Fatalf("the %s package file name %q contains a colon; the epoch belongs in "+
+				"the control Version field only", role, filepath.Base(packages[role].path))
+		}
+	}
+
+	// A role package pins the node version exactly, so the pin must carry the
+	// same epoch. A pin without the epoch never matches the installed node
+	// package and dpkg refuses the install.
+	for _, role := range []string{"server", "endpoint"} {
+		pin := "agent-cluster-node (= " + epoch + ":"
+		if !strings.Contains(packages[role].depends, pin) {
+			t.Fatalf("the %s package Depends %q does not pin the node version with the "+
+				"epoch (%q); the pin would never match the installed node package",
+				role, packages[role].depends, pin)
 		}
 	}
 }
