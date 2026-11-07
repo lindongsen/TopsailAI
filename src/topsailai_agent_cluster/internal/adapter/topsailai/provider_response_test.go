@@ -87,12 +87,12 @@ func TestExecuteOmitsProviderResponseWhenProviderReturnsNothing(t *testing.T) {
 // is bounded, labelled, and still valid UTF-8 rather than split mid-rune.
 func TestBoundedProviderResponseTruncatesOnRuneBoundary(t *testing.T) {
 	exact := strings.Repeat("a", protocol.MaxProviderResponseBytes)
-	if got, truncated := boundedProviderResponse(exact); got != exact || truncated {
+	if got, truncated := adapter.BoundedProviderResponse(exact); got != exact || truncated {
 		t.Fatalf("a document at the bound must pass through unchanged (len=%d, truncated=%t)", len(got), truncated)
 	}
 	// A three-byte rune straddling the bound must not be cut in half.
 	oversized := strings.Repeat("a", protocol.MaxProviderResponseBytes-1) + "世" + strings.Repeat("b", 10)
-	got, truncated := boundedProviderResponse(oversized)
+	got, truncated := adapter.BoundedProviderResponse(oversized)
 	if !truncated {
 		t.Fatal("an oversized document must be marked truncated")
 	}
