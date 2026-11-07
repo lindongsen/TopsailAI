@@ -132,7 +132,11 @@
       "permission": "control",
       "payload_schema": {
         "type": "object",
-        "properties": {"instruction": {"type": "string"}},
+        "properties": {
+          "instruction": {"type": "string"},
+          "args": {"type": "array"},
+          "kwargs": {"type": "object"}
+        },
         "required": ["instruction"]
       },
       "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]

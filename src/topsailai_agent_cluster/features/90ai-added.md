@@ -123,8 +123,8 @@ state was not verified alive, `unknown` for an empty state, and otherwise the
 reported standard state. `SessionRow.Drive` carries the summary from
 `protocol.Session.Drive`, which the adapter already populated, so no protocol,
 Server, storage or adapter change was needed. The column sits directly after
-`SESSION_STATUS`, which makes it the first data column after `NO` whenever colour
-mode drops `SESSION_STATUS`. A dash is deliberately distinct from `none`: `none`
+`SESSION_ID`, so the controller state is read next to the session identity it
+belongs to. A dash is deliberately distinct from `none`: `none`
 is a confirmed absence of a controller, while a dash only means the provider said
 nothing.
 
@@ -167,3 +167,13 @@ a time in name order, optional fields accept an empty answer, required fields re
 one, enum values are offered as choices, and an action without a schema falls back
 to the generic `key=value` prompt so an older Endpoint still works. No interactive
 path requires hand-written JSON.
+
+A structured field is encoded as its real JSON type rather than as a string that
+merely looks like one. `args` is written as space-separated words and becomes a JSON
+array, with a double-quoted word keeping its inner spaces and an unterminated quote
+refused; `kwargs` is written as space-separated `key=value` pairs and becomes a JSON
+object, with a pair lacking `=` and a repeated key both refused. The prompt states
+the shape for a structured field, because an operator cannot guess that a list is
+written on one line. This matters for `call_instruction`, whose provider payload
+carries `instruction`, `args` and `kwargs`: sending `args` as a string would be
+rejected by the provider even though it reads like a list to a human.

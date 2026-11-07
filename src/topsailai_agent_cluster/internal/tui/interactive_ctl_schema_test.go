@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -376,5 +377,152 @@ func TestAdvertisedEnumDrivesCallInstructionSelection(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "2. git.git_log") {
 		t.Fatalf("menu = %q, want the advertised instructions numbered", out.String())
+	}
+}
+
+func TestCtlFieldValueEncodesArrayAsRealJSONArray(t *testing.T) {
+	// The provider validates the payload type, so an array field must become a
+	// JSON array. Sending the answer as a string would be rejected at the
+	// provider even though it looks like a list to a human.
+	field := ctlField{Name: "args", Type: "array"}
+	value, err := ctlFieldValue(field, "one two three")
+	if err != nil {
+		t.Fatalf("encode array: %v", err)
+	}
+	if string(value) != `["one","two","three"]` {
+		t.Fatalf("array value = %s, want a JSON array of three strings", value)
+	}
+}
+
+func TestCtlFieldValueKeepsQuotedArrayItemTogether(t *testing.T) {
+	// One line carries the whole list, so an item that contains a space needs a
+	// quoting rule. Without it the operator could not express such an argument.
+	field := ctlField{Name: "args", Type: "array"}
+	value, err := ctlFieldValue(field, `one "two words" three`)
+	if err != nil {
+		t.Fatalf("encode array: %v", err)
+	}
+	if string(value) != `["one","two words","three"]` {
+		t.Fatalf("array value = %s, want the quoted item kept together", value)
+	}
+}
+
+func TestCtlFieldValueRejectsUnterminatedArrayQuote(t *testing.T) {
+	// A dangling quote would otherwise swallow the rest of the line, so the
+	// operator would submit a value they never intended.
+	field := ctlField{Name: "args", Type: "array"}
+	if _, err := ctlFieldValue(field, `one "two`); err == nil {
+		t.Fatal("expected an unterminated quote to be rejected")
+	}
+}
+
+func TestCtlFieldValueEncodesObjectAsRealJSONObject(t *testing.T) {
+	// kwargs is a map, so it must become a JSON object rather than a string that
+	// merely contains an equals sign.
+	field := ctlField{Name: "kwargs", Type: "object"}
+	value, err := ctlFieldValue(field, "key=value other=second")
+	if err != nil {
+		t.Fatalf("encode object: %v", err)
+	}
+	if !sameJSONObject(value, `{"key":"value","other":"second"}`) {
+		t.Fatalf("object value = %s, want a JSON object with two keys", value)
+	}
+}
+
+func TestCtlFieldValueRejectsObjectPairWithoutEquals(t *testing.T) {
+	// Guessing what a bare word means would silently change the payload, so a
+	// pair that is not key=value is refused instead.
+	field := ctlField{Name: "kwargs", Type: "object"}
+	if _, err := ctlFieldValue(field, "key=value stray"); err == nil {
+		t.Fatal("expected a pair without '=' to be rejected")
+	}
+}
+
+func TestCtlFieldValueRejectsRepeatedObjectKey(t *testing.T) {
+	// The later value would overwrite the earlier one without telling the
+	// operator, so a repeated key is refused.
+	field := ctlField{Name: "kwargs", Type: "object"}
+	if _, err := ctlFieldValue(field, "key=one key=two"); err == nil {
+		t.Fatal("expected a repeated key to be rejected")
+	}
+}
+
+func TestCtlFieldPromptExplainsStructuredShapes(t *testing.T) {
+	// An operator cannot guess that an array is written as space-separated words,
+	// so the prompt states the shape for a structured field and stays silent for
+	// a scalar.
+	arrayPrompt := ctlFieldPrompt(ctlField{Name: "args", Type: "array"})
+	if !strings.Contains(arrayPrompt, "space-separated") {
+		t.Fatalf("array prompt = %q, want the shape explained", arrayPrompt)
+	}
+	objectPrompt := ctlFieldPrompt(ctlField{Name: "kwargs", Type: "object"})
+	if !strings.Contains(objectPrompt, "key=value") {
+		t.Fatalf("object prompt = %q, want the shape explained", objectPrompt)
+	}
+	stringPrompt := ctlFieldPrompt(ctlField{Name: "instruction", Type: "string"})
+	if strings.Contains(stringPrompt, "space-separated") || strings.Contains(stringPrompt, "key=value") {
+		t.Fatalf("string prompt = %q, want no shape hint", stringPrompt)
+	}
+}
+
+func TestShippedCallInstructionSchemaDocumentsArgsAndKwargs(t *testing.T) {
+	// The provider accepts args and kwargs, so the shipped catalog must document
+	// them. Otherwise the guided prompt would build a payload the provider
+	// accepts but that silently drops the operator's arguments.
+	//
+	// The catalog is read as a document rather than through the adapter package,
+	// because the client must not depend on the adapter: the schema reaches the
+	// client through the advertised capability, exactly as this test does.
+	raw, err := os.ReadFile("../../conf/control-actions.conf.example")
+	if err != nil {
+		t.Fatalf("read shipped catalog: %v", err)
+	}
+	kept := make([]string, 0, 64)
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	var document struct {
+		Actions []struct {
+			Name          string          `json:"name"`
+			PayloadSchema json.RawMessage `json:"payload_schema"`
+		} `json:"actions"`
+	}
+	if err := json.Unmarshal([]byte(strings.Join(kept, "\n")), &document); err != nil {
+		t.Fatalf("decode shipped catalog: %v", err)
+	}
+	var schema json.RawMessage
+	for _, action := range document.Actions {
+		if action.Name == "call_instruction" {
+			schema = action.PayloadSchema
+		}
+	}
+	if len(schema) == 0 {
+		t.Fatal("shipped catalog does not document call_instruction")
+	}
+	fields, err := ctlSchemaFields(string(schema))
+	if err != nil {
+		t.Fatalf("parse schema: %v", err)
+	}
+	byName := make(map[string]ctlField, len(fields))
+	for _, field := range fields {
+		byName[field.Name] = field
+	}
+	for name, wantType := range map[string]string{"instruction": "string", "args": "array", "kwargs": "object"} {
+		field, ok := byName[name]
+		if !ok {
+			t.Fatalf("call_instruction schema is missing %q", name)
+		}
+		if field.Type != wantType {
+			t.Fatalf("%s type = %q, want %q", name, field.Type, wantType)
+		}
+	}
+	if !byName["instruction"].Required {
+		t.Fatal("instruction must stay required")
+	}
+	if byName["args"].Required || byName["kwargs"].Required {
+		t.Fatal("args and kwargs must stay optional")
 	}
 }
