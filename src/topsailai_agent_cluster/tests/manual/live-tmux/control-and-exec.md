@@ -187,3 +187,55 @@ Record case ID, exact keystrokes, captured output, admitted command ID, payload,
 resolved session directory, the allowlist path and entry count, the Endpoint process ID
 and the tmux target under workspace `.tmp/live-tmux-audit/`. Stop only the tmux session
 and service processes created by this run.
+
+## Execution log
+
+Executed on 2026-11-07 against a real `topsailai` provider, using binaries built from
+HEAD into `.tmp/live-tmux-audit/bin/` and the isolated cluster started by
+`start_services.py`. The live deployment (`/usr/local/sbin/agent-cluster-endpoint`,
+PID 100053) was never restarted: its uptime advanced from 6h04m to 6h30m across the run,
+which is the isolation proof.
+
+Preconditions observed before any case: Endpoint log line
+`loaded command allowlist ... entries=3`, all ten `ctl.*` actions plus `command.exec`
+advertised, and one live session in the persisted inventory.
+
+| Case | Result | Evidence |
+|---|---|---|
+| CTLEXEC-01 | PASS | Bare `ctl` rendered all ten actions as a numbered list with the `ctl.action>` prompt; no command admitted |
+| CTLEXEC-02 | PASS | Empty answer produced `error: ctl cancelled` plus usage; no command admitted |
+| CTLEXEC-03 | PASS | `7` resolved to `ctl heartbeat` and reached the confirmation gate |
+| CTLEXEC-04 | PASS | `ctl heartbeat '{}' <generation>` returned `finished`/`acknowledged`; provider response carried `delivery_state: control_acknowledged` and `result: {"alive": true, "pid": 3472, "hostname": "ai-dev"}` |
+| CTLEXEC-05 | PASS | `ctl.not_a_real_action` rejected as `unsupported capability` |
+| CTLEXEC-06 | PASS | `!ls internal` listed the real `internal/` tree; `pwd` matched `topsailai_session_info` `project_workspace` |
+| CTLEXEC-07 | PASS | Command outside the allowlist returned `rejected`/`not_applied`/`policy_denied` |
+| CTLEXEC-08 | PASS | `two words` stayed one argument; `$HOME` stayed literal; `a \| b` stayed literal; `-n` reached `echo` (no trailing newline) |
+| CTLEXEC-09 | PASS | Bare `!` produced `invalid arguments` and `usage: !<program> [arguments...]`; an unterminated quote produced `unterminated quote in command line` |
+| CTLEXEC-10 | PASS | Both `usage:` forms matched; both confirmation gates fired; `-la` appeared as a discrete argv element; both `--yes` receipts matched the CTLEXEC-03 and CTLEXEC-06 shapes, with real `ls -la` output from the session directory |
+| CTLEXEC-11 | PASS | Reload asserted in both directions: a newly listed `ls` was permitted, and the previously listed `echo` was revoked with `policy_denied` |
+| CTLEXEC-12 | PASS | REPL returned `unknown help command "exec"`; standalone `help exec` rendered the full syntax |
+
+### Confinement verified separately from the allowlist
+
+With `ls -la` in the allowlist, `ls /etc/passwd` was denied as `policy_denied` because the
+prefix did not match, which does not exercise confinement. After reloading to a bare `ls`
+entry, the same arguments were denied as `argument_not_confined`, a distinct error code
+proving `confineArguments` ran, while `ls internal` still succeeded.
+
+### Corrections made during execution
+
+Two findings were stated and then retracted after verification:
+
+- `ctl.heartbeat` returning `target_generation_mismatch` was an invocation error, not a
+  defect: the syntax is `ctl <endpoint> <resource> <action> [json] [generation]`, and the
+  generation had been omitted. Re-running with it succeeded.
+- The TUI ENDPOINT column showing `ai-dev` is the endpoint hostname field, not a
+  cross-cluster leak. `endpoint_id` was `live-tmux-endpoint` and only one Server was
+  running, so the run was isolated.
+
+### Harness requirement
+
+`start_services.py` gained an optional `--allowlist` argument, because the harness
+previously had no way to configure `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` and
+`command.exec` therefore always failed closed. The option is optional so the same harness
+can still prove the fail-closed path.
