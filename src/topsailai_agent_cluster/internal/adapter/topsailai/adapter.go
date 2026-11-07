@@ -44,6 +44,7 @@ type Adapter struct {
 	config       Config
 	mapper       adapter.ResourceMapper
 	runner       commandRunner
+	execRunner   commandExecRunner
 	platformStop bool
 }
 
@@ -72,7 +73,7 @@ func New(config Config) (*Adapter, error) {
 	if err != nil {
 		capabilities = PlatformCapabilities{}
 	}
-	return &Adapter{config: config, mapper: config.ResourceMapper, runner: execRunner{timeout: config.Timeout}, platformStop: capabilities.ProcAvailable && capabilities.PidfdAvailable}, nil
+	return &Adapter{config: config, mapper: config.ResourceMapper, runner: execRunner{timeout: config.Timeout}, execRunner: execCommandRunner{timeout: config.Timeout}, platformStop: capabilities.ProcAvailable && capabilities.PidfdAvailable}, nil
 }
 
 func newWithRunner(config Config, runner commandRunner) (*Adapter, error) {
@@ -98,6 +99,10 @@ func (a *Adapter) Describe(context.Context) (adapter.Descriptor, error) {
 			{Name: protocol.OperationAgentResume, Version: "v1", TargetKinds: []string{"session"}},
 			{Name: protocol.OperationAgentDriveStart, Version: "v1", TargetKinds: []string{"session"}},
 			{Name: protocol.OperationAgentDriveStop, Version: "v1", TargetKinds: []string{"session"}},
+			// command.exec runs an operator-supplied argv array, so it declares the
+			// control permission: an operator who may not control a session must not
+			// be able to run commands in its working directory either.
+			{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion, TargetKinds: []string{"session"}, SafetyClass: "mutating", RequiredPermission: "control"},
 		}},
 	}
 	if a.platformStop {
@@ -317,6 +322,10 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 	var args []string
 	var stdin []byte
 	switch operation {
+	case protocol.OperationCommandExec:
+		// command.exec does not build a provider argv: it runs the operator's own
+		// argv array locally, so it returns before the provider invocation path.
+		return a.executeCommand(ctx, intent)
 	case "send", protocol.OperationMessageSend:
 		message, err := runtimeMessage(intent.Payload)
 		if err != nil {
