@@ -379,9 +379,9 @@ func TestListDispatchMatchesAdvertisedSyntaxAgainstIsolatedServer(t *testing.T) 
 			wantError: "usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean]",
 		},
 		{
-			name:      "global endpoint after list rejected",
-			args:      []string{"--server-url", server.URL, "--token", "test-token", "list", "--endpoint", "endpoint-1"},
-			wantError: "usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean]",
+			name:    "global endpoint after list is honoured",
+			args:    []string{"--server-url", server.URL, "--token", "test-token", "list", "--endpoint", "endpoint-1"},
+			wantIDs: []string{"A1", "A2"},
 		},
 	}
 	for _, tc := range tests {

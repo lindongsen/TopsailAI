@@ -73,6 +73,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	flags.SetOutput(errors)
 	flags.Usage = func() {
 		fmt.Fprintln(errors, "Usage: agent-cluster-cli [options] <command>")
+		fmt.Fprintln(errors, "Global options may also be written after the command.")
 		fmt.Fprintln(errors, "Commands:")
 		for _, line := range tui.NonInteractiveCommandHelpLines() {
 			fmt.Fprintln(errors, "  "+line)
@@ -96,7 +97,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	task := flags.String("task", "", "literal initial task text for start; no JSON is required")
 	generation := flags.String("generation", "", "target generation; alternative to the positional generation argument")
 	interactiveShort := flags.Bool("i", false, "start the interactive REPL (same as the interactive command)")
-	if err := flags.Parse(args); err != nil {
+	if err := flags.Parse(hoistTrailingFlags(args)); err != nil {
 		return err
 	}
 	interactiveSelected, err := resolveInteractiveSelection(*interactiveShort, flags.Args())
@@ -204,6 +205,87 @@ func resolveInteractiveSelection(shortFlag bool, args []string) (bool, error) {
 		return false, fmt.Errorf("usage: interactive")
 	}
 	return true, nil
+}
+
+// globalOptionNames lists the options the top-level flag set owns. Only these are
+// hoisted, so an option a subcommand owns (for example list --clean) keeps its
+// position and its meaning.
+var globalOptionNames = map[string]bool{
+	"json": true, "endpoint": true, "yes": true, "server-url": true, "token": true,
+	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "no-color": true,
+	"profile": true, "profile-revision": true, "folder": true, "task": true,
+	"generation": true, "i": true,
+}
+
+// booleanGlobalOptions lists the hoisted options that take no value, so hoisting
+// never swallows the following argument as if it were that option's value.
+var booleanGlobalOptions = map[string]bool{
+	"json": true, "yes": true, "no-color": true, "i": true,
+}
+
+// hoistTrailingFlags moves recognized global options that appear after the
+// subcommand in front of it. Go's flag package stops parsing at the first
+// positional argument, so without this an operator who follows the tool's own
+// advice ("rerun with --yes") has the option silently swallowed as data, and a
+// filter such as --endpoint is dropped instead of narrowing the scope. A "--"
+// terminator still ends option parsing, so a literal value beginning with a dash
+// stays expressible.
+func hoistTrailingFlags(args []string) []string {
+	split := -1
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			split = i
+			break
+		}
+		// A leading value-taking option written as a separate pair owns the next
+		// argument, so that value is not the first positional. Skipping it keeps
+		// the boundary at the real subcommand instead of at an option's value.
+		name, hasValue := splitOptionName(arg)
+		if !hasValue && globalOptionNames[name] && !booleanGlobalOptions[name] && i+1 < len(args) {
+			i++
+		}
+	}
+	if split < 0 {
+		return args
+	}
+	hoisted := make([]string, 0, len(args))
+	hoisted = append(hoisted, args[:split]...)
+	rest := make([]string, 0, len(args)-split)
+	for i := split; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			rest = append(rest, args[i:]...)
+			break
+		}
+		name, hasValue := splitOptionName(arg)
+		if !globalOptionNames[name] {
+			rest = append(rest, arg)
+			continue
+		}
+		hoisted = append(hoisted, arg)
+		// A value-taking option written as a separate pair takes its value with
+		// it, otherwise hoisting would leave the value behind as a positional.
+		// A boolean option never consumes the next argument.
+		if !hasValue && !booleanGlobalOptions[name] && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			i++
+			hoisted = append(hoisted, args[i])
+		}
+	}
+	return append(hoisted, rest...)
+}
+
+// splitOptionName reports the option name without its leading dashes and whether
+// the value was attached with "=".
+func splitOptionName(arg string) (string, bool) {
+	name := strings.TrimLeft(arg, "-")
+	if idx := strings.Index(name, "="); idx >= 0 {
+		return name[:idx], true
+	}
+	return name, false
 }
 
 func parseListArgs(args []string, clean bool) (bool, error) {
