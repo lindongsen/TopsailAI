@@ -86,14 +86,14 @@ was dispatched rather than rejected as unknown.
 | `send` | `send` | `send`, `>` | yes |
 | `context.inject` | `btw`, `inject` | `inject`, `btw` | yes |
 | `execution.interrupt` | `control` | `interrupt`, `control` | yes |
-| `ctl.<action>` | `ctl` | `ctl` | yes |
+| `ctl.<action>` | `ctl` | `ctl`, `ctl.<action>` | yes |
 | `command.exec` | `exec` | `!<argv...>` | yes |
 | `agent.start` | `start` | `start` | yes |
 | `agent.resume` | `resume` | `resume` | yes |
 | `agent.stop` | `stop` | `stop` | yes |
-| `agent.drive.start` | `drive start` | `drive start` | yes |
-| `agent.drive.stop` | `drive stop` | `drive stop` | yes |
-| `drive status` | `drive status` | `drive status`, `drive` | yes |
+| `agent.drive.start` | `drive start` | `drive start [session]` | yes |
+| `agent.drive.stop` | `drive stop` | `drive stop [session]` | yes |
+| `drive status` | `drive status` | `drive status [session]`, `drive [session]` | yes |
 | `watch` | not applicable | `watch`, `w` | yes |
 | `help` | `help` | `help`, `?` | yes |
 | `cd` | not applicable | `cd` | not applicable |
@@ -124,6 +124,20 @@ diagnostics unchanged, and it does not shadow the longer `logs` spelling.
 
 `cd` and `quit` navigate a session that only exists inside the interactive loop, so
 they have no standalone meaning and are not gaps.
+
+`drive` is available in all three scopes, because a driver belongs to one session
+but an operator usually starts from a fleet or endpoint listing. Its grammar is
+`drive [start|stop|status] [session]`: the first token is read as an action only
+when it names one, so `drive 3` and `drive res_abc` are the literal
+`drive [number-or-session-id]` form and report controller state. Session scope
+keeps its pinned selection and rejects a target argument, exactly as `stop` does;
+workspace and endpoint scope require one, because there is no current session to
+fall back to. Workspace scope resolves the row's own endpoint, and a token that
+matches sessions on several endpoints is rejected rather than guessed. `status`
+stays a read of the persisted projection and never admits a command, while
+`start` and `stop` keep the confirmation gate and revalidate the exact generation
+before dispatch. `stop` and `drive` share one target resolver, so the two cannot
+drift into different authority checks.
 
 `watch` is interactive-only for a different reason, and it is not a gap either. It
 adds no behaviour: every tick performs exactly `list` (re-read the persisted
@@ -176,11 +190,12 @@ usage: exec <endpoint-id> <resource-id> <generation> -- <argv...>
 ```
 
 `ctl` follows the non-interactive-first rule directly. The standalone form carries the
-action name and an explicit payload; the interactive form is a convenience layer that
-prompts for the action when it is omitted. The prompt renders its action list from the
-advertised capabilities rather than from a hardcoded list, so it cannot offer an action
-the Endpoint does not support. A bare `ctl` in non-interactive mode is a usage error,
-not a prompt, as the fourth command above shows.
+action name and an explicit JSON payload; the interactive form is a convenience layer that
+prompts for the action when it is omitted and then guides the parameters as `key=value`
+pairs, so no JSON document is ever typed interactively. The prompt renders its action list
+from the advertised capabilities rather than from a hardcoded list, so it cannot offer an
+action the Endpoint does not support. A bare `ctl` in non-interactive mode is a usage
+error, not a prompt, as the fourth command above shows.
 
 `!` is an input-prefix form, not a command word. It is recognised before the command
 word is split, so `!git status` never reaches the dispatcher as a command named `!git`.
@@ -296,6 +311,26 @@ The output boundary owns the policy. The CLI writer reports a `TableLayout` of
 width plus truncation state, so every render path inherits the switch without
 threading a new parameter through each command, and the interactive prompt editor
 keeps the real terminal width as its editing budget.
+
+## Interactive input block
+
+The prompt editor renders the current edit as a soft-wrapped block instead of a
+single horizontally scrolled row. A long message therefore keeps its head visible,
+which is what an operator needs in order to review what was actually typed.
+
+- The first row shares its width with the prompt; continuation rows use the whole
+  terminal width, and one column stays reserved so a full row never auto-wraps.
+- The block is bounded by the terminal height reported through the output
+  boundary. A block taller than the screen scrolls by whole rows, so the cursor
+  row always stays visible, and a writer without a terminal size falls back to a
+  bounded default instead of rendering unbounded rows.
+- Every redraw erases the previously rendered block first, so a block that shrank
+  leaves no stale row behind. Submit, interrupt and EOF move the cursor to the
+  block end before writing the newline, so the operator's input is never split.
+- A Tab completion candidate list is printed below the erased block rather than
+  inside it, so the next redraw cannot erase the candidates.
+- Unsafe runes are dropped, matching `sanitizeTerminal`, so the rendered block is
+  byte-identical to the sanitized form of the typed text.
 
 ## Verification
 

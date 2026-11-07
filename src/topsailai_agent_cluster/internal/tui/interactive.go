@@ -380,6 +380,15 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		return false, runShellCommand(ctx, api, state, line, trustedOut, options)
 	}
 	rawName, rest := commandToken(line)
+	// The dotted control spelling is resolved before alias and scope resolution,
+	// because it carries its action inside the command word. It is a form of the
+	// ctl command, so it inherits ctl's session-only scope rule and confirmation
+	// gate instead of becoming a second command with its own semantics.
+	ctlCall := ctlInvocation{rest: rest}
+	if action, dotted := ctlDottedAction(rawName); dotted {
+		ctlCall = ctlInvocation{dotted: true, action: action, rest: rest}
+		rawName = "ctl"
+	}
 	// The send prefix is resolved before tokenisation: splitCommand splits on the
 	// first literal space, so ">hello world" would otherwise yield the token
 	// ">hello". The prefix is disjoint from every command word, so this branch can
@@ -498,7 +507,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "send":
 		return false, interactiveSend(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	case "ctl":
-		return false, interactiveCtl(ctx, api, state, rest, lineResults, out, trustedOut, options)
+		return false, interactiveCtl(ctx, api, state, ctlCall, lineResults, out, trustedOut, options)
 	default:
 		return false, offerSendForUnknownInput(ctx, api, state, line, name, lineResults, out, trustedOut, options)
 	}
@@ -513,12 +522,17 @@ func numericInput(line string) (candidate bool, token string, surplus bool) {
 	return true, fields[0], len(fields) > 1
 }
 
-// diagnosticCommandName keeps numeric shorthand errors on the cd help path.
+// diagnosticCommandName keeps numeric shorthand errors on the cd help path and
+// reports the dotted control spelling under the ctl help, so a rejected dotted
+// line points at the command that actually owns the syntax.
 func diagnosticCommandName(line string) string {
 	if candidate, _, _ := numericInput(line); candidate {
 		return "cd"
 	}
 	name, _ := commandToken(line)
+	if _, dotted := ctlDottedAction(name); dotted {
+		return "ctl"
+	}
 	return name
 }
 

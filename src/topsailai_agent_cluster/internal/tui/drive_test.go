@@ -39,24 +39,69 @@ func driveStub() *interactiveStub {
 	return stub
 }
 
-// TestDriveIsUnavailableOutsideSessionScope proves the controller command never
-// becomes reachable from a scope that has no selected session to control.
-func TestDriveIsUnavailableOutsideSessionScope(t *testing.T) {
+// ambiguousDriveStub reports the same session identifier on two endpoints, so a
+// workspace-scope target that names no endpoint is genuinely ambiguous.
+func ambiguousDriveStub() *interactiveStub {
+	stub := driveStub()
+	stub.reports["endpoint-2"] = scopeInventory("res-1", "generation-2")
+	return stub
+}
+
+// TestDriveStatusResolvesTargetOutsideSessionScope proves the read projection is
+// reachable from workspace and endpoint scope by naming the session, so an
+// operator does not have to enter a session to inspect its controller.
+func TestDriveStatusResolvesTargetOutsideSessionScope(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{name: "workspace", input: "drive res-1\nquit\n"},
+		{name: "endpoint", input: "cd host-one/endpoint-1\ndrive res-1\nquit\n"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			stub := driveStub()
+			output, diagnostics := runScope(t, stub, testCase.input, ColorPolicy{})
+			if diagnostics != "" {
+				t.Fatalf("unexpected diagnostics: %q", diagnostics)
+			}
+			if !strings.Contains(output, "session: res-1") || !strings.Contains(output, "drive_state: running") {
+				t.Fatalf("drive status did not render the controller: %q", output)
+			}
+			if stub.admit != 0 {
+				t.Fatalf("drive status admitted %d commands", stub.admit)
+			}
+		})
+	}
+}
+
+// TestDriveStatusAcceptsARowNumberInWorkspaceScope proves the documented
+// "drive [number]" form resolves the row rendered by the startup list, so the
+// operator can use the same shorthand that cd and stop accept.
+func TestDriveStatusAcceptsARowNumberInWorkspaceScope(t *testing.T) {
+	stub := driveStub()
+	output, diagnostics := runScope(t, stub, "drive 1\nquit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if !strings.Contains(output, "session: res-1") || !strings.Contains(output, "drive_state: running") {
+		t.Fatalf("row-number drive did not render the controller: %q", output)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("drive status admitted %d commands", stub.admit)
+	}
+}
+
+// TestDriveRequiresATargetOutsideSessionScope proves a bare drive in a scope with
+// no selected session fails closed instead of guessing which session to control.
+func TestDriveRequiresATargetOutsideSessionScope(t *testing.T) {
 	cases := []struct {
 		name  string
 		input string
 		want  string
 	}{
-		{
-			name:  "workspace",
-			input: "drive status\nquit\n",
-			want:  `command "drive" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, stop, status, refresh, watch, help, quit`,
-		},
-		{
-			name:  "endpoint",
-			input: "cd host-one/endpoint-1\ndrive status\nquit\n",
-			want:  `command "drive" is unavailable in endpoint scope; available commands: list, cd, show, info, start, stop, logs, status, refresh, watch, help, quit`,
-		},
+		{name: "workspace", input: "drive\nquit\n", want: "drive requires a session in workspace scope; use drive <number> for a session row"},
+		{name: "endpoint", input: "cd host-one/endpoint-1\ndrive\nquit\n", want: "drive requires a session in endpoint scope; use drive <number> for a session row"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -67,6 +112,84 @@ func TestDriveIsUnavailableOutsideSessionScope(t *testing.T) {
 				t.Fatalf("rejected drive admitted %d commands", stub.admit)
 			}
 		})
+	}
+}
+
+// TestDriveStartInWorkspaceScopeAdmitsTheExactTarget proves the mutating action
+// submits the standard drive operation against the endpoint-scoped session the
+// operator named, even though workspace scope has no current endpoint.
+func TestDriveStartInWorkspaceScopeAdmitsTheExactTarget(t *testing.T) {
+	stub := driveCapabilityStub{interactiveStub: driveStub()}
+	output, diagnostics := runScope(t, stub, "drive start res-1\ny\nquit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if stub.admit != 1 || len(stub.intents) != 1 {
+		t.Fatalf("admitted %d commands with %d intents, want 1", stub.admit, len(stub.intents))
+	}
+	intent := stub.intents[0]
+	if intent.Operation != protocol.OperationAgentDriveStart {
+		t.Fatalf("operation=%q want %q", intent.Operation, protocol.OperationAgentDriveStart)
+	}
+	if intent.Target == nil || intent.Target.ResourceID != "res-1" || intent.Target.Generation != "generation-1" {
+		t.Fatalf("target=%+v want res-1/generation-1", intent.Target)
+	}
+	if intent.EndpointID != "endpoint-1" {
+		t.Fatalf("endpoint=%q want endpoint-1", intent.EndpointID)
+	}
+	if !strings.Contains(output, "CommandID:") {
+		t.Fatalf("missing durable receipt: %q", output)
+	}
+}
+
+// TestDriveStopInWorkspaceScopeIsNotAgentStop proves the workspace-scope stop
+// action still targets the controller rather than the agent.
+func TestDriveStopInWorkspaceScopeIsNotAgentStop(t *testing.T) {
+	stub := driveCapabilityStub{interactiveStub: driveStub()}
+	_, diagnostics := runScope(t, stub, "drive stop res-1\ny\nquit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if len(stub.intents) != 1 {
+		t.Fatalf("intents=%d want 1", len(stub.intents))
+	}
+	if got := stub.intents[0].Operation; got != protocol.OperationAgentDriveStop {
+		t.Fatalf("operation=%q want %q", got, protocol.OperationAgentDriveStop)
+	}
+}
+
+// TestDriveRejectsATargetOutsideTheCurrentEndpoint proves endpoint scope never
+// retargets a session that belongs to another endpoint, because the operator
+// named a session the current table does not contain.
+func TestDriveRejectsATargetOutsideTheCurrentEndpoint(t *testing.T) {
+	stub := driveCapabilityStub{interactiveStub: driveStub()}
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\ndrive start res-2\nquit\n", ColorPolicy{})
+	assertActionableError(t, diagnostics, `error: session "res-2" was not found on endpoint "endpoint-1"`)
+	if stub.admit != 0 {
+		t.Fatalf("rejected drive admitted %d commands", stub.admit)
+	}
+}
+
+// TestDriveRejectsAnAmbiguousWorkspaceTarget proves a session identifier reported
+// by several endpoints is rejected instead of being silently retargeted, because
+// the operator named no endpoint.
+func TestDriveRejectsAnAmbiguousWorkspaceTarget(t *testing.T) {
+	stub := driveCapabilityStub{interactiveStub: ambiguousDriveStub()}
+	_, diagnostics := runScope(t, stub, "drive start res-1\nquit\n", ColorPolicy{})
+	assertActionableError(t, diagnostics, `error: multiple sessions match "res-1"; use drive <number> with a row from list`)
+	if stub.admit != 0 {
+		t.Fatalf("ambiguous drive admitted %d commands", stub.admit)
+	}
+}
+
+// TestDriveInSessionScopeRejectsATarget proves session scope keeps its pinned
+// selection and refuses an argument, because the scope already names the target.
+func TestDriveInSessionScopeRejectsATarget(t *testing.T) {
+	stub := driveCapabilityStub{interactiveStub: driveStub()}
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\ndrive res-1\nquit\n", ColorPolicy{})
+	assertActionableError(t, diagnostics, "error: invalid arguments")
+	if stub.admit != 0 {
+		t.Fatalf("rejected drive admitted %d commands", stub.admit)
 	}
 }
 

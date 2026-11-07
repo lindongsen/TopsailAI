@@ -25,6 +25,10 @@ type TerminalEditor struct {
 	width  func() int
 	enable func() (func() error, error)
 	editor *lineEditor
+	// blockRows and blockCursorRow record the input block rendered last time, so
+	// the next redraw returns to its first row instead of appending a second copy.
+	blockRows      int
+	blockCursorRow int
 }
 
 // NewTerminalEditor injects terminal operations at the CLI boundary.
@@ -74,6 +78,9 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 		t.editor = newLineEditor(limit, 100)
 	}
 	t.editor.reset()
+	// A new prompt always starts a new input block, so no stale row count from a
+	// previous read can move the cursor on the first redraw.
+	t.blockRows, t.blockCursorRow = 0, 0
 	defer t.editor.reset()
 	// Only question-style prompts request a new row; named prompts are already printed.
 	if strings.HasPrefix(prompt, "\n") {
@@ -137,24 +144,79 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 		case lineEditContinue:
 		case lineEditSubmit:
 			line, overflow = t.editor.finish(history)
-			_, err = io.WriteString(t.output, "\r\n")
+			// The cursor leaves from the last row of the block, so the submit
+			// newline never splits the operator's input in the middle.
+			_, err = io.WriteString(t.output, t.blockEndSequence()+"\r\n")
 			return
 		case lineEditInterrupt:
-			_, writeErr := io.WriteString(t.output, "^C\r\n")
+			_, writeErr := io.WriteString(t.output, t.blockEndSequence()+"^C\r\n")
 			return "", false, errors.Join(ErrInteractiveInterrupt, writeErr)
 		case lineEditEOF:
-			_, writeErr := io.WriteString(t.output, "\r\n")
+			_, writeErr := io.WriteString(t.output, t.blockEndSequence()+"\r\n")
 			return "", false, joinTerminalError(io.EOF, writeErr)
 		}
 	}
 }
 
-// clearPromptLine erases the prompt row before a refresh is printed, so the
-// table never overwrites the operator's partially typed input.
-const clearPromptLine = "\r\x1b[2K"
+// blockEndSequence returns the cursor movement that leaves the rendered input
+// block below its last row, and forgets the block so the next prompt starts on a
+// fresh row. A block that was never rendered needs no movement.
+func (t *TerminalEditor) blockEndSequence() string {
+	if t.blockRows == 0 {
+		return ""
+	}
+	down := t.blockRows - 1 - t.blockCursorRow
+	t.blockRows, t.blockCursorRow = 0, 0
+	if down <= 0 {
+		return "\r"
+	}
+	return fmt.Sprintf("\r\x1b[%dB", down)
+}
 
-// applyWatch prints one pending refresh between keypresses. The prompt row is
-// cleared first, so the table never overwrites the operator's input line.
+// defaultInputRows bounds the visible input block when the output boundary
+// reports no terminal height, so an unknown height never renders unbounded rows.
+const defaultInputRows = 20
+
+// eraseBlock returns the cursor to the first row of the last rendered input
+// block and clears every row of it. A block that was never rendered writes
+// nothing, so the first redraw of a prompt starts on the current row.
+func (t *TerminalEditor) eraseBlock() error {
+	if t.blockRows == 0 {
+		return nil
+	}
+	var out strings.Builder
+	out.WriteString("\r")
+	if t.blockCursorRow > 0 {
+		fmt.Fprintf(&out, "\x1b[%dA", t.blockCursorRow)
+	}
+	for row := 0; row < t.blockRows; row++ {
+		out.WriteString("\x1b[2K")
+		if row < t.blockRows-1 {
+			out.WriteString("\r\n")
+		}
+	}
+	if t.blockRows > 1 {
+		fmt.Fprintf(&out, "\x1b[%dA", t.blockRows-1)
+	}
+	out.WriteString("\r")
+	t.blockRows, t.blockCursorRow = 0, 0
+	_, err := io.WriteString(t.output, out.String())
+	return err
+}
+
+// inputRows reports how many rows the input block may occupy. The output
+// boundary owns the terminal height, so the editor never probes global state.
+func (t *TerminalEditor) inputRows() int {
+	if provider, ok := t.output.(interface{ TerminalHeight() int }); ok {
+		if height := provider.TerminalHeight(); height > 2 {
+			return height - 1
+		}
+	}
+	return defaultInputRows
+}
+
+// applyWatch prints one pending refresh between keypresses. The whole input
+// block is erased first, so the table never overwrites the operator's input.
 func (t *TerminalEditor) applyWatch(watch WatchSession) error {
 	payload, err := watch.Idle()
 	if err != nil {
@@ -163,10 +225,18 @@ func (t *TerminalEditor) applyWatch(watch WatchSession) error {
 	if len(payload) == 0 {
 		return nil
 	}
-	if _, err := io.WriteString(t.output, clearPromptLine); err != nil {
+	if err := t.eraseBlock(); err != nil {
 		return err
 	}
-	_, err = t.output.Write(toCRLF(payload))
+	converted := toCRLF(payload)
+	if _, err := t.output.Write(converted); err != nil {
+		return err
+	}
+	// The redrawn input block must start on its own row, so a payload that does
+	// not end with a newline still leaves the cursor at the beginning of a row.
+	if len(converted) == 0 || converted[len(converted)-1] != '\n' {
+		_, err = io.WriteString(t.output, "\r\n")
+	}
 	return err
 }
 
@@ -184,7 +254,9 @@ func toCRLF(payload []byte) []byte {
 	return converted
 }
 
-// redraw uses horizontal scrolling with a reserved final column to prevent wrapping.
+// redraw renders the input as a soft-wrapped block, so a long edit keeps its
+// head visible instead of scrolling out of a single row. The previous block is
+// erased in the same write, so a shorter block never leaves stale rows behind.
 func (t *TerminalEditor) redraw(prompt string) error {
 	width := t.width()
 	if width < 4 {
@@ -196,12 +268,77 @@ func (t *TerminalEditor) redraw(prompt string) error {
 	}
 	prompt = clipCell(prompt, max(1, width/2))
 	promptWidth := displayWidth(prompt)
-	budget := width - promptWidth - 1
-	text, cursor := t.editor.viewport(budget)
+	// The first row shares its width with the prompt; continuation rows use the
+	// whole width, and one column stays reserved so a full row never wraps.
+	firstBudget := max(1, width-promptWidth-1)
+	nextBudget := max(1, width-1)
+	rows, cursorRow, cursorColumn := t.editor.wrapViewport(firstBudget, nextBudget)
+	// A block taller than the terminal scrolls by whole rows, so the cursor row
+	// always stays visible. The first visible row keeps the prompt, because an
+	// operator who cannot see the scope prompt cannot tell where input goes.
+	start := 0
+	if visible := t.inputRows(); len(rows) > visible {
+		start = cursorRow - visible + 1
+		if start < 0 {
+			start = 0
+		}
+		if start > len(rows)-visible {
+			start = len(rows) - visible
+		}
+	}
+	visibleRows := rows[start:]
+	if start > 0 {
+		// The first visible row is a continuation row whose head scrolled off, so
+		// it keeps its tail and marks the hidden part instead of dropping text
+		// silently.
+		visibleRows = append([]string{clipCellLeft(visibleRows[0], firstBudget)}, visibleRows[1:]...)
+	}
+	cursorRow -= start
 	if green {
 		prompt = ansiBoldGreen + prompt + ansiReset
 	}
-	_, err := fmt.Fprintf(t.output, "\r\x1b[2K%s%s\r\x1b[%dC", prompt, text, promptWidth+cursor)
+	var out strings.Builder
+	// Erase the previous block first, so a block that shrank leaves no stale row.
+	out.WriteString("\r")
+	if t.blockRows > 0 {
+		if t.blockCursorRow > 0 {
+			fmt.Fprintf(&out, "\x1b[%dA", t.blockCursorRow)
+		}
+		out.WriteString("\r")
+		for row := 0; row < t.blockRows; row++ {
+			out.WriteString("\x1b[2K")
+			if row < t.blockRows-1 {
+				out.WriteString("\r\n")
+			}
+		}
+		if t.blockRows > 1 {
+			fmt.Fprintf(&out, "\x1b[%dA", t.blockRows-1)
+		}
+		out.WriteString("\r")
+	}
+	for row, text := range visibleRows {
+		if row > 0 {
+			out.WriteString("\r\n")
+		}
+		out.WriteString("\x1b[2K")
+		if row == 0 {
+			out.WriteString(prompt)
+		}
+		out.WriteString(text)
+	}
+	if up := len(visibleRows) - 1 - cursorRow; up > 0 {
+		fmt.Fprintf(&out, "\x1b[%dA", up)
+	}
+	out.WriteString("\r")
+	column := cursorColumn
+	if cursorRow == 0 {
+		column += promptWidth
+	}
+	if column > 0 {
+		fmt.Fprintf(&out, "\x1b[%dC", column)
+	}
+	t.blockRows, t.blockCursorRow = len(visibleRows), cursorRow
+	_, err := io.WriteString(t.output, out.String())
 	return err
 }
 

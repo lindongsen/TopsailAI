@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"topsailai_agent_cluster/internal/adapter"
+	topsailaiadapter "topsailai_agent_cluster/internal/adapter/topsailai"
 	"topsailai_agent_cluster/internal/channel"
 	"topsailai_agent_cluster/internal/config"
 	endpointservice "topsailai_agent_cluster/internal/endpoint"
@@ -95,13 +96,45 @@ func main() {
 		os.Exit(1)
 	}
 	registry := adapter.NewRegistry()
+	// The control action file is Endpoint-local administrative configuration. It is
+	// loaded before any adapter is configured so a broken file fails startup rather
+	// than silently leaving a wider default set in force.
+	var controlActions *topsailaiadapter.ControlActionSet
+	if cfg.ControlActionFile != "" {
+		controlActions, err = topsailaiadapter.LoadControlActionSet(cfg.ControlActionFile)
+		if err != nil {
+			logger.Error("load control action file", "path", cfg.ControlActionFile, "error", err)
+			_ = client.Close()
+			_ = store.Close()
+			os.Exit(1)
+		}
+		logger.Info("loaded control action file", "path", cfg.ControlActionFile, "actions", controlActions.Len(), "names", controlActions.Names())
+	} else {
+		logger.Info("control action file is not configured; the reviewed default ctl. set is in force")
+	}
+	if controlActions != nil {
+		stopControlReload, watchErr := controlActions.WatchReload(ctx, func(reloadErr error) {
+			if reloadErr != nil {
+				logger.Error("reload control action file", "error", reloadErr)
+				return
+			}
+			logger.Info("reloaded control action file", "actions", controlActions.Len(), "names", controlActions.Names())
+		})
+		if watchErr != nil {
+			logger.Error("watch control action file", "error", watchErr)
+			_ = client.Close()
+			_ = store.Close()
+			os.Exit(1)
+		}
+		defer stopControlReload()
+	}
 	registered := make(map[string]bool)
 	for _, item := range cfg.Adapters {
 		if registered[item.ProviderType] {
 			continue
 		}
 		providerType := item.ProviderType
-		if err := registerAdapterType(registry, providerType, store); err != nil {
+		if err := registerAdapterType(registry, providerType, store, controlActions); err != nil {
 			logger.Error("register adapter provider", "provider_type", providerType, "error", err)
 			_ = client.Close()
 			_ = store.Close()

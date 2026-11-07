@@ -10,7 +10,7 @@ import (
 	endpointstorage "topsailai_agent_cluster/internal/storage/endpoint"
 )
 
-func registerAdapterType(registry *adapter.Registry, providerType string, store *endpointstorage.Store) error {
+func registerAdapterType(registry *adapter.Registry, providerType string, store *endpointstorage.Store, controlActions *topsailaiadapter.ControlActionSet) error {
 	if registry == nil || store == nil {
 		return fmt.Errorf("registry and store are required")
 	}
@@ -22,6 +22,10 @@ func registerAdapterType(registry *adapter.Registry, providerType string, store 
 				AdapterID: local.AdapterID, Executable: local.Command,
 				Timeout:        time.Duration(local.TimeoutMS) * time.Millisecond,
 				ResourceMapper: store,
+				// The Endpoint-global control action set is passed explicitly rather
+				// than read from the environment inside Describe, so the adapter has
+				// no hidden configuration dependency and a test can supply its own.
+				ControlActions: controlActions,
 			})
 		}
 	case "fixture", "command":

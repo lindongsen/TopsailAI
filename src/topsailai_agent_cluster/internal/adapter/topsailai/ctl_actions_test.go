@@ -118,7 +118,7 @@ func TestDescribeAdvertisesEveryControlAction(t *testing.T) {
 }
 
 func TestControlActionArgsBuildsProviderArgv(t *testing.T) {
-	args, err := controlActionArgs("ctl.heartbeat", "sess1", []byte(`{"detail":true}`))
+	args, err := controlActionArgs(nil, "ctl.heartbeat", "sess1", []byte(`{"detail":true}`))
 	if err != nil {
 		t.Fatalf("controlActionArgs: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestControlActionArgsBuildsProviderArgv(t *testing.T) {
 }
 
 func TestControlActionArgsDefaultsEmptyPayload(t *testing.T) {
-	args, err := controlActionArgs("ctl.heartbeat", "sess1", nil)
+	args, err := controlActionArgs(nil, "ctl.heartbeat", "sess1", nil)
 	if err != nil {
 		t.Fatalf("controlActionArgs: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestControlActionArgsRejectsUnreviewedAction(t *testing.T) {
 	}
 	for name, operation := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := controlActionArgs(operation, "sess1", nil); !errors.Is(err, errControlActionUnreviewed) {
+			if _, err := controlActionArgs(nil, operation, "sess1", nil); !errors.Is(err, errControlActionUnreviewed) {
 				t.Fatalf("error = %v, want errControlActionUnreviewed", err)
 			}
 		})
@@ -169,7 +169,7 @@ func TestControlActionArgsRejectsNonObjectPayload(t *testing.T) {
 	}
 	for name, payload := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := controlActionArgs("ctl.heartbeat", "sess1", []byte(payload)); err == nil {
+			if _, err := controlActionArgs(nil, "ctl.heartbeat", "sess1", []byte(payload)); err == nil {
 				t.Fatalf("payload %q was accepted", payload)
 			}
 		})

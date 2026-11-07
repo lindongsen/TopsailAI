@@ -38,6 +38,9 @@ type Config struct {
 	AuthToken            string
 	AuthScopes           []string
 	CommandAllowlistFile string
+	// ControlActionFile is the Endpoint-local file that selects which ctl. actions
+	// this Endpoint serves. An empty value keeps the reviewed default set in force.
+	ControlActionFile     string
 	ChannelAddress        string
 	ChannelDirection      string
 	EndpointChannelListen string
@@ -91,6 +94,9 @@ func Load(args []string, role string) (Config, error) {
 	}
 	if value := os.Getenv("AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE"); value != "" {
 		cfg.CommandAllowlistFile = value
+	}
+	if value := os.Getenv("AGENT_CLUSTER_CONTROL_ACTION_FILE"); value != "" {
+		cfg.ControlActionFile = value
 	}
 	if value := os.Getenv("AGENT_CLUSTER_CHANNEL_ADDRESS"); value != "" {
 		cfg.ChannelAddress = value
@@ -161,6 +167,7 @@ func Load(args []string, role string) (Config, error) {
 		return nil
 	})
 	flags.StringVar(&cfg.CommandAllowlistFile, "command-allowlist-file", cfg.CommandAllowlistFile, "Endpoint-global command allowlist file")
+	flags.StringVar(&cfg.ControlActionFile, "control-action-file", cfg.ControlActionFile, "Endpoint-local file selecting which ctl. actions are served")
 	flags.StringVar(&cfg.ChannelAddress, "channel-address", cfg.ChannelAddress, "Endpoint WSS address")
 	flags.StringVar(&cfg.ChannelDirection, "channel-direction", cfg.ChannelDirection, "channel direction: endpoint-initiated or server-initiated")
 	flags.StringVar(&cfg.EndpointChannelListen, "endpoint-channel-listen-addr", cfg.EndpointChannelListen, "Endpoint mTLS channel listen address for server-initiated connections")

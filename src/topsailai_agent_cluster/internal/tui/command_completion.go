@@ -58,7 +58,14 @@ func (t *TerminalEditor) completeCommand(prompt string) error {
 		}
 	}
 	if len(matches) > 1 {
-		_, err := fmt.Fprintf(t.output, "\r\n%s\r\n", strings.Join(matches, "  "))
+		// The candidate list replaces the input block instead of being printed
+		// inside it, so the next redraw starts below the list and never erases
+		// it. Erasing first also keeps the cursor out of the middle of a
+		// multi-row block.
+		if err := t.eraseBlock(); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(t.output, "%s\r\n", strings.Join(matches, "  "))
 		return err
 	}
 	return nil

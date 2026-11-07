@@ -51,20 +51,39 @@ func TestLineEditHistoryIsolation(t *testing.T) {
 	}
 }
 
-// TestLineEditViewport bounds text and cursor without terminal control injection.
-func TestLineEditViewport(t *testing.T) {
-	for _, value := range []string{"abcdef", "a中文b", "ab\u202ecd", "e\u0301x"} {
-		e := newLineEditor(100, 0)
+// TestLineEditWrapViewport bounds every wrapped row and keeps the whole text.
+// Wrapping is what keeps the head of a long edit visible, so the concatenated
+// rows must reproduce the typed text exactly.
+func TestLineEditWrapViewport(t *testing.T) {
+	for _, value := range []string{"abcdef", "a中文b", "ab\u202ecd", "e\u0301x", strings.Repeat("word ", 40)} {
+		e := newLineEditor(4096, 0)
 		typeEditor(e, value)
 		for cursor := 0; cursor <= len(e.text); cursor++ {
 			e.cursor = cursor
-			for width := 0; width <= 8; width++ {
-				text, col := e.viewport(width)
-				if displayWidth(text) > width || col < 0 || (width > 0 && col >= width) {
-					t.Fatalf("value=%q width=%d text=%q col=%d", value, width, text, col)
-				}
-				if strings.ContainsRune(text, '\u202e') {
-					t.Fatal("unsafe bidi control rendered")
+			for first := 1; first <= 8; first++ {
+				for next := 1; next <= 8; next++ {
+					rows, row, column := e.wrapViewport(first, next)
+					if len(rows) == 0 {
+						t.Fatalf("value=%q first=%d next=%d produced no row", value, first, next)
+					}
+					if row < 0 || row >= len(rows) || column < 0 {
+						t.Fatalf("value=%q cursor row=%d column=%d rows=%d", value, row, column, len(rows))
+					}
+					for index, text := range rows {
+						budget := next
+						if index == 0 {
+							budget = first
+						}
+						if displayWidth(text) > budget && len([]rune(text)) > 1 {
+							t.Fatalf("value=%q row=%q width=%d budget=%d", value, text, displayWidth(text), budget)
+						}
+						if strings.ContainsRune(text, '\u202e') {
+							t.Fatal("unsafe bidi control rendered")
+						}
+					}
+					if joined := strings.Join(rows, ""); joined != sanitizeTerminal([]byte(value)) {
+						t.Fatalf("value=%q joined=%q", value, joined)
+					}
 				}
 			}
 		}

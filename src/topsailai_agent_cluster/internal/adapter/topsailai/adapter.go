@@ -29,6 +29,10 @@ type Config struct {
 	MaxOutput      int
 	PlatformProbe  PlatformCapabilityProbe
 	ResourceMapper adapter.ResourceMapper
+	// ControlActions is the Endpoint-local set of enabled ctl. actions. A nil set
+	// keeps the reviewed default set in force, so an existing deployment that does
+	// not configure a control action file behaves exactly as before.
+	ControlActions *ControlActionSet
 }
 
 // PlatformCapabilities describes host support required by agent.stop.
@@ -106,10 +110,12 @@ func (a *Adapter) Describe(context.Context) (adapter.Descriptor, error) {
 			{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion, TargetKinds: []string{"session"}, SafetyClass: "mutating", RequiredPermission: "control"},
 		}},
 	}
-	// The provider control family is advertised per reviewed action so an operator
-	// sees exactly the actions this adapter serves, and each action carries the
-	// scope it requires instead of inheriting one blanket permission.
-	descriptor.Capabilities.Capabilities = append(descriptor.Capabilities.Capabilities, controlActionCapabilities()...)
+	// The provider control family is advertised per enabled action so an operator
+	// sees exactly the actions this Endpoint serves, and each action carries the
+	// scope it requires instead of inheriting one blanket permission. A configured
+	// control action file narrows this list; an omitted action becomes unreachable
+	// because the Endpoint rejects an operation it does not advertise.
+	descriptor.Capabilities.Capabilities = append(descriptor.Capabilities.Capabilities, controlActionCapabilities(a.config.ControlActions)...)
 	if a.platformStop {
 		descriptor.Capabilities.Capabilities = append(descriptor.Capabilities.Capabilities, protocol.Capability{Name: protocol.OperationAgentStop, Version: "v1", TargetKinds: []string{"session"}})
 	}
@@ -418,7 +424,7 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 		if !strings.HasPrefix(operation, security.ProviderControlPrefix) {
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "unsupported")}, adapter.ErrUnsupported
 		}
-		controlArgs, controlErr := controlActionArgs(operation, providerKey, intent.Payload)
+		controlArgs, controlErr := controlActionArgs(a.config.ControlActions, operation, providerKey, intent.Payload)
 		if controlErr != nil {
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "control_action_unreviewed")}, controlErr
 		}

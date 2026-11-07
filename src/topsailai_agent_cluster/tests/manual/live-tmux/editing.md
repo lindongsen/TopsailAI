@@ -16,7 +16,7 @@ author: DawsonLin
 | EDIT-07 | type `helx`, Backspace, `p`, Enter | executes help, one green prompt after completion |
 | EDIT-08 | Up, Down | prior command recalled; unfinished draft restored; confirmation/task answers excluded from history |
 | EDIT-09 | Home/Ctrl-A, End/Ctrl-E, Left/Right, Delete | expected cursor movement/deletion, Unicode rune boundaries preserved |
-| EDIT-10 | long printable line, narrow then wide terminal | horizontal viewport without prompt wrapping/duplicate rows; over-limit submission rejected without executing partial text |
+| EDIT-10 | long printable line, narrow then wide terminal | soft-wrapped input block keeps the head visible; block bounded by terminal height; over-limit submission rejected without executing partial text |
 | EDIT-11 | confirmation or wizard field TAB | no command completion, answer not submitted or exposed to history |
 | EDIT-12 | new disposable CLI window: Ctrl-D on empty line; separate window Ctrl-C at prompt | CLI exits under current policy, terminal restored; neither kills provider agent |
 

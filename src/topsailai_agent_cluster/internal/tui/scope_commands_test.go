@@ -96,12 +96,12 @@ func TestSendIsUnavailableOutsideSessionScope(t *testing.T) {
 		{
 			name:  "workspace",
 			input: "send {\"text\":\"hi\"}\nquit\n",
-			want:  "error: command \"send\" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, stop, status, refresh, watch, help, quit\n",
+			want:  "error: command \"send\" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, stop, drive, status, refresh, watch, help, quit\n",
 		},
 		{
 			name:  "endpoint",
 			input: "cd host-one/endpoint-1\nsend {\"text\":\"hi\"}\nquit\n",
-			want:  "error: command \"send\" is unavailable in endpoint scope; available commands: list, cd, show, info, start, stop, logs, status, refresh, watch, help, quit\n",
+			want:  "error: command \"send\" is unavailable in endpoint scope; available commands: list, cd, show, info, start, stop, drive, logs, status, refresh, watch, help, quit\n",
 		},
 	}
 	for _, testCase := range cases {
@@ -132,7 +132,7 @@ func TestSendWorksInSessionScope(t *testing.T) {
 
 func TestLogsIsUnavailableInWorkspaceScope(t *testing.T) {
 	_, diagnostics := runScope(t, scopeStub(), "logs\nquit\n", ColorPolicy{})
-	want := "error: command \"logs\" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, stop, status, refresh, watch, help, quit\n"
+	want := "error: command \"logs\" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, stop, drive, status, refresh, watch, help, quit\n"
 	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 }
 
@@ -338,8 +338,8 @@ func TestAvailableCommandsUseStableOrder(t *testing.T) {
 		kind ScopeKind
 		want string
 	}{
-		{kind: ScopeWorkspace, want: "list, endpoints, cd, show, info, start, stop, status, refresh, watch, help, quit"},
-		{kind: ScopeEndpoint, want: "list, cd, show, info, start, stop, logs, status, refresh, watch, help, quit"},
+		{kind: ScopeWorkspace, want: "list, endpoints, cd, show, info, start, stop, drive, status, refresh, watch, help, quit"},
+		{kind: ScopeEndpoint, want: "list, cd, show, info, start, stop, drive, logs, status, refresh, watch, help, quit"},
 		{kind: ScopeSession, want: "list, cd, show, info, resume, stop, inject, interrupt, ctl, drive, logs, send, status, refresh, help, quit"},
 	}
 	for _, testCase := range cases {

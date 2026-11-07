@@ -53,39 +53,53 @@ never select the first action.
 Precondition: same as CTLEXEC-01.
 
 Type `ctl` then Enter, then the number of a harmless advertised action such as
-`heartbeat`, then Enter. Expect the action name echoed in the confirmation question.
+`heartbeat`, then Enter. Expect `Parameters for heartbeat:` and the `ctl.param>`
+prompt, because the Endpoint advertises no per-action field schema so the client
+cannot know which actions take arguments. Answer with no text, expect
+`Parameters: none`, then expect the action name echoed in the confirmation question.
 Answer `n` and expect `ctl cancelled` with no admission.
 
-Repeat, answering `y`. Expect one `command submitted: <id>; use status <id> to query`
-line, then the receipt fields CommandID, Status, DeliveryBoundary, EffectCertainty and
-ErrorCode. Query `status <id>` and confirm the durable result matches the rendered one.
+Repeat, answering `y` at the confirmation. Expect one `command submitted: <id>; use
+status <id> to query` line, then the receipt fields CommandID, Status,
+DeliveryBoundary, EffectCertainty and ErrorCode. Query `status <id>` and confirm the
+durable result matches the rendered one.
 
 Repeat once more, typing the action name instead of its number, and confirm the same
 behaviour. Record the exact provider result; an admitted command that the provider
 rejects is a FAIL, not a PASS.
 
-## CTLEXEC-04 Supplied action and payload
+## CTLEXEC-04 Supplied action and guided parameters
 
 Precondition: same as CTLEXEC-01.
 
 Type `ctl heartbeat` then Enter. Expect the confirmation question without the action
-list, because the operator already named the action.
+list, because the operator already named the action, and expect the parameter prompt
+first because no parameter was supplied.
 
-Repeat with an explicit payload, for example `ctl pause {"reason":"live-tmux"}`.
-Expect the payload echoed in the confirmation preview. Answer `n` first and confirm no
-admission, then `y` and confirm the receipt.
+Repeat with explicit parameters, for example `ctl pause reason=live-tmux`. Expect no
+parameter prompt, because the parameters were supplied on the command line, and expect
+`Parameters: reason=live-tmux` echoed in the confirmation preview. Answer `n` first and
+confirm no admission, then `y` and confirm the receipt.
 
-Type `ctl heartbeat not-json` then Enter. Expect `payload must be a JSON object` and no
-admission. Repeat with `ctl heartbeat []` and `ctl heartbeat 5`; both must be rejected
-rather than wrapped into an object.
+Type `ctl pause timeout_seconds=300` then Enter and confirm. Expect the value to reach
+the provider as a JSON number rather than a string, because an unquoted value that
+parses as a JSON scalar keeps its type. Repeat with `timeout_seconds="300"` and expect
+a JSON string instead.
+
+Type `ctl heartbeat not-json` then Enter. Expect a parameter rejection naming the
+`key=value` form and no admission. Repeat with `ctl heartbeat []` and `ctl heartbeat 5`;
+both must be rejected rather than wrapped into an object. No interactive form may
+accept a JSON document.
 
 ## CTLEXEC-05 Unadvertised action is refused
 
 Precondition: session scope, with an action name that the Endpoint does not advertise.
 
 Type `ctl <unadvertised-action>` then Enter. Expect an explicit refusal naming the
-action, and expect no command admission. A silently admitted command that later fails
-is a FAIL, because the client must not send an operation the Endpoint never advertised.
+action, and expect no command admission and no parameter prompt, because the action is
+rejected before the operator is asked to fill anything. A silently admitted command
+that later fails is a FAIL, because the client must not send an operation the Endpoint
+never advertised.
 
 ## CTLEXEC-06 `!` runs an allowlisted command
 
@@ -190,6 +204,12 @@ and service processes created by this run.
 
 ## Execution log
 
+Note: this log records a run that predates the guided-parameter change. CTLEXEC-03 and
+CTLEXEC-04 below were executed while the interactive surface still accepted a JSON
+payload, so their recorded evidence describes the superseded behaviour and must be
+re-run against the current build before it can be cited as acceptance evidence. The
+other cases are unaffected, because they do not exercise the payload form.
+
 Executed on 2026-11-07 against a real `topsailai` provider, using binaries built from
 HEAD into `.tmp/live-tmux-audit/bin/` and the isolated cluster started by
 `start_services.py`. The live deployment (`/usr/local/sbin/agent-cluster-endpoint`,
@@ -209,8 +229,8 @@ advertised, and one live session in the persisted inventory.
 |---|---|---|
 | CTLEXEC-01 | PASS | Bare `ctl` rendered all ten actions as a numbered list with the `ctl.action>` prompt; no command admitted |
 | CTLEXEC-02 | PASS | Empty answer produced `error: ctl cancelled` plus usage; no command admitted |
-| CTLEXEC-03 | PASS | `7` resolved to `ctl heartbeat` and reached the confirmation gate |
-| CTLEXEC-04 | PASS | `ctl heartbeat '{}' <generation>` returned `finished`/`acknowledged`; provider response carried `delivery_state: control_acknowledged` and `result: {"alive": true, "pid": 3472, "hostname": "ai-dev"}` |
+| CTLEXEC-03 | SUPERSEDED | `7` resolved to `ctl heartbeat` and reached the confirmation gate; recorded before the guided-parameter change, so the parameter prompt was not exercised |
+| CTLEXEC-04 | SUPERSEDED | `ctl heartbeat '{}' <generation>` returned `finished`/`acknowledged`; provider response carried `delivery_state: control_acknowledged` and `result: {"alive": true, "pid": 3472, "hostname": "ai-dev"}`. Recorded with an explicit JSON payload, which the interactive surface no longer accepts |
 | CTLEXEC-05 | PASS | `ctl.not_a_real_action` rejected as `unsupported capability` |
 | CTLEXEC-06 | PASS | `!ls internal` listed the real `internal/` tree; `pwd` matched `topsailai_session_info` `project_workspace` |
 | CTLEXEC-07 | PASS | Command outside the allowlist returned `rejected`/`not_applied`/`policy_denied` |

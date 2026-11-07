@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -58,6 +60,31 @@ func ctlLines(answers ...string) <-chan lineReadResult {
 		lines <- lineReadResult{line: answer}
 	}
 	return lines
+}
+
+// sameJSONObject compares two JSON objects by decoded value.
+//
+// The guided parameter builder encodes through a map, so key order is not the
+// order the operator typed. Comparing decoded values keeps the assertions about
+// meaning instead of about serialization order.
+func sameJSONObject(got json.RawMessage, want string) bool {
+	var gotValue, wantValue map[string]any
+	if err := json.Unmarshal(got, &gotValue); err != nil {
+		return false
+	}
+	if err := json.Unmarshal([]byte(want), &wantValue); err != nil {
+		return false
+	}
+	if len(gotValue) != len(wantValue) {
+		return false
+	}
+	for key, wantEntry := range wantValue {
+		gotEntry, ok := gotValue[key]
+		if !ok || fmt.Sprint(gotEntry) != fmt.Sprint(wantEntry) {
+			return false
+		}
+	}
+	return true
 }
 
 // TestCtlActionNamesFollowsTheDescriptor proves the rendered list is derived from
@@ -128,8 +155,9 @@ func TestCtlPayload(t *testing.T) {
 	}
 }
 
-// TestParseCtlArguments proves the action and the optional payload are split
-// without interpreting the payload as further arguments.
+// TestParseCtlArguments proves the action and the guided parameters are split
+// without interpreting a parameter as a further action, and that a JSON document
+// is no longer accepted on the interactive surface.
 func TestParseCtlArguments(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -139,12 +167,14 @@ func TestParseCtlArguments(t *testing.T) {
 		wantErr    string
 	}{
 		{name: "action only", rest: "heartbeat", wantAction: "heartbeat", wantPay: "{}"},
-		{name: "action and payload", rest: `pause {"reason":"x"}`, wantAction: "pause", wantPay: `{"reason":"x"}`},
+		{name: "one parameter", rest: "pause reason=maintenance", wantAction: "pause", wantPay: `{"reason":"maintenance"}`},
+		{name: "two parameters", rest: "pause reason=maintenance timeout_seconds=300", wantAction: "pause", wantPay: `{"reason":"maintenance","timeout_seconds":300}`},
 		{name: "surrounding spaces", rest: "  heartbeat  ", wantAction: "heartbeat", wantPay: "{}"},
-		{name: "empty", rest: "", wantErr: ctlUsage},
-		{name: "whitespace only", rest: "   ", wantErr: ctlUsage},
-		{name: "leading dash", rest: "--json", wantErr: ctlUsage},
-		{name: "bad payload", rest: "pause nope", wantErr: "payload must be a JSON object"},
+		{name: "empty", rest: "", wantErr: ctlInteractiveUsage},
+		{name: "whitespace only", rest: "   ", wantErr: ctlInteractiveUsage},
+		{name: "leading dash", rest: "--json", wantErr: ctlInteractiveUsage},
+		{name: "bare word parameter", rest: "pause nope", wantErr: "must be key=value"},
+		{name: "json document", rest: `pause {"reason":"x"}`, wantErr: "must be key=value"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -158,7 +188,7 @@ func TestParseCtlArguments(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parseCtlArguments(%q) error: %v", testCase.rest, err)
 			}
-			if action != testCase.wantAction || string(payload) != testCase.wantPay {
+			if action != testCase.wantAction || !sameJSONObject(payload, testCase.wantPay) {
 				t.Fatalf("action=%q payload=%q, want %q/%q", action, payload, testCase.wantAction, testCase.wantPay)
 			}
 		})
@@ -264,7 +294,7 @@ func TestExecuteInteractiveLineCtlAdmitsTheAdvertisedOperation(t *testing.T) {
 	stub := ctlStub(protocol.Capability{Name: "ctl.heartbeat", Version: "2"})
 	state := ctlState()
 	var output, diagnostics strings.Builder
-	_, err := executeInteractiveLine(context.Background(), stub, state, `ctl heartbeat {"note":"x"}`, ctlLines("y"), &output, &output, &diagnostics, InteractiveOptions{WaitTimeoutMS: 100})
+	_, err := executeInteractiveLine(context.Background(), stub, state, `ctl heartbeat note=x`, ctlLines("y"), &output, &output, &diagnostics, InteractiveOptions{WaitTimeoutMS: 100})
 	if err != nil {
 		t.Fatalf("executeInteractiveLine: %v", err)
 	}
@@ -281,8 +311,8 @@ func TestExecuteInteractiveLineCtlAdmitsTheAdvertisedOperation(t *testing.T) {
 	if intent.Target == nil || intent.Target.ResourceID != "session-1" || intent.Target.Generation != "generation-1" {
 		t.Fatalf("target = %+v, want session-1/generation-1", intent.Target)
 	}
-	if string(intent.Payload) != `{"note":"x"}` {
-		t.Fatalf("payload = %q, want the supplied object", intent.Payload)
+	if !sameJSONObject(intent.Payload, `{"note":"x"}`) {
+		t.Fatalf("payload = %q, want the supplied parameter", intent.Payload)
 	}
 	if !strings.Contains(output.String(), "CommandID: cmd-1") {
 		t.Fatalf("output missing the receipt: %q", output.String())
@@ -290,7 +320,8 @@ func TestExecuteInteractiveLineCtlAdmitsTheAdvertisedOperation(t *testing.T) {
 }
 
 // TestExecuteInteractiveLineCtlPromptsForTheAction proves a bare control line
-// renders the advertised actions and submits the chosen one.
+// renders the advertised actions, then guides the parameters, and submits the
+// chosen action. The parameter answer is empty, so no JSON is ever required.
 func TestExecuteInteractiveLineCtlPromptsForTheAction(t *testing.T) {
 	stub := ctlStub(
 		protocol.Capability{Name: "ctl.heartbeat"},
@@ -298,7 +329,7 @@ func TestExecuteInteractiveLineCtlPromptsForTheAction(t *testing.T) {
 	)
 	state := ctlState()
 	var output, diagnostics strings.Builder
-	_, err := executeInteractiveLine(context.Background(), stub, state, "ctl", ctlLines("2", "y"), &output, &output, &diagnostics, InteractiveOptions{WaitTimeoutMS: 100})
+	_, err := executeInteractiveLine(context.Background(), stub, state, "ctl", ctlLines("2", "", "y"), &output, &output, &diagnostics, InteractiveOptions{WaitTimeoutMS: 100})
 	if err != nil {
 		t.Fatalf("executeInteractiveLine: %v", err)
 	}
@@ -311,15 +342,19 @@ func TestExecuteInteractiveLineCtlPromptsForTheAction(t *testing.T) {
 	if !strings.Contains(output.String(), "1. heartbeat") {
 		t.Fatalf("output missing the rendered action list: %q", output.String())
 	}
+	if !strings.Contains(output.String(), "Parameters for pause:") {
+		t.Fatalf("output missing the guided parameter prompt: %q", output.String())
+	}
 }
 
 // TestExecuteInteractiveLineCtlDeclinedAdmitsNothing proves the confirmation gate
-// still guards the control path.
+// still guards the control path. The parameter answer comes first because the
+// guided prompt runs before the confirmation.
 func TestExecuteInteractiveLineCtlDeclinedAdmitsNothing(t *testing.T) {
 	stub := ctlStub(protocol.Capability{Name: "ctl.heartbeat"})
 	state := ctlState()
 	var output, diagnostics strings.Builder
-	_, err := executeInteractiveLine(context.Background(), stub, state, "ctl heartbeat", ctlLines("n"), &output, &output, &diagnostics, InteractiveOptions{WaitTimeoutMS: 100})
+	_, err := executeInteractiveLine(context.Background(), stub, state, "ctl heartbeat", ctlLines("", "n"), &output, &output, &diagnostics, InteractiveOptions{WaitTimeoutMS: 100})
 	if err != nil {
 		t.Fatalf("executeInteractiveLine: %v", err)
 	}
@@ -332,17 +367,22 @@ func TestExecuteInteractiveLineCtlDeclinedAdmitsNothing(t *testing.T) {
 }
 
 // TestExecuteInteractiveLineCtlRejectsUnadvertisedAction proves an action the
-// Endpoint does not advertise fails during preflight, before admission.
+// Endpoint does not advertise fails during preflight, before admission and before
+// any parameter prompt. No answer is supplied, so a parameter prompt would block
+// or consume the confirmation answer and the test would fail.
 func TestExecuteInteractiveLineCtlRejectsUnadvertisedAction(t *testing.T) {
 	stub := ctlStub(protocol.Capability{Name: "ctl.heartbeat"})
 	state := ctlState()
 	var output, diagnostics strings.Builder
-	_, err := executeInteractiveLine(context.Background(), stub, state, "ctl hard_interrupt", ctlLines("y"), &output, &output, &diagnostics, InteractiveOptions{WaitTimeoutMS: 100})
+	_, err := executeInteractiveLine(context.Background(), stub, state, "ctl hard_interrupt", ctlLines(), &output, &output, &diagnostics, InteractiveOptions{WaitTimeoutMS: 100})
 	if err == nil || !strings.Contains(err.Error(), "unsupported capability") {
 		t.Fatalf("error = %v, want an unsupported-capability rejection", err)
 	}
 	if stub.admit != 0 {
 		t.Fatalf("unadvertised action admitted %d commands", stub.admit)
+	}
+	if strings.Contains(output.String(), "Parameters for") {
+		t.Fatalf("an unadvertised action must not prompt for parameters: %q", output.String())
 	}
 }
 
@@ -380,18 +420,38 @@ func TestCtlIsRegisteredInSessionScopeOnly(t *testing.T) {
 	}
 }
 
-// TestCtlHelpAdvertisesTheInteractiveSyntax proves the help text and the dispatch
-// agree, so an operator never reads a syntax the command rejects.
+// TestCtlHelpAdvertisesTheInteractiveSyntax proves the interactive help advertises
+// the guided parameter form and never a JSON payload, while the standalone help
+// keeps its explicit JSON argument. The two surfaces are separate contracts, so a
+// reader of one must not be told to use the other.
 func TestCtlHelpAdvertisesTheInteractiveSyntax(t *testing.T) {
 	entry, ok := commandHelpCatalog["ctl"]
 	if !ok {
 		t.Fatal("ctl is missing from the help catalog")
 	}
-	if !strings.Contains(entry.syntax, "ctl") {
-		t.Fatalf("syntax = %q, want it to name the command", entry.syntax)
+	if !strings.Contains(entry.syntax, "key=value") {
+		t.Fatalf("interactive syntax = %q, want the guided parameter form", entry.syntax)
+	}
+	if strings.Contains(entry.syntax, "[json]") {
+		t.Fatalf("interactive syntax = %q, must not advertise a JSON payload", entry.syntax)
+	}
+	if !strings.Contains(entry.syntax, "ctl.<action>") {
+		t.Fatalf("interactive syntax = %q, want the dotted spelling", entry.syntax)
+	}
+	for _, example := range entry.examples {
+		if strings.Contains(example, "{") {
+			t.Fatalf("interactive example %q must not contain a JSON document", example)
+		}
 	}
 	if !containsCommand(nonInteractiveHelpOrder, "ctl") {
 		t.Fatal("ctl is missing from the non-interactive help order")
+	}
+	var standalone bytes.Buffer
+	if err := PrintNonInteractiveCommandHelp(&standalone, "ctl"); err != nil {
+		t.Fatalf("PrintNonInteractiveCommandHelp: %v", err)
+	}
+	if !strings.Contains(standalone.String(), "[json]") {
+		t.Fatalf("standalone help = %q, want the explicit JSON argument", standalone.String())
 	}
 }
 
@@ -411,5 +471,136 @@ func TestCtlPayloadExportMatchesTheInternalValidator(t *testing.T) {
 	var decoded map[string]any
 	if err := json.Unmarshal(payload, &decoded); err != nil {
 		t.Fatalf("payload is not a JSON object: %v", err)
+	}
+}
+
+// TestCtlParameterPayloadBuildsTheGuidedObject proves the guided parameters become
+// one JSON object, so the interactive surface never needs a JSON document.
+func TestCtlParameterPayloadBuildsTheGuidedObject(t *testing.T) {
+	cases := []struct {
+		name       string
+		parameters []string
+		want       string
+		wantErr    string
+	}{
+		{name: "empty sends the empty object", parameters: nil, want: "{}"},
+		{name: "one string", parameters: []string{"reason=maintenance"}, want: `{"reason":"maintenance"}`},
+		{name: "number keeps its type", parameters: []string{"timeout_seconds=300"}, want: `{"timeout_seconds":300}`},
+		{name: "boolean keeps its type", parameters: []string{"force=true"}, want: `{"force":true}`},
+		{name: "null keeps its type", parameters: []string{"default=null"}, want: `{"default":null}`},
+		{name: "quoted number stays a string", parameters: []string{`timeout_seconds="300"`}, want: `{"timeout_seconds":"300"}`},
+		{name: "quoted boolean stays a string", parameters: []string{`force="true"`}, want: `{"force":"true"}`},
+		{name: "plain word stays a string", parameters: []string{"default=continue"}, want: `{"default":"continue"}`},
+		{name: "two parameters", parameters: []string{"reason=maintenance", "timeout_seconds=300"}, want: `{"reason":"maintenance","timeout_seconds":300}`},
+		{name: "missing equals", parameters: []string{"nope"}, wantErr: "must be key=value"},
+		{name: "empty key", parameters: []string{"=value"}, wantErr: "must be key=value"},
+		{name: "duplicate key", parameters: []string{"a=1", "a=2"}, wantErr: "supplied twice"},
+		{name: "json document is not a parameter", parameters: []string{`{"reason":"x"}`}, wantErr: "must be key=value"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload, err := ctlParameterPayload(testCase.parameters)
+			if testCase.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
+					t.Fatalf("error = %v, want it to contain %q", err, testCase.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ctlParameterPayload(%v) error: %v", testCase.parameters, err)
+			}
+			if !sameJSONObject(payload, testCase.want) {
+				t.Fatalf("payload = %q, want %q", payload, testCase.want)
+			}
+		})
+	}
+}
+
+// TestCtlParameterSummaryEchoesTheGuidedForm proves the confirmation preview shows
+// the parameters as key=value pairs with stable ordering, so the operator verifies
+// what will be sent without reading JSON.
+func TestCtlParameterSummaryEchoesTheGuidedForm(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{name: "empty object", payload: "{}", want: "none"},
+		{name: "one pair", payload: `{"reason":"maintenance"}`, want: "reason=maintenance"},
+		{name: "sorted keys", payload: `{"timeout_seconds":300,"reason":"maintenance"}`, want: "reason=maintenance timeout_seconds=300"},
+		{name: "number is unquoted", payload: `{"timeout_seconds":300}`, want: "timeout_seconds=300"},
+		{name: "boolean is unquoted", payload: `{"force":true}`, want: "force=true"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := ctlParameterSummary(json.RawMessage(testCase.payload)); got != testCase.want {
+				t.Fatalf("summary = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestPromptCtlParametersGuidesAndSendsTheEmptyObject proves the guided prompt is
+// rendered and an empty answer sends the empty object, so an action without
+// arguments needs no input at all.
+func TestPromptCtlParametersGuidesAndSendsTheEmptyObject(t *testing.T) {
+	var output strings.Builder
+	payload, err := promptCtlParameters(context.Background(), "heartbeat", ctlLines(""), &output)
+	if err != nil {
+		t.Fatalf("promptCtlParameters: %v", err)
+	}
+	if string(payload) != "{}" {
+		t.Fatalf("payload = %q, want the empty object", payload)
+	}
+	if !strings.Contains(output.String(), "Parameters for heartbeat:") {
+		t.Fatalf("output missing the guided prompt: %q", output.String())
+	}
+}
+
+// TestPromptCtlParametersAcceptsKeyValuePairs proves a supplied answer becomes the
+// guided object rather than being parsed as JSON.
+func TestPromptCtlParametersAcceptsKeyValuePairs(t *testing.T) {
+	var output strings.Builder
+	payload, err := promptCtlParameters(context.Background(), "pause", ctlLines("reason=maintenance timeout_seconds=300"), &output)
+	if err != nil {
+		t.Fatalf("promptCtlParameters: %v", err)
+	}
+	if !sameJSONObject(payload, `{"reason":"maintenance","timeout_seconds":300}`) {
+		t.Fatalf("payload = %q", payload)
+	}
+}
+
+// TestPromptCtlParametersRejectsAJSONDocument proves the guided prompt refuses a
+// JSON document, so the interactive surface keeps exactly one payload syntax.
+func TestPromptCtlParametersRejectsAJSONDocument(t *testing.T) {
+	var output strings.Builder
+	_, err := promptCtlParameters(context.Background(), "pause", ctlLines(`{"reason":"x"}`), &output)
+	if err == nil || !strings.Contains(err.Error(), "must be key=value") {
+		t.Fatalf("error = %v, want a guided-parameter rejection", err)
+	}
+}
+
+// TestExecuteInteractiveLineCtlSuppliedParametersSkipThePrompt proves parameters
+// typed on the command line are sent without asking again, so the guided prompt is
+// only a fallback.
+func TestExecuteInteractiveLineCtlSuppliedParametersSkipThePrompt(t *testing.T) {
+	stub := ctlStub(protocol.Capability{Name: "ctl.pause"})
+	state := ctlState()
+	var output, diagnostics strings.Builder
+	_, err := executeInteractiveLine(context.Background(), stub, state, "ctl pause reason=maintenance", ctlLines("y"), &output, &output, &diagnostics, InteractiveOptions{WaitTimeoutMS: 100})
+	if err != nil {
+		t.Fatalf("executeInteractiveLine: %v", err)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted %d commands, want 1", stub.admit)
+	}
+	if !sameJSONObject(stub.intents[0].Payload, `{"reason":"maintenance"}`) {
+		t.Fatalf("payload = %q, want the supplied parameter", stub.intents[0].Payload)
+	}
+	if strings.Contains(output.String(), "Parameters for") {
+		t.Fatalf("supplied parameters must not prompt again: %q", output.String())
+	}
+	if !strings.Contains(output.String(), "Parameters: reason=maintenance") {
+		t.Fatalf("output missing the guided preview: %q", output.String())
 	}
 }

@@ -232,6 +232,7 @@ func unitC19MainHelp() string {
 	return "Current scope: workspace\n\nCommands:\n" +
 		"  list [endpoint] [--clean]   list sessions across all endpoints\n  endpoints [endpoint-id]   list every registered endpoint with its connection state and freshness\n  cd [target]   navigate to an endpoint or session\n  show [endpoint-or-session]   show endpoint or session details\n  info [session]   show session detail by row number or session ID\n" + unitC19StartHelpLine() +
 		"  stop [session]   stop a session by row number or session ID\n" +
+		"  drive [start|stop|status] [session]   manage a session driver by row number or session ID; drive stop leaves the agent running\n" +
 		"  status [command-id]   show command result\n  refresh   refresh inventories\n" + unitC19WatchHelpLine() + "  help [command]   show help\n  quit   exit\n\nNext: list -> <number> or cd <number> -> show/logs. Run help list for row selection rules.\nStart example: start <endpoint> <resource> --profile <id> --profile-revision <revision>\n" + commandPrefixHelp + "\nRun help all for every command and scope.\n"
 }
 
