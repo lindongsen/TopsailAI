@@ -64,10 +64,20 @@ func RenderDetail(w io.Writer, detail Detail) {
 
 // RenderSnapshot writes an explicit one-shot output snapshot result.
 // maxLines bounds the content to its newest lines so a chatty session cannot
-// flood the terminal; a non-positive limit keeps every line.
+// flood the terminal; a non-positive limit keeps every line. The body is
+// sanitized with colour disabled, so this entry point never emits an escape
+// sequence; callers that own a colour policy use RenderSnapshotStyled.
 func RenderSnapshot(w io.Writer, observedAtMS int64, content string, truncated bool, maxLines int) {
+	RenderSnapshotStyled(w, observedAtMS, content, truncated, maxLines, ColorPolicy{})
+}
+
+// RenderSnapshotStyled writes a snapshot whose body keeps SGR colour when the
+// policy is enabled. Every other escape sequence is still stripped, because the
+// body is provider data and must never be able to move the cursor, retitle the
+// window or open a hyperlink.
+func RenderSnapshotStyled(w io.Writer, observedAtMS int64, content string, truncated bool, maxLines int, policy ColorPolicy) {
 	bounded, clipped := TrimTailLines(content, maxLines)
-	fmt.Fprintf(w, "observed_at_ms: %d\ntruncated: %t\n%s\n", observedAtMS, truncated || clipped, bounded)
+	fmt.Fprintf(w, "observed_at_ms: %d\ntruncated: %t\n%s\n", observedAtMS, truncated || clipped, filterProviderOutput(bounded, policy))
 }
 
 // ReceiptForStatus builds a receipt value from a generic command response.

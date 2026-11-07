@@ -259,7 +259,7 @@ func TestProviderSessionIDContextIsPreserved(t *testing.T) {
 	state.enterEndpoint(protocol.Endpoint{EndpointID: "endpoint-1", Hostname: "host-one"})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := interactiveLogs(ctx, stub, state, "20261027152208", 4096, 4096, &strings.Builder{})
+	err := interactiveLogs(ctx, stub, state, "20261027152208", 4096, 4096, &strings.Builder{}, ColorPolicy{})
 	// loadReports degrades a failed inventory read into an incomplete report, so
 	// the observable contract is that the cancelled parent aborts before any
 	// output request is issued.

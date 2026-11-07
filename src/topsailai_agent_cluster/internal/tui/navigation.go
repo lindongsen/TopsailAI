@@ -48,7 +48,7 @@ func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiv
 		if err := cdRowNumber(state, api, parent, index); err != nil {
 			return err
 		}
-		return autoLogsOnSessionEntry(parent, api, state, previous, out, options)
+		return autoLogsOnSessionEntry(parent, api, state, previous, trustedOut, color, options)
 	}
 	for _, part := range parts {
 		if strings.TrimSpace(part) == "" {
@@ -78,7 +78,7 @@ func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiv
 	if err := rerenderNavigatedList(parent, api, state, trustedOut, color); err != nil {
 		return err
 	}
-	return autoLogsOnSessionEntry(parent, api, state, previous, out, options)
+	return autoLogsOnSessionEntry(parent, api, state, previous, trustedOut, color, options)
 }
 
 // autoLogsOnSessionEntry renders one bounded output snapshot when a navigation
@@ -86,7 +86,7 @@ func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiv
 // transition is reused, so entering a session costs one output read and no
 // repeated inventory discovery. A failed read is reported without rolling back
 // the already validated selection.
-func autoLogsOnSessionEntry(parent context.Context, api InteractiveAPI, state *interactiveState, previous ScopeState, out io.Writer, options InteractiveOptions) error {
+func autoLogsOnSessionEntry(parent context.Context, api InteractiveAPI, state *interactiveState, previous ScopeState, trustedOut io.Writer, color ColorPolicy, options InteractiveOptions) error {
 	if state.Scope.Kind != ScopeSession || previous.Kind == ScopeSession {
 		return nil
 	}
@@ -94,8 +94,10 @@ func autoLogsOnSessionEntry(parent context.Context, api InteractiveAPI, state *i
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy}
-	if err := runner.RenderSessionSnapshot(ctx, out, state.EndpointID, state.SessionID, state.Generation, maxBytes, maxLines); err != nil {
-		_, writeErr := fmt.Fprintf(out, "session selected; automatic logs failed: %v\n", err)
+	if err := runner.RenderSessionSnapshot(ctx, trustedOut, state.EndpointID, state.SessionID, state.Generation, maxBytes, maxLines, color); err != nil {
+		// The diagnostic interpolates a provider error, so it is sanitized
+		// before it reaches the trusted writer.
+		_, writeErr := fmt.Fprintf(trustedOut, "session selected; automatic logs failed: %s\n", sanitizeTerminal([]byte(err.Error())))
 		return writeErr
 	}
 	return nil

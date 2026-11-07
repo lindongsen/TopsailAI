@@ -16,7 +16,10 @@ import (
 // interactiveLogs resolves the session inside the current endpoint scope.
 // A bare ASCII row number selects the session from the most recently rendered
 // list, so the operator never has to type a provider session identifier.
-func interactiveLogs(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, maxBytes, maxLines int, out io.Writer) error {
+// The snapshot body is written through trustedOut because RenderSessionSnapshot
+// sanitizes it at the data boundary; writing it through the safe writer as well
+// would strip the SGR colour the colour policy just allowed.
+func interactiveLogs(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, maxBytes, maxLines int, trustedOut io.Writer, color ColorPolicy) error {
 	if state.Invalidated {
 		return state.requireUsable()
 	}
@@ -52,7 +55,7 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 	if err != nil {
 		return numericTokenHint(strings.TrimSpace(rest), err)
 	}
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, out, endpointID, session.SessionID, maxBytes, maxLines, false)
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, trustedOut, endpointID, session.SessionID, maxBytes, maxLines, false, color)
 }
 
 // parseLogsArgs splits an optional session token from an optional line limit.

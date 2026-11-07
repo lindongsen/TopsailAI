@@ -164,7 +164,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if flags.NArg() != 3 {
 			return fmt.Errorf("usage: logs <endpoint-id> <session-id>")
 		}
-		return logs(ctx, api, output, flags.Arg(1), flags.Arg(2), *maxBytes, *lines, *jsonMode)
+		return logs(ctx, api, output, flags.Arg(1), flags.Arg(2), *maxBytes, *lines, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
 	case "status":
 		if flags.NArg() != 2 {
 			return fmt.Errorf("usage: status <command-id>")
@@ -273,8 +273,8 @@ func status(ctx context.Context, api tui.CommandAPI, output io.Writer, commandID
 	return legacyRunner(api).Status(ctx, output, commandID, jsonMode)
 }
 
-func logs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID, resourceID string, maxBytes, maxLines int, jsonMode bool) error {
-	return legacyRunner(api).Logs(ctx, output, endpointID, resourceID, maxBytes, maxLines, jsonMode)
+func logs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID, resourceID string, maxBytes, maxLines int, jsonMode bool, color tui.ColorPolicy) error {
+	return legacyRunner(api).Logs(ctx, output, endpointID, resourceID, maxBytes, maxLines, jsonMode, color)
 }
 
 // drive dispatches the standalone drive surface. status is a read projection of
