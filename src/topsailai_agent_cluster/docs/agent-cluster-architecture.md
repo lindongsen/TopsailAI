@@ -41,6 +41,18 @@ The human confirmed:
 
 The naming proposal was accepted: product **Agent Cluster**; project/repository `topsailai_agent_cluster`; three independent executable commands `agent-cluster-server`, `agent-cluster-endpoint` and `agent-cluster-cli`; service names match the Server/Endpoint commands; first adapter ID `topsailai`. Do not use an `agent-cluster` executable with role subcommands. Each command is independently launched; internal libraries may be shared. Adapters initially run inside the Endpoint process, not as separate services. SQLite support is now required; language and transport choices remain proposals.
 
+The human clarified the three related names, quoted verbatim:
+
+> topsailai是本地管理agent的入口，agent-cluster-cli是跨机器管理agents，topsailai2就是跨机器管理的意思
+
+| Name | Scope | Meaning |
+|---|---|---|
+| `topsailai` | Local | Entry point that manages agents on the local machine |
+| `agent-cluster-cli` | Cross-machine | Operator CLI that manages agents across machines through the Server |
+| `topsailai2` | Cross-machine | Installed symlink alias of `agent-cluster-cli`, carrying the cross-machine meaning |
+
+`topsailai` and `agent-cluster-cli` are therefore not interchangeable: the former is the provider CLI that manages local agents, the latter is the cluster operator CLI. `topsailai2` is an alias of `agent-cluster-cli`, not a separate implementation.
+
 Start/resume/stop are mandatory MVP platform capabilities. A provider that lacks a safe implementation must report the gap, but the first-release TopsailAI lifecycle gap cannot be deferred as an optional feature. No periodic stdout snapshot refresh is required; this does not decide between explicit reads and continuous subscriptions. Design documents live in `docs/`; planning, execution checklists and evidence remain in `.task/`.
 
 ## Recommendation
