@@ -103,6 +103,10 @@ func writeNarrowTable(out io.Writer, rows, states [][]string, rowStyles []string
 				// Session names stay complete even in a narrow terminal.
 				cell = value
 			}
+			if columns[i].leftClip {
+				// A path keeps its identifying tail in a narrow terminal too.
+				cell = clipCellLeft(value, remaining)
+			}
 			state := states[index][i]
 			if err := writeCellState(out, cell, columns[i].warn, state, rowStyle, policy); err != nil {
 				return err

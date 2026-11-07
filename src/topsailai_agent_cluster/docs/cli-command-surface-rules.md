@@ -212,6 +212,12 @@ long session ID, endpoint ID, hostname or capability revision is printed in full
 and the terminal wraps it. The switch does not weaken sanitization: terminal
 control sequences in provider data are still stripped.
 
+`PROJECT_WORKSPACE` is clipped from the left, so an over-wide path keeps its
+identifying tail (`...topsailai_agent_cluster/internal/tui`) instead of a prefix
+that every sibling path shares. Every other column keeps its head. The rule
+applies to both the framed and the narrow layout, and `--no-truncate` still
+prints the complete path.
+
 The output boundary owns the policy. The CLI writer reports a `TableLayout` of
 width plus truncation state, so every render path inherits the switch without
 threading a new parameter through each command, and the interactive prompt editor

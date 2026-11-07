@@ -43,13 +43,17 @@ const (
 )
 
 // tableColumn describes one column: its header, its width cap, whether it is
-// never truncated, and whether it keeps its own warning colour.
+// never truncated, whether it keeps its own warning colour, and which end a
+// clipped value keeps.
 type tableColumn struct {
 	key    string
 	header string
 	cap    int
 	wide   bool
 	warn   bool
+	// leftClip keeps the tail of an over-wide value instead of its head. A path
+	// shares a long prefix with its siblings, so its tail identifies it.
+	leftClip bool
 }
 
 // allColumns is the complete column set. SESSION_STATUS is dropped when the row
@@ -59,7 +63,7 @@ var allColumns = []tableColumn{
 	{key: columnState, header: "SESSION_STATUS", cap: 14},
 	{key: columnName, header: "SESSION_NAME", cap: 64, wide: true},
 	{key: columnID, header: "SESSION_ID", cap: 36},
-	{key: columnWorkspace, header: "PROJECT_WORKSPACE", cap: 48},
+	{key: columnWorkspace, header: "PROJECT_WORKSPACE", cap: 48, leftClip: true},
 	{key: columnEndpoint, header: "ENDPOINT", cap: 20},
 	{key: columnDataStatus, header: "DATA_STATUS", cap: 35, warn: true},
 }
@@ -199,6 +203,9 @@ func writeFramedTable(out io.Writer, headers []string, cells, states [][]string,
 				}
 			}
 			cell := clipCell(value, widths[i])
+			if !header && columns[i].leftClip {
+				cell = clipCellLeft(value, widths[i])
+			}
 			cell += strings.Repeat(" ", widths[i]-displayWidth(cell))
 			if header {
 				if err := writeStyled(out, ansiBoldCyan, cell, policy); err != nil {
@@ -428,6 +435,34 @@ func safeClipIndex(value string, limit int) int {
 		used += runeWidth
 	}
 	return len(value)
+}
+
+// clipCellLeft keeps the tail of an over-wide value, so a path that shares a
+// long prefix with its siblings still shows the part that identifies it.
+func clipCellLeft(value string, width int) string {
+	if displayWidth(value) <= width {
+		return value
+	}
+	if width <= 3 {
+		return strings.Repeat(".", width)
+	}
+	return "..." + value[safeClipStartIndex(value, width-3):]
+}
+
+// safeClipStartIndex returns the byte offset where the last limit display
+// columns of value begin, so a left clip never splits a rune.
+func safeClipStartIndex(value string, limit int) int {
+	used := 0
+	for i := len(value); i > 0; {
+		r, size := utf8.DecodeLastRuneInString(value[:i])
+		runeWidth := runeDisplayWidth(r)
+		if used+runeWidth > limit {
+			return i
+		}
+		used += runeWidth
+		i -= size
+	}
+	return 0
 }
 func displayWidth(value string) int {
 	width := 0
