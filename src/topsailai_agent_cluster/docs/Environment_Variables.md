@@ -7,15 +7,18 @@ created: 2026-11-07
 
 # Environment Variables
 
-Every variable below is read once at the process boundary by
-`internal/config/config.go` and converted into typed configuration. Business logic
-receives explicit parameters and never reads the environment directly.
+Every variable below is read once at the process boundary and converted into typed
+configuration. The Server and Endpoint read theirs through
+`internal/config/config.go`; the operator CLI reads its own two variables in
+`src/main/agent-cluster-cli/main.go`. Business logic receives explicit parameters
+and never reads the environment directly.
 
-Each variable also has a command-line flag. The flag takes precedence over the
-environment variable, and the environment variable takes precedence over the
-built-in default. The launcher `scripts/agent-clusterctl` reads a shell
-configuration file and passes values as flags, so a bundle deployment does not
-depend on inherited environment variables.
+Almost every variable also has a command-line flag. The flag takes precedence over
+the environment variable, and the environment variable takes precedence over the
+built-in default. `AGENT_CLUSTER_ADAPTERS` is the exception: it carries a JSON array
+and has no flag, so the launcher exports it. The launcher
+`scripts/agent-clusterctl` reads a shell configuration file and passes values as
+flags, so a bundle deployment does not depend on inherited environment variables.
 
 ## Shared
 
@@ -115,11 +118,28 @@ the active set, so a malformed edit keeps the previous entries in force and is
 logged. A reload that would remove every entry is refused unless the file contains
 the explicit empty directive. Each successful reload logs the entry count.
 
+## Client
+
+The operator CLI reads these two variables at its own process boundary. They are
+not read by the Server or the Endpoint, so a bundle deployment configures them per
+operator rather than per node.
+
+| Variable | Flag | Default | Purpose |
+|---|---|---|---|
+| `AGENT_CLUSTER_SERVER_URL` | `--server-url` | `http://127.0.0.1:8080` | Server API URL the CLI connects to |
+| `AGENT_CLUSTER_TOKEN` | `--token` | empty | Bearer token the CLI presents to the Server |
+
+`AGENT_CLUSTER_TOKEN` has no built-in default, unlike the Server's development
+token. A CLI started without it omits the `Authorization` header entirely, so the
+Server rejects the request instead of the client silently using a known development
+value.
+
 ## Security consequences of leaving a value unset
 
 | Variable | Consequence |
 |---|---|
 | `AGENT_CLUSTER_AUTH_TOKEN` | The known development token is accepted |
+| `AGENT_CLUSTER_TOKEN` | The CLI omits the `Authorization` header and every request is rejected |
 | `AGENT_CLUSTER_AUTH_SCOPES` | The token holds every scope |
 | `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `command.exec` is unavailable |
 | `AGENT_CLUSTER_TLS_*` | Remote listeners cannot verify peers |
