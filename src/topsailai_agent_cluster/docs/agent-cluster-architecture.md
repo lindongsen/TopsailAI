@@ -105,14 +105,19 @@ MVP supports start/resume/stop requests by invoking the corresponding Adapter CL
 
 The channel is one authenticated TLS WebSocket carrying registration, heartbeat, bounded inventory synchronization, commands and small event frames. It is versioned and direction-agnostic: either side may dial, because a real deployment may only have one working network path.
 
-Two directions are implemented and selected by `AGENT_CLUSTER_CHANNEL_DIRECTION`:
+Three directions are implemented and selected by `AGENT_CLUSTER_CHANNEL_DIRECTION`:
 
 | Direction | Who dials | When to use |
 |---|---|---|
 | `endpoint-initiated` (default) | Endpoint dials Server | Server is reachable, Endpoint is behind NAT or a firewall |
 | `server-initiated` | Server dials Endpoint | Endpoint is reachable, Server cannot be reached from the Endpoint side |
+| `bidirectional` | Both sides dial | Neither side can be assumed reachable from the other |
 
-In the `endpoint-initiated` direction the Server opens the channel listener and the Endpoint dials it, so no inbound Endpoint port is exposed. In the `server-initiated` direction the Server opens no channel listener and instead dials each configured Endpoint, so the Endpoint needs no outbound route to the Server. Both directions use the same frames, the same handshake and the same fencing rules; only the dialing side differs.
+In the `endpoint-initiated` direction the Server opens the channel listener and the Endpoint dials it, so no inbound Endpoint port is exposed. In the `server-initiated` direction the Server opens no channel listener and instead dials each configured Endpoint, so the Endpoint needs no outbound route to the Server. All directions use the same frames, the same handshake and the same fencing rules; only the dialing side differs.
+
+In the `bidirectional` direction both sides dial at the same time, so the cluster converges on whichever link is established last. Convergence needs no extra fencing mechanism: the Server is the sole generation authority, and it acquires the generation inside the same lock that installs the peer, so install order equals generation order. The Endpoint keeps the highest generation it has seen and closes the superseded link. A failed dial never evicts a healthy link, because a generation is proposed during the handshake and committed only after it succeeds.
+
+`AGENT_CLUSTER_TLS_SHARED_CERTIFICATE` makes every Endpoint present the Server certificate, so only one certificate has to be maintained. The certificate then no longer proves which Endpoint is connecting: Endpoint identity becomes an assertion in the hello frame, trusted because the peer holds the shared certificate. This is acceptable only when every Endpoint is equally trusted, and must never be described as per-Endpoint authentication. The mode is opt-in, so the default deployment keeps the certificate-to-Endpoint binding.
 
 The `hello` frame carries an `initiator` field so each side can reject a connection that dialed the wrong side instead of silently accepting it. An empty `initiator` is the legacy Endpoint-initiated handshake and remains valid.
 

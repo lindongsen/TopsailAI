@@ -41,8 +41,9 @@ flags, so a bundle deployment does not depend on inherited environment variables
 |---|---|---|---|
 | `AGENT_CLUSTER_API_LISTEN_ADDR` | `--api-listen-addr` | `:8080` | Bearer-authenticated operator API address |
 | `AGENT_CLUSTER_CHANNEL_LISTEN_ADDR` | `--channel-listen-addr` | `:8443` | mTLS Endpoint channel address; unused in the `server-initiated` direction |
-| `AGENT_CLUSTER_CHANNEL_DIRECTION` | `--channel-direction` | `endpoint-initiated` | Which side dials the channel: `endpoint-initiated` or `server-initiated` |
-| `AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES` | `--endpoint-dial-addresses` | empty | Comma-separated `endpoint_id=wss://address` pairs the Server dials in the `server-initiated` direction |
+| `AGENT_CLUSTER_CHANNEL_DIRECTION` | `--channel-direction` | `endpoint-initiated` | Which side dials the channel: `endpoint-initiated`, `server-initiated` or `bidirectional` |
+| `AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES` | `--endpoint-dial-addresses` | empty | Comma-separated `endpoint_id=wss://address` pairs the Server dials in the `server-initiated` and `bidirectional` directions |
+| `AGENT_CLUSTER_TLS_SHARED_CERTIFICATE` | `--tls-shared-certificate` | `false` | Every Endpoint presents the Server certificate; the certificate no longer proves Endpoint identity |
 | `AGENT_CLUSTER_LISTEN_ADDRESS` | `--listen-address` | `:8080` | Deprecated alias for the API address |
 | `AGENT_CLUSTER_AUTH_TOKEN` | `--auth-token` | `development-token` | Bearer token the API validates |
 | `AGENT_CLUSTER_AUTH_SCOPES` | `--auth-scopes` | empty | Comma-separated operator scopes granted to that token |
@@ -75,8 +76,8 @@ listener to a trusted address.
 | `AGENT_CLUSTER_ENDPOINT_ID` | `--endpoint-id` | empty | Endpoint identity announced to the Server |
 | `AGENT_CLUSTER_INSTANCE_ID` | `--instance-id` | `default` | Endpoint instance identity |
 | `AGENT_CLUSTER_CHANNEL_ADDRESS` | `--channel-address` | empty | Server WSS address the Endpoint dials; unused in the `server-initiated` direction |
-| `AGENT_CLUSTER_CHANNEL_DIRECTION` | `--channel-direction` | `endpoint-initiated` | Which side dials the channel: `endpoint-initiated` or `server-initiated` |
-| `AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR` | `--endpoint-channel-listen-addr` | empty | mTLS listen address the Endpoint accepts the Server on in the `server-initiated` direction |
+| `AGENT_CLUSTER_CHANNEL_DIRECTION` | `--channel-direction` | `endpoint-initiated` | Which side dials the channel: `endpoint-initiated`, `server-initiated` or `bidirectional` |
+| `AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR` | `--endpoint-channel-listen-addr` | empty | mTLS listen address the Endpoint accepts the Server on in the `server-initiated` and `bidirectional` directions |
 | `AGENT_CLUSTER_SERVER_NAME` | `--server-name` | `agent-cluster-server` | Server certificate identity the Endpoint verifies in the `server-initiated` direction |
 | `AGENT_CLUSTER_ADAPTERS` | none | empty | JSON array of adapter bindings |
 | `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |
