@@ -22,7 +22,7 @@ func TestUnitAContextHelpAndHelpAll(t *testing.T) {
 	if err := PrintScopedCommandHelp(&all, "all", ScopeWorkspace); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"inject <text>", "interrupt [soft|hard] [message]", "Aliases: ", ">=send", "?=help", "btw=inject", "control=interrupt", "r=refresh", "q=quit"} {
+	for _, name := range []string{"inject <text>", "interrupt [soft|hard] [message]", "Aliases: ", ">=send", "?=help", "l=list", "btw=inject", "control=interrupt", "r=refresh", "q=quit"} {
 		if !strings.Contains(all.String(), name) {
 			t.Fatalf("help all missing %q: %q", name, all.String())
 		}

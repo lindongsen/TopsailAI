@@ -54,7 +54,7 @@ was dispatched rather than rejected as unknown.
 
 | Command | Standalone spelling | Interactive spelling | Compliant |
 |---|---|---|---|
-| `list` | `list` | `list` | yes |
+| `list` | `list` | `list`, `l` | yes |
 | `refresh` | `refresh` | `refresh`, `r` | yes |
 | `endpoints` | `endpoints` | `endpoints` | yes |
 | `show` | `show` | `show` | yes |
@@ -87,6 +87,12 @@ disjoint from every command word, a message can never be read as a command and a
 typo can never be read as a message; an unprefixed unknown word still returns the
 unknown-command diagnostic. The alias keeps the confirmation gate and the
 session-only scope rule of `send`.
+
+The `l` alias is interactive-only and resolves to `list` through the same alias
+registry as `r` and `q`. It is absent from the standalone surface, which accepts
+only the canonical `list` spelling. Because `canonicalCommandName` runs before the
+dispatch switch, `l` inherits `list`'s arguments, scope availability and usage
+diagnostics unchanged, and it does not shadow the longer `logs` spelling.
 
 `cd` and `quit` navigate a session that only exists inside the interactive loop, so
 they have no standalone meaning and are not gaps.

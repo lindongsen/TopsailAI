@@ -58,6 +58,7 @@ var commandAliases = map[string]string{
 	"exit":     "quit",
 	"q":        "quit",
 	"r":        "refresh",
+	"l":        "list",
 	"btw":      "inject",
 	"control":  "interrupt",
 	sendPrefix: "send",
