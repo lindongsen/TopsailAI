@@ -66,6 +66,9 @@ was dispatched rather than rejected as unknown.
 | `agent.start` | `start` | `start` | yes |
 | `agent.resume` | `resume` | `resume` | yes |
 | `agent.stop` | `stop` | `stop` | yes |
+| `agent.drive.start` | `drive start` | `drive start` | yes |
+| `agent.drive.stop` | `drive stop` | `drive stop` | yes |
+| `drive status` | `drive status` | `drive status`, `drive` | yes |
 | `help` | `help` | `help`, `?` | yes |
 | `cd` | not applicable | `cd` | not applicable |
 | `quit` | not applicable | `quit`, `exit`, `q` | not applicable |
