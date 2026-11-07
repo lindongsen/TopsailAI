@@ -1,2 +1,20 @@
 # Compiled command entry points built into the workspace bin folder
 /bin/
+
+# Stray binaries written to the project root by a bare `go build <package>`.
+#
+# Every pattern below is root-anchored with a leading slash on purpose. A bare
+# pattern such as `topsailai` matches a directory of that name at any depth, so
+# it would silently exclude the fixture source tree `tests/fixtures/topsailai/`
+# and the command source trees under `src/main/`. Anchoring keeps the source
+# directories tracked while still ignoring the executable that a bare build
+# drops beside this file.
+/agent-cluster-server
+/agent-cluster-endpoint
+/agent-cluster-cli
+/provider
+/topsailai
+/topsailai_session_info
+
+# Test binaries produced by `go test -c` and similar tooling.
+*.test
