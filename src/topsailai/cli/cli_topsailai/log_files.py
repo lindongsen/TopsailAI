@@ -436,70 +436,18 @@ def get_file_pid(filepath: str) -> Optional[int]:
     """
     Extract the PID associated with a stdout/stderr log file.
 
-    First tries to parse the PID from the filename itself (e.g.
-    ``{session_id}.{pid}.task.stdout``).  If the filename does not contain a
-    parseable PID, falls back to scanning for processes that currently have
-    the file open using ``lsof`` and then ``fuser``.
-
-    All spawned subprocesses are tracked and cleaned up on exit.
+    The PID is parsed from the filename itself (e.g.
+    ``{session_id}.{pid}.task.stdout``). A filename without a parseable PID has
+    no PID: it is never resolved by asking which process currently holds the
+    file, because ``tail -f`` and stream watchers also hold it and would be
+    reported instead of the session process.
     """
     if not filepath:
         return None
 
     filename = os.path.basename(filepath)
     _session_id, pid = _parse_stdout_filename(filename)
-    if pid is not None:
-        return pid
-
-    # Fallback to lsof
-    try:
-        proc = subprocess.Popen(
-            ["lsof", "-t", filepath],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        register_process(proc)
-        try:
-            stdout, _ = proc.communicate(timeout=3)
-            if proc.returncode == 0 and stdout.strip():
-                pids = stdout.strip().splitlines()
-                if pids:
-                    return int(pids[0])
-        finally:
-            unregister_process(proc)
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait(timeout=1)
-    except Exception:
-        pass
-
-    # Fallback to fuser
-    try:
-        proc = subprocess.Popen(
-            ["fuser", filepath],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        register_process(proc)
-        try:
-            stdout, _ = proc.communicate(timeout=3)
-            if proc.returncode == 0 and stdout.strip():
-                parts = stdout.strip().split(":")
-                if len(parts) >= 2:
-                    pids = parts[1].strip().split()
-                    if pids:
-                        return int(pids[0])
-        finally:
-            unregister_process(proc)
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait(timeout=1)
-    except Exception:
-        pass
-
-    return None
+    return pid
 
 
 def is_process_holding_file(pid: int, filepath: str) -> bool:
@@ -550,15 +498,63 @@ def is_session_pipe_open(file_info: dict) -> bool:
     return False
 
 
+def _proc_available() -> bool:
+    """Return whether this host exposes the Linux ``/proc`` process table."""
+    if os.name != "posix":
+        return False
+    try:
+        os.stat("/proc/self/stat")
+    except OSError:
+        return False
+    return True
+
+
+def _proc_holds_file(filepath: str) -> Optional[bool]:
+    """Answer "is *filepath* open" from the process table, or None if unknown.
+
+    Every process descriptor is compared by resolved path, so a holder is found
+    without spawning a tool. ``None`` means the process table cannot answer and
+    the caller must fall back to a portable check.
+    """
+    if not _proc_available():
+        return None
+    expected = os.path.realpath(filepath)
+    try:
+        pids = os.listdir("/proc")
+    except OSError:
+        return None
+    for entry in pids:
+        if not entry.isdigit():
+            continue
+        fd_dir = os.path.join("/proc", entry, "fd")
+        try:
+            descriptors = os.listdir(fd_dir)
+        except OSError:
+            # The process exited, or its descriptors are not readable.
+            continue
+        for descriptor in descriptors:
+            try:
+                if os.path.realpath(os.path.join(fd_dir, descriptor)) == expected:
+                    return True
+            except OSError:
+                continue
+    return False
+
+
 def is_file_in_use(filepath: str) -> bool:
     """Return True if any process currently has *filepath* open.
 
-    Checks ``lsof`` first, then falls back to ``fuser``.  If neither tool is
-    available or neither reports a holder, the file is considered not in use.
-    All spawned subprocesses are tracked and cleaned up on exit.
+    The Linux process table answers first, because it needs no external tool.
+    ``lsof`` and then ``fuser`` are used only when the process table is
+    unavailable. If no tool is available or none reports a holder, the file is
+    considered not in use. All spawned subprocesses are tracked and cleaned up.
     """
     if not filepath or not os.path.exists(filepath):
         return False
+
+    held = _proc_holds_file(filepath)
+    if held is not None:
+        return held
 
     for cmd in (["lsof", "-t", filepath], ["fuser", filepath]):
         try:
