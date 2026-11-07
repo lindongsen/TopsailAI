@@ -581,6 +581,17 @@ func printHelp(out io.Writer, target string, kind ScopeKind) error {
 	return PrintScopedCommandHelp(out, target, kind)
 }
 
+// nonSyntaxError marks a failure that is not an argument-syntax problem, so the
+// diagnostic omits the usage line instead of telling the operator to fix syntax.
+// The optional next hint replaces the generic syntax advice.
+type nonSyntaxError struct {
+	message string
+	next    string
+}
+
+// Error implements error.
+func (e nonSyntaxError) Error() string { return e.message }
+
 // writeInteractiveError renders one actionable three-line diagnostic.
 func writeInteractiveError(out io.Writer, command string, err error) error {
 	canonical := canonicalCommandName(command)
@@ -610,11 +621,24 @@ func writeInteractiveError(out io.Writer, command string, err error) error {
 		usage = "interactive command"
 		next = "Shorten the input line and retry."
 	}
+	// A non-syntax failure keeps the cause and the remedy but drops the usage
+	// line, because the operator's command shape was already valid.
+	var notSyntax nonSyntaxError
+	if stderrors.As(err, &notSyntax) {
+		usage = ""
+		if notSyntax.next != "" {
+			next = notSyntax.next
+		} else {
+			next = "Run endpoints to list valid endpoint identifiers."
+		}
+	}
 	if _, writeErr := fmt.Fprintln(out, "error:", cause); writeErr != nil {
 		return writeErr
 	}
-	if _, writeErr := fmt.Fprintln(out, "usage:", usage); writeErr != nil {
-		return writeErr
+	if usage != "" {
+		if _, writeErr := fmt.Fprintln(out, "usage:", usage); writeErr != nil {
+			return writeErr
+		}
 	}
 	_, writeErr := fmt.Fprintln(out, "next:", next)
 	return writeErr

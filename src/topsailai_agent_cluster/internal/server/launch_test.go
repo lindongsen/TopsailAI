@@ -2,12 +2,17 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"testing"
+
 	"topsailai_agent_cluster/internal/client"
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/security"
+	serverstorage "topsailai_agent_cluster/internal/storage/server"
 )
 
 type launchRequester struct{}
@@ -46,6 +51,47 @@ func TestLaunchHTTPClient(t *testing.T) {
 		h.ServeHTTP(out, req)
 		if out.Code != item.status {
 			t.Fatalf("%d want %d", out.Code, item.status)
+		}
+	}
+}
+
+// launchFailureRequester fails every launch query, so the handler must classify it.
+type launchFailureRequester struct{ launchRequester }
+
+// RequestLaunchOptions always fails, standing in for an offline endpoint.
+func (launchFailureRequester) RequestLaunchOptions(context.Context, string, protocol.LaunchQuery) (protocol.LaunchOptions, error) {
+	return protocol.LaunchOptions{}, errors.New("endpoint is offline")
+}
+
+// TestLaunchOptionsDistinguishesUnknownEndpointFromOffline proves a typo is no
+// longer reported as an availability failure.
+func TestLaunchOptionsDistinguishesUnknownEndpointFromOffline(t *testing.T) {
+	store, err := serverstorage.Open(context.Background(), filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.UpsertEndpoint(context.Background(), protocol.Endpoint{EndpointID: "known", InstanceID: "known-1", DisplayName: "known", Hostname: "host-known", ConnectionState: "online", CapabilityRevision: "v1"}, 1000); err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: launchFailureRequester{}, Store: store}
+	for _, item := range []struct {
+		endpointID string
+		status     int
+		code       string
+	}{
+		{endpointID: "missing", status: http.StatusNotFound, code: "endpoint_not_found"},
+		{endpointID: "known", status: http.StatusServiceUnavailable, code: "endpoint_unavailable"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/launch-options?endpoint_id="+item.endpointID, nil)
+		req.Header.Set("Authorization", "Bearer test")
+		out := httptest.NewRecorder()
+		h.ServeHTTP(out, req)
+		if out.Code != item.status {
+			t.Fatalf("endpoint %q status=%d want=%d body=%s", item.endpointID, out.Code, item.status, out.Body.String())
+		}
+		if !strings.Contains(out.Body.String(), `"`+item.code+`"`) {
+			t.Fatalf("endpoint %q body=%s want code %q", item.endpointID, out.Body.String(), item.code)
 		}
 	}
 }

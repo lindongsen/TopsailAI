@@ -220,7 +220,12 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 		return fmt.Errorf("usage: start [endpoint]")
 	}
 	if len(args) == 1 {
-		endpointID = args[0]
+		// An explicit argument is resolved against the inventory, so a hostname or
+		// a printed row number works here exactly as it does in the wizard.
+		endpointID, err = resolveLaunchEndpointTarget(ctx, api, args[0])
+		if err != nil {
+			return err
+		}
 	}
 	endpointID, err = resolveLaunchEndpoint(ctx, api, state, endpointID, lines, out)
 	if err != nil || endpointID == "" {
@@ -230,7 +235,7 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 	catalog, err := query.GetLaunchOptions(queryCtx, endpointID, "")
 	cancel()
 	if err != nil {
-		return err
+		return nonSyntaxError{message: fmt.Sprintf("endpoint %q is not reachable: %v", endpointID, err), next: "Run endpoints to check endpoint connectivity, then retry."}
 	}
 	if catalog.ErrorCode != "" {
 		return fmt.Errorf("launch query: %s", catalog.ErrorCode)

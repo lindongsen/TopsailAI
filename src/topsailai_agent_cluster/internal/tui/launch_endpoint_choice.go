@@ -80,5 +80,66 @@ func resolveLaunchEndpoint(ctx context.Context, api InteractiveAPI, state *inter
 	if err != nil || answer == "" {
 		return "", err
 	}
-	return resolveLaunchEndpointAnswer(endpoints, answer)
+	if listErr != nil {
+		// Without an inventory there is nothing to resolve against, so keep the
+		// literal identifier and reject only a bare number.
+		return resolveLaunchEndpointAnswer(endpoints, answer)
+	}
+	return resolveLaunchEndpointValue(endpoints, answer)
+}
+
+// resolveLaunchEndpointTarget resolves an explicit start argument against the
+// endpoint inventory. An exact endpoint identifier wins, a unique hostname maps
+// to its endpoint, and a bare decimal selects the numbered row the wizard prints.
+// A failed inventory read keeps the literal value so an identifier-only script
+// still works; an unknown value fails locally instead of being sent to the
+// server, where it would surface as a misleading availability error.
+func resolveLaunchEndpointTarget(ctx context.Context, api InteractiveAPI, target string) (string, error) {
+	trimmed := strings.TrimSpace(target)
+	if trimmed == "" {
+		return "", nil
+	}
+	queryCtx, cancel := commandContext(ctx)
+	endpoints, err := api.ListEndpoints(queryCtx)
+	cancel()
+	if err != nil {
+		return target, nil
+	}
+	return resolveLaunchEndpointValue(endpoints, trimmed)
+}
+
+// resolveLaunchEndpointValue maps one operator answer onto an endpoint identifier
+// using an already-fetched inventory. The exact identifier is checked first, so a
+// numeric identifier is never mistaken for a row number.
+func resolveLaunchEndpointValue(endpoints []protocol.Endpoint, answer string) (string, error) {
+	trimmed := strings.TrimSpace(answer)
+	if trimmed == "" {
+		return "", nil
+	}
+	if endpoint, ok := endpointByID(reportLoad{endpoints: endpoints}, trimmed); ok {
+		return endpoint.EndpointID, nil
+	}
+	if isASCIIDecimal(trimmed) {
+		return resolveLaunchEndpointAnswer(endpoints, trimmed)
+	}
+	matches := launchEndpointsByHostname(endpoints, trimmed)
+	switch len(matches) {
+	case 1:
+		return matches[0].EndpointID, nil
+	case 0:
+		return "", nonSyntaxError{message: fmt.Sprintf("endpoint %q was not found; run endpoints to list valid identifiers", trimmed)}
+	default:
+		return "", nonSyntaxError{message: fmt.Sprintf("hostname %q matches %d endpoints; enter an endpoint identifier instead", trimmed, len(matches))}
+	}
+}
+
+// launchEndpointsByHostname returns every endpoint reporting the exact hostname.
+func launchEndpointsByHostname(endpoints []protocol.Endpoint, target string) []protocol.Endpoint {
+	matches := make([]protocol.Endpoint, 0, 2)
+	for _, endpoint := range endpoints {
+		if endpoint.Hostname != "" && endpoint.Hostname == target {
+			matches = append(matches, endpoint)
+		}
+	}
+	return matches
 }

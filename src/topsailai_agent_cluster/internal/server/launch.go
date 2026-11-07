@@ -33,8 +33,22 @@ func (h *Handler) launchOptions(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	result, err := requester.RequestLaunchOptions(ctx, endpointID, protocol.LaunchQuery{AdapterID: r.URL.Query().Get("adapter_id")})
 	if err != nil {
-		h.writeError(w, 503, "endpoint_unavailable", "launch query failed")
+		h.writeLaunchFailure(w, r, endpointID, err)
 		return
 	}
 	h.write(w, 200, 0, "success", result)
+}
+
+// writeLaunchFailure separates an unknown endpoint identifier from an endpoint
+// that is registered but has no live connection. Both used to collapse into one
+// availability error, so a typo looked like an infrastructure outage.
+func (h *Handler) writeLaunchFailure(w http.ResponseWriter, r *http.Request, endpointID string, err error) {
+	if h.Store != nil {
+		_, known, lookupErr := h.Store.GetEndpoint(r.Context(), endpointID)
+		if lookupErr == nil && !known {
+			h.writeError(w, http.StatusNotFound, "endpoint_not_found", "endpoint "+endpointID+" is not registered")
+			return
+		}
+	}
+	h.writeError(w, 503, "endpoint_unavailable", "launch query failed: "+err.Error())
 }

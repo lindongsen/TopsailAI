@@ -47,6 +47,20 @@ func (s *Store) ListEndpoints(ctx context.Context, options QueryOptions) ([]prot
 	return result, rows.Err()
 }
 
+// GetEndpoint returns one endpoint projection, so a caller can distinguish an
+// unknown identifier from an endpoint that exists but has no live connection.
+func (s *Store) GetEndpoint(ctx context.Context, endpointID string) (protocol.Endpoint, bool, error) {
+	var item protocol.Endpoint
+	err := s.db.QueryRowContext(ctx, `SELECT endpoint_id, instance_id, display_name, hostname, connection_state, observed_at_ms, capability_revision FROM endpoints WHERE endpoint_id = ?`, endpointID).Scan(&item.EndpointID, &item.InstanceID, &item.DisplayName, &item.Hostname, &item.ConnectionState, &item.ObservedAtMS, &item.CapabilityRevision)
+	if err == sql.ErrNoRows {
+		return protocol.Endpoint{}, false, nil
+	}
+	if err != nil {
+		return protocol.Endpoint{}, false, err
+	}
+	return item, true, nil
+}
+
 // GetInventory returns the latest complete report for an endpoint.
 func (s *Store) GetInventory(ctx context.Context, endpointID string) (protocol.InventoryReport, error) {
 	var report protocol.InventoryReport
