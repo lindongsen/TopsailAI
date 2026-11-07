@@ -3,6 +3,7 @@ package tui
 import (
 	"io"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -13,7 +14,12 @@ const (
 	ansiDim       = "\x1b[2m"
 	ansiYellow    = "\x1b[33m"
 	ansiRed       = "\x1b[31m"
-	ansiReset     = "\x1b[0m"
+	// ansiMagenta marks operator-supplied payload text, so a message body is
+	// never confused with the application's own question. It is deliberately
+	// outside the state palette (green running, yellow unknown, red failed), so
+	// a payload can never read as a status.
+	ansiMagenta = "\x1b[35m"
+	ansiReset   = "\x1b[0m"
 )
 
 // ColorPolicy controls trusted application styling.
@@ -71,30 +77,135 @@ func RenderAnswerPrompt(policy ColorPolicy) string {
 	return "\n" + ansiBoldGreen + strings.TrimSuffix(answerPrompt, " ") + ansiReset + " "
 }
 
-// writeConfirmationQuestion writes a trusted confirmation question. The
-// question text is styled and the trailing answer hint is dimmed; with colour
-// disabled the exact plain question is written, so redirected output stays
-// byte-identical. Callers must sanitize every provider or payload value they
-// interpolate, because this writer carries trusted styling.
-func writeConfirmationQuestion(w io.Writer, question string, policy ColorPolicy) error {
+// styledConfirmationQuestion returns the confirmation question with its own
+// styling applied. The question text is bold cyan and the trailing answer hint is
+// dimmed; with colour disabled the exact plain question is returned, so redirected
+// output stays byte-identical. Callers must sanitize every provider or payload
+// value they interpolate, because this function carries trusted styling.
+func styledConfirmationQuestion(question string, policy ColorPolicy) string {
 	if !policy.Enabled {
-		_, err := io.WriteString(w, question)
-		return err
+		return question
 	}
 	// The hint is the trailing literal, so a payload that itself contains
 	// "[y/N]" must not be mistaken for it.
 	index := strings.LastIndex(question, confirmationHint)
 	if index < 0 {
-		return writeStyled(w, ansiBoldCyan, question, policy)
+		return ansiBoldCyan + question + ansiReset
 	}
-	if err := writeStyled(w, ansiBoldCyan, question[:index], policy); err != nil {
-		return err
-	}
-	if err := writeStyled(w, ansiDim, confirmationHint, policy); err != nil {
-		return err
-	}
-	_, err := io.WriteString(w, question[index+len(confirmationHint):])
+	return ansiBoldCyan + question[:index] + ansiReset +
+		ansiDim + confirmationHint + ansiReset +
+		question[index+len(confirmationHint):]
+}
+
+// writeConfirmationQuestion writes a trusted confirmation question.
+func writeConfirmationQuestion(w io.Writer, question string, policy ColorPolicy) error {
+	_, err := io.WriteString(w, styledConfirmationQuestion(question, policy))
 	return err
+}
+
+// RenderConfirmationPrompt returns the confirmation question as a terminal-editor
+// prompt, so the question row itself becomes the input row and the cursor waits
+// after the answer hint. The leading newline is the editor's question-row marker:
+// it ends the previous row and redraws the question on a row of its own, which is
+// why no separate answer prompt is printed for this question.
+func RenderConfirmationPrompt(question string, policy ColorPolicy) string {
+	return "\n" + styledConfirmationQuestion(question, policy)
+}
+
+// sgrSequenceSize returns the byte length of a colour-only SGR sequence at the
+// start of value, or zero when value does not start with one. Only the styling
+// this package emits is recognised, so a cursor-control sequence is never treated
+// as zero-width.
+func sgrSequenceSize(value string) int {
+	if len(value) < 3 || value[0] != 0x1b || value[1] != '[' {
+		return 0
+	}
+	for index := 2; index < len(value); index++ {
+		switch {
+		case value[index] == 'm':
+			return index + 1
+		case value[index] >= '0' && value[index] <= '9':
+		case value[index] == ';' || value[index] == ':':
+		default:
+			return 0
+		}
+	}
+	return 0
+}
+
+// styledDisplayWidth returns the terminal column count of value, ignoring the
+// colour-only SGR sequences this package emits. A styled prompt must be measured
+// by its visible text, because escape bytes occupy no column and counting them
+// would misplace the cursor.
+func styledDisplayWidth(value string) int {
+	width := 0
+	for index := 0; index < len(value); {
+		if size := sgrSequenceSize(value[index:]); size > 0 {
+			index += size
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(value[index:])
+		width += runeDisplayWidth(r)
+		index += size
+	}
+	return width
+}
+
+// clipStyledCell clips a styled value to width visible columns. Escape sequences
+// are preserved and never counted, and a truncated value ends with a reset so the
+// terminal cannot inherit a style from the clipped tail.
+func clipStyledCell(value string, width int) string {
+	if styledDisplayWidth(value) <= width {
+		return value
+	}
+	if width <= 3 {
+		return strings.Repeat(".", width)
+	}
+	limit := width - 3
+	var out strings.Builder
+	used := 0
+	styled := false
+	for index := 0; index < len(value); {
+		if size := sgrSequenceSize(value[index:]); size > 0 {
+			out.WriteString(value[index : index+size])
+			styled = true
+			index += size
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(value[index:])
+		runeWidth := runeDisplayWidth(r)
+		if used+runeWidth > limit {
+			break
+		}
+		out.WriteRune(r)
+		used += runeWidth
+		index += size
+	}
+	out.WriteString("...")
+	if styled {
+		out.WriteString(ansiReset)
+	}
+	return out.String()
+}
+
+// clipStyledCellKeepHint clips a styled question to width visible columns while
+// keeping the trailing answer hint. The hint is the only cue telling the operator
+// what to type, so a narrow terminal must shorten the question instead of hiding
+// the hint. Escape sequences are preserved and never counted.
+func clipStyledCellKeepHint(value string, width int) string {
+	if styledDisplayWidth(value) <= width {
+		return value
+	}
+	index := strings.LastIndex(value, confirmationHint)
+	if index < 0 {
+		return clipStyledCell(value, width)
+	}
+	head, tail := value[:index], value[index:]
+	tailWidth := styledDisplayWidth(tail)
+	if tailWidth >= width {
+		return tail
+	}
+	return clipStyledCell(head, width-tailWidth) + tail
 }
 
 // sanitizeInlineText flattens untrusted text into one terminal-safe line before

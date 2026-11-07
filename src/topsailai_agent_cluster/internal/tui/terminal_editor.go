@@ -76,7 +76,10 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 	t.editor.reset()
 	defer t.editor.reset()
 	// Only question-style prompts request a new row; named prompts are already printed.
-	if strings.HasPrefix(prompt, "\n") {
+	// The marker is captured before it is stripped, because a question row is allowed
+	// the whole row width while a named prompt keeps the half-row budget.
+	questionRow := strings.HasPrefix(prompt, "\n")
+	if questionRow {
 		prompt = strings.TrimPrefix(prompt, "\n")
 		if _, err = io.WriteString(t.output, "\r\n"); err != nil {
 			return
@@ -93,12 +96,12 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 			if err := t.applyWatch(watch); err != nil {
 				return err
 			}
-			return t.redraw(prompt)
+			return t.redraw(prompt, questionRow)
 		}
 	}
 	reader := bufio.NewReaderSize(byteReader, 16)
 	for {
-		if err = t.redraw(prompt); err != nil {
+		if err = t.redraw(prompt, questionRow); err != nil {
 			return
 		}
 		byteReader.escapeDeadline = time.Time{}
@@ -185,7 +188,11 @@ func toCRLF(payload []byte) []byte {
 }
 
 // redraw uses horizontal scrolling with a reserved final column to prevent wrapping.
-func (t *TerminalEditor) redraw(prompt string) error {
+// A question row carries the whole question, so it may use the full row instead of
+// the half-row budget that keeps a named prompt short; otherwise a long question
+// would lose its trailing answer hint. Styled prompts are measured and clipped by
+// visible columns, so escape bytes never shift the cursor.
+func (t *TerminalEditor) redraw(prompt string, questionRow bool) error {
 	width := t.width()
 	if width < 4 {
 		width = 4
@@ -194,8 +201,19 @@ func (t *TerminalEditor) redraw(prompt string) error {
 	if green {
 		prompt = strings.TrimSuffix(strings.TrimPrefix(prompt, ansiBoldGreen), ansiReset+" ") + " "
 	}
-	prompt = clipCell(prompt, max(1, width/2))
-	promptWidth := displayWidth(prompt)
+	budgetWidth := max(1, width/2)
+	if questionRow {
+		budgetWidth = max(1, width-1)
+	}
+	// A question row must keep its trailing answer hint, because the hint is the
+	// only cue telling the operator what to type. A named prompt has no hint, so
+	// the plain clip is used there.
+	if questionRow {
+		prompt = clipStyledCellKeepHint(prompt, budgetWidth)
+	} else {
+		prompt = clipStyledCell(prompt, budgetWidth)
+	}
+	promptWidth := styledDisplayWidth(prompt)
 	budget := width - promptWidth - 1
 	text, cursor := t.editor.viewport(budget)
 	if green {

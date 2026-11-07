@@ -27,6 +27,10 @@ func registerUnknownInputOfferSteps(ctx *godog.ScenarioContext) {
 // so a payload that dropped the first word would be visible in the assertion.
 const offerLiteralLine = "hello world"
 
+// offerQuestionMarker prefixes the offer's question row, which is also the input
+// row. It separates the application's question from the message row above it.
+const offerQuestionMarker = ">>> "
+
 // runOfferAccepted navigates to the first session row, types the literal line,
 // accepts the offer and quits.
 func runOfferAccepted() error {
@@ -61,17 +65,56 @@ func runOfferScript(script string) error {
 	return nil
 }
 
-// assertOfferNamesLiteralLine proves the question carries the whole typed line, so
-// the operator can see exactly what would be sent before answering.
+// assertOfferNamesLiteralLine proves the message row carries the whole typed line
+// on its own row before the question, so the operator can see exactly what would
+// be sent before answering.
 func assertOfferNamesLiteralLine() error {
 	text := interactiveOutput()
 	if !strings.Contains(text, "as a message?") {
 		return fmt.Errorf("the send offer was not shown: %s", text)
 	}
-	if !strings.Contains(text, "send "+offerLiteralLine+" as a message?") {
-		return fmt.Errorf("the offer does not name the whole literal line: %s", text)
+	messageRow, questionRow, found := offerRowsIn(text)
+	if !found {
+		return fmt.Errorf("the offer does not render the message and the question on separate rows: %s", text)
+	}
+	if messageRow != offerLiteralLine {
+		return fmt.Errorf("the message row does not carry the whole literal line: %q", messageRow)
+	}
+	if !strings.HasPrefix(questionRow, offerQuestionMarker) {
+		return fmt.Errorf("the question row does not carry the %q marker: %q", offerQuestionMarker, questionRow)
+	}
+	if strings.Index(text, messageRow) > strings.Index(text, questionRow) {
+		return fmt.Errorf("the message row must precede the question row: %s", text)
 	}
 	return nil
+}
+
+// offerRowsIn finds the message row and the question row of the offer. The
+// message row carries only the literal text; the question row carries the marker
+// and the answer hint. Rows are compared by visible text, so the styled and plain
+// forms are both accepted.
+func offerRowsIn(text string) (messageRow, questionRow string, found bool) {
+	for _, row := range strings.Split(text, "\n") {
+		visible := stripOfferStyles(row)
+		if strings.Contains(visible, "[y/N]") {
+			questionRow = visible
+			continue
+		}
+		if strings.TrimRight(visible, " ") == offerLiteralLine {
+			messageRow = visible
+		}
+	}
+	return messageRow, questionRow, messageRow != "" && questionRow != ""
+}
+
+// stripOfferStyles removes the offer's own SGR styling so a row can be matched by
+// its visible text. Only the styles this CLI emits are removed, so a payload
+// sequence that survived sanitization would still be visible. The trailing
+// carriage return of a pty row is dropped as well, because a pty ends every row
+// with CRLF while the visible text carries no carriage return.
+func stripOfferStyles(row string) string {
+	stripped := strings.NewReplacer("\x1b[35m", "", "\x1b[1;36m", "", "\x1b[2m", "", "\x1b[0m", "").Replace(row)
+	return strings.TrimSuffix(stripped, "\r")
 }
 
 // assertOneSendAdmitted proves accepting the offer admits exactly one command.

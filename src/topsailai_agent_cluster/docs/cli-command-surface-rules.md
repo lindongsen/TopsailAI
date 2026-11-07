@@ -256,9 +256,20 @@ Such a line is offered as a `send` instead of only being rejected:
 
 ```text
 session[ai-dev/fixture-session]> hello world
-unknown command hello; send hello world as a message? [y/N]
+hello world
+>>> send the text above as a message? [y/N]
 ```
 
+- The message row comes first and the question row comes second, so the operator
+  reads exactly what would be sent before reading the question. The message row
+  carries only the payload and its own colour, so a payload can never be read as
+  the application's own question.
+- The question row is the input row. The `>>>` marker separates the application's
+  question from the message row above it, and the cursor waits after the answer
+  hint, so no separate `answer>` prompt is printed for this offer.
+- The offer does not repeat the unknown-command diagnostic inline. The message row
+  and the question row already say what would happen, and the diagnostic is still
+  reported when the offer is declined.
 - The offer applies only in session scope. `send` is unavailable in workspace and
   endpoint scope, so an offer there could never be honoured and the plain
   unknown-command diagnostic is kept.
@@ -278,6 +289,8 @@ unknown command hello; send hello world as a message? [y/N]
   cannot be admitted.
 - The offer is interactive-only. A non-interactive caller passes the command word
   explicitly, so no prompt can appear where no human is present.
+- With colour disabled the offer is the plain form of the same two rows, so a
+  redirected run carries no escape sequence.
 
 ## Global presentation flags
 
