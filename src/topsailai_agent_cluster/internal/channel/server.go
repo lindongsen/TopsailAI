@@ -34,6 +34,7 @@ type Server struct {
 	pendingOutput    map[string]pendingOutputRequest
 	pendingLaunch    map[string]pendingLaunchRequest
 	pendingRefresh   map[string]pendingRefreshRequest
+	pendingHistory   map[string]pendingHistoryRequest
 }
 
 // pendingOutputRequest tracks one output request so read-limit failures can be reported.
@@ -66,7 +67,7 @@ type Peer struct {
 
 // NewServer constructs a channel server.
 func NewServer(tlsConfig *tls.Config) *Server {
-	return &Server{TLSConfig: tlsConfig, Fence: NewFence(), Active: make(map[string]*Peer), HeartbeatTimeout: 30 * time.Second, RevokedSerials: make(map[string]bool), pendingOutput: make(map[string]pendingOutputRequest), pendingRefresh: make(map[string]pendingRefreshRequest)}
+	return &Server{TLSConfig: tlsConfig, Fence: NewFence(), Active: make(map[string]*Peer), HeartbeatTimeout: 30 * time.Second, RevokedSerials: make(map[string]bool), pendingOutput: make(map[string]pendingOutputRequest), pendingRefresh: make(map[string]pendingRefreshRequest), pendingHistory: make(map[string]pendingHistoryRequest)}
 }
 
 // Handler accepts Endpoint-initiated WebSocket upgrades and fences older peers.
@@ -171,6 +172,9 @@ func (s *Server) readLoop(ctx context.Context, peer *Peer) {
 		}
 		if frame.Type == FrameLaunchResponse {
 			s.deliverLaunch(peer, frame)
+		}
+		if frame.Type == FrameHistoryResponse {
+			s.deliverHistory(peer, frame)
 		}
 		if frame.Type == FrameOutputResponse {
 			s.Mu.Lock()
@@ -350,9 +354,10 @@ func (s *Server) remove(peer *Peer) {
 	if !authoritative {
 		return
 	}
-	// A disconnected Endpoint can never answer a forced collection, so fail the
-	// waiters instead of letting them block until their own deadline.
+	// A disconnected Endpoint can never answer a forced collection or a history
+	// read, so fail the waiters instead of letting them block until their deadline.
 	s.failPendingRefresh(peer.EndpointID)
+	s.failPendingHistory(peer.EndpointID)
 	if s.OnDisconnect == nil {
 		return
 	}
