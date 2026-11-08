@@ -262,6 +262,26 @@ Initial reachability policy remains heartbeat every 10 seconds, suspect after 30
 
 SQLite serializes write transactions; use bounded transaction lengths, a bounded busy retry policy and explicit database-error responses. Configure WAL/checkpoint and durability settings deliberately with the SQLite library; publish commit evidence rather than promising hard real-time I/O. The initial single active Server owns the database. Measure JSON serialization/whole-document replacement costs, collection duration, commit latency, database/WAL size and bounded query parsing under representative retained provider history. No per-Session SQL index or database-specific JSON features are needed for MVP.
 
+## Implemented output read authorization
+
+Both output routes require the `read_output` scope. `GET /api/v1/output` and
+`GET /api/v1/output/follow` resolve the required permission through one shared
+helper (`internal/server/output_scope.go`), so a future output route cannot be
+added without the check. A credential that lacks the scope receives `403` with
+code `permission_denied`, and the message names the operation and the missing
+permission.
+
+The check runs before the transport is consulted and before the handler inspects
+whether a transport or streaming capability is configured. An unauthorized caller
+therefore cannot infer Endpoint reachability or Server streaming capability from a
+status code or a response time.
+
+An empty scope set remains unrestricted, which models the single-credential
+deployment where the one provisioned token is the administrator. The check
+therefore only narrows access when `AGENT_CLUSTER_AUTH_SCOPES` (or
+`--auth-scopes`) is set explicitly. Verification must narrow the scopes, because a
+default deployment cannot distinguish a working check from a missing one.
+
 ## Output and backpressure
 
 Real follow support requires an opaque cursor bound to source identity/generation plus an offset/sequence, rotation detection and bounded retention. Cursor expiry returns an explicit gap and recovery option. Do not derive a reliable cursor from a tail snapshot or deduplicate identical text lines: repeated lines can be legitimate.

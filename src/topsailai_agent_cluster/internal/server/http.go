@@ -114,6 +114,9 @@ func (h *Handler) output(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported")
 		return
 	}
+	if !h.authorizeOutputRead(w, r, operationOutputSnapshot) {
+		return
+	}
 	if h.Output == nil {
 		h.writeError(w, http.StatusServiceUnavailable, "endpoint_offline", "Endpoint output channel is unavailable")
 		return
@@ -151,6 +154,9 @@ func (h *Handler) output(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) outputFollow(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported")
+		return
+	}
+	if !h.authorizeOutputRead(w, r, operationOutputFollow) {
 		return
 	}
 	follower, ok := h.Output.(OutputFollower)

@@ -72,3 +72,39 @@ so it copied the missing check as well.
   transport.
 - A BDD scenario drives the real cluster with a narrowed credential and asserts
   the CLI reports a permission failure rather than output.
+
+## Resolution
+
+Fixed. Both output routes now require the `read_output` scope through one shared
+helper, `internal/server/output_scope.go`.
+
+- `Handler.output` and `Handler.outputFollow` call `authorizeOutputRead` after the
+  method check and before any transport or capability probe.
+- A credential that lacks the scope receives `403` with code `permission_denied`,
+  and the message names the operation and the missing permission.
+- The handler form delegates to `authorizeOutputReadContext`, so the rule has one
+  implementation and a future caller cannot drift from it.
+- An empty scope set stays unrestricted, preserving the single-credential
+  deployment.
+
+Evidence:
+
+| Check | Result |
+|---|---|
+| `go test ./internal/server/ -run Output` | 6 new tests pass, existing output tests unchanged |
+| `go test ./... -count=1` | pass |
+| `go test ./tests/bdd/ -run TestFeatures` | 73 scenarios / 282 steps pass |
+| `internal/server` coverage | 80.5%, both new functions 100% |
+| reverse check | with the check disabled, both refusal scenarios fail, so the scenarios detect the defect |
+
+The reverse check matters: a scenario that passes with the fix removed proves
+nothing. Both refusal scenarios failed when the check was temporarily disabled and
+passed again once it was restored.
+
+New tests: `internal/server/output_scope_test.go`. New scenarios:
+`features/output_scope.feature` with `tests/bdd/steps_output_scope.go`.
+
+Note for future verification: the check only narrows access when
+`AGENT_CLUSTER_AUTH_SCOPES` is set. A default deployment uses an empty scope set,
+which is unrestricted, so a test that does not narrow the scopes cannot tell a
+working check from a missing one.
