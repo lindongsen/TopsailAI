@@ -174,6 +174,12 @@ The cluster does not paginate around it, does not request more, and does not pre
 result as a complete history. The result carries an explicit `truncated` flag so the
 operator can see that the list is a bounded window rather than everything that exists.
 
+The adapter sets `truncated` when the provider answer reaches the provider's own cap,
+because the provider offers no way to ask for one more row and a full window therefore
+cannot be proven complete. The cap is judged before the caller's `limit` is applied, so a
+narrowed view never turns a capped provider answer into an apparently complete one. A
+provider answer below the cap is not labelled truncated, so the warning keeps its meaning.
+
 `HistoryResult` carries the rows, the observation time, the `truncated` flag and an
 optional `error_code`. A failed provider call is an explicit error, never an empty
 successful list, because an empty list would read as "this Endpoint has no history".

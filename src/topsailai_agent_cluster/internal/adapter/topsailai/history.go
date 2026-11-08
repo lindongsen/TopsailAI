@@ -25,6 +25,18 @@ type historyEntry struct {
 	Status           string `json:"status"`
 }
 
+// providerHistoryRowCap is the row cap the provider applies to its own
+// `project list_sessions` surface. The provider hardcodes this window and offers
+// no way to ask for one more row, so the adapter cannot distinguish "exactly this
+// many sessions exist" from "the provider stopped at its cap".
+//
+// The ambiguity is resolved in the safe direction: a full window is reported as
+// truncated. Claiming completeness when the provider may have withheld rows would
+// present a bounded window as a complete history, which is the failure this field
+// exists to prevent. The opposite error merely tells the operator that older
+// sessions may exist when none do.
+const providerHistoryRowCap = 30
+
 // History lists provider session history without mutation.
 //
 // The provider's own row cap is an intentional product decision, so this method
@@ -46,12 +58,15 @@ func (a *Adapter) History(ctx context.Context, query protocol.HistoryQuery) (pro
 	if len(entries) > protocol.MaxHistoryRows {
 		return protocol.HistoryResult{ErrorCode: protocol.HistoryResponseTooLarge}, fmt.Errorf("history row count exceeds limit")
 	}
+	// The provider cap is judged before the caller's own limit is applied,
+	// because a narrowed view must not be mistaken for a complete provider answer.
+	truncated := len(entries) >= providerHistoryRowCap
 	limit := query.Limit
 	if limit > 0 && limit < len(entries) {
 		entries = entries[:limit]
 	}
 	nowMS := time.Now().UnixMilli()
-	result := protocol.HistoryResult{Rows: make([]protocol.HistoryRow, 0, len(entries)), ObservedAtMS: nowMS}
+	result := protocol.HistoryResult{Rows: make([]protocol.HistoryRow, 0, len(entries)), ObservedAtMS: nowMS, Truncated: truncated}
 	for _, entry := range entries {
 		if entry.SessionID == "" {
 			continue
