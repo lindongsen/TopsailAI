@@ -11,6 +11,7 @@ context:
     - docs/Environment_Variables.md # env_template
     - MEMO.md
     - LEARN.md
+    - MEMORY.md
 
   default: []
 

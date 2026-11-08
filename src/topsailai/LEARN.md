@@ -1,4 +1,7 @@
-# Learn & Memory Of Project
+# Learn Of Project
+
+Lessons the agent discovered while implementing, debugging, and testing this project.
+Human-required rules and decisions live in [MEMORY.md](./MEMORY.md).
 
 ## When user provides negative or corrective feedback, treat it as high-signal design constraints rather than just a code-location fix
 
@@ -26,15 +29,6 @@ Lessons:
 (1) Use a dedicated exception class (`HeavyTaskError`) for control-flow errors that must propagate through generic catch-all handlers;
 (2) Generic hook callers should explicitly re-raise domain-specific exceptions rather than swallowing them;
 (3) Any termination signal that crosses a layer boundary must be treated as part of the API contract, not as an internal invariant.
-
-## Respect existing control flow and obtain explicit approval before behavioral changes
-
-When implementing a display-only feature (cache hit rate), a previous change moved the summary block outside the `while` loop and deleted `self.last_message = answer`, altering behavior beyond the user's request and was committed without explicit approval. The user rejected it with "改动太多了".
-
-Lessons:
-1. A "small display change" must not silently restructure control flow or remove state mutations.
-2. Before committing any change that affects when/how output is produced or mutates object state, obtain the user's explicit approval.
-3. When the user says a change is too large, stop and revert to the minimal version rather than iterating on top of the rejected approach.
 
 ## Each layer's lifecycle must be self-contained: setup and teardown belong to the same layer
 
@@ -128,29 +122,6 @@ the prior failure was classified FLAKY/transient, not established as caused by
 SSE. Verified import isolation prevents false baseline comparisons, while
 repeated runs prevent one transient result from being labelled a regression.
 
-## A human-facing "explain the decision" block should start minimal, not grow
-
-The approval-prompt focus block was implemented with a heading plus a per-condition
-breakdown, then had to be simplified twice on user feedback: first the labels, then the
-heading and the whole condition list were removed, leaving only `Rule:` and `Pattern:`.
-The verbose version was rejected as noise because the full arguments are already shown
-right below it.
-
-Lessons:
-(1) for a prompt a human reads under time pressure, default to the minimum that answers
-"why am I being asked this?" and let the existing detail sections carry the rest; do not
-restate data the reader can already see;
-(2) when a rendering layer is simplified, delete the now-unreachable helpers and branches
-instead of leaving dead code, but keep the underlying data pipeline (structured match
-results) so other consumers such as CLI tooling and audit logs can still use it;
-(3) encode rejected verbosity as negative assertions (`"Trigger" not in text`) so a future
-"improvement" cannot silently reintroduce it.
-
-## Features tightly coupled to the LLM must be covered by BDD tests
-
-Any capability whose behavior depends closely on the LLM (prompt construction, message injection, tool-call/ReAct loop, streaming, approval decisions driven by model output, session/context handling) MUST have BDD (Gherkin) tests under `tests/bdd/` that express the user-visible behavior, in addition to unit tests.
-
-
 ## Verify feature enablement and reachable execution paths before implementation, testing, or optimization
 
 The native tool-call incident review initially treated tool-shaped messages appearing in a non-native request as evidence that non-native execution could produce them, but source tracing showed that only native mode creates new `tool_calls` and `tool_call_id` values; non-native mode can only replay structures inherited from earlier native history after persistence, restart, or a mode transition. This distinction also exposed that BDD scenarios running with native mode disabled were valid cross-mode compatibility tests but were not faithful reproductions of the original native incident.
@@ -163,18 +134,9 @@ Lessons:
 5. Before optimizing disabled-mode work, verify whether the boundary also protects data created while the feature was previously enabled; this prevents a locally reasonable gate from removing the final compatibility safeguard.
 6. In this project, `build_parameters_for_chat()` in `ai_base/llm_control/base_class.py` must keep its request-boundary calls to `normalize_message_tool_calls` and `drop_orphaned_tool_messages` mode-independent: the earlier cleanup sites in `workspace/context/agent.py` and `ai_base/llm_hooks/hook_before_chat/tool_call_pairing.py` are already gated by `TOPSAILAI_USE_TOOL_CALLS`, so adding the same gate at the request boundary removes the final safeguard for inherited native history and reopens the provider 400 `No tool call found for function call output with call_id ...`.
 
-## Keep utility-layer classes free of business-layer dependencies
-
-When the LLM request-statistics feature caused `utils.StateVisualizer` to import, instantiate, and invoke `context.LLMRequestStat`, the trigger was a review request to keep utility methods generic. The correction moved statistics coordination into `context.LLMStateVisualizer`, a subclass of the generic utility visualizer, and moved the LLM model-specific decorator into the context layer. This prevents recurrence by requiring dependency direction to remain business/context to utility and by keeping both runtime dependencies and examples in utility modules free of domain-specific concepts.
-
 ## Abandoned User2Agent turns must bypass completion side effects and restore turn accounting
 
 When `LLMBackToChatError` abandons a failed User2Agent turn, reading a replacement message is not sufficient: falling through normal completion handling can run success/final hooks, persist a fake answer, reset session state, or consume the finite-turn budget. Handle Back with explicit local state, invoke the failure hook once, normalize and revalidate fresh input, guard all completion-only effects, and restore `curr_count` before naturally starting the next iteration. This prevents old-message replay, false completion records, and premature finite-run termination without confusing Back with the request-level retry that remains inside `LLMModel.chat()`.
-
-## Retry policy implementations must use the approved explicit status allowlist
-
-During JEV client review, treating every HTTP 5xx response as retryable conflicted with the approved policy that permits retries only for transport failures and HTTP 408, 429, 502, 503, and 504. Implement retryability from one explicit allowlist shared by response mapping and tests, and add a negative regression for an unlisted status such as HTTP 500; this prevents broad status families from silently consuming extra requests and service capacity.
-
 
 ## A broad OpenAPI union does not prove each discriminated variant accepts every union member
 
@@ -213,7 +175,6 @@ Why this prevents recurrence: every late result is observed before another non-c
 
 The artifact descriptor ledger originally rejected an uncertain close only during bulk cleanup, while direct `close()` and its `close_descriptor()` alias could re-enter first from the public exception handler and retry a historical descriptor integer. When an operation records an ambiguous outcome, every public and internal entry point capable of repeating that operation must reject the uncertain state before authority mutation or I/O; tests must cover each individual alias plus the real composed recovery order with actual identifier reuse, not only the final bulk-cleanup path. This prevents an earlier cleanup stage from bypassing a safeguard implemented only in a later stage.
 
-
 ## A per-file test runner must preserve both import roots, isolate temporary trees, and bound process concurrency
 
 Trigger: the repository-mandated `tests/run_tests.py` passed focused tests but failed 25 files when each file ran from `tests/unit`, privilege-dropping children traversed a shared pytest temporary tree, and ten concurrent process-heavy files exhausted deadline budgets.
@@ -221,10 +182,6 @@ Trigger: the repository-mandated `tests/run_tests.py` passed focused tests but f
 Action: construct each child `PYTHONPATH` from both the project root (for `tests.*`) and source root (for `topsailai`), assign each file a task-scoped basetemp below a minimally traversable `0755` root, and use bounded worker concurrency that the deadline-sensitive process tests can sustain.
 
 Why this prevents recurrence: the runner now preserves isolated per-file imports, lets unprivileged children reach only their owned temporary hierarchy without widening source permissions, and avoids turning host contention into false deadline regressions.
-
-## Hook configuration convenience must preserve the Human-approved execution architecture
-
-Trigger: the request to simplify Hook-name plus scripts/folder configuration was misinterpreted as permission to introduce a standalone scripts-only registration path, and compliance was assessed against documents rewritten to match that path. Action: restore the Human's per-Hook-Point Module/default-terminal-Hook model, `main(*args, **kwargs)` entry and both name-order contracts in the design/API, and track the actual Runtime divergence separately. U06A–U06D subsequently connected unified synchronous execution, the configured adapter (`17d9e9ac`) and ordinary registration/dispatch (`14d61522`); lifecycle and migration acceptance remains in U07–U11. Prevention: compare convenience-layer proposals and runtime call graphs against the original architectural invariants and decision history before updating documents or claiming compliance; tests of isolated planners and separate Script APIs cannot prove one unified end-to-end plan.
 
 ## A shared test harness fixture change can break sibling tests that build their own synthetic fixture
 
@@ -235,7 +192,6 @@ Lessons:
 2. Verify a shared-fixture change with the full suite (or at least every file that imports the fixture), because per-file verification only covers the owning harness.
 3. Treat a new failure that appears after a test-infra fix as a coupling signal, not as an unrelated flake.
 
-
 ## A presentation update must be triggered where the value is produced, not only where it is consumed
 
 Trigger: the terminal title kept showing `host:session_id` after the agent auto-generated a session name. Three defects combined: the title was refreshed at session start, before the asynchronous naming thread could produce a name; the end-of-turn refresh sat *after* `if reached_times_limit: break`, so every `times=1` entry never applied the name at all; and `_async_update_session_name()` never notified `terminal_title` when the name was actually stored.
@@ -243,14 +199,6 @@ Trigger: the terminal title kept showing `host:session_id` after the agent auto-
 Action: notify the presentation layer from the producer (`_refresh_terminal_title_after_rename()` right after a successful `update_session_name()`), move the consumer-side refresh before the loop-exit check, and add `force` plus `reset_terminal_title_cache()` so a cached title cannot suppress a later write after the terminal overwrote it on its own.
 
 Why this prevents recurrence: a value produced asynchronously has two distinct moments — when it is stored and when it is displayed. Refreshing only at fixed checkpoints silently misses the value whenever the checkpoint precedes production, and a cache keyed on the rendered string then makes the miss permanent. Tests must assert the ordering (refresh happens before the exit check) and the producer-side notification, because a test that only checks "the title module works" passes while the title never updates.
-
-## Hook Point wrappers require explicit Human approval before implementation
-
-Trigger: an implementer added an `observe_*` wrapper (`observe_tool_execute`) around Hook Points without Human approval, despite the earlier rejection of `observe_before_input` and the documented direct-call architecture; the Human explicitly expressed dissatisfaction.
-
-Action: call the named Hook Point function directly, keep payload builders data-only and never dispatch Hooks from them, and obtain explicit Human approval before adding any wrapper, adapter, or indirection. Do not reinterpret implementation convenience as authorization.
-
-Why this prevents recurrence: the mandatory rule and Human decision provenance are now explicit in `features/feature-unified-hooks-design.md` and `docs/Hooks_API.md`, so future implementers cannot claim the constraint was undocumented or infer permission from historical adapter descriptions.
 
 ## A prompt that no terminal can display must be echoed at the lowest shared layer
 
