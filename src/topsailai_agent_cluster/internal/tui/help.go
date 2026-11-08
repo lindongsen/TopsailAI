@@ -37,7 +37,6 @@ var commandHelpCatalog = map[string]commandHelp{
 	"show":      {"show [endpoint-or-session]", "show detailed information for an endpoint or session; defaults to the current scope target", []string{"endpoint-or-session: optional endpoint ID, session/resource ID, provider session ID, or a bare list row number", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID"}, []string{"show", "show 1", "show endpoint-1"}},
 	"info":      {"info [session]", "show session detail for one session; defaults to the current session", []string{"session: optional session/resource ID, provider session ID, or a bare list row number; required in workspace scope and rejected when it names an endpoint", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID", "read-only: it never changes the selected session, the list row numbers, or any provider state", "--json: rejected in interactive mode"}, []string{"info", "info 1", "info res_abc"}},
 	"start":     {"start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--task <text>]", "start an agent through the selected endpoint; interactive mode executes directly and does not support --json", []string{"endpoint: endpoint ID", "resource: compatibility resource identifier", "--profile: launch profile ID (required)", "--profile-revision: launch profile revision (required)", "--folder: optional working folder; empty value is treated as omitted", "--task: optional literal initial task text; no JSON is required", "without --task and without a positional task: read a multi-line task and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the task, and the accepted task is echoed verbatim with colour so it can be verified before submission", "an empty multi-line task is rejected instead of submitting nothing", "--json: rejected in interactive mode"}, []string{"start", "start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1", `start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1 --task "summarize the open issues"`}},
-	"resume":    {"resume", "resume the selected session", []string{"--json: rejected in interactive mode"}, []string{"resume"}},
 	"stop":      {"stop [session]", "stop a session after confirmation; session scope stops the selected session", []string{"session: optional session/resource ID, provider session ID, or a bare list row number; required outside session scope and rejected inside it", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID", "workspace scope resolves the row's own endpoint; a token matching sessions on several endpoints is rejected", "--json: rejected in interactive mode"}, []string{"stop", "stop 1", "stop res_abc"}},
 	"inject":    {"inject [text]", "inject context into the selected session; a bare inject reads a multi-line context block", []string{"text: literal context text; no JSON is required", "without text: read a multi-line context block and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the context", "an empty multi-line context block is rejected instead of submitting nothing", "--json: rejected in interactive mode"}, []string{"inject the deployment notes are in docs/", `inject {"text":"context"}`}},
 	"interrupt": {"interrupt [soft|hard] [message]", "request a soft or hard execution interrupt for the selected session", []string{"soft: soft interrupt, optionally followed by a literal message; empty input prompts for the action", "hard: hard interrupt; accepts no message", "--json: rejected in interactive mode"}, []string{"interrupt", "interrupt soft stop and summarize now", "interrupt hard"}},
@@ -105,7 +104,6 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"info":      "show the current session detail, or another session in this endpoint",
 		"logs":      "show current session output, or another session in this endpoint; -n <lines> bounds the trailing lines",
 		"send":      "send a message to the current session; an explicit text submits directly, and a bare send asks for confirmation; unrecognized text offers this action",
-		"resume":    "resume the current session",
 		"stop":      "stop the current session",
 		"inject":    "inject context into the current session",
 		"interrupt": "interrupt the current session",
@@ -282,8 +280,18 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 	canonical := canonicalCommandName(name)
 	entry := commandHelpCatalog[canonical]
 	switch name {
-	case "start", "resume":
+	case "start":
 		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [text] [generation]"
+	case "resume":
+		// resume is a standalone-only spelling: the interactive form was removed
+		// because session scope requires a live generation while resume authorizes
+		// on a proven absence, so the two conditions are mutually exclusive. It
+		// therefore has no scope-matrix entry, and its description is supplied here
+		// instead of in the catalog, which must stay one-to-one with the matrix.
+		entry.syntax = "agent-cluster-cli [options] resume <endpoint> <resource> [text] [generation]"
+		entry.description = "resume a stopped session identified by resource ID; the endpoint must prove from a complete fresh inventory that the session has no live generation"
+		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID of the stopped session", "text: optional literal initial task text", "generation: optional expected generation; a live generation is rejected instead of resumed", "--json: write the structured receipt instead of the rendered one"}
+		entry.examples = []string{"resume endpoint-1 res_abc", "resume endpoint-1 res_abc gen-1"}
 	case "stop":
 		entry.syntax = "agent-cluster-cli [options] stop <endpoint> <resource> <generation>"
 	case "drive":

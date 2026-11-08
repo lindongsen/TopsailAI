@@ -35,7 +35,9 @@ var commandScopeMatrix = []commandScopeRule{
 	{Name: "show", Workspace: true, Endpoint: true, Session: true},
 	{Name: "info", Workspace: true, Endpoint: true, Session: true},
 	{Name: "start", Workspace: true, Endpoint: true},
-	{Name: "resume", Session: true},
+	// resume is deliberately absent: session scope requires a live generation,
+	// while resume authorizes on a proven absence, so the two conditions are
+	// mutually exclusive. The standalone spelling keeps the operation reachable.
 	{Name: "stop", Workspace: true, Endpoint: true, Session: true},
 	{Name: "inject", Session: true},
 	{Name: "interrupt", Session: true},

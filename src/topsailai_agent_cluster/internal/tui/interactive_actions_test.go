@@ -31,12 +31,9 @@ func TestInteractiveStartExactIntent(t *testing.T) {
 
 // TestInteractiveSessionExactIntents checks every lifecycle/control operation and alias.
 func TestInteractiveSessionExactIntents(t *testing.T) {
-	for command, op := range map[string]string{"resume": protocol.OperationAgentResume, "stop": protocol.OperationAgentStop, "inject": protocol.OperationContextInject, "btw": protocol.OperationContextInject, "interrupt": protocol.OperationExecutionInterrupt, "control": protocol.OperationExecutionInterrupt} {
+	for command, op := range map[string]string{"stop": protocol.OperationAgentStop, "inject": protocol.OperationContextInject, "btw": protocol.OperationContextInject, "interrupt": protocol.OperationExecutionInterrupt, "control": protocol.OperationExecutionInterrupt} {
 		t.Run(command, func(t *testing.T) {
 			stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-			if op == protocol.OperationAgentResume {
-				stub.sessionPresenceSequence = []bool{true, true, false, false}
-			}
 			payload := `{}`
 			line := command
 			if op == protocol.OperationContextInject {
@@ -72,7 +69,7 @@ func TestInteractiveArgumentErrors(t *testing.T) {
 			t.Fatalf("accepted %q", input)
 		}
 	}
-	for _, command := range []string{"resume", "stop", "inject", "interrupt", "btw", "control"} {
+	for _, command := range []string{"stop", "inject", "interrupt", "btw", "control"} {
 		stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 		_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\n"+command+" --json\nquit\n", ColorPolicy{})
 		if !strings.Contains(diagnostics, "non-interactive") && !strings.Contains(diagnostics, "does not support --json") {
@@ -90,27 +87,38 @@ func TestInteractiveLifecycleRejectsChangedGeneration(t *testing.T) {
 	}
 }
 
-// TestInteractiveResumeRequiresAuthoritativeAbsence rejects both a live target and a target that reappears during confirmation.
-func TestInteractiveResumeRequiresAuthoritativeAbsence(t *testing.T) {
-	t.Run("live before confirmation", func(t *testing.T) {
-		stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-		_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\nresume\nquit\n", ColorPolicy{})
-		if stub.admit != 0 || !strings.Contains(diagnostics, "is still live; stop it before resume") {
-			t.Fatalf("admit=%d diagnostics=%q", stub.admit, diagnostics)
+// TestInteractiveResumeIsNotASessionCommand pins the removal of the interactive
+// resume spelling. Session scope requires a live generation while resume authorizes
+// on a proven absence, so the two conditions are mutually exclusive and the command
+// word is rejected instead of being offered and then refused.
+func TestInteractiveResumeIsNotASessionCommand(t *testing.T) {
+	for _, kind := range []ScopeKind{ScopeWorkspace, ScopeEndpoint, ScopeSession} {
+		if containsCommand(availableCommands(kind), "resume") {
+			t.Fatalf("resume must not be offered in %s scope", kind)
 		}
-	})
-	t.Run("reappears after confirmation", func(t *testing.T) {
-		stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}, sessionPresenceSequence: []bool{true, true, false, true}}
-		_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\nresume\ny\nquit\n", ColorPolicy{})
-		if stub.admit != 0 || !strings.Contains(diagnostics, "is still live; stop it before resume") {
-			t.Fatalf("admit=%d diagnostics=%q", stub.admit, diagnostics)
-		}
-	})
+	}
+	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+	_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\nresume\nquit\n", ColorPolicy{})
+	if stub.admit != 0 || !strings.Contains(diagnostics, `unknown command "resume"`) {
+		t.Fatalf("admit=%d diagnostics=%q", stub.admit, diagnostics)
+	}
+}
+
+// TestStandaloneResumeHelpSurvivesRemoval proves the operation stays reachable through
+// the standalone CLI, so removing the interactive spelling never removes the capability.
+func TestStandaloneResumeHelpSurvivesRemoval(t *testing.T) {
+	var out strings.Builder
+	if err := PrintNonInteractiveCommandHelp(&out, "resume"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "resume <endpoint> <resource>") {
+		t.Fatalf("standalone resume help=%q", out.String())
+	}
 }
 
 // TestInteractiveNewCommandHelpAndScope covers every newly exposed session command.
 func TestInteractiveNewCommandHelpAndScope(t *testing.T) {
-	for _, name := range []string{"resume", "inject", "btw", "interrupt", "control"} {
+	for _, name := range []string{"inject", "btw", "interrupt", "control"} {
 		var out strings.Builder
 		if err := PrintCommandHelp(&out, name); err != nil {
 			t.Fatal(err)
@@ -154,54 +162,25 @@ func TestStartMinimalProfileArguments(t *testing.T) {
 	}
 }
 
-// TestInteractiveStartAndResumePayloads pins the plain-text task and the empty resume payload.
-func TestInteractiveStartAndResumePayloads(t *testing.T) {
-	t.Run("start task", func(t *testing.T) {
-		stub := &interactiveStub{}
-		var out, diagnostics strings.Builder
-		input := `start endpoint-1 resource-1 --profile p --profile-revision r --task "literal --json data"` + "\nquit\n"
-		if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &out, &diagnostics, InteractiveOptions{}); err != nil {
-			t.Fatal(err)
-		}
-		if diagnostics.Len() != 0 || len(stub.intents) != 1 || string(stub.intents[0].Payload) != `{"task":"literal --json data"}` {
-			t.Fatalf("diagnostics=%q intents=%+v", diagnostics.String(), stub.intents)
-		}
-	})
-	for _, testCase := range []struct {
-		name    string
-		command string
-		want    string
-	}{
-		{name: "resume default", command: "resume", want: `{}`},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}, sessionPresenceSequence: []bool{true, true, false, false}}
-			var out, diagnostics strings.Builder
-			input := "cd endpoint-1/session-1\n" + testCase.command + "\ny\nquit\n"
-			if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &out, &diagnostics, InteractiveOptions{}); err != nil {
-				t.Fatal(err)
-			}
-			if diagnostics.Len() != 0 || len(stub.intents) != 1 || string(stub.intents[0].Payload) != testCase.want {
-				t.Fatalf("diagnostics=%q intents=%+v", diagnostics.String(), stub.intents)
-			}
-		})
+// TestInteractiveStartPayload pins the plain-text task payload.
+func TestInteractiveStartPayload(t *testing.T) {
+	stub := &interactiveStub{}
+	var out, diagnostics strings.Builder
+	input := `start endpoint-1 resource-1 --profile p --profile-revision r --task "literal --json data"` + "\nquit\n"
+	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &out, &diagnostics, InteractiveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if diagnostics.Len() != 0 || len(stub.intents) != 1 || string(stub.intents[0].Payload) != `{"task":"literal --json data"}` {
+		t.Fatalf("diagnostics=%q intents=%+v", diagnostics.String(), stub.intents)
 	}
 }
 
 // TestInteractivePayloadValidationRejectsJSONArguments verifies no JSON payload argument is admitted.
 func TestInteractivePayloadValidationRejectsJSONArguments(t *testing.T) {
-	for _, testCase := range []struct {
-		input string
-		want  string
-	}{
-		{input: `start endpoint-1 resource-1 --profile p --profile-revision r --payload nope` + "\nquit\n", want: "--payload"},
-		{input: "cd endpoint-1/session-1\nresume --payload nope\nquit\n", want: "usage: resume"},
-	} {
-		stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-		_, diagnostics := runScope(t, stub, testCase.input, ColorPolicy{})
-		if stub.admit != 0 || !strings.Contains(diagnostics, testCase.want) {
-			t.Fatalf("admit=%d diagnostics=%q want=%q", stub.admit, diagnostics, testCase.want)
-		}
+	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
+	_, diagnostics := runScope(t, stub, `start endpoint-1 resource-1 --profile p --profile-revision r --payload nope`+"\nquit\n", ColorPolicy{})
+	if stub.admit != 0 || !strings.Contains(diagnostics, "--payload") {
+		t.Fatalf("admit=%d diagnostics=%q", stub.admit, diagnostics)
 	}
 }
 

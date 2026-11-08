@@ -512,8 +512,6 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 			commandErr = interactiveStart(ctx, api, state, request, startOut, startTrustedOut, options)
 		}
 		return false, startOutputError(commandErr, recorder, startOut, startTrustedOut, startErrOut)
-	case "resume":
-		return false, interactiveSessionLifecycle(ctx, api, state, name, rest, lineResults, out, trustedOut, options)
 	case "stop":
 		return false, interactiveStop(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	case "inject", "btw":

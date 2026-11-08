@@ -36,12 +36,3 @@ func confirmationTargetFor(session protocol.Session) confirmationTarget {
 		SessionID:         session.SessionID,
 	}
 }
-
-// confirmationTargetForSelection names the pinned selection, for a command that
-// has no live session to read, such as resume of a stopped session.
-func confirmationTargetForSelection(state *interactiveState) confirmationTarget {
-	return confirmationTarget{
-		ProviderSessionID: state.Scope.ProviderSessionID,
-		SessionID:         state.SessionID,
-	}
-}

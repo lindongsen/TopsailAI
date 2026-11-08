@@ -462,15 +462,12 @@ func TestInteractiveHelpIncludesStart(t *testing.T) {
 func TestInteractiveSessionLifecycleAndControlCommands(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	input := "cd endpoint-1/session-1\nresume\ninject {\"text\":\"context\"}\ny\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nstop\nn\nexit\n"
+	input := "cd endpoint-1/session-1\ninject {\"text\":\"context\"}\ny\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nstop\nn\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(errorsOut.String(), "is still live; stop it before resume") {
-		t.Fatalf("live resume rejection missing: %q", errorsOut.String())
-	}
 	if stub.admit != 2 {
-		t.Fatalf("admitted %d commands, want 2 after rejected live resume and declined stop", stub.admit)
+		t.Fatalf("admitted %d commands, want 2 after declined stop", stub.admit)
 	}
 	for _, phrase := range []string{"inject session-1?", "interrupt session-1?", "stop cancelled"} {
 		if !strings.Contains(output.String(), phrase) {
@@ -481,8 +478,8 @@ func TestInteractiveSessionLifecycleAndControlCommands(t *testing.T) {
 
 func TestInteractiveSessionActionsRequireSessionScope(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-	_, diagnostics := runScope(t, stub, "resume\ninject {}\ninterrupt {}\nexit\n", ColorPolicy{})
-	for _, name := range []string{"resume", "inject", "interrupt"} {
+	_, diagnostics := runScope(t, stub, "inject {}\ninterrupt {}\nexit\n", ColorPolicy{})
+	for _, name := range []string{"inject", "interrupt"} {
 		if !strings.Contains(diagnostics, `command "`+name+`" is unavailable in workspace scope`) {
 			t.Fatalf("missing scope rejection for %s: %q", name, diagnostics)
 		}
@@ -535,7 +532,6 @@ func TestInteractiveSessionActionValidation(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "resume arguments", input: "cd endpoint-1/session-1\nresume extra\nexit\n", want: "usage: resume"},
 		{name: "stop arguments", input: "cd endpoint-1/session-1\nstop extra\nexit\n", want: "usage: stop"},
 		{name: "inject empty block", input: "cd endpoint-1/session-1\ninject\nEOF\nexit\n", want: "payload must not be empty"},
 		{name: "interrupt unknown action", input: "cd endpoint-1/session-1\ninterrupt nope\nexit\n", want: "usage: interrupt [soft|hard] [message]"},

@@ -139,7 +139,6 @@ func TestNonRemovingOperationsKeepTheSessionScope(t *testing.T) {
 		name  string
 		input string
 	}{
-		{name: "resume", input: "cd host-one/endpoint-1/res-1\nresume\ny\nexit\n"},
 		{name: "inject", input: "cd host-one/endpoint-1/res-1\ninject {\"text\":\"hi\"}\ny\nexit\n"},
 		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nexit\n"},
 		{name: "send", input: "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\nexit\n"},
@@ -147,10 +146,6 @@ func TestNonRemovingOperationsKeepTheSessionScope(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			stub := stopScopeStub()
-			if testCase.name == "resume" {
-				// resume requires an authoritative absence before and after confirmation.
-				stub.sessionPresenceSequence = []bool{true, true, false, false, false}
-			}
 			output, diagnostics := runScope(t, stub, testCase.input, ColorPolicy{})
 			if diagnostics != "" {
 				t.Fatalf("unexpected diagnostics: %q", diagnostics)
