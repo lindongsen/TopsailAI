@@ -147,3 +147,34 @@ func TestHistoryEmptySuccessIsNotAnError(t *testing.T) {
 		t.Fatalf("empty success carried an error: %s", out.Body.String())
 	}
 }
+
+// historyDisconnectRequester reproduces the real disconnect path: the channel
+// reports a lost endpoint as an error code with no Go error, so the handler must
+// classify the code rather than fall through to the provider default.
+type historyDisconnectRequester struct{ historyRequester }
+
+// RequestHistory returns the channel's disconnect result unchanged.
+func (historyDisconnectRequester) RequestHistory(context.Context, string, protocol.HistoryQuery) (protocol.HistoryResult, error) {
+	return protocol.HistoryResult{ErrorCode: "endpoint_unavailable"}, nil
+}
+
+// TestHistoryDisconnectIsNotReportedAsProviderError proves a lost endpoint is an
+// availability failure, never a provider failure. The channel signals a
+// disconnect with an error code and a nil error, so this path is distinct from
+// the transport-error path and must reach the same 503 outcome.
+func TestHistoryDisconnectIsNotReportedAsProviderError(t *testing.T) {
+	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: historyDisconnectRequester{}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/history?endpoint_id=e", nil)
+	req.Header.Set("Authorization", "Bearer test")
+	out := httptest.NewRecorder()
+	h.ServeHTTP(out, req)
+	if out.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want=%d body=%s", out.Code, http.StatusServiceUnavailable, out.Body.String())
+	}
+	if !strings.Contains(out.Body.String(), `"endpoint_unavailable"`) {
+		t.Fatalf("body=%s want code endpoint_unavailable", out.Body.String())
+	}
+	if strings.Contains(out.Body.String(), `"`+protocol.HistoryProviderError+`"`) {
+		t.Fatalf("disconnect was reported as a provider failure: %s", out.Body.String())
+	}
+}

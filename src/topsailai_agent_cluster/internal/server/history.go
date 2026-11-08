@@ -64,12 +64,19 @@ func (h *Handler) writeHistoryFailure(w http.ResponseWriter, r *http.Request, en
 // writeHistoryResultFailure maps an adapter-reported capability or provider
 // failure to a stable machine code. An unsupported adapter is not an outage and
 // an empty history is not an error, so each outcome keeps its own status.
+//
+// A disconnected endpoint is reported by the channel as an error code with no
+// Go error, so it must be classified here as well. Without this case it fell
+// through to the provider default and told the operator to investigate a
+// provider that was never reached.
 func (h *Handler) writeHistoryResultFailure(w http.ResponseWriter, r *http.Request, endpointID string, result protocol.HistoryResult) {
 	switch result.ErrorCode {
 	case protocol.HistoryUnsupported:
 		h.writeError(w, 501, protocol.HistoryUnsupported, "endpoint has no history-capable adapter")
 	case protocol.HistoryResponseTooLarge:
 		h.writeError(w, 502, protocol.HistoryResponseTooLarge, "provider history response exceeded the configured bound")
+	case "endpoint_unavailable":
+		h.writeError(w, 503, "endpoint_unavailable", "history query failed: endpoint is not connected")
 	default:
 		h.writeError(w, 502, protocol.HistoryProviderError, "provider history read failed")
 	}
