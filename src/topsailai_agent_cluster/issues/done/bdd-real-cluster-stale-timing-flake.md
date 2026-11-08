@@ -87,3 +87,57 @@ this workspace because `tests/bdd/suite_test.go`, `tests/bdd/steps_watch.go`,
 edited by a parallel agent. The package compiles (`go vet ./tests/bdd/` exit 0)
 and the new guard tests pass; the real-cluster scenarios themselves were not
 re-executed after the change.
+
+## Correction: the earlier root cause was wrong
+
+The resolution above raised the budget from 5 s to 30 s and concluded the flake
+was "a timing budget, not a logic defect". That conclusion was wrong, and the
+flake reappeared after the merge with the 30 s budget already in place. Raising a
+deadline cannot fix a missed window, so the budget was never the lever.
+
+### Measured root cause
+
+The scenario injects `ProviderFailAfterN: 1`, so discovery call 1 succeeds and
+call 2 fails. `collectionLoop` publishes immediately, then waits
+`CollectionDelayMS` (100 ms) and publishes again. The non-stale successful
+document therefore exists only for one collection delay.
+
+Measured on this host with a 5 ms probe: the non-stale document was observable
+for 46-65 ms across four runs (51.9, 60.4, 46.7, 65.5 ms), while
+`waitRealInventory` polls every 50 ms. A poll interval that is comparable to the
+window cannot reliably observe it, so the first wait usually missed it and then
+waited the full budget for a state that had already gone. The 30 s budget made
+each failure slower, not rarer.
+
+The earlier "passes when run alone" observation is consistent with this: an idle
+machine polls at a phase that happens to land inside the window, and load shifts
+the phase.
+
+### Fix
+
+The scenario no longer races the transient window. The durable stale document
+carries the same evidence, so the steps assert on it:
+
+- `the real Endpoint refreshes inventory after provider failure` waits for the
+  durable stale document: one adapter, `Stale`, `DataKnown`,
+  `CollectionFailed`, a recorded `LastSuccessAtMS` and retained sessions.
+- `the real source retains its sessions and is automatically marked stale`
+  asserts `LastSuccessAtMS < LastAttemptAtMS`, which is the durable proof that a
+  successful collection happened first and its data was kept, plus that every
+  retained session is non-empty and attributable to the stale adapter.
+
+Assertion strength was not reduced. The previous version compared the stale
+document against a captured first document; the new version proves the same
+ordering from the durable document alone, and additionally checks session
+attribution.
+
+### Verification
+
+- Scenario run 5 times in isolation: 5/5 pass (4.06-4.71 s each).
+- Full suite `go test ./...`: exit 0, 19 packages ok, 0 FAIL.
+- Non-vacuity proven by two mutations of `internal/endpoint/collector.go`:
+  - `snapshot.Stale = true` -> `false` in the retained-data branch: scenario
+    fails with `Stale:false`.
+  - `snapshot.Sessions = previous.Sessions` -> `nil`: scenario fails with
+    `sessions=0`.
+  Both mutations were reverted and `collector.go` is unchanged.
