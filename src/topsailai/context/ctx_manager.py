@@ -16,6 +16,7 @@ from topsailai.utils import (
     env_tool,
     message_tool,
     thread_local_tool,
+    db_io_tool,
 )
 
 from .chat_history_manager import ALL_MANAGERS
@@ -407,6 +408,8 @@ def _async_update_session_name(
                 logger.warning("auto_rename storage update failed: session_id=%s", session_id)
         except Exception as e:
             logger.debug(f"auto_rename failed for session_id={session_id}: {e}")
+            if db_io_tool.is_db_io_failure(e):
+                raise
 
     # notify the terminal title outside the worker identity scope, so the
     # composed agent name is not extended by an unrelated presentation concern
