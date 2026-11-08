@@ -457,9 +457,9 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	// because it carries its action inside the command word. It is a form of the
 	// ctl command, so it inherits ctl's session-only scope rule and confirmation
 	// gate instead of becoming a second command with its own semantics.
-	ctlCall := ctlInvocation{rest: rest}
+	ctlCall := ctlInvocation{rest: rest, spelling: rawName}
 	if action, dotted := ctlDottedAction(rawName); dotted {
-		ctlCall = ctlInvocation{dotted: true, action: action, rest: rest}
+		ctlCall = ctlInvocation{dotted: true, action: action, rest: rest, spelling: "ctl"}
 		rawName = "ctl"
 	}
 	// The send prefix is resolved before tokenisation: splitCommand splits on the
@@ -601,7 +601,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		return false, interactiveStop(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	case "btw":
 		return false, interactiveSessionPayload(ctx, api, state, protocol.OperationContextInject, name, rest, lineResults, out, trustedOut, options)
-	case "interrupt", "control":
+	case "interrupt":
 		return false, interactiveSessionPayload(ctx, api, state, protocol.OperationExecutionInterrupt, name, rest, lineResults, out, trustedOut, options)
 	case "drive":
 		return false, interactiveDrive(ctx, api, state, rest, lineResults, out, trustedOut, options)

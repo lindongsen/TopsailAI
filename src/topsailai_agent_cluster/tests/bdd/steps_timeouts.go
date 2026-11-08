@@ -96,7 +96,7 @@ func registerTimeoutSteps(ctx *godog.ScenarioContext) {
 		if err != nil {
 			return err
 		}
-		stdout, stderr, code, runErr := activeScenario.realCluster.RunTUI("--json", "--yes", "--wait-timeout-ms", "5000", "control", "endpoint-1", resourceID, `{"text":"wait"}`, generation)
+		stdout, stderr, code, runErr := activeScenario.realCluster.RunTUI("--json", "--yes", "--wait-timeout-ms", "5000", "interrupt", "endpoint-1", resourceID, "hard", generation)
 		if runErr != nil || code != 0 {
 			return fmt.Errorf("run TUI action: code=%d err=%v stderr=%s stdout=%s", code, runErr, stderr, stdout)
 		}

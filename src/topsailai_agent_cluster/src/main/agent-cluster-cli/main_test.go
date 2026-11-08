@@ -356,7 +356,7 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, command := range []string{"list", "refresh", "show", "info", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "drive", "help"} {
+	for _, command := range []string{"list", "refresh", "show", "info", "logs", "status", "send", "btw", "interrupt", "start", "resume", "stop", "drive", "help"} {
 		if !strings.Contains(text, " "+command) {
 			t.Fatalf("help missing dispatched command %q: %q", command, text)
 		}
@@ -410,8 +410,8 @@ func TestStandalonePlainTextPayloadsNeedNoJSON(t *testing.T) {
 	}{
 		{"send", "hello world", `{"text":"hello world"}`},
 		{"btw", "the notes are in docs/", `{"text":"the notes are in docs/"}`},
-		{"control", "soft stop now", `{"action":"soft_interrupt","message":"stop now"}`},
-		{"control", "hard", `{"action":"hard_interrupt"}`},
+		{"interrupt", "soft stop now", `{"action":"soft_interrupt","message":"stop now"}`},
+		{"interrupt", "hard", `{"action":"hard_interrupt"}`},
 		{"start", "summarize the open issues", `{"task":"summarize the open issues"}`},
 	} {
 		got, err := resolveActionPayload(tc.operation, tc.value)
@@ -422,7 +422,7 @@ func TestStandalonePlainTextPayloadsNeedNoJSON(t *testing.T) {
 			t.Fatalf("%s %q payload=%s want=%s", tc.operation, tc.value, got, tc.want)
 		}
 	}
-	if _, err := resolveActionPayload("control", "hard with a message"); err == nil {
+	if _, err := resolveActionPayload("interrupt", "hard with a message"); err == nil {
 		t.Fatal("hard interrupt accepted a message")
 	}
 	if _, err := resolveActionPayload("start", "   "); err == nil {
@@ -939,7 +939,7 @@ func TestStandaloneControlKeepsItsGrammar(t *testing.T) {
 	stub := &allCapabilityStub{}
 	var out strings.Builder
 	input := &unreadableInput{}
-	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"control", "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
+	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"interrupt", "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
 		t.Fatalf("control: %v", err)
 	}
 	if input.reads != 0 {

@@ -224,7 +224,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		return status(ctx, api, output, flags.Arg(1), *jsonMode)
 	case "drive":
 		return driveWithProgress(ctx, api, output, errors, flags.Args()[1:], *confirmed, *jsonMode, *waitTimeoutMS, *generation)
-	case "send", "btw", "interrupt", "control", "start", "resume", "stop":
+	case "send", "btw", "interrupt", "start", "resume", "stop":
 		// A bare send, btw or start reads a multi-line block from the
 		// command input. On a terminal nothing else would prompt, so the
 		// operator would face a silent wait; the hint goes to the diagnostics
@@ -238,7 +238,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		// even when stdin is an interactive terminal.
 		color := tui.OutputColorPolicy(output)
 		return action(ctx, api, output, input, errors, color, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
-	case "ctl":
+	case "ctl", "control":
 		return ctlCommandWithProgress(ctx, api, output, errors, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	case "exec":
 		return execCommandWithProgress(ctx, api, output, errors, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
@@ -657,7 +657,7 @@ func resolveActionPayload(operation, value string) (json.RawMessage, error) {
 	switch operation {
 	case "send", "btw":
 		return tui.MessagePayload(value)
-	case "interrupt", "control":
+	case "interrupt":
 		return tui.InterruptPayload(operation, value)
 	case "start":
 		return tui.TaskPayload(value)
@@ -891,7 +891,7 @@ func operationName(value string) string {
 	if value == "btw" {
 		return "context.inject"
 	}
-	if value == "interrupt" || value == "control" {
+	if value == "interrupt" {
 		return "execution.interrupt"
 	}
 	if value == "start" {

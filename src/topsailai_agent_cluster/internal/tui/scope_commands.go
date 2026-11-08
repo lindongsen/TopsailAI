@@ -71,7 +71,7 @@ var commandAliases = map[string]string{
 	"r":        "refresh",
 	"l":        "list",
 	"w":        "watch",
-	"control":  "interrupt",
+	"control":  "ctl",
 	sendPrefix: "send",
 }
 

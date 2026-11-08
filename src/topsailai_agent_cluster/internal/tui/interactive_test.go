@@ -78,7 +78,7 @@ func (s *interactiveStub) GetInventory(_ context.Context, id string) (protocol.I
 	return report, nil
 }
 func (s *interactiveStub) GetCapabilities(context.Context, string) (protocol.CapabilityDescriptor, error) {
-	return protocol.CapabilityDescriptor{Revision: "r1", Capabilities: []protocol.Capability{{Name: protocol.OperationMessageSend}, {Name: protocol.OperationAgentStart}, {Name: protocol.OperationAgentResume}, {Name: protocol.OperationAgentStop}, {Name: protocol.OperationContextInject}, {Name: protocol.OperationExecutionInterrupt}}}, nil
+	return protocol.CapabilityDescriptor{Revision: "r1", Capabilities: []protocol.Capability{{Name: protocol.OperationMessageSend}, {Name: protocol.OperationAgentStart}, {Name: protocol.OperationAgentResume}, {Name: protocol.OperationAgentStop}, {Name: protocol.OperationContextInject}, {Name: protocol.OperationExecutionInterrupt}, {Name: "ctl.heartbeat"}}}, nil
 }
 func (s *interactiveStub) GetCommand(context.Context, string) (map[string]any, error) {
 	if s.getCommandErr != nil {
@@ -512,7 +512,7 @@ func TestInteractiveControlAliasesAreDocumented(t *testing.T) {
 	// to the canonical name, so "help control" would answer "interrupt" and the
 	// operator could not tell which command the help described.
 	for _, testCase := range []struct{ alias, canonical string }{
-		{alias: "control", canonical: "interrupt"},
+		{alias: "control", canonical: "ctl"},
 	} {
 		t.Run(testCase.alias, func(t *testing.T) {
 			var aliasOutput, canonicalOutput strings.Builder
@@ -579,14 +579,14 @@ func TestInteractiveSessionActionValidation(t *testing.T) {
 func TestInteractiveControlAliasesExecuteSharedOperations(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	input := "cd endpoint-1/session-1\nbtw {\"text\":\"alias context\"}\ny\ncontrol {\"action\":\"soft_interrupt\"}\ny\nexit\n"
+	input := "cd endpoint-1/session-1\nbtw {\"text\":\"alias context\"}\ny\ncontrol heartbeat\n\ny\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if errorsOut.Len() != 0 || stub.admit != 2 {
 		t.Fatalf("output=%q errors=%q admits=%d", output.String(), errorsOut.String(), stub.admit)
 	}
-	for _, phrase := range []string{"btw session-1?", "interrupt session-1?"} {
+	for _, phrase := range []string{"btw session-1?", "control heartbeat?"} {
 		if !strings.Contains(output.String(), phrase) {
 			t.Fatalf("output missing %q: %q", phrase, output.String())
 		}

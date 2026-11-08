@@ -117,7 +117,7 @@ func runUnsupportedTUIAction() error {
 	if err != nil {
 		return err
 	}
-	stdout, stderr, code, err := activeScenario.realCluster.RunTUI("--json", "--yes", "control", "endpoint-1", resourceID, `{"text":"unsupported"}`)
+	stdout, stderr, code, err := activeScenario.realCluster.RunTUI("--json", "--yes", "ctl", "endpoint-1", resourceID, "not_advertised")
 	activeScenario.lastBody = append([]byte(stdout), []byte(stderr)...)
 	activeScenario.lastStatus = code
 	if err == nil || code == 0 {

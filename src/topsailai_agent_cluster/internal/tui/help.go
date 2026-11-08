@@ -228,12 +228,12 @@ func CommandHelpLines() []string {
 	return formatHelpBlock(cells, descriptions)
 }
 
-var nonInteractiveHelpOrder = []string{"list", "refresh", "history", "endpoints", "show", "info", "logs", "status", "send", "btw", "interrupt", "control", "ctl", "exec", "start", "resume", "stop", "drive", "help", "interactive"}
+var nonInteractiveHelpOrder = []string{"list", "refresh", "history", "endpoints", "show", "info", "logs", "status", "send", "btw", "interrupt", "ctl", "exec", "start", "resume", "stop", "drive", "help", "interactive"}
 
 // nonInteractiveHelpAliases maps accepted standalone spellings to the advertised
 // command. The advertised list keeps one spelling per surface, while an accepted
 // alias still resolves to the same detailed help.
-var nonInteractiveHelpAliases = map[string]string{}
+var nonInteractiveHelpAliases = map[string]string{"control": "ctl"}
 
 // NonInteractiveCommandHelpLines returns only commands dispatched by the standalone CLI.
 func NonInteractiveCommandHelpLines() []string {
@@ -345,16 +345,6 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [text] [generation]"
 		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID", "text: literal context text; no JSON is required", "without text: read a multi-line context block from stdin and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the context", "generation: optional expected generation", "--json: write the structured receipt instead of the rendered one"}
 		entry.examples = []string{"btw endpoint-1 res_abc the deployment notes are in docs/", `btw endpoint-1 res_abc {"text":"context"}`}
-	case "control":
-		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [text] [generation]"
-		// The catalog entry is the interactive spelling, so its parameters and
-		// examples describe the REPL form: an action word followed by free text,
-		// with --json rejected. The standalone surface separates the payload by
-		// argv position and accepts --json, so both lists are replaced instead of
-		// inherited. An example that names "interrupt" would be unusable here,
-		// because the standalone CLI rejects that spelling as an unknown command.
-		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID", "text: optional action word soft or hard, optionally followed by a literal message; hard accepts no message", "generation: optional expected generation", "--yes: confirm the interrupt, which is required because it cannot be undone", "--json: write the structured receipt instead of the rendered one"}
-		entry.examples = []string{"control endpoint-1 res_abc soft", "control endpoint-1 res_abc soft stop and summarize now", "control endpoint-1 res_abc hard"}
 	case "interrupt":
 		// interrupt is the only spelling of execution interruption, so the
 		// standalone entry replaces the interactive parameter list instead of
@@ -365,6 +355,12 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.examples = []string{"interrupt endpoint-1 res_abc", "interrupt endpoint-1 res_abc soft", "interrupt endpoint-1 res_abc soft stop and summarize now", "interrupt endpoint-1 res_abc hard"}
 	case "ctl":
 		entry.syntax = "agent-cluster-cli [options] ctl <endpoint> <resource> <action> [json] [generation]"
+		// The catalog entry is the interactive spelling, so its parameters
+		// describe the REPL form and reject --json. The standalone surface
+		// separates the payload by argv position and accepts --json, so both
+		// lists are replaced instead of inherited.
+		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID", "action: advertised control action name", "json: optional JSON object payload; empty sends no parameters", "generation: optional expected generation", "--yes: confirm the control action, which is required because it mutates the session", "--json: write the structured receipt instead of the rendered one"}
+		entry.examples = []string{"ctl endpoint-1 res_abc heartbeat", `ctl endpoint-1 res_abc pause {"reason":"maintenance"}`}
 	case "exec":
 		// exec is a standalone-only spelling: it has no interactive command word
 		// because the interactive form is the "!" input prefix. It therefore has

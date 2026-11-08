@@ -290,6 +290,19 @@ type ctlInvocation struct {
 	dotted bool
 	action string
 	rest   string
+	// spelling is the command word the operator typed, so the confirmation gate
+	// and the progress label echo "control" when that is what was typed. The
+	// protocol operation stays the canonical ctl.<action> spelling, because the
+	// alias is a CLI convenience and never a second wire identity.
+	spelling string
+}
+
+// displayName is the command word used in operator-facing text.
+func (invocation ctlInvocation) displayName() string {
+	if invocation.spelling == "" {
+		return "ctl"
+	}
+	return invocation.spelling
 }
 
 // ctlSuppliedParameters reports whether the command line already carried at least
@@ -345,7 +358,7 @@ func interactiveCtl(parent context.Context, api InteractiveAPI, state *interacti
 	if err != nil {
 		return err
 	}
-	return interactiveConfirmedAction(parent, api, state, ctlOperationPrefix+action, "ctl "+action, confirmationTargetFor(*session), session.Generation, payload, lines, out, trustedOut, options, nil, nil)
+	return interactiveConfirmedAction(parent, api, state, ctlOperationPrefix+action, invocation.displayName()+" "+action, confirmationTargetFor(*session), session.Generation, payload, lines, out, trustedOut, options, nil, nil)
 }
 
 // ctlResolveAction returns the action and the payload the command line already
