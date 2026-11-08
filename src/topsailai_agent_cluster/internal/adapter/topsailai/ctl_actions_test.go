@@ -245,6 +245,47 @@ func TestExecuteRejectsUnconfiguredControlAction(t *testing.T) {
 	}
 }
 
+// TestExecuteReportsPayloadConflictSeparately proves a payload that disagrees
+// with a value the catalog entry fixes itself is reported as a payload conflict,
+// not as an unconfigured action. The two failures need different operator
+// responses: one means the catalog is missing an entry, the other means the entry
+// exists and the payload is wrong.
+func TestExecuteReportsPayloadConflictSeparately(t *testing.T) {
+	const pinnedCatalog = `{
+  "actions": [
+    {"name": "pinned", "permission": "read_output", "payload_constants": {"instruction": "probe.one"}, "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]}
+  ]
+}`
+	runner := &fakeRunner{}
+	binding, err := newWithRunner(Config{
+		AdapterID:      "a1",
+		Executable:     "/provider",
+		MaxOutput:      1024,
+		ResourceMapper: newFakeMapper(),
+		ControlActions: newTestControlSet(t, pinnedCatalog),
+		PlatformProbe: func() (PlatformCapabilities, error) {
+			return PlatformCapabilities{ProcAvailable: true, PidfdAvailable: true}, nil
+		},
+	}, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := controlIntent(t, binding, "ctl.pinned", []byte(`{"instruction":"probe.two"}`))
+	result, err := binding.Execute(context.Background(), adapter.ExecuteRequest{Intent: intent})
+	if !errors.Is(err, errControlPayloadConflict) {
+		t.Fatalf("error = %v, want errControlPayloadConflict", err)
+	}
+	if runner.args != nil {
+		t.Fatalf("provider was invoked with %v", runner.args)
+	}
+	if result.Receipt.ErrorCode != "control_payload_conflict" {
+		t.Fatalf("error code = %q, want control_payload_conflict", result.Receipt.ErrorCode)
+	}
+	if result.Receipt.EffectCertainty != protocol.EffectNotApplied {
+		t.Fatalf("effect certainty = %q, want not_applied", result.Receipt.EffectCertainty)
+	}
+}
+
 // TestExecuteStillRejectsUnknownOperation proves a non-ctl operation keeps its
 // existing unsupported result.
 func TestExecuteStillRejectsUnknownOperation(t *testing.T) {

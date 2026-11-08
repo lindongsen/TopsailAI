@@ -14,6 +14,13 @@ import (
 // Endpoint does not serve. It is a definite failure: nothing was sent.
 var errControlActionUnreviewed = errors.New("provider control action is not configured")
 
+// errControlPayloadConflict reports that a supplied payload field disagrees with
+// the value the catalog entry fixes itself. It is a definite failure: nothing was
+// sent. It is distinct from errControlActionUnreviewed because the action is
+// configured and the caller reached it; the payload is what did not match, so
+// reporting "not configured" would send the operator looking for a missing entry.
+var errControlPayloadConflict = errors.New("control payload conflicts with the configured action")
+
 // controlActionCapabilities returns one capability per enabled control action.
 //
 // The catalog is the only source of actions. A nil set means no control action
@@ -113,10 +120,10 @@ func controlActionConstantPayload(action ControlAction, payload []byte) ([]byte,
 		if supplied, ok := envelope[field]; ok {
 			var value string
 			if err := json.Unmarshal(supplied, &value); err != nil {
-				return nil, fmt.Errorf("%s must be a string: %w", field, err)
+				return nil, fmt.Errorf("%w: %s must be a string", errControlPayloadConflict, field)
 			}
 			if value != constant {
-				return nil, fmt.Errorf("%s %q does not match the %q this action fixes", field, value, constant)
+				return nil, fmt.Errorf("%w: %s %q does not match the %q this action fixes", errControlPayloadConflict, field, value, constant)
 			}
 		}
 		encodedConstant, err := json.Marshal(constant)

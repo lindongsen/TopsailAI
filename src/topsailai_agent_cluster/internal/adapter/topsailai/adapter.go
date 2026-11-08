@@ -433,7 +433,15 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 		}
 		controlArgs, controlErr := controlActionArgs(a.config.ControlActions, operation, providerKey, intent.Payload)
 		if controlErr != nil {
-			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "control_action_unconfigured")}, controlErr
+			// A payload that disagrees with a value the catalog entry fixes itself
+			// is a different failure from an action the Endpoint does not serve.
+			// Reporting "unconfigured" would send the operator looking for a
+			// missing catalog entry when the entry exists and the payload is wrong.
+			code := "control_action_unconfigured"
+			if errors.Is(controlErr, errControlPayloadConflict) {
+				code = "control_payload_conflict"
+			}
+			return adapter.ExecuteResult{Receipt: failedReceipt(intent, code)}, controlErr
 		}
 		args = controlArgs
 	}

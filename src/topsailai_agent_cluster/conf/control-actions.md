@@ -310,7 +310,10 @@ enforced when the file loads:
   the selector itself.
 - A supplied value that disagrees with the constant is rejected rather than
   overwritten. The catalog is the authorization surface, so a caller must not reach
-  a different instruction through an entry that advertises one.
+  a different instruction through an entry that advertises one. The rejection is
+  reported as `control_payload_conflict` with `not_applied` effect certainty, which
+  is distinct from `control_action_unconfigured`: the entry exists and the payload
+  is wrong, so the operator must not go looking for a missing catalog entry.
 
 A shortcut inherits its target's constants and may not declare its own.
 
