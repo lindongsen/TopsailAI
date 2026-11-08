@@ -77,18 +77,10 @@ func (c *APIClient) GetOutput(ctx context.Context, endpointID, resourceID, gener
 	return result, err
 }
 
-// FollowChunk is one streamed output record delivered by FollowOutput.
-//
-// Exactly one FollowChunk carries End, and it is always the last one, so a caller
-// that stops receiving records without End must treat the stream as interrupted
-// rather than complete.
-type FollowChunk struct {
-	Lines        []string
-	ObservedAtMS int64
-	Truncated    bool
-	End          bool
-	ErrorCode    string
-}
+// FollowChunk is one streamed output record delivered by FollowOutput. It is an
+// alias of the protocol record so the terminal surfaces can consume the same
+// vocabulary without importing this HTTP client.
+type FollowChunk = protocol.OutputFollowRecord
 
 // FollowOutput streams output records for a resource until the stream ends or ctx
 // is cancelled.

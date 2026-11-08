@@ -48,6 +48,9 @@ type interactiveState struct {
 	commandID string
 	// watch is the armed auto-refresh intent; it is consumed by the next prompt.
 	watch *watchRequest
+	// follow is the armed output-follow intent; it is consumed by the next
+	// prompt, so a keypress that stops the stream cannot re-arm it.
+	follow *followRequest
 }
 
 type interruptController struct {
@@ -241,6 +244,17 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			// read cannot be interrupted from outside. The reader stops it on the
 			// first keypress, so the loop never outlives the prompt it serves.
 			watch := startWatch(readCtx, api, &state, options)
+			// An armed follow stream takes precedence over an armed auto-refresh
+			// loop, because the operator asked for one specific session's output
+			// and a moving table would compete for the same terminal rows. The
+			// superseded loop is stopped here, so its goroutine never outlives the
+			// prompt that armed it.
+			if follow := startFollow(readCtx, api, &state, options); follow != nil {
+				if watch != nil {
+					watch.Stop()
+				}
+				watch = follow
+			}
 			if watch != nil && options.WatchReader != nil {
 				line, overflow, err = options.WatchReader.ReadLineWithWatch(readCtx, prompt.String(), true, options.LineLimit, watch)
 			} else {

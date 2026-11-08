@@ -125,9 +125,10 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 		// Any decoded key ends the loop before it is applied, so the operator's
 		// next action always runs against a table that has stopped moving.
 		if watch != nil {
+			label := watchStopLabel(watch)
 			watch.Stop()
 			watch = nil
-			if _, err = io.WriteString(t.output, "auto-refresh stopped\r\n"); err != nil {
+			if _, err = io.WriteString(t.output, label+"\r\n"); err != nil {
 				return
 			}
 		}
@@ -213,6 +214,16 @@ func (t *TerminalEditor) inputRows() int {
 		}
 	}
 	return defaultInputRows
+}
+
+// watchStopLabel names the loop in the stop message. A session that does not
+// name itself keeps the auto-refresh wording, so the existing behaviour stays
+// byte-identical for every caller that predates follow.
+func watchStopLabel(watch WatchSession) string {
+	if labelled, ok := watch.(followStopLabel); ok {
+		return labelled.StopLabel()
+	}
+	return "auto-refresh stopped"
 }
 
 // applyWatch prints one pending refresh between keypresses. The whole input

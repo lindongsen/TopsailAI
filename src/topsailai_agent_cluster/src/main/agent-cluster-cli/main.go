@@ -90,6 +90,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	waitTimeoutMS := flags.Int64("wait-timeout-ms", 0, "maximum local wait for command completion in milliseconds")
 	maxBytes := flags.Int("max-bytes", 64<<10, "maximum output snapshot size in bytes")
 	lines := flags.Int("lines", 100, "maximum number of output lines returned by logs")
+	follow := flags.Bool("follow", false, "stream output records until interrupted; logs only")
 	noColor := flags.Bool("no-color", false, "disable terminal colors")
 	noTruncate := flags.Bool("no-truncate", false, "disable table truncation; a narrow terminal wraps instead of clipping")
 	profile := flags.String("profile", "", "launch profile ID for start")
@@ -171,7 +172,16 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if flags.NArg() != 3 {
 			return fmt.Errorf("usage: logs <endpoint-id> <session-id>")
 		}
-		return logs(ctx, api, output, flags.Arg(1), flags.Arg(2), *maxBytes, *lines, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
+		color := tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)
+		if *follow {
+			// The process installs a SIGINT handler, so the default termination is
+			// disabled. A standalone follow therefore has to observe the interrupt
+			// itself, or Ctrl-C would be swallowed and the stream would never end.
+			followCtx, stopFollow := interruptContext(ctx, interrupts)
+			defer stopFollow()
+			return followLogs(followCtx, api, output, flags.Arg(1), flags.Arg(2), *generation, *maxBytes, *lines, *jsonMode, color)
+		}
+		return logs(ctx, api, output, flags.Arg(1), flags.Arg(2), *maxBytes, *lines, *jsonMode, color)
 	case "status":
 		if flags.NArg() != 2 {
 			return fmt.Errorf("usage: status <command-id>")
@@ -377,6 +387,51 @@ func status(ctx context.Context, api tui.CommandAPI, output io.Writer, commandID
 
 func logs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID, resourceID string, maxBytes, maxLines int, jsonMode bool, color tui.ColorPolicy) error {
 	return legacyRunner(api).Logs(ctx, output, endpointID, resourceID, maxBytes, maxLines, jsonMode, color)
+}
+
+// interruptContext derives a cancellable context that ends on the first
+// interrupt signal. The returned stop function releases the watcher, so a
+// completed stream never leaves a goroutine behind.
+func interruptContext(parent context.Context, interrupts <-chan os.Signal) (context.Context, func()) {
+	if interrupts == nil {
+		return parent, func() {}
+	}
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		select {
+		case <-interrupts:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, func() {
+		cancel()
+		<-done
+	}
+}
+
+// followLogs streams output records for one session. The generation is resolved
+// from the committed inventory first, so the stream is bound to the exact
+// session the operator named rather than to whatever the provider reports later.
+// The standalone surface has no terminal to observe a keypress, so the operator
+// stops the stream with an interrupt signal.
+func followLogs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID, resourceID, generation string, maxBytes, maxLines int, jsonMode bool, color tui.ColorPolicy) error {
+	runner := legacyRunner(api)
+	if generation == "" {
+		report, err := api.GetInventory(ctx, endpointID)
+		if err != nil {
+			return err
+		}
+		for _, session := range report.Sessions {
+			if session.SessionID == resourceID {
+				generation = session.Generation
+				break
+			}
+		}
+	}
+	return runner.FollowLogs(ctx, output, endpointID, resourceID, generation, maxBytes, maxLines, jsonMode, color)
 }
 
 // drive dispatches the standalone drive surface. status is a read projection of

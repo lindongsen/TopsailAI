@@ -196,6 +196,21 @@ type OutputEnd struct {
 	Truncated    bool   `json:"truncated,omitempty"`
 }
 
+// OutputFollowRecord is one streamed output record delivered to a consumer.
+//
+// Exactly one record carries End, and it is always the last one, so a consumer
+// that stops receiving records without End must treat the stream as interrupted
+// rather than complete. The type lives in the protocol package because both the
+// API client and the terminal surfaces consume it, and the terminal package must
+// not depend on the HTTP client.
+type OutputFollowRecord struct {
+	Lines        []string
+	ObservedAtMS int64
+	Truncated    bool
+	End          bool
+	ErrorCode    string
+}
+
 // CanonicalHash computes a versioned digest of the immutable intent fields.
 func CanonicalHash(intent ImmutableIntent) (string, error) {
 	if intent.HashVersion == "" || intent.CommandID == "" || intent.EndpointID == "" || intent.Operation == "" || intent.OperationVersion == "" || intent.CapabilityRevision == "" || intent.PayloadSchemaVersion == "" {
