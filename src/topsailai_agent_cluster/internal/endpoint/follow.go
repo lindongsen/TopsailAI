@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"topsailai_agent_cluster/internal/adapter"
 	"topsailai_agent_cluster/internal/channel"
 	"topsailai_agent_cluster/internal/protocol"
 )
@@ -87,6 +88,10 @@ func (s *Service) runFollow(ctx context.Context, requestID string, follower Outp
 	case err == nil:
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		code = "cancelled"
+	case errors.Is(err, adapter.ErrUnsupported):
+		// The adapter cannot stream. Reporting unsupported is honest; degrading
+		// the request into a snapshot would show a stream that never updates.
+		code = "unsupported"
 	default:
 		code = "provider_error"
 		s.logError("follow provider output", err)

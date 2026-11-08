@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"topsailai_agent_cluster/internal/adapter"
 	"topsailai_agent_cluster/internal/channel"
 	"topsailai_agent_cluster/internal/protocol"
 )
@@ -113,6 +114,22 @@ func TestStartFollowReportsProviderError(t *testing.T) {
 	transport.mu.Unlock()
 	if end == nil || end.ErrorCode != "provider_error" {
 		t.Fatalf("end=%#v want provider_error", end)
+	}
+}
+
+// TestStartFollowReportsUnsupportedWhenAdapterCannotStream proves an adapter that
+// reports ErrUnsupported ends the stream with "unsupported" rather than
+// "provider_error", because a missing capability is not a provider failure.
+func TestStartFollowReportsUnsupportedWhenAdapterCannotStream(t *testing.T) {
+	executor := &followExecutor{followErr: adapter.ErrUnsupported}
+	service, transport := newFollowService(t, executor)
+	service.startFollow(context.Background(), channel.Frame{Type: channel.FrameOutputFollowRequest, RequestID: "req-unsup", OutputFollowRequest: &protocol.OutputFollowRequest{ResourceID: "r"}})
+	waitForFrames(t, transport, channel.FrameOutputEnd, 1)
+	transport.mu.Lock()
+	end := transport.frames[len(transport.frames)-1].OutputEnd
+	transport.mu.Unlock()
+	if end == nil || end.ErrorCode != "unsupported" {
+		t.Fatalf("end=%#v want unsupported", end)
 	}
 }
 
