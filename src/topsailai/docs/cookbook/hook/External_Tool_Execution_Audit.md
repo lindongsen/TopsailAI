@@ -358,7 +358,7 @@ ls -1 /tmp/hook-audit-demo/audit
 
 ```text
 Approval timeout denied for tool [incident-review] instance=7e843848-87d8-4850-b095-63ab29001e42 policy=deny
-raised: ToolApprovalDeniedError Tool 'incident-review' was not approved (status: denied).
+raised: ToolApprovalDeniedError Tool 'incident-review' was not approved (status: denied, rule: deny-incident-review).
 --- audit folder
 ```
 
