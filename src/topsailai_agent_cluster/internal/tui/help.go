@@ -333,9 +333,13 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 	case "endpoints":
 		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] endpoints [endpoint-id]"
 	case "send":
+		// The standalone entry replaces the interactive parameter list instead of
+		// appending to it. The catalog entry rejects --json because the REPL has no
+		// machine output, and appending would also repeat the "without text"
+		// parameter that the catalog already states.
 		entry.syntax = "agent-cluster-cli [options] send <endpoint> <resource> [text] [generation]"
 		entry.description = "send a message to one session; without text it reads a multi-line message from stdin"
-		entry.parameters = append(entry.parameters, "without text: read a multi-line message from stdin and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the message")
+		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID", "text: message text, or a JSON object with a text field; an explicit text is submitted without a confirmation question", "without text: read a multi-line message from stdin and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the message", "generation: optional expected generation", "--json: write the structured receipt instead of the rendered one"}
 	case "btw":
 		// btw is the only spelling of context injection, so the standalone entry
 		// replaces the interactive parameter list instead of appending to it. The
