@@ -19,6 +19,8 @@ func TestTerminalTabCompletion(t *testing.T) {
 		{"unknown", "workspace> ", "xyz\t\r", "xyz", "", true, 128},
 		{"scope", "workspace> ", "res\t\r", "resume ", "", true, 128},
 		{"session", ansiBoldGreen + "session[demo/id]>" + ansiReset + " ", "bt\t\r", "btw ", "", true, 128},
+		{"alias", "session[demo/id]> ", "con\t\r", "control ", "", true, 128},
+		{"alias-prefix", "session[demo/id]> ", "cont\t\r", "control ", "", true, 128},
 		{"endpoint", "endpoint[demo]> ", "lo\t\r", "logs ", "", true, 128},
 		{"argument", "session[demo/id]> ", "send {}\t\r", "send {}", "", true, 128},
 		{"middle", "workspace> ", "hep\x1b[D\t\r", "hep", "", true, 128},

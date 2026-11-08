@@ -417,6 +417,44 @@ func TestPrintNonInteractiveCommandHelp(t *testing.T) {
 	}
 }
 
+// TestContextHelpListsOnlyScopeAliases proves the first-use overview names the
+// aliases the current scope accepts and never advertises one it rejects. A
+// spelling that the scope refuses would send the operator straight into a scope
+// error, so the alias line is filtered by the same availability rule the
+// dispatcher uses.
+func TestContextHelpListsOnlyScopeAliases(t *testing.T) {
+	for _, testCase := range []struct {
+		kind ScopeKind
+		want string
+	}{
+		{ScopeWorkspace, "Aliases: ?=help, l=list, q=quit, r=refresh, w=watch"},
+		{ScopeEndpoint, "Aliases: ?=help, l=list, q=quit, r=refresh, w=watch"},
+		{ScopeSession, "Aliases: >=send, ?=help, control=ctl, l=list, q=quit, r=refresh"},
+	} {
+		t.Run(testCase.kind.String(), func(t *testing.T) {
+			var out strings.Builder
+			if err := PrintScopedCommandHelp(&out, "", testCase.kind); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), testCase.want) {
+				t.Fatalf("scope=%s missing %q in %q", testCase.kind, testCase.want, out.String())
+			}
+		})
+	}
+	// The session-only spellings must never reach a scope that rejects them.
+	for _, kind := range []ScopeKind{ScopeWorkspace, ScopeEndpoint} {
+		var out strings.Builder
+		if err := PrintScopedCommandHelp(&out, "", kind); err != nil {
+			t.Fatal(err)
+		}
+		for _, leaked := range []string{">=send", "control=ctl"} {
+			if strings.Contains(out.String(), leaked) {
+				t.Fatalf("scope=%s advertised %q: %q", kind, leaked, out.String())
+			}
+		}
+	}
+}
+
 // TestContextHelpExampleMatchesScope keeps examples executable in the current scope.
 func TestContextHelpExampleMatchesScope(t *testing.T) {
 	for _, kind := range []ScopeKind{ScopeWorkspace, ScopeEndpoint, ScopeSession} {

@@ -567,6 +567,9 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 			return err
 		}
 	}
+	if _, err := fmt.Fprintln(out, "\nAliases: "+scopeAliasHelp(kind)); err != nil {
+		return err
+	}
 	workflow := "Next: list -> <number> or cd <number> -> show/logs. Run help list for row selection rules."
 	if kind == ScopeSession {
 		workflow = "Bare cd or cd / returns to workspace; cd .. returns to endpoint. Numeric row navigation is unavailable in session scope.\n" +
@@ -625,6 +628,21 @@ func commandAliasHelp() string {
 	aliases := make([]string, 0, len(commandAliases))
 	for alias, canonical := range commandAliases {
 		aliases = append(aliases, alias+"="+canonical)
+	}
+	sort.Strings(aliases)
+	return strings.Join(aliases, ", ")
+}
+
+// scopeAliasHelp renders the aliases usable in one scope, so the first-use
+// overview names them instead of hiding them until help all. An alias outside
+// the current scope is omitted, because advertising a spelling the scope rejects
+// would send the operator straight into a scope error.
+func scopeAliasHelp(kind ScopeKind) string {
+	aliases := make([]string, 0, len(commandAliases))
+	for alias, canonical := range commandAliases {
+		if commandAllowed(alias, kind) {
+			aliases = append(aliases, alias+"="+canonical)
+		}
 	}
 	sort.Strings(aliases)
 	return strings.Join(aliases, ", ")

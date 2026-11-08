@@ -52,7 +52,7 @@ func (t *TerminalEditor) completeCommand(prompt string) error {
 		if strings.IndexFunc(prefix, unicode.IsSpace) >= 0 {
 			return nil
 		}
-		for _, name := range availableCommands(kind) {
+		for _, name := range completableCommands(kind) {
 			if strings.HasPrefix(name, matchPrefix) {
 				matches = append(matches, name)
 			}
