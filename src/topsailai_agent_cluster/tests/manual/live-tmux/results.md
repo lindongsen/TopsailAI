@@ -18,6 +18,7 @@ Detailed machine-readable case ledger and full terminal captures are stored unde
 | Lifecycle and controls | PASS | LIFE-01..LIFE-09, ERR-11, ERR-13 |
 | Failures and cleanup | PARTIAL | ERR-05 BLOCKED, ERR-08 BLOCKED, ERR-09/ERR-12/ERR-14 PASS |
 | Input ergonomics | PASS | ERG-01..ERG-08, E6-01..E6-05 in `.tmp/live-tmux-audit/e5/evidence/` and `.tmp/live-tmux-audit/e6/evidence/` |
+| Instruction shortcuts | PASS | CTLSHORT-01..CTLSHORT-05 against the isolated stack on API port 35739 |
 
 A module is not complete while required cases are failed or blocked. Fixes must name the failing case, root cause, regression checks and live rerun evidence. No blanket guarantee may replace this status table.
 
@@ -62,6 +63,36 @@ Run against revision `f7257e00`; evidence under `.tmp/live-tmux-audit/e5/evidenc
 
 `logs` is unavailable in workspace scope, so a provider-ID `logs` case must be run from endpoint or session scope; a workspace-scope run only proves the scope rejection and must not be recorded as an identifier result.
 
+## Instruction shortcut case outcomes
+
+Run against the isolated stack on API port 35739 with the shipped catalog, which loaded 48
+actions including the 27 instruction shortcuts. Evidence is the CLI receipt and the provider
+document it returned; no case is recorded from expectation.
+
+| Case | Outcome | Evidence |
+| --- | --- | --- |
+| CTLSHORT-01 disagreeing constant | PASS | `ctl.git.status` with `{"instruction":"ctx.history"}` returned `Status: rejected`, `ErrorCode: control_payload_conflict`, `EffectCertainty: not_applied`, `DeliveryBoundary: not_started`; the provider was never invoked |
+| CTLSHORT-02 empty payload | PASS | `ctl.git.status` with `{}` returned `Status: finished`, `ErrorCode: ""`, and genuine `git status` output (`On branch staging ... nothing to commit, working tree clean`); the decoded `intent_json` still carries `"payload":{}`, so the constant is injected at dispatch and not by the client |
+| CTLSHORT-03 `ctl.ctx.history` | PASS | `Status: finished`, `ErrorCode: ""`, provider `result` begins with the conversation-history separator line |
+| CTLSHORT-04 `ctl.agent.tokens` | PASS | `Status: finished`, `ErrorCode: ""`, provider `result` begins `Model: DeepSeek-V4-Flash-Preview` then `Agent2LLM:` |
+| CTLSHORT-05 `ctl.git.branch` | PASS | `Status: finished`, `ErrorCode: ""`, provider `result` is `  main\n* staging\n` |
+
+CTLSHORT-01 is the case that distinguishes the two failure classes. Before the fix it reported
+`control_action_unconfigured`, which sends the operator looking for a missing catalog entry when
+the entry exists and the payload is wrong. It now reports `control_payload_conflict` with
+`not_applied` effect certainty, so the operator knows nothing was sent and the payload is what
+must change.
+
+CTLSHORT-02 is the case that proves the mechanism. The client submitted an empty payload, and the
+provider still received `git.git_status`, so the catalog entry supplied the instruction. The
+receipt's `intent_json` is the client's own intent and still shows `"payload":{}`, which is why the
+injection point is the adapter and not the CLI.
+
+A pinned constant narrows what the menu offers, not what a hand-built payload can reach: the
+Endpoint does not validate a payload against the advertised schema, so a caller that builds the
+payload itself can still name any instruction the provider registers. Closing that gap needs
+Endpoint-side schema validation and is not part of this change.
+
 ## Defects found and fixed during this run
 
 | Defect | Root cause | Fix commit |
@@ -80,6 +111,7 @@ Run against revision `f7257e00`; evidence under `.tmp/live-tmux-audit/e5/evidenc
 | `start` wizard demanded a raw endpoint identifier | no numbered endpoint choice | `36fdcbcb` |
 | Actionable errors named only long identifier forms | messages predated the short forms | `29380344` |
 | The `SESSION_ID` column showed an identifier the CLI rejected | `FindSession` matched only the internal resource ID | `f7257e00` |
+| A payload disagreeing with a pinned constant reported `control_action_unconfigured` | one error code covered both a missing catalog entry and a wrong payload | `c77139d6` |
 
 ## Remaining work
 
