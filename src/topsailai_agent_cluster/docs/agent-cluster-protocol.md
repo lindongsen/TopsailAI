@@ -200,6 +200,7 @@ All paths below are proposed, not existing APIs. JSON responses use a common env
 | POST /api/v1/commands | Admit one target-bound, capability-validated intent |
 | GET /api/v1/commands/{command_id} | Durable delivery and result evidence |
 | GET /api/v1/output/snapshot | Bounded output for an exact authorized source |
+| GET /api/v1/output/follow | Streamed output records for an exact authorized source, newline-delimited JSON |
 | GET /api/v1/events | Authorized SSE updates with replay ID |
 | POST /api/v1/output/subscriptions | Admit a bounded demand-driven output subscription |
 | DELETE /api/v1/output/subscriptions/{id} | Release only that owned subscription |
@@ -208,7 +209,11 @@ Enrollment, credential rotation and revocation are administrative operations spe
 
 A command request contains client-generated command_id, endpoint_id, target kind/ID/generation (or launch_profile_id/profile_revision for start), operation/version, capability_revision, typed payload, expiry and optional expected_resource_revision. Server derives the operator identity and permissions from authentication, never from client-provided authority claims. HTTP 202 means Server admission only. A repeated ID with identical canonical intent returns its prior state; changed intent returns conflict. Owner/scope checks precede duplicate-result disclosure.
 
-SSE uses resource changes, command updates and freshness events. Output subscriptions return an authorized stream reference. MVP does not periodically refresh stdout snapshots. Explicit snapshot requests are one-shot reads; continuous subscriptions, if approved and supported, must provide true stream semantics rather than timer-driven snapshots.
+SSE uses resource changes, command updates and freshness events. MVP does not periodically refresh stdout snapshots. Explicit snapshot requests are one-shot reads.
+
+Output follow is implemented as a real stream over the existing authenticated WebSocket, not as a timer-driven snapshot. One `output_follow_request` frame starts a stream; the Endpoint answers with repeated `output_chunk` frames and exactly one terminal `output_end` frame, all correlated by the same request ID. The Server exposes it as `GET /api/v1/output/follow`, which writes newline-delimited JSON: chunk records followed by exactly one end record. A transport that cannot stream returns `503 unsupported` rather than degrading into a snapshot, because a snapshot presented as a stream would look complete while silently missing everything written after it.
+
+The `POST`/`DELETE /api/v1/output/subscriptions` routes above remain unimplemented proposals. They are not required for follow, because a follow stream is bounded by its own request and ends with its terminal frame; a durable subscription would add retained state that the current design does not need.
 
 ## Command lifecycle and uncertain effects
 
@@ -262,6 +267,8 @@ SQLite serializes write transactions; use bounded transaction lengths, a bounded
 Real follow support requires an opaque cursor bound to source identity/generation plus an offset/sequence, rotation detection and bounded retention. Cursor expiry returns an explicit gap and recovery option. Do not derive a reliable cursor from a tail snapshot or deduplicate identical text lines: repeated lines can be legitimate.
 
 Snapshot-only providers return snapshot_id, observation time, returned content and partial/truncation evidence. The TUI replaces the panel snapshot rather than appending inferred new lines. MVP performs no periodic stdout snapshot refresh. One-shot reads show their observation time; they promise neither complete history nor sub-second follow.
+
+Implemented follow semantics: a follow stream is a live tail, not a historical replay. It starts from the provider's current position and carries each record's observation time, so a consumer can tell when a record was observed. It does not promise complete history, and it does not promise that no record was missed between the last snapshot and the start of the stream. A provider that cannot tail reports `unsupported` rather than returning a snapshot. The Endpoint bounds concurrent follows (`maxConcurrentFollows = 8`) and rejects an excess request with `too_many_follows` instead of queueing it, so a long follow can never starve commands, heartbeats, inventory reports or launch queries on the same channel.
 
 Bound frame bytes, queues, output rate, subscriptions per operator and per Endpoint, CLI concurrency and snapshot size. Reserve transport capacity for heartbeat/control. Backpressure on output drops or pauses only with explicit gap/status events; control admission fails visibly when full. Slow consumers expire their subscriptions and can re-query state. Secrets and escape sequences are never rendered as trusted terminal commands.
 

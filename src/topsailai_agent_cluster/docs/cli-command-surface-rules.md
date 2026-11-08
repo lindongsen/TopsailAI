@@ -81,7 +81,7 @@ was dispatched rather than rejected as unknown.
 | `endpoints` | `endpoints` | `endpoints` | yes |
 | `show` | `show` | `show` | yes |
 | `info` | `info` | `info` | yes |
-| `logs` | `logs` | `logs` | yes |
+| `logs` | `logs`, `logs --follow` | `logs`, `logs -f` | yes |
 | `status` | `status` | `status` | yes |
 | `send` | `send` | `send`, `>` | yes |
 | `context.inject` | `btw`, `inject` | `inject`, `btw` | yes |
@@ -212,6 +212,13 @@ Both families are one-shot: a single bounded snapshot carrying its observation t
 never a stream, a follow or a durable subscription. Neither may silently degrade; an
 unavailable capability returns an explicit error rather than cached or partial data.
 
+That one-shot rule is scoped to `ctl.<action>` and `command.exec`, because both answer
+one question about one invocation and then stop. It does not describe output reading.
+Output follow is a separate capability, `output.follow`, and it is a real stream; see
+the output follow section below. The two are never interchangeable: a follow request
+that cannot stream returns an explicit error rather than a snapshot, and a snapshot
+request never silently becomes a stream.
+
 Two properties are worth stating because they are easy to get wrong:
 
 - `exec` takes its argv array from the shell's own word splitting and never
@@ -222,6 +229,40 @@ Two properties are worth stating because they are easy to get wrong:
   denied command therefore surfaces as a durable `rejected` receipt with
   `policy_denied`, which is the same evidence an operator sees for any other
   admission refusal. The client never decides policy locally.
+
+## Output follow
+
+`logs` reads output. Without a flag it is one bounded snapshot. With `-f` or
+`--follow` it is a stream, and the two forms are different capabilities rather than
+two spellings of one behaviour.
+
+- Standalone: `agent-cluster-cli [options] [--lines <lines>] [--follow] logs <endpoint> <session>`.
+  The stream runs until the process is interrupted, because a non-interactive caller
+  has no terminal to observe a keypress. An interrupt is a normal stop, not a failure.
+- Interactive: `logs [-n <lines>] [-f|--follow] [session]`. The stream runs until any
+  key is pressed, reusing the same watch seam that stops an auto-refresh loop, so the
+  editor remains the only writer to the terminal.
+- Both surfaces call the same runner method, so the two cannot diverge.
+- A repeated follow flag is rejected rather than silently accepted, and an unknown
+  flag still returns the usage line.
+- A client without the streaming seam refuses follow explicitly. It never degrades to
+  a snapshot, because a snapshot presented as a stream would look complete while
+  silently missing everything written after it.
+- The stream is bound to the session generation resolved from the committed inventory
+  before the request is sent, so a replaced session is never followed by accident.
+- Every stream ends with exactly one terminal record. A consumer that stops receiving
+  records without that terminal record treats the stream as interrupted rather than
+  complete, and the client reports `stream_interrupted` in that case.
+- Provider lines are sanitized through the same boundary the snapshot renderer uses.
+  A stream must not be able to move the cursor or retitle the window just because it
+  arrives in pieces.
+- `--json` emits one JSON document per record, so a machine-readable stream stays
+  parseable line by line.
+
+The transport is the existing authenticated WebSocket. One `output_follow_request`
+starts a stream, repeated `output_chunk` frames carry records, and exactly one
+`output_end` frame closes it, all correlated by the same request ID. No new
+connection, no subscription resource and no durable stream state are introduced.
 
 ## Command-word prefix
 
