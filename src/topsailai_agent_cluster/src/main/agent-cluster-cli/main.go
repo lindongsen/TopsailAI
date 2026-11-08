@@ -167,6 +167,11 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return err
 		}
 		return endpoints(ctx, api, output, endpointFilter, *jsonMode, tui.OutputColorPolicy(output))
+	case "history":
+		if flags.NArg() != 2 {
+			return fmt.Errorf("usage: history <endpoint-id-or-hostname>")
+		}
+		return history(ctx, api, output, errors, flags.Arg(1), *jsonMode, tui.OutputColorPolicy(output))
 	case "table":
 		return fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "show":
@@ -410,6 +415,17 @@ func parseEndpointsArgs(args []string, flagFilter string) (string, error) {
 
 func legacyRunner(api tui.CommandAPI) tui.CommandRunner {
 	return tui.CommandRunner{API: api, Policy: tui.LegacyPolicy}
+}
+
+// history renders bounded provider session history for one endpoint.
+//
+// The endpoint argument is mandatory because a history query is endpoint-scoped:
+// provider session IDs may collide across endpoints, so a fleet-wide merge could
+// not be joined to the persisted inventory unambiguously.
+func history(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target string, jsonMode bool, color tui.ColorPolicy) error {
+	options := tui.TableOptionsFor(output)
+	options.Color = color
+	return legacyRunner(api).History(ctx, output, errors, target, jsonMode, options)
 }
 
 func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, jsonMode bool, color tui.ColorPolicy) error {
