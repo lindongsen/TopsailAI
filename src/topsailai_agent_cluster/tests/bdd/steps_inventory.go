@@ -341,17 +341,23 @@ func registerRealInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 		return activeScenario.world.StartRealCluster(harness.FaultInjection{ProviderFailAfterN: 1, CollectionDelayMS: 100})
 	})
 	ctx.Step(`^the real Endpoint refreshes inventory after provider failure$`, func() error {
-		first, err := waitRealInventory(realInventoryWait, func(report protocol.InventoryReport) bool {
-			return len(report.Adapters) == 1 && report.Adapters[0].DataKnown && !report.Adapters[0].Stale && len(report.Sessions) > 0
+		// The successful collection and the failing collection are two consecutive
+		// cycles, so the non-stale document exists only for one collection delay.
+		// Polling for that transient state raced the poll interval and failed under
+		// load even with a generous budget, because the window had already closed.
+		// The durable stale document carries the same evidence: a recorded success
+		// time, retained sessions and a later failed attempt. Waiting for that
+		// durable state asserts the behaviour without racing a transient window.
+		stale, err := waitRealInventory(realInventoryWait, func(report protocol.InventoryReport) bool {
+			return len(report.Adapters) == 1 && report.Adapters[0].Stale && report.Adapters[0].DataKnown &&
+				report.Adapters[0].CollectionStatus == protocol.CollectionFailed &&
+				report.Adapters[0].LastSuccessAtMS != nil && len(report.Sessions) > 0
 		})
 		if err != nil {
 			return err
 		}
-		activeScenario.firstInventory = first
-		_, err = waitRealInventory(realInventoryWait, func(report protocol.InventoryReport) bool {
-			return len(report.Adapters) == 1 && report.Adapters[0].Stale
-		})
-		return err
+		activeScenario.firstInventory = stale
+		return nil
 	})
 	ctx.Step(`^the real source retains its sessions and is automatically marked stale$`, func() error {
 		report, err := activeScenario.world.RealInventory()
@@ -363,16 +369,26 @@ func registerRealInventoryFreshnessSteps(ctx *godog.ScenarioContext) {
 		if err := json.Unmarshal(data, &decoded); err != nil {
 			return err
 		}
+		if len(decoded.Adapters) != 1 {
+			return fmt.Errorf("want one adapter, got %#v", decoded.Adapters)
+		}
 		item := decoded.Adapters[0]
-		first := activeScenario.firstInventory.Adapters[0]
-		if !item.Stale || !item.DataKnown || item.LastSuccessAtMS == nil || first.LastSuccessAtMS == nil {
-			return fmt.Errorf("automatic stale snapshot missing: %#v", decoded)
+		// A recorded success time that is strictly older than the failed attempt is
+		// the durable proof that a successful collection happened first and its data
+		// was kept. Without it, "stale" could describe a source that never succeeded.
+		if !item.Stale || !item.DataKnown || item.CollectionStatus != protocol.CollectionFailed || item.LastSuccessAtMS == nil {
+			return fmt.Errorf("automatic stale snapshot missing: %#v", item)
 		}
-		if *item.LastSuccessAtMS != *first.LastSuccessAtMS || item.LastAttemptAtMS <= first.LastAttemptAtMS {
-			return fmt.Errorf("freshness timestamps did not advance correctly: first=%#v latest=%#v", first, item)
+		if *item.LastSuccessAtMS >= item.LastAttemptAtMS {
+			return fmt.Errorf("success time did not precede the failed attempt: %#v", item)
 		}
-		if len(decoded.Sessions) != len(activeScenario.firstInventory.Sessions) || decoded.Sessions[0].SessionID != activeScenario.firstInventory.Sessions[0].SessionID {
-			return fmt.Errorf("automatic stale snapshot did not retain sessions: first=%#v latest=%#v", activeScenario.firstInventory.Sessions, decoded.Sessions)
+		if len(decoded.Sessions) == 0 {
+			return fmt.Errorf("automatic stale snapshot did not retain sessions: %#v", decoded)
+		}
+		for _, session := range decoded.Sessions {
+			if session.SessionID == "" || session.AdapterID != item.AdapterID {
+				return fmt.Errorf("retained session is not attributable to the stale source: %#v", session)
+			}
 		}
 		return nil
 	})

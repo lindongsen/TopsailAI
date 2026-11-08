@@ -339,3 +339,127 @@ class TestDecoratorRegistry:
         with pytest.raises(ToolApprovalDeniedError):
             wrapped(run_cmd, {"cmd": "ls"}, tool_name="cmd_tool-exec_cmd")
         assert registry.get_pending_approval(transport.instances[0].id) is None
+
+
+class TestDenialMessageReason:
+    """The denial message must carry the matched rule name as the reason."""
+
+    def test_deny_message_contains_rule_name(self, monkeypatch):
+        monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")
+        monkeypatch.setenv(
+            "TOPSAILAI_TOOL_APPROVAL_RULES",
+            '[{"name": "deny dangerous rm", "match": "cmd_tool-exec_cmd", "mode": "deny"}]',
+        )
+        from topsailai.ai_base.tool_approval import matcher
+
+        matcher.clear_approval_rules_cache()
+        transport = MockTransport()
+        wrapped, calls = make_wrapped(transport)
+
+        def run_cmd(cmd):
+            return f"ran {cmd}"
+
+        with pytest.raises(ToolApprovalDeniedError) as caught:
+            wrapped(run_cmd, {"cmd": "ls"}, tool_name="cmd_tool-exec_cmd")
+
+        message = str(caught.value)
+        assert "deny dangerous rm" in message
+        assert "cmd_tool-exec_cmd" in message
+        assert len(calls) == 0
+
+    def test_deny_message_without_rule_keeps_previous_text(self, monkeypatch):
+        monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")
+        from topsailai.ai_base.tool_approval import instance as instance_module
+
+        transport = MockTransport()
+        wrapped, calls = make_wrapped(transport)
+
+        def decide(self):
+            return instance_module.ApprovalDecision(action=instance_module.ApprovalDecision.DENY)
+
+        monkeypatch.setattr(instance_module.ToolApprovalInstance, "decide", decide)
+
+        def run_cmd(cmd):
+            return f"ran {cmd}"
+
+        with pytest.raises(ToolApprovalDeniedError) as caught:
+            wrapped(run_cmd, {"cmd": "ls"}, tool_name="cmd_tool-exec_cmd")
+
+        assert str(caught.value) == "Tool 'cmd_tool-exec_cmd' was denied by approval policy."
+        assert "rule:" not in str(caught.value)
+        assert len(calls) == 0
+
+    def test_deny_message_reads_rule_name_from_mapping(self, monkeypatch):
+        monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")
+        from topsailai.ai_base.tool_approval import instance as instance_module
+
+        transport = MockTransport()
+        wrapped, calls = make_wrapped(transport)
+
+        def decide(self):
+            return instance_module.ApprovalDecision(
+                action=instance_module.ApprovalDecision.DENY,
+                rule={"name": "mapping rule", "match": "cmd_tool-exec_cmd"},
+            )
+
+        monkeypatch.setattr(instance_module.ToolApprovalInstance, "decide", decide)
+
+        def run_cmd(cmd):
+            return f"ran {cmd}"
+
+        with pytest.raises(ToolApprovalDeniedError) as caught:
+            wrapped(run_cmd, {"cmd": "ls"}, tool_name="cmd_tool-exec_cmd")
+
+        assert "mapping rule" in str(caught.value)
+        assert len(calls) == 0
+
+    def test_ask_denied_message_contains_rule_name(self, monkeypatch):
+        monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")
+        monkeypatch.setenv(
+            "TOPSAILAI_TOOL_APPROVAL_RULES",
+            '[{"name": "git reset approval", "match": "cmd_tool-exec_cmd", "mode": "require", "timeout": 1, "policy": "deny"}]',
+        )
+        from topsailai.ai_base.tool_approval import matcher
+
+        matcher.clear_approval_rules_cache()
+        transport = MockTransport()
+        wrapped, calls = make_wrapped(transport)
+
+        def run_cmd(cmd):
+            return f"ran {cmd}"
+
+        def resolve_later():
+            assert transport.request_ready.wait(timeout=1)
+            transport.resolve(transport.instances[0].id, "deny")
+
+        threading.Thread(target=resolve_later).start()
+        with pytest.raises(ToolApprovalDeniedError) as caught:
+            wrapped(run_cmd, {"cmd": "ls"}, tool_name="cmd_tool-exec_cmd")
+
+        message = str(caught.value)
+        assert "git reset approval" in message
+        assert "status: denied" in message
+        assert len(calls) == 0
+
+    def test_ask_timeout_message_contains_rule_name(self, monkeypatch):
+        monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")
+        monkeypatch.setenv(
+            "TOPSAILAI_TOOL_APPROVAL_RULES",
+            '[{"name": "write file approval", "match": "cmd_tool-exec_cmd", "mode": "require", "timeout": 0.05, "policy": "deny"}]',
+        )
+        from topsailai.ai_base.tool_approval import matcher
+
+        matcher.clear_approval_rules_cache()
+        transport = MockTransport()
+        wrapped, calls = make_wrapped(transport)
+
+        def run_cmd(cmd):
+            return f"ran {cmd}"
+
+        with pytest.raises(ToolApprovalDeniedError) as caught:
+            wrapped(run_cmd, {"cmd": "ls"}, tool_name="cmd_tool-exec_cmd")
+
+        message = str(caught.value)
+        assert "write file approval" in message
+        assert "status: denied" in message
+        assert len(calls) == 0

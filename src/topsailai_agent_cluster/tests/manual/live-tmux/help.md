@@ -11,9 +11,9 @@ In workspace, endpoint and session respectively type `help` then Enter. Expect `
 
 | Scope | Commands in display order |
 | --- | --- |
-| workspace | list, endpoints, cd, show, start, stop, status, refresh, watch, help, quit, exit |
-| endpoint | list, cd, show, start, stop, logs, status, refresh, watch, help, quit, exit |
-| session | list, cd, show, resume, stop, inject, interrupt, ctl, drive, logs, send, status, refresh, help, quit, exit |
+| workspace | list, endpoints, cd, show, info, start, stop, drive, status, refresh, watch, help, quit, exit |
+| endpoint | list, cd, show, info, start, stop, drive, logs, status, refresh, watch, help, quit, exit |
+| session | list, cd, show, info, resume, stop, inject, interrupt, ctl, drive, logs, send, status, refresh, help, quit, exit |
 
 Workspace/endpoint help must explain starting a project and navigation; session help must explain bare cd/root, parent endpoint, internal selectors, adapter capability and freshness. A legacy start form may be documented but must not obscure supported wizard behavior.
 
@@ -33,8 +33,8 @@ For **each** of list, endpoints, cd, show, info, start, resume, stop, inject, in
 | stop | `stop`; confirmation, pinned resource and generation |
 | inject | `inject <text>`; literal context text, confirmation; no JSON is required |
 | interrupt | `interrupt [soft\|hard] [message]`; bare `interrupt` prompts for the action then an optional soft message; verify real effect, not just admission |
-| ctl | `ctl [action] [json]`; bare `ctl` renders the action list from the capabilities the endpoint advertises and accepts a number or a name, so no action has to be typed; an unadvertised action must be refused before admission; the payload is an optional JSON object and an empty payload sends `{}`; confirmation is required; verify the durable receipt, not just admission |
-| drive | `drive [start\|stop\|status]`; omitted action reports status; `drive stop` stops only the driver controller and must leave the agent running |
+| ctl | `ctl [action] [key=value ...]` or `ctl.<action> [key=value ...]`; bare `ctl` renders the action list from the capabilities the endpoint advertises and accepts a number or a name, so no action has to be typed; the dotted spelling names the action in the command word and must skip the action prompt while keeping the confirmation gate; an unadvertised action must be refused before admission in both spellings; parameters are guided as `key=value` pairs and an empty answer sends `{}`, so no JSON document is ever typed; a bare word without `=` must be rejected as a parameter error; confirmation is required; verify the durable receipt, not just admission |
+| drive | `drive [start\|stop\|status] [session]`; omitted action reports status; the first token is an action only when it names one, so `drive <row>` and `drive <session-id>` report status; a target is required in workspace and endpoint scope and rejected in session scope; workspace scope resolves the row's own endpoint and rejects a token matching several endpoints; `drive stop` stops only the driver controller and must leave the agent running |
 | logs | `logs [session]`; selected session by default; a bare row number or the displayed provider session ID is accepted; bounded stdout body, not just metadata |
 | send | `send <text>`; literal message text, no confirmation because the text is on screen; a bare `send` reads a multi-line block and asks once; no JSON is required |
 | status | `status [command-id]`; explicit result, otherwise the last command submitted in this CLI, otherwise selected session state; with no retained command it explains the short form instead of demanding an identifier |
@@ -61,7 +61,8 @@ Every command that takes a session or endpoint target accepts a short form, so a
 | `logs` | `logs <row>` | `logs <resource-id>`, `logs <provider-session-id>` |
 | `status` | `status` (no argument) | `status <command-id>` |
 | `start` | `start` then a bare endpoint number | `start <endpoint-id>` |
-| `ctl` | `ctl` then a bare action number or name | `ctl <action> <json>` |
+| `drive` | `drive <row>` | `drive <resource-id>`, `drive <provider-session-id>`, `drive status <row>` |
+| `ctl` | `ctl` then a bare action number or name | `ctl <action> <key=value ...>`, `ctl.<action> <key=value ...>` |
 
 The interactive `!` prefix is a short form of its own: `!<argv>` runs one allowlisted command in the selected session without any endpoint, resource or generation argument, because the current session supplies them. It has no `help <command>` entry; see `control-and-exec.md`.
 

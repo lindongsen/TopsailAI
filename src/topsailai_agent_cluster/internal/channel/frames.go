@@ -8,8 +8,17 @@ const (
 	ProtocolVersion = "v1"
 	// FrameHello starts an Endpoint connection registration.
 	FrameHello = "hello"
-	// FrameHelloAck confirms the active connection generation.
+	// FrameHelloAck confirms the handshake and carries the Endpoint identity.
 	FrameHelloAck = "hello_ack"
+	// FrameHelloConfirm carries the generation the Server assigned when it
+	// installed the connection. The Endpoint attaches only after this frame, so
+	// both sides agree on which link is authoritative.
+	FrameHelloConfirm = "hello_confirm"
+	// FrameHelloAttached confirms that the Endpoint adopted the generation from
+	// hello_confirm. The dialing Server waits for it before reporting success, so
+	// "successfully established" means both sides adopted the same link rather
+	// than only that the Server installed one.
+	FrameHelloAttached = "hello_attached"
 	// FrameHelloRejected explains an authenticated handshake rejection before closure.
 	FrameHelloRejected = "hello_rejected"
 	// FrameHeartbeat is an application-level liveness frame.
@@ -36,6 +45,20 @@ const (
 	FrameHistoryResponse = "history_response"
 	// FrameOutputResponse returns a bounded provider output snapshot.
 	FrameOutputResponse = "output_response"
+	// FrameOutputFollowRequest starts one streaming output follow. It is a
+	// separate frame type from FrameOutputRequest because a snapshot has exactly
+	// one response while a follow has many.
+	FrameOutputFollowRequest = "output_follow_request"
+	// FrameOutputChunk carries one bounded batch of followed output lines.
+	FrameOutputChunk = "output_chunk"
+	// FrameOutputEnd terminates one follow stream. It is always the last frame
+	// for its request ID, so a consumer that stops receiving chunks without it
+	// treats the stream as interrupted rather than complete.
+	FrameOutputEnd = "output_end"
+	// InitiatorEndpoint marks a connection dialed by the Endpoint.
+	InitiatorEndpoint = "endpoint"
+	// InitiatorServer marks a connection dialed by the Server.
+	InitiatorServer = "server"
 )
 
 // Frame is the bounded JSON envelope exchanged over the persistent channel.
@@ -48,6 +71,7 @@ type Frame struct {
 	ProtocolVersion      string                           `json:"protocol_version"`
 	FrameID              string                           `json:"frame_id,omitempty"`
 	ConnectionGeneration string                           `json:"connection_generation"`
+	Initiator            string                           `json:"initiator,omitempty"`
 	EndpointID           string                           `json:"endpoint_id,omitempty"`
 	InstanceID           string                           `json:"instance_id,omitempty"`
 	Hostname             string                           `json:"hostname,omitempty"`
@@ -59,4 +83,7 @@ type Frame struct {
 	Receipt              *protocol.ExecutionReceipt       `json:"receipt,omitempty"`
 	OutputRequest        *protocol.OutputSnapshotRequest  `json:"output_request,omitempty"`
 	OutputResponse       *protocol.OutputSnapshotResponse `json:"output_response,omitempty"`
+	OutputFollowRequest  *protocol.OutputFollowRequest    `json:"output_follow_request,omitempty"`
+	OutputChunk          *protocol.OutputChunk            `json:"output_chunk,omitempty"`
+	OutputEnd            *protocol.OutputEnd              `json:"output_end,omitempty"`
 }

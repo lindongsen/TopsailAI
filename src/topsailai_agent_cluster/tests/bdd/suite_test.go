@@ -26,6 +26,9 @@ func TestFeatures(t *testing.T) {
 			"../../features/lifecycle.feature",
 			"../../features/commands.feature",
 			"../../features/unknown_input_offer.feature",
+			"../../features/bidirectional_channel.feature",
+			"../../features/output_follow.feature",
+			"../../features/output_scope.feature",
 		}, Strict: true, TestingT: t},
 	}
 	if suite.Run() != 0 {
@@ -61,6 +64,9 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	registerProviderResponseSteps(ctx)
 	registerWatchSteps(ctx)
 	registerUnknownInputOfferSteps(ctx)
+	registerBidirectionalSteps(ctx)
+	registerFollowSteps(ctx)
+	registerOutputScopeSteps(ctx)
 	registerQReturnsToWorkspaceSteps(ctx)
 	ctx.After(func(goCtx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if activeScenario != nil && activeScenario.commandDone != nil {

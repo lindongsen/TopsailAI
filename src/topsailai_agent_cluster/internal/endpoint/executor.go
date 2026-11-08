@@ -242,6 +242,36 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 	return response, nil
 }
 
+// FollowOutput streams output records through the mapped resource adapter.
+//
+// It resolves the target exactly like ReadOutput so a follow can never reach an
+// adapter that does not own the resource, and it revalidates the generation from
+// the same snapshot before the provider child is started. The adapter capability
+// is asserted separately from Adapter because streaming is optional: an adapter
+// that cannot stream reports ErrUnsupported, which the Endpoint turns into an
+// honest "unsupported" end frame instead of a provider failure.
+func (e *Executor) FollowOutput(ctx context.Context, request protocol.OutputFollowRequest, emit func(protocol.OutputChunk) error) error {
+	if request.ResourceID == "" || request.Generation == "" {
+		return fmt.Errorf("resource ID and generation are required")
+	}
+	mapping, err := e.store.LookupResourceID(ctx, request.ResourceID)
+	if err != nil {
+		return err
+	}
+	instance, ok := e.registry.Get(mapping.AdapterID)
+	if !ok {
+		return fmt.Errorf("adapter %q is not configured", mapping.AdapterID)
+	}
+	if err := e.revalidateGeneration(ctx, instance, mapping.AdapterID, protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation}); err != nil {
+		return err
+	}
+	follower, ok := instance.(adapter.OutputFollower)
+	if !ok {
+		return adapter.ErrUnsupported
+	}
+	return follower.FollowOutput(ctx, request, emit)
+}
+
 // revalidateGeneration confirms the requested target generation without paying for a
 // full provider discovery on every command. It trusts only a known, non-stale snapshot
 // that actually contains the resource; anything else falls back to a live inspection so

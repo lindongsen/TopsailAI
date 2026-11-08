@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"topsailai_agent_cluster/internal/protocol"
 )
 
 // EndpointFailure identifies an endpoint whose inventory could not be observed.
@@ -35,6 +37,7 @@ type TableOptions struct {
 const (
 	columnNo         = "no"
 	columnState      = "state"
+	columnDrive      = "drive"
 	columnName       = "name"
 	columnID         = "id"
 	columnWorkspace  = "workspace"
@@ -63,6 +66,7 @@ var allColumns = []tableColumn{
 	{key: columnState, header: "SESSION_STATUS", cap: 14},
 	{key: columnName, header: "SESSION_NAME", cap: 64, wide: true},
 	{key: columnID, header: "SESSION_ID", cap: 36},
+	{key: columnDrive, header: "DRIVER", cap: 10},
 	{key: columnWorkspace, header: "PROJECT_WORKSPACE", cap: 48, leftClip: true},
 	{key: columnEndpoint, header: "ENDPOINT", cap: 20},
 	{key: columnDataStatus, header: "DATA_STATUS", cap: 35, warn: true},
@@ -360,6 +364,7 @@ func tableCells(row SessionRow, location *time.Location) map[string]string {
 	return map[string]string{
 		columnNo:         strconv.Itoa(row.No),
 		columnState:      escapeCell(row.State),
+		columnDrive:      escapeCell(driveCell(row)),
 		columnName:       escapeCell(row.DisplayName),
 		columnID:         escapeCell(row.ProviderSessionID),
 		columnWorkspace:  escapeCell(row.ProjectWorkspace),
@@ -497,6 +502,27 @@ func minInt(a, b int) int {
 // rowState reports the provider-reported lifecycle state that colours one row.
 func rowState(row SessionRow) string {
 	return row.State
+}
+
+// driveCell projects the controller summary into one short table value.
+//
+// A nil summary means the provider reported no driver observation, so it renders
+// as "-" rather than "none": "none" would claim a confirmed absence of a
+// controller, which the provider never stated. A running state whose liveness was
+// not verified renders as "unverified", because presenting it as running would
+// let an operator stop supervising a session whose controller is not actually
+// alive.
+func driveCell(row SessionRow) string {
+	if row.Drive == nil {
+		return "-"
+	}
+	if row.Drive.State == protocol.DriveStateRunning && !row.Drive.Verified {
+		return "unverified"
+	}
+	if row.Drive.State == "" {
+		return "unknown"
+	}
+	return row.Drive.State
 }
 
 // dataStatus combines collection outcome and data freshness for table display.

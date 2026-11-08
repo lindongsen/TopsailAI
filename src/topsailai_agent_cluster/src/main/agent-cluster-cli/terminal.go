@@ -38,6 +38,21 @@ func (out terminalOutput) TerminalWidth() int {
 	return width
 }
 
+// TerminalHeight reports the real terminal height, so the interactive input
+// block never grows past the visible screen. A writer without a terminal size
+// reports zero, and the editor then applies its own bounded default.
+func (out terminalOutput) TerminalHeight() int {
+	file, ok := out.Writer.(interface{ Fd() uintptr })
+	if !ok {
+		return 0
+	}
+	_, height, err := term.GetSize(int(file.Fd()))
+	if err != nil {
+		return 0
+	}
+	return height
+}
+
 // TableLayout reports the width and truncation policy of this output boundary.
 // The width stays the real terminal width even when truncation is disabled, so
 // the interactive line editor keeps its prompt budget.

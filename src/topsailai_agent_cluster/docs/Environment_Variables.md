@@ -40,7 +40,10 @@ flags, so a bundle deployment does not depend on inherited environment variables
 | Variable | Flag | Default | Purpose |
 |---|---|---|---|
 | `AGENT_CLUSTER_API_LISTEN_ADDR` | `--api-listen-addr` | `:8080` | Bearer-authenticated operator API address |
-| `AGENT_CLUSTER_CHANNEL_LISTEN_ADDR` | `--channel-listen-addr` | `:8443` | mTLS Endpoint channel address |
+| `AGENT_CLUSTER_CHANNEL_LISTEN_ADDR` | `--channel-listen-addr` | `:8443` | mTLS Endpoint channel address; unused in the `server-initiated` direction |
+| `AGENT_CLUSTER_CHANNEL_DIRECTION` | `--channel-direction` | `endpoint-initiated` | Which side dials the channel: `endpoint-initiated`, `server-initiated` or `bidirectional` |
+| `AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES` | `--endpoint-dial-addresses` | empty | Comma-separated `endpoint_id=wss://address` pairs the Server dials in the `server-initiated` and `bidirectional` directions |
+| `AGENT_CLUSTER_TLS_SHARED_CERTIFICATE` | `--tls-shared-certificate` | `false` | Every Endpoint presents the Server certificate; the certificate no longer proves Endpoint identity |
 | `AGENT_CLUSTER_LISTEN_ADDRESS` | `--listen-address` | `:8080` | Deprecated alias for the API address |
 | `AGENT_CLUSTER_AUTH_TOKEN` | `--auth-token` | `development-token` | Bearer token the API validates |
 | `AGENT_CLUSTER_AUTH_SCOPES` | `--auth-scopes` | empty | Comma-separated operator scopes granted to that token |
@@ -72,9 +75,13 @@ listener to a trusted address.
 |---|---|---|---|
 | `AGENT_CLUSTER_ENDPOINT_ID` | `--endpoint-id` | empty | Endpoint identity announced to the Server |
 | `AGENT_CLUSTER_INSTANCE_ID` | `--instance-id` | `default` | Endpoint instance identity |
-| `AGENT_CLUSTER_CHANNEL_ADDRESS` | `--channel-address` | empty | Server WSS address the Endpoint dials |
+| `AGENT_CLUSTER_CHANNEL_ADDRESS` | `--channel-address` | empty | Server WSS address the Endpoint dials; unused in the `server-initiated` direction |
+| `AGENT_CLUSTER_CHANNEL_DIRECTION` | `--channel-direction` | `endpoint-initiated` | Which side dials the channel: `endpoint-initiated`, `server-initiated` or `bidirectional` |
+| `AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR` | `--endpoint-channel-listen-addr` | empty | mTLS listen address the Endpoint accepts the Server on in the `server-initiated` and `bidirectional` directions |
+| `AGENT_CLUSTER_SERVER_NAME` | `--server-name` | `agent-cluster-server` | Server certificate identity the Endpoint verifies in the `server-initiated` direction |
 | `AGENT_CLUSTER_ADAPTERS` | none | empty | JSON array of adapter bindings |
 | `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `--command-allowlist-file` | empty | Endpoint-global command allowlist file |
+| `AGENT_CLUSTER_CONTROL_ACTION_FILE` | `--control-action-file` | empty | Endpoint-local `ctl.<action>` catalog; the only source of control actions |
 
 ### `AGENT_CLUSTER_ADAPTERS`
 
@@ -124,6 +131,51 @@ The file is reloaded on `SIGHUP`. A reload parses the whole file before replacin
 the active set, so a malformed edit keeps the previous entries in force and is
 logged. A reload that would remove every entry is refused unless the file contains
 the explicit empty directive. Each successful reload logs the entry count.
+
+### `AGENT_CLUSTER_CONTROL_ACTION_FILE`
+
+Defines the `ctl.<action>` surface. This file is the only source of control
+actions: the action name, its permission, its payload schema and the provider
+command each action runs all come from here, so changing the action surface never
+requires a code change. Paths are resolved relative to the bundle root by the
+launcher.
+
+The file is one JSON document. Whole-line `#` comments are ignored, so the shipped
+example can explain itself; trailing comments are not supported. Each entry carries:
+
+| Field | Meaning |
+|---|---|
+| `name` | Action name after the `ctl.` prefix. Required, no whitespace, must not repeat the prefix. A dotted name stays one action. |
+| `permission` | Scope required to invoke it. Must be one of `view`, `read_output`, `send_message`, `control`, `endpoint_admin`. |
+| `payload_schema` | JSON Schema object describing the payload. Descriptive only: the Server stores and returns it verbatim and never interprets it. |
+| `command` | Provider argv template. Required, no empty tokens. |
+| `payload_session_field` | Optional payload field filled from the revalidated target, so the operator is not asked for a selector the Endpoint already holds. Requires a `{payload}` placeholder. |
+
+The `command` array is executed directly, never through a shell. Two placeholders
+are substituted per token, so a placeholder never splits into several arguments:
+`{session}` becomes the provider session key and `{payload}` becomes the JSON
+payload. Each may appear at most once, and an unknown or unterminated placeholder
+is rejected when the file is loaded.
+
+An unset value advertises no `ctl.` action at all and refuses every `ctl.`
+operation. That is the fail-closed default, not an error: an Endpoint without a
+catalog cannot be talked into running an action nobody configured.
+
+Both deployment paths install the shipped catalog, so a fresh node keeps the
+feature. The bundle installs `conf/control-actions.conf.example` as
+`conf/control-actions.conf`; the Debian package installs it as
+`/etc/agent-cluster/control-actions.conf` and registers it as a conffile, so an
+upgrade does not replace the operator's action surface.
+
+The file is reloaded on `SIGHUP`. A reload parses the whole document before
+replacing the active set, so a malformed edit keeps the previous actions in force
+and is logged. An empty `actions` list is accepted and disables the whole family.
+Each successful reload logs the action count.
+
+Because the catalog decides which provider command runs, it is an authorization
+surface and must not be remotely writable. The Endpoint validates the configured
+capability list before its policy hook runs, so an action absent from the catalog is
+rejected before any allowlist or policy check.
 
 ## Client
 
@@ -205,6 +257,7 @@ File format constraints:
 | `AGENT_CLUSTER_TOKEN` | The CLI omits the `Authorization` header and every request is rejected |
 | `AGENT_CLUSTER_AUTH_SCOPES` | The token holds every scope |
 | `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` | `command.exec` is unavailable |
+| `AGENT_CLUSTER_CONTROL_ACTION_FILE` | No `ctl.` action is advertised and every `ctl.` operation is refused |
 | `AGENT_CLUSTER_TLS_*` | Remote listeners cannot verify peers |
 | `AGENT_CLUSTER_ADAPTERS` | The Endpoint has no provider to collect from |
 

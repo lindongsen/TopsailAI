@@ -65,6 +65,7 @@ Feature: non-interactive TUI
     And the output contains "SESSION_ID"
     And the output contains "PROJECT_WORKSPACE"
     And the output contains "SESSION_STATUS"
+    And the output contains "DRIVER"
     And the output contains "DATA_STATUS"
     And the output contains "ok ("
 

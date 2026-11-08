@@ -16,23 +16,28 @@ func TestParseLogsArgsAcceptsSupportedForms(t *testing.T) {
 	const token = "20261027152208"
 
 	cases := []struct {
-		name     string
-		rest     string
-		wantTok  string
-		wantLine int
+		name       string
+		rest       string
+		wantTok    string
+		wantLine   int
+		wantFollow bool
 	}{
-		{"empty keeps fallback", "", "", fallback},
-		{"short flag", "-n " + fmt.Sprint(limit), "", limit},
-		{"long flag", "--lines " + fmt.Sprint(limit), "", limit},
-		{"equals form", "--lines=" + fmt.Sprint(limit), "", limit},
-		{"token only", token, token, fallback},
-		{"flag then token", "-n " + fmt.Sprint(limit) + " " + token, token, limit},
-		{"token then flag", token + " --lines=" + fmt.Sprint(limit), token, limit},
+		{"empty keeps fallback", "", "", fallback, false},
+		{"short flag", "-n " + fmt.Sprint(limit), "", limit, false},
+		{"long flag", "--lines " + fmt.Sprint(limit), "", limit, false},
+		{"equals form", "--lines=" + fmt.Sprint(limit), "", limit, false},
+		{"token only", token, token, fallback, false},
+		{"flag then token", "-n " + fmt.Sprint(limit) + " " + token, token, limit, false},
+		{"token then flag", token + " --lines=" + fmt.Sprint(limit), token, limit, false},
+		{"short follow", "-f", "", fallback, true},
+		{"long follow", "--follow", "", fallback, true},
+		{"follow with limit", "-f -n " + fmt.Sprint(limit), "", limit, true},
+		{"follow with token", "--follow " + token, token, fallback, true},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotTok, gotLine, err := parseLogsArgs(tc.rest, fallback)
+			gotTok, gotLine, gotFollow, err := parseLogsArgs(tc.rest, fallback)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -42,6 +47,9 @@ func TestParseLogsArgsAcceptsSupportedForms(t *testing.T) {
 			if gotLine != tc.wantLine {
 				t.Fatalf("lines=%d want=%d", gotLine, tc.wantLine)
 			}
+			if gotFollow != tc.wantFollow {
+				t.Fatalf("follow=%t want=%t", gotFollow, tc.wantFollow)
+			}
 		})
 	}
 }
@@ -50,7 +58,7 @@ func TestParseLogsArgsAcceptsSupportedForms(t *testing.T) {
 // limit is supplied.
 func TestParseLogsArgsKeepsFallbackWhenAbsent(t *testing.T) {
 	const fallback = 515151
-	_, gotLine, err := parseLogsArgs("", fallback)
+	_, gotLine, _, err := parseLogsArgs("", fallback)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -72,11 +80,13 @@ func TestParseLogsArgsRejectsInvalidInput(t *testing.T) {
 		"--lines=x",
 		"--unknown 909090",
 		"tok1 tok2",
+		"-f -f",
+		"--follow --follow",
 	}
 
 	for _, rest := range bad {
 		t.Run(rest, func(t *testing.T) {
-			if _, _, err := parseLogsArgs(rest, 616161); err == nil {
+			if _, _, _, err := parseLogsArgs(rest, 616161); err == nil {
 				t.Fatalf("expected error for %q", rest)
 			}
 		})

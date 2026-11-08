@@ -31,6 +31,43 @@ def _get_default_transport():
     return get_default_approval_transport()
 
 
+def _get_rule_name(rule: Any) -> str | None:
+    """
+    Return the matched rule's name, or ``None`` when it has no usable name.
+
+    Rules normally come from JSON, so a plain ``dict`` must be read as well as
+    the ``ApprovalRule`` dataclass. An empty or missing name returns ``None`` so
+    callers can omit the reason instead of printing a placeholder.
+    """
+    if rule is None:
+        return None
+    if isinstance(rule, dict):
+        name = rule.get("name")
+    else:
+        name = getattr(rule, "name", None)
+    if not name:
+        return None
+    return str(name)
+
+
+def _build_denial_message(tool_name: str, rule_name: str | None, status: str | None = None) -> str:
+    """
+    Build the denial message shown to the agent as the tool observation.
+
+    The matched rule name is appended as the reason because the agent only sees
+    this text: without it the model cannot tell which policy blocked the call
+    and tends to retry the identical request. The reason is omitted when the
+    rule has no name so the message stays free of placeholder noise.
+    """
+    reason = f" (rule: {rule_name})" if rule_name else ""
+    if status is None:
+        return f"Tool '{tool_name}' was denied by approval policy{reason}."
+    status_part = f"status: {status}"
+    if rule_name:
+        status_part = f"{status_part}, rule: {rule_name}"
+    return f"Tool '{tool_name}' was not approved ({status_part})."
+
+
 def with_tool_approval(exec_tool_func: Callable) -> Callable:
     """
     Decorator that wraps the agent's tool execution entry point.
@@ -61,24 +98,24 @@ def with_tool_approval(exec_tool_func: Callable) -> Callable:
             return exec_tool_func(tool_func=tool_func, args=args, tool_name=tool_name, **kwargs)
 
         if decision.action == ApprovalDecision.DENY:
-            rule_name = decision.rule.name if decision.rule and decision.rule.name else "<unnamed>"
+            rule_name = _get_rule_name(decision.rule)
             logger.info(
                 "Tool approval matched rule: [%s] for tool [%s] decision=deny",
-                rule_name,
+                rule_name or "<unnamed>",
                 effective_tool_name,
             )
             raise ToolApprovalDeniedError(
-                f"Tool '{effective_tool_name}' was denied by approval policy.",
+                _build_denial_message(effective_tool_name, rule_name),
                 instance_id=instance.id,
             )
 
         # decision.action == ApprovalDecision.ASK
         register_pending_approval(instance)
-        rule_name = decision.rule.name if decision.rule and decision.rule.name else "<unnamed>"
-        instance.rule_name = rule_name
+        rule_name = _get_rule_name(decision.rule)
+        instance.rule_name = rule_name or "<unnamed>"
         logger.info(
             "Tool approval matched rule: [%s] for tool [%s] instance=%s timeout=%s policy=%s",
-            rule_name,
+            instance.rule_name,
             effective_tool_name,
             instance.id,
             decision.timeout,
@@ -93,7 +130,7 @@ def with_tool_approval(exec_tool_func: Callable) -> Callable:
 
             if status in (ToolApprovalInstance.STATUS_DENIED, ToolApprovalInstance.STATUS_TIMEOUT):
                 raise ToolApprovalDeniedError(
-                    f"Tool '{effective_tool_name}' was not approved (status: {status}).",
+                    _build_denial_message(effective_tool_name, rule_name, status),
                     instance_id=instance.id,
                 )
         finally:

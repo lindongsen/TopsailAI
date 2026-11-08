@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"topsailai_agent_cluster/internal/adapter"
+	topsailaiadapter "topsailai_agent_cluster/internal/adapter/topsailai"
 	"topsailai_agent_cluster/internal/channel"
 	"topsailai_agent_cluster/internal/config"
 	endpointservice "topsailai_agent_cluster/internal/endpoint"
@@ -39,27 +40,80 @@ func main() {
 		logger.Error("open endpoint storage", "error", err)
 		os.Exit(1)
 	}
-	if cfg.ChannelAddress == "" {
+	// The direction decides which side dials. In the server-initiated direction
+	// the Endpoint has no dial address and instead listens for the Server. In the
+	// bidirectional direction it does both, so a deployment where neither side can
+	// be assumed reachable from the other still converges on one link.
+	serverInitiated := cfg.ChannelDirection == config.DirectionServerInitiated
+	bidirectional := cfg.ChannelDirection == config.DirectionBidirectional
+	listens := serverInitiated || bidirectional
+	dials := !serverInitiated
+	if dials && cfg.ChannelAddress == "" {
+		if bidirectional {
+			logger.Error("endpoint channel address is required for the bidirectional direction", "error", "AGENT_CLUSTER_CHANNEL_ADDRESS is empty")
+			_ = store.Close()
+			os.Exit(1)
+		}
 		_ = store.Close()
 		<-ctx.Done()
 		return
 	}
-	var tlsConfig *tls.Config
+	if listens && cfg.EndpointChannelListen == "" {
+		logger.Error("endpoint channel listen address is required when the endpoint listens", "error", "AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR is empty")
+		_ = store.Close()
+		os.Exit(1)
+	}
+	// Two TLS configurations are needed because the two roles are not the same:
+	// a dialing client verifies the peer name, while a listening server must
+	// request and verify the peer certificate. Reusing the client configuration
+	// for the listener leaves ClientAuth unset, so the Server certificate is never
+	// requested and every Server-dialed connection is rejected.
+	var clientTLS *tls.Config
+	var acceptorTLS *tls.Config
 	if cfg.TLSCertificateFile != "" && cfg.TLSKeyFile != "" {
-		tlsConfig, err = security.LoadMTLSConfig(security.MTLSConfig{CAFile: cfg.TLSCAFile, CertificateFile: cfg.TLSCertificateFile, KeyFile: cfg.TLSKeyFile, RevokedSerialsFile: cfg.TLSRevokedSerialsFile}, false)
+		clientTLS, err = security.LoadMTLSConfig(security.MTLSConfig{CAFile: cfg.TLSCAFile, CertificateFile: cfg.TLSCertificateFile, KeyFile: cfg.TLSKeyFile, RevokedSerialsFile: cfg.TLSRevokedSerialsFile}, false)
 		if err != nil {
 			logger.Error("load mTLS configuration", "error", err)
 			_ = store.Close()
 			os.Exit(1)
+		}
+		if listens {
+			acceptorTLS, err = security.LoadMTLSConfig(security.MTLSConfig{CAFile: cfg.TLSCAFile, CertificateFile: cfg.TLSCertificateFile, KeyFile: cfg.TLSKeyFile, RevokedSerialsFile: cfg.TLSRevokedSerialsFile}, true)
+			if err != nil {
+				logger.Error("load acceptor mTLS configuration", "error", err)
+				_ = store.Close()
+				os.Exit(1)
+			}
 		}
 	}
 	hostname, hostnameErr := os.Hostname()
 	if hostnameErr != nil {
 		logger.Warn("resolve endpoint hostname", "error", hostnameErr)
 	}
-	client := &channel.EndpointClient{EndpointID: cfg.EndpointID, InstanceID: cfg.InstanceID, Hostname: hostname, TLSConfig: tlsConfig, Address: cfg.ChannelAddress}
-	if err := client.Dial(ctx, cfg.ChannelAddress); err != nil {
-		logger.Error("connect endpoint channel; reconnecting", "error", err)
+	client := &channel.EndpointClient{EndpointID: cfg.EndpointID, InstanceID: cfg.InstanceID, Hostname: hostname, TLSConfig: clientTLS, Address: cfg.ChannelAddress, Bidirectional: bidirectional}
+	if listens {
+		// The Endpoint accepts the Server connection, so it must verify the
+		// Server certificate itself and reject a revoked one.
+		revokedSerials, revokedErr := security.LoadRevokedSerials(cfg.TLSRevokedSerialsFile)
+		if revokedErr != nil {
+			logger.Error("load revoked certificate serials", "error", revokedErr)
+			_ = store.Close()
+			os.Exit(1)
+		}
+		acceptor := &channel.EndpointAcceptor{EndpointID: cfg.EndpointID, ServerName: cfg.ServerName, TLSConfig: acceptorTLS, RevokedSerials: revokedSerials, Client: client, OnReject: func(rejectErr error) {
+			logger.Warn("reject server-initiated connection", "error", rejectErr)
+		}}
+		go func() {
+			if serveErr := acceptor.Serve(ctx, cfg.EndpointChannelListen, acceptorTLS); serveErr != nil && ctx.Err() == nil {
+				logger.Error("endpoint channel listener stopped", "error", serveErr)
+			}
+		}()
+		logger.Info("endpoint accepting server-initiated connections", "listen_address", cfg.EndpointChannelListen)
+	}
+	if dials {
+		if err := client.Dial(ctx, cfg.ChannelAddress); err != nil {
+			logger.Error("connect endpoint channel; reconnecting", "error", err)
+		}
 	}
 	if len(cfg.Adapters) == 0 {
 		logger.Error("endpoint adapters are required", "error", "AGENT_CLUSTER_ADAPTERS is empty")
@@ -68,13 +122,47 @@ func main() {
 		os.Exit(1)
 	}
 	registry := adapter.NewRegistry()
+	// The control action file is Endpoint-local administrative configuration and
+	// the only source of ctl. actions. It is loaded before any adapter is
+	// configured so a broken file fails startup rather than silently leaving a
+	// different action surface in force. An Endpoint without the file advertises
+	// no ctl. action at all, which is the fail-closed default.
+	var controlActions *topsailaiadapter.ControlActionSet
+	if cfg.ControlActionFile != "" {
+		controlActions, err = topsailaiadapter.LoadControlActionSet(cfg.ControlActionFile)
+		if err != nil {
+			logger.Error("load control action file", "path", cfg.ControlActionFile, "error", err)
+			_ = client.Close()
+			_ = store.Close()
+			os.Exit(1)
+		}
+		logger.Info("loaded control action file", "path", cfg.ControlActionFile, "actions", controlActions.Len(), "names", controlActions.Names())
+	} else {
+		logger.Info("control action file is not configured; no ctl. action is advertised and every ctl. operation is refused")
+	}
+	if controlActions != nil {
+		stopControlReload, watchErr := controlActions.WatchReload(ctx, func(reloadErr error) {
+			if reloadErr != nil {
+				logger.Error("reload control action file", "error", reloadErr)
+				return
+			}
+			logger.Info("reloaded control action file", "actions", controlActions.Len(), "names", controlActions.Names())
+		})
+		if watchErr != nil {
+			logger.Error("watch control action file", "error", watchErr)
+			_ = client.Close()
+			_ = store.Close()
+			os.Exit(1)
+		}
+		defer stopControlReload()
+	}
 	registered := make(map[string]bool)
 	for _, item := range cfg.Adapters {
 		if registered[item.ProviderType] {
 			continue
 		}
 		providerType := item.ProviderType
-		if err := registerAdapterType(registry, providerType, store); err != nil {
+		if err := registerAdapterType(registry, providerType, store, controlActions); err != nil {
 			logger.Error("register adapter provider", "provider_type", providerType, "error", err)
 			_ = client.Close()
 			_ = store.Close()

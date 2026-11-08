@@ -96,19 +96,19 @@ was dispatched rather than rejected as unknown.
 | `endpoints` | `endpoints` | `endpoints` | yes |
 | `show` | `show` | `show` | yes |
 | `info` | `info` | `info` | yes |
-| `logs` | `logs` | `logs` | yes |
+| `logs` | `logs`, `logs --follow` | `logs`, `logs -f` | yes |
 | `status` | `status` | `status` | yes |
 | `send` | `send` | `send`, `>` | yes (explicit text submits directly; a bare `send` asks once) |
 | `context.inject` | `btw`, `inject` | `inject`, `btw` | yes |
 | `execution.interrupt` | `control` | `interrupt`, `control` | yes |
-| `ctl.<action>` | `ctl` | `ctl` | yes |
+| `ctl.<action>` | `ctl` | `ctl`, `ctl.<action>` | yes |
 | `command.exec` | `exec` | `!<argv...>` | yes |
 | `agent.start` | `start` | `start` | yes |
 | `agent.resume` | `resume` | not applicable | yes (standalone only: session scope requires a live generation while resume authorizes on a proven absence, so the interactive spelling was removed) |
 | `agent.stop` | `stop` | `stop` | yes |
-| `agent.drive.start` | `drive start` | `drive start` | yes |
-| `agent.drive.stop` | `drive stop` | `drive stop` | yes |
-| `drive status` | `drive status` | `drive status`, `drive` | yes |
+| `agent.drive.start` | `drive start` | `drive start [session]` | yes |
+| `agent.drive.stop` | `drive stop` | `drive stop [session]` | yes |
+| `drive status` | `drive status` | `drive status [session]`, `drive [session]` | yes |
 | `watch` | not applicable | `watch`, `w` | yes |
 | `help` | `help` | `help`, `?` | yes |
 | `cd` | not applicable | `cd` | not applicable |
@@ -151,6 +151,20 @@ the spelling they typed is an alias.
 
 `cd` and `quit` navigate a session that only exists inside the interactive loop, so
 they have no standalone meaning and are not gaps.
+
+`drive` is available in all three scopes, because a driver belongs to one session
+but an operator usually starts from a fleet or endpoint listing. Its grammar is
+`drive [start|stop|status] [session]`: the first token is read as an action only
+when it names one, so `drive 3` and `drive res_abc` are the literal
+`drive [number-or-session-id]` form and report controller state. Session scope
+keeps its pinned selection and rejects a target argument, exactly as `stop` does;
+workspace and endpoint scope require one, because there is no current session to
+fall back to. Workspace scope resolves the row's own endpoint, and a token that
+matches sessions on several endpoints is rejected rather than guessed. `status`
+stays a read of the persisted projection and never admits a command, while
+`start` and `stop` keep the confirmation gate and revalidate the exact generation
+before dispatch. `stop` and `drive` share one target resolver, so the two cannot
+drift into different authority checks.
 
 `quit` is scope-aware, and this is a dispatch rule rather than a scope-availability
 rule. Outside workspace scope `quit` navigates back to workspace scope and
@@ -220,11 +234,12 @@ usage: exec <endpoint-id> <resource-id> <generation> -- <argv...>
 ```
 
 `ctl` follows the non-interactive-first rule directly. The standalone form carries the
-action name and an explicit payload; the interactive form is a convenience layer that
-prompts for the action when it is omitted. The prompt renders its action list from the
-advertised capabilities rather than from a hardcoded list, so it cannot offer an action
-the Endpoint does not support. A bare `ctl` in non-interactive mode is a usage error,
-not a prompt, as the fourth command above shows.
+action name and an explicit JSON payload; the interactive form is a convenience layer that
+prompts for the action when it is omitted and then guides the parameters as `key=value`
+pairs, so no JSON document is ever typed interactively. The prompt renders its action list
+from the advertised capabilities rather than from a hardcoded list, so it cannot offer an
+action the Endpoint does not support. A bare `ctl` in non-interactive mode is a usage
+error, not a prompt, as the fourth command above shows.
 
 `!` is an input-prefix form, not a command word. It is recognised before the command
 word is split, so `!git status` never reaches the dispatcher as a command named `!git`.
@@ -241,6 +256,13 @@ Both families are one-shot: a single bounded snapshot carrying its observation t
 never a stream, a follow or a durable subscription. Neither may silently degrade; an
 unavailable capability returns an explicit error rather than cached or partial data.
 
+That one-shot rule is scoped to `ctl.<action>` and `command.exec`, because both answer
+one question about one invocation and then stop. It does not describe output reading.
+Output follow is a separate capability, `output.follow`, and it is a real stream; see
+the output follow section below. The two are never interchangeable: a follow request
+that cannot stream returns an explicit error rather than a snapshot, and a snapshot
+request never silently becomes a stream.
+
 Two properties are worth stating because they are easy to get wrong:
 
 - `exec` takes its argv array from the shell's own word splitting and never
@@ -251,6 +273,40 @@ Two properties are worth stating because they are easy to get wrong:
   denied command therefore surfaces as a durable `rejected` receipt with
   `policy_denied`, which is the same evidence an operator sees for any other
   admission refusal. The client never decides policy locally.
+
+## Output follow
+
+`logs` reads output. Without a flag it is one bounded snapshot. With `-f` or
+`--follow` it is a stream, and the two forms are different capabilities rather than
+two spellings of one behaviour.
+
+- Standalone: `agent-cluster-cli [options] [--lines <lines>] [--follow] logs <endpoint> <session>`.
+  The stream runs until the process is interrupted, because a non-interactive caller
+  has no terminal to observe a keypress. An interrupt is a normal stop, not a failure.
+- Interactive: `logs [-n <lines>] [-f|--follow] [session]`. The stream runs until any
+  key is pressed, reusing the same watch seam that stops an auto-refresh loop, so the
+  editor remains the only writer to the terminal.
+- Both surfaces call the same runner method, so the two cannot diverge.
+- A repeated follow flag is rejected rather than silently accepted, and an unknown
+  flag still returns the usage line.
+- A client without the streaming seam refuses follow explicitly. It never degrades to
+  a snapshot, because a snapshot presented as a stream would look complete while
+  silently missing everything written after it.
+- The stream is bound to the session generation resolved from the committed inventory
+  before the request is sent, so a replaced session is never followed by accident.
+- Every stream ends with exactly one terminal record. A consumer that stops receiving
+  records without that terminal record treats the stream as interrupted rather than
+  complete, and the client reports `stream_interrupted` in that case.
+- Provider lines are sanitized through the same boundary the snapshot renderer uses.
+  A stream must not be able to move the cursor or retitle the window just because it
+  arrives in pieces.
+- `--json` emits one JSON document per record, so a machine-readable stream stays
+  parseable line by line.
+
+The transport is the existing authenticated WebSocket. One `output_follow_request`
+starts a stream, repeated `output_chunk` frames carry records, and exactly one
+`output_end` frame closes it, all correlated by the same request ID. No new
+connection, no subscription resource and no durable stream state are introduced.
 
 ## Command-word prefix
 
@@ -444,6 +500,25 @@ signal. Stages are printed as discrete lines instead.
 Progress is presentation only. A write failure is ignored, so a closed diagnostics
 stream never changes the outcome of the command it describes, and a caller that
 supplies no diagnostics stream keeps the previous silent behaviour.
+## Interactive input block
+
+The prompt editor renders the current edit as a soft-wrapped block instead of a
+single horizontally scrolled row. A long message therefore keeps its head visible,
+which is what an operator needs in order to review what was actually typed.
+
+- The first row shares its width with the prompt; continuation rows use the whole
+  terminal width, and one column stays reserved so a full row never auto-wraps.
+- The block is bounded by the terminal height reported through the output
+  boundary. A block taller than the screen scrolls by whole rows, so the cursor
+  row always stays visible, and a writer without a terminal size falls back to a
+  bounded default instead of rendering unbounded rows.
+- Every redraw erases the previously rendered block first, so a block that shrank
+  leaves no stale row behind. Submit, interrupt and EOF move the cursor to the
+  block end before writing the newline, so the operator's input is never split.
+- A Tab completion candidate list is printed below the erased block rather than
+  inside it, so the next redraw cannot erase the candidates.
+- Unsafe runes are dropped, matching `sanitizeTerminal`, so the rendered block is
+  byte-identical to the sanitized form of the typed text.
 
 ## Verification
 

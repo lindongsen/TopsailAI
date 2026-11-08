@@ -29,6 +29,11 @@ type Config struct {
 	MaxOutput      int
 	PlatformProbe  PlatformCapabilityProbe
 	ResourceMapper adapter.ResourceMapper
+	// ControlActions is the Endpoint-local catalog of ctl. actions. A nil set
+	// advertises no action and refuses every ctl. operation, because the catalog
+	// is the only source of actions and an Endpoint cannot serve an action it was
+	// never told about.
+	ControlActions *ControlActionSet
 }
 
 // PlatformCapabilities describes host support required by agent.stop.
@@ -46,6 +51,7 @@ type Adapter struct {
 	mapper       adapter.ResourceMapper
 	runner       commandRunner
 	execRunner   commandExecRunner
+	followRunner followRunner
 	platformStop bool
 }
 
@@ -74,7 +80,7 @@ func New(config Config) (*Adapter, error) {
 	if err != nil {
 		capabilities = PlatformCapabilities{}
 	}
-	return &Adapter{config: config, mapper: config.ResourceMapper, runner: execRunner{timeout: config.Timeout}, execRunner: execCommandRunner{timeout: config.Timeout}, platformStop: capabilities.ProcAvailable && capabilities.PidfdAvailable}, nil
+	return &Adapter{config: config, mapper: config.ResourceMapper, runner: execRunner{timeout: config.Timeout}, execRunner: execCommandRunner{timeout: config.Timeout}, followRunner: execFollowRunner{timeout: config.Timeout}, platformStop: capabilities.ProcAvailable && capabilities.PidfdAvailable}, nil
 }
 
 func newWithRunner(config Config, runner commandRunner) (*Adapter, error) {
@@ -96,6 +102,11 @@ func (a *Adapter) Describe(context.Context) (adapter.Descriptor, error) {
 			{Name: protocol.OperationContextInject, Version: "v1", TargetKinds: []string{"session"}},
 			{Name: protocol.OperationExecutionInterrupt, Version: "v1", TargetKinds: []string{"session"}},
 			{Name: protocol.OperationOutputRead, Version: "v1", TargetKinds: []string{"session"}},
+			// output.follow is advertised only because this adapter can stream
+			// provider records. A provider without a streaming entry point must
+			// omit it so the Endpoint reports the gap instead of degrading a
+			// follow into a snapshot that never updates.
+			{Name: protocol.OperationOutputFollow, Version: "v1", TargetKinds: []string{"session"}},
 			{Name: protocol.OperationAgentStart, Version: "v1", TargetKinds: []string{"endpoint"}},
 			{Name: protocol.OperationAgentResume, Version: "v1", TargetKinds: []string{"session"}},
 			{Name: protocol.OperationAgentDriveStart, Version: "v1", TargetKinds: []string{"session"}},
@@ -106,10 +117,12 @@ func (a *Adapter) Describe(context.Context) (adapter.Descriptor, error) {
 			{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion, TargetKinds: []string{"session"}, SafetyClass: "mutating", RequiredPermission: "control"},
 		}},
 	}
-	// The provider control family is advertised per reviewed action so an operator
-	// sees exactly the actions this adapter serves, and each action carries the
-	// scope it requires instead of inheriting one blanket permission.
-	descriptor.Capabilities.Capabilities = append(descriptor.Capabilities.Capabilities, controlActionCapabilities()...)
+	// The provider control family is advertised per enabled action so an operator
+	// sees exactly the actions this Endpoint serves, and each action carries the
+	// scope it requires instead of inheriting one blanket permission. A configured
+	// control action file narrows this list; an omitted action becomes unreachable
+	// because the Endpoint rejects an operation it does not advertise.
+	descriptor.Capabilities.Capabilities = append(descriptor.Capabilities.Capabilities, controlActionCapabilities(a.config.ControlActions)...)
 	if a.platformStop {
 		descriptor.Capabilities.Capabilities = append(descriptor.Capabilities.Capabilities, protocol.Capability{Name: protocol.OperationAgentStop, Version: "v1", TargetKinds: []string{"session"}})
 	}
@@ -353,7 +366,7 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 	if operation == protocol.OperationAgentStop && !a.platformStop {
 		return adapter.ExecuteResult{}, adapter.ErrUnsupported
 	}
-	providerKey, err := a.providerTarget(intent.Target)
+	providerKey, err := a.providerTarget(ctx, intent.Target)
 	if err != nil && operation != protocol.OperationAgentStart {
 		return adapter.ExecuteResult{Receipt: failedReceipt(intent, "unknown_target")}, err
 	}
@@ -421,14 +434,22 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 	default:
 		// The provider control family is addressed by a dynamic ctl.<action>
 		// operation, so it cannot be a constant case label. controlActionArgs
-		// matches the reviewed action list before building any argv, so an
-		// unreviewed action never reaches the provider.
+		// matches the configured catalog before building any argv, so an action
+		// the operator did not configure never reaches the provider.
 		if !strings.HasPrefix(operation, security.ProviderControlPrefix) {
 			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "unsupported")}, adapter.ErrUnsupported
 		}
-		controlArgs, controlErr := controlActionArgs(operation, providerKey, intent.Payload)
+		controlArgs, controlErr := controlActionArgs(a.config.ControlActions, operation, providerKey, intent.Payload)
 		if controlErr != nil {
-			return adapter.ExecuteResult{Receipt: failedReceipt(intent, "control_action_unreviewed")}, controlErr
+			// A payload that disagrees with a value the catalog entry fixes itself
+			// is a different failure from an action the Endpoint does not serve.
+			// Reporting "unconfigured" would send the operator looking for a
+			// missing catalog entry when the entry exists and the payload is wrong.
+			code := "control_action_unconfigured"
+			if errors.Is(controlErr, errControlPayloadConflict) {
+				code = "control_payload_conflict"
+			}
+			return adapter.ExecuteResult{Receipt: failedReceipt(intent, code)}, controlErr
 		}
 		args = controlArgs
 	}
@@ -530,14 +551,20 @@ func runtimeMessage(payload []byte) (string, error) {
 	return "", errors.New("runtime payload requires text or message")
 }
 
-func (a *Adapter) providerTarget(target *protocol.CommandTarget) (string, error) {
+// providerTarget resolves the private provider key for one opaque public target.
+//
+// The caller context is honoured rather than replaced with context.Background():
+// a long-running follow must be cancellable, and a lookup that ignores
+// cancellation would keep a provider child alive after the operator stopped
+// watching.
+func (a *Adapter) providerTarget(ctx context.Context, target *protocol.CommandTarget) (string, error) {
 	if target == nil {
 		return "", errors.New("target is required")
 	}
 	if a.mapper == nil {
 		return "", errors.New("durable resource mapper is required")
 	}
-	mapping, err := a.mapper.LookupResourceID(context.Background(), target.ResourceID)
+	mapping, err := a.mapper.LookupResourceID(ctx, target.ResourceID)
 	if err != nil {
 		return "", err
 	}
@@ -557,7 +584,7 @@ func (a *Adapter) run(ctx context.Context, args []string, stdin []byte) ([]byte,
 
 // ReadOutput returns one bounded runtime log snapshot.
 func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest) (adapter.OutputResult, error) {
-	key, err := a.providerTarget(&request.Target)
+	key, err := a.providerTarget(ctx, &request.Target)
 	if err != nil {
 		return adapter.OutputResult{}, err
 	}
@@ -589,6 +616,28 @@ func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest)
 	}
 	response := envelope.Response
 	return adapter.OutputResult{Lines: response.Lines, Truncated: response.Truncated || response.ScanLimited, ScanLimited: response.ScanLimited, ObservedAtMS: time.Now().UnixMilli()}, nil
+}
+
+// FollowOutput streams runtime log records until the consumer stops or the
+// provider stream ends.
+//
+// The provider rejects --json together with --follow, so this path passes plain
+// text arguments and never decodes a document. Records are delivered as complete
+// lines, and the runner sets PYTHONUNBUFFERED so they arrive as they are written
+// instead of only at process exit.
+func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollowRequest, emit func(protocol.OutputChunk) error) error {
+	key, err := a.providerTarget(ctx, &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation})
+	if err != nil {
+		return err
+	}
+	lines := request.MaxLines
+	if lines <= 0 || lines > 10000 {
+		lines = 20
+	}
+	args := []string{"runtime", "logs", "-s", key, "-n", fmt.Sprint(lines), "--follow"}
+	return a.followRunner.Follow(ctx, a.config.Executable, args, func(line string) error {
+		return emit(protocol.OutputChunk{Lines: []string{line}, ObservedAtMS: time.Now().UnixMilli()})
+	})
 }
 
 // QueryCommand reports that TopsailAI has no supported command reconciliation API.

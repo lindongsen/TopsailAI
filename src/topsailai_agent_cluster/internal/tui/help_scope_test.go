@@ -275,7 +275,7 @@ func TestHelpOverviewKeepsScopePrompts(t *testing.T) {
 
 func TestHelpOverviewKeepsScopeRestrictions(t *testing.T) {
 	output, diagnostics := runScope(t, scopeStub(), "send {}\nquit\n", ColorPolicy{})
-	if !strings.Contains(diagnostics, `command "send" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, status, refresh, watch, history, help, quit`) {
+	if !strings.Contains(diagnostics, `command "send" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, drive, status, refresh, watch, history, help, quit, exit`) {
 		t.Fatalf("scope restriction lost: %q", diagnostics)
 	}
 	if strings.Contains(output, "admitted") {
@@ -361,7 +361,7 @@ func TestNonInteractiveHelpCatalogMatchesStandaloneDispatch(t *testing.T) {
 		"agent-cluster-cli [options] [--endpoint <id>] list [--clean]",
 		"agent-cluster-cli [options] [--endpoint <id>] refresh",
 		"agent-cluster-cli [options] show <endpoint-or-session>",
-		"agent-cluster-cli [options] [--lines <lines>] logs <endpoint> <session>",
+		"agent-cluster-cli [options] [--lines <lines>] [--follow] logs <endpoint> <session>",
 		"agent-cluster-cli [options] status <command-id>",
 		"agent-cluster-cli [options] send <endpoint> <resource> [text] [generation]",
 		"agent-cluster-cli [options] btw <endpoint> <resource> [text] [generation]",

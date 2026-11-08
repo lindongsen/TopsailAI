@@ -53,6 +53,9 @@ type interactiveState struct {
 	commandID string
 	// watch is the armed auto-refresh intent; it is consumed by the next prompt.
 	watch *watchRequest
+	// follow is the armed output-follow intent; it is consumed by the next
+	// prompt, so a keypress that stops the stream cannot re-arm it.
+	follow *followRequest
 	// history is the row-number namespace produced by the most recent history
 	// render. It is nil until history renders, and rendering a list clears it, so
 	// a number always means the row of the table the operator last saw.
@@ -225,6 +228,16 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 	if err := parent.Err(); err != nil {
 		return err
 	}
+	// Dotted completion is opt-in. A REPL that supplies no completion source
+	// performs no capability query for completion, so the existing contract that
+	// a capability query happens only when a command needs one is preserved. The
+	// editor receives the cache's read method, so completion stays a pure lookup
+	// and never performs network I/O inside the keystroke handler.
+	var actions *CtlActionCache
+	if setter, ok := options.WatchReader.(interface{ SetActionSource(func() []string) }); ok {
+		actions = NewCtlActionCache()
+		setter.SetActionSource(actions.Cached)
+	}
 	consecutivePromptFailures := 0
 	for {
 		if err := parent.Err(); err != nil {
@@ -232,6 +245,9 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		}
 		if controller.promptWasInterrupted() {
 			return ErrInteractiveInterrupt
+		}
+		if actions != nil {
+			actions.Actions(parent, api, state.Scope.EndpointID)
 		}
 		if err := writePrompt(output, state, options.Color); err != nil {
 			return err
@@ -250,6 +266,17 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			// read cannot be interrupted from outside. The reader stops it on the
 			// first keypress, so the loop never outlives the prompt it serves.
 			watch := startWatch(readCtx, api, &state, output, options)
+			// An armed follow stream takes precedence over an armed auto-refresh
+			// loop, because the operator asked for one specific session's output
+			// and a moving table would compete for the same terminal rows. The
+			// superseded loop is stopped here, so its goroutine never outlives the
+			// prompt that armed it.
+			if follow := startFollow(readCtx, api, &state, options); follow != nil {
+				if watch != nil {
+					watch.Stop()
+				}
+				watch = follow
+			}
 			if watch != nil && options.WatchReader != nil {
 				line, overflow, err = options.WatchReader.ReadLineWithWatch(readCtx, prompt.String(), true, options.LineLimit, watch)
 			} else {
@@ -389,6 +416,15 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		return false, runShellCommand(ctx, api, state, line, trustedOut, options)
 	}
 	rawName, rest := commandToken(line)
+	// The dotted control spelling is resolved before alias and scope resolution,
+	// because it carries its action inside the command word. It is a form of the
+	// ctl command, so it inherits ctl's session-only scope rule and confirmation
+	// gate instead of becoming a second command with its own semantics.
+	ctlCall := ctlInvocation{rest: rest}
+	if action, dotted := ctlDottedAction(rawName); dotted {
+		ctlCall = ctlInvocation{dotted: true, action: action, rest: rest}
+		rawName = "ctl"
+	}
 	// The send prefix is resolved before tokenisation: splitCommand splits on the
 	// first literal space, so ">hello world" would otherwise yield the token
 	// ">hello". The prefix is disjoint from every command word, so this branch can
@@ -535,7 +571,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	case "send":
 		return false, interactiveSend(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	case "ctl":
-		return false, interactiveCtl(ctx, api, state, rest, lineResults, out, trustedOut, options)
+		return false, interactiveCtl(ctx, api, state, ctlCall, lineResults, out, trustedOut, options)
 	default:
 		return false, offerSendForUnknownInput(ctx, api, state, line, name, lineResults, out, trustedOut, options)
 	}
@@ -550,12 +586,17 @@ func numericInput(line string) (candidate bool, token string, surplus bool) {
 	return true, fields[0], len(fields) > 1
 }
 
-// diagnosticCommandName keeps numeric shorthand errors on the cd help path.
+// diagnosticCommandName keeps numeric shorthand errors on the cd help path and
+// reports the dotted control spelling under the ctl help, so a rejected dotted
+// line points at the command that actually owns the syntax.
 func diagnosticCommandName(line string) string {
 	if candidate, _, _ := numericInput(line); candidate {
 		return "cd"
 	}
 	name, _ := commandToken(line)
+	if _, dotted := ctlDottedAction(name); dotted {
+		return "ctl"
+	}
 	return name
 }
 

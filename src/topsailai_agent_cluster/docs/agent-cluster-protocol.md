@@ -53,9 +53,10 @@ The `ctl.<action>` family exposes the provider control actions an Endpoint actua
 advertised action is a separate versioned capability with a fixed payload schema, so the Server
 validates a standard shape and never forwards an unvalidated provider instruction.
 
-- The action inventory is derived from the Endpoint's live provider registry, not from a hardcoded
-  Server list. Adding a provider action requires no Server code, table or public schema change.
-- The Endpoint advertises only actions it can actually execute. An action that is absent from the
+- The action inventory comes from the Endpoint-local control action catalog, not from a hardcoded
+  Server list and not from compiled-in adapter code. Adding, changing or removing a provider action
+  requires no Server code, table or public schema change, and no adapter rebuild.
+- The Endpoint advertises only actions its catalog defines. An action that is absent from the
   advertised capabilities is rejected at admission rather than attempted and failed.
 - Payloads are validated against the advertised schema before dispatch. A payload that does not match
   the schema is rejected; it is never passed through as an opaque provider instruction.
@@ -63,6 +64,38 @@ validates a standard shape and never forwards an unvalidated provider instructio
   must not be reachable with an unscoped credential.
 - The Server treats the action name as an opaque standard identifier. It does not interpret provider
   semantics, select code by action name, or route by adapter.
+
+### Control action catalog
+
+The catalog is Endpoint-local administrative configuration, loaded at startup and reloaded on
+`SIGHUP`. It is the only source of control actions, so the action surface is an operational decision
+rather than a code change. Each entry defines:
+
+| Field | Meaning |
+|---|---|
+| `name` | Action name after the `ctl.` prefix. A dotted name stays one action. |
+| `permission` | Scope required to invoke it, from the closed scope vocabulary. |
+| `payload_schema` | JSON Schema object describing the payload. Descriptive only; the Server stores and returns it verbatim. |
+| `command` | Provider argv template, executed directly and never through a shell. |
+| `payload_session_field` | Optional payload field filled from the revalidated target. |
+
+Two placeholders are substituted per token, so a placeholder never splits into several arguments:
+`{session}` becomes the provider session key and `{payload}` becomes the JSON payload. Each may appear
+at most once; an unknown or unterminated placeholder is rejected when the file is loaded.
+
+An Endpoint without a catalog advertises no `ctl.` action and refuses every `ctl.` operation. That is
+the fail-closed default: an Endpoint cannot be talked into running an action nobody configured. An
+empty `actions` list is accepted and disables the family the same way.
+
+Because the catalog decides which provider command runs, it is an authorization surface. The Endpoint
+validates the configured capability list before its policy hook runs, so an action absent from the
+catalog is rejected before any allowlist or policy check. The file must not be remotely writable.
+
+The catalog is descriptive for the Server and authoritative for the Endpoint. The Server never
+interprets `command`, `payload_schema` or `payload_session_field`; it only carries the advertised
+capability so the operator surface can render the right prompt. A catalog edit reaches the operator
+only after the Endpoint re-describes, republishes and the Server commits, so a forced collection is
+the only path that makes the next view fresh.
 
 ## Allowlisted command execution
 
@@ -167,6 +200,7 @@ All paths below are proposed, not existing APIs. JSON responses use a common env
 | POST /api/v1/commands | Admit one target-bound, capability-validated intent |
 | GET /api/v1/commands/{command_id} | Durable delivery and result evidence |
 | GET /api/v1/output/snapshot | Bounded output for an exact authorized source |
+| GET /api/v1/output/follow | Streamed output records for an exact authorized source, newline-delimited JSON |
 | GET /api/v1/events | Authorized SSE updates with replay ID |
 | POST /api/v1/output/subscriptions | Admit a bounded demand-driven output subscription |
 | DELETE /api/v1/output/subscriptions/{id} | Release only that owned subscription |
@@ -175,7 +209,47 @@ Enrollment, credential rotation and revocation are administrative operations spe
 
 A command request contains client-generated command_id, endpoint_id, target kind/ID/generation (or launch_profile_id/profile_revision for start), operation/version, capability_revision, typed payload, expiry and optional expected_resource_revision. Server derives the operator identity and permissions from authentication, never from client-provided authority claims. HTTP 202 means Server admission only. A repeated ID with identical canonical intent returns its prior state; changed intent returns conflict. Owner/scope checks precede duplicate-result disclosure.
 
-SSE uses resource changes, command updates and freshness events. Output subscriptions return an authorized stream reference. MVP does not periodically refresh stdout snapshots. Explicit snapshot requests are one-shot reads; continuous subscriptions, if approved and supported, must provide true stream semantics rather than timer-driven snapshots.
+SSE uses resource changes, command updates and freshness events. MVP does not periodically refresh stdout snapshots. Explicit snapshot requests are one-shot reads.
+
+Output follow is implemented as a real stream over the existing authenticated WebSocket, not as a timer-driven snapshot. One `output_follow_request` frame starts a stream; the Endpoint answers with repeated `output_chunk` frames and exactly one terminal `output_end` frame, all correlated by the same request ID. The Server exposes it as `GET /api/v1/output/follow`, which writes newline-delimited JSON: chunk records followed by exactly one end record. A transport that cannot stream returns `503 unsupported` rather than degrading into a snapshot, because a snapshot presented as a stream would look complete while silently missing everything written after it.
+
+## Implemented output follow terminal frame delivery
+
+The Endpoint's terminal `output_end` frame is **best-effort**, not guaranteed. This
+is a deliberate decision, not an oversight, and it is the contract a consumer must
+rely on.
+
+The Endpoint keeps no follow journal. A terminal frame that cannot be sent is
+never queued, never retried and never replayed on reconnect, because retaining it
+would require a durable record type, a reconnect flush order and a retention bound
+on the command deduplication journal. That is a larger change than the contract
+needs, and the safety property it would add is already provided elsewhere.
+
+The property that makes best-effort safe lives on the Server. When an Endpoint
+disconnects, `failPendingFollow` releases every pending follow for that Endpoint
+with the Server-inferred `endpoint_offline` code. A consumer therefore always
+learns that the stream was interrupted rather than finished, even though the
+Endpoint never stated how it ended. The Endpoint's own terminal code is advisory:
+it is delivered when the channel is up, and its absence is never a clean end.
+
+Consequences a consumer must respect:
+
+- A stream that stops without a terminal frame is interrupted, never complete.
+  The client already fails closed this way and reports `stream_interrupted`.
+- A disconnect always terminates a follow with `endpoint_offline`, which is
+  inferred by the Server rather than reported by the Endpoint. A consumer must not
+  expect the Endpoint's own code, such as `cancelled` or `provider_error`, to
+  survive a disconnect.
+- A lost terminal frame is a contract event, not routine noise. The Endpoint logs
+  `output follow terminal frame lost` with the request ID and the undelivered
+  code, at WARN for an offline channel and at ERROR for any other transport
+  failure. It never claims the frame was deferred, because no retry exists.
+
+A normal stop is unaffected: it still delivers exactly one terminal frame with a
+clean code, and a regression test guards that path so disconnect handling cannot
+mask it.
+
+The `POST`/`DELETE /api/v1/output/subscriptions` routes above remain unimplemented proposals. They are not required for follow, because a follow stream is bounded by its own request and ends with its terminal frame; a durable subscription would add retained state that the current design does not need.
 
 ## Command lifecycle and uncertain effects
 
@@ -224,11 +298,33 @@ Initial reachability policy remains heartbeat every 10 seconds, suspect after 30
 
 SQLite serializes write transactions; use bounded transaction lengths, a bounded busy retry policy and explicit database-error responses. Configure WAL/checkpoint and durability settings deliberately with the SQLite library; publish commit evidence rather than promising hard real-time I/O. The initial single active Server owns the database. Measure JSON serialization/whole-document replacement costs, collection duration, commit latency, database/WAL size and bounded query parsing under representative retained provider history. No per-Session SQL index or database-specific JSON features are needed for MVP.
 
+## Implemented output read authorization
+
+Both output routes require the `read_output` scope. `GET /api/v1/output` and
+`GET /api/v1/output/follow` resolve the required permission through one shared
+helper (`internal/server/output_scope.go`), so a future output route cannot be
+added without the check. A credential that lacks the scope receives `403` with
+code `permission_denied`, and the message names the operation and the missing
+permission.
+
+The check runs before the transport is consulted and before the handler inspects
+whether a transport or streaming capability is configured. An unauthorized caller
+therefore cannot infer Endpoint reachability or Server streaming capability from a
+status code or a response time.
+
+An empty scope set remains unrestricted, which models the single-credential
+deployment where the one provisioned token is the administrator. The check
+therefore only narrows access when `AGENT_CLUSTER_AUTH_SCOPES` (or
+`--auth-scopes`) is set explicitly. Verification must narrow the scopes, because a
+default deployment cannot distinguish a working check from a missing one.
+
 ## Output and backpressure
 
 Real follow support requires an opaque cursor bound to source identity/generation plus an offset/sequence, rotation detection and bounded retention. Cursor expiry returns an explicit gap and recovery option. Do not derive a reliable cursor from a tail snapshot or deduplicate identical text lines: repeated lines can be legitimate.
 
 Snapshot-only providers return snapshot_id, observation time, returned content and partial/truncation evidence. The TUI replaces the panel snapshot rather than appending inferred new lines. MVP performs no periodic stdout snapshot refresh. One-shot reads show their observation time; they promise neither complete history nor sub-second follow.
+
+Implemented follow semantics: a follow stream is a live tail, not a historical replay. It starts from the provider's current position and carries each record's observation time, so a consumer can tell when a record was observed. It does not promise complete history, and it does not promise that no record was missed between the last snapshot and the start of the stream. A provider that cannot tail reports `unsupported` rather than returning a snapshot. The Endpoint bounds concurrent follows (`maxConcurrentFollows = 8`) and rejects an excess request with `too_many_follows` instead of queueing it, so a long follow can never starve commands, heartbeats, inventory reports or launch queries on the same channel.
 
 Bound frame bytes, queues, output rate, subscriptions per operator and per Endpoint, CLI concurrency and snapshot size. Reserve transport capacity for heartbeat/control. Backpressure on output drops or pauses only with explicit gap/status events; control admission fails visibly when full. Slow consumers expire their subscriptions and can re-query state. Secrets and escape sequences are never rendered as trusted terminal commands.
 

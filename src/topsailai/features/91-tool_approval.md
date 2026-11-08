@@ -600,6 +600,24 @@ class ToolApprovalDeniedError(ToolApprovalException):
         self.instance_id = instance_id
 ```
 
+### Denial Message Carries the Matched Rule Name
+
+`ai_base/agent_types/tool.py::execute_step_action()` catches `ToolApprovalDeniedError` and returns
+`str(e)`, so the exception message is exactly what the agent sees as the tool observation. The
+message therefore includes the matched rule name as the denial reason; without it the model cannot
+tell which policy blocked the call and tends to retry the identical request.
+
+| Path | Message |
+|---|---|
+| `DENY` action with a named rule | `Tool '<name>' was denied by approval policy (rule: <rule name>).` |
+| `DENY` action without a rule name | `Tool '<name>' was denied by approval policy.` |
+| `ASK` denied or timed out with a named rule | `Tool '<name>' was not approved (status: <status>, rule: <rule name>).` |
+| `ASK` denied or timed out without a rule name | `Tool '<name>' was not approved (status: <status>).` |
+
+The rule name is read through one helper that accepts both the `ApprovalRule` dataclass and a plain
+mapping, because rules originate as JSON. An unnamed rule omits the reason entirely instead of
+printing a placeholder, and the existing log lines keep their `<unnamed>` fallback unchanged.
+
 ### Decorator Design
 
 ```python

@@ -31,10 +31,15 @@ type Server struct {
 	OnReject         func(error)
 	OnRejectReason   func(endpointID, certificateIdentity, reason, requestID string)
 	RevokedSerials   map[string]bool
-	pendingOutput    map[string]pendingOutputRequest
-	pendingLaunch    map[string]pendingLaunchRequest
-	pendingRefresh   map[string]pendingRefreshRequest
-	pendingHistory   map[string]pendingHistoryRequest
+	// SharedCertificate relaxes the certificate-to-Endpoint identity binding when
+	// every Endpoint presents the same Server certificate. It is opt-in because
+	// the binding is a real security property, not a formality.
+	SharedCertificate bool
+	pendingOutput     map[string]pendingOutputRequest
+	pendingLaunch     map[string]pendingLaunchRequest
+	pendingRefresh    map[string]pendingRefreshRequest
+	pendingFollow     map[string]pendingFollowRequest
+	pendingHistory    map[string]pendingHistoryRequest
 }
 
 // pendingOutputRequest tracks one output request so read-limit failures can be reported.
@@ -49,7 +54,36 @@ type pendingRefreshRequest struct {
 	response   chan Frame
 }
 
-// Peer is one currently connected Endpoint.
+// pendingFollowRequest tracks one streaming follow. Unlike a snapshot, a follow
+// delivers many chunks before it ends, so it owns a channel of chunk events
+// rather than a single response slot.
+type pendingFollowRequest struct {
+	endpointID string
+	events     chan FollowEvent
+	// done is closed when the request is released, so the cancellation watcher
+	// stops instead of lingering for the lifetime of the process.
+	done chan struct{}
+}
+
+// FollowEvent is one delivered follow frame: either a chunk or the terminal end.
+// Exactly one event carries End, and it is always the last event for its stream,
+// so a consumer that stops receiving events without End treats the stream as
+// interrupted rather than complete.
+type FollowEvent struct {
+	Chunk *protocol.OutputChunk
+	End   *protocol.OutputEnd
+}
+
+// followChunkBuffer bounds how many chunks may wait for one consumer. A consumer
+// that falls this far behind is disconnected rather than buffered without limit,
+// because an unbounded queue would let one slow reader exhaust Server memory.
+const followChunkBuffer = 64
+
+// maxPendingFollow bounds concurrent follow streams per Server so a few operators
+// cannot hold every transport slot.
+const maxPendingFollow = 64
+
+// channelReadLimit bounds one channel frame so a hostile peer cannot exhaust memory.
 const channelReadLimit int64 = 2 << 20
 
 // maxPendingRefresh bounds concurrent forced collections so discovery cannot amplify.
@@ -61,13 +95,14 @@ type Peer struct {
 	InstanceID           string
 	Hostname             string
 	ConnectionGeneration int64
+	Initiator            string
 	Conn                 *websocket.Conn
 	LastSeen             time.Time
 }
 
 // NewServer constructs a channel server.
 func NewServer(tlsConfig *tls.Config) *Server {
-	return &Server{TLSConfig: tlsConfig, Fence: NewFence(), Active: make(map[string]*Peer), HeartbeatTimeout: 30 * time.Second, RevokedSerials: make(map[string]bool), pendingOutput: make(map[string]pendingOutputRequest), pendingRefresh: make(map[string]pendingRefreshRequest), pendingHistory: make(map[string]pendingHistoryRequest)}
+	return &Server{TLSConfig: tlsConfig, Fence: NewFence(), Active: make(map[string]*Peer), HeartbeatTimeout: 30 * time.Second, RevokedSerials: make(map[string]bool), pendingOutput: make(map[string]pendingOutputRequest), pendingRefresh: make(map[string]pendingRefreshRequest), pendingFollow: make(map[string]pendingFollowRequest), pendingHistory: make(map[string]pendingHistoryRequest)}
 }
 
 // Handler accepts Endpoint-initiated WebSocket upgrades and fences older peers.
@@ -98,27 +133,62 @@ func (s *Server) Handler(w http.ResponseWriter, r *http.Request) {
 		s.sendHelloRejection(r.Context(), conn, hello, "invalid_hello", "invalid hello", certificate)
 		return
 	}
-	if certificate != nil {
+	// A shared certificate cannot bind the peer to one Endpoint identity, because
+	// every Endpoint presents the same certificate name. The check is skipped only
+	// when the operator explicitly enabled the shared-certificate mode; the strict
+	// default still requires the certificate to name the claimed Endpoint.
+	if certificate != nil && !s.SharedCertificate {
 		if err := security.ValidateEndpointIdentity(certificate, hello.EndpointID); err != nil {
 			s.sendHelloRejection(r.Context(), conn, hello, "identity_mismatch", err.Error(), certificate)
 			s.reject(err)
 			return
 		}
 	}
-	generation := s.Fence.Acquire(hello.EndpointID)
-	peer := &Peer{EndpointID: hello.EndpointID, InstanceID: hello.InstanceID, Hostname: hello.Hostname, ConnectionGeneration: generation, Conn: conn, LastSeen: time.Now()}
-	s.Mu.Lock()
-	if old := s.Active[hello.EndpointID]; old != nil {
-		_ = old.Conn.CloseNow()
+	// An explicit server initiator means the peer dialed the wrong side: this
+	// handler only accepts Endpoint-initiated connections. An empty initiator is
+	// the legacy handshake and is treated as Endpoint-initiated.
+	if hello.Initiator == InitiatorServer {
+		s.sendHelloRejection(r.Context(), conn, hello, "wrong_initiator", "handler requires an endpoint-initiated connection", certificate)
+		return
 	}
-	s.Active[hello.EndpointID] = peer
-	s.Mu.Unlock()
-	ack := Frame{Type: FrameHelloAck, ProtocolVersion: ProtocolVersion, ConnectionGeneration: strconv.FormatInt(generation, 10), EndpointID: hello.EndpointID}
+	peer := s.installPeer(hello.EndpointID, hello.InstanceID, hello.Hostname, InitiatorEndpoint, conn)
+	ack := Frame{Type: FrameHelloAck, ProtocolVersion: ProtocolVersion, ConnectionGeneration: strconv.FormatInt(peer.ConnectionGeneration, 10), EndpointID: hello.EndpointID}
 	if err := wsjson.Write(context.Background(), conn, ack); err != nil {
 		s.remove(peer)
 		return
 	}
+	// The Endpoint confirms it adopted this generation. Waiting here means the
+	// Server only treats a link as established once both sides agree, which is the
+	// same rule the Server-initiated direction uses.
+	var attached Frame
+	if err := wsjson.Read(r.Context(), conn, &attached); err != nil {
+		s.remove(peer)
+		return
+	}
+	if attached.Type != FrameHelloAttached || attached.EndpointID != hello.EndpointID || attached.ConnectionGeneration != ack.ConnectionGeneration {
+		s.remove(peer)
+		_ = conn.Close(websocket.StatusPolicyViolation, "invalid hello attached")
+		return
+	}
 	go s.readLoop(context.Background(), peer)
+}
+
+// installPeer makes a connection authoritative and assigns its generation under
+// one lock, so install order and generation order are identical and the newest
+// connection always wins. Assigning the generation before the handshake instead
+// would let a slower handshake overwrite a newer connection, which is the
+// opposite of the required latest-wins behaviour.
+func (s *Server) installPeer(endpointID, instanceID, hostname, initiator string, conn *websocket.Conn) *Peer {
+	s.Mu.Lock()
+	generation := s.Fence.Acquire(endpointID)
+	peer := &Peer{EndpointID: endpointID, InstanceID: instanceID, Hostname: hostname, ConnectionGeneration: generation, Initiator: initiator, Conn: conn, LastSeen: time.Now()}
+	previous := s.Active[endpointID]
+	s.Active[endpointID] = peer
+	s.Mu.Unlock()
+	if previous != nil && previous.Conn != conn {
+		_ = previous.Conn.CloseNow()
+	}
+	return peer
 }
 
 func (s *Server) sendHelloRejection(ctx context.Context, conn *websocket.Conn, hello Frame, reason, message string, certificate *x509.Certificate) {
@@ -184,6 +254,9 @@ func (s *Server) readLoop(ctx context.Context, peer *Peer) {
 			}
 			s.Mu.Unlock()
 		}
+		if frame.Type == FrameOutputChunk || frame.Type == FrameOutputEnd {
+			s.deliverFollow(peer, frame)
+		}
 		if frame.Type == FrameReceipt && frame.Receipt != nil && s.OnReceipt != nil {
 			s.OnReceipt(*peer, *frame.Receipt)
 		}
@@ -208,6 +281,111 @@ func (s *Server) deliverRefresh(peer *Peer, frame Frame) {
 	}
 	delete(s.pendingRefresh, frame.RequestID)
 	pending.response <- frame
+}
+
+// deliverFollow hands one chunk or the terminal end to its waiting consumer.
+//
+// A chunk is delivered without blocking the channel read loop: if the consumer
+// has fallen behind the bounded buffer, the follow is terminated with an explicit
+// overflow error instead of stalling every other frame on this connection. A
+// silent drop would let the operator believe the stream is complete, so the
+// consumer always learns that data was lost.
+func (s *Server) deliverFollow(peer *Peer, frame Frame) {
+	s.Mu.Lock()
+	pending, ok := s.pendingFollow[frame.RequestID]
+	if !ok || pending.endpointID != peer.EndpointID {
+		s.Mu.Unlock()
+		return
+	}
+	s.Mu.Unlock()
+	if frame.Type == FrameOutputEnd {
+		released, ok := s.releaseFollow(frame.RequestID)
+		if !ok {
+			return
+		}
+		end := frame.OutputEnd
+		if end == nil {
+			end = &protocol.OutputEnd{ErrorCode: "invalid_response", ObservedAtMS: time.Now().UnixMilli()}
+		}
+		deliverFollowEnd(released.events, end)
+		return
+	}
+	chunk := frame.OutputChunk
+	if chunk == nil {
+		return
+	}
+	select {
+	case pending.events <- FollowEvent{Chunk: chunk}:
+	default:
+		// The consumer is too slow to keep up with the provider. Terminating the
+		// stream with an explicit code is the only honest option: buffering
+		// without limit would exhaust Server memory, and dropping the chunk
+		// silently would present a partial stream as complete.
+		released, ok := s.releaseFollow(frame.RequestID)
+		if !ok {
+			return
+		}
+		deliverFollowEnd(released.events, &protocol.OutputEnd{ErrorCode: "consumer_overflow", ObservedAtMS: time.Now().UnixMilli()})
+	}
+}
+
+// deliverFollowEnd guarantees the terminal event reaches the consumer.
+//
+// A plain non-blocking send would drop the end event exactly when the queue is
+// full, which is the overflow case that most needs to be reported: the consumer
+// would then see neither the missing chunks nor the reason, and would treat a
+// truncated stream as a finished one. Discarding the queued chunks is acceptable
+// here because the end event already declares that data was lost.
+func deliverFollowEnd(events chan FollowEvent, end *protocol.OutputEnd) {
+	for {
+		select {
+		case events <- FollowEvent{End: end}:
+			return
+		default:
+		}
+		select {
+		case <-events:
+		default:
+			// The consumer drained the queue concurrently; retry the send.
+		}
+	}
+}
+
+// releaseFollow removes one pending follow and closes its done channel so the
+// cancellation watcher stops. It is idempotent, so a disconnect, a terminal
+// frame and a cancelled context can all race without double-closing done.
+func (s *Server) releaseFollow(requestID string) (pendingFollowRequest, bool) {
+	s.Mu.Lock()
+	pending, ok := s.pendingFollow[requestID]
+	if ok {
+		delete(s.pendingFollow, requestID)
+	}
+	s.Mu.Unlock()
+	if ok {
+		close(pending.done)
+	}
+	return pending, ok
+}
+
+// failPendingFollow reports a transport failure to every follow for one Endpoint,
+// so a disconnected Endpoint never leaves a consumer waiting for chunks that can
+// no longer arrive.
+func (s *Server) failPendingFollow(endpointID string) {
+	s.Mu.Lock()
+	requestIDs := make([]string, 0, len(s.pendingFollow))
+	for requestID, request := range s.pendingFollow {
+		if request.endpointID == endpointID {
+			requestIDs = append(requestIDs, requestID)
+		}
+	}
+	s.Mu.Unlock()
+	for _, requestID := range requestIDs {
+		released, ok := s.releaseFollow(requestID)
+		if !ok {
+			continue
+		}
+		deliverFollowEnd(released.events, &protocol.OutputEnd{ErrorCode: "endpoint_offline", ObservedAtMS: time.Now().UnixMilli()})
+	}
 }
 
 // failPendingRefresh reports a transport failure to every request for one Endpoint.
@@ -271,6 +449,45 @@ func (s *Server) RequestOutput(ctx context.Context, endpointID string, request p
 		s.Mu.Unlock()
 		return protocol.OutputSnapshotResponse{ErrorCode: "endpoint_offline"}, ctx.Err()
 	}
+}
+
+// RequestFollow starts one streaming output follow and returns its event stream.
+//
+// The returned channel delivers chunks followed by exactly one terminal end
+// event. A consumer that stops receiving events without an end event must treat
+// the stream as interrupted rather than complete, because a silent stop would
+// present a partial stream as a finished one.
+//
+// Cancelling ctx releases the pending entry and terminates the stream with a
+// cancelled end event, so an operator who stops watching never leaves a provider
+// child streaming into a queue nobody reads.
+func (s *Server) RequestFollow(ctx context.Context, endpointID string, request protocol.OutputFollowRequest) (<-chan FollowEvent, error) {
+	requestID := security.NewRequestID()
+	events := make(chan FollowEvent, followChunkBuffer)
+	done := make(chan struct{})
+	s.Mu.Lock()
+	if len(s.pendingFollow) >= maxPendingFollow {
+		s.Mu.Unlock()
+		return nil, errors.New("follow capacity exceeded")
+	}
+	s.pendingFollow[requestID] = pendingFollowRequest{endpointID: endpointID, events: events, done: done}
+	s.Mu.Unlock()
+	if err := s.SendCommand(ctx, endpointID, Frame{Type: FrameOutputFollowRequest, ProtocolVersion: ProtocolVersion, RequestID: requestID, OutputFollowRequest: &request}); err != nil {
+		s.releaseFollow(requestID)
+		return nil, err
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			released, ok := s.releaseFollow(requestID)
+			if !ok {
+				return
+			}
+			deliverFollowEnd(released.events, &protocol.OutputEnd{ErrorCode: "cancelled", ObservedAtMS: time.Now().UnixMilli()})
+		case <-done:
+		}
+	}()
+	return events, nil
 }
 
 // RequestRefresh asks an online Endpoint to collect and report a fresh inventory.
@@ -358,6 +575,11 @@ func (s *Server) remove(peer *Peer) {
 	// read, so fail the waiters instead of letting them block until their deadline.
 	s.failPendingRefresh(peer.EndpointID)
 	s.failPendingHistory(peer.EndpointID)
+	// A disconnected Endpoint can never answer a snapshot or a follow either, so
+	// those waiters are failed immediately instead of blocking until their own
+	// deadline.
+	s.failPendingOutput(peer.EndpointID, protocol.OutputSnapshotResponse{ErrorCode: "endpoint_offline"})
+	s.failPendingFollow(peer.EndpointID)
 	if s.OnDisconnect == nil {
 		return
 	}

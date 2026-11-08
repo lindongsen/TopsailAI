@@ -70,7 +70,13 @@ func CertificatesE(dir string) (CertFiles, error) {
 	if err != nil {
 		return CertFiles{}, fmt.Errorf("generate client key: %w", err)
 	}
-	clientDER, err := x509.CreateCertificate(rand.Reader, certificateTemplateE("endpoint-1", false), caTemplate, &clientKey.PublicKey, caKey)
+	// The Endpoint certificate carries a DNS SAN equal to the Endpoint identity.
+	// Go ignores the legacy Common Name for hostname verification, so a
+	// certificate with only a CN cannot be verified when the Server dials the
+	// Endpoint and expects the Endpoint identity as the peer name.
+	clientTemplate := certificateTemplateE("endpoint-1", false)
+	clientTemplate.DNSNames = []string{"endpoint-1"}
+	clientDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, caTemplate, &clientKey.PublicKey, caKey)
 	if err != nil {
 		return CertFiles{}, fmt.Errorf("create client certificate: %w", err)
 	}
@@ -82,7 +88,9 @@ func CertificatesE(dir string) (CertFiles, error) {
 	if err != nil {
 		return CertFiles{}, fmt.Errorf("generate second client key: %w", err)
 	}
-	clientDER2, err := x509.CreateCertificate(rand.Reader, certificateTemplateE("endpoint-2", false), caTemplate, &clientKey2.PublicKey, caKey)
+	clientTemplate2 := certificateTemplateE("endpoint-2", false)
+	clientTemplate2.DNSNames = []string{"endpoint-2"}
+	clientDER2, err := x509.CreateCertificate(rand.Reader, clientTemplate2, caTemplate, &clientKey2.PublicKey, caKey)
 	if err != nil {
 		return CertFiles{}, fmt.Errorf("create second client certificate: %w", err)
 	}
@@ -150,8 +158,17 @@ func WaitHTTPE(url, token string, want int, limit time.Duration) error {
 	return fmt.Errorf("HTTP %s did not return %d before deadline", url, want)
 }
 
-// WaitInventoryE waits for the first real Endpoint inventory report.
+// WaitInventoryE waits for the first real Endpoint inventory report from either
+// of the two adapter IDs the default fixture configuration publishes.
 func WaitInventoryE(url, token string, limit time.Duration) error {
+	return WaitInventoryForE(url, token, "", limit)
+}
+
+// WaitInventoryForE waits for the first real Endpoint inventory report that
+// mentions the expected adapter ID. An empty adapter ID accepts the default
+// fixture adapter IDs, so existing callers keep their original behaviour while a
+// scenario that selects another provider type can wait for its own adapter.
+func WaitInventoryForE(url, token, adapterID string, limit time.Duration) error {
 	deadline := time.Now().Add(limit)
 	for time.Now().Before(deadline) {
 		req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -166,13 +183,22 @@ func WaitInventoryE(url, token string, limit time.Duration) error {
 			if readErr != nil {
 				return fmt.Errorf("read inventory response: %w", readErr)
 			}
-			if resp.StatusCode == http.StatusOK && (bytes.Contains(data, []byte("fixture-main")) || bytes.Contains(data, []byte("adapter-a"))) {
+			if resp.StatusCode == http.StatusOK && inventoryMentionsE(data, adapterID) {
 				return nil
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("real Endpoint inventory was not reported before deadline")
+}
+
+// inventoryMentionsE reports whether an inventory document names the expected
+// adapter. An empty expectation accepts the default fixture adapter IDs.
+func inventoryMentionsE(data []byte, adapterID string) bool {
+	if adapterID != "" {
+		return bytes.Contains(data, []byte(adapterID))
+	}
+	return bytes.Contains(data, []byte("fixture-main")) || bytes.Contains(data, []byte("adapter-a"))
 }
 
 func generateKeyE() (*ecdsa.PrivateKey, error) {

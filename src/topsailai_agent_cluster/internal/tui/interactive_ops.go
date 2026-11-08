@@ -28,7 +28,7 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 		return fmt.Errorf("no endpoint selected; use cd <number> to enter an endpoint row, or cd <hostname>/<endpoint-id>")
 	}
 	resourceID := state.Scope.SessionID
-	target, maxLines, err := parseLogsArgs(rest, maxLines)
+	target, maxLines, follow, err := parseLogsArgs(rest, maxLines)
 	if err != nil {
 		return err
 	}
@@ -55,44 +55,67 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 	if err != nil {
 		return numericTokenHint(strings.TrimSpace(rest), err)
 	}
+	if follow {
+		// The stream is armed for the next prompt rather than started here,
+		// because the editor owns the terminal and is the only writer. Arming
+		// keeps the existing watch seam, so a keypress stops the stream through
+		// the same path that stops an auto-refresh loop.
+		if _, ok := api.(OutputFollower); !ok {
+			return fmt.Errorf("follow is unavailable: the API client does not support streaming output")
+		}
+		state.follow = &followRequest{EndpointID: endpointID, ResourceID: session.SessionID, Generation: session.Generation, MaxBytes: maxBytes, MaxLines: maxLines}
+		_, err = fmt.Fprintf(trustedOut, "follow: %s (any key stops)\n", sanitizeInlineText(session.SessionID))
+		return err
+	}
 	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, trustedOut, endpointID, session.SessionID, maxBytes, maxLines, false, color)
 }
 
-// parseLogsArgs splits an optional session token from an optional line limit.
-// Accepted forms are -n <lines>, --lines <lines>, and --lines=<lines>.
-func parseLogsArgs(rest string, fallback int) (string, int, error) {
+// logsUsage is the single usage string for the logs grammar, so every rejection
+// names the same accepted forms.
+const logsUsage = "usage: logs [-n <lines>] [-f|--follow] [session]"
+
+// parseLogsArgs splits an optional session token from an optional line limit and
+// an optional follow request. Accepted forms are -n <lines>, --lines <lines>,
+// --lines=<lines>, -f and --follow.
+func parseLogsArgs(rest string, fallback int) (string, int, bool, error) {
 	maxLines := fallback
 	target := ""
+	follow := false
 	tokens := strings.Fields(rest)
 	for i := 0; i < len(tokens); i++ {
 		token := tokens[i]
 		switch {
 		case token == "-n" || token == "--lines":
 			if i+1 >= len(tokens) {
-				return "", 0, fmt.Errorf("usage: logs [-n <lines>] [session]")
+				return "", 0, false, fmt.Errorf("%s", logsUsage)
 			}
 			i++
 			parsed, err := parseLineCount(tokens[i])
 			if err != nil {
-				return "", 0, err
+				return "", 0, false, err
 			}
 			maxLines = parsed
 		case strings.HasPrefix(token, "--lines="):
 			parsed, err := parseLineCount(strings.TrimPrefix(token, "--lines="))
 			if err != nil {
-				return "", 0, err
+				return "", 0, false, err
 			}
 			maxLines = parsed
+		case token == "-f" || token == "--follow":
+			if follow {
+				return "", 0, false, fmt.Errorf("%s", logsUsage)
+			}
+			follow = true
 		case strings.HasPrefix(token, "-"):
-			return "", 0, fmt.Errorf("usage: logs [-n <lines>] [session]")
+			return "", 0, false, fmt.Errorf("%s", logsUsage)
 		default:
 			if target != "" {
-				return "", 0, fmt.Errorf("usage: logs [-n <lines>] [session]")
+				return "", 0, false, fmt.Errorf("%s", logsUsage)
 			}
 			target = token
 		}
 	}
-	return target, maxLines, nil
+	return target, maxLines, follow, nil
 }
 
 // parseLineCount validates a positive line limit.

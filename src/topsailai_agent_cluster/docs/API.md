@@ -197,6 +197,28 @@ The result is one bounded snapshot with its observation time. It is not a stream
 not a durable subscription. A provider that cannot answer returns `503` with the provider's error
 code, so an unavailable read is never reported as an empty successful read.
 
+## Output follow
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/output/follow` | Stream output records for one resource |
+
+Required query parameters are `endpoint_id` and `resource_id`. Optional parameters are
+`generation`, `max_bytes` and `max_lines`, with the same defaults and clamps as the snapshot route.
+
+The response is `application/x-ndjson` with `Cache-Control: no-store`: one JSON record per line,
+chunk records first and exactly one terminal record last. Each record carries `lines`,
+`observed_at_ms`, `truncated`, `end` and an optional `error_code`. A consumer that stops receiving
+records without a terminal record must treat the stream as interrupted rather than complete; the
+client reports `stream_interrupted` in that case.
+
+A transport that cannot stream returns `503` with `unsupported` rather than degrading into a
+snapshot, because a snapshot presented as a stream would look complete while silently missing
+everything written after it. The Endpoint admits at most 8 concurrent follows and rejects an excess
+request with `too_many_follows` instead of queueing it, so a long follow cannot starve commands,
+heartbeats or inventory reports on the shared channel. Cancelling the request stops the stream; it
+does not stop the agent.
+
 ## Launch options
 
 | Method | Path | Purpose |

@@ -1,0 +1,582 @@
+# Agent Cluster control action catalog
+#
+# Author: DawsonLin
+#
+# This file defines the `ctl.` operation family, which backs the operator `ctl`
+# command. It is read by the Endpoint at startup and reloaded on SIGHUP.
+#
+# The file is JSON, not the shell-style KEY=VALUE used by the node
+# configuration, because the payload schemas are nested documents. Point the
+# Endpoint at it with CONTROL_ACTION_FILE in the node configuration, or with
+# --control-action-file on the command line.
+#
+# Everything about an action is defined here: its name, the permission it
+# requires, the payload schema the interactive prompt follows, and the provider
+# command it runs. Nothing is compiled in, so adding, renaming or retiring an
+# action is an edit to this file and never a rebuild.
+#
+# This file is an authorization surface, not a convenience switch. The Endpoint
+# checks the advertised capability list before it consults any other policy, so
+# an action that is absent here is refused before it can reach the provider.
+# Widening this file widens what the Endpoint will accept.
+#
+# An Endpoint with no catalog advertises no action and refuses every ctl.
+# operation. An empty `actions` array does the same. Both are the fail-closed
+# default: the Endpoint cannot serve an action it was never told about.
+#
+# Rules enforced when the file is loaded, so a mistake fails at startup rather
+# than at the first execution:
+#
+#   - `name` is required, must not contain whitespace, and must not repeat the
+#     `ctl.` prefix. A dotted name such as `pause.request` is allowed and stays
+#     one action, because the operation is split only on the prefix.
+#   - `permission` is required and must be one of the defined operator scopes:
+#     view, read_output, send_message, control, endpoint_admin.
+#   - `command` is required and is an argv array, never a shell string. The
+#     Endpoint executes it directly, so no shell parses it and no operator input
+#     can become a command.
+#   - `command` may use `{session}` and `{payload}` at most once each. Any other
+#     brace placeholder is refused rather than passed through as literal text.
+#   - `payload_session_field` names a payload field that must carry the provider
+#     session key. It requires a `{payload}` placeholder, because otherwise the
+#     injection would be silently ignored.
+#   - `payload_schema` must be a JSON object when present.
+#   - A name may appear only once, and an unknown field is refused rather than
+#     ignored.
+#   - An entry is either a real action or a shortcut. A real action declares
+#     `permission`, `command` and optionally `payload_schema` and
+#     `payload_session_field`. A shortcut declares only `name` and `alias_of`.
+#   - `alias_of` must name a real action declared anywhere in this file. A
+#     shortcut may not name itself, may not name another shortcut, and may not
+#     declare `permission`, `command`, `payload_schema` or
+#     `payload_session_field`, because it inherits all of them.
+#
+# A reload parses the new file completely before it swaps the catalog. A parse
+# failure keeps the previous catalog and is logged, so a typo never leaves the
+# Endpoint with no actions in force.
+#
+# `payload_schema` is descriptive. The provider still validates the payload it
+# receives, and the Server stores and returns this document verbatim without
+# interpreting it. It exists so the interactive prompt asks for the documented
+# fields instead of a generic key=value line, and so an enumerated field such as
+# `llm_control.operation` can refuse an unsupported value before submission.
+# Omitting `payload_schema` falls back to the generic prompt.
+#
+# An action that takes no payload carries an object schema with no properties,
+# which tells the prompt to ask nothing and send the empty object. An action
+# whose payload is derived from the target carries the same empty schema plus
+# `payload_session_field`, because the adapter injects the selector and the
+# operator must not be asked for it.
+#
+# The catalog below lists the actions the TopsailAI provider serves. Trim it to
+# the actions your site needs, and keep in mind that every entry is reachable by
+# anyone holding the permission it declares.
+#
+# What is deliberately absent: the provider CLI verbs `send`, `btw` and `logs`.
+# They are standard cluster operations (`message.send`, `context.inject`,
+# `output.snapshot`) with their own payload contracts, and they cannot be
+# expressed as a catalog template anyway, because `send` takes `-m TEXT` and
+# `logs` takes `-n N` while a template can only substitute `{session}` and
+# `{payload}`. Adding them here would duplicate a standard operation with a
+# weaker contract.
+#
+# The `call_instruction` entry carries the full instruction inventory in its
+# `instruction` enum, so the guided prompt offers a numbered menu instead of a
+# free-text field. Read `conf/control-actions.md` for what each instruction does.
+# Two limits of that enum are worth stating plainly:
+#
+#   - It is a prompt, not a gate. The interactive surface refuses a value that
+#     is not listed, but a caller that builds the payload itself can submit any
+#     name the provider's live registry accepts. The provider validates the name
+#     against that registry, so an unknown name still fails; a known name that is
+#     absent from this enum does not.
+#   - It is a snapshot. Plugin instructions arrive through
+#     TOPSAILAI_PLUGIN_INSTRUCTIONS at agent start and exist only in the live
+#     process, so this list cannot know them in advance.
+#
+# Because one entry carries one permission, every instruction reachable through
+# the single `call_instruction` entry shares the `control` scope. A site that must
+# let an operator read history without letting them clear it therefore splits that
+# entry into one entry per instruction, each declaring the permission it needs.
+# `payload_constants` is what makes that split possible: it pins the `instruction`
+# field, so the operator types `ctl.git.status` and is never asked to choose from
+# the enum again.
+#
+# The split narrows the menu, not the wire. The Endpoint does not validate a
+# payload against the advertised schema, so a caller that builds the payload
+# itself can still submit any instruction name the provider registers, whatever
+# permission the entry it went through declares. Closing that gap needs
+# Endpoint-side schema validation, which is not implemented today.
+#
+# Shortcuts
+#
+# A shortcut is a second name for an action that already exists here. It exists
+# so a frequent action can be typed quickly: with the entry below, an operator
+# types `ctl.session.messages` instead of `ctl.get_session_messages`, and the
+# dotted spelling skips the action menu entirely.
+#
+# A shortcut inherits the permission, the payload schema, the payload selector
+# field, the payload constants and the provider argv of the action it names, so it
+# can never widen what an operator may do and it can never run a different command.
+# Retiring the target retires the shortcut with it, because the file is validated
+# as a whole.
+#
+# The shortcut list at the end of this file is a starting point, not a fixed set.
+# Add, rename or remove entries freely; nothing about a shortcut is compiled in.
+#
+# payload_constants
+#
+# `payload_constants` is an object of payload field to literal value. The adapter
+# merges it into the payload before dispatch, so the field is filled without
+# asking the operator. It is how one catalog entry names exactly one instruction:
+#
+#   {"name": "git.status", "permission": "read_output",
+#    "payload_constants": {"instruction": "git.git_status"}, ...}
+#
+# Four rules apply, and the file is rejected when one is broken:
+#
+#   - The value is a literal, never a template. A value containing `{` is
+#     rejected, because a constant that could expand would reintroduce the
+#     operator-controlled command this catalog exists to prevent.
+#   - The entry must still carry a `{payload}` placeholder, since the constants
+#     are merged into that payload.
+#   - A constant may not name the `payload_session_field`, because the adapter
+#     injects the selector itself.
+#   - A supplied value that disagrees with the constant is rejected rather than
+#     overwritten. The catalog is the authorization surface, so a caller must not
+#     reach a different instruction through an entry that advertises one.
+#
+# A shortcut inherits its target's constants and may not declare its own.
+
+{
+  "actions": [
+    {
+      "name": "heartbeat",
+      "permission": "control",
+      "payload_schema": {"type": "object", "properties": {}},
+      "command": ["runtime", "control", "heartbeat", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "pause",
+      "permission": "control",
+      "payload_schema": {
+        "type": "object",
+        "properties": {
+          "reason": {"type": "string"},
+          "prompt": {"type": "string"},
+          "timeout_seconds": {"type": "number"},
+          "default": {"type": "string", "enum": ["continue", "interrupt"]}
+        }
+      },
+      "command": ["runtime", "control", "pause", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "clear_pause",
+      "permission": "control",
+      "payload_schema": {"type": "object", "properties": {}},
+      "command": ["runtime", "control", "clear_pause", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "hard_interrupt",
+      "permission": "control",
+      "payload_schema": {"type": "object", "properties": {}},
+      "command": ["runtime", "control", "hard_interrupt", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "clear_interrupt",
+      "permission": "control",
+      "payload_schema": {"type": "object", "properties": {}},
+      "command": ["runtime", "control", "clear_interrupt", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "soft_interrupt",
+      "permission": "control",
+      "payload_schema": {
+        "type": "object",
+        "properties": {"message": {"type": "string"}}
+      },
+      "command": ["runtime", "control", "soft_interrupt", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "get_runtime_messages",
+      "permission": "read_output",
+      "payload_schema": {"type": "object", "properties": {}},
+      "command": ["runtime", "control", "get_runtime_messages", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "get_session_messages",
+      "permission": "read_output",
+      "payload_schema": {"type": "object", "properties": {}},
+      "payload_session_field": "session_id",
+      "command": ["runtime", "control", "get_session_messages", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "call_instruction",
+      "permission": "control",
+      "payload_schema": {
+        "type": "object",
+        "properties": {
+          "instruction": {
+            "type": "string",
+            "enum": [
+              "help",
+              "agent.system_prompt",
+              "agent.env_prompt",
+              "agent.tool_prompt",
+              "agent.tools",
+              "agent.tools_observation",
+              "agent.set_llm",
+              "agent.models",
+              "agent.llm",
+              "agent.messages",
+              "agent.tokens",
+              "env.set",
+              "env.get",
+              "env.print_step_mode",
+              "git",
+              "git.git",
+              "git.git_status",
+              "git.git_log",
+              "git.git_diff",
+              "git.git_show",
+              "git.git_branch",
+              "git.git_tag",
+              "git.git_remote",
+              "skill.show",
+              "skill.load",
+              "skill.unload",
+              "skill.hooks",
+              "skill_repo.list",
+              "skill_repo.install",
+              "skill_repo.uninstall",
+              "stat.tool_call",
+              "stat.tool_call_errors",
+              "stat.tool_call_reset",
+              "stat.tool_call_log",
+              "ctx.clear",
+              "ctx.story",
+              "ctx.history",
+              "ctx.history2",
+              "ctx.del_msg",
+              "ctx.del_msgs",
+              "ctx.del_msg_ids",
+              "ctx.summarize",
+              "ctx.search",
+              "ctx.btw",
+              "session.rename",
+              "hosting"
+            ]
+          },
+          "args": {"type": "array"},
+          "kwargs": {"type": "object"}
+        },
+        "required": ["instruction"]
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "llm_control",
+      "permission": "control",
+      "payload_schema": {
+        "type": "object",
+        "properties": {
+          "operation": {"type": "string", "enum": ["force_retry"]}
+        },
+        "required": ["operation"]
+      },
+      "command": ["runtime", "control", "llm_control", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+
+    {
+      "name": "git.status",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "git.git_status"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "git.log",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "git.git_log"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "git.diff",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "git.git_diff"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "git.show",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "git.git_show"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "git.branch",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "git.git_branch"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "git.tag",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "git.git_tag"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "git.remote",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "git.git_remote"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "ctx.history",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "ctx.history"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "ctx.search",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "ctx.search"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "agent.tokens",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "agent.tokens"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "agent.messages",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "agent.messages"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "agent.llm",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "agent.llm"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "agent.tools",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "agent.tools"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "agent.models",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "agent.models"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "skill.show",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "skill.show"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "skill.hooks",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "skill.hooks"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "skill_repo.list",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "skill_repo.list"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "stat.tool_call",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "stat.tool_call"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "stat.tool_call_errors",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "stat.tool_call_errors"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "stat.tool_call_log",
+      "permission": "read_output",
+      "payload_constants": {"instruction": "stat.tool_call_log"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "ctx.clear",
+      "permission": "control",
+      "payload_constants": {"instruction": "ctx.clear"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "ctx.del_msg",
+      "permission": "control",
+      "payload_constants": {"instruction": "ctx.del_msg"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "ctx.summarize",
+      "permission": "control",
+      "payload_constants": {"instruction": "ctx.summarize"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "env.set",
+      "permission": "control",
+      "payload_constants": {"instruction": "env.set"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "session.rename",
+      "permission": "control",
+      "payload_constants": {"instruction": "session.rename"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "skill.load",
+      "permission": "control",
+      "payload_constants": {"instruction": "skill.load"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "skill.unload",
+      "permission": "control",
+      "payload_constants": {"instruction": "skill.unload"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+    {
+      "name": "stat.tool_call_reset",
+      "permission": "control",
+      "payload_constants": {"instruction": "stat.tool_call_reset"},
+      "payload_schema": {
+        "type": "object",
+        "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+      },
+      "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+    },
+
+    {"name": "session.messages", "alias_of": "get_session_messages"},
+    {"name": "session.runtime_messages", "alias_of": "get_runtime_messages"},
+    {"name": "session.heartbeat", "alias_of": "heartbeat"},
+    {"name": "session.pause", "alias_of": "pause"},
+    {"name": "session.unpause", "alias_of": "clear_pause"},
+    {"name": "session.interrupt", "alias_of": "hard_interrupt"},
+    {"name": "session.soft_interrupt", "alias_of": "soft_interrupt"},
+    {"name": "session.clear_interrupt", "alias_of": "clear_interrupt"},
+    {"name": "session.instruction", "alias_of": "call_instruction"},
+    {"name": "session.llm", "alias_of": "llm_control"}
+  ]
+}

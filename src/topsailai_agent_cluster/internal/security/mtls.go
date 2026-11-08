@@ -16,6 +16,10 @@ type MTLSConfig struct {
 	CertificateFile    string
 	KeyFile            string
 	RevokedSerialsFile string
+	// ServerName overrides the expected peer name for a dialing client. A Server
+	// that dials an Endpoint must verify the Endpoint certificate, so it cannot
+	// reuse the default name that identifies the Server itself.
+	ServerName string
 }
 
 // LoadMTLSConfig builds a mutual-TLS configuration for a server or client.
@@ -50,7 +54,10 @@ func LoadMTLSConfig(config MTLSConfig, server bool) (*tls.Config, error) {
 		result.ClientAuth = tls.RequireAndVerifyClientCert
 		result.ClientCAs = roots
 	} else {
-		result.ServerName = "agent-cluster-server"
+		result.ServerName = config.ServerName
+		if result.ServerName == "" {
+			result.ServerName = "agent-cluster-server"
+		}
 	}
 	return result, nil
 }
@@ -74,6 +81,30 @@ func ValidateEndpointIdentity(certificate *x509.Certificate, endpointID string) 
 		}
 	}
 	return fmt.Errorf("certificate identity does not match endpoint %q", endpointID)
+}
+
+// ValidateServerIdentity verifies that a certificate identifies the Server an
+// Endpoint dialed. It is the mirror of ValidateEndpointIdentity: in the reverse
+// direction the Endpoint accepts the connection, so it must confirm that the
+// dialer is the Server rather than trusting the transport alone.
+func ValidateServerIdentity(certificate *x509.Certificate, serverName string) error {
+	if certificate == nil || serverName == "" {
+		return fmt.Errorf("server identity certificate is missing")
+	}
+	if certificate.Subject.CommonName == serverName {
+		return nil
+	}
+	for _, name := range certificate.DNSNames {
+		if name == serverName {
+			return nil
+		}
+	}
+	for _, name := range certificate.URIs {
+		if name.String() == serverName {
+			return nil
+		}
+	}
+	return fmt.Errorf("certificate identity does not match server %q", serverName)
 }
 
 // IsCertificateRevoked reports whether a certificate serial is in the configured rejection set.
@@ -103,4 +134,11 @@ func loadRevokedSerials(path string) (map[string]bool, error) {
 		}
 	}
 	return result, nil
+}
+
+// LoadRevokedSerials reads the revoked certificate serial list. It is exported
+// because the Endpoint acceptor must reject a revoked Server certificate itself,
+// rather than relying on the TLS layer alone.
+func LoadRevokedSerials(path string) (map[string]bool, error) {
+	return loadRevokedSerials(path)
 }

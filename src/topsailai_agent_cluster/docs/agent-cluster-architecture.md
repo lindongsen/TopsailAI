@@ -54,7 +54,7 @@ The human clarified the three related names, quoted verbatim:
 
 `topsailai` and `agent-cluster-cli` are therefore not interchangeable: the former is the provider CLI that manages local agents, the latter is the cluster operator CLI. `topsailai2` is an alias of `agent-cluster-cli`, not a separate implementation.
 
-Start/resume/stop are mandatory MVP platform capabilities. A provider that lacks a safe implementation must report the gap, but the first-release TopsailAI lifecycle gap cannot be deferred as an optional feature. No periodic stdout snapshot refresh is required; this does not decide between explicit reads and continuous subscriptions. Design documents live in `docs/`; planning, execution checklists and evidence remain in `.task/`.
+Start/resume/stop are mandatory MVP platform capabilities. A provider that lacks a safe implementation must report the gap, but the first-release TopsailAI lifecycle gap cannot be deferred as an optional feature. No periodic stdout snapshot refresh is required. Continuous output follow is required as an explicit operator action in both the interactive REPL and the standalone command; it is a live tail over the existing authenticated channel, not a background refresh and not a durable subscription. Design documents live in `docs/`; planning, execution checklists and evidence remain in `.task/`.
 
 ## Recommendation
 
@@ -104,11 +104,33 @@ MVP supports start/resume/stop requests by invoking the corresponding Adapter CL
 
 ## Transport and connectivity
 
-Recommended default: Endpoint initiates an authenticated TLS WebSocket connection to Server. Registration, heartbeat, bounded inventory synchronization, commands and small event frames share a versioned channel. This works behind NAT without exposing an inbound Endpoint port.
+The channel is one authenticated TLS WebSocket carrying registration, heartbeat, bounded inventory synchronization, commands and small event frames. It is versioned and direction-agnostic: either side may dial, because a real deployment may only have one working network path.
 
-Both components expose HTTP APIs. Server exposes the operator API and the Endpoint connection entry point. Endpoint exposes the same local application services over a loopback-only API for health, inventory, command status and diagnostics. Remote access to the Endpoint API is disabled by default. It is not a second bypass around Server authorization: any enabled direct write path requires explicit endpoint-local authorization and the same journal and policy checks.
+Three directions are implemented and selected by `AGENT_CLUSTER_CHANNEL_DIRECTION`:
 
-Server-to-Endpoint HTTP push is an optional future transport for controlled networks, not an additional MVP requirement. Transport bindings must preserve command IDs, target identity, revisions, authorization context and result semantics.
+| Direction | Who dials | When to use |
+|---|---|---|
+| `endpoint-initiated` (default) | Endpoint dials Server | Server is reachable, Endpoint is behind NAT or a firewall |
+| `server-initiated` | Server dials Endpoint | Endpoint is reachable, Server cannot be reached from the Endpoint side |
+| `bidirectional` | Both sides dial | Neither side can be assumed reachable from the other |
+
+In the `endpoint-initiated` direction the Server opens the channel listener and the Endpoint dials it, so no inbound Endpoint port is exposed. In the `server-initiated` direction the Server opens no channel listener and instead dials each configured Endpoint, so the Endpoint needs no outbound route to the Server. All directions use the same frames, the same handshake and the same fencing rules; only the dialing side differs.
+
+In the `bidirectional` direction both sides dial at the same time, so the cluster converges on whichever link is established last. Convergence needs no extra fencing mechanism: the Server is the sole generation authority, and it acquires the generation inside the same lock that installs the peer, so install order equals generation order. The Endpoint keeps the highest generation it has seen and closes the superseded link. A failed dial never evicts a healthy link, because a generation is proposed during the handshake and committed only after it succeeds.
+
+`AGENT_CLUSTER_TLS_SHARED_CERTIFICATE` makes every Endpoint present the Server certificate, so only one certificate has to be maintained. The certificate then no longer proves which Endpoint is connecting: Endpoint identity becomes an assertion in the hello frame, trusted because the peer holds the shared certificate. This is acceptable only when every Endpoint is equally trusted, and must never be described as per-Endpoint authentication. The mode is opt-in, so the default deployment keeps the certificate-to-Endpoint binding.
+
+The `hello` frame carries an `initiator` field so each side can reject a connection that dialed the wrong side instead of silently accepting it. An empty `initiator` is the legacy Endpoint-initiated handshake and remains valid.
+
+The Server remains the sole authority for the connection generation in both directions. In the `server-initiated` direction the Server proposes a generation in `hello` and the Endpoint adopts it, so fencing behaves identically either way. A dialer proposes with `Peek` and commits with `Acquire` only after the handshake succeeds, so a failed dial never fences a healthy peer.
+
+Each side verifies the certificate of the side it accepts. In the `endpoint-initiated` direction the Server validates the Endpoint identity. In the `server-initiated` direction the Endpoint validates the Server identity, and the dialing Server validates the Endpoint certificate by name.
+
+Server dial addresses are operator configuration, not protocol data: `AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES` maps `endpoint_id=wss://address` pairs. A command can never choose where the Server connects.
+
+Both components expose HTTP APIs. Server exposes the operator API and, in the `endpoint-initiated` direction, the Endpoint connection entry point. Endpoint exposes the same local application services over a loopback-only API for health, inventory, command status and diagnostics. Remote access to the Endpoint API is disabled by default. It is not a second bypass around Server authorization: any enabled direct write path requires explicit endpoint-local authorization and the same journal and policy checks.
+
+Transport bindings must preserve command IDs, target identity, revisions, authorization context and result semantics.
 
 Use HTTP requests for queries and command admission, SSE for TUI state/command updates, and a separate demand-driven output subscription for selected sessions. Large output must not block command/heartbeat delivery; use bounded priority queues and independent output flow control, or a separate output connection if required by load testing.
 
@@ -172,7 +194,7 @@ Provisional target: 100 Endpoints, 20 active sessions per Endpoint, 100,000 reta
 
 At a 10-second inventory refresh, one batched provider discovery per binding per cycle is approximately 10 CLI discovery launches/second across a fleet with one binding per Endpoint. Never run a full discovery separately for every session or every operator. Local provider discovery may still scan retained history: current CLI pagination/incremental discovery is not verified and may be the limiting cost. Measure it at representative history size before promising this target; do not compensate with ever faster polling.
 
-A 10-second heartbeat yields approximately 10 fleet heartbeats/second. MVP does not periodically refresh stdout snapshots, so no recurring stdout polling workload is budgeted. Explicit output requests remain bounded and shared where appropriate. Whether continuous output subscription is required remains open; if selected, measure rate, backpressure and concurrent watcher cost separately. Inventory refresh is independent of stdout refresh. Use bounded worker pools, jitter, cache, adaptive backoff and per-binding quotas.
+A 10-second heartbeat yields approximately 10 fleet heartbeats/second. MVP does not periodically refresh stdout snapshots, so no recurring stdout polling workload is budgeted. Explicit output requests remain bounded and shared where appropriate. Continuous output follow is implemented as an explicit operator action, so its workload is bounded by operator behaviour rather than by a timer: the Endpoint admits at most 8 concurrent follows and rejects an excess request instead of queueing it, and the Server bounds pending follows per connection. A follow therefore cannot multiply discovery cost, and it cannot starve commands, heartbeats or inventory reports on the shared channel. Inventory refresh is independent of stdout follow. Use bounded worker pools, jitter, cache, adaptive backoff and per-binding quotas.
 
 Proposed initial budgets: cached first TUI page under 1 second, command durable admission p95 under 500 ms, command dispatch p95 under 2 seconds on a healthy LAN excluding provider execution, inventory freshness under 15 seconds in steady state. Endpoint queries use deterministic pagination and indexed endpoint/update-time filters. Session filtering reads the current JSON documents in the application, with bounded endpoint selection and result budgets; do not promise indexed global Session-state queries without a measured cost model. Cross-request pagination that observes changed revisions returns resync_required rather than retaining old snapshots; no live fleet fan-out on first render. Confirm with representative load evidence, not small fixtures.
 

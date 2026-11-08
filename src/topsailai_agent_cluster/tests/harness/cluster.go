@@ -22,6 +22,18 @@ type ClusterOptions struct {
 	Environment map[string]string
 	DelayMS     int
 	Faults      FaultInjection
+	// ChannelDirection selects which side dials. An empty value keeps the
+	// default endpoint-initiated direction, so existing scenarios are unchanged.
+	ChannelDirection string
+	// SharedCertificate makes the Endpoint present the Server certificate, so the
+	// certificate no longer proves which Endpoint is connecting.
+	SharedCertificate bool
+	// ProviderType selects the adapter implementation. An empty value keeps the
+	// generic "fixture" adapter, so existing scenarios are unchanged. Selecting
+	// "topsailai" wires the real TopsailAI adapter, which is the only adapter that
+	// implements streaming output follow; the generic fixture adapter answers a
+	// follow with "unsupported" because it cannot stream.
+	ProviderType string
 }
 
 // FaultInjection contains test-only process-composition controls shared by integration and BDD tests.
@@ -84,6 +96,21 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if err := Build(fixtureBin, "./tests/fixtures/provider"); err != nil {
 		return nil, err
 	}
+	// The TopsailAI adapter resolves topsailai_session_info as a sibling of the
+	// configured executable and never through PATH, so both entry points are built
+	// into one provider directory when that adapter is selected.
+	providerDir := filepath.Join(root, "provider")
+	if options.ProviderType == "topsailai" {
+		if err := os.MkdirAll(providerDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create provider directory: %w", err)
+		}
+		if err := Build(filepath.Join(providerDir, "topsailai"), "./tests/fixtures/topsailai_fixture"); err != nil {
+			return nil, err
+		}
+		if err := Build(filepath.Join(providerDir, "topsailai_session_info"), "./tests/fixtures/topsailai_session_info_fixture"); err != nil {
+			return nil, err
+		}
+	}
 	apiPort, err := FreePortE()
 	if err != nil {
 		return nil, fmt.Errorf("allocate API port: %w", err)
@@ -93,7 +120,26 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		return nil, fmt.Errorf("allocate channel port: %w", err)
 	}
 	cluster := &Cluster{Root: root, API: apiPort, Channel: channelPort, ServerDB: filepath.Join(root, "server.db"), EndpointDB: filepath.Join(root, "endpoint.db"), Record: filepath.Join(root, "records.jsonl"), Certs: certs}
+	// The Endpoint only listens when the Server dials, so its channel port is
+	// allocated on demand and stays empty for the default direction.
+	endpointChannelPort := ""
+	if options.ChannelDirection == "server-initiated" || options.ChannelDirection == "bidirectional" {
+		endpointChannelPort, err = FreePortE()
+		if err != nil {
+			return nil, fmt.Errorf("allocate endpoint channel port: %w", err)
+		}
+		cluster.EndpointChannel = endpointChannelPort
+	}
 	serverEnv := []string{"AGENT_CLUSTER_API_LISTEN_ADDR=127.0.0.1:" + cluster.API, "AGENT_CLUSTER_CHANNEL_LISTEN_ADDR=127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_DATABASE_PATH=" + cluster.ServerDB, "AGENT_CLUSTER_AUTH_TOKEN=secret", "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + certs.ServerCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + certs.ServerKey}
+	if options.ChannelDirection != "" {
+		serverEnv = append(serverEnv, "AGENT_CLUSTER_CHANNEL_DIRECTION="+options.ChannelDirection)
+	}
+	if endpointChannelPort != "" {
+		serverEnv = append(serverEnv, "AGENT_CLUSTER_ENDPOINT_DIAL_ADDRESSES=endpoint-1=wss://127.0.0.1:"+endpointChannelPort)
+	}
+	if options.SharedCertificate {
+		serverEnv = append(serverEnv, "AGENT_CLUSTER_TLS_SHARED_CERTIFICATE=true")
+	}
 	serverEnv = appendFaultEnvironment(serverEnv, options.Faults)
 	for key, value := range options.Environment {
 		serverEnv = append(serverEnv, key+"="+value)
@@ -119,6 +165,12 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	}
 	discoveryCount := filepath.Join(root, "discovery-count")
 	adapterArgs := []map[string]any{{"adapter_id": "fixture-main", "provider_type": "fixture", "command": fixtureBin, "args": []string{"--mode", mode, "--record-file", cluster.Record, "--discovery-count-file", discoveryCount, "--delay-ms", fmt.Sprint(options.DelayMS), "--output-size", fmt.Sprint(options.Faults.OutputSize)}, "timeout_ms": 5000}}
+	// The TopsailAI adapter is the only adapter that can stream output, so a
+	// follow scenario selects it explicitly. Its fixture answers discovery from a
+	// workspace document and streams plain text records on the follow path.
+	if options.ProviderType == "topsailai" {
+		adapterArgs = []map[string]any{{"adapter_id": "topsailai-main", "provider_type": "topsailai", "command": filepath.Join(providerDir, "topsailai"), "args": []string{}, "timeout_ms": 5000}}
+	}
 	if options.Faults.TwoAdapters {
 		adapterArgs = []map[string]any{{"adapter_id": "adapter-a", "provider_type": "fixture", "command": fixtureBin, "args": []string{"--mode", "one", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-a"}, "timeout_ms": 5000}, {"adapter_id": "adapter-b", "provider_type": "fixture", "command": fixtureBin, "args": []string{"--mode", "one", "--always-fail", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-b"}, "timeout_ms": 5000}}
 	}
@@ -145,7 +197,23 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		return nil, fmt.Errorf("marshal adapter configuration: %w", err)
 	}
 	args := "AGENT_CLUSTER_ADAPTERS=" + string(adapterJSON)
-	endpointEnv := []string{"AGENT_CLUSTER_CHANNEL_ADDRESS=wss://127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH=" + cluster.EndpointDB, "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + certs.ClientCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + certs.ClientKey, args}
+	// With one shared certificate the Endpoint presents the Server certificate as
+	// its own client certificate, so the certificate no longer proves which
+	// Endpoint is connecting.
+	endpointCert, endpointKey := certs.ClientCert, certs.ClientKey
+	if options.SharedCertificate {
+		endpointCert, endpointKey = certs.ServerCert, certs.ServerKey
+	}
+	endpointEnv := []string{"AGENT_CLUSTER_CHANNEL_ADDRESS=wss://127.0.0.1:" + cluster.Channel, "AGENT_CLUSTER_ENDPOINT_ID=endpoint-1", "AGENT_CLUSTER_DATABASE_PATH=" + cluster.EndpointDB, "AGENT_CLUSTER_TLS_CA_FILE=" + certs.CA, "AGENT_CLUSTER_TLS_CERTIFICATE_FILE=" + endpointCert, "AGENT_CLUSTER_TLS_KEY_FILE=" + endpointKey, args}
+	if options.ChannelDirection != "" {
+		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_CHANNEL_DIRECTION="+options.ChannelDirection)
+	}
+	if endpointChannelPort != "" {
+		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_ENDPOINT_CHANNEL_LISTEN_ADDR=127.0.0.1:"+endpointChannelPort)
+	}
+	if options.SharedCertificate {
+		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_TLS_SHARED_CERTIFICATE=true")
+	}
 	endpointEnv = appendFaultEnvironment(endpointEnv, options.Faults)
 	cluster.EndpointPath = endpointBin
 	cluster.EndpointEnv = append([]string(nil), endpointEnv...)
@@ -153,10 +221,20 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := WaitInventoryE(cluster.URL("/api/v1/endpoints/endpoint-1/session-state"), "secret", 20*time.Second); err != nil {
+	if err := WaitInventoryForE(cluster.URL("/api/v1/endpoints/endpoint-1/session-state"), "secret", inventoryAdapterID(options), 20*time.Second); err != nil {
 		return nil, err
 	}
 	return cluster, nil
+}
+
+// inventoryAdapterID returns the adapter ID the inventory wait should expect.
+// The default fixture configuration publishes "fixture-main", while a scenario
+// that selects another provider type publishes its own adapter ID.
+func inventoryAdapterID(options ClusterOptions) string {
+	if options.ProviderType == "topsailai" {
+		return "topsailai-main"
+	}
+	return ""
 }
 
 var marshalAdapterConfigurationFn = json.Marshal
@@ -443,6 +521,13 @@ func (c *Cluster) RunTUIInteractiveEditor(stdin string, args ...string) (stdout 
 
 // runTUIInteractiveWithTerm runs the REPL under one terminal type.
 func (c *Cluster) runTUIInteractiveWithTerm(stdin string, termType string, args ...string) (stdout string, stderr string, exitCode int, err error) {
+	return c.runTUIInteractiveWithReader(strings.NewReader(stdin), termType, args...)
+}
+
+// runTUIInteractiveWithReader runs the REPL under one terminal type with an
+// arbitrary input reader, so a caller can pace the scripted input instead of
+// delivering it in one burst.
+func (c *Cluster) runTUIInteractiveWithReader(stdin io.Reader, termType string, args ...string) (stdout string, stderr string, exitCode int, err error) {
 	if c.TUIPath == "" {
 		return "", "", -1, fmt.Errorf("TUI binary has not been built; call BuildTUI first")
 	}
@@ -463,7 +548,7 @@ func (c *Cluster) runTUIInteractiveWithTerm(stdin string, termType string, args 
 		"AGENT_CLUSTER_TLS_KEY_FILE="+c.Certs.ClientKey,
 		"TERM="+termType,
 	)
-	cmd.Stdin = strings.NewReader(stdin)
+	cmd.Stdin = stdin
 	var out, stderrBuffer bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &stderrBuffer

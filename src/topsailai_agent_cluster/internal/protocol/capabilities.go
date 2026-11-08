@@ -10,7 +10,13 @@ const (
 	OperationAgentDriveStart    = "agent.drive.start"
 	OperationAgentDriveStop     = "agent.drive.stop"
 	OperationOutputRead         = "output.read"
-	OperationDiscover           = "discover"
+	// OperationOutputFollow streams output records until the consumer stops. It
+	// is a separate capability from OperationOutputRead: a snapshot is one
+	// bounded read, while a follow stays open. Advertising them separately lets a
+	// provider that cannot stream report the gap instead of degrading a follow
+	// into a snapshot that never updates.
+	OperationOutputFollow = "output.follow"
+	OperationDiscover     = "discover"
 	// OperationCommandExec runs one allowlisted argv array in a session working
 	// directory. It is a bounded standard operation, not a remote shell.
 	OperationCommandExec = "command.exec"

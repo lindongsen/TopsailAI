@@ -51,10 +51,23 @@ type OutputReader interface {
 	ReadOutput(context.Context, protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error)
 }
 
-// defaultCollectionDelay is the pause after a completed collection cycle before
-// the next cycle starts. It is a delay, not a period: the effective cycle time
-// is this delay plus the collection duration.
+// OutputFollower streams provider output records until the consumer stops.
+// It is a separate optional interface so an Endpoint whose adapter cannot stream
+// reports the capability as unsupported instead of degrading a follow into a
+// snapshot that never updates.
+type OutputFollower interface {
+	FollowOutput(context.Context, protocol.OutputFollowRequest, func(protocol.OutputChunk) error) error
+}
+
 const defaultCollectionDelay = 5 * time.Second
+
+// maxConcurrentFollows bounds how many output follows one Endpoint streams at
+// once. Each follow holds a provider child process and a transport slot, so an
+// unbounded count would let a few operators starve command and heartbeat
+// delivery. A follow beyond this bound is rejected instead of queued, because a
+// queued follow would silently start late and the operator would believe the
+// stream began when it did not.
+const maxConcurrentFollows = 8
 
 // ServiceDeps contains explicit dependencies for the Endpoint lifecycle.
 type ServiceDeps struct {
@@ -86,6 +99,9 @@ type Service struct {
 	closeErr          error
 	receiptsMu        sync.Mutex
 	pendingReceipts   map[string]protocol.ExecutionReceipt
+	followMu          sync.Mutex
+	activeFollows     map[string]context.CancelFunc
+	followSlots       chan struct{}
 }
 
 // NewService constructs an Endpoint lifecycle service from explicit dependencies.
@@ -99,7 +115,7 @@ func NewService(deps ServiceDeps) (*Service, error) {
 	if deps.Heartbeater != nil && deps.HeartbeatInterval <= 0 {
 		deps.HeartbeatInterval = 5 * time.Second
 	}
-	return &Service{collector: deps.Collector, executor: deps.Executor, channel: deps.Channel, heartbeat: deps.Heartbeater, storage: deps.Storage, logger: deps.Logger, collectionDelay: deps.CollectionDelay, heartbeatInterval: deps.HeartbeatInterval, receiptDelay: deps.ReceiptDelay, pendingReceipts: make(map[string]protocol.ExecutionReceipt)}, nil
+	return &Service{collector: deps.Collector, executor: deps.Executor, channel: deps.Channel, heartbeat: deps.Heartbeater, storage: deps.Storage, logger: deps.Logger, collectionDelay: deps.CollectionDelay, heartbeatInterval: deps.HeartbeatInterval, receiptDelay: deps.ReceiptDelay, pendingReceipts: make(map[string]protocol.ExecutionReceipt), activeFollows: make(map[string]context.CancelFunc), followSlots: make(chan struct{}, maxConcurrentFollows)}, nil
 }
 
 // Run starts all Endpoint loops and waits until the context is cancelled.
@@ -123,6 +139,10 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	<-runCtx.Done()
 	cancel()
+	// Cancel active follows before waiting: a follow holds a provider child
+	// process, so waiting first would block shutdown until the operator stops
+	// watching.
+	s.stopFollows()
 	_ = s.channel.Close()
 	s.wg.Wait()
 	return nil
@@ -184,6 +204,28 @@ func (s *Service) resendRecordedReceipts(ctx context.Context) {
 		return
 	}
 	s.resendPendingReceipts(ctx)
+}
+
+// waitForAttachedChannel blocks until the channel reports an attached
+// connection, or the context is cancelled. It is used in the server-initiated
+// direction, where the Endpoint cannot dial and must wait for the Server.
+func (s *Service) waitForAttachedChannel(ctx context.Context) bool {
+	readyChannel, ok := s.channel.(ReadyChannel)
+	if !ok {
+		return false
+	}
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if readyChannel.Ready() {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *Service) resendPendingReceipts(ctx context.Context) {
@@ -288,6 +330,16 @@ func (s *Service) channelLoop(ctx context.Context) {
 					s.loggerInfo("endpoint channel reconnected")
 					s.resendPendingReceipts(ctx)
 					break
+				} else if errors.Is(reconnectErr, channel.ErrAwaitingServerDial) {
+					// The Server dials in this direction, so the Endpoint cannot
+					// reconnect by itself. It waits for the acceptor to attach a
+					// new connection instead of logging a failure it cannot fix.
+					s.loggerInfo("endpoint waits for a server-initiated connection")
+					if !s.waitForAttachedChannel(ctx) {
+						return
+					}
+					s.resendPendingReceipts(ctx)
+					break
 				} else {
 					s.logError("reconnect endpoint channel", reconnectErr)
 				}
@@ -319,6 +371,8 @@ func (s *Service) channelLoop(ctx context.Context) {
 			s.historyFrame(ctx, frame)
 		case channel.FrameOutputRequest:
 			s.outputFrame(ctx, frame)
+		case channel.FrameOutputFollowRequest:
+			s.startFollow(ctx, frame)
 		}
 	}
 }

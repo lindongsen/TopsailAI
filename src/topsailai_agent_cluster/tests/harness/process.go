@@ -20,7 +20,10 @@ type CertFiles struct {
 
 // Cluster contains process paths and isolated persistent state for a scenario.
 type Cluster struct {
-	Root, API, Channel          string
+	Root, API, Channel string
+	// EndpointChannel is the Endpoint listener port, set only when the Server
+	// dials. It stays empty in the default endpoint-initiated direction.
+	EndpointChannel             string
 	ServerDB, EndpointDB        string
 	Server, Endpoint, Endpoint2 *exec.Cmd
 	Record, Record2             string

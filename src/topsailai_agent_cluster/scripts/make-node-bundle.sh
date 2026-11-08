@@ -126,6 +126,12 @@ if [ "${ROLE}" = "endpoint" ]; then
     install -m 0644 "${PROJECT_DIR}/conf/command-allowlist.conf.example" \
         "${DEST}/conf/command-allowlist.conf" ||
         die "cannot install the command allowlist"
+    # The control action catalog is the only source of ctl. actions. A missing file
+    # is not a startup error: it fails closed by advertising no ctl. action at all.
+    # The bundle still ships the reviewed catalog so a fresh node keeps the feature.
+    install -m 0644 "${PROJECT_DIR}/conf/control-actions.conf.example" \
+        "${DEST}/conf/control-actions.conf" ||
+        die "cannot install the control action catalog"
 fi
 
 # An adapter override is appended rather than substituted: the controller sources

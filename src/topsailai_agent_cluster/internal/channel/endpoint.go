@@ -15,16 +15,31 @@ import (
 	"github.com/coder/websocket/wsjson"
 )
 
-// EndpointClient is an Endpoint-initiated channel client.
+// ErrAwaitingServerDial reports that the Endpoint cannot reconnect by itself
+// because the Server dials in this direction. The caller must wait for the
+// acceptor to attach a new connection instead of dialing.
+var ErrAwaitingServerDial = errors.New("endpoint waits for a server-initiated connection")
+
+// EndpointClient is the Endpoint-side channel transport. It supports both
+// directions: the Endpoint may dial the Server, or it may accept a connection
+// the Server dialed. Initiator records which direction produced the active
+// connection so reconnect logic can repeat the same direction.
 type EndpointClient struct {
-	EndpointID string
-	InstanceID string
-	Hostname   string
-	TLSConfig  *tls.Config
-	Address    string
-	Conn       *websocket.Conn
-	Generation int64
-	mu         sync.Mutex
+	EndpointID     string
+	InstanceID     string
+	Hostname       string
+	TLSConfig      *tls.Config
+	Address        string
+	ServerName     string
+	RevokedSerials map[string]bool
+	Initiator      string
+	// Bidirectional means both sides dial at the same time. The Endpoint then
+	// always has an address to dial, so a lost connection is recovered by
+	// dialing instead of waiting for the Server to dial again.
+	Bidirectional bool
+	Conn          *websocket.Conn
+	Generation    int64
+	mu            sync.Mutex
 }
 
 // Dial establishes the Endpoint-initiated WebSocket connection and handshake.
@@ -44,15 +59,10 @@ func (c *EndpointClient) Dial(ctx context.Context, address string) error {
 		return err
 	}
 	conn.SetReadLimit(channelReadLimit)
-	c.mu.Lock()
-	previous := c.Conn
-	c.Conn = conn
-	c.Address = address
-	c.mu.Unlock()
-	if previous != nil && previous != conn {
-		_ = previous.Close(websocket.StatusNormalClosure, "reconnecting")
-	}
-	if err := wsjson.Write(ctx, conn, Frame{Type: FrameHello, ProtocolVersion: ProtocolVersion, EndpointID: c.EndpointID, InstanceID: c.InstanceID, Hostname: c.Hostname}); err != nil {
+	// The connection is adopted only after the handshake succeeds. Installing it
+	// first would leave a half-open connection as the active channel when the
+	// handshake fails, so the Endpoint would report ready while nothing works.
+	if err := wsjson.Write(ctx, conn, Frame{Type: FrameHello, ProtocolVersion: ProtocolVersion, EndpointID: c.EndpointID, InstanceID: c.InstanceID, Hostname: c.Hostname, Initiator: InitiatorEndpoint}); err != nil {
 		_ = conn.Close(websocket.StatusInternalError, "hello failed")
 		return err
 	}
@@ -75,9 +85,52 @@ func (c *EndpointClient) Dial(ctx context.Context, address string) error {
 		return errors.New("invalid channel connection generation")
 	}
 	c.mu.Lock()
-	c.Generation = generation
+	c.Address = address
 	c.mu.Unlock()
+	// A superseded connection must not confirm adoption, because the Server would
+	// then treat a link this Endpoint discarded as successfully established.
+	if !c.Attach(conn, generation, InitiatorEndpoint) {
+		_ = conn.Close(websocket.StatusNormalClosure, "superseded")
+		return errors.New("channel connection was superseded by a newer link")
+	}
+	// The Server waits for this frame before reporting success, so "successfully
+	// established" means both sides adopted the same link in both directions.
+	if err := wsjson.Write(ctx, conn, Frame{Type: FrameHelloAttached, ProtocolVersion: ProtocolVersion, EndpointID: c.EndpointID, ConnectionGeneration: strconv.FormatInt(generation, 10), Initiator: InitiatorEndpoint}); err != nil {
+		_ = conn.Close(websocket.StatusInternalError, "hello attached failed")
+		return err
+	}
 	return nil
+}
+
+// Attach adopts a connection the Server dialed. The Server allocated the
+// generation, so the Endpoint records it rather than minting its own; fencing
+// therefore behaves identically in both directions.
+//
+// When a dial and an attach race, both sides must converge on the same link. The
+// Server assigns a higher generation to the connection it installed later, so the
+// Endpoint keeps the highest generation it has seen and closes the older
+// connection. Without this comparison the Endpoint could keep a link the Server
+// already fenced, and the two sides would disagree about which one is live.
+//
+// It reports whether this connection became the active link. A superseded
+// connection returns false, so the caller never confirms an adoption that did not
+// happen.
+func (c *EndpointClient) Attach(conn *websocket.Conn, generation int64, initiator string) bool {
+	c.mu.Lock()
+	if c.Conn != nil && c.Generation > generation {
+		c.mu.Unlock()
+		_ = conn.Close(websocket.StatusNormalClosure, "superseded")
+		return false
+	}
+	previous := c.Conn
+	c.Conn = conn
+	c.Generation = generation
+	c.Initiator = initiator
+	c.mu.Unlock()
+	if previous != nil && previous != conn {
+		_ = previous.Close(websocket.StatusNormalClosure, "replaced")
+	}
+	return true
 }
 
 // Ready reports whether the client has an authenticated active connection.
@@ -91,7 +144,17 @@ func (c *EndpointClient) Ready() bool {
 func (c *EndpointClient) Reconnect(ctx context.Context) error {
 	c.mu.Lock()
 	address := c.Address
+	initiator := c.Initiator
+	bidirectional := c.Bidirectional
 	c.mu.Unlock()
+	// In the server-initiated direction the Endpoint has no address to dial, so
+	// it must wait for the acceptor to attach a new connection instead of
+	// repeatedly failing a dial that can never succeed. In the bidirectional
+	// direction the Endpoint does have an address, so it recovers by dialing and
+	// the two sides converge again on whichever link is installed last.
+	if initiator == InitiatorServer && !bidirectional {
+		return ErrAwaitingServerDial
+	}
 	if address == "" {
 		return errors.New("channel address is not configured")
 	}

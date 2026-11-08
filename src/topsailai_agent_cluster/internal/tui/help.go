@@ -26,6 +26,7 @@ var fieldHelp = []string{
 	"SESSION_STATUS: provider-reported lifecycle state, such as running, stopped, or failed; the column is shown only when colour is disabled, because an enabled table colours the whole data row by that state.",
 	"SESSION_NAME: session display name; empty when the provider did not report one.",
 	"SESSION_ID: provider-native session ID; empty when the provider did not report one.",
+	"DRIVER: controller state reported by the provider: running, unverified, stale, exited, failed, none, or unknown; a dash means the provider reported no driver observation, which is not proof that no controller exists. A controller injects input on the operator's behalf; it is not the agent, so stopping it leaves the agent running. The column is a read projection of the persisted inventory and never probes the provider.",
 	"PROJECT_WORKSPACE: workspace the session is working on, as reported by the provider; empty when the provider did not report one. It is descriptive report data only and never selects a route, capability, or permission.",
 	"ENDPOINT: endpoint hostname, falling back to its display name or ID.",
 	"DATA_STATUS: collection result plus freshness qualifiers; base values are ok, failed, partial, unknown, or unrecognized, optionally followed by /stale, /unknown, or /unknown+stale; a trailing parenthesised local-time stamp such as ok (11:58:36) reports the latest successful collection, not the failure start time, and is omitted when no success has been recorded.",
@@ -41,9 +42,9 @@ var commandHelpCatalog = map[string]commandHelp{
 	"stop":      {"stop [session]", "stop a session after confirmation; session scope stops the selected session", []string{"session: optional session/resource ID, provider session ID, or a bare list row number; required outside session scope and rejected inside it", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID", "workspace scope resolves the row's own endpoint; a token matching sessions on several endpoints is rejected", "--json: rejected in interactive mode"}, []string{"stop", "stop 1", "stop res_abc"}},
 	"inject":    {"inject [text]", "inject context into the selected session; a bare inject reads a multi-line context block", []string{"text: literal context text; no JSON is required", "without text: read a multi-line context block and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the context", "an empty multi-line context block is rejected instead of submitting nothing", "--json: rejected in interactive mode"}, []string{"inject the deployment notes are in docs/", `inject {"text":"context"}`}},
 	"interrupt": {"interrupt [soft|hard] [message]", "request a soft or hard execution interrupt for the selected session", []string{"soft: soft interrupt, optionally followed by a literal message; empty input prompts for the action", "hard: hard interrupt; accepts no message", "--json: rejected in interactive mode"}, []string{"interrupt", "interrupt soft stop and summarize now", "interrupt hard"}},
-	"ctl":       {"ctl [action] [json]", "send one provider control action to the selected session; the action list is rendered from the capabilities the endpoint advertises, so an unsupported action is never offered", []string{"action: advertised control action name, or its number in the rendered list; empty prompts for the action", "json: optional JSON object payload; empty sends the empty object", "the action is a mutating request and needs explicit confirmation", "--json: rejected in interactive mode"}, []string{"ctl", "ctl heartbeat", `ctl pause {"reason":"maintenance"}`}},
-	"drive":     {"drive [start|stop|status]", "manage the resident driver of the selected session; a driver injects input on the operator's behalf and is not the agent, so drive stop leaves the agent running", []string{"start: start a driver for the selected session; the driver runs autonomously and needs explicit confirmation", "stop: stop only the driver controller; the agent keeps running", "status: report the standard drive state from the persisted inventory; it never probes the provider", "an omitted action reports status", "--json: rejected in interactive mode"}, []string{"drive", "drive status", "drive start", "drive stop"}},
-	"logs":      {"logs [-n <lines>] [session]", "show bounded output for a session in the current endpoint", []string{"-n, --lines: maximum number of trailing output lines to show; defaults to 0100", "session: optional session/resource ID, provider session ID, or a bare list row number; defaults to the current session", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID"}, []string{"logs", "logs -n 0250", "logs 1", "logs res_abc"}},
+	"ctl":       {"ctl [action] [key=value ...] | ctl.<action> [key=value ...]", "send one provider control action to the selected session; the action list is rendered from the capabilities the endpoint advertises, so an unsupported action is never offered", []string{"action: advertised control action name, or its number in the rendered list; empty prompts for the action", "ctl.<action>: dotted spelling that names the action in the command word, so the action prompt is skipped", "key=value: optional parameters separated by spaces; empty sends no parameters, and a bare word without = is rejected", "a value is read as a JSON scalar when it is one, so 300 is a number and true is a boolean; wrap it in double quotes to send the literal text", "when no parameter is supplied the prompt asks for them, so no JSON document is ever typed in interactive mode", "the action is a mutating request and needs explicit confirmation", "--json: rejected in interactive mode"}, []string{"ctl", "ctl heartbeat", "ctl.heartbeat", "ctl pause reason=maintenance", `ctl.pause reason=maintenance timeout_seconds=300`}},
+	"drive":     {"drive [start|stop|status] [session]", "manage the resident driver of one session; a driver injects input on the operator's behalf and is not the agent, so drive stop leaves the agent running", []string{"start: start a driver for the target session; the driver runs autonomously and needs explicit confirmation", "stop: stop only the driver controller; the agent keeps running", "status: report the standard drive state from the persisted inventory; it never probes the provider", "an omitted action reports status, so a bare drive never mutates anything", "session: optional session/resource ID, provider session ID, or a bare list row number; required outside session scope and rejected inside it", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID", "workspace scope resolves the row's own endpoint; a token matching sessions on several endpoints is rejected", "--json: rejected in interactive mode"}, []string{"drive", "drive 1", "drive res_abc", "drive status 1", "drive start 1", "drive stop res_abc"}},
+	"logs":      {"logs [-n <lines>] [-f|--follow] [session]", "show bounded output for a session in the current endpoint, or stream it until a key is pressed", []string{"-n, --lines: maximum number of trailing output lines to show; defaults to 0100", "-f, --follow: stream new output records until any key is pressed; the stream is bound to the session generation resolved now, so a replaced session is never followed", "session: optional session/resource ID, provider session ID, or a bare list row number; defaults to the current session", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID"}, []string{"logs", "logs -n 0250", "logs 1", "logs res_abc", "logs -f", "logs --follow 1"}},
 	"history":   {"history [endpoint]", "read bounded provider session history for one endpoint and render it as a numbered table; the result is a live provider read, never a persisted projection", []string{"endpoint: optional endpoint ID or hostname; defaults to the current endpoint, and workspace scope requires it", "a hostname shared by several endpoints is rejected with the candidate list", "history row numbers are a separate namespace from list row numbers, and a history render replaces the list row numbers", "a row that the inventory join could not resolve to a live resource and generation cannot be entered with cd; it is reported instead of fabricating a generation", "--json: rejected in interactive mode"}, []string{"history", "history endpoint-1", "history ai-dev"}},
 	"send":      {"send [text]", "send a message to the selected session; an explicit text submits directly, and only a bare send reads a multi-line message and asks for confirmation", []string{"text: message text, or a JSON object with a text field; an explicit text is submitted without a confirmation question, because the command word and the payload are already stated", "without text: read a multi-line message and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the message", "a bare send asks Confirm send? before submitting, because the assembled block was never shown as a whole; an empty multi-line message is rejected instead of submitting nothing", "after a completed send: render one bounded output snapshot, then force one collection for the selected endpoint and revalidate only the selected session, so a later list reads a newer document; both steps are reported as diagnostics and never turn the accepted send into a failure"}, []string{`send hello world`, `send {"text":"hello"}`}},
 	"endpoints": {"endpoints [endpoint-id]", "list every registered endpoint with its connection state, observation time and capability revision; JSON output (--json) is available only in the standalone non-interactive command", []string{"endpoint-id: optional endpoint ID filter; an unknown filter renders an empty table", "read-only: it never forces provider discovery and never changes the list row numbers"}, []string{"endpoints", "endpoints endpoint-1"}},
@@ -81,6 +82,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"history":   "read provider session history for one endpoint and number its rows",
 		"resume":    "resume a stopped session by history row number",
 		"stop":      "stop a session by row number or session ID",
+		"drive":     "manage a session driver by row number or session ID; drive stop leaves the agent running",
 		"status":    "show command result",
 		"refresh":   "refresh inventories",
 		"watch":     "re-render the list on a timer until any key is pressed",
@@ -96,6 +98,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"history": "read provider session history for the current endpoint and number its rows",
 		"resume":  "resume a stopped session by history row number",
 		"stop":    "stop a session in this endpoint by row number or session ID",
+		"drive":   "manage a session driver in this endpoint by row number or session ID; drive stop leaves the agent running",
 		"status":  "show command result",
 		"refresh": "refresh the current endpoint",
 		"watch":   "re-render the endpoint table on a timer until any key is pressed",
@@ -108,7 +111,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"cd":        "bare cd or cd /: workspace; cd ..: endpoint; cd <target>: navigate",
 		"show":      "show the current session, or an explicit endpoint/session target",
 		"info":      "show the current session detail, or another session in this endpoint",
-		"logs":      "show current session output, or another session in this endpoint; -n <lines> bounds the trailing lines",
+		"logs":      "show current session output, or another session in this endpoint; -n <lines> bounds the trailing lines and -f streams until a key is pressed",
 		"send":      "send a message to the current session; an explicit text submits directly, and a bare send asks for confirmation; unrecognized text offers this action",
 		"stop":      "stop the current session",
 		"inject":    "inject context into the current session",
@@ -305,7 +308,7 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 	case "drive":
 		entry.syntax = "agent-cluster-cli [options] drive <start|stop|status> <endpoint> <session> [generation]"
 	case "logs":
-		entry.syntax = "agent-cluster-cli [options] [--lines <lines>] logs <endpoint> <session>"
+		entry.syntax = "agent-cluster-cli [options] [--lines <lines>] [--follow] logs <endpoint> <session>"
 	case "show":
 		entry.syntax = "agent-cluster-cli [options] show <endpoint-or-session>"
 	case "info":
@@ -409,9 +412,15 @@ func commandScopes(name string) []string {
 
 // helpTarget normalizes one help argument: case, surrounding space, and the
 // optional command prefix. The prefix is a form, so "help /send" must resolve
-// exactly like "help send".
+// exactly like "help send". The dotted control spelling is a form of ctl too, so
+// "help ctl.heartbeat" resolves like "help ctl" instead of reporting an unknown
+// command for a spelling the dispatcher accepts.
 func helpTarget(target string) string {
-	return canonicalCommandName(trimCommandPrefix(strings.ToLower(strings.TrimSpace(target))))
+	normalized := canonicalCommandName(trimCommandPrefix(strings.ToLower(strings.TrimSpace(target))))
+	if _, dotted := ctlDottedAction(normalized); dotted {
+		return "ctl"
+	}
+	return normalized
 }
 
 // helpSpelling returns the spelling the operator typed, normalized the same way

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"topsailai_agent_cluster/internal/channel"
 	"topsailai_agent_cluster/internal/protocol"
 	"topsailai_agent_cluster/internal/security"
 	serverstorage "topsailai_agent_cluster/internal/storage/server"
@@ -20,6 +21,14 @@ import (
 // OutputRequester forwards bounded output snapshot requests to an Endpoint.
 type OutputRequester interface {
 	RequestOutput(context.Context, string, protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error)
+}
+
+// OutputFollower starts one streaming output follow and returns its event stream.
+// It is a separate interface from OutputRequester because a snapshot has exactly
+// one response while a follow has many, so a transport that cannot stream must
+// not be forced to pretend it can.
+type OutputFollower interface {
+	RequestFollow(context.Context, string, protocol.OutputFollowRequest) (<-chan channel.FollowEvent, error)
 }
 
 // RefreshRequester forces one fresh Endpoint collection and returns its committed report.
@@ -62,6 +71,7 @@ func (h *Handler) routes() http.Handler {
 	mux.HandleFunc("/api/v1/endpoints/", h.endpointResource)
 	mux.HandleFunc("/api/v1/commands", h.commands)
 	mux.HandleFunc("/api/v1/output", h.output)
+	mux.HandleFunc("/api/v1/output/follow", h.outputFollow)
 	mux.HandleFunc("/api/v1/launch-options", h.launchOptions)
 	mux.HandleFunc("/api/v1/history", h.history)
 	mux.HandleFunc("/api/v1/commands/", h.commandResource)
@@ -105,6 +115,9 @@ func (h *Handler) output(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported")
 		return
 	}
+	if !h.authorizeOutputRead(w, r, operationOutputSnapshot) {
+		return
+	}
 	if h.Output == nil {
 		h.writeError(w, http.StatusServiceUnavailable, "endpoint_offline", "Endpoint output channel is unavailable")
 		return
@@ -129,6 +142,74 @@ func (h *Handler) output(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.write(w, http.StatusOK, 0, "success", response)
+}
+
+// outputFollow streams followed output records as newline-delimited JSON.
+//
+// The response is a stream rather than one envelope because a follow has no
+// natural end: the operator watches until they stop. Each line is one chunk, and
+// exactly one terminal line carries the end record, so a client that stops
+// reading without an end record must treat the stream as interrupted rather than
+// complete. Chunk lines are flushed immediately; buffering them would defeat the
+// purpose of following.
+func (h *Handler) outputFollow(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported")
+		return
+	}
+	if !h.authorizeOutputRead(w, r, operationOutputFollow) {
+		return
+	}
+	follower, ok := h.Output.(OutputFollower)
+	if !ok {
+		// A transport without streaming support reports unsupported instead of
+		// degrading into a snapshot, because a snapshot presented as a follow
+		// would never update.
+		h.writeError(w, http.StatusServiceUnavailable, "unsupported", "Endpoint output follow is unavailable")
+		return
+	}
+	q := r.URL.Query()
+	endpointID, resourceID := q.Get("endpoint_id"), q.Get("resource_id")
+	if endpointID == "" || resourceID == "" {
+		h.writeError(w, http.StatusBadRequest, "invalid_target", "endpoint_id and resource_id are required")
+		return
+	}
+	maxBytes := parseInt(q.Get("max_bytes"), 64<<10)
+	if maxBytes > 1<<20 {
+		maxBytes = 1 << 20
+	}
+	events, err := follower.RequestFollow(r.Context(), endpointID, protocol.OutputFollowRequest{EndpointID: endpointID, ResourceID: resourceID, Generation: q.Get("generation"), MaxBytes: maxBytes, MaxLines: parseMaxLines(q.Get("max_lines"))})
+	if err != nil {
+		h.writeError(w, http.StatusServiceUnavailable, "endpoint_offline", err.Error())
+		return
+	}
+	flusher, _ := w.(http.Flusher)
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Request-ID", security.NewRequestID())
+	w.WriteHeader(http.StatusOK)
+	encoder := json.NewEncoder(w)
+	for event := range events {
+		record := map[string]any{"type": "chunk"}
+		if event.End != nil {
+			record = map[string]any{"type": "end", "error_code": event.End.ErrorCode, "observed_at_ms": event.End.ObservedAtMS, "truncated": event.End.Truncated}
+		} else if event.Chunk != nil {
+			record["lines"] = event.Chunk.Lines
+			record["observed_at_ms"] = event.Chunk.ObservedAtMS
+			record["truncated"] = event.Chunk.Truncated
+		}
+		if err := encoder.Encode(record); err != nil {
+			// The client stopped reading. Returning releases the follow through
+			// the request context, so the provider child is not left streaming.
+			return
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		if event.End != nil {
+			return
+		}
+	}
 }
 
 func (h *Handler) endpoints(w http.ResponseWriter, r *http.Request) {

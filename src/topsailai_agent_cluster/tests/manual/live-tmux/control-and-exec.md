@@ -53,39 +53,53 @@ never select the first action.
 Precondition: same as CTLEXEC-01.
 
 Type `ctl` then Enter, then the number of a harmless advertised action such as
-`heartbeat`, then Enter. Expect the action name echoed in the confirmation question.
+`heartbeat`, then Enter. Expect `Parameters for heartbeat:` and the `ctl.param>`
+prompt, because the Endpoint advertises no per-action field schema so the client
+cannot know which actions take arguments. Answer with no text, expect
+`Parameters: none`, then expect the action name echoed in the confirmation question.
 Answer `n` and expect `ctl cancelled` with no admission.
 
-Repeat, answering `y`. Expect one `command submitted: <id>; use status <id> to query`
-line, then the receipt fields CommandID, Status, DeliveryBoundary, EffectCertainty and
-ErrorCode. Query `status <id>` and confirm the durable result matches the rendered one.
+Repeat, answering `y` at the confirmation. Expect one `command submitted: <id>; use
+status <id> to query` line, then the receipt fields CommandID, Status,
+DeliveryBoundary, EffectCertainty and ErrorCode. Query `status <id>` and confirm the
+durable result matches the rendered one.
 
 Repeat once more, typing the action name instead of its number, and confirm the same
 behaviour. Record the exact provider result; an admitted command that the provider
 rejects is a FAIL, not a PASS.
 
-## CTLEXEC-04 Supplied action and payload
+## CTLEXEC-04 Supplied action and guided parameters
 
 Precondition: same as CTLEXEC-01.
 
 Type `ctl heartbeat` then Enter. Expect the confirmation question without the action
-list, because the operator already named the action.
+list, because the operator already named the action, and expect the parameter prompt
+first because no parameter was supplied.
 
-Repeat with an explicit payload, for example `ctl pause {"reason":"live-tmux"}`.
-Expect the payload echoed in the confirmation preview. Answer `n` first and confirm no
-admission, then `y` and confirm the receipt.
+Repeat with explicit parameters, for example `ctl pause reason=live-tmux`. Expect no
+parameter prompt, because the parameters were supplied on the command line, and expect
+`Parameters: reason=live-tmux` echoed in the confirmation preview. Answer `n` first and
+confirm no admission, then `y` and confirm the receipt.
 
-Type `ctl heartbeat not-json` then Enter. Expect `payload must be a JSON object` and no
-admission. Repeat with `ctl heartbeat []` and `ctl heartbeat 5`; both must be rejected
-rather than wrapped into an object.
+Type `ctl pause timeout_seconds=300` then Enter and confirm. Expect the value to reach
+the provider as a JSON number rather than a string, because an unquoted value that
+parses as a JSON scalar keeps its type. Repeat with `timeout_seconds="300"` and expect
+a JSON string instead.
+
+Type `ctl heartbeat not-json` then Enter. Expect a parameter rejection naming the
+`key=value` form and no admission. Repeat with `ctl heartbeat []` and `ctl heartbeat 5`;
+both must be rejected rather than wrapped into an object. No interactive form may
+accept a JSON document.
 
 ## CTLEXEC-05 Unadvertised action is refused
 
 Precondition: session scope, with an action name that the Endpoint does not advertise.
 
 Type `ctl <unadvertised-action>` then Enter. Expect an explicit refusal naming the
-action, and expect no command admission. A silently admitted command that later fails
-is a FAIL, because the client must not send an operation the Endpoint never advertised.
+action, and expect no command admission and no parameter prompt, because the action is
+rejected before the operator is asked to fill anything. A silently admitted command
+that later fails is a FAIL, because the client must not send an operation the Endpoint
+never advertised.
 
 ## CTLEXEC-06 `!` runs an allowlisted command
 
@@ -190,6 +204,12 @@ and service processes created by this run.
 
 ## Execution log
 
+Note: the table below records the first run, which predates the guided-parameter change.
+CTLEXEC-03 and CTLEXEC-04 were executed while the interactive surface still accepted a
+JSON payload, so their recorded evidence describes superseded behaviour. Both cases were
+re-run against the current build; see "Run 2" below, which supersedes those two rows. The
+other cases are unaffected, because they do not exercise the payload form.
+
 Executed on 2026-11-07 against a real `topsailai` provider, using binaries built from
 HEAD into `.tmp/live-tmux-audit/bin/` and the isolated cluster started by
 `start_services.py`. The live deployment (`/usr/local/sbin/agent-cluster-endpoint`,
@@ -209,8 +229,8 @@ advertised, and one live session in the persisted inventory.
 |---|---|---|
 | CTLEXEC-01 | PASS | Bare `ctl` rendered all ten actions as a numbered list with the `ctl.action>` prompt; no command admitted |
 | CTLEXEC-02 | PASS | Empty answer produced `error: ctl cancelled` plus usage; no command admitted |
-| CTLEXEC-03 | PASS | `7` resolved to `ctl heartbeat` and reached the confirmation gate |
-| CTLEXEC-04 | PASS | `ctl heartbeat '{}' <generation>` returned `finished`/`acknowledged`; provider response carried `delivery_state: control_acknowledged` and `result: {"alive": true, "pid": 3472, "hostname": "ai-dev"}` |
+| CTLEXEC-03 | PASS (run 2) | `7` resolved to `ctl heartbeat`; guided prompt `ctl.param>` accepted an empty answer as `Parameters: none`; confirmation `y` returned `finished`/`acknowledged` with `delivery_state: control_acknowledged` and `result: {"alive": true, "pid": 1347750, "hostname": "ai-dev", "session_id": "wa-d9ef07069d5b"}`. Supersedes the run-1 row |
+| CTLEXEC-04 | PASS (run 2) | `9` resolved to `ctl pause`; the guided prompt walked `default` (enum `continue`/`interrupt`), `prompt`, `reason` and `timeout_seconds` (number) one field at a time; `timeout_seconds=300` was sent as a JSON number and the provider returned `state: pause_requested` with the pause flag path. No JSON was typed. Supersedes the run-1 row |
 | CTLEXEC-05 | PASS | `ctl.not_a_real_action` rejected as `unsupported capability` |
 | CTLEXEC-06 | PASS | `!ls internal` listed the real `internal/` tree; `pwd` matched `topsailai_session_info` `project_workspace` |
 | CTLEXEC-07 | PASS | Command outside the allowlist returned `rejected`/`not_applied`/`policy_denied` |
@@ -244,3 +264,70 @@ Two findings were stated and then retracted after verification:
 previously had no way to configure `AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE` and
 `command.exec` therefore always failed closed. The option is optional so the same harness
 can still prove the fail-closed path.
+
+## Run 2: guided parameters against the current build
+
+Executed on 2026-11-08 against a real `topsailai` provider, using binaries built from HEAD
+`63664ebe` into `.tmp/live-tmux-audit/bin/` and the isolated cluster started by
+`start_services.py`. The live deployment was never restarted.
+
+Environment:
+
+```text
+runtime        .tmp/ctl/r6
+provider home  .tmp/ctl/h
+project        .tmp/ctl/p/demo
+catalog        conf/control-actions.conf.example
+allowlist      .tmp/live-tmux-audit/allowlist.conf
+tmux session   ctllive   (window 0 = harness, window 1 = cli)
+api port       39333
+endpoint       live-tmux-endpoint
+session        wa-d9ef07069d5b / res_993e48f6b1994d21ac9117af7c8646c5 / pid 1347750
+```
+
+Preconditions observed: Endpoint log line `loaded control action file ... actions=10`
+listing all ten names, `loaded command allowlist ... entries=2`, and
+`GET /api/v1/endpoints/live-tmux-endpoint/capabilities` returning 21 capabilities with all
+ten `ctl.*` present.
+
+| Case | Result | Evidence |
+|---|---|---|
+| CTLEXEC-01 | PASS | Bare `ctl` rendered `Control actions:` with ten numbered entries and the `ctl.action>` prompt; no command admitted |
+| CTLEXEC-03 | PASS | `7` → `ctl.param>` → empty → `Parameters: none` → `y` → `finished`/`acknowledged`, `result: {"alive": true, "pid": 1347750, "hostname": "ai-dev"}` |
+| CTLEXEC-04 | PASS | `9` → guided fields `default`/`prompt`/`reason`/`timeout_seconds` → `300` → `y` → `state: pause_requested` with the pause flag path |
+| CTLEXEC-05 | PASS | `ctl.not_configured` → `error: endpoint "live-tmux-endpoint": unsupported capability "ctl.not_configured"` |
+| CTLEXEC-13 | PASS | `ctl.heartbeat` skipped the action menu and went straight to `ctl.param>`, proving dotted spelling |
+| CTLEXEC-14 | PASS | `call_instruction` prompted `args` (array), `instruction` (46-value enum) and `kwargs` (object) in alphabetical order; `agent.tokens` returned real token statistics |
+| CTLEXEC-15 | PASS | `llm_control` prompted `operation` with the single value `force_retry`; an empty answer produced `error: operation is required for llm_control` |
+| CTLEXEC-16 | PASS | `get_session_messages` prompted no user-facing field and returned `count: 3` real messages, proving `session_id` is injected from the target |
+
+### Guided prompt shape observed
+
+`call_instruction` prompts its fields in alphabetical order, not schema order:
+
+```text
+args · array · optional · space-separated, quote an item to keep spaces; empty skips
+instruction · string · required · one of: help, agent.system_prompt, ... ; empty is rejected
+kwargs · object · optional · key=value pairs, space-separated; empty skips
+```
+
+`pause` prompts `default`, `prompt`, `reason` and `timeout_seconds` in the same alphabetical
+order, and `default` renders as a numbered enum menu.
+
+### AF_UNIX path-length constraint
+
+The provider builds its control socket at
+`{TOPSAILAI_HOME}/workspace/task/{session_id}.{pid}.session.sock`. The first attempt used
+`.tmp/live-tmux-audit/provider-home`, which produced a 125-character path and exceeded the
+108-character AF_UNIX limit, so `get_or_start_control_server` failed with
+`AF_UNIX path too long`, the agent never created its socket, and every `ctl.*` returned
+`endpoint_missing`. Relocating the provider home to `.tmp/ctl/h` shortened the path to 101
+characters and the socket appeared. Any future live run must keep the provider home short.
+
+### Harness requirement for the catalog
+
+`start_services.py` gained an optional `--control-actions` argument mirroring `--allowlist`:
+it validates an absolute path and an existing file, then sets
+`AGENT_CLUSTER_CONTROL_ACTION_FILE`. Without it the Endpoint advertises no `ctl.*` action and
+every `ctl.*` fails closed, so the catalog could not be exercised at all. The option stays
+optional so the same harness can still prove the fail-closed path.
