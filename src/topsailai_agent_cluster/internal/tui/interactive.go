@@ -219,6 +219,16 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 	if err := parent.Err(); err != nil {
 		return err
 	}
+	// Dotted completion is opt-in. A REPL that supplies no completion source
+	// performs no capability query for completion, so the existing contract that
+	// a capability query happens only when a command needs one is preserved. The
+	// editor receives the cache's read method, so completion stays a pure lookup
+	// and never performs network I/O inside the keystroke handler.
+	var actions *CtlActionCache
+	if setter, ok := options.WatchReader.(interface{ SetActionSource(func() []string) }); ok {
+		actions = NewCtlActionCache()
+		setter.SetActionSource(actions.Cached)
+	}
 	consecutivePromptFailures := 0
 	for {
 		if err := parent.Err(); err != nil {
@@ -226,6 +236,9 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 		}
 		if controller.promptWasInterrupted() {
 			return ErrInteractiveInterrupt
+		}
+		if actions != nil {
+			actions.Actions(parent, api, state.Scope.EndpointID)
 		}
 		if err := writePrompt(output, state, options.Color); err != nil {
 			return err

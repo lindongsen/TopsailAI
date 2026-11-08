@@ -6,7 +6,13 @@ import (
 	"unicode"
 )
 
-// completeCommand completes only the command token at a named scope prompt.
+// completeCommand completes the command token at a named scope prompt.
+//
+// Two candidate sets exist. A dotted control word such as ctl.git.st is completed
+// from the Endpoint's advertised actions, because the action lives inside the
+// command word. Every other command is completed from the command words of the
+// current scope, and only while the line still holds a single token, so an
+// argument is never rewritten.
 func (t *TerminalEditor) completeCommand(prompt string) error {
 	prompt = strings.TrimPrefix(prompt, ansiBoldGreen)
 	var kind ScopeKind
@@ -21,7 +27,7 @@ func (t *TerminalEditor) completeCommand(prompt string) error {
 		return nil
 	}
 	e := t.editor
-	if e.overflow || e.cursor != len(e.text) || strings.IndexFunc(string(e.text), unicode.IsSpace) >= 0 {
+	if e.overflow || e.cursor != len(e.text) {
 		return nil
 	}
 	prefix := string(e.text)
@@ -32,10 +38,24 @@ func (t *TerminalEditor) completeCommand(prompt string) error {
 	if matchPrefix == "/" {
 		matchPrefix = ""
 	}
-	matches := []string{}
-	for _, name := range availableCommands(kind) {
-		if strings.HasPrefix(name, matchPrefix) {
-			matches = append(matches, name)
+	var matches []string
+	if strings.HasPrefix(matchPrefix, ctlOperationPrefix) {
+		// The dotted spelling carries the action inside the command word, so the
+		// action is completed from the advertised capabilities. A line that
+		// already carries a parameter is left untouched, because parameters are
+		// not completed.
+		if strings.IndexFunc(prefix, unicode.IsSpace) >= 0 {
+			return nil
+		}
+		matches = t.completeCtlActions(matchPrefix)
+	} else {
+		if strings.IndexFunc(prefix, unicode.IsSpace) >= 0 {
+			return nil
+		}
+		for _, name := range availableCommands(kind) {
+			if strings.HasPrefix(name, matchPrefix) {
+				matches = append(matches, name)
+			}
 		}
 	}
 	if len(matches) == 0 {
@@ -69,4 +89,29 @@ func (t *TerminalEditor) completeCommand(prompt string) error {
 		return err
 	}
 	return nil
+}
+
+// completeCtlActions returns the advertised control actions matching a typed
+// dotted command word.
+//
+// The candidate set is the Endpoint's advertised actions rather than the command
+// words, so a shortcut is completed from the same descriptor the Endpoint uses to
+// authorize it. An empty action lists every action, which is how an operator
+// discovers the shortcuts without the numbered menu.
+//
+// The source reads a cache and never performs network I/O, because this runs
+// inside the keystroke handler. A nil source completes nothing, so an editor
+// without a capability seam keeps the previous behaviour.
+func (t *TerminalEditor) completeCtlActions(matchPrefix string) []string {
+	if t.actions == nil {
+		return nil
+	}
+	typed := strings.TrimPrefix(matchPrefix, ctlOperationPrefix)
+	matches := []string{}
+	for _, name := range t.actions() {
+		if strings.HasPrefix(name, typed) {
+			matches = append(matches, ctlOperationPrefix+name)
+		}
+	}
+	return matches
 }

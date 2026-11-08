@@ -25,6 +25,10 @@ type TerminalEditor struct {
 	width  func() int
 	enable func() (func() error, error)
 	editor *lineEditor
+	// actions supplies the advertised control actions for dotted completion. It
+	// reads a cache and never performs network I/O, because completion runs
+	// inside the keystroke handler. A nil source completes no action.
+	actions func() []string
 	// blockRows and blockCursorRow record the input block rendered last time, so
 	// the next redraw returns to its first row instead of appending a second copy.
 	blockRows      int
@@ -34,6 +38,14 @@ type TerminalEditor struct {
 // NewTerminalEditor injects terminal operations at the CLI boundary.
 func NewTerminalEditor(input TerminalInput, output io.Writer, width func() int, enable func() (func() error, error)) *TerminalEditor {
 	return &TerminalEditor{input: input, output: output, width: width, enable: enable}
+}
+
+// SetActionSource injects the advertised control actions used by dotted
+// completion. The source must read a cache rather than query the Server, because
+// it is called from the keystroke handler. A nil source disables action
+// completion and leaves command-word completion unchanged.
+func (t *TerminalEditor) SetActionSource(actions func() []string) {
+	t.actions = actions
 }
 
 // The editor is both the plain and the tick-capable reader. These assertions keep

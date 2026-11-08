@@ -340,6 +340,31 @@ submit any instruction name the provider registers, whatever permission the entr
 it went through declares. Closing that gap needs Endpoint-side schema validation,
 which is not implemented today.
 
+## Tab completion
+
+The interactive REPL completes a dotted control word from the Endpoint's
+advertised actions, so `ctl.git.st` completes to `ctl.git.status ` and `ctl.`
+lists every advertised action. The candidate set is the same capability
+descriptor the Endpoint uses to authorize the action, so completion can never
+offer an action the Endpoint would refuse, and a newly configured shortcut needs
+no client change.
+
+Completion reads a cache and never performs network I/O, because it runs inside
+the keystroke handler. The cache is refreshed once per Endpoint change, so one
+scope change costs one capability query instead of one query per keypress. A
+failed query leaves the list empty rather than retrying on every prompt: TAB then
+offers nothing, which is the safe outcome, and re-entering the Endpoint scope
+refreshes it.
+
+Completion is opt-in. A REPL that supplies no completion source performs no
+capability query for completion at all, so the existing contract that a
+capability query happens only when a command needs one is preserved.
+
+Two limits are deliberate. A line that already carries a parameter is not
+completed, because parameters are not completed and rewriting the command word
+would move the cursor away from the argument. A command word that is not the
+dotted spelling keeps the previous behaviour, so an argument is never rewritten.
+
 ## Provider gaps this catalog cannot close
 
 These are provider-side limitations. The catalog documents them rather than working around them.
