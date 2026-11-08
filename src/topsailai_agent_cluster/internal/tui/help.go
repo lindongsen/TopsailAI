@@ -219,7 +219,7 @@ func CommandHelpLines() []string {
 	return formatHelpBlock(cells, descriptions)
 }
 
-var nonInteractiveHelpOrder = []string{"list", "refresh", "endpoints", "show", "info", "logs", "status", "send", "btw", "control", "ctl", "exec", "start", "resume", "stop", "drive", "help"}
+var nonInteractiveHelpOrder = []string{"list", "refresh", "endpoints", "show", "info", "logs", "status", "send", "btw", "control", "ctl", "exec", "start", "resume", "stop", "drive", "help", "interactive"}
 
 // nonInteractiveHelpAliases maps accepted standalone spellings to the advertised
 // command. The advertised list keeps one spelling per surface, while an accepted
@@ -257,7 +257,11 @@ func PrintNonInteractiveCommandHelp(out io.Writer, target string) error {
 		return fmt.Errorf("unknown help command %q; available commands: %s", target, strings.Join(nonInteractiveHelpOrder, ", "))
 	}
 	entry := nonInteractiveHelpEntry(advertised)
-	if _, err := fmt.Fprintf(out, "%s\n\nSyntax: %s\nDescription: %s\n", advertised, entry.syntax, entry.description); err != nil {
+	// The standalone surface shares the canonical renderer so a command's help
+	// cannot drift between the two surfaces. The scope line is suppressed
+	// because the standalone CLI has no scope model. The heading is the spelling
+	// the operator typed, so an alias never answers with a name they did not use.
+	if err := printCommandDetail(out, target, advertised, entry, false); err != nil {
 		return err
 	}
 	if advertised != target {
@@ -335,6 +339,15 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.examples = []string{"exec endpoint-1 res_abc gen-1 -- git status", "exec endpoint-1 res_abc gen-1 -- ls -la"}
 	case "help":
 		entry.syntax = "agent-cluster-cli help [command]"
+	case "interactive":
+		// interactive is a standalone-only spelling: it has no interactive
+		// command word because it is the REPL itself. It therefore has no
+		// scope-matrix entry, and its description is supplied here instead of
+		// in the catalog, which must stay one-to-one with the matrix.
+		entry.syntax = "agent-cluster-cli [options] interactive"
+		entry.description = "start the interactive REPL; equivalent to -i, and it requires a terminal on stdin"
+		entry.parameters = []string{"-i: the same selection written as a global option", "--json, --yes: rejected, because the REPL renders its own output"}
+		entry.examples = []string{"interactive", "agent-cluster-cli -i"}
 	}
 	return entry
 }
@@ -381,6 +394,14 @@ func helpTarget(target string) string {
 	return canonicalCommandName(trimCommandPrefix(strings.ToLower(strings.TrimSpace(target))))
 }
 
+// helpSpelling returns the spelling the operator typed, normalized the same way
+// helpTarget normalizes it but without alias canonicalization. An alias must
+// answer with the name the operator used, so "help btw" is headed "btw" rather
+// than the canonical "inject" it resolves to.
+func helpSpelling(target string) string {
+	return trimCommandPrefix(strings.ToLower(strings.TrimSpace(target)))
+}
+
 // PrintCommandHelp renders overview or detailed help without ANSI styling.
 func PrintCommandHelp(out io.Writer, target string) error {
 	target = helpTarget(target)
@@ -394,11 +415,12 @@ func PrintCommandHelp(out io.Writer, target string) error {
 	if !ok {
 		return fmt.Errorf("unknown help command %q; available commands: %s", target, strings.Join(commandHelpOrder, ", "))
 	}
-	return printCommandDetail(out, target, entry)
+	return printCommandDetail(out, target, target, entry, true)
 }
 
 // PrintScopedCommandHelp renders context help or complete canonical help.
 func PrintScopedCommandHelp(out io.Writer, target string, kind ScopeKind) error {
+	spelling := helpSpelling(target)
 	target = helpTarget(target)
 	if target == "" {
 		return printContextHelp(out, kind)
@@ -417,7 +439,7 @@ func PrintScopedCommandHelp(out io.Writer, target string, kind ScopeKind) error 
 	if target == "start" {
 		return printInteractiveStartHelp(out, entry)
 	}
-	if err := printCommandDetail(out, target, entry); err != nil {
+	if err := printCommandDetail(out, spelling, target, entry, true); err != nil {
 		return err
 	}
 	if target == "list" {
@@ -429,16 +451,26 @@ func PrintScopedCommandHelp(out io.Writer, target string, kind ScopeKind) error 
 
 // printInteractiveStartHelp adds wizard guidance only to scoped interactive help.
 func printInteractiveStartHelp(out io.Writer, entry commandHelp) error {
-	if err := printCommandDetail(out, "start", entry); err != nil {
+	if err := printCommandDetail(out, "start", "start", entry, true); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintln(out, "Project launch: start [endpoint] selects a live adapter and project (or manual folder), then asks for the initial task. Without an endpoint argument it prints a numbered endpoint list and accepts a bare number, so no endpoint identifier has to be typed. An empty task answer enters multi-line task mode: type the task, then finish it with a standalone EOF line or Ctrl+D, and the accepted task is echoed verbatim with colour so it can be verified before submission. Empty/cancel cancels. Legacy explicit --profile syntax and clients without launch queries use the endpoint/resource/profile/revision prompts; q quits, r refreshes, and help repeats guidance.")
 	return err
 }
 
-// printCommandDetail renders one canonical command without changing non-interactive help.
-func printCommandDetail(out io.Writer, target string, entry commandHelp) error {
-	if _, err := fmt.Fprintf(out, "%s\n\nSyntax: %s\nAvailable in: %s\nDescription: %s\n", target, entry.syntax, strings.Join(commandScopes(target), ", "), entry.description); err != nil {
+// printCommandDetail renders one canonical command. The heading is the spelling
+// the operator asked for, while target stays canonical so the scope line and the
+// field list are looked up by the command that actually owns them. The scope line
+// is optional because the standalone surface has no scope model: printing
+// "Available in:" there would advertise an interactive concept the caller cannot
+// use. Both surfaces share this renderer so a command's help cannot drift between
+// them.
+func printCommandDetail(out io.Writer, heading, target string, entry commandHelp, withScopes bool) error {
+	if withScopes {
+		if _, err := fmt.Fprintf(out, "%s\n\nSyntax: %s\nAvailable in: %s\nDescription: %s\n", heading, entry.syntax, strings.Join(commandScopes(target), ", "), entry.description); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintf(out, "%s\n\nSyntax: %s\nDescription: %s\n", heading, entry.syntax, entry.description); err != nil {
 		return err
 	}
 	if len(entry.parameters) > 0 {
@@ -641,6 +673,18 @@ func scopedHelpEntry(name string, kind ScopeKind) commandHelp {
 		entry.description = "show an explicit command result; without an ID, use the last command submitted in this CLI, otherwise show current session state"
 		entry.parameters = []string{"command-id: optional submitted command identifier", "without an ID: last submitted command takes precedence over current session state"}
 		entry.examples = []string{"status", "status cmd_123"}
+	}
+	if name == "send" || name == "inject" {
+		// The REPL takes the rest of the line as literal content, so these two
+		// commands accept no options at all. --help is not an option here: it is
+		// sent as literal text, and help <command> is the only help entry. The
+		// standalone command keeps --help, because argv position separates the
+		// command word from the payload there.
+		spelling := name
+		if name == "inject" {
+			spelling = "btw"
+		}
+		entry.parameters = append(entry.parameters, "no options: the rest of the line is literal content, so "+spelling+" --help sends the text --help; run help "+spelling+" for this help")
 	}
 	return entry
 }

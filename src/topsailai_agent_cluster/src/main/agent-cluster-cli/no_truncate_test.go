@@ -1,8 +1,6 @@
 package main
 
 import (
-	"errors"
-	"flag"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,12 +68,13 @@ func TestNoTruncateFlagKeepsFullValues(t *testing.T) {
 // an operator can discover it without reading the source.
 func TestNoTruncateFlagIsAdvertised(t *testing.T) {
 	var output, diagnostics strings.Builder
+	// A help request succeeds, so the usage block is written to stdout.
 	err := runWithIO([]string{"-h"}, strings.NewReader(""), &output, &diagnostics, false, nil)
-	if !errors.Is(err, flag.ErrHelp) {
+	if err != nil {
 		t.Fatalf("error=%v", err)
 	}
-	if !strings.Contains(diagnostics.String(), "-no-truncate") {
-		t.Fatalf("usage=%q does not advertise --no-truncate", diagnostics.String())
+	if !strings.Contains(output.String(), "-no-truncate") {
+		t.Fatalf("usage=%q does not advertise --no-truncate", output.String())
 	}
 }
 

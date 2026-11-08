@@ -507,23 +507,48 @@ func TestInteractiveStopRequiresTargetOutsideSessionScope(t *testing.T) {
 }
 
 func TestInteractiveControlAliasesAreDocumented(t *testing.T) {
-	var aliasOutput, canonicalOutput strings.Builder
-	for _, name := range []string{"btw", "control"} {
-		if err := PrintCommandHelp(&aliasOutput, name); err != nil {
-			t.Fatal(err)
-		}
+	// An alias must answer with the spelling the operator typed, while the body
+	// stays the canonical command's body. Byte-identity would force the heading
+	// to the canonical name, so "help btw" would answer "inject" and the operator
+	// could not tell which command the help described.
+	for _, testCase := range []struct{ alias, canonical string }{
+		{alias: "btw", canonical: "inject"},
+		{alias: "control", canonical: "interrupt"},
+	} {
+		t.Run(testCase.alias, func(t *testing.T) {
+			var aliasOutput, canonicalOutput strings.Builder
+			if err := PrintScopedCommandHelp(&aliasOutput, testCase.alias, ScopeSession); err != nil {
+				t.Fatal(err)
+			}
+			if err := PrintScopedCommandHelp(&canonicalOutput, testCase.canonical, ScopeSession); err != nil {
+				t.Fatal(err)
+			}
+			aliasHeading, aliasBody := splitHelpHeading(aliasOutput.String())
+			canonicalHeading, canonicalBody := splitHelpHeading(canonicalOutput.String())
+			if aliasHeading != testCase.alias {
+				t.Fatalf("alias heading = %q, want the typed spelling %q", aliasHeading, testCase.alias)
+			}
+			if canonicalHeading != testCase.canonical {
+				t.Fatalf("canonical heading = %q, want %q", canonicalHeading, testCase.canonical)
+			}
+			if aliasBody != canonicalBody {
+				t.Fatalf("alias body differs from canonical body: alias=%q canonical=%q", aliasBody, canonicalBody)
+			}
+			if !strings.Contains(aliasBody, "Available in: session") {
+				t.Fatalf("alias help missing scope: %q", aliasBody)
+			}
+		})
 	}
-	for _, name := range []string{"inject", "interrupt"} {
-		if err := PrintCommandHelp(&canonicalOutput, name); err != nil {
-			t.Fatal(err)
-		}
+}
+
+// splitHelpHeading separates the rendered heading from the remaining body so a
+// test can compare bodies without pinning the heading to one spelling.
+func splitHelpHeading(rendered string) (string, string) {
+	heading, body, found := strings.Cut(rendered, "\n")
+	if !found {
+		return rendered, ""
 	}
-	if aliasOutput.String() != canonicalOutput.String() {
-		t.Fatalf("alias help differs from canonical help: alias=%q canonical=%q", aliasOutput.String(), canonicalOutput.String())
-	}
-	if !strings.Contains(aliasOutput.String(), "Available in: session") {
-		t.Fatalf("alias help missing scope: %q", aliasOutput.String())
-	}
+	return heading, body
 }
 
 func TestInteractiveSessionActionValidation(t *testing.T) {

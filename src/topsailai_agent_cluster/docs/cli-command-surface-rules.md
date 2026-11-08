@@ -139,6 +139,15 @@ only the canonical `list` spelling. Because `canonicalCommandName` runs before t
 dispatch switch, `l` inherits `list`'s arguments, scope availability and usage
 diagnostics unchanged, and it does not shadow the longer `logs` spelling.
 
+An alias answers with the spelling the operator typed. `help btw` is headed `btw`
+and `help l` is headed `l`, while the body stays the canonical command's body, so
+an alias never advertises a different contract and never answers with a name the
+operator did not use. The heading is the only difference: syntax, scope line,
+description, parameters, examples and fields are identical, which is why the
+alias tests compare bodies rather than whole output. The standalone surface adds
+an `Alias of:` line after the body, because there the operator may not know that
+the spelling they typed is an alias.
+
 `cd` and `quit` navigate a session that only exists inside the interactive loop, so
 they have no standalone meaning and are not gaps.
 
@@ -346,6 +355,57 @@ The output boundary owns the policy. The CLI writer reports a `TableLayout` of
 width plus truncation state, so every render path inherits the switch without
 threading a new parameter through each command, and the interactive prompt editor
 keeps the real terminal width as its editing budget.
+
+## Help option and the literal terminator
+
+`--help` and `-h` are global meta-options, not per-command syntax. They are
+documented once in the usage header and never repeated in each command entry,
+because a repeated description drifts into inconsistent wording and reads like a
+different feature per command.
+
+- A help request is a successful request: it exits `0` and writes to stdout, so
+  `agent-cluster-cli list --help | less` works and a script never mistakes help
+  for a failure.
+- `--help` renders exactly the same detail as `help <command>`, including
+  parameters, examples and fields. One renderer serves both surfaces, so the two
+  spellings cannot diverge.
+- The option is recognized after the command word and before that command's own
+  argument validation, so `list --help` is answered instead of being reported as
+  a usage error.
+- `--` ends option parsing. Before it, `--help` is a help request; after it,
+  everything is literal data. `send ep res -- --help` therefore sends the text
+  `--help`, and `ctl ep res action -- {"k":"v"}` accepts a payload that begins
+  with a dash. `exec` keeps its own `--` because the terminator is part of its
+  documented syntax.
+- The interactive REPL has no `--help`. `send`, `btw`, `inject`, `interrupt` and
+  `control` take the rest of the line as literal content, so `send --help` sends
+  the text `--help`; `help send` is the only help entry there. The standalone
+  command can separate the command word from the payload by argv position, which
+  is why the option exists only there.
+
+### Exception: interactive `send` and `btw` accept no options
+
+`send` and `btw` are the two commands whose entire remaining line is the payload,
+so in the REPL they accept no options at all. This is an explicit exception, not
+an oversight, and it applies only to the interactive surface.
+
+- `send --help` and `btw --help` send the literal text `--help`. They do not
+  render help, because the REPL cannot tell an option from a message: the rest of
+  the line is the message.
+- `help send` and `help btw` are the only help entries in the REPL. The
+  interactive help for both commands states this exception, so an operator learns
+  it from the help text instead of discovering it by sending `--help` as a
+  message.
+- `--json` is rejected rather than sent, because a payload that is only the
+  option is a mistake, not a message. Ordinary prose that merely contains
+  `--json` stays literal text.
+- The standalone `send` and `btw` commands keep `--help`, because argv position
+  separates the command word from the payload there. `agent-cluster-cli send
+  --help` renders the same detail as `agent-cluster-cli help send`, and the
+  standalone help does not advertise the interactive restriction.
+- `inject` is the same command as `btw`, so the exception covers both spellings.
+  `interrupt` and `control` also take literal content, but they are not part of
+  this exception because their first token is an action word, not free text.
 
 ## Progress lines
 

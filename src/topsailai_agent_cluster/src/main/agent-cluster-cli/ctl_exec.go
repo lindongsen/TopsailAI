@@ -25,11 +25,21 @@ func ctlCommand(ctx context.Context, api tui.CommandAPI, output io.Writer, args 
 // lines. A nil diagnostics stream keeps the previous silent behaviour, so a
 // caller that has no diagnostics boundary loses nothing.
 func ctlCommandWithProgress(ctx context.Context, api tui.CommandAPI, output, diagnostics io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
-	if len(args) < 4 {
+	// A "--" after the command word ends option parsing, so a JSON payload that
+	// begins with a dash is accepted literally. The head is still checked for
+	// misplaced flags, because a flag written before the terminator would silently
+	// become the action or the payload. The command word is checked before it is
+	// read, because a bare "ctl" has no word to inspect.
+	if len(args) < 1 {
 		return fmt.Errorf("usage: ctl <endpoint-id> <resource-id> <action> [json] [generation]")
 	}
-	if err := rejectMisplacedFlags(args[0], args); err != nil {
+	head, tail := splitTerminator(args)
+	if err := rejectMisplacedFlags(args[0], head); err != nil {
 		return err
+	}
+	args = append(append([]string{}, head...), tail...)
+	if len(args) < 4 {
+		return fmt.Errorf("usage: ctl <endpoint-id> <resource-id> <action> [json] [generation]")
 	}
 	endpointID, resourceID, action := args[1], args[2], args[3]
 	operation, err := tui.CtlOperation(action)

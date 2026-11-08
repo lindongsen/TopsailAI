@@ -208,11 +208,16 @@ func TestPromptInterruptMapsToExitCode130(t *testing.T) {
 
 func TestCLIHelpDescribesListCleanBehavior(t *testing.T) {
 	var output, diagnostics strings.Builder
+	// A help request is a successful request: it must not be reported as a
+	// failure, and it must be written to stdout so "cli -h | less" works.
 	err := runWithIO([]string{"-h"}, strings.NewReader(""), &output, &diagnostics, false, nil)
-	if err == nil || err.Error() != "flag: help requested" {
+	if err != nil {
 		t.Fatalf("help error=%v", err)
 	}
-	text := diagnostics.String()
+	if diagnostics.Len() != 0 {
+		t.Fatalf("help wrote diagnostics=%q", diagnostics.String())
+	}
+	text := output.String()
 	for _, phrase := range []string{"[--endpoint <id>] list [--clean]", "failed to report", "--clean", "stderr"} {
 		if !strings.Contains(text, phrase) {
 			t.Fatalf("CLI help missing %q: %q", phrase, text)
@@ -220,6 +225,67 @@ func TestCLIHelpDescribesListCleanBehavior(t *testing.T) {
 	}
 	if strings.Contains(text, "table [endpoint]") {
 		t.Fatalf("removed table command remains in help: %q", text)
+	}
+}
+
+// TestSplitTerminatorSeparatesLiteralTail pins the "--" rule that lets a payload
+// begin with a dash. Before the terminator a dash token is an option, so it must
+// still be rejected; after it the token is data and must never be inspected.
+func TestSplitTerminatorSeparatesLiteralTail(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		wantHead []string
+		wantTail []string
+	}{
+		{
+			name:     "no terminator keeps the whole line",
+			args:     []string{"send", "ep", "res", "hello"},
+			wantHead: []string{"send", "ep", "res", "hello"},
+			wantTail: nil,
+		},
+		{
+			name:     "terminator splits head from literal tail",
+			args:     []string{"send", "ep", "res", "--", "--help"},
+			wantHead: []string{"send", "ep", "res"},
+			wantTail: []string{"--help"},
+		},
+		{
+			name:     "command word is never a terminator",
+			args:     []string{"--", "ep"},
+			wantHead: []string{"--", "ep"},
+			wantTail: nil,
+		},
+		{
+			name:     "only the first terminator splits",
+			args:     []string{"ctl", "ep", "res", "act", "--", "--", "x"},
+			wantHead: []string{"ctl", "ep", "res", "act"},
+			wantTail: []string{"--", "x"},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			head, tail := splitTerminator(testCase.args)
+			if strings.Join(head, "\x00") != strings.Join(testCase.wantHead, "\x00") {
+				t.Fatalf("head=%q want %q", head, testCase.wantHead)
+			}
+			if strings.Join(tail, "\x00") != strings.Join(testCase.wantTail, "\x00") {
+				t.Fatalf("tail=%q want %q", tail, testCase.wantTail)
+			}
+		})
+	}
+}
+
+// TestHelpRequestStopsAtTerminator proves the two rules do not collide: a help
+// request before "--" is answered, and the same token after "--" is payload.
+func TestHelpRequestStopsAtTerminator(t *testing.T) {
+	requested, target := helpRequest([]string{"send", "ep", "res", "--help"})
+	if !requested || target != "send" {
+		t.Fatalf("requested=%v target=%q, want the send help", requested, target)
+	}
+	requested, target = helpRequest([]string{"send", "ep", "res", "--", "--help"})
+	if requested {
+		t.Fatalf("a terminator must end help detection, got target=%q", target)
 	}
 }
 

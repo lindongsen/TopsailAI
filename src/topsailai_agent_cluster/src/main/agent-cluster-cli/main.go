@@ -72,15 +72,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	flags := flag.NewFlagSet("agent-cluster-cli", flag.ContinueOnError)
 	flags.SetOutput(errors)
 	flags.Usage = func() {
-		fmt.Fprintln(errors, "Usage: agent-cluster-cli [options] <command>")
-		fmt.Fprintln(errors, "Global options may also be written after the command.")
-		fmt.Fprintln(errors, "Commands:")
-		for _, line := range tui.NonInteractiveCommandHelpLines() {
-			fmt.Fprintln(errors, "  "+line)
-		}
-		fmt.Fprintln(errors, "  interactive        start the interactive REPL (equivalent to -i)")
-		fmt.Fprintln(errors, "Options:")
-		flags.PrintDefaults()
+		writeUsage(errors, flags)
 	}
 	jsonMode := flags.Bool("json", false, "write structured JSON")
 	filter := flags.String("endpoint", "", "filter by endpoint ID")
@@ -99,6 +91,18 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	task := flags.String("task", "", "literal initial task text for start; no JSON is required")
 	generation := flags.String("generation", "", "target generation; alternative to the positional generation argument")
 	interactiveShort := flags.Bool("i", false, "start the interactive REPL (same as the interactive command)")
+	// A help request is a successful request, so it is answered before flag
+	// parsing: Go's flag package reports --help as flag.ErrHelp, which the caller
+	// would otherwise turn into exit code 2 on stderr. The request is detected on
+	// the raw arguments because flag.Parse stops at the first positional, so a
+	// command-level --help would never reach the flag set at all.
+	if requested, target := helpRequest(args); requested {
+		if target == "" {
+			writeUsage(output, flags)
+			return nil
+		}
+		return tui.PrintNonInteractiveCommandHelp(output, target)
+	}
 	if err := flags.Parse(hoistTrailingFlags(args)); err != nil {
 		return err
 	}
@@ -208,6 +212,61 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
 	}
+}
+
+// writeUsage renders the global usage block. The flag set's own Usage hook and
+// an explicit help request share it, so the two can never drift. The flag set
+// writes its defaults to its configured output, so that output is redirected for
+// the duration of the call; otherwise a help request answered on stdout would
+// still print its options on stderr.
+func writeUsage(out io.Writer, flags *flag.FlagSet) {
+	previous := flags.Output()
+	flags.SetOutput(out)
+	defer flags.SetOutput(previous)
+	fmt.Fprintln(out, "Usage: agent-cluster-cli [options] <command>")
+	fmt.Fprintln(out, "Global options may also be written after the command.")
+	// The help option is documented once here instead of on every command, so
+	// the command list stays a list of commands rather than a list of options.
+	fmt.Fprintln(out, "Every command accepts --help (or -h) for its detailed help, equivalent to help <command>.")
+	fmt.Fprintln(out, "Commands:")
+	for _, line := range tui.NonInteractiveCommandHelpLines() {
+		fmt.Fprintln(out, "  "+line)
+	}
+	fmt.Fprintln(out, "Options:")
+	flags.PrintDefaults()
+}
+
+// helpRequest reports whether the raw arguments ask for help and which command
+// the request names. It scans the raw arguments because flag.Parse stops at the
+// first positional argument, so a command-level --help would never reach the
+// flag set. A "--" terminator ends the scan: after it every token is data, so
+// "exec <endpoint> <resource> <generation> -- ls --help" still passes --help to
+// ls instead of answering it here.
+func helpRequest(args []string) (bool, string) {
+	target := ""
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			return false, ""
+		}
+		if arg == "--help" || arg == "-h" {
+			return true, target
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			if target == "" {
+				target = arg
+			}
+			continue
+		}
+		// A value-taking global option written as a separate pair owns the next
+		// argument, so a value that happens to look like an option is not
+		// misread as a help request.
+		name, hasValue := splitOptionName(arg)
+		if !hasValue && globalOptionNames[name] && !booleanGlobalOptions[name] && index+1 < len(args) && !strings.HasPrefix(args[index+1], "-") {
+			index++
+		}
+	}
+	return false, ""
 }
 
 // resolveInteractiveSelection decides whether the invocation enters the REPL.
@@ -499,6 +558,16 @@ func resolveActionPayload(operation, value string) (json.RawMessage, error) {
 // resolved by the caller, because only it knows whether the output is a terminal.
 func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.Reader, diagnostics io.Writer, color tui.ColorPolicy, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision, folder, task, generationFlag string) error {
 	operation := args[0]
+	// A "--" after the command word ends option parsing, so everything after it is
+	// literal data. The head is still checked for misplaced flags, because a flag
+	// written before the terminator would silently become a payload or a target
+	// generation; the tail is never inspected, so a message that begins with a dash
+	// can be sent without escaping it.
+	head, tail := splitTerminator(args)
+	if err := rejectMisplacedFlags(args[0], head); err != nil {
+		return err
+	}
+	args = append(append([]string{}, head...), tail...)
 	if operation == "stop" && len(args) < 4 && generationFlag == "" {
 		return fmt.Errorf("usage: stop <endpoint-id> <resource-id> <generation>")
 	}
@@ -506,12 +575,6 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 		return fmt.Errorf("usage: %s <endpoint-id> <resource-id> [text] [generation]", operation)
 	}
 	endpointID, resourceID := args[1], args[2]
-	// flag.Parse stops at the first positional, so a flag written after the command stays
-	// positional and would silently become a payload or a target generation. Reject it
-	// explicitly instead of corrupting the target.
-	if err := rejectMisplacedFlags(args[0], args); err != nil {
-		return err
-	}
 	// The documented syntax accepts at most one text and one generation positional. A
 	// value supplied by a flag removes its positional slot, so an unquoted multi-word
 	// message is rejected instead of being silently truncated to its first word.
@@ -666,6 +729,21 @@ func rejectMisplacedFlags(command string, args []string) error {
 		return fmt.Errorf("option %q must be written before the command; run help %s for valid syntax", arg, command)
 	}
 	return nil
+}
+
+// splitTerminator separates the option-bearing head of a command line from the
+// literal tail written after "--". args[0] is the command word, so a "--" at
+// index 0 is not a terminator. Everything after the first "--" is data: it is
+// never inspected for flags, so a payload that begins with a dash can be sent
+// without the operator escaping it. The tail is returned separately because the
+// caller must still apply its positional rules to it.
+func splitTerminator(args []string) (head, tail []string) {
+	for index := 1; index < len(args); index++ {
+		if args[index] == "--" {
+			return args[:index], args[index+1:]
+		}
+	}
+	return args, nil
 }
 
 // rejectExtraPositionals fails when more positional arguments are supplied than the
