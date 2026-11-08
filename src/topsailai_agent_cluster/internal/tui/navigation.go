@@ -45,6 +45,16 @@ func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiv
 		if !numeric {
 			return fmt.Errorf("row number exceeds the supported integer range")
 		}
+		// The history namespace wins when it is the most recent render, because
+		// the operator is looking at the history table and a number must mean the
+		// row they can see. Rendering a list clears the namespace, so the two can
+		// never both claim the same number.
+		if state.history != nil {
+			if err := cdHistoryRowNumber(state, api, parent, index); err != nil {
+				return err
+			}
+			return autoLogsOnSessionEntry(parent, api, state, previous, trustedOut, color, options)
+		}
 		if err := cdRowNumber(state, api, parent, index); err != nil {
 			return err
 		}
@@ -214,6 +224,14 @@ func cdRowNumber(state *interactiveState, api InteractiveAPI, parent context.Con
 	if row.Generation == "" {
 		return fmt.Errorf("row %d has no generation; run list again", number)
 	}
+	return cdSessionRow(state, api, parent, number, row)
+}
+
+// cdSessionRow enters one already resolved session row after revalidating its
+// generation against the current inventory. It is shared by the live list
+// namespace and the history namespace, so both surfaces apply exactly the same
+// authority checks instead of drifting apart.
+func cdSessionRow(state *interactiveState, api InteractiveAPI, parent context.Context, number int, row SessionRow) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	loaded, err := loadReports(ctx, api, row.EndpointID)

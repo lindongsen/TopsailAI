@@ -50,12 +50,12 @@ func TestDriveIsUnavailableOutsideSessionScope(t *testing.T) {
 		{
 			name:  "workspace",
 			input: "drive status\nexit\n",
-			want:  `command "drive" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, stop, status, refresh, watch, help, quit, exit`,
+			want:  `command "drive" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, status, refresh, watch, history, help, quit, exit`,
 		},
 		{
 			name:  "endpoint",
 			input: "cd host-one/endpoint-1\ndrive status\nexit\n",
-			want:  `command "drive" is unavailable in endpoint scope; available commands: list, cd, show, info, start, stop, logs, status, refresh, watch, help, quit, exit`,
+			want:  `command "drive" is unavailable in endpoint scope; available commands: list, cd, show, info, start, resume, stop, logs, status, refresh, watch, history, help, quit, exit`,
 		},
 	}
 	for _, testCase := range cases {

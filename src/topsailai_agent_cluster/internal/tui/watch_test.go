@@ -830,11 +830,11 @@ func TestWatchCommandSurface(t *testing.T) {
 		t.Fatalf("alias w resolved to %q", canonicalCommandName("w"))
 	}
 	workspace := strings.Join(availableCommands(ScopeWorkspace), ", ")
-	if !strings.Contains(workspace, "refresh, watch, help") {
+	if !strings.Contains(workspace, "refresh, watch, history, help") {
 		t.Fatalf("workspace availability=%q, want watch after refresh", workspace)
 	}
 	endpoint := strings.Join(availableCommands(ScopeEndpoint), ", ")
-	if !strings.Contains(endpoint, "refresh, watch, help") {
+	if !strings.Contains(endpoint, "refresh, watch, history, help") {
 		t.Fatalf("endpoint availability=%q, want watch after refresh", endpoint)
 	}
 }

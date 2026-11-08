@@ -236,10 +236,12 @@ func unitC19MainHelp() string {
 		"  show [endpoint-or-session]   show endpoint or session details\n" +
 		"  info [session]               show session detail by row number or session ID\n" +
 		unitC19StartHelpLine() +
+		"  resume [row]                 resume a stopped session by history row number\n" +
 		"  stop [session]               stop a session by row number or session ID\n" +
 		"  status [command-id]          show command result\n" +
 		"  refresh                      refresh inventories\n" +
 		unitC19WatchHelpLine() +
+		"  history [endpoint]           read provider session history for one endpoint and number its rows\n" +
 		"  help [command]               show help\n" +
 		"  quit                         leave interactive mode\n" +
 		"  exit                         leave interactive mode from every scope\n" +

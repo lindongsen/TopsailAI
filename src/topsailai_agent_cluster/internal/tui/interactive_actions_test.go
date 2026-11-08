@@ -87,19 +87,22 @@ func TestInteractiveLifecycleRejectsChangedGeneration(t *testing.T) {
 	}
 }
 
-// TestInteractiveResumeIsNotASessionCommand pins the removal of the interactive
-// resume spelling. Session scope requires a live generation while resume authorizes
-// on a proven absence, so the two conditions are mutually exclusive and the command
-// word is rejected instead of being offered and then refused.
+// TestInteractiveResumeIsNotASessionCommand pins the scope boundary of the
+// interactive resume spelling. Resume authorizes on a proven absence while session
+// scope requires a live generation, so resume is offered only where a history row
+// can be selected and session scope keeps rejecting the command word.
 func TestInteractiveResumeIsNotASessionCommand(t *testing.T) {
-	for _, kind := range []ScopeKind{ScopeWorkspace, ScopeEndpoint, ScopeSession} {
-		if containsCommand(availableCommands(kind), "resume") {
-			t.Fatalf("resume must not be offered in %s scope", kind)
+	for _, kind := range []ScopeKind{ScopeWorkspace, ScopeEndpoint} {
+		if !containsCommand(availableCommands(kind), "resume") {
+			t.Fatalf("resume must be offered in %s scope", kind)
 		}
+	}
+	if containsCommand(availableCommands(ScopeSession), "resume") {
+		t.Fatal("resume must not be offered in session scope")
 	}
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\nresume\nquit\n", ColorPolicy{})
-	if stub.admit != 0 || !strings.Contains(diagnostics, `unknown command "resume"`) {
+	if stub.admit != 0 || !strings.Contains(diagnostics, `unavailable in session scope`) {
 		t.Fatalf("admit=%d diagnostics=%q", stub.admit, diagnostics)
 	}
 }

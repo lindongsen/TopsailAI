@@ -53,6 +53,10 @@ type interactiveState struct {
 	commandID string
 	// watch is the armed auto-refresh intent; it is consumed by the next prompt.
 	watch *watchRequest
+	// history is the row-number namespace produced by the most recent history
+	// render. It is nil until history renders, and rendering a list clears it, so
+	// a number always means the row of the table the operator last saw.
+	history *historyNamespace
 }
 
 type interruptController struct {
@@ -440,6 +444,10 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		// The endpoint table is trusted application styling over sanitized cells,
 		// so it renders through the trusted writer like list and refresh.
 		return false, interactiveEndpoints(ctx, api, rest, trustedOut, options.Color)
+	case "history":
+		// The history table is trusted application styling over sanitized cells,
+		// so it renders through the trusted writer like list and endpoints.
+		return false, interactiveHistory(ctx, api, state, rest, trustedOut, errOut, options.Color)
 	case "table":
 		return false, fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "use":
@@ -512,6 +520,10 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 			commandErr = interactiveStart(ctx, api, state, request, startOut, startTrustedOut, options)
 		}
 		return false, startOutputError(commandErr, recorder, startOut, startTrustedOut, startErrOut)
+	case "resume":
+		// Resume authorizes on the provider session being absent, so it is
+		// dispatched from the history namespace rather than the live one.
+		return false, interactiveResume(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	case "stop":
 		return false, interactiveStop(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	case "inject", "btw":
@@ -699,6 +711,9 @@ func interactiveList(parent context.Context, api InteractiveAPI, state *interact
 		return err
 	}
 	state.Rows = nil
+	// A list render restores the live namespace, so a history row number can
+	// never survive into a table that no longer shows history rows.
+	state.history = nil
 	staged := make([]SessionRow, 0)
 	ctx, cancel := commandContext(parent)
 	defer cancel()
