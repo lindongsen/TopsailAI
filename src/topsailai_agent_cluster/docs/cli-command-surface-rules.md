@@ -298,6 +298,33 @@ starts a stream, repeated `output_chunk` frames carry records, and exactly one
 `output_end` frame closes it, all correlated by the same request ID. No new
 connection, no subscription resource and no durable stream state are introduced.
 
+## Interactive output line budget
+
+Entering session scope renders one bounded snapshot automatically, so the REPL
+needs a line budget before the operator types anything. That budget is 300 lines
+by default, and the startup `--lines` option sets it within 100-1000.
+
+- The budget is one quantity with one meaning: how many trailing output lines a
+  read returns. `--lines` keeps that name on both surfaces instead of adding a
+  second flag that would raise a precedence question and a silent loser.
+- The default is surface-aware. A standalone `logs` keeps 100, because a script
+  asking for a snapshot is not the same as an operator who deliberately selected
+  a session. The REPL uses 300, because the entry snapshot is the first thing an
+  operator reads and a session tail is usually read to see what just happened.
+- An explicit startup value outside 100-1000 is rejected with an error naming the
+  range. It is never silently clamped, because an operator who asked for 5000
+  lines and silently received 1000 would believe the terminal showed everything.
+- The range is a terminal budget, not a provider limit. The standalone surface
+  still accepts any positive count, and the Server still clamps a provider read
+  to its own documented maximum.
+- The per-command override is unaffected: `logs -n 7` inside the REPL still reads
+  7 lines, because a per-command read is a deliberate, visible request.
+- The budget is resolved once when the REPL starts, so the entry snapshot, a bare
+  `logs` and the post-`send` snapshot cannot disagree about how many lines they
+  show. Two separate literals would be free to drift apart.
+- The startup value is validated before the editor takes the terminal, so a
+  rejected value never leaves the screen in raw mode.
+
 ## Command-word prefix
 
 The interactive REPL accepts an optional `/` before the command word, so `send hi`

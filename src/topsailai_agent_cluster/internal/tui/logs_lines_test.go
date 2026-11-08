@@ -238,7 +238,7 @@ func TestLogsForwardsParsedLineCountToAPI(t *testing.T) {
 		{name: "short flag", input: "cd host-one/endpoint-1/res-1\nlogs -n 250\nexit\n", want: 250},
 		{name: "long flag", input: "cd host-one/endpoint-1/res-1\nlogs --lines 7\nexit\n", want: 7},
 		{name: "equals form", input: "cd host-one/endpoint-1/res-1\nlogs --lines=33\nexit\n", want: 33},
-		{name: "absent keeps interactive default", input: "cd host-one/endpoint-1/res-1\nlogs\nexit\n", want: 100},
+		{name: "absent keeps interactive default", input: "cd host-one/endpoint-1/res-1\nlogs\nexit\n", want: DefaultInteractiveMaxLines},
 	}
 
 	for _, testCase := range cases {
@@ -250,8 +250,8 @@ func TestLogsForwardsParsedLineCountToAPI(t *testing.T) {
 			if len(stub.outputRequests) != 2 {
 				t.Fatalf("output requests=%+v", stub.outputRequests)
 			}
-			if got := stub.outputRequests[0].maxLines; got != 100 {
-				t.Fatalf("automatic entry snapshot maxLines=%d want=100", got)
+			if got := stub.outputRequests[0].maxLines; got != DefaultInteractiveMaxLines {
+				t.Fatalf("automatic entry snapshot maxLines=%d want=%d", got, DefaultInteractiveMaxLines)
 			}
 			if got := stub.outputRequests[1].maxLines; got != testCase.want {
 				t.Fatalf("maxLines=%d want=%d", got, testCase.want)

@@ -70,8 +70,8 @@ func TestUnitSendAutoLogsIsBoundedByTheReplDefaults(t *testing.T) {
 	if len(requests) != 1 {
 		t.Fatalf("post-send output requests=%+v, want exactly one", requests)
 	}
-	if got := requests[0].maxLines; got != 100 {
-		t.Fatalf("post-send maxLines=%d want=100", got)
+	if got := requests[0].maxLines; got != DefaultInteractiveMaxLines {
+		t.Fatalf("post-send maxLines=%d want=%d", got, DefaultInteractiveMaxLines)
 	}
 	if got := requests[0].maxBytes; got != 64<<10 {
 		t.Fatalf("post-send maxBytes=%d want=%d", got, 64<<10)
@@ -91,8 +91,8 @@ func TestUnitSendAutoLogsKeepsTheExplicitLogsRead(t *testing.T) {
 	if len(requests) != 2 {
 		t.Fatalf("post-send output requests=%+v, want the automatic read then the explicit read", requests)
 	}
-	if got := requests[0].maxLines; got != 100 {
-		t.Fatalf("automatic read maxLines=%d want=100", got)
+	if got := requests[0].maxLines; got != DefaultInteractiveMaxLines {
+		t.Fatalf("automatic read maxLines=%d want=%d", got, DefaultInteractiveMaxLines)
 	}
 	if got := requests[1].maxLines; got != 7 {
 		t.Fatalf("explicit read maxLines=%d want=7", got)

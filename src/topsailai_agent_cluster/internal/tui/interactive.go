@@ -16,6 +16,42 @@ import (
 
 // InteractiveAPI is defined as the shared CommandAPI alias in commands.go.
 
+// Interactive output line budget. The REPL renders one bounded snapshot when a
+// navigation command enters session scope, and that snapshot is the first thing
+// an operator reads, so its default is larger than the standalone default: a
+// session tail is usually read to see what just happened, not to sample it.
+//
+// The bounds exist because the budget is a terminal budget, not a provider
+// limit. A startup value outside the range is rejected by the CLI instead of
+// being clamped, so an operator who asked for more lines than the REPL will
+// render never believes the terminal showed everything.
+const (
+	// DefaultInteractiveMaxLines is the trailing line count used when the
+	// operator supplies no startup budget.
+	DefaultInteractiveMaxLines = 300
+	// MinInteractiveMaxLines and MaxInteractiveMaxLines bound the startup budget.
+	MinInteractiveMaxLines = 100
+	MaxInteractiveMaxLines = 1000
+)
+
+// NormalizeInteractiveMaxLines resolves the REPL line budget from an optional
+// startup value. An unset or non-positive value selects the default, and an
+// out-of-range value is clamped into the supported window. The CLI rejects an
+// out-of-range startup value before this runs, so the clamp is the safety net
+// for a caller that bypasses the CLI rather than the operator-facing rule.
+func NormalizeInteractiveMaxLines(value int) int {
+	if value <= 0 {
+		return DefaultInteractiveMaxLines
+	}
+	if value < MinInteractiveMaxLines {
+		return MinInteractiveMaxLines
+	}
+	if value > MaxInteractiveMaxLines {
+		return MaxInteractiveMaxLines
+	}
+	return value
+}
+
 // InteractiveOptions controls bounded REPL behavior.
 type InteractiveOptions struct {
 	ReadLine      InteractiveLineReader
@@ -144,9 +180,10 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 	if input == nil || output == nil || errors == nil {
 		return fmt.Errorf("interactive streams are unavailable")
 	}
-	if options.MaxLines <= 0 {
-		options.MaxLines = 100
-	}
+	// The REPL budget is resolved once here, so every automatic snapshot and
+	// every bare logs read inherits the same value instead of each path keeping
+	// its own literal.
+	options.MaxLines = NormalizeInteractiveMaxLines(options.MaxLines)
 	if options.MaxBytes <= 0 {
 		options.MaxBytes = 64 << 10
 	}

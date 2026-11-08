@@ -152,13 +152,13 @@ func writeAutomaticDiagnostic(out io.Writer, failurePrefix, detail string) error
 }
 
 // interactiveOutputBounds resolves the bounded output read limits used by an
-// automatic snapshot, applying the same REPL defaults as RunInteractive so an
+// automatic snapshot, applying the same REPL budget as RunInteractive so an
 // unset option never requests an unbounded read.
 func interactiveOutputBounds(options InteractiveOptions) (int, int) {
-	maxLines := options.MaxLines
-	if maxLines <= 0 {
-		maxLines = 100
-	}
+	// The automatic snapshot reuses the REPL budget resolver, so the entry
+	// snapshot and a bare logs read can never disagree about how many trailing
+	// lines they show.
+	maxLines := NormalizeInteractiveMaxLines(options.MaxLines)
 	maxBytes := options.MaxBytes
 	if maxBytes <= 0 {
 		maxBytes = 64 << 10

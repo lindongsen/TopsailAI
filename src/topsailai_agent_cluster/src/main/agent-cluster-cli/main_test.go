@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -174,6 +175,55 @@ func TestInjectedTTYTrueEntersInteractiveWithoutRealTerminal(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "workspace>") {
 		t.Fatalf("interactive output=%q", output.String())
+	}
+}
+
+// TestInteractiveLinesEntryPointRejectsOutOfRange proves the startup budget is
+// validated through the real entry point before the editor takes the terminal,
+// so an operator who asks for an unsupported count is told instead of silently
+// receiving a shorter tail.
+func TestInteractiveLinesEntryPointRejectsOutOfRange(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "below the minimum", args: []string{"-i", "--lines", "99"}, want: "--lines 99 is outside the interactive range 100-1000"},
+		{name: "above the maximum", args: []string{"-i", "--lines", "1001"}, want: "--lines 1001 is outside the interactive range 100-1000"},
+		{name: "trailing flag below the minimum", args: []string{"interactive", "--lines", "50"}, want: "--lines 50 is outside the interactive range 100-1000"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var output, diagnostics strings.Builder
+			code := runExitCode(testCase.args, strings.NewReader("quit\n"), &output, &diagnostics, func() bool { return true })
+			if code != 2 {
+				t.Fatalf("exit code=%d want=2 diagnostics=%q", code, diagnostics.String())
+			}
+			if !strings.Contains(diagnostics.String(), testCase.want) {
+				t.Fatalf("diagnostics=%q want substring %q", diagnostics.String(), testCase.want)
+			}
+			if strings.Contains(output.String(), "workspace>") {
+				t.Fatalf("the REPL started despite a rejected budget: %q", output.String())
+			}
+		})
+	}
+}
+
+// TestInteractiveLinesEntryPointAcceptsTheWindow proves every supported startup
+// value still enters the REPL, so the range check never rejects a valid budget.
+func TestInteractiveLinesEntryPointAcceptsTheWindow(t *testing.T) {
+	for _, value := range []string{"100", "300", "1000"} {
+		t.Run("lines "+value, func(t *testing.T) {
+			var output, diagnostics strings.Builder
+			code := runExitCode([]string{"-i", "--lines", value}, strings.NewReader("quit\n"), &output, &diagnostics, func() bool { return true })
+			if code != 0 {
+				t.Fatalf("exit code=%d diagnostics=%q", code, diagnostics.String())
+			}
+			if !strings.Contains(output.String(), "workspace>") {
+				t.Fatalf("interactive output=%q", output.String())
+			}
+		})
 	}
 }
 
@@ -565,6 +615,56 @@ func TestResolveInteractiveSelection(t *testing.T) {
 				t.Fatalf("selected=%t want %t", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestResolveInteractiveLines covers the startup line budget. An absent --lines
+// selects the interactive default, a value inside the window is kept, and an
+// explicit value outside the window is rejected instead of being clamped.
+func TestResolveInteractiveLines(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		want    int
+		wantErr string
+	}{
+		{name: "absent selects the interactive default", args: nil, want: tui.DefaultInteractiveMaxLines},
+		{name: "the minimum is accepted", args: []string{"--lines", "100"}, want: 100},
+		{name: "a value inside the window is accepted", args: []string{"--lines", "300"}, want: 300},
+		{name: "the maximum is accepted", args: []string{"--lines", "1000"}, want: 1000},
+		{name: "below the minimum is rejected", args: []string{"--lines", "99"}, wantErr: "--lines 99 is outside the interactive range 100-1000; the standalone logs command accepts any positive count"},
+		{name: "above the maximum is rejected", args: []string{"--lines", "1001"}, wantErr: "--lines 1001 is outside the interactive range 100-1000; the standalone logs command accepts any positive count"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			flags := flag.NewFlagSet("agent-cluster-cli", flag.ContinueOnError)
+			lines := flags.Int("lines", 100, "trailing output lines")
+			if err := flags.Parse(testCase.args); err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			got, err := resolveInteractiveLines(flags, *lines)
+			if testCase.wantErr != "" {
+				if err == nil || err.Error() != testCase.wantErr {
+					t.Fatalf("error=%v want %q", err, testCase.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != testCase.want {
+				t.Fatalf("lines=%d want=%d", got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestStandaloneLinesDefaultStaysIndependent proves the standalone surface keeps
+// its own default, so the interactive budget never silently changes a script.
+func TestStandaloneLinesDefaultStaysIndependent(t *testing.T) {
+	if tui.DefaultInteractiveMaxLines == 100 {
+		t.Fatalf("the interactive default must differ from the standalone default")
 	}
 }
 

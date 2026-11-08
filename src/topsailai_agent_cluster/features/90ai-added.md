@@ -177,3 +177,20 @@ the shape for a structured field, because an operator cannot guess that a list i
 written on one line. This matters for `call_instruction`, whose provider payload
 carries `instruction`, `args` and `kwargs`: sending `args` as a string would be
 rejected by the provider even though it reads like a list to a human.
+
+The interactive REPL renders one bounded output snapshot when the operator enters
+session scope, and that snapshot now uses a 300-line budget instead of 100. The
+budget is one quantity with one meaning, so the automatic entry snapshot, a bare
+`logs` command and the post-`send` snapshot all read the same resolved value
+(`internal/tui/interactive.go`, `internal/tui/navigation.go`). Two independent
+literals previously decided the same number, which let the surfaces disagree.
+
+The startup `--lines` option sets the budget when entering interactive mode and is
+bounded to 100-1000. An explicit value outside that window is rejected with an error
+naming the range rather than silently clamped, because an operator who asked for
+5000 lines and received 1000 would believe the terminal showed everything
+(`resolveInteractiveLines` in `src/main/agent-cluster-cli/main.go`). The value is
+validated before the editor takes the terminal, so a rejected value never leaves the
+screen in raw mode. The standalone `logs` command keeps its own 100-line default and
+still accepts any positive count, and a per-command `logs -n 7` inside the REPL
+still wins over the startup budget.

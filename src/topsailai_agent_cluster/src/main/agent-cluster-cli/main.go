@@ -89,7 +89,12 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	token := flags.String("token", os.Getenv("AGENT_CLUSTER_TOKEN"), "Server bearer token")
 	waitTimeoutMS := flags.Int64("wait-timeout-ms", 0, "maximum local wait for command completion in milliseconds")
 	maxBytes := flags.Int("max-bytes", 64<<10, "maximum output snapshot size in bytes")
-	lines := flags.Int("lines", 100, "maximum number of output lines returned by logs")
+	// --lines is one quantity with one meaning: how many trailing output lines a
+	// read returns. Its default depends on the surface, because a script that
+	// asks for a snapshot is not the same as an operator who deliberately
+	// selected a session, so the interactive default is resolved after parsing
+	// instead of being baked into the flag.
+	lines := flags.Int("lines", 100, "maximum number of output lines returned by logs; interactive mode defaults to 300 and accepts 100-1000")
 	follow := flags.Bool("follow", false, "stream output records until interrupted; logs only")
 	// -f is the short spelling of --follow. Both surfaces accept it, so an
 	// operator who learned it in the interactive REPL can use it here too.
@@ -126,6 +131,12 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if !terminal {
 			return fmt.Errorf("interactive mode requires a terminal on stdin")
 		}
+		// The budget is validated before the editor takes the terminal, so a
+		// rejected startup value never leaves the screen in raw mode.
+		interactiveLines, err := resolveInteractiveLines(flags, *lines)
+		if err != nil {
+			return err
+		}
 		editor, closeEditor, editorErr := interactiveEditor(input, output)
 		if editorErr != nil {
 			return editorErr
@@ -133,7 +144,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		defer closeEditor()
 		// Colour follows the output boundary, so a REPL whose stdout is redirected
 		// stays plain even though interactive mode requires a terminal on stdin.
-		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: *lines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output)}
+		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: interactiveLines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output)}
 		return tui.RunInteractive(ctx, api, input, output, errors, wireEditorReaders(options, editor))
 	}
 	switch flags.Arg(0) {
@@ -236,6 +247,30 @@ func resolveInteractiveSelection(shortFlag bool, args []string) (bool, error) {
 		return false, fmt.Errorf("usage: interactive")
 	}
 	return true, nil
+}
+
+// resolveInteractiveLines resolves the REPL output line budget from the startup
+// flags. An absent --lines selects the interactive default, and an explicit value
+// outside the supported window is rejected instead of being clamped: an operator
+// who asked for more lines than the REPL will render must not be shown a shorter
+// tail that looks complete.
+//
+// The standalone surface keeps its own default, so this resolver is only called
+// once the invocation is known to enter the REPL.
+func resolveInteractiveLines(flags *flag.FlagSet, value int) (int, error) {
+	explicit := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "lines" {
+			explicit = true
+		}
+	})
+	if !explicit {
+		return tui.DefaultInteractiveMaxLines, nil
+	}
+	if value < tui.MinInteractiveMaxLines || value > tui.MaxInteractiveMaxLines {
+		return 0, fmt.Errorf("--lines %d is outside the interactive range %d-%d; the standalone logs command accepts any positive count", value, tui.MinInteractiveMaxLines, tui.MaxInteractiveMaxLines)
+	}
+	return value, nil
 }
 
 // globalOptionNames lists the options the top-level flag set owns. Only these are
