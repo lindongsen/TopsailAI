@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
+	"time"
 )
 
 func main() {
@@ -32,10 +34,78 @@ func main() {
 	case "project":
 		emit([]map[string]any{})
 	case "runtime":
-		control(args[1:])
+		runtime(args[1:])
 	default:
 		fail("unsupported subcommand " + args[0])
 	}
+}
+
+// runtime dispatches the runtime subcommands the adapter invokes.
+func runtime(args []string) {
+	if len(args) == 0 {
+		fail("unsupported runtime subcommand")
+	}
+	if args[0] == "logs" {
+		logs(args[1:])
+		return
+	}
+	control(args)
+}
+
+// logs answers one runtime logs invocation. The adapter rejects --json together
+// with --follow, so a follow answers plain text records and a snapshot answers
+// the JSON envelope the adapter decodes.
+func logs(args []string) {
+	session, lines, follow := "", 20, false
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "-s":
+			if index+1 < len(args) {
+				session = args[index+1]
+				index++
+			}
+		case "-n":
+			if index+1 < len(args) {
+				if parsed, err := strconv.Atoi(args[index+1]); err == nil && parsed > 0 {
+					lines = parsed
+				}
+				index++
+			}
+		case "--follow":
+			follow = true
+		}
+	}
+	if session == "" {
+		fail("missing session selector")
+	}
+	if follow {
+		followRecords(session, lines)
+		return
+	}
+	emit(map[string]any{
+		"ok": true,
+		"response": map[string]any{
+			"lines": []string{"fixture output for " + session},
+		},
+	})
+}
+
+// followRecords writes complete records one at a time and then stays alive.
+//
+// The records are written incrementally so a test can observe a live stream
+// instead of one burst at exit, and the process deliberately outlives the last
+// record so a stream that ends on its own can never be mistaken for a stream the
+// operator stopped. The lifetime is capped so a failed test cannot leave an
+// orphan process behind.
+func followRecords(session string, lines int) {
+	if lines > 5 {
+		lines = 5
+	}
+	for index := 1; index <= lines; index++ {
+		fmt.Printf("fixture follow %s record %d\n", session, index)
+		time.Sleep(150 * time.Millisecond)
+	}
+	time.Sleep(30 * time.Second)
 }
 
 // control answers one runtime control invocation with a correlated document.

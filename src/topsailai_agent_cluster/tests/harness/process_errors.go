@@ -158,8 +158,17 @@ func WaitHTTPE(url, token string, want int, limit time.Duration) error {
 	return fmt.Errorf("HTTP %s did not return %d before deadline", url, want)
 }
 
-// WaitInventoryE waits for the first real Endpoint inventory report.
+// WaitInventoryE waits for the first real Endpoint inventory report from either
+// of the two adapter IDs the default fixture configuration publishes.
 func WaitInventoryE(url, token string, limit time.Duration) error {
+	return WaitInventoryForE(url, token, "", limit)
+}
+
+// WaitInventoryForE waits for the first real Endpoint inventory report that
+// mentions the expected adapter ID. An empty adapter ID accepts the default
+// fixture adapter IDs, so existing callers keep their original behaviour while a
+// scenario that selects another provider type can wait for its own adapter.
+func WaitInventoryForE(url, token, adapterID string, limit time.Duration) error {
 	deadline := time.Now().Add(limit)
 	for time.Now().Before(deadline) {
 		req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -174,13 +183,22 @@ func WaitInventoryE(url, token string, limit time.Duration) error {
 			if readErr != nil {
 				return fmt.Errorf("read inventory response: %w", readErr)
 			}
-			if resp.StatusCode == http.StatusOK && (bytes.Contains(data, []byte("fixture-main")) || bytes.Contains(data, []byte("adapter-a"))) {
+			if resp.StatusCode == http.StatusOK && inventoryMentionsE(data, adapterID) {
 				return nil
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("real Endpoint inventory was not reported before deadline")
+}
+
+// inventoryMentionsE reports whether an inventory document names the expected
+// adapter. An empty expectation accepts the default fixture adapter IDs.
+func inventoryMentionsE(data []byte, adapterID string) bool {
+	if adapterID != "" {
+		return bytes.Contains(data, []byte(adapterID))
+	}
+	return bytes.Contains(data, []byte("fixture-main")) || bytes.Contains(data, []byte("adapter-a"))
 }
 
 func generateKeyE() (*ecdsa.PrivateKey, error) {

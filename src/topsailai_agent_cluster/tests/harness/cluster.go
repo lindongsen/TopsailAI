@@ -28,6 +28,12 @@ type ClusterOptions struct {
 	// SharedCertificate makes the Endpoint present the Server certificate, so the
 	// certificate no longer proves which Endpoint is connecting.
 	SharedCertificate bool
+	// ProviderType selects the adapter implementation. An empty value keeps the
+	// generic "fixture" adapter, so existing scenarios are unchanged. Selecting
+	// "topsailai" wires the real TopsailAI adapter, which is the only adapter that
+	// implements streaming output follow; the generic fixture adapter answers a
+	// follow with "unsupported" because it cannot stream.
+	ProviderType string
 }
 
 // FaultInjection contains test-only process-composition controls shared by integration and BDD tests.
@@ -90,6 +96,21 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if err := Build(fixtureBin, "./tests/fixtures/provider"); err != nil {
 		return nil, err
 	}
+	// The TopsailAI adapter resolves topsailai_session_info as a sibling of the
+	// configured executable and never through PATH, so both entry points are built
+	// into one provider directory when that adapter is selected.
+	providerDir := filepath.Join(root, "provider")
+	if options.ProviderType == "topsailai" {
+		if err := os.MkdirAll(providerDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create provider directory: %w", err)
+		}
+		if err := Build(filepath.Join(providerDir, "topsailai"), "./tests/fixtures/topsailai_fixture"); err != nil {
+			return nil, err
+		}
+		if err := Build(filepath.Join(providerDir, "topsailai_session_info"), "./tests/fixtures/topsailai_session_info_fixture"); err != nil {
+			return nil, err
+		}
+	}
 	apiPort, err := FreePortE()
 	if err != nil {
 		return nil, fmt.Errorf("allocate API port: %w", err)
@@ -144,6 +165,12 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	}
 	discoveryCount := filepath.Join(root, "discovery-count")
 	adapterArgs := []map[string]any{{"adapter_id": "fixture-main", "provider_type": "fixture", "command": fixtureBin, "args": []string{"--mode", mode, "--record-file", cluster.Record, "--discovery-count-file", discoveryCount, "--delay-ms", fmt.Sprint(options.DelayMS), "--output-size", fmt.Sprint(options.Faults.OutputSize)}, "timeout_ms": 5000}}
+	// The TopsailAI adapter is the only adapter that can stream output, so a
+	// follow scenario selects it explicitly. Its fixture answers discovery from a
+	// workspace document and streams plain text records on the follow path.
+	if options.ProviderType == "topsailai" {
+		adapterArgs = []map[string]any{{"adapter_id": "topsailai-main", "provider_type": "topsailai", "command": filepath.Join(providerDir, "topsailai"), "args": []string{}, "timeout_ms": 5000}}
+	}
 	if options.Faults.TwoAdapters {
 		adapterArgs = []map[string]any{{"adapter_id": "adapter-a", "provider_type": "fixture", "command": fixtureBin, "args": []string{"--mode", "one", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-a"}, "timeout_ms": 5000}, {"adapter_id": "adapter-b", "provider_type": "fixture", "command": fixtureBin, "args": []string{"--mode", "one", "--always-fail", "--record-file", cluster.Record, "--discovery-count-file", discoveryCount + "-b"}, "timeout_ms": 5000}}
 	}
@@ -194,10 +221,20 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := WaitInventoryE(cluster.URL("/api/v1/endpoints/endpoint-1/session-state"), "secret", 20*time.Second); err != nil {
+	if err := WaitInventoryForE(cluster.URL("/api/v1/endpoints/endpoint-1/session-state"), "secret", inventoryAdapterID(options), 20*time.Second); err != nil {
 		return nil, err
 	}
 	return cluster, nil
+}
+
+// inventoryAdapterID returns the adapter ID the inventory wait should expect.
+// The default fixture configuration publishes "fixture-main", while a scenario
+// that selects another provider type publishes its own adapter ID.
+func inventoryAdapterID(options ClusterOptions) string {
+	if options.ProviderType == "topsailai" {
+		return "topsailai-main"
+	}
+	return ""
 }
 
 var marshalAdapterConfigurationFn = json.Marshal
@@ -484,6 +521,13 @@ func (c *Cluster) RunTUIInteractiveEditor(stdin string, args ...string) (stdout 
 
 // runTUIInteractiveWithTerm runs the REPL under one terminal type.
 func (c *Cluster) runTUIInteractiveWithTerm(stdin string, termType string, args ...string) (stdout string, stderr string, exitCode int, err error) {
+	return c.runTUIInteractiveWithReader(strings.NewReader(stdin), termType, args...)
+}
+
+// runTUIInteractiveWithReader runs the REPL under one terminal type with an
+// arbitrary input reader, so a caller can pace the scripted input instead of
+// delivering it in one burst.
+func (c *Cluster) runTUIInteractiveWithReader(stdin io.Reader, termType string, args ...string) (stdout string, stderr string, exitCode int, err error) {
 	if c.TUIPath == "" {
 		return "", "", -1, fmt.Errorf("TUI binary has not been built; call BuildTUI first")
 	}
@@ -504,7 +548,7 @@ func (c *Cluster) runTUIInteractiveWithTerm(stdin string, termType string, args 
 		"AGENT_CLUSTER_TLS_KEY_FILE="+c.Certs.ClientKey,
 		"TERM="+termType,
 	)
-	cmd.Stdin = strings.NewReader(stdin)
+	cmd.Stdin = stdin
 	var out, stderrBuffer bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &stderrBuffer
