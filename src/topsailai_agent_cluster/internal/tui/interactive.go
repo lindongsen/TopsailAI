@@ -30,6 +30,11 @@ type InteractiveOptions struct {
 	// a separate seam because ReadLine is a function value and cannot be type
 	// asserted, and because a reader without it must refuse watch explicitly.
 	WatchReader WatchLineReader
+	// ProgressWriter receives progress lines for long-running commands. It is a
+	// separate seam because the REPL diagnostics writer sanitizes untrusted text
+	// and therefore cannot report a progress boundary itself. A nil writer keeps
+	// the REPL silent, so a caller that supplies none loses nothing.
+	ProgressWriter io.Writer
 	// Ticks injects the auto-refresh tick source; nil selects the real ticker.
 	Ticks             WatchTicker
 	watcherExit       func(bool)

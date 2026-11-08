@@ -327,6 +327,7 @@ invocation. They never change query semantics or the data returned by the API.
 |---|---|
 | `--no-color` | Disable terminal colors |
 | `--no-truncate` | Disable table truncation; a narrow terminal wraps instead of clipping |
+| `--no-progress` | Disable progress lines for long-running commands |
 
 `--no-truncate` is the switch for a small terminal. Truncation stays the default,
 because a bounded table is what keeps a wide fleet readable. With the switch set,
@@ -345,6 +346,43 @@ The output boundary owns the policy. The CLI writer reports a `TableLayout` of
 width plus truncation state, so every render path inherits the switch without
 threading a new parameter through each command, and the interactive prompt editor
 keeps the real terminal width as its editing budget.
+
+## Progress lines
+
+A command that waits for a durable result reports what it is doing while it waits.
+The wait is real: a `send` takes seconds and a forced collection can take longer,
+so a silent terminal leaves the operator unable to tell work from a hang.
+
+Progress is written to the diagnostics stream, never to the output stream. The
+output stream is the machine contract, so `--json` output stays a single valid
+document and a redirected stdout never receives a progress line.
+
+The diagnostics boundary owns the decision, exactly as the output boundary owns
+colour. Progress is enabled only when the diagnostics stream is a terminal, so a
+redirected or piped stderr stays silent without the caller configuring anything.
+`--no-progress` disables the lines explicitly. `--no-color` keeps the lines and
+removes only their styling, because the lines carry the information and the colour
+does not.
+
+A command that finishes within 200 milliseconds prints nothing, because a hint
+that appears and disappears within one frame is noise rather than information. The
+fast read commands therefore stay silent, and only a command that actually makes
+the operator wait reports progress.
+
+Every stage row comes from a durable command state the client already polled, and
+the wording comes from the same label the final receipt uses. A progress row
+therefore never claims more than the receipt will: it reports delivery and
+execution stages, and it never reports success before the receipt does. A repeated
+stage is not a new fact and is printed once.
+
+Progress never animates. The interactive diagnostics writer strips carriage
+returns and cursor control, so an in-place animation would be printed as
+replacement runes; and a spinner unrelated to real progress would be a fabricated
+signal. Stages are printed as discrete lines instead.
+
+Progress is presentation only. A write failure is ignored, so a closed diagnostics
+stream never changes the outcome of the command it describes, and a caller that
+supplies no diagnostics stream keeps the previous silent behaviour.
 
 ## Verification
 

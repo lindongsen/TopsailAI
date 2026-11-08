@@ -92,6 +92,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	lines := flags.Int("lines", 100, "maximum number of output lines returned by logs")
 	noColor := flags.Bool("no-color", false, "disable terminal colors")
 	noTruncate := flags.Bool("no-truncate", false, "disable table truncation; a narrow terminal wraps instead of clipping")
+	noProgress := flags.Bool("no-progress", false, "disable progress lines for long-running commands")
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
 	folder := flags.String("folder", "", "working folder for start")
@@ -106,6 +107,9 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// Colour eligibility follows the output stream: a redirected stdout cannot
 	// render escape sequences even when stdin is an interactive terminal.
 	output = terminalOutput{Writer: output, full: *noTruncate, color: resolveOutputColor(output, *noColor)}
+	// The diagnostics boundary owns the progress decision, so a redirected stderr
+	// stays silent and --no-progress disables the lines without touching colour.
+	errors = resolveProgressOutput(errors, *noColor, *noProgress)
 	interactiveSelected, err := resolveInteractiveSelection(*interactiveShort, flags.Args())
 	if err != nil {
 		return err
@@ -129,7 +133,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		defer closeEditor()
 		// Colour follows the output boundary, so a REPL whose stdout is redirected
 		// stays plain even though interactive mode requires a terminal on stdin.
-		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: *lines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output)}
+		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: *lines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output), ProgressWriter: errors}
 		return tui.RunInteractive(ctx, api, input, output, errors, wireEditorReaders(options, editor))
 	}
 	switch flags.Arg(0) {
@@ -182,7 +186,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		}
 		return status(ctx, api, output, flags.Arg(1), *jsonMode)
 	case "drive":
-		return drive(ctx, api, output, flags.Args()[1:], *confirmed, *jsonMode, *waitTimeoutMS, *generation)
+		return driveWithProgress(ctx, api, output, errors, flags.Args()[1:], *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	case "send", "btw", "inject", "control", "start", "resume", "stop":
 		// A bare send, btw, inject or start reads a multi-line block from the
 		// command input. On a terminal nothing else would prompt, so the
@@ -198,9 +202,9 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		color := tui.OutputColorPolicy(output)
 		return action(ctx, api, output, input, errors, color, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
 	case "ctl":
-		return ctlCommand(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
+		return ctlCommandWithProgress(ctx, api, output, errors, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	case "exec":
-		return execCommand(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
+		return execCommandWithProgress(ctx, api, output, errors, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
 	}
@@ -231,14 +235,15 @@ func resolveInteractiveSelection(shortFlag bool, args []string) (bool, error) {
 var globalOptionNames = map[string]bool{
 	"json": true, "endpoint": true, "yes": true, "server-url": true, "token": true,
 	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "no-color": true,
-	"profile": true, "profile-revision": true, "folder": true, "task": true,
+	"no-progress": true,
+	"profile":     true, "profile-revision": true, "folder": true, "task": true,
 	"generation": true, "i": true,
 }
 
 // booleanGlobalOptions lists the hoisted options that take no value, so hoisting
 // never swallows the following argument as if it were that option's value.
 var booleanGlobalOptions = map[string]bool{
-	"json": true, "yes": true, "no-color": true, "i": true,
+	"json": true, "yes": true, "no-color": true, "no-progress": true, "i": true,
 }
 
 // hoistTrailingFlags moves recognized global options that appear after the
@@ -362,7 +367,20 @@ func refresh(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, 
 	defer cancel()
 	options := tui.TableOptionsFor(output)
 	options.Color = color
-	return legacyRunner(api).Refresh(refreshCtx, output, errors, filter, jsonMode, options)
+	// A forced collection is the longest silent wait on the read surface, so it
+	// reports progress like a command does. The reporter is built from the
+	// diagnostics stream, so a redirected stream stays silent.
+	progress := tui.NewProgress(errors, refreshProgressHeader(filter))
+	return legacyRunner(api).RefreshWithProgress(refreshCtx, output, errors, filter, jsonMode, options, progress)
+}
+
+// refreshProgressHeader describes the forced collection in flight. A scoped
+// refresh names its Endpoint, because the operator asked for that exact one.
+func refreshProgressHeader(filter string) string {
+	if filter == "" {
+		return "refreshing all endpoints..."
+	}
+	return "refreshing endpoint " + tui.SanitizeInlineText(filter) + "..."
 }
 
 // endpoints renders the endpoint projection for the standalone CLI.
@@ -389,6 +407,12 @@ func logs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID,
 // the persisted inventory; start and stop admit one durable command through the
 // same runner the interactive surface uses, so the two cannot diverge.
 func drive(ctx context.Context, api tui.CommandAPI, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
+	return driveWithProgress(ctx, api, output, nil, args, confirmed, jsonMode, waitTimeoutMS, generationFlag)
+}
+
+// driveWithProgress is drive with a diagnostics stream for progress lines. A nil
+// diagnostics stream keeps the previous silent behaviour.
+func driveWithProgress(ctx context.Context, api tui.CommandAPI, output, diagnostics io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: drive <start|stop|status> <endpoint> <session> [generation]")
 	}
@@ -422,6 +446,7 @@ func drive(ctx context.Context, api tui.CommandAPI, output io.Writer, args []str
 	}
 	request := tui.ActionRequest{Operation: operation, OperationLabel: "drive " + action, EndpointID: endpointID, ResourceID: resourceID, Generation: generation, Payload: json.RawMessage(`{}`), Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS}
 	runner := legacyRunner(api)
+	progress := tui.NewActionProgress(diagnostics, request)
 	intent, err := runner.PrepareAction(ctx, request)
 	if err != nil {
 		return err
@@ -430,7 +455,7 @@ func drive(ctx context.Context, api tui.CommandAPI, output io.Writer, args []str
 	if err != nil {
 		return err
 	}
-	result, err := runner.WaitAction(ctx, actionResult, intent.Budget)
+	result, err := runner.WaitActionWithProgress(ctx, actionResult, intent.Budget, progress)
 	if err != nil {
 		return err
 	}
@@ -591,6 +616,11 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 	operationValue := operationName(operation)
 	request := tui.ActionRequest{Operation: operationValue, OperationLabel: operation, EndpointID: endpointID, ResourceID: resourceID, Generation: generation, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS, Profile: profile, ProfileRevision: profileRevision, Folder: folder}
 	runner := legacyRunner(api)
+	// Progress is created before the capability preflight, because that preflight
+	// is itself a network round trip the operator would otherwise wait through
+	// silently. The reporter is nil when the diagnostics stream cannot render it,
+	// so a redirected or disabled stream costs nothing.
+	progress := tui.NewActionProgress(diagnostics, request)
 	intent, err := runner.PrepareAction(ctx, request)
 	if err != nil {
 		return err
@@ -599,7 +629,7 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 	if err != nil {
 		return err
 	}
-	result, err := runner.WaitAction(ctx, actionResult, intent.Budget)
+	result, err := runner.WaitActionWithProgress(ctx, actionResult, intent.Budget, progress)
 	if err != nil {
 		return err
 	}

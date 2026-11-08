@@ -56,6 +56,37 @@ func (out terminalOutput) outputIsTerminal() bool {
 	return term.IsTerminal(int(file.Fd()))
 }
 
+// progressOutput marks the diagnostics stream as progress-capable when that
+// stream is a real terminal, and reports the colour policy of that same stream.
+//
+// Eligibility is deliberately independent of colour: --no-color keeps the
+// progress lines and only removes their styling, because the lines carry
+// information and the colour does not. The diagnostics stream decides both
+// decisions, because that is where the bytes are written; a redirected stderr
+// therefore stays silent even when stdout is a terminal.
+type progressOutput struct {
+	io.Writer
+	terminal bool
+	color    tui.ColorPolicy
+}
+
+// ColorPolicy reports the colour policy of this diagnostics boundary.
+func (out progressOutput) ColorPolicy() tui.ColorPolicy { return out.color }
+
+// ProgressEligible reports whether this boundary can render progress lines.
+func (out progressOutput) ProgressEligible() bool { return out.terminal }
+
+// resolveProgressOutput wraps the diagnostics stream so the progress reporter can
+// decide eligibility from the stream it actually writes to. An unknown or
+// redirected stream stays silent, so no escape sequence and no progress line ever
+// reaches a pipe or a file.
+func resolveProgressOutput(errors io.Writer, noColorFlag, noProgressFlag bool) io.Writer {
+	boundary := terminalOutput{Writer: errors}
+	terminal := boundary.outputIsTerminal() && !noProgressFlag
+	color := tui.ResolveColorPolicy(terminal, noColorPresent(), noColorFlag, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)
+	return progressOutput{Writer: errors, terminal: terminal, color: color}
+}
+
 // resolveOutputColor resolves the colour policy from the output stream. The
 // output stream decides eligibility, because escape sequences are written there;
 // stdin being a terminal says nothing about whether stdout can render them.

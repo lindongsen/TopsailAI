@@ -30,10 +30,18 @@ func RefreshCommandTimeout() time.Duration {
 // Unlike the interactive command it refuses to degrade to a read-only projection,
 // because a command named refresh must never silently return cached data.
 func (r CommandRunner) Refresh(ctx context.Context, out, errors io.Writer, filter string, jsonMode bool, options TableOptions) error {
+	return r.RefreshWithProgress(ctx, out, errors, filter, jsonMode, options, nil)
+}
+
+// RefreshWithProgress forces one fresh collection and reports each Endpoint as it
+// completes. A forced collection is the longest silent wait on the read surface,
+// so it benefits from the same progress block as a command. The reporter is
+// presentation only, so a nil reporter keeps the previous behaviour exactly.
+func (r CommandRunner) RefreshWithProgress(ctx context.Context, out, errors io.Writer, filter string, jsonMode bool, options TableOptions, progress *ActionProgress) error {
 	if _, ok := r.API.(InventoryRefresher); !ok {
 		return fmt.Errorf("forced collection is unavailable: the API client does not support refresh")
 	}
-	loaded, err := forceCollection(ctx, r.API, filter)
+	loaded, err := forceCollectionWithProgress(ctx, r.API, filter, progress)
 	if err != nil {
 		return err
 	}
@@ -122,6 +130,14 @@ type endpointResult struct {
 // slowest one. A failed Endpoint keeps its last committed document and is reported
 // through the load errors, so one slow or offline Endpoint never hides the others.
 func forceCollection(ctx context.Context, api InteractiveAPI, filter string) (reportLoad, error) {
+	return forceCollectionWithProgress(ctx, api, filter, nil)
+}
+
+// forceCollectionWithProgress is forceCollection with a progress reporter. Each
+// completed Endpoint is reported as one stage row, so a fleet refresh shows which
+// Endpoints have answered instead of a single opaque wait. The reporter is
+// presentation only, so a nil reporter keeps the previous behaviour exactly.
+func forceCollectionWithProgress(ctx context.Context, api InteractiveAPI, filter string, progress *ActionProgress) (reportLoad, error) {
 	endpoints, err := api.ListEndpoints(ctx)
 	if err != nil {
 		return reportLoad{}, err
@@ -164,9 +180,11 @@ func forceCollection(ctx context.Context, api InteractiveAPI, filter string) (re
 			slots <- struct{}{}
 			defer func() { <-slots }()
 			results[index] = collectEndpoint(ctx, api, refresher, scoped[index].EndpointID)
+			progress.Stage(progressEndpointStage(results[index]))
 		}(index)
 	}
 	wg.Wait()
+	progress.Tick()
 	for _, result := range results {
 		if result.err != nil {
 			loaded.errors[result.endpointID] = result.err
@@ -176,6 +194,17 @@ func forceCollection(ctx context.Context, api InteractiveAPI, filter string) (re
 		}
 	}
 	return loaded, nil
+}
+
+// progressEndpointStage describes one completed Endpoint collection. A failed
+// Endpoint is reported as failed rather than omitted, because a silent gap would
+// let the operator believe every Endpoint answered.
+func progressEndpointStage(result endpointResult) string {
+	name := sanitizeInlineText(result.endpointID)
+	if result.err != nil {
+		return name + ": collection failed"
+	}
+	return name + ": collected"
 }
 
 // collectEndpoint forces one collection for a single Endpoint. The committed

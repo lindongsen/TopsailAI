@@ -217,6 +217,14 @@ func sanitizeInlineText(value string) string {
 	return strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(clean)
 }
 
+// SanitizeInlineText exposes sanitizeInlineText so a caller outside this package
+// can flatten an untrusted identifier before interpolating it into a trusted
+// line. It is the same rule the renderers use, so a caller cannot invent a
+// weaker one.
+func SanitizeInlineText(value string) string {
+	return sanitizeInlineText(value)
+}
+
 // RenderPrompt writes a trusted, reset-safe REPL prompt.
 func RenderPrompt(w io.Writer, scope ScopeState, invalidated bool, policy ColorPolicy) error {
 	prompt := scope.Kind.String()

@@ -355,7 +355,9 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
+	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS}
+	progress := NewActionProgress(options.ProgressWriter, request)
+	intent, err := runner.PrepareAction(ctx, request)
 	if err != nil {
 		return err
 	}
@@ -368,7 +370,7 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	if _, err = fmt.Fprintln(out, "command submitted:", state.commandID); err != nil {
 		return err
 	}
-	actionResultData, err := runner.WaitAction(ctx, actionResult, intent.Budget)
+	actionResultData, err := runner.WaitActionWithProgress(ctx, actionResult, intent.Budget, progress)
 	if err != nil {
 		return err
 	}
@@ -517,7 +519,7 @@ func interactiveStart(parent context.Context, api InteractiveAPI, state *interac
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	intent, err := runner.PrepareAction(ctx, ActionRequest{
+	actionRequest := ActionRequest{
 		Operation:       protocol.OperationAgentStart,
 		OperationLabel:  "start",
 		EndpointID:      request.EndpointID,
@@ -528,7 +530,9 @@ func interactiveStart(parent context.Context, api InteractiveAPI, state *interac
 		ProfileRevision: request.ProfileRevision,
 		Folder:          request.Folder,
 		WaitTimeoutMS:   options.WaitTimeoutMS,
-	})
+	}
+	progress := NewActionProgress(options.ProgressWriter, actionRequest)
+	intent, err := runner.PrepareAction(ctx, actionRequest)
 	if err != nil {
 		return err
 	}
@@ -541,7 +545,7 @@ func interactiveStart(parent context.Context, api InteractiveAPI, state *interac
 	if _, err := fmt.Fprintf(out, "command submitted: %s; use status %s to query\n", state.commandID, state.commandID); err != nil {
 		return err
 	}
-	result, err := runner.WaitAction(ctx, action, intent.Budget)
+	result, err := runner.WaitActionWithProgress(ctx, action, intent.Budget, progress)
 	if err != nil {
 		return fmt.Errorf("command %s status unavailable; use status %s to query; %w", state.commandID, state.commandID, err)
 	}
@@ -867,7 +871,9 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 		return err
 	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.SessionID, Generation: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
+	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.SessionID, Generation: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS}
+	progress := NewActionProgress(options.ProgressWriter, actionRequest)
+	intent, err := runner.PrepareAction(ctx, actionRequest)
 	if err != nil {
 		return err
 	}
@@ -877,7 +883,7 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 		return fmt.Errorf("command %s result unknown; use status %s to query; %w", intent.CommandID, intent.CommandID, err)
 	}
 	state.commandID = action.CommandID
-	result, err := runner.WaitAction(ctx, action, intent.Budget)
+	result, err := runner.WaitActionWithProgress(ctx, action, intent.Budget, progress)
 	if err != nil {
 		return err
 	}
