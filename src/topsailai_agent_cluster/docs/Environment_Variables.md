@@ -118,14 +118,17 @@ shipped allowlist in force rather than refusing to start. The bundle installs
 `conf/command-allowlist.conf.example` as `conf/command-allowlist.conf`; the Debian
 package installs it as `/etc/agent-cluster/command-allowlist.conf` and registers it
 as a conffile, so an upgrade does not replace the operator's policy. The shipped
-default permits `ls`, `pwd`, `git status`, `git log`, `git diff`, `git show` and
-`git push`.
+default permits `ls`, `pwd`, `git status`, `git log`, `git diff`, `git show`,
+`git push`, `git pull`, `git fetch` and `hostname`.
 
-The default is not a sandbox. `git push` accepts `--receive-pack`, which runs a
-local command, and `git show` honours `--output` and textconv filters declared in
-`.gitattributes`. Prefix matching cannot distinguish those forms, so an entry is
-only as narrow as its first tokens and every entry is reachable by anyone holding
-the `control` scope.
+The default is not a sandbox. `git push` accepts `--receive-pack` and
+`git fetch`/`git pull` accept `--upload-pack`, both of which run a local command;
+`git pull` also runs the repository's `post-merge` hook and any configured merge
+driver; `git show` honours `--output` and textconv filters declared in
+`.gitattributes`; and `hostname NAME` renames the machine when the Endpoint runs as
+root. Prefix matching cannot distinguish those forms, so an entry is only as narrow
+as its first tokens and every entry is reachable by anyone holding the `control`
+scope.
 
 The file is reloaded on `SIGHUP`. A reload parses the whole file before replacing
 the active set, so a malformed edit keeps the previous entries in force and is

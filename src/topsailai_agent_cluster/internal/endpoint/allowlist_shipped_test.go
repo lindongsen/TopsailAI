@@ -34,9 +34,9 @@ func TestShippedAllowlistParses(t *testing.T) {
 }
 
 // TestShippedAllowlistPinsTheDefaultPolicy pins the intent of the default policy.
-// It is mostly read-only, but it deliberately includes `git push` and `git show`,
-// so a later edit that adds a mutating or shell-capable entry has to change this
-// test and justify the change.
+// It is mostly read-only, but it deliberately includes `git push`, `git pull`,
+// `git fetch` and `hostname`, so a later edit that adds a mutating or
+// shell-capable entry has to change this test and justify the change.
 func TestShippedAllowlistPinsTheDefaultPolicy(t *testing.T) {
 	data, err := os.ReadFile(shippedAllowlistPath(t))
 	if err != nil {
@@ -58,6 +58,12 @@ func TestShippedAllowlistPinsTheDefaultPolicy(t *testing.T) {
 		{"git", "show", "HEAD:README.md"},
 		{"git", "push"},
 		{"git", "push", "origin", "main"},
+		{"git", "pull"},
+		{"git", "pull", "--ff-only"},
+		{"git", "fetch"},
+		{"git", "fetch", "--all"},
+		{"hostname"},
+		{"hostname", "-f"},
 	}
 	for _, argv := range permitted {
 		if err := list.Permit(argv); err != nil {
@@ -81,11 +87,12 @@ func TestShippedAllowlistPinsTheDefaultPolicy(t *testing.T) {
 	}
 }
 
-// TestShippedAllowlistGitPushAndShowAreNotSandboxed records the accepted risk of
-// the two entries this policy adds. Prefix matching cannot see the options that
-// turn them into local command execution, so the test asserts the permissive
-// behaviour explicitly instead of leaving it as an undocumented surprise.
-func TestShippedAllowlistGitPushAndShowAreNotSandboxed(t *testing.T) {
+// TestShippedAllowlistPermissiveFormsAreNotSandboxed records the accepted risk of
+// the entries this policy adds. Prefix matching cannot see the options that turn
+// them into local command execution or machine mutation, so the test asserts the
+// permissive behaviour explicitly instead of leaving it as an undocumented
+// surprise.
+func TestShippedAllowlistPermissiveFormsAreNotSandboxed(t *testing.T) {
 	data, err := os.ReadFile(shippedAllowlistPath(t))
 	if err != nil {
 		t.Fatalf("read the shipped allowlist: %v", err)
@@ -94,12 +101,17 @@ func TestShippedAllowlistGitPushAndShowAreNotSandboxed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the shipped allowlist must parse, got %v", err)
 	}
-	// `git push --receive-pack=CMD` runs CMD locally, and `git show --output=PATH`
-	// writes PATH. Both keep argv[0..1] equal to the allowlisted prefix, so the
-	// policy permits them. This is a documented consequence of prefix matching.
+	// `git push --receive-pack=CMD` and `git fetch --upload-pack=CMD` run CMD
+	// locally, `git show --output=PATH` writes PATH, and `hostname NAME` renames
+	// the machine when the Endpoint runs as root. Each keeps argv[0..1] equal to
+	// the allowlisted prefix, so the policy permits them. This is a documented
+	// consequence of prefix matching, not an oversight.
 	risky := [][]string{
 		{"git", "push", "--receive-pack=sh -c id", "origin", "main"},
+		{"git", "fetch", "--upload-pack=sh -c id", "origin"},
+		{"git", "pull", "--upload-pack=sh -c id", "origin"},
 		{"git", "show", "--output=/tmp/x", "HEAD"},
+		{"hostname", "renamed-by-operator"},
 	}
 	for _, argv := range risky {
 		if err := list.Permit(argv); err != nil {
