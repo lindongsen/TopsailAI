@@ -377,7 +377,7 @@ func TestNonInteractiveHelpCatalogMatchesStandaloneDispatch(t *testing.T) {
 	}
 	for _, line := range lines {
 		name := strings.Fields(line)[2]
-		for _, forbidden := range []string{"inject", "interrupt", "cd", "quit"} {
+		for _, forbidden := range []string{"inject", "cd", "quit"} {
 			if name == forbidden {
 				t.Fatalf("standalone help leaked interactive command %q: %q", forbidden, joined)
 			}
@@ -407,8 +407,11 @@ func TestPrintNonInteractiveCommandHelp(t *testing.T) {
 	if err := PrintNonInteractiveCommandHelp(&out, "inject"); err == nil || !strings.Contains(err.Error(), "unknown help command") {
 		t.Fatalf("removed spelling inject still resolved: %v", err)
 	}
-	if err := PrintNonInteractiveCommandHelp(&out, "interrupt"); err == nil || !strings.Contains(err.Error(), "unknown help command") {
-		t.Fatalf("unknown help error=%v", err)
+	if err := PrintNonInteractiveCommandHelp(&out, "interrupt"); err != nil {
+		t.Fatalf("standalone interrupt help failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "Syntax: agent-cluster-cli [options] interrupt <endpoint> <resource> [text] [generation]") {
+		t.Fatalf("standalone interrupt help=%q", out.String())
 	}
 	if !containsCommand(nonInteractiveHelpOrder, "start") || containsCommand(nonInteractiveHelpOrder, "inject") {
 		t.Fatal("standalone command membership is inconsistent")

@@ -225,7 +225,10 @@ func InterruptPayload(name, text string) (json.RawMessage, error) {
 		return nil, err
 	}
 	if len(args) == 0 {
-		return nil, fmt.Errorf("usage: %s [soft|hard] [message]", name)
+		// The hard action is the default, so a bare interrupt needs no action
+		// word. A message without an explicit action word is still rejected
+		// below, because guessing soft from free text would hide the choice.
+		return json.RawMessage(`{"action":"hard_interrupt"}`), nil
 	}
 	action, known := interruptActions[strings.ToLower(args[0])]
 	if !known {
@@ -724,10 +727,11 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 }
 
 // promptInterruptPayload guides a bare interrupt through the action choice and, for a soft
-// interrupt, one optional message. Empty answers select the safe defaults, so the operator
-// never has to compose a JSON object.
+// interrupt, one optional message. The prompt is kept so the operator always sees both
+// actions, and an empty answer selects the documented default, which is hard. The operator
+// therefore never has to compose a JSON object, and never selects an action unknowingly.
 func promptInterruptPayload(parent context.Context, name string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) (json.RawMessage, error) {
-	question := name + " action? soft or hard, empty selects soft " + confirmationHint + " "
+	question := name + " action? soft or hard, empty selects hard " + confirmationHint + " "
 	if err := writeConfirmationQuestion(trustedOut, question, options.Color); err != nil {
 		return nil, err
 	}
@@ -738,7 +742,7 @@ func promptInterruptPayload(parent context.Context, name string, lines <-chan li
 	}
 	action := strings.ToLower(strings.TrimSpace(answer))
 	if action == "" {
-		action = "soft"
+		action = "hard"
 	}
 	if _, known := interruptActions[action]; !known {
 		return nil, fmt.Errorf("usage: %s [soft|hard] [message]", name)

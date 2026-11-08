@@ -305,7 +305,7 @@ func TestUnitAHelpAndErrorWriterBranches(t *testing.T) {
 	if err := PrintCommandHelp(&out, "missing"); err == nil {
 		t.Fatal("missing help target unexpectedly succeeded")
 	}
-	if err := PrintNonInteractiveCommandHelp(&out, "interrupt"); err == nil {
+	if err := PrintNonInteractiveCommandHelp(&out, "cd"); err == nil {
 		t.Fatal("interactive-only help target unexpectedly succeeded")
 	}
 	out.Reset()

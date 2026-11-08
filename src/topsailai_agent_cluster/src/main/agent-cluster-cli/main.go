@@ -220,7 +220,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		return status(ctx, api, output, flags.Arg(1), *jsonMode)
 	case "drive":
 		return driveWithProgress(ctx, api, output, errors, flags.Args()[1:], *confirmed, *jsonMode, *waitTimeoutMS, *generation)
-	case "send", "btw", "control", "start", "resume", "stop":
+	case "send", "btw", "interrupt", "control", "start", "resume", "stop":
 		// A bare send, btw or start reads a multi-line block from the
 		// command input. On a terminal nothing else would prompt, so the
 		// operator would face a silent wait; the hint goes to the diagnostics
@@ -653,7 +653,7 @@ func resolveActionPayload(operation, value string) (json.RawMessage, error) {
 	switch operation {
 	case "send", "btw":
 		return tui.MessagePayload(value)
-	case "control":
+	case "interrupt", "control":
 		return tui.InterruptPayload(operation, value)
 	case "start":
 		return tui.TaskPayload(value)
@@ -738,6 +738,15 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 				return err
 			}
 			resolved, err := resolveActionPayload(operation, block.Text)
+			if err != nil {
+				return err
+			}
+			payload = resolved
+		} else if operation == "interrupt" {
+			// A bare interrupt submits the hard default, so the operator does not
+			// have to spell the action word. A message without an explicit action
+			// word is rejected by InterruptPayload instead of being guessed.
+			resolved, err := resolveActionPayload(operation, "")
 			if err != nil {
 				return err
 			}
@@ -878,7 +887,7 @@ func operationName(value string) string {
 	if value == "btw" {
 		return "context.inject"
 	}
-	if value == "control" {
+	if value == "interrupt" || value == "control" {
 		return "execution.interrupt"
 	}
 	if value == "start" {

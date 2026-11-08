@@ -361,7 +361,7 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 			t.Fatalf("help missing dispatched command %q: %q", command, text)
 		}
 	}
-	for _, interactiveOnly := range []string{"inject", "interrupt", "cd", "quit"} {
+	for _, interactiveOnly := range []string{"inject", "cd", "quit"} {
 		if strings.Contains(text, "[options] "+interactiveOnly+" ") {
 			t.Fatalf("non-interactive help leaked command %q: %q", interactiveOnly, text)
 		}
@@ -381,8 +381,11 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 	if err := runWithIO([]string{"help", "inject"}, strings.NewReader(""), &output, &diagnostics, false, nil); err == nil {
 		t.Fatal("non-interactive help accepted the removed inject spelling")
 	}
-	if err := runWithIO([]string{"help", "interrupt"}, strings.NewReader(""), io.Discard, io.Discard, false, nil); err == nil {
-		t.Fatal("non-interactive help accepted undispatched interrupt command")
+	if err := runWithIO([]string{"help", "interrupt"}, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
+		t.Fatalf("non-interactive help rejected the dispatched interrupt command: %v", err)
+	}
+	if !strings.Contains(output.String(), "Syntax: agent-cluster-cli [options] interrupt <endpoint> <resource> [text] [generation]") {
+		t.Fatalf("standalone interrupt help=%q", output.String())
 	}
 }
 

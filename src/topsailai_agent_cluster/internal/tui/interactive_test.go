@@ -610,7 +610,7 @@ func TestInteractivePlainTextActionsNeedNoJSON(t *testing.T) {
 		{name: "btw literal text", input: "cd endpoint-1/session-1\nbtw the deployment notes are in docs/\ny\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"the deployment notes are in docs/"}`},
 		{name: "interrupt soft with message", input: "cd endpoint-1/session-1\ninterrupt soft stop and summarize now\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt","message":"stop and summarize now"}`},
 		{name: "interrupt hard", input: "cd endpoint-1/session-1\ninterrupt hard\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
-		{name: "guided interrupt defaults to soft", input: "cd endpoint-1/session-1\ninterrupt\n\n\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt"}`},
+		{name: "guided interrupt defaults to hard", input: "cd endpoint-1/session-1\ninterrupt\n\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
 		{name: "guided interrupt soft with message", input: "cd endpoint-1/session-1\ninterrupt\nsoft\nwrap up please\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt","message":"wrap up please"}`},
 		{name: "guided interrupt hard", input: "cd endpoint-1/session-1\ninterrupt\nhard\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
 	}
