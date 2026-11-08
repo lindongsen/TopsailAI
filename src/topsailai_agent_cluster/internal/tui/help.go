@@ -326,6 +326,14 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.parameters = append(entry.parameters, "without text: read a multi-line context block from stdin and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the context")
 	case "control":
 		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [text] [generation]"
+		// The catalog entry is the interactive spelling, so its parameters and
+		// examples describe the REPL form: an action word followed by free text,
+		// with --json rejected. The standalone surface separates the payload by
+		// argv position and accepts --json, so both lists are replaced instead of
+		// inherited. An example that names "interrupt" would be unusable here,
+		// because the standalone CLI rejects that spelling as an unknown command.
+		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID", "text: optional action word soft or hard, optionally followed by a literal message; hard accepts no message", "generation: optional expected generation", "--yes: confirm the interrupt, which is required because it cannot be undone", "--json: write the structured receipt instead of the rendered one"}
+		entry.examples = []string{"control endpoint-1 res_abc soft", "control endpoint-1 res_abc soft stop and summarize now", "control endpoint-1 res_abc hard"}
 	case "ctl":
 		entry.syntax = "agent-cluster-cli [options] ctl <endpoint> <resource> <action> [json] [generation]"
 	case "exec":
