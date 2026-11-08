@@ -245,6 +245,12 @@ serves persisted inventory and never caches a result. The Server forwards the qu
 returns the adapter's answer unchanged, so it does not interpret provider status words, re-derive
 resumability or correlate rows with the inventory.
 
+`limit` is optional and narrows the caller's view only. It is parsed at the Server boundary and
+forwarded as an explicit protocol value, so the transport layer never re-reads the request. An absent,
+non-numeric or negative value keeps the provider's own window instead of silently narrowing the read
+to zero rows. A positive value can never raise the provider's own cap, and the adapter judges provider
+truncation before applying it, so a narrowed view is never presented as a complete history.
+
 Reading history requires the `view` scope. A history row carries the session name, the recorded task
 text and the project workspace, which is metadata rather than session output, so `view` is the
 required scope and reading a session's actual output still needs the separate `read_output` scope.

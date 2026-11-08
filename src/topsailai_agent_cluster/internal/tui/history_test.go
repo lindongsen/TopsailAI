@@ -19,6 +19,9 @@ type historyStubAPI struct {
 	history     map[string]protocol.HistoryResult
 	historyEr   map[string]error
 	calls       []string
+	// limits records the caller limit of every history read, so a test can
+	// prove the value reached the seam instead of being dropped on the way.
+	limits []int
 }
 
 func (s *historyStubAPI) ListEndpoints(context.Context) ([]protocol.Endpoint, error) {
@@ -54,8 +57,9 @@ func (s *historyStubAPI) AdmitCommand(context.Context, protocol.ImmutableIntent)
 	return nil, nil
 }
 
-func (s *historyStubAPI) GetHistory(_ context.Context, endpointID string) (protocol.HistoryResult, error) {
+func (s *historyStubAPI) GetHistory(_ context.Context, endpointID string, limit int) (protocol.HistoryResult, error) {
 	s.calls = append(s.calls, "history:"+endpointID)
+	s.limits = append(s.limits, limit)
 	if err := s.historyEr[endpointID]; err != nil {
 		return protocol.HistoryResult{}, err
 	}
@@ -260,7 +264,7 @@ func TestHistoryJSONCarriesNoRoutingIdentityForPastRows(t *testing.T) {
 
 func TestCommandRunnerHistoryRequiresEndpointArgument(t *testing.T) {
 	api := &historyStubAPI{}
-	err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, "  ", false, TableOptions{})
+	err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, "  ", 0, false, TableOptions{})
 	if err == nil || !strings.Contains(err.Error(), "usage: history") {
 		t.Fatalf("err=%v", err)
 	}
@@ -271,7 +275,7 @@ func TestCommandRunnerHistoryRequiresEndpointArgument(t *testing.T) {
 
 func TestCommandRunnerHistoryReportsMissingSeam(t *testing.T) {
 	api := &historylessAPI{}
-	err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, "ep-1", false, TableOptions{})
+	err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, "ep-1", 0, false, TableOptions{})
 	if err == nil || !strings.Contains(err.Error(), "history is unavailable") {
 		t.Fatalf("err=%v", err)
 	}
@@ -279,7 +283,7 @@ func TestCommandRunnerHistoryReportsMissingSeam(t *testing.T) {
 
 func TestCommandRunnerHistoryRejectsUnknownEndpoint(t *testing.T) {
 	api := &historyStubAPI{endpoints: []protocol.Endpoint{{EndpointID: "ep-1"}}}
-	err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, "ep-missing", false, TableOptions{})
+	err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, "ep-missing", 0, false, TableOptions{})
 	if err == nil || !strings.Contains(err.Error(), "was not found") {
 		t.Fatalf("err=%v", err)
 	}
@@ -290,7 +294,7 @@ func TestCommandRunnerHistoryRejectsAmbiguousHostname(t *testing.T) {
 		{EndpointID: "ep-b", Hostname: "ai-dev"},
 		{EndpointID: "ep-a", Hostname: "ai-dev"},
 	}}
-	err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, "ai-dev", false, TableOptions{})
+	err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, "ai-dev", 0, false, TableOptions{})
 	if err == nil {
 		t.Fatal("ambiguous hostname must be rejected")
 	}
@@ -308,7 +312,7 @@ func TestCommandRunnerHistoryResolvesUniqueHostname(t *testing.T) {
 		history:   map[string]protocol.HistoryResult{"ep-1": {Rows: []protocol.HistoryRow{{ProviderSessionID: "wa-1", Resumable: true}}}},
 	}
 	var out strings.Builder
-	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), &out, io.Discard, "ai-dev", false, TableOptions{}); err != nil {
+	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), &out, io.Discard, "ai-dev", 0, false, TableOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "wa-1") {
@@ -326,7 +330,7 @@ func TestCommandRunnerHistoryRendersJoinColumns(t *testing.T) {
 		reports: map[string]protocol.InventoryReport{"ep-1": {Sessions: []protocol.Session{historyLiveSession("res_1", "wa-live", "gen-1")}}},
 	}
 	var out strings.Builder
-	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), &out, io.Discard, "ep-1", false, TableOptions{}); err != nil {
+	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), &out, io.Discard, "ep-1", 0, false, TableOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	text := out.String()
@@ -344,7 +348,7 @@ func TestCommandRunnerHistoryJSONEmitsJoinedView(t *testing.T) {
 		reports:   map[string]protocol.InventoryReport{"ep-1": {Sessions: []protocol.Session{historyLiveSession("res_1", "wa-live", "gen-1")}}},
 	}
 	var out strings.Builder
-	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), &out, io.Discard, "ep-1", true, TableOptions{}); err != nil {
+	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), &out, io.Discard, "ep-1", 0, true, TableOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	var view HistoryView
@@ -365,7 +369,7 @@ func TestCommandRunnerHistoryReportsTruncation(t *testing.T) {
 		history:   map[string]protocol.HistoryResult{"ep-1": {Rows: []protocol.HistoryRow{{ProviderSessionID: "wa-1"}}, Truncated: true}},
 	}
 	var out, diagnostics strings.Builder
-	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), &out, &diagnostics, "ep-1", false, TableOptions{}); err != nil {
+	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), &out, &diagnostics, "ep-1", 0, false, TableOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(diagnostics.String(), "bounded provider window") {
@@ -380,7 +384,7 @@ func TestCommandRunnerHistoryReportsUnjoinedInventory(t *testing.T) {
 		inventoryEr: map[string]error{"ep-1": errors.New("inventory unavailable")},
 	}
 	var out, diagnostics strings.Builder
-	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), &out, &diagnostics, "ep-1", false, TableOptions{}); err != nil {
+	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), &out, &diagnostics, "ep-1", 0, false, TableOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(diagnostics.String(), "unjoined") {
@@ -396,7 +400,7 @@ func TestCommandRunnerHistorySurfacesProviderErrorCode(t *testing.T) {
 		endpoints: []protocol.Endpoint{{EndpointID: "ep-1"}},
 		history:   map[string]protocol.HistoryResult{"ep-1": {ErrorCode: protocol.HistoryUnsupported}},
 	}
-	err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, "ep-1", false, TableOptions{})
+	err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, "ep-1", 0, false, TableOptions{})
 	if err == nil || !strings.Contains(err.Error(), protocol.HistoryUnsupported) {
 		t.Fatalf("err=%v", err)
 	}
@@ -407,7 +411,7 @@ func TestCommandRunnerHistoryPropagatesTransportError(t *testing.T) {
 		endpoints: []protocol.Endpoint{{EndpointID: "ep-1"}},
 		historyEr: map[string]error{"ep-1": errors.New("endpoint_unavailable")},
 	}
-	err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, "ep-1", false, TableOptions{})
+	err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, "ep-1", 0, false, TableOptions{})
 	if err == nil || !strings.Contains(err.Error(), "endpoint_unavailable") {
 		t.Fatalf("err=%v", err)
 	}
@@ -419,7 +423,7 @@ func TestCommandRunnerHistoryEmptySuccessIsNotAnError(t *testing.T) {
 		history:   map[string]protocol.HistoryResult{"ep-1": {Rows: nil}},
 	}
 	var out strings.Builder
-	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), &out, io.Discard, "ep-1", false, TableOptions{}); err != nil {
+	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), &out, io.Discard, "ep-1", 0, false, TableOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "wa-") {
@@ -448,7 +452,7 @@ func TestCommandRunnerHistoryRejectsOfflineEndpoint(t *testing.T) {
 			api := &historyStubAPI{endpoints: []protocol.Endpoint{
 				{EndpointID: "ep-1", Hostname: "ai-dev", ConnectionState: "offline"},
 			}}
-			err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, testCase.target, false, TableOptions{})
+			err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, testCase.target, 0, false, TableOptions{})
 			want := `endpoint "ep-1" is not online: connection_state=offline`
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("err=%v, want %q", err, want)
@@ -457,5 +461,22 @@ func TestCommandRunnerHistoryRejectsOfflineEndpoint(t *testing.T) {
 				t.Fatalf("offline endpoint must not query history: %v", api.calls)
 			}
 		})
+	}
+}
+
+// TestCommandRunnerHistoryForwardsLimit proves the standalone surface passes the
+// caller limit to the history seam instead of dropping it. The seam is the only
+// place the value can be applied, so a dropped limit would silently ignore the
+// operator's request.
+func TestCommandRunnerHistoryForwardsLimit(t *testing.T) {
+	api := &historyStubAPI{
+		endpoints: []protocol.Endpoint{{EndpointID: "ep-1"}},
+		history:   map[string]protocol.HistoryResult{"ep-1": {Rows: []protocol.HistoryRow{{ProviderSessionID: "wa-1", Resumable: true}}}},
+	}
+	if err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, "ep-1", 7, false, TableOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.limits) != 1 || api.limits[0] != 7 {
+		t.Fatalf("limits=%v want=[7]", api.limits)
 	}
 }

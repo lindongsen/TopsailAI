@@ -43,7 +43,9 @@ func interactiveHistory(parent context.Context, api InteractiveAPI, state *inter
 	if err != nil {
 		return err
 	}
-	result, err := querier.GetHistory(ctx, endpointID)
+	// The interactive surface always reads the whole provider window, because a
+	// REPL operator selects a row from what is rendered and cannot pass a limit.
+	result, err := querier.GetHistory(ctx, endpointID, 0)
 	if err != nil {
 		return err
 	}

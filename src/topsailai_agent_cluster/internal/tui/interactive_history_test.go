@@ -18,12 +18,17 @@ type interactiveHistoryStub struct {
 	history      map[string]protocol.HistoryResult
 	historyEr    map[string]error
 	historyCalls []string
+	// historyLimits records the caller limit of every interactive read. The REPL
+	// always passes zero, so a non-zero value would mean the surface narrowed a
+	// table the operator selects rows from.
+	historyLimits []int
 }
 
 // GetHistory records the queried endpoint so a test can prove which endpoint the
 // interactive surface addressed.
-func (s *interactiveHistoryStub) GetHistory(_ context.Context, endpointID string) (protocol.HistoryResult, error) {
+func (s *interactiveHistoryStub) GetHistory(_ context.Context, endpointID string, limit int) (protocol.HistoryResult, error) {
 	s.historyCalls = append(s.historyCalls, endpointID)
+	s.historyLimits = append(s.historyLimits, limit)
 	if err := s.historyEr[endpointID]; err != nil {
 		return protocol.HistoryResult{}, err
 	}
@@ -586,5 +591,21 @@ func TestInteractiveHistoryRejectsOfflineEndpoint(t *testing.T) {
 	}
 	if len(stub.historyCalls) != 0 {
 		t.Fatalf("offline endpoint reached the history API: %v", stub.historyCalls)
+	}
+}
+
+// TestInteractiveHistoryReadsWholeProviderWindow proves the REPL never narrows a
+// history read. An operator selects a row from what is rendered, so a hidden limit
+// would make a row unreachable with no way to ask for it.
+func TestInteractiveHistoryReadsWholeProviderWindow(t *testing.T) {
+	stub := historyScenarioStub([]protocol.HistoryRow{
+		{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"},
+	}, historyReport())
+
+	if _, diagnostics := runScope(t, stub, "history endpoint-1\nexit\n", ColorPolicy{}); diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if len(stub.historyLimits) != 1 || stub.historyLimits[0] != 0 {
+		t.Fatalf("limits=%v want=[0]", stub.historyLimits)
 	}
 }

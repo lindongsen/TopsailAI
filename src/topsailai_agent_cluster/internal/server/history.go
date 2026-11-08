@@ -42,7 +42,11 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	result, err := requester.RequestHistory(ctx, endpointID, protocol.HistoryQuery{})
+	// The limit is parsed at the boundary and passed down as an explicit value, so
+	// the transport layer never re-reads the request. An absent or invalid value
+	// keeps the provider's own window instead of silently narrowing it to zero.
+	query := protocol.HistoryQuery{Limit: parseInt(r.URL.Query().Get("limit"), 0)}
+	result, err := requester.RequestHistory(ctx, endpointID, query)
 	if err != nil {
 		h.writeHistoryFailure(w, r, endpointID, err)
 		return

@@ -328,7 +328,7 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		// argument and writes the joined document instead of a numbered table.
 		entry.syntax = "agent-cluster-cli [options] history <endpoint-id-or-hostname>"
 		entry.description = "read bounded provider session history for one endpoint; the result is a live provider read, never a persisted projection"
-		entry.parameters = []string{"endpoint-id-or-hostname: endpoint to query; a hostname shared by several endpoints is rejected with the candidate list", "--json: write the joined history document instead of the rendered table"}
+		entry.parameters = []string{"endpoint-id-or-hostname: endpoint to query; a hostname shared by several endpoints is rejected with the candidate list", "--limit: maximum number of history rows returned; 0 keeps the provider's own window and a positive value never raises it", "--json: write the joined history document instead of the rendered table"}
 		entry.examples = []string{"history endpoint-1", "history ai-dev"}
 	case "endpoints":
 		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] endpoints [endpoint-id]"

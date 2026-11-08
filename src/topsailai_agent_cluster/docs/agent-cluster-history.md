@@ -285,8 +285,10 @@ It returns the adapter's result verbatim; it does not join, filter or interpret.
 - Should the history view show the provider's own row number as a separate column, so an
   operator can cross-reference the provider's own listing? Recommended: yes, as
   descriptive data only, never as a selection key.
-- Should `history` accept a `--limit` bound below the provider cap? Recommended: yes,
-  as a caller-side narrowing only; it never raises the cap.
-- Which permission scope should `history` require? Not yet decided. The rows carry
-  session names, task text and workspace paths, but no stdout and no conversation
-  content.
+- Should `history` accept a `--limit` bound below the provider cap? Decided and implemented:
+  yes, as a caller-side narrowing only; it never raises the cap. The standalone surface exposes
+  `--limit`, the interactive surface always reads the whole provider window because a REPL operator
+  selects a row from what is rendered, and an absent or invalid value keeps the provider's window.
+- Which permission scope should `history` require? Decided and implemented: `view`. The rows carry
+  session names, task text and workspace paths, but no stdout and no conversation content, so `view`
+  is the required scope and reading a session's actual output still needs `read_output`.

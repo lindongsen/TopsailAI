@@ -14,9 +14,11 @@ import (
 // HistoryQuerier reads bounded provider session history for one Endpoint.
 //
 // History is a live provider read, so this seam never returns a persisted
-// projection and never caches a result.
+// projection and never caches a result. The limit narrows the caller's view
+// only: zero means the whole provider window, and a positive value can never
+// raise the provider's own cap.
 type HistoryQuerier interface {
-	GetHistory(context.Context, string) (protocol.HistoryResult, error)
+	GetHistory(context.Context, string, int) (protocol.HistoryResult, error)
 }
 
 // HistoryViewRow is one rendered history row: provider evidence plus the cluster
@@ -242,7 +244,11 @@ func historyResumableState(row HistoryViewRow) string {
 // The endpoint argument is mandatory on the standalone surface, because a history
 // query is endpoint-scoped: fanning out across endpoints would multiply provider
 // calls and would mix rows whose provider session IDs may collide.
-func (r CommandRunner) History(ctx context.Context, out, errors io.Writer, target string, jsonMode bool, options TableOptions) error {
+//
+// The limit narrows the caller's view only. Zero keeps the whole provider window,
+// and a positive value can never raise the provider's own cap, so a narrowed view
+// is never presented as a complete history.
+func (r CommandRunner) History(ctx context.Context, out, errors io.Writer, target string, limit int, jsonMode bool, options TableOptions) error {
 	querier, ok := r.API.(HistoryQuerier)
 	if !ok {
 		return fmt.Errorf("history is unavailable: this client cannot query provider history")
@@ -251,7 +257,7 @@ func (r CommandRunner) History(ctx context.Context, out, errors io.Writer, targe
 	if err != nil {
 		return err
 	}
-	result, err := querier.GetHistory(ctx, endpoint.EndpointID)
+	result, err := querier.GetHistory(ctx, endpoint.EndpointID, limit)
 	if err != nil {
 		return err
 	}

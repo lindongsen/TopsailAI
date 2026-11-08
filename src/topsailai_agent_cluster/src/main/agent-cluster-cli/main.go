@@ -94,6 +94,10 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	noColor := flags.Bool("no-color", false, "disable terminal colors")
 	noTruncate := flags.Bool("no-truncate", false, "disable table truncation; a narrow terminal wraps instead of clipping")
 	noProgress := flags.Bool("no-progress", false, "disable progress lines for long-running commands")
+	// --limit narrows a history read. It is a separate quantity from --lines
+	// because history rows are provider session records, not output lines, and
+	// conflating them would let an output setting silently reshape a history table.
+	historyLimit := flags.Int("limit", 0, "maximum number of history rows returned; 0 keeps the provider's own window")
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
 	folder := flags.String("folder", "", "working folder for start")
@@ -186,7 +190,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if flags.NArg() != 2 {
 			return fmt.Errorf("usage: history <endpoint-id-or-hostname>")
 		}
-		return history(ctx, api, output, errors, flags.Arg(1), *jsonMode, tui.OutputColorPolicy(output))
+		return history(ctx, api, output, errors, flags.Arg(1), *historyLimit, *jsonMode, tui.OutputColorPolicy(output))
 	case "table":
 		return fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "show":
@@ -470,10 +474,10 @@ func legacyRunner(api tui.CommandAPI) tui.CommandRunner {
 // The endpoint argument is mandatory because a history query is endpoint-scoped:
 // provider session IDs may collide across endpoints, so a fleet-wide merge could
 // not be joined to the persisted inventory unambiguously.
-func history(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target string, jsonMode bool, color tui.ColorPolicy) error {
+func history(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target string, limit int, jsonMode bool, color tui.ColorPolicy) error {
 	options := tui.TableOptionsFor(output)
 	options.Color = color
-	return legacyRunner(api).History(ctx, output, errors, target, jsonMode, options)
+	return legacyRunner(api).History(ctx, output, errors, target, limit, jsonMode, options)
 }
 
 func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, jsonMode bool, color tui.ColorPolicy) error {
