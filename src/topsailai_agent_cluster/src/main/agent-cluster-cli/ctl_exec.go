@@ -18,11 +18,28 @@ import (
 // action is rejected by the Endpoint as unsupported, which is the same evidence
 // an operator sees for any other admission refusal.
 func ctlCommand(ctx context.Context, api tui.CommandAPI, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
-	if len(args) < 4 {
+	return ctlCommandWithProgress(ctx, api, output, nil, args, confirmed, jsonMode, waitTimeoutMS, generationFlag)
+}
+
+// ctlCommandWithProgress is ctlCommand with a diagnostics stream for progress
+// lines. A nil diagnostics stream keeps the previous silent behaviour, so a
+// caller that has no diagnostics boundary loses nothing.
+func ctlCommandWithProgress(ctx context.Context, api tui.CommandAPI, output, diagnostics io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
+	// A "--" after the command word ends option parsing, so a JSON payload that
+	// begins with a dash is accepted literally. The head is still checked for
+	// misplaced flags, because a flag written before the terminator would silently
+	// become the action or the payload. The command word is checked before it is
+	// read, because a bare "ctl" has no word to inspect.
+	if len(args) < 1 {
 		return fmt.Errorf("usage: ctl <endpoint-id> <resource-id> <action> [json] [generation]")
 	}
-	if err := rejectMisplacedFlags(args[0], args); err != nil {
+	head, tail := splitTerminator(args)
+	if err := rejectMisplacedFlags(args[0], head); err != nil {
 		return err
+	}
+	args = append(append([]string{}, head...), tail...)
+	if len(args) < 4 {
+		return fmt.Errorf("usage: ctl <endpoint-id> <resource-id> <action> [json] [generation]")
 	}
 	endpointID, resourceID, action := args[1], args[2], args[3]
 	operation, err := tui.CtlOperation(action)
@@ -44,7 +61,7 @@ func ctlCommand(ctx context.Context, api tui.CommandAPI, output io.Writer, args 
 	if err != nil {
 		return err
 	}
-	return submitAction(ctx, api, output, tui.ActionRequest{
+	return submitActionWithProgress(ctx, api, output, diagnostics, tui.ActionRequest{
 		Operation:      operation,
 		OperationLabel: "ctl " + action,
 		EndpointID:     endpointID,
@@ -63,6 +80,12 @@ func ctlCommand(ctx context.Context, api tui.CommandAPI, output io.Writer, args 
 // the allowlist cannot reason about. The allowlist decision belongs to the
 // Endpoint policy hook, so this path never decides policy locally.
 func execCommand(ctx context.Context, api tui.CommandAPI, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
+	return execCommandWithProgress(ctx, api, output, nil, args, confirmed, jsonMode, waitTimeoutMS, generationFlag)
+}
+
+// execCommandWithProgress is execCommand with a diagnostics stream for progress
+// lines. A nil diagnostics stream keeps the previous silent behaviour.
+func execCommandWithProgress(ctx context.Context, api tui.CommandAPI, output, diagnostics io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
 	separator := -1
 	for index, arg := range args {
 		if arg == "--" {
@@ -95,7 +118,7 @@ func execCommand(ctx context.Context, api tui.CommandAPI, output io.Writer, args
 	if err != nil {
 		return err
 	}
-	return submitAction(ctx, api, output, tui.ActionRequest{
+	return submitActionWithProgress(ctx, api, output, diagnostics, tui.ActionRequest{
 		Operation:      protocol.OperationCommandExec,
 		OperationLabel: "exec",
 		EndpointID:     endpointID,
@@ -115,7 +138,15 @@ func execCommand(ctx context.Context, api tui.CommandAPI, output io.Writer, args
 // it is rendered through the same renderer the interactive form uses; every other
 // operation keeps the generic receipt rendering.
 func submitAction(ctx context.Context, api tui.CommandAPI, output io.Writer, request tui.ActionRequest, jsonMode bool) error {
+	return submitActionWithProgress(ctx, api, output, nil, request, jsonMode)
+}
+
+// submitActionWithProgress is submitAction with a diagnostics stream for progress
+// lines. The reporter is built from that stream, so a nil or redirected stream
+// stays silent and the machine-readable output is never touched.
+func submitActionWithProgress(ctx context.Context, api tui.CommandAPI, output, diagnostics io.Writer, request tui.ActionRequest, jsonMode bool) error {
 	runner := legacyRunner(api)
+	progress := tui.NewActionProgress(diagnostics, request)
 	intent, err := runner.PrepareAction(ctx, request)
 	if err != nil {
 		return err
@@ -124,7 +155,7 @@ func submitAction(ctx context.Context, api tui.CommandAPI, output io.Writer, req
 	if err != nil {
 		return err
 	}
-	result, err := runner.WaitAction(ctx, actionResult, intent.Budget)
+	result, err := runner.WaitActionWithProgress(ctx, actionResult, intent.Budget, progress)
 	if err != nil {
 		return err
 	}

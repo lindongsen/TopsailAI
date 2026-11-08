@@ -653,6 +653,10 @@ class LLMModel(
                             retry_reason=retry_reason,
                         ) from last_error
                     else:
+                        # The human deliberately chose Exit: mark it so the
+                        # User2Agent loop does not mistake this for automatic
+                        # exhaustion and abandon the turn instead of exiting.
+                        exhausted_error.explicit_exit = True
                         raise exhausted_error from last_error
             try:
                 agent = get_agent_object()

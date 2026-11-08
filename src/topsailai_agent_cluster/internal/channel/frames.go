@@ -39,6 +39,10 @@ const (
 	FrameOutputRequest  = "output_request"
 	FrameLaunchRequest  = "launch_request"
 	FrameLaunchResponse = "launch_response"
+	// FrameHistoryRequest requests a bounded provider session-history read.
+	FrameHistoryRequest = "history_request"
+	// FrameHistoryResponse returns a bounded provider session-history read.
+	FrameHistoryResponse = "history_response"
 	// FrameOutputResponse returns a bounded provider output snapshot.
 	FrameOutputResponse = "output_response"
 	// FrameOutputFollowRequest starts one streaming output follow. It is a
@@ -61,6 +65,8 @@ const (
 type Frame struct {
 	LaunchQuery          *protocol.LaunchQuery            `json:"launch_query,omitempty"`
 	LaunchOptions        *protocol.LaunchOptions          `json:"launch_options,omitempty"`
+	HistoryQuery         *protocol.HistoryQuery           `json:"history_query,omitempty"`
+	HistoryResult        *protocol.HistoryResult          `json:"history_result,omitempty"`
 	Type                 string                           `json:"type"`
 	ProtocolVersion      string                           `json:"protocol_version"`
 	FrameID              string                           `json:"frame_id,omitempty"`

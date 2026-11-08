@@ -31,6 +31,9 @@ BDD_MAX_MANUAL_RETRY_CYCLES = 2
 BDD_MAX_TOTAL_ATTEMPTS = MAX_ATTEMPTS * (BDD_MAX_MANUAL_RETRY_CYCLES + 1)
 SIGINT_RETRY_MENU_READY = "BDD_SIGINT_RETRY_MENU_READY"
 SIGINT_CHILD_RESULT = "BDD_SIGINT_CHILD_RESULT="
+INCIDENT_STREAM_ERROR = (
+    "litellm.InternalServerError: The model is repeating the same chunk =   |  |  |."
+)
 
 
 def _skip_retry_backoff():
@@ -162,6 +165,8 @@ class LLMRetryScenario:
         self.error: BaseException | None = None
         self.agent: RealTransportAgent | None = None
         self.back_input_calls = 0
+        self.provider_recovery_input_calls = 0
+        self.provider_recovery_fail_hooks = 0
         self.server_thread_stopped = False
         self.boundary_manual_cycles: int | None = None
         self.boundary_total_attempts: int | None = None
@@ -237,6 +242,20 @@ class LLMRetryScenario:
     def script_exhaustion(self) -> None:
         """Return busy content for every request in one bounded cycle."""
         self.start_server((BUSY_RESPONSE,) * MAX_ATTEMPTS)
+
+    def script_incident_stream_error_then_success(self) -> None:
+        """Return the incident stream error frame, then one successful turn."""
+        self.start_server(
+            (SUCCESS_RESPONSE,) * (MAX_ATTEMPTS + 1),
+            (INCIDENT_STREAM_ERROR,) * MAX_ATTEMPTS + (None,),
+        )
+
+    def script_incident_stream_error_exhaustion(self) -> None:
+        """Return the incident stream error frame for one bounded cycle."""
+        self.start_server(
+            (SUCCESS_RESPONSE,) * MAX_ATTEMPTS,
+            (INCIDENT_STREAM_ERROR,) * MAX_ATTEMPTS,
+        )
 
     def script_total_bound_exhaustion(self) -> None:
         """Return busy content through the injected finite retry budget."""
@@ -397,6 +416,143 @@ class LLMRetryScenario:
                     )
                 except _ScenarioComplete:
                     self.result = chat.last_message
+        except BaseException as error:  # noqa: BLE001 - scenario asserts exact outcome
+            self.error = error
+
+    def run_provider_failure_to_fresh_message(self) -> None:
+        """Abandon a turn whose provider stream failed, then send a fresh turn.
+
+        The incident stream error frame is a provider-side failure, not a local
+        defect. After the bounded retry loop consumes it, AgentChat must abandon
+        the turn, keep the session alive, and wait for the next user message
+        instead of terminating the process.
+        """
+        assert self.model is not None
+        # "2" is Back to chat: the existing handling approach for abandoning a
+        # turn. The incident error is a provider-side failure, so the turn ends
+        # and the loop waits for the next user message instead of exiting.
+        self.input_script = ScriptedInput(["2"])
+        self.agent = RealTransportAgent(self.model)
+        hook_instruction = MagicMock()
+        ctx_rt_aiagent = MagicMock()
+        ctx_rt_instruction = MagicMock()
+        ctx_runtime_data = MagicMock()
+        ctx_runtime_data.session_id = "bdd-provider-recovery-session"
+        ctx_runtime_data.session_data = None
+        ctx_rt_aiagent.ai_agent = self.agent
+        ctx_rt_aiagent.ctx_runtime_data = ctx_runtime_data
+        fresh_inputs = ["   ", "continue", "fresh request"]
+
+        def next_message(*, hook: Any) -> str:
+            """Supply blank, formatted-empty, and then fresh User2Agent input."""
+            self.provider_recovery_input_calls += 1
+            return fresh_inputs.pop(0)
+
+        try:
+            with ExitStack() as stack:
+                stack.enter_context(patch(
+                    "topsailai.workspace.agent.hooks.base.init.get_hooks",
+                    return_value=[],
+                ))
+                stack.enter_context(patch(
+                    "topsailai.workspace.agent.agent_chat_base.set_ai_agent"
+                ))
+                chat = AgentChat(hook_instruction, ctx_rt_aiagent, ctx_rt_instruction)
+                chat._start_control_server = MagicMock()
+                chat.call_hooks_pre_run = MagicMock()
+                chat.call_hooks_post_fail_run = MagicMock()
+                chat.call_hooks_post_succ_run = MagicMock(side_effect=_ScenarioComplete)
+                chat.call_hook_for_final_answer = MagicMock()
+                chat.hook_for_answer = MagicMock()
+                chat.hook_build_answer = MagicMock(side_effect=lambda answer, **_: answer)
+                stack.enter_context(patch(
+                    "topsailai.workspace.agent.agent_shell_base.get_agent_runtime_input",
+                    return_value=self.input_script,
+                ))
+                stack.enter_context(patch(
+                    "topsailai.workspace.agent.agent_shell_base.input_message",
+                    side_effect=next_message,
+                ))
+                stack.enter_context(patch(
+                    "topsailai.workspace.agent.agent_shell_base.task_tool.ctxm_process_task",
+                    side_effect=lambda _task: nullcontext(),
+                ))
+                stack.enter_context(patch(
+                    "topsailai.workspace.agent.agent_shell_base.lock_tool.ctxm_void",
+                    side_effect=lambda **_: nullcontext({}),
+                ))
+                stack.enter_context(patch(
+                    "topsailai.workspace.agent.agent_shell_base.terminal_title.refresh_terminal_title"
+                ))
+                stack.enter_context(_skip_retry_backoff())
+                try:
+                    chat._run(
+                        message="old request",
+                        times=0,
+                        need_interactive=True,
+                        need_confirm_abort=False,
+                    )
+                except _ScenarioComplete:
+                    self.result = chat.last_message
+                self.provider_recovery_fail_hooks = (
+                    chat.call_hooks_post_fail_run.call_count
+                )
+        except BaseException as error:  # noqa: BLE001 - scenario asserts exact outcome
+            self.error = error
+
+    def run_provider_failure_non_interactive(self) -> None:
+        """Keep the fail-fast contract when no interactive user is present."""
+        assert self.model is not None
+        self.input_script = ScriptedInput([])
+        self.agent = RealTransportAgent(self.model)
+        hook_instruction = MagicMock()
+        ctx_rt_aiagent = MagicMock()
+        ctx_rt_instruction = MagicMock()
+        ctx_runtime_data = MagicMock()
+        ctx_runtime_data.session_id = "bdd-provider-fatal-session"
+        ctx_runtime_data.session_data = None
+        ctx_rt_aiagent.ai_agent = self.agent
+        ctx_rt_aiagent.ctx_runtime_data = ctx_runtime_data
+
+        try:
+            with ExitStack() as stack:
+                stack.enter_context(patch(
+                    "topsailai.workspace.agent.hooks.base.init.get_hooks",
+                    return_value=[],
+                ))
+                stack.enter_context(patch(
+                    "topsailai.workspace.agent.agent_chat_base.set_ai_agent"
+                ))
+                chat = AgentChat(hook_instruction, ctx_rt_aiagent, ctx_rt_instruction)
+                chat._start_control_server = MagicMock()
+                chat.call_hooks_pre_run = MagicMock()
+                chat.call_hooks_post_fail_run = MagicMock()
+                chat.call_hooks_post_succ_run = MagicMock()
+                chat.call_hook_for_final_answer = MagicMock()
+                chat.hook_for_answer = MagicMock()
+                chat.hook_build_answer = MagicMock(side_effect=lambda answer, **_: answer)
+                stack.enter_context(patch(
+                    "topsailai.workspace.agent.agent_shell_base.get_agent_runtime_input",
+                    return_value=self.input_script,
+                ))
+                stack.enter_context(patch(
+                    "topsailai.workspace.agent.agent_shell_base.task_tool.ctxm_process_task",
+                    side_effect=lambda _task: nullcontext(),
+                ))
+                stack.enter_context(patch(
+                    "topsailai.workspace.agent.agent_shell_base.lock_tool.ctxm_void",
+                    side_effect=lambda **_: nullcontext({}),
+                ))
+                stack.enter_context(patch(
+                    "topsailai.workspace.agent.agent_shell_base.terminal_title.refresh_terminal_title"
+                ))
+                stack.enter_context(_skip_retry_backoff())
+                chat._run(
+                    message="old request",
+                    times=0,
+                    need_interactive=False,
+                    need_confirm_abort=False,
+                )
         except BaseException as error:  # noqa: BLE001 - scenario asserts exact outcome
             self.error = error
 

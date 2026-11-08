@@ -82,10 +82,12 @@ func TestRefreshHelpAndDispatchContract(t *testing.T) {
 	if err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
 		t.Fatalf("advertised syntax failed: %v diagnostics=%q", err, diagnostics.String())
 	}
-	// The fan-out collects Endpoints concurrently, so arrival order is not a
-	// contract; the contract is that every Endpoint was forced exactly once.
-	if got := fixture.calls(); !sameStringSet(got, []string{"endpoint-1", "endpoint-2"}) {
-		t.Fatalf("forced collections=%q want endpoint-1 and endpoint-2", got)
+	// Endpoints are collected concurrently, so the call order is not part of the
+	// contract: the design stores results by Endpoint index and the rendered order
+	// never depends on completion order. Assert the set and the exactly-once rule
+	// instead of an order the worker pool does not promise.
+	if calls := fixture.calls(); !sameStringSet(calls, []string{"endpoint-1", "endpoint-2"}) || len(calls) != 2 {
+		t.Fatalf("forced collection calls=%q want each of endpoint-1,endpoint-2 exactly once", calls)
 	}
 	if !sameStringSet(listSessionIDs(output.String()), []string{"fresh-1", "fresh-2"}) {
 		t.Fatalf("rendered rows=%q", output.String())

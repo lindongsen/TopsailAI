@@ -72,15 +72,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	flags := flag.NewFlagSet("agent-cluster-cli", flag.ContinueOnError)
 	flags.SetOutput(errors)
 	flags.Usage = func() {
-		fmt.Fprintln(errors, "Usage: agent-cluster-cli [options] <command>")
-		fmt.Fprintln(errors, "Global options may also be written after the command.")
-		fmt.Fprintln(errors, "Commands:")
-		for _, line := range tui.NonInteractiveCommandHelpLines() {
-			fmt.Fprintln(errors, "  "+line)
-		}
-		fmt.Fprintln(errors, "  interactive        start the interactive REPL (equivalent to -i)")
-		fmt.Fprintln(errors, "Options:")
-		flags.PrintDefaults()
+		writeUsage(errors, flags)
 	}
 	jsonMode := flags.Bool("json", false, "write structured JSON")
 	filter := flags.String("endpoint", "", "filter by endpoint ID")
@@ -101,12 +93,25 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	followShort := flags.Bool("f", false, "short form of --follow")
 	noColor := flags.Bool("no-color", false, "disable terminal colors")
 	noTruncate := flags.Bool("no-truncate", false, "disable table truncation; a narrow terminal wraps instead of clipping")
+	noProgress := flags.Bool("no-progress", false, "disable progress lines for long-running commands")
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
 	folder := flags.String("folder", "", "working folder for start")
 	task := flags.String("task", "", "literal initial task text for start; no JSON is required")
 	generation := flags.String("generation", "", "target generation; alternative to the positional generation argument")
 	interactiveShort := flags.Bool("i", false, "start the interactive REPL (same as the interactive command)")
+	// A help request is a successful request, so it is answered before flag
+	// parsing: Go's flag package reports --help as flag.ErrHelp, which the caller
+	// would otherwise turn into exit code 2 on stderr. The request is detected on
+	// the raw arguments because flag.Parse stops at the first positional, so a
+	// command-level --help would never reach the flag set at all.
+	if requested, target := helpRequest(args); requested {
+		if target == "" {
+			writeUsage(output, flags)
+			return nil
+		}
+		return tui.PrintNonInteractiveCommandHelp(output, target)
+	}
 	if err := flags.Parse(hoistTrailingFlags(args)); err != nil {
 		return err
 	}
@@ -115,6 +120,9 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// Colour eligibility follows the output stream: a redirected stdout cannot
 	// render escape sequences even when stdin is an interactive terminal.
 	output = terminalOutput{Writer: output, full: *noTruncate, color: resolveOutputColor(output, *noColor)}
+	// The diagnostics boundary owns the progress decision, so a redirected stderr
+	// stays silent and --no-progress disables the lines without touching colour.
+	errors = resolveProgressOutput(errors, *noColor, *noProgress)
 	interactiveSelected, err := resolveInteractiveSelection(*interactiveShort, flags.Args())
 	if err != nil {
 		return err
@@ -144,7 +152,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		defer closeEditor()
 		// Colour follows the output boundary, so a REPL whose stdout is redirected
 		// stays plain even though interactive mode requires a terminal on stdin.
-		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: interactiveLines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output)}
+		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: interactiveLines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output), ProgressWriter: errors}
 		return tui.RunInteractive(ctx, api, input, output, errors, wireEditorReaders(options, editor))
 	}
 	switch flags.Arg(0) {
@@ -174,6 +182,11 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return err
 		}
 		return endpoints(ctx, api, output, endpointFilter, *jsonMode, tui.OutputColorPolicy(output))
+	case "history":
+		if flags.NArg() != 2 {
+			return fmt.Errorf("usage: history <endpoint-id-or-hostname>")
+		}
+		return history(ctx, api, output, errors, flags.Arg(1), *jsonMode, tui.OutputColorPolicy(output))
 	case "table":
 		return fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "show":
@@ -206,7 +219,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		}
 		return status(ctx, api, output, flags.Arg(1), *jsonMode)
 	case "drive":
-		return drive(ctx, api, output, flags.Args()[1:], *confirmed, *jsonMode, *waitTimeoutMS, *generation)
+		return driveWithProgress(ctx, api, output, errors, flags.Args()[1:], *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	case "send", "btw", "inject", "control", "start", "resume", "stop":
 		// A bare send, btw, inject or start reads a multi-line block from the
 		// command input. On a terminal nothing else would prompt, so the
@@ -222,12 +235,67 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		color := tui.OutputColorPolicy(output)
 		return action(ctx, api, output, input, errors, color, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
 	case "ctl":
-		return ctlCommand(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
+		return ctlCommandWithProgress(ctx, api, output, errors, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	case "exec":
-		return execCommand(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
+		return execCommandWithProgress(ctx, api, output, errors, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
 	}
+}
+
+// writeUsage renders the global usage block. The flag set's own Usage hook and
+// an explicit help request share it, so the two can never drift. The flag set
+// writes its defaults to its configured output, so that output is redirected for
+// the duration of the call; otherwise a help request answered on stdout would
+// still print its options on stderr.
+func writeUsage(out io.Writer, flags *flag.FlagSet) {
+	previous := flags.Output()
+	flags.SetOutput(out)
+	defer flags.SetOutput(previous)
+	fmt.Fprintln(out, "Usage: agent-cluster-cli [options] <command>")
+	fmt.Fprintln(out, "Global options may also be written after the command.")
+	// The help option is documented once here instead of on every command, so
+	// the command list stays a list of commands rather than a list of options.
+	fmt.Fprintln(out, "Every command accepts --help (or -h) for its detailed help, equivalent to help <command>.")
+	fmt.Fprintln(out, "Commands:")
+	for _, line := range tui.NonInteractiveCommandHelpLines() {
+		fmt.Fprintln(out, "  "+line)
+	}
+	fmt.Fprintln(out, "Options:")
+	flags.PrintDefaults()
+}
+
+// helpRequest reports whether the raw arguments ask for help and which command
+// the request names. It scans the raw arguments because flag.Parse stops at the
+// first positional argument, so a command-level --help would never reach the
+// flag set. A "--" terminator ends the scan: after it every token is data, so
+// "exec <endpoint> <resource> <generation> -- ls --help" still passes --help to
+// ls instead of answering it here.
+func helpRequest(args []string) (bool, string) {
+	target := ""
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			return false, ""
+		}
+		if arg == "--help" || arg == "-h" {
+			return true, target
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			if target == "" {
+				target = arg
+			}
+			continue
+		}
+		// A value-taking global option written as a separate pair owns the next
+		// argument, so a value that happens to look like an option is not
+		// misread as a help request.
+		name, hasValue := splitOptionName(arg)
+		if !hasValue && globalOptionNames[name] && !booleanGlobalOptions[name] && index+1 < len(args) && !strings.HasPrefix(args[index+1], "-") {
+			index++
+		}
+	}
+	return false, ""
 }
 
 // resolveInteractiveSelection decides whether the invocation enters the REPL.
@@ -279,6 +347,7 @@ func resolveInteractiveLines(flags *flag.FlagSet, value int) (int, error) {
 var globalOptionNames = map[string]bool{
 	"json": true, "endpoint": true, "yes": true, "server-url": true, "token": true,
 	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "no-color": true,
+	"no-progress": true,
 	"profile": true, "profile-revision": true, "folder": true, "task": true,
 	"generation": true, "i": true, "follow": true, "f": true,
 }
@@ -286,7 +355,7 @@ var globalOptionNames = map[string]bool{
 // booleanGlobalOptions lists the hoisted options that take no value, so hoisting
 // never swallows the following argument as if it were that option's value.
 var booleanGlobalOptions = map[string]bool{
-	"json": true, "yes": true, "no-color": true, "i": true, "follow": true, "f": true,
+	"json": true, "yes": true, "no-color": true, "no-progress": true, "i": true, "follow": true, "f": true,
 }
 
 // hoistTrailingFlags moves recognized global options that appear after the
@@ -396,6 +465,17 @@ func legacyRunner(api tui.CommandAPI) tui.CommandRunner {
 	return tui.CommandRunner{API: api, Policy: tui.LegacyPolicy}
 }
 
+// history renders bounded provider session history for one endpoint.
+//
+// The endpoint argument is mandatory because a history query is endpoint-scoped:
+// provider session IDs may collide across endpoints, so a fleet-wide merge could
+// not be joined to the persisted inventory unambiguously.
+func history(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target string, jsonMode bool, color tui.ColorPolicy) error {
+	options := tui.TableOptionsFor(output)
+	options.Color = color
+	return legacyRunner(api).History(ctx, output, errors, target, jsonMode, options)
+}
+
 func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, jsonMode bool, color tui.ColorPolicy) error {
 	options := tui.TableOptionsFor(output)
 	options.Color = color
@@ -410,7 +490,20 @@ func refresh(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, 
 	defer cancel()
 	options := tui.TableOptionsFor(output)
 	options.Color = color
-	return legacyRunner(api).Refresh(refreshCtx, output, errors, filter, jsonMode, options)
+	// A forced collection is the longest silent wait on the read surface, so it
+	// reports progress like a command does. The reporter is built from the
+	// diagnostics stream, so a redirected stream stays silent.
+	progress := tui.NewProgress(errors, refreshProgressHeader(filter))
+	return legacyRunner(api).RefreshWithProgress(refreshCtx, output, errors, filter, jsonMode, options, progress)
+}
+
+// refreshProgressHeader describes the forced collection in flight. A scoped
+// refresh names its Endpoint, because the operator asked for that exact one.
+func refreshProgressHeader(filter string) string {
+	if filter == "" {
+		return "refreshing all endpoints..."
+	}
+	return "refreshing endpoint " + tui.SanitizeInlineText(filter) + "..."
 }
 
 // endpoints renders the endpoint projection for the standalone CLI.
@@ -482,6 +575,12 @@ func followLogs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpo
 // the persisted inventory; start and stop admit one durable command through the
 // same runner the interactive surface uses, so the two cannot diverge.
 func drive(ctx context.Context, api tui.CommandAPI, output io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
+	return driveWithProgress(ctx, api, output, nil, args, confirmed, jsonMode, waitTimeoutMS, generationFlag)
+}
+
+// driveWithProgress is drive with a diagnostics stream for progress lines. A nil
+// diagnostics stream keeps the previous silent behaviour.
+func driveWithProgress(ctx context.Context, api tui.CommandAPI, output, diagnostics io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: drive <start|stop|status> <endpoint> <session> [generation]")
 	}
@@ -515,6 +614,7 @@ func drive(ctx context.Context, api tui.CommandAPI, output io.Writer, args []str
 	}
 	request := tui.ActionRequest{Operation: operation, OperationLabel: "drive " + action, EndpointID: endpointID, ResourceID: resourceID, Generation: generation, Payload: json.RawMessage(`{}`), Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS}
 	runner := legacyRunner(api)
+	progress := tui.NewActionProgress(diagnostics, request)
 	intent, err := runner.PrepareAction(ctx, request)
 	if err != nil {
 		return err
@@ -523,7 +623,7 @@ func drive(ctx context.Context, api tui.CommandAPI, output io.Writer, args []str
 	if err != nil {
 		return err
 	}
-	result, err := runner.WaitAction(ctx, actionResult, intent.Budget)
+	result, err := runner.WaitActionWithProgress(ctx, actionResult, intent.Budget, progress)
 	if err != nil {
 		return err
 	}
@@ -567,6 +667,16 @@ func resolveActionPayload(operation, value string) (json.RawMessage, error) {
 // resolved by the caller, because only it knows whether the output is a terminal.
 func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.Reader, diagnostics io.Writer, color tui.ColorPolicy, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision, folder, task, generationFlag string) error {
 	operation := args[0]
+	// A "--" after the command word ends option parsing, so everything after it is
+	// literal data. The head is still checked for misplaced flags, because a flag
+	// written before the terminator would silently become a payload or a target
+	// generation; the tail is never inspected, so a message that begins with a dash
+	// can be sent without escaping it.
+	head, tail := splitTerminator(args)
+	if err := rejectMisplacedFlags(args[0], head); err != nil {
+		return err
+	}
+	args = append(append([]string{}, head...), tail...)
 	if operation == "stop" && len(args) < 4 && generationFlag == "" {
 		return fmt.Errorf("usage: stop <endpoint-id> <resource-id> <generation>")
 	}
@@ -574,12 +684,6 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 		return fmt.Errorf("usage: %s <endpoint-id> <resource-id> [text] [generation]", operation)
 	}
 	endpointID, resourceID := args[1], args[2]
-	// flag.Parse stops at the first positional, so a flag written after the command stays
-	// positional and would silently become a payload or a target generation. Reject it
-	// explicitly instead of corrupting the target.
-	if err := rejectMisplacedFlags(args[0], args); err != nil {
-		return err
-	}
 	// The documented syntax accepts at most one text and one generation positional. A
 	// value supplied by a flag removes its positional slot, so an unquoted multi-word
 	// message is rejected instead of being silently truncated to its first word.
@@ -684,6 +788,11 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 	operationValue := operationName(operation)
 	request := tui.ActionRequest{Operation: operationValue, OperationLabel: operation, EndpointID: endpointID, ResourceID: resourceID, Generation: generation, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS, Profile: profile, ProfileRevision: profileRevision, Folder: folder}
 	runner := legacyRunner(api)
+	// Progress is created before the capability preflight, because that preflight
+	// is itself a network round trip the operator would otherwise wait through
+	// silently. The reporter is nil when the diagnostics stream cannot render it,
+	// so a redirected or disabled stream costs nothing.
+	progress := tui.NewActionProgress(diagnostics, request)
 	intent, err := runner.PrepareAction(ctx, request)
 	if err != nil {
 		return err
@@ -692,7 +801,7 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 	if err != nil {
 		return err
 	}
-	result, err := runner.WaitAction(ctx, actionResult, intent.Budget)
+	result, err := runner.WaitActionWithProgress(ctx, actionResult, intent.Budget, progress)
 	if err != nil {
 		return err
 	}
@@ -729,6 +838,21 @@ func rejectMisplacedFlags(command string, args []string) error {
 		return fmt.Errorf("option %q must be written before the command; run help %s for valid syntax", arg, command)
 	}
 	return nil
+}
+
+// splitTerminator separates the option-bearing head of a command line from the
+// literal tail written after "--". args[0] is the command word, so a "--" at
+// index 0 is not a terminator. Everything after the first "--" is data: it is
+// never inspected for flags, so a payload that begins with a dash can be sent
+// without the operator escaping it. The tail is returned separately because the
+// caller must still apply its positional rules to it.
+func splitTerminator(args []string) (head, tail []string) {
+	for index := 1; index < len(args); index++ {
+		if args[index] == "--" {
+			return args[:index], args[index+1:]
+		}
+	}
+	return args, nil
 }
 
 // rejectExtraPositionals fails when more positional arguments are supplied than the

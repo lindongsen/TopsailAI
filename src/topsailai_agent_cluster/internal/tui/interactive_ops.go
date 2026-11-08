@@ -378,7 +378,9 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
+	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS}
+	progress := NewActionProgress(options.ProgressWriter, request)
+	intent, err := runner.PrepareAction(ctx, request)
 	if err != nil {
 		return err
 	}
@@ -391,7 +393,7 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	if _, err = fmt.Fprintln(out, "command submitted:", state.commandID); err != nil {
 		return err
 	}
-	actionResultData, err := runner.WaitAction(ctx, actionResult, intent.Budget)
+	actionResultData, err := runner.WaitActionWithProgress(ctx, actionResult, intent.Budget, progress)
 	if err != nil {
 		return err
 	}
@@ -540,7 +542,7 @@ func interactiveStart(parent context.Context, api InteractiveAPI, state *interac
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	intent, err := runner.PrepareAction(ctx, ActionRequest{
+	actionRequest := ActionRequest{
 		Operation:       protocol.OperationAgentStart,
 		OperationLabel:  "start",
 		EndpointID:      request.EndpointID,
@@ -551,7 +553,9 @@ func interactiveStart(parent context.Context, api InteractiveAPI, state *interac
 		ProfileRevision: request.ProfileRevision,
 		Folder:          request.Folder,
 		WaitTimeoutMS:   options.WaitTimeoutMS,
-	})
+	}
+	progress := NewActionProgress(options.ProgressWriter, actionRequest)
+	intent, err := runner.PrepareAction(ctx, actionRequest)
 	if err != nil {
 		return err
 	}
@@ -564,7 +568,7 @@ func interactiveStart(parent context.Context, api InteractiveAPI, state *interac
 	if _, err := fmt.Fprintf(out, "command submitted: %s; use status %s to query\n", state.commandID, state.commandID); err != nil {
 		return err
 	}
-	result, err := runner.WaitAction(ctx, action, intent.Budget)
+	result, err := runner.WaitActionWithProgress(ctx, action, intent.Budget, progress)
 	if err != nil {
 		return fmt.Errorf("command %s status unavailable; use status %s to query; %w", state.commandID, state.commandID, err)
 	}
@@ -636,68 +640,6 @@ func renderInteractiveStartResult(out io.Writer, commandID string, result map[st
 	return renderProviderResponse(out, receipt.ProviderResponse, receipt.ProviderResponseTruncated)
 }
 
-// parseInteractivePayload rejects every argument for a lifecycle command that takes none.
-// The interactive grammar never asks the operator to compose a JSON payload: the standard
-// empty object is supplied here, so the provider contract is unchanged while the operator
-// only ever types the command name.
-func parseInteractivePayload(name, rest string) (json.RawMessage, error) {
-	args, err := splitInteractiveArguments(rest)
-	if err != nil {
-		return nil, err
-	}
-	if len(args) == 0 {
-		return json.RawMessage(`{}`), nil
-	}
-	if len(args) == 1 && args[0] == "--json" {
-		return nil, fmt.Errorf("interactive %s does not support --json", name)
-	}
-	return nil, fmt.Errorf("usage: %s", name)
-}
-
-// interactiveSessionLifecycle executes resume or stop against the selected fresh session.
-// Preflight authority checks run under the command deadline; the human confirmation is
-// read afterwards with the cancel-only parent context.
-func interactiveSessionLifecycle(parent context.Context, api InteractiveAPI, state *interactiveState, name, rest string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
-	payload := json.RawMessage(`{}`)
-	var err error
-	if name == "resume" {
-		payload, err = parseInteractivePayload(name, rest)
-	} else {
-		err = rejectInteractiveOption(name, rest)
-		if err == nil && strings.TrimSpace(rest) != "" {
-			err = fmt.Errorf("usage: stop")
-		}
-	}
-	if err != nil {
-		return err
-	}
-	ctx, cancel := commandContext(parent)
-	if err := state.requireUsable(); err != nil {
-		cancel()
-		return err
-	}
-	if name == "resume" {
-		if err := validateResumeSelectionAbsent(ctx, api, state); err != nil {
-			cancel()
-			return err
-		}
-		cancel()
-		revalidate := func(revalidateCtx context.Context) error {
-			return validateResumeSelectionAbsent(revalidateCtx, api, state)
-		}
-		return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentResume, name, confirmationTargetForSelection(state), state.Generation, payload, lines, out, trustedOut, options, revalidate, nil)
-	}
-	_, _, session, err := findSelected(ctx, api, state)
-	cancel()
-	if err != nil {
-		return err
-	}
-	postSubmit := func(postCtx context.Context, result map[string]any) error {
-		return reconcileStoppedSelection(postCtx, api, state, session.SessionID, out)
-	}
-	return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentStop, name, confirmationTargetFor(*session), session.Generation, payload, lines, out, trustedOut, options, nil, postSubmit)
-}
-
 // reconcileStoppedSelection leaves the session scope once a fresh inventory proves the
 // stopped session is no longer reported. The durable receipt stays the only authority for
 // what happened; this reconciliation only decides where the operator continues working, so
@@ -728,38 +670,6 @@ func reconcileStoppedSelection(ctx context.Context, api InteractiveAPI, state *i
 	state.enterEndpoint(endpoint)
 	_, err = fmt.Fprintf(out, "session %s is no longer reported by endpoint %s; returned to endpoint scope\n", sessionID, endpoint.EndpointID)
 	return err
-}
-
-// validateResumeSelectionAbsent proves from a complete fresh adapter inventory that the selected historical session has no live generation.
-func validateResumeSelectionAbsent(ctx context.Context, api InteractiveAPI, state *interactiveState) error {
-	if err := state.requireUsable(); err != nil {
-		return err
-	}
-	loaded, err := loadReports(ctx, api, state.EndpointID)
-	if err != nil {
-		return err
-	}
-	report, ok := loaded.reports[state.EndpointID]
-	if !ok || !report.ReportComplete || report.CollectionStatus != protocol.CollectionSucceeded {
-		return fmt.Errorf("endpoint %q inventory cannot prove the selected session is stopped", state.EndpointID)
-	}
-	if state.Scope.AdapterID == "" {
-		return fmt.Errorf("selected session adapter is unknown; use the session again")
-	}
-	if err := validateAdapterFreshness(report, state.Scope.AdapterID); err != nil {
-		return err
-	}
-	for _, session := range report.Sessions {
-		if session.SessionID != state.SessionID {
-			continue
-		}
-		if session.Generation != state.Generation {
-			state.invalidate("selected session generation changed")
-			return fmt.Errorf("selected session generation changed; use the session again")
-		}
-		return fmt.Errorf("selected session %q is still live; stop it before resume", state.SessionID)
-	}
-	return nil
 }
 
 // interactiveSessionPayload executes context injection or interruption with confirmation.
@@ -890,7 +800,9 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 		return err
 	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.SessionID, Generation: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
+	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.SessionID, Generation: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS}
+	progress := NewActionProgress(options.ProgressWriter, actionRequest)
+	intent, err := runner.PrepareAction(ctx, actionRequest)
 	if err != nil {
 		return err
 	}
@@ -900,7 +812,7 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 		return fmt.Errorf("command %s result unknown; use status %s to query; %w", intent.CommandID, intent.CommandID, err)
 	}
 	state.commandID = action.CommandID
-	result, err := runner.WaitAction(ctx, action, intent.Budget)
+	result, err := runner.WaitActionWithProgress(ctx, action, intent.Budget, progress)
 	if err != nil {
 		return err
 	}

@@ -73,7 +73,7 @@ see the effect.
   multi-line block and asks once, because the assembled block is never echoed as a
   whole and the question is the only place the operator can see it before it is
   admitted. The confirmation gate stays on every operation that cannot be undone:
-  `stop`, `resume`, `inject`, `interrupt`, `ctl` and `drive start`.
+  `stop`, `inject`, `interrupt`, `ctl` and `drive start`.
 - A confirmation question names the provider session identifier first, followed by
   the opaque cluster resource ID in parentheses, for example
   `stop session provider-res-1 (res-1)? Confirm stop?`. The provider identifier is
@@ -92,6 +92,7 @@ was dispatched rather than rejected as unknown.
 |---|---|---|---|
 | `list` | `list` | `list`, `l` | yes |
 | `refresh` | `refresh` | `refresh`, `r` | yes |
+| `history` | `history <endpoint-id-or-hostname>` | `history [endpoint-id-or-hostname]` | yes (standalone requires the endpoint argument; interactive requires it in workspace scope, and in endpoint scope it defaults to the current endpoint while rejecting a different one) |
 | `endpoints` | `endpoints` | `endpoints` | yes |
 | `show` | `show` | `show` | yes |
 | `info` | `info` | `info` | yes |
@@ -103,7 +104,7 @@ was dispatched rather than rejected as unknown.
 | `ctl.<action>` | `ctl` | `ctl`, `ctl.<action>` | yes |
 | `command.exec` | `exec` | `!<argv...>` | yes |
 | `agent.start` | `start` | `start` | yes |
-| `agent.resume` | `resume` | `resume` | yes |
+| `agent.resume` | `resume` | not applicable | yes (standalone only: session scope requires a live generation while resume authorizes on a proven absence, so the interactive spelling was removed) |
 | `agent.stop` | `stop` | `stop` | yes |
 | `agent.drive.start` | `drive start` | `drive start [session]` | yes |
 | `agent.drive.stop` | `drive stop` | `drive stop [session]` | yes |
@@ -138,6 +139,15 @@ registry as `r` and `q`. It is absent from the standalone surface, which accepts
 only the canonical `list` spelling. Because `canonicalCommandName` runs before the
 dispatch switch, `l` inherits `list`'s arguments, scope availability and usage
 diagnostics unchanged, and it does not shadow the longer `logs` spelling.
+
+An alias answers with the spelling the operator typed. `help btw` is headed `btw`
+and `help l` is headed `l`, while the body stays the canonical command's body, so
+an alias never advertises a different contract and never answers with a name the
+operator did not use. The heading is the only difference: syntax, scope line,
+description, parameters, examples and fields are identical, which is why the
+alias tests compare bodies rather than whole output. The standalone surface adds
+an `Alias of:` line after the body, because there the operator may not know that
+the spelling they typed is an alias.
 
 `cd` and `quit` navigate a session that only exists inside the interactive loop, so
 they have no standalone meaning and are not gaps.
@@ -410,6 +420,7 @@ invocation. They never change query semantics or the data returned by the API.
 |---|---|
 | `--no-color` | Disable terminal colors |
 | `--no-truncate` | Disable table truncation; a narrow terminal wraps instead of clipping |
+| `--no-progress` | Disable progress lines for long-running commands |
 
 `--no-truncate` is the switch for a small terminal. Truncation stays the default,
 because a bounded table is what keeps a wide fleet readable. With the switch set,
@@ -429,6 +440,93 @@ width plus truncation state, so every render path inherits the switch without
 threading a new parameter through each command, and the interactive prompt editor
 keeps the real terminal width as its editing budget.
 
+## Help option and the literal terminator
+
+`--help` and `-h` are global meta-options, not per-command syntax. They are
+documented once in the usage header and never repeated in each command entry,
+because a repeated description drifts into inconsistent wording and reads like a
+different feature per command.
+
+- A help request is a successful request: it exits `0` and writes to stdout, so
+  `agent-cluster-cli list --help | less` works and a script never mistakes help
+  for a failure.
+- `--help` renders exactly the same detail as `help <command>`, including
+  parameters, examples and fields. One renderer serves both surfaces, so the two
+  spellings cannot diverge.
+- The option is recognized after the command word and before that command's own
+  argument validation, so `list --help` is answered instead of being reported as
+  a usage error.
+- `--` ends option parsing. Before it, `--help` is a help request; after it,
+  everything is literal data. `send ep res -- --help` therefore sends the text
+  `--help`, and `ctl ep res action -- {"k":"v"}` accepts a payload that begins
+  with a dash. `exec` keeps its own `--` because the terminator is part of its
+  documented syntax.
+- The interactive REPL has no `--help`. `send`, `btw`, `inject`, `interrupt` and
+  `control` take the rest of the line as literal content, so `send --help` sends
+  the text `--help`; `help send` is the only help entry there. The standalone
+  command can separate the command word from the payload by argv position, which
+  is why the option exists only there.
+
+### Exception: interactive `send` and `btw` accept no options
+
+`send` and `btw` are the two commands whose entire remaining line is the payload,
+so in the REPL they accept no options at all. This is an explicit exception, not
+an oversight, and it applies only to the interactive surface.
+
+- `send --help` and `btw --help` send the literal text `--help`. They do not
+  render help, because the REPL cannot tell an option from a message: the rest of
+  the line is the message.
+- `help send` and `help btw` are the only help entries in the REPL. The
+  interactive help for both commands states this exception, so an operator learns
+  it from the help text instead of discovering it by sending `--help` as a
+  message.
+- `--json` is rejected rather than sent, because a payload that is only the
+  option is a mistake, not a message. Ordinary prose that merely contains
+  `--json` stays literal text.
+- The standalone `send` and `btw` commands keep `--help`, because argv position
+  separates the command word from the payload there. `agent-cluster-cli send
+  --help` renders the same detail as `agent-cluster-cli help send`, and the
+  standalone help does not advertise the interactive restriction.
+- `inject` is the same command as `btw`, so the exception covers both spellings.
+  `interrupt` and `control` also take literal content, but they are not part of
+  this exception because their first token is an action word, not free text.
+
+## Progress lines
+
+A command that waits for a durable result reports what it is doing while it waits.
+The wait is real: a `send` takes seconds and a forced collection can take longer,
+so a silent terminal leaves the operator unable to tell work from a hang.
+
+Progress is written to the diagnostics stream, never to the output stream. The
+output stream is the machine contract, so `--json` output stays a single valid
+document and a redirected stdout never receives a progress line.
+
+The diagnostics boundary owns the decision, exactly as the output boundary owns
+colour. Progress is enabled only when the diagnostics stream is a terminal, so a
+redirected or piped stderr stays silent without the caller configuring anything.
+`--no-progress` disables the lines explicitly. `--no-color` keeps the lines and
+removes only their styling, because the lines carry the information and the colour
+does not.
+
+A command that finishes within 200 milliseconds prints nothing, because a hint
+that appears and disappears within one frame is noise rather than information. The
+fast read commands therefore stay silent, and only a command that actually makes
+the operator wait reports progress.
+
+Every stage row comes from a durable command state the client already polled, and
+the wording comes from the same label the final receipt uses. A progress row
+therefore never claims more than the receipt will: it reports delivery and
+execution stages, and it never reports success before the receipt does. A repeated
+stage is not a new fact and is printed once.
+
+Progress never animates. The interactive diagnostics writer strips carriage
+returns and cursor control, so an in-place animation would be printed as
+replacement runes; and a spinner unrelated to real progress would be a fabricated
+signal. Stages are printed as discrete lines instead.
+
+Progress is presentation only. A write failure is ignored, so a closed diagnostics
+stream never changes the outcome of the command it describes, and a caller that
+supplies no diagnostics stream keeps the previous silent behaviour.
 ## Interactive input block
 
 The prompt editor renders the current edit as a soft-wrapped block instead of a

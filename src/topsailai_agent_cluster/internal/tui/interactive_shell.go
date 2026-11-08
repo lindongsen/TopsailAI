@@ -137,7 +137,7 @@ func runShellCommand(parent context.Context, api InteractiveAPI, state *interact
 		return err
 	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	intent, err := runner.PrepareAction(ctx, ActionRequest{
+	actionRequest := ActionRequest{
 		Operation:      protocol.OperationCommandExec,
 		OperationLabel: "exec",
 		EndpointID:     state.EndpointID,
@@ -146,7 +146,9 @@ func runShellCommand(parent context.Context, api InteractiveAPI, state *interact
 		Payload:        payload,
 		Confirmed:      true,
 		WaitTimeoutMS:  options.WaitTimeoutMS,
-	})
+	}
+	progress := NewActionProgress(options.ProgressWriter, actionRequest)
+	intent, err := runner.PrepareAction(ctx, actionRequest)
 	if err != nil {
 		return err
 	}
@@ -156,7 +158,7 @@ func runShellCommand(parent context.Context, api InteractiveAPI, state *interact
 		return fmt.Errorf("command %s result unknown; use status %s to query; %w", intent.CommandID, intent.CommandID, err)
 	}
 	state.commandID = action.CommandID
-	result, err := runner.WaitAction(ctx, action, intent.Budget)
+	result, err := runner.WaitActionWithProgress(ctx, action, intent.Budget, progress)
 	if err != nil {
 		return fmt.Errorf("command %s status unavailable; use status %s to query; %w", state.commandID, state.commandID, err)
 	}

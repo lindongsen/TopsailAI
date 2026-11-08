@@ -35,7 +35,10 @@ var commandScopeMatrix = []commandScopeRule{
 	{Name: "show", Workspace: true, Endpoint: true, Session: true},
 	{Name: "info", Workspace: true, Endpoint: true, Session: true},
 	{Name: "start", Workspace: true, Endpoint: true},
-	{Name: "resume", Session: true},
+	// resume is available only where a history row can be selected: session scope
+	// requires a live generation, while resume authorizes on a proven absence, so
+	// the two conditions are mutually exclusive and session scope stays excluded.
+	{Name: "resume", Workspace: true, Endpoint: true},
 	{Name: "stop", Workspace: true, Endpoint: true, Session: true},
 	{Name: "inject", Session: true},
 	{Name: "interrupt", Session: true},
@@ -46,6 +49,9 @@ var commandScopeMatrix = []commandScopeRule{
 	{Name: "status", Workspace: true, Endpoint: true, Session: true},
 	{Name: "refresh", Workspace: true, Endpoint: true, Session: true},
 	{Name: "watch", Workspace: true, Endpoint: true},
+	// history is a read-only projection of retained provider history, so it is
+	// available wherever an endpoint can be resolved and never in session scope.
+	{Name: "history", Workspace: true, Endpoint: true},
 	{Name: "help", Workspace: true, Endpoint: true, Session: true},
 	{Name: "quit", Workspace: true, Endpoint: true, Session: true},
 	{Name: "exit", Workspace: true, Endpoint: true, Session: true},

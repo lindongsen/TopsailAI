@@ -93,9 +93,16 @@ func (r CommandRunner) SubmitAction(ctx context.Context, intent protocol.Immutab
 
 // WaitAction polls the durable command result within the requested local budget.
 func (r CommandRunner) WaitAction(ctx context.Context, action ActionResult, budget protocol.Budget) (map[string]any, error) {
+	return r.WaitActionWithProgress(ctx, action, budget, nil)
+}
+
+// WaitActionWithProgress polls the durable command result and reports each
+// observed lifecycle stage to progress. The reporter is presentation only, so a
+// nil reporter keeps the previous behaviour exactly.
+func (r CommandRunner) WaitActionWithProgress(ctx context.Context, action ActionResult, budget protocol.Budget, progress *ActionProgress) (map[string]any, error) {
 	waitCtx, cancel := WaitContext(context.WithoutCancel(ctx), budget)
 	defer cancel()
-	return WaitForTerminal(waitCtx, r.API, action.CommandID, 100*time.Millisecond)
+	return WaitForTerminalWithProgress(waitCtx, r.API, action.CommandID, 100*time.Millisecond, progress)
 }
 
 // RenderAction writes the policy-specific action result.

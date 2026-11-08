@@ -66,6 +66,11 @@ type InteractiveOptions struct {
 	// a separate seam because ReadLine is a function value and cannot be type
 	// asserted, and because a reader without it must refuse watch explicitly.
 	WatchReader WatchLineReader
+	// ProgressWriter receives progress lines for long-running commands. It is a
+	// separate seam because the REPL diagnostics writer sanitizes untrusted text
+	// and therefore cannot report a progress boundary itself. A nil writer keeps
+	// the REPL silent, so a caller that supplies none loses nothing.
+	ProgressWriter io.Writer
 	// Ticks injects the auto-refresh tick source; nil selects the real ticker.
 	Ticks             WatchTicker
 	watcherExit       func(bool)
@@ -87,6 +92,10 @@ type interactiveState struct {
 	// follow is the armed output-follow intent; it is consumed by the next
 	// prompt, so a keypress that stops the stream cannot re-arm it.
 	follow *followRequest
+	// history is the row-number namespace produced by the most recent history
+	// render. It is nil until history renders, and rendering a list clears it, so
+	// a number always means the row of the table the operator last saw.
+	history *historyNamespace
 }
 
 type interruptController struct {
@@ -508,6 +517,10 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		// The endpoint table is trusted application styling over sanitized cells,
 		// so it renders through the trusted writer like list and refresh.
 		return false, interactiveEndpoints(ctx, api, rest, trustedOut, options.Color)
+	case "history":
+		// The history table is trusted application styling over sanitized cells,
+		// so it renders through the trusted writer like list and endpoints.
+		return false, interactiveHistory(ctx, api, state, rest, trustedOut, errOut, options.Color)
 	case "table":
 		return false, fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "use":
@@ -581,7 +594,9 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		}
 		return false, startOutputError(commandErr, recorder, startOut, startTrustedOut, startErrOut)
 	case "resume":
-		return false, interactiveSessionLifecycle(ctx, api, state, name, rest, lineResults, out, trustedOut, options)
+		// Resume authorizes on the provider session being absent, so it is
+		// dispatched from the history namespace rather than the live one.
+		return false, interactiveResume(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	case "stop":
 		return false, interactiveStop(ctx, api, state, rest, lineResults, out, trustedOut, options)
 	case "inject", "btw":
@@ -774,6 +789,9 @@ func interactiveList(parent context.Context, api InteractiveAPI, state *interact
 		return err
 	}
 	state.Rows = nil
+	// A list render restores the live namespace, so a history row number can
+	// never survive into a table that no longer shows history rows.
+	state.history = nil
 	staged := make([]SessionRow, 0)
 	ctx, cancel := commandContext(parent)
 	defer cancel()

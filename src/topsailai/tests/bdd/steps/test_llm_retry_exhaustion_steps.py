@@ -526,3 +526,79 @@ def then_sigint_resources_are_cleaned_up(llm_retry_ctx):
     assert llm_retry_ctx.sigint_server_closed
     assert llm_retry_ctx.sigint_server_socket_closed
     assert llm_retry_ctx.server_owner is None
+
+
+@given(
+    "an LLM retry scenario whose bounded request cycle returns the incident "
+    "provider stream error"
+)
+def given_incident_provider_stream_error(llm_retry_ctx):
+    """Script the incident stream error frame for one bounded request cycle."""
+    llm_retry_ctx.script_incident_stream_error_then_success()
+    assert llm_retry_ctx.server_owner.thread.is_alive()
+
+
+@when("the interactive user abandons the failed turn and sends a fresh message")
+def when_interactive_user_abandons_failed_turn(llm_retry_ctx):
+    """Abandon the failed turn, then run one fresh User2Agent turn."""
+    llm_retry_ctx.run_provider_failure_to_fresh_message()
+
+
+@when("the same provider stream failure occurs without an interactive user")
+def when_provider_failure_without_interactive_user(llm_retry_ctx):
+    """Run the same provider failure with interactivity explicitly disabled."""
+    llm_retry_ctx.run_provider_failure_non_interactive()
+
+
+@then("the provider failure scenario kept the session alive and ran the fresh turn")
+def then_provider_failure_kept_session_alive(llm_retry_ctx):
+    """Assert the process survived and only the fresh turn produced an answer."""
+    assert llm_retry_ctx.error is None
+    assert llm_retry_ctx.result == SUCCESS_RESPONSE
+    assert llm_retry_ctx.agent is not None
+    assert llm_retry_ctx.agent.run_messages == ["old request", "fresh request"]
+
+
+@then("the provider failure scenario ignored blank and formatting-empty fresh input")
+def then_provider_failure_ignored_empty_input(llm_retry_ctx):
+    """Assert only a non-empty formatted message starts the next Agent turn."""
+    assert llm_retry_ctx.provider_recovery_input_calls == 3
+    assert llm_retry_ctx.agent is not None
+    assert llm_retry_ctx.agent.run_messages == ["old request", "fresh request"]
+
+
+@then("the provider failure scenario sent 18 failed requests followed by one fresh request")
+def then_provider_failure_wire_requests(llm_retry_ctx):
+    """Prove the failed turn never replays its old request after the failure."""
+    bodies = llm_retry_ctx.request_bodies()
+    assert len(bodies) == MAX_ATTEMPTS + 1
+    old_bodies = bodies[:MAX_ATTEMPTS]
+    assert all(body == old_bodies[0] for body in old_bodies[1:])
+    assert all(body["messages"][-1]["content"] == "old request" for body in old_bodies)
+    assert bodies[MAX_ATTEMPTS]["messages"][-1] == {
+        "role": "user",
+        "content": "fresh request",
+    }
+
+
+@then("the provider failure scenario reported the failure hook exactly once")
+def then_provider_failure_reported_failure_hook(llm_retry_ctx):
+    """Assert the abandoned turn reports one failure without a success hook."""
+    assert llm_retry_ctx.provider_recovery_fail_hooks == 1
+
+
+@then("the provider failure scenario sent exactly 18 completion requests")
+def then_provider_failure_sent_eighteen_requests(llm_retry_ctx):
+    """Assert the non-interactive path stops at the bounded automatic budget."""
+    state = llm_retry_ctx.state()
+    assert state["total_requests"] == MAX_ATTEMPTS, state
+    assert len(state["request_bodies"]) == MAX_ATTEMPTS, state
+    assert all(record["parsed"] for record in state["request_bodies"]), state
+
+
+@then("the provider failure scenario terminates with a bounded exhaustion error")
+def then_provider_failure_terminates_with_exhaustion(llm_retry_ctx):
+    """Assert the non-interactive path fails fast with the bounded exhaustion error."""
+    assert isinstance(llm_retry_ctx.error, LLMRetryExhaustedError), llm_retry_ctx.error
+    assert llm_retry_ctx.agent is not None
+    assert llm_retry_ctx.agent.run_messages == ["old request"]

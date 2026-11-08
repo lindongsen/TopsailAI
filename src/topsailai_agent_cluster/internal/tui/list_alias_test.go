@@ -34,7 +34,8 @@ func TestListAliasRendersSameTable(t *testing.T) {
 }
 
 // TestListAliasMatchesCanonicalHelp proves the alias resolves to the canonical
-// help text, so the alias never advertises a different contract.
+// help body, so the alias never advertises a different contract, while the
+// heading keeps the spelling the operator typed.
 func TestListAliasMatchesCanonicalHelp(t *testing.T) {
 	var aliasHelp, canonicalHelp strings.Builder
 	if err := PrintScopedCommandHelp(&aliasHelp, "l", ScopeWorkspace); err != nil {
@@ -43,8 +44,16 @@ func TestListAliasMatchesCanonicalHelp(t *testing.T) {
 	if err := PrintScopedCommandHelp(&canonicalHelp, "list", ScopeWorkspace); err != nil {
 		t.Fatal(err)
 	}
-	if aliasHelp.String() != canonicalHelp.String() {
-		t.Fatalf("alias help differs from canonical help: alias=%q canonical=%q", aliasHelp.String(), canonicalHelp.String())
+	aliasHeading, aliasBody := splitHelpHeading(aliasHelp.String())
+	canonicalHeading, canonicalBody := splitHelpHeading(canonicalHelp.String())
+	if aliasHeading != "l" {
+		t.Fatalf("alias heading = %q, want the typed spelling %q", aliasHeading, "l")
+	}
+	if canonicalHeading != "list" {
+		t.Fatalf("canonical heading = %q, want %q", canonicalHeading, "list")
+	}
+	if aliasBody != canonicalBody {
+		t.Fatalf("alias help body differs from canonical help body: alias=%q canonical=%q", aliasBody, canonicalBody)
 	}
 }
 

@@ -499,13 +499,39 @@ def test_response_adapter_translates_litellm_wrapped_connection_error():
         "服务器繁忙，请稍后再试。",
         "APIConnectionError: incidental provider error",
         "litellm.APIError: unrelated provider error",
+        "litellm.InternalServerError: The model is repeating the same chunk =   |  |  |.",
     ],
 )
-def test_response_adapter_preserves_unrelated_base_openai_api_errors(message):
-    """Only the LiteLLM connection-error marker receives compatibility retrying."""
+def test_response_adapter_translates_base_openai_api_errors_as_internal_server(
+    message,
+):
+    """A stream-embedded base API error joins the retryable internal-server path.
+
+    The SDK raises the base ``openai.APIError`` when a streaming response
+    delivers an error frame instead of a chunk. Leaving it untranslated sent the
+    failure to the generic unknown branch, which prompted the operator instead
+    of auto-retrying and never rebuilt the client.
+    """
     source_error = _make_openai_api_error(message)
 
-    assert OpenAIResponseAdapter.translate_error(source_error) is source_error
+    translated = OpenAIResponseAdapter.translate_error(source_error)
+
+    assert isinstance(translated, LLMProviderInternalServerError)
+    assert str(translated) == str(source_error)
+    assert translated.response is getattr(source_error, "response", None)
+    assert translated.body is getattr(source_error, "body", None)
+
+
+def test_response_adapter_keeps_specific_subclasses_ahead_of_base_api_error():
+    """Specific SDK subclasses must never be shadowed by the base fallback."""
+    source_error = _make_openai_status_error(
+        openai.RateLimitError, "rate limited"
+    )
+
+    translated = OpenAIResponseAdapter.translate_error(source_error)
+
+    assert isinstance(translated, LLMProviderRateLimitError)
+    assert not isinstance(translated, LLMProviderInternalServerError)
 
 
 def test_response_adapter_preserves_unrecognized_errors():

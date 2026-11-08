@@ -38,6 +38,7 @@ class _LLMChatRetryControlError(Exception):
         manual_cycle_count: int = 0,
         last_error: Exception | None = None,
         retry_reason: str = "unknown",
+        explicit_exit: bool = False,
     ) -> None:
         """Initialize details for the LLM chat request retry decision."""
         super().__init__(message)
@@ -45,7 +46,10 @@ class _LLMChatRetryControlError(Exception):
         self.manual_cycle_count = manual_cycle_count
         self.last_error = last_error
         self.retry_reason = retry_reason
-
+        # True only when the interactive user deliberately chose Exit in the
+        # retry-exhaustion menu. Automatic exhaustion leaves it False so the
+        # caller can tell "the budget ran out" apart from "the human said stop".
+        self.explicit_exit = explicit_exit
 
 class LLMRetryExhaustedError(_LLMChatRetryControlError):
     """Report terminal exhaustion of bounded retries for one LLM chat request."""

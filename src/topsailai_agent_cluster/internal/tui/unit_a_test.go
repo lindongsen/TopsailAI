@@ -113,8 +113,19 @@ func TestUnitACommandMetadataIsConsistent(t *testing.T) {
 		if err := PrintScopedCommandHelp(&canonicalHelp, canonical, ScopeWorkspace); err != nil {
 			t.Fatalf("help %q: %v", canonical, err)
 		}
-		if aliasHelp.String() != canonicalHelp.String() {
-			t.Fatalf("alias %q help differs from canonical %q", alias, canonical)
+		// The heading keeps the spelling the operator typed, so an alias answers
+		// with its own name; the body must stay the canonical command's body so
+		// the alias never advertises a different contract.
+		aliasHeading, aliasBody := splitHelpHeading(aliasHelp.String())
+		canonicalHeading, canonicalBody := splitHelpHeading(canonicalHelp.String())
+		if aliasHeading != alias {
+			t.Fatalf("alias %q heading = %q, want the typed spelling", alias, aliasHeading)
+		}
+		if canonicalHeading != canonical {
+			t.Fatalf("canonical %q heading = %q, want the canonical spelling", canonical, canonicalHeading)
+		}
+		if aliasBody != canonicalBody {
+			t.Fatalf("alias %q help body differs from canonical %q", alias, canonical)
 		}
 	}
 	for _, scope := range scopeHelpOrder {

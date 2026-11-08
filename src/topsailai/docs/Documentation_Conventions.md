@@ -12,6 +12,22 @@ author: DawsonLin
 
 How AI-maintained documentation is split and kept consistent in this project.
 
+## `LEARN.md` and `MEMORY.md` Are Separate Files
+
+`LEARN.md` and `MEMORY.md` are two distinct documents with different provenance. They MUST NOT be merged, and neither may be a symbolic link to the other.
+
+| File | Provenance | Content |
+|---|---|---|
+| `LEARN.md` | Discovered by the agent | Technical lessons the agent learned while implementing, debugging, or testing: root causes, detection failures, and reusable pitfalls. |
+| `MEMORY.md` | Required by the human | Rules, constraints, and decisions the human explicitly stated, approved, or rejected, including rejected approaches that must not be reintroduced. |
+
+Routing rules:
+
+- Write an entry to `MEMORY.md` when its authority comes from a human instruction, approval, or rejection, even if the agent also learned something while implementing it.
+- Write an entry to `LEARN.md` when the authority comes from the agent's own investigation and the human did not state the rule.
+- An entry that records both belongs in `MEMORY.md`, with the technical detail kept in the same entry; do not duplicate it across both files.
+- Both files are loaded into the agent context, so each entry stays concise and states the trigger, the action, and why the action prevents recurrence.
+
 ## `MEMO.md` Is Index Only
 
 `MEMO.md` is injected into the agent context, so it holds only index entries: a heading, a relative link to the owning document, and at most one summary sentence. It MUST NOT accumulate detailed design notes, conventions, or pitfalls.

@@ -1,0 +1,453 @@
+package tui
+
+import (
+	"context"
+	"errors"
+	"io"
+	"strings"
+	"testing"
+
+	"topsailai_agent_cluster/internal/protocol"
+)
+
+// interactiveHistoryStub adds the optional HistoryQuerier seam to the shared
+// interactive stub, so one scenario can render history and still reuse the same
+// inventory, capability and admission recording as every other REPL test.
+type interactiveHistoryStub struct {
+	*interactiveStub
+	history      map[string]protocol.HistoryResult
+	historyEr    map[string]error
+	historyCalls []string
+}
+
+// GetHistory records the queried endpoint so a test can prove which endpoint the
+// interactive surface addressed.
+func (s *interactiveHistoryStub) GetHistory(_ context.Context, endpointID string) (protocol.HistoryResult, error) {
+	s.historyCalls = append(s.historyCalls, endpointID)
+	if err := s.historyEr[endpointID]; err != nil {
+		return protocol.HistoryResult{}, err
+	}
+	return s.history[endpointID], nil
+}
+
+// historyReport builds a complete report holding the given sessions, so a test
+// states only the sessions it cares about.
+func historyReport(sessions ...protocol.Session) protocol.InventoryReport {
+	return protocol.InventoryReport{
+		ReportComplete:   true,
+		CollectionStatus: protocol.CollectionSucceeded,
+		Sessions:         sessions,
+	}
+}
+
+// historyScenarioStub serves one endpoint whose inventory holds the given
+// sessions. A single endpoint keeps the inventory call sequence predictable, so
+// the startup list, the history join and the resume revalidation each observe the
+// call the test expects.
+func historyScenarioStub(rows []protocol.HistoryRow, report protocol.InventoryReport) *interactiveHistoryStub {
+	return &interactiveHistoryStub{
+		interactiveStub: &interactiveStub{
+			endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1", Hostname: "host-one"}},
+			reports:   map[string]protocol.InventoryReport{"endpoint-1": report},
+		},
+		history: map[string]protocol.HistoryResult{"endpoint-1": {Rows: rows}},
+	}
+}
+
+// TestInteractiveHistoryRendersTableAndBindsRowNumbers proves the interactive
+// surface renders the history layout and queries exactly the named endpoint.
+func TestInteractiveHistoryRendersTableAndBindsRowNumbers(t *testing.T) {
+	stub := historyScenarioStub([]protocol.HistoryRow{
+		{ProviderSessionID: "wa-live", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning},
+		{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"},
+	}, historyReport(historyLiveSession("res-live", "wa-live", "gen-1")))
+
+	output, diagnostics := runScope(t, stub, "history endpoint-1\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	for _, want := range []string{"PROVIDER_STATUS", "LIVE", "RESUMABLE", "wa-live", "wa-past"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("history table missing %q: %q", want, output)
+		}
+	}
+	if len(stub.historyCalls) != 1 || stub.historyCalls[0] != "endpoint-1" {
+		t.Fatalf("history calls=%v", stub.historyCalls)
+	}
+}
+
+// TestInteractiveHistoryEndpointScopeUsesCurrentEndpoint proves endpoint scope
+// needs no argument, because the operator is already inside one machine.
+func TestInteractiveHistoryEndpointScopeUsesCurrentEndpoint(t *testing.T) {
+	stub := historyScenarioStub([]protocol.HistoryRow{{ProviderSessionID: "wa-past", Resumable: true}}, historyReport())
+
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nhistory\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if !strings.Contains(output, "PROVIDER_STATUS") {
+		t.Fatalf("history table not rendered: %q", output)
+	}
+	if len(stub.historyCalls) != 1 || stub.historyCalls[0] != "endpoint-1" {
+		t.Fatalf("history calls=%v", stub.historyCalls)
+	}
+}
+
+// TestInteractiveHistoryEndpointScopeRejectsDifferentEndpoint proves a number or
+// name from another machine is never silently retargeted.
+func TestInteractiveHistoryEndpointScopeRejectsDifferentEndpoint(t *testing.T) {
+	stub := historyScenarioStub([]protocol.HistoryRow{{ProviderSessionID: "wa-past"}}, historyReport())
+
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nhistory endpoint-2\nexit\n", ColorPolicy{})
+	want := `error: history "endpoint-2" does not match the current endpoint "endpoint-1"; run cd .. to query another endpoint`
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+	if len(stub.historyCalls) != 0 {
+		t.Fatalf("rejected history reached the API: %v", stub.historyCalls)
+	}
+}
+
+// TestInteractiveHistoryWorkspaceScopeRequiresEndpoint proves workspace scope has
+// no current endpoint, so the argument is mandatory.
+func TestInteractiveHistoryWorkspaceScopeRequiresEndpoint(t *testing.T) {
+	stub := historyScenarioStub([]protocol.HistoryRow{{ProviderSessionID: "wa-past"}}, historyReport())
+
+	_, diagnostics := runScope(t, stub, "history\nexit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, "error: invalid arguments") {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+	if !strings.Contains(diagnostics, "usage: history <endpoint-id-or-hostname>") {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+	if len(stub.historyCalls) != 0 {
+		t.Fatalf("argument-less history reached the API: %v", stub.historyCalls)
+	}
+}
+
+// TestInteractiveHistoryRejectsJSONOption proves the interactive surface refuses
+// a non-interactive option instead of ignoring it.
+func TestInteractiveHistoryRejectsJSONOption(t *testing.T) {
+	stub := historyScenarioStub([]protocol.HistoryRow{{ProviderSessionID: "wa-past"}}, historyReport())
+
+	_, diagnostics := runScope(t, stub, "history endpoint-1 --json\nexit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, `option "--json" is available only in non-interactive mode`) {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+	if len(stub.historyCalls) != 0 {
+		t.Fatalf("rejected option reached the API: %v", stub.historyCalls)
+	}
+}
+
+// TestInteractiveHistoryReportsMissingSeam proves a client without the history
+// seam reports the missing capability instead of rendering an empty table.
+func TestInteractiveHistoryReportsMissingSeam(t *testing.T) {
+	api := &historylessAPI{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}}
+
+	_, diagnostics := runScope(t, api, "history endpoint-1\nexit\n", ColorPolicy{})
+	want := "history is unavailable: this client cannot query provider history"
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+}
+
+// TestInteractiveHistorySurfacesProviderErrorCode proves a provider error code is
+// reported with the endpoint it belongs to.
+func TestInteractiveHistorySurfacesProviderErrorCode(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport())
+	stub.history["endpoint-1"] = protocol.HistoryResult{ErrorCode: protocol.HistoryUnsupported}
+
+	_, diagnostics := runScope(t, stub, "history endpoint-1\nexit\n", ColorPolicy{})
+	want := `history for endpoint "endpoint-1" failed: history_unsupported`
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+}
+
+// TestInteractiveHistoryLabelsTruncatedWindow proves a bounded provider window is
+// never presented as a complete history.
+func TestInteractiveHistoryLabelsTruncatedWindow(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport())
+	stub.history["endpoint-1"] = protocol.HistoryResult{
+		Rows:      []protocol.HistoryRow{{ProviderSessionID: "wa-past"}},
+		Truncated: true,
+	}
+
+	_, diagnostics := runScope(t, stub, "history endpoint-1\nexit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, "bounded provider window") {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+}
+
+// TestInteractiveHistoryReportsUnjoinedInventory proves an unavailable inventory
+// leaves rows unjoined rather than assuming they are stopped.
+func TestInteractiveHistoryReportsUnjoinedInventory(t *testing.T) {
+	stub := historyScenarioStub([]protocol.HistoryRow{{ProviderSessionID: "wa-past"}}, historyReport())
+	stub.interactiveStub.inventoryErr = errors.New("inventory unavailable")
+
+	output, diagnostics := runScope(t, stub, "history endpoint-1\nexit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, "history rows are unjoined") {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+	if !strings.Contains(output, "unjoined") {
+		t.Fatalf("table must label unjoined rows: %q", output)
+	}
+}
+
+// TestInteractiveHistoryCDEntersLiveRow proves a live history row is entered
+// through the joined pair rather than through the provider key.
+func TestInteractiveHistoryCDEntersLiveRow(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-live", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning}},
+		historyReport(historyLiveSession("res-live", "wa-live", "gen-1")),
+	)
+
+	output, diagnostics := runScope(t, stub, "history endpoint-1\ncd 1\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if got := lastPrompt(output); got != "session[host-one/wa-live]>" {
+		t.Fatalf("prompt=%q, want session scope", got)
+	}
+}
+
+// TestInteractiveHistoryCDRejectsNonLiveRow proves a past row cannot be entered
+// and the failure names the resume remedy.
+func TestInteractiveHistoryCDRejectsNonLiveRow(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"}},
+		historyReport(),
+	)
+
+	_, diagnostics := runScope(t, stub, "history endpoint-1\ncd 1\nexit\n", ColorPolicy{})
+	want := `history row 1 is not live on endpoint "endpoint-1", so it cannot be entered; use resume 1 to resume it`
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+}
+
+// TestInteractiveHistoryCDRejectsOutOfRangeRow proves the history namespace
+// reports its own valid range instead of the live list range.
+func TestInteractiveHistoryCDRejectsOutOfRangeRow(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-past", Resumable: true}},
+		historyReport(),
+	)
+
+	_, diagnostics := runScope(t, stub, "history endpoint-1\ncd 99\nexit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, "row 99 is out of range; valid history rows are 1-1") {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+}
+
+// TestCDHistoryRowNumberWithoutNamespaceExplainsTheFix proves the helper refuses
+// row navigation before any history render. The startup list always populates the
+// live namespace, so only a direct call can reach this branch.
+func TestCDHistoryRowNumberWithoutNamespaceExplainsTheFix(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport())
+	state := &interactiveState{}
+
+	err := cdHistoryRowNumber(state, stub, context.Background(), 1)
+	if err == nil || !strings.Contains(err.Error(), "no history table is available for row navigation; run history first") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// TestInteractiveListRestoresLiveNamespaceAfterHistory proves a list render
+// reclaims the row numbers, so a history number never survives into a list.
+func TestInteractiveListRestoresLiveNamespaceAfterHistory(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"}},
+		historyReport(historyLiveSession("res-live", "wa-live", "gen-1")),
+	)
+
+	output, diagnostics := runScope(t, stub, "history endpoint-1\nlist\ncd 1\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if got := lastPrompt(output); got != "session[host-one/wa-live]>" {
+		t.Fatalf("prompt=%q, want the list row rather than the history row", got)
+	}
+}
+
+// TestInteractiveResumeSubmitsAgentResumeWithoutGeneration proves resume addresses
+// the opaque handle and carries no generation, because it authorizes on absence.
+func TestInteractiveResumeSubmitsAgentResumeWithoutGeneration(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"}},
+		historyReport(),
+	)
+
+	output, diagnostics := runScope(t, stub, "history endpoint-1\nresume 1\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted=%d", stub.admit)
+	}
+	intent := stub.intents[0]
+	if intent.Operation != protocol.OperationAgentResume || intent.EndpointID != "endpoint-1" {
+		t.Fatalf("wrong resume intent: %+v", intent)
+	}
+	if intent.Target == nil || intent.Target.ResourceID != "res-past" || intent.Target.Generation != "" {
+		t.Fatalf("wrong resume target: %+v", intent.Target)
+	}
+	if !strings.Contains(output, "history row numbers are stale after resume; run history to refresh") {
+		t.Fatalf("missing row invalidation notice: %q", output)
+	}
+}
+
+// TestInteractiveResumeRejectsLiveRow proves a running session is entered rather
+// than resumed.
+func TestInteractiveResumeRejectsLiveRow(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-live", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning}},
+		historyReport(historyLiveSession("res-live", "wa-live", "gen-1")),
+	)
+
+	_, diagnostics := runScope(t, stub, "history endpoint-1\nresume 1\nexit\n", ColorPolicy{})
+	want := `history row 1 is live on endpoint "endpoint-1", so it cannot be resumed; use cd 1 to enter it`
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("live row admitted %d commands", stub.admit)
+	}
+}
+
+// TestInteractiveResumeReportsAdapterReason proves the adapter verdict is
+// reported verbatim instead of being re-derived by the cluster.
+func TestInteractiveResumeReportsAdapterReason(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-past", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedWorkspaceMissing}},
+		historyReport(),
+	)
+
+	_, diagnostics := runScope(t, stub, "history endpoint-1\nresume 1\nexit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, "history row 1 is not resumable: workspace_missing") {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("non-resumable row admitted %d commands", stub.admit)
+	}
+}
+
+// TestInteractiveResumeRejectsMissingResourceHandle proves a row without the
+// opaque handle cannot be addressed at all.
+func TestInteractiveResumeRejectsMissingResourceHandle(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-past", Resumable: true}},
+		historyReport(),
+	)
+
+	_, diagnostics := runScope(t, stub, "history endpoint-1\nresume 1\nexit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, "history row 1 has no resource handle, so it cannot be resumed; run history again") {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("handle-less row admitted %d commands", stub.admit)
+	}
+}
+
+// TestInteractiveResumeRejectsNonNumericArgument proves resume accepts a row
+// number only, so a provider key is never mistaken for a selection.
+func TestInteractiveResumeRejectsNonNumericArgument(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"}},
+		historyReport(),
+	)
+
+	_, diagnostics := runScope(t, stub, "history endpoint-1\nresume abc\nexit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, "resume accepts a history row number only; run history to see the rows") {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("non-numeric argument admitted %d commands", stub.admit)
+	}
+}
+
+// TestInteractiveResumeRequiresRowArgument proves the missing argument is a
+// syntax failure with the documented usage.
+func TestInteractiveResumeRequiresRowArgument(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport())
+
+	_, diagnostics := runScope(t, stub, "resume\nexit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, "error: invalid arguments") {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+	if !strings.Contains(diagnostics, "usage: resume <row-number>") {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+}
+
+// TestInteractiveResumeRevalidatesAbsenceBeforeSubmission proves a stale history
+// row cannot resume a session that has since started. The inventory reports the
+// session live only on the revalidation read, so the history render still shows a
+// past row and the guard is the only thing that stops the admission.
+func TestInteractiveResumeRevalidatesAbsenceBeforeSubmission(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"}},
+		historyReport(historyLiveSession("res-live", "wa-past", "gen-1")),
+	)
+	// Call 1 is the startup list, call 2 the history join, call 3 the revalidation.
+	stub.interactiveStub.sessionPresenceSequence = []bool{true, false, true}
+
+	_, diagnostics := runScope(t, stub, "history endpoint-1\nresume 1\ny\nexit\n", ColorPolicy{})
+	want := `session "wa-past" is live on endpoint "endpoint-1", so it cannot be resumed; use cd to enter it`
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("stale row admitted %d commands", stub.admit)
+	}
+}
+
+// TestInteractiveResumeRejectsIncompleteInventory proves an incomplete report
+// cannot prove absence, so the resume fails closed instead of guessing.
+func TestInteractiveResumeRejectsIncompleteInventory(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"}},
+		protocol.InventoryReport{ReportComplete: false, CollectionStatus: protocol.CollectionSucceeded},
+	)
+
+	_, diagnostics := runScope(t, stub, "history endpoint-1\nresume 1\ny\nexit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, "cannot be proven") {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("incomplete inventory admitted %d commands", stub.admit)
+	}
+}
+
+// TestInteractiveResumeRejectsOfflineEndpoint proves retained inventory from a
+// disconnected endpoint never authorizes a resume.
+func TestInteractiveResumeRejectsOfflineEndpoint(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"}},
+		historyReport(),
+	)
+	stub.interactiveStub.endpoints[0].ConnectionState = "offline"
+
+	_, diagnostics := runScope(t, stub, "history endpoint-1\nresume 1\ny\nexit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, `endpoint "endpoint-1" is not online: connection_state=offline`) {
+		t.Fatalf("diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("offline endpoint admitted %d commands", stub.admit)
+	}
+}
+
+// TestInteractiveResumeWithoutHistoryNamespaceExplainsTheFix proves resume refuses
+// to act before any history render, because it has no row to address.
+func TestInteractiveResumeWithoutHistoryNamespaceExplainsTheFix(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport())
+	state := &interactiveState{}
+
+	err := interactiveResume(context.Background(), stub, state, "1", nil, io.Discard, io.Discard, InteractiveOptions{})
+	if err == nil || !strings.Contains(err.Error(), "resume requires a history row; run history first") {
+		t.Fatalf("err=%v", err)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("history-less resume admitted %d commands", stub.admit)
+	}
+}

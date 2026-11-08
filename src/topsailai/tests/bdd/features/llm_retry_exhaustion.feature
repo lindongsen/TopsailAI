@@ -103,3 +103,17 @@ Feature: Interactive recovery after LLM retry exhaustion
     When all seven default Retry choices are supplied
     Then the default retry policy stops after exactly 144 requests and seven menu prompts
     And every default-policy request body is parsed and identical
+
+  Scenario: Interactive provider stream failure abandons the turn and waits for the next message
+    Given an LLM retry scenario whose bounded request cycle returns the incident provider stream error
+    When the interactive user abandons the failed turn and sends a fresh message
+    Then the provider failure scenario kept the session alive and ran the fresh turn
+    And the provider failure scenario ignored blank and formatting-empty fresh input
+    And the provider failure scenario sent 18 failed requests followed by one fresh request
+    And the provider failure scenario reported the failure hook exactly once
+
+  Scenario: Non-interactive provider stream failure keeps the fail-fast contract
+    Given an LLM retry scenario whose bounded request cycle returns the incident provider stream error
+    When the same provider stream failure occurs without an interactive user
+    Then the provider failure scenario terminates with a bounded exhaustion error
+    And the provider failure scenario sent exactly 18 completion requests

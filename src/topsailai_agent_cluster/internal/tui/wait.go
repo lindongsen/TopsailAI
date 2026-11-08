@@ -14,8 +14,18 @@ type CommandStateReader interface {
 
 // WaitForTerminal polls durable state until a terminal state or the local budget ends.
 // A timeout returns the most recently observed persistent state without changing it.
-// WaitForTerminal polls durable state until a terminal state or the local budget ends.
 func WaitForTerminal(ctx context.Context, reader CommandStateReader, commandID string, interval time.Duration) (map[string]any, error) {
+	return WaitForTerminalWithProgress(ctx, reader, commandID, interval, nil)
+}
+
+// WaitForTerminalWithProgress polls durable state and reports each observed
+// lifecycle stage to progress.
+//
+// The stage is derived from the same durable state the wait already reads, so a
+// progress row is evidence rather than a guess, and it costs no extra request.
+// Progress is presentation only: a nil reporter reports nothing, and a reporter
+// failure never changes the returned state or error.
+func WaitForTerminalWithProgress(ctx context.Context, reader CommandStateReader, commandID string, interval time.Duration, progress *ActionProgress) (map[string]any, error) {
 	if interval <= 0 {
 		interval = 100 * time.Millisecond
 	}
@@ -24,12 +34,16 @@ func WaitForTerminal(ctx context.Context, reader CommandStateReader, commandID s
 		state, err := reader.GetCommand(ctx, commandID)
 		if err == nil {
 			last = state
+			progress.Stage(progressStage(state))
 			if IsTerminalState(state) {
 				return state, nil
 			}
 		} else if last == nil {
 			return nil, err
 		}
+		// The tick prints buffered stages once the threshold has passed, so a
+		// command whose state does not change still shows that it is in flight.
+		progress.Tick()
 		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
@@ -38,6 +52,17 @@ func WaitForTerminal(ctx context.Context, reader CommandStateReader, commandID s
 		case <-timer.C:
 		}
 	}
+}
+
+// progressStage maps one durable command state onto the operator-facing stage
+// row. It reuses StatusLabel, so the progress wording and the final receipt
+// wording can never disagree about what a state means.
+func progressStage(state map[string]any) string {
+	status := protocol.CommandStatus(stringValue(state, "status"))
+	if status == "" {
+		return ""
+	}
+	return StatusLabel(status, ReceiptForStatus(state))
 }
 
 // IsTerminalState reports whether durable command state is final.

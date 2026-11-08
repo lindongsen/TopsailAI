@@ -193,6 +193,62 @@ token. A CLI started without it omits the `Authorization` header entirely, so th
 Server rejects the request instead of the client silently using a known development
 value.
 
+### CLI configuration file precedence
+
+The CLI resolves its two variables from five sources. `prepareExecutableEnv` runs
+in `main` before flag parsing, so the files are loaded first and the flags are then
+parsed with the resolved values as their defaults.
+
+| Rank | Source | Mechanism |
+|---|---|---|
+| 1 | Explicit flag | `--server-url`, `--token` |
+| 2 | Process environment | `os.LookupEnv` before the CLI starts |
+| 3 | Executable-local file | `/opt/agent-cluster/bin/.env.local` |
+| 4 | Per-user file | `${HOME}/.topsailai/.topsailai_agent_cluster.env` |
+| 5 | Built-in default | `http://127.0.0.1:8080` for the URL, empty for the token |
+
+Prefer the per-user file. It is written at install time by
+`agent-cluster-node-setup` and is the intended configuration source. Use the
+executable-local file only when the per-user file cannot be used, because it is
+read first and therefore overrides the per-user file.
+
+Each file only fills keys that are still unset, so the first source to define a key
+wins and a later source cannot override it. The executable-local file is read
+before the per-user file, so its presence makes the per-user file inert for any key
+it defines. Neither file reports which source supplied a value, and no diagnostic
+command prints the resolved origin, so a stale executable-local file is not
+visible from the CLI output.
+
+An empty assignment still occupies the key, because `os.LookupEnv` reports an
+empty value as present. The two variables then diverge: `--server-url` is resolved
+through `envOr`, which treats a blank value as unset and falls back to the built-in
+default, while `--token` reads `os.Getenv` directly and keeps the empty string. An
+empty `AGENT_CLUSTER_SERVER_URL` therefore both suppresses the per-user file and
+selects the built-in default, and an empty `AGENT_CLUSTER_TOKEN` sends no
+`Authorization` header.
+
+The built-in URL default is `http://127.0.0.1:8080`, while the shipped Server
+configuration listens on `127.0.0.1:53680`. An unconfigured CLI therefore fails to
+connect rather than reporting that it is unconfigured.
+
+File format constraints:
+
+- Values are literals. Variable expansion and command substitution are not
+  supported, so `$HOST` stays the four characters `$HOST`.
+- A leading `export ` is accepted, and a value may be single-quoted, double-quoted
+  or unquoted. A quoted value must close on the same line and may only be followed
+  by whitespace or a `#` comment.
+- An unquoted value ends at the first ` #` sequence.
+- Blank lines and lines starting with `#` are ignored.
+- A file larger than 1 MiB is rejected rather than truncated.
+- A syntax error aborts the CLI with exit status 2 before any command runs, so one
+  malformed file prevents every command even when the other file is correct.
+- A read error is always labelled `read .env.local`, including when the failing
+  file is the per-user file, so that message does not identify the real source.
+  Assignment errors instead carry the correct file label and line number.
+- An unresolvable home directory is not an error. The per-user file is skipped
+  silently and resolution continues to the built-in default.
+
 ## Security consequences of leaving a value unset
 
 | Variable | Consequence |

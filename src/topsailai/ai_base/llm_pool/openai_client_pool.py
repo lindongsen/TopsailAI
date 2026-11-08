@@ -189,6 +189,18 @@ class OpenAIResponseAdapter:
             and "litellm.APIConnectionError:" in str(error)
         )
 
+    @staticmethod
+    def _is_stream_embedded_api_error(error):
+        """Return whether a base SDK API error carries a stream-embedded failure.
+
+        The SDK raises the base ``openai.APIError`` when a streaming response
+        delivers an error frame instead of a chunk (``openai/_streaming.py``).
+        That is a provider-side service failure, not a local defect, so it must
+        stay retryable. Exact-type matching is required: every specific SDK
+        error is a subclass of ``openai.APIError`` and is already mapped above.
+        """
+        return type(error) is openai.APIError
+
     @classmethod
     def translate_error(cls, error):
         """Translate one recognized OpenAI or transport error."""
@@ -201,6 +213,15 @@ class OpenAIResponseAdapter:
                 )
         if cls._is_litellm_connection_error(error):
             return LLMProviderConnectionError(
+                str(error),
+                response=getattr(error, "response", None),
+                body=getattr(error, "body", None),
+            )
+        if cls._is_stream_embedded_api_error(error):
+            # A stream-embedded error frame is reported by the provider as an
+            # internal service failure, so it joins the internal-server retry
+            # path instead of falling through to the generic unknown branch.
+            return LLMProviderInternalServerError(
                 str(error),
                 response=getattr(error, "response", None),
                 body=getattr(error, "body", None),
