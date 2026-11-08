@@ -290,10 +290,18 @@ func (a *Adapter) resourceID(ctx context.Context, providerKey string) (string, e
 	return mapping.ResourceID, nil
 }
 
-// Inspect revalidates a mapped resource and its current provider generation.
+// Inspect revalidates a mapped resource and reports its current provider state.
+//
+// A generation is not required. Resume authorizes on the absence of a target, and
+// a history row has no generation because the session is not running, so demanding
+// one would make every history resume fail before the provider was ever asked. The
+// absence proof still comes from the provider's own answer: a session that is
+// running is reported as found, and only a genuinely absent one is reported as not
+// found. Callers that need a generation match compare the returned value
+// themselves, so this relaxation cannot silently authorize a stale generation.
 func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (adapter.InspectResult, error) {
-	if request.Target.ResourceID == "" || request.Target.Generation == "" {
-		return adapter.InspectResult{}, errors.New("resource ID and generation are required")
+	if request.Target.ResourceID == "" {
+		return adapter.InspectResult{}, errors.New("resource ID is required")
 	}
 	if a.mapper == nil {
 		return adapter.InspectResult{}, errors.New("durable resource mapper is required")
