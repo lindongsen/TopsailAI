@@ -426,3 +426,36 @@ func TestCommandRunnerHistoryEmptySuccessIsNotAnError(t *testing.T) {
 		t.Fatalf("empty success must render no rows: %q", out.String())
 	}
 }
+
+// TestCommandRunnerHistoryRejectsOfflineEndpoint proves a disconnected endpoint is
+// refused before the query is dispatched.
+//
+// A history query is a live provider read forwarded through the endpoint channel, so
+// an offline endpoint can only fail after the transport budget expires. Checking
+// connectivity first reports the real cause immediately and keeps history consistent
+// with every other endpoint-scoped command.
+func TestCommandRunnerHistoryRejectsOfflineEndpoint(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+	}{
+		{name: "exact endpoint id", target: "ep-1"},
+		{name: "unique hostname", target: "ai-dev"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			api := &historyStubAPI{endpoints: []protocol.Endpoint{
+				{EndpointID: "ep-1", Hostname: "ai-dev", ConnectionState: "offline"},
+			}}
+			err := (CommandRunner{API: api, Policy: LegacyPolicy}).History(context.Background(), io.Discard, io.Discard, testCase.target, false, TableOptions{})
+			want := `endpoint "ep-1" is not online: connection_state=offline`
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("err=%v, want %q", err, want)
+			}
+			if len(api.calls) != 1 || api.calls[0] != "list" {
+				t.Fatalf("offline endpoint must not query history: %v", api.calls)
+			}
+		})
+	}
+}

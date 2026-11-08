@@ -568,3 +568,23 @@ func TestInteractiveResumeRejectsAmbiguousRow(t *testing.T) {
 		t.Fatalf("ambiguous resume admitted %d commands", stub.admit)
 	}
 }
+
+// TestInteractiveHistoryRejectsOfflineEndpoint proves endpoint scope revalidates
+// connectivity at query time, not at entry time.
+//
+// Entering an endpoint does not require it to be online, so an endpoint can be
+// entered while connected and disconnect before the history query is dispatched.
+// The query therefore resolves the endpoint again instead of trusting the scope.
+func TestInteractiveHistoryRejectsOfflineEndpoint(t *testing.T) {
+	stub := historyScenarioStub([]protocol.HistoryRow{{ProviderSessionID: "wa-past", Resumable: true}}, historyReport())
+	stub.interactiveStub.endpoints[0].ConnectionState = "offline"
+
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nhistory\nexit\n", ColorPolicy{})
+	want := `endpoint "endpoint-1" is not online: connection_state=offline`
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+	if len(stub.historyCalls) != 0 {
+		t.Fatalf("offline endpoint reached the history API: %v", stub.historyCalls)
+	}
+}

@@ -200,7 +200,12 @@ would merge rows from different machines into one table, where the duplicate
 Endpoint, which is also what makes the join well defined.
 
 Hostname resolution reuses the existing endpoint resolver, including its ambiguity
-prompt when several Endpoints share a hostname.
+prompt when several Endpoints share a hostname. The resolved Endpoint must also be
+online: a history query is a live provider read forwarded through the endpoint
+channel, so an offline Endpoint can only fail after the transport budget expires.
+Both scopes therefore resolve the Endpoint again at query time instead of trusting
+the scope, because an Endpoint that was online when it was entered can disconnect
+before the query is dispatched.
 
 ## Row-number namespace
 
@@ -225,7 +230,7 @@ rather than degrade:
 | Situation | Behaviour |
 |---|---|
 | Endpoint has no history-capable adapter | Explicit `history_unsupported` error |
-| Endpoint is offline | Explicit `endpoint_unavailable` error |
+| Endpoint is offline | Explicit `endpoint_unavailable` error, rejected before dispatch so no transport budget is spent |
 | Provider call fails | Explicit error with the provider's bounded diagnostic |
 | Provider returns no rows | Successful empty result, distinct from an error |
 | Result is capped | Successful result with `truncated = true` |

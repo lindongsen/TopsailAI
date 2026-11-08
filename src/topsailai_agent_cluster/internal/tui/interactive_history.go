@@ -84,13 +84,15 @@ func interactiveHistory(parent context.Context, api InteractiveAPI, state *inter
 //
 // Endpoint scope already names one machine, so an explicit argument may only
 // repeat it. Workspace scope has no current endpoint, so the argument is
-// mandatory and is resolved through the same resolver the standalone command uses.
+// mandatory. Both scopes resolve through the same resolver the standalone command
+// uses, so connectivity is validated on both paths: an endpoint that was online
+// when it was entered can disconnect before the query is dispatched.
 func historyEndpointID(ctx context.Context, api InteractiveAPI, state *interactiveState, target string) (string, error) {
 	if state.Scope.Kind == ScopeEndpoint {
 		if target != "" && target != state.Scope.EndpointID {
 			return "", fmt.Errorf("history %q does not match the current endpoint %q; run cd .. to query another endpoint", target, state.Scope.EndpointID)
 		}
-		return state.Scope.EndpointID, nil
+		target = state.Scope.EndpointID
 	}
 	endpoint, err := resolveHistoryEndpoint(ctx, api, target)
 	if err != nil {

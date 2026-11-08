@@ -283,6 +283,12 @@ func (r CommandRunner) History(ctx context.Context, out, errors io.Writer, targe
 // A hostname shared by several endpoints is rejected with the candidate list
 // instead of picking one, because the operator asked for a specific machine and a
 // silent choice would query the wrong provider.
+//
+// The resolved endpoint must be online. A history query is a live provider read
+// forwarded through the endpoint channel, so an offline endpoint can only fail after
+// the transport budget expires. Rejecting it here reports the real cause immediately
+// and matches every other endpoint-scoped command, which validates connectivity
+// before dispatch.
 func resolveHistoryEndpoint(ctx context.Context, api CommandAPI, target string) (protocol.Endpoint, error) {
 	if strings.TrimSpace(target) == "" {
 		return protocol.Endpoint{}, fmt.Errorf("usage: history <endpoint-id-or-hostname>")
@@ -293,7 +299,7 @@ func resolveHistoryEndpoint(ctx context.Context, api CommandAPI, target string) 
 	}
 	for _, endpoint := range endpoints {
 		if endpoint.EndpointID == target {
-			return endpoint, nil
+			return requireOnlineHistoryEndpoint(endpoint)
 		}
 	}
 	matches := make([]protocol.Endpoint, 0, 2)
@@ -306,7 +312,7 @@ func resolveHistoryEndpoint(ctx context.Context, api CommandAPI, target string) 
 	case 0:
 		return protocol.Endpoint{}, fmt.Errorf("endpoint %q was not found", target)
 	case 1:
-		return matches[0], nil
+		return requireOnlineHistoryEndpoint(matches[0])
 	}
 	sort.Slice(matches, func(i, j int) bool { return matches[i].EndpointID < matches[j].EndpointID })
 	ids := make([]string, len(matches))
@@ -314,4 +320,17 @@ func resolveHistoryEndpoint(ctx context.Context, api CommandAPI, target string) 
 		ids[i] = endpoint.EndpointID
 	}
 	return protocol.Endpoint{}, fmt.Errorf("hostname %q matches several endpoints (%s); pass the endpoint ID instead", target, strings.Join(ids, ", "))
+}
+
+// requireOnlineHistoryEndpoint rejects a disconnected endpoint before a history
+// query is dispatched.
+//
+// The check reuses the shared connectivity rule, so history reports the same
+// connection_state diagnostic as every other endpoint-scoped command instead of
+// inventing its own wording.
+func requireOnlineHistoryEndpoint(endpoint protocol.Endpoint) (protocol.Endpoint, error) {
+	if err := validateEndpointOnline(endpoint); err != nil {
+		return protocol.Endpoint{}, err
+	}
+	return endpoint, nil
 }
