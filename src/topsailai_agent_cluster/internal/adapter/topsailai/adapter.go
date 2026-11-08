@@ -358,7 +358,7 @@ func (a *Adapter) Execute(ctx context.Context, request adapter.ExecuteRequest) (
 	if operation == protocol.OperationAgentStop && !a.platformStop {
 		return adapter.ExecuteResult{}, adapter.ErrUnsupported
 	}
-	providerKey, err := a.providerTarget(intent.Target)
+	providerKey, err := a.providerTarget(ctx, intent.Target)
 	if err != nil && operation != protocol.OperationAgentStart {
 		return adapter.ExecuteResult{Receipt: failedReceipt(intent, "unknown_target")}, err
 	}
@@ -535,14 +535,20 @@ func runtimeMessage(payload []byte) (string, error) {
 	return "", errors.New("runtime payload requires text or message")
 }
 
-func (a *Adapter) providerTarget(target *protocol.CommandTarget) (string, error) {
+// providerTarget resolves the private provider key for one opaque public target.
+//
+// The caller context is honoured rather than replaced with context.Background():
+// a long-running follow must be cancellable, and a lookup that ignores
+// cancellation would keep a provider child alive after the operator stopped
+// watching.
+func (a *Adapter) providerTarget(ctx context.Context, target *protocol.CommandTarget) (string, error) {
 	if target == nil {
 		return "", errors.New("target is required")
 	}
 	if a.mapper == nil {
 		return "", errors.New("durable resource mapper is required")
 	}
-	mapping, err := a.mapper.LookupResourceID(context.Background(), target.ResourceID)
+	mapping, err := a.mapper.LookupResourceID(ctx, target.ResourceID)
 	if err != nil {
 		return "", err
 	}
@@ -562,7 +568,7 @@ func (a *Adapter) run(ctx context.Context, args []string, stdin []byte) ([]byte,
 
 // ReadOutput returns one bounded runtime log snapshot.
 func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest) (adapter.OutputResult, error) {
-	key, err := a.providerTarget(&request.Target)
+	key, err := a.providerTarget(ctx, &request.Target)
 	if err != nil {
 		return adapter.OutputResult{}, err
 	}
@@ -604,7 +610,7 @@ func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest)
 // lines, and the runner sets PYTHONUNBUFFERED so they arrive as they are written
 // instead of only at process exit.
 func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollowRequest, emit func(protocol.OutputChunk) error) error {
-	key, err := a.providerTarget(&protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation})
+	key, err := a.providerTarget(ctx, &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation})
 	if err != nil {
 		return err
 	}

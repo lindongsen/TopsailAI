@@ -38,6 +38,7 @@ type Server struct {
 	pendingOutput     map[string]pendingOutputRequest
 	pendingLaunch     map[string]pendingLaunchRequest
 	pendingRefresh    map[string]pendingRefreshRequest
+	pendingFollow     map[string]pendingFollowRequest
 }
 
 // pendingOutputRequest tracks one output request so read-limit failures can be reported.
@@ -51,6 +52,35 @@ type pendingRefreshRequest struct {
 	endpointID string
 	response   chan Frame
 }
+
+// pendingFollowRequest tracks one streaming follow. Unlike a snapshot, a follow
+// delivers many chunks before it ends, so it owns a channel of chunk events
+// rather than a single response slot.
+type pendingFollowRequest struct {
+	endpointID string
+	events     chan FollowEvent
+	// done is closed when the request is released, so the cancellation watcher
+	// stops instead of lingering for the lifetime of the process.
+	done chan struct{}
+}
+
+// FollowEvent is one delivered follow frame: either a chunk or the terminal end.
+// Exactly one event carries End, and it is always the last event for its stream,
+// so a consumer that stops receiving events without End treats the stream as
+// interrupted rather than complete.
+type FollowEvent struct {
+	Chunk *protocol.OutputChunk
+	End   *protocol.OutputEnd
+}
+
+// followChunkBuffer bounds how many chunks may wait for one consumer. A consumer
+// that falls this far behind is disconnected rather than buffered without limit,
+// because an unbounded queue would let one slow reader exhaust Server memory.
+const followChunkBuffer = 64
+
+// maxPendingFollow bounds concurrent follow streams per Server so a few operators
+// cannot hold every transport slot.
+const maxPendingFollow = 64
 
 // channelReadLimit bounds one channel frame so a hostile peer cannot exhaust memory.
 const channelReadLimit int64 = 2 << 20
@@ -71,7 +101,7 @@ type Peer struct {
 
 // NewServer constructs a channel server.
 func NewServer(tlsConfig *tls.Config) *Server {
-	return &Server{TLSConfig: tlsConfig, Fence: NewFence(), Active: make(map[string]*Peer), HeartbeatTimeout: 30 * time.Second, RevokedSerials: make(map[string]bool), pendingOutput: make(map[string]pendingOutputRequest), pendingRefresh: make(map[string]pendingRefreshRequest)}
+	return &Server{TLSConfig: tlsConfig, Fence: NewFence(), Active: make(map[string]*Peer), HeartbeatTimeout: 30 * time.Second, RevokedSerials: make(map[string]bool), pendingOutput: make(map[string]pendingOutputRequest), pendingRefresh: make(map[string]pendingRefreshRequest), pendingFollow: make(map[string]pendingFollowRequest)}
 }
 
 // Handler accepts Endpoint-initiated WebSocket upgrades and fences older peers.
@@ -220,6 +250,9 @@ func (s *Server) readLoop(ctx context.Context, peer *Peer) {
 			}
 			s.Mu.Unlock()
 		}
+		if frame.Type == FrameOutputChunk || frame.Type == FrameOutputEnd {
+			s.deliverFollow(peer, frame)
+		}
 		if frame.Type == FrameReceipt && frame.Receipt != nil && s.OnReceipt != nil {
 			s.OnReceipt(*peer, *frame.Receipt)
 		}
@@ -244,6 +277,111 @@ func (s *Server) deliverRefresh(peer *Peer, frame Frame) {
 	}
 	delete(s.pendingRefresh, frame.RequestID)
 	pending.response <- frame
+}
+
+// deliverFollow hands one chunk or the terminal end to its waiting consumer.
+//
+// A chunk is delivered without blocking the channel read loop: if the consumer
+// has fallen behind the bounded buffer, the follow is terminated with an explicit
+// overflow error instead of stalling every other frame on this connection. A
+// silent drop would let the operator believe the stream is complete, so the
+// consumer always learns that data was lost.
+func (s *Server) deliverFollow(peer *Peer, frame Frame) {
+	s.Mu.Lock()
+	pending, ok := s.pendingFollow[frame.RequestID]
+	if !ok || pending.endpointID != peer.EndpointID {
+		s.Mu.Unlock()
+		return
+	}
+	s.Mu.Unlock()
+	if frame.Type == FrameOutputEnd {
+		released, ok := s.releaseFollow(frame.RequestID)
+		if !ok {
+			return
+		}
+		end := frame.OutputEnd
+		if end == nil {
+			end = &protocol.OutputEnd{ErrorCode: "invalid_response", ObservedAtMS: time.Now().UnixMilli()}
+		}
+		deliverFollowEnd(released.events, end)
+		return
+	}
+	chunk := frame.OutputChunk
+	if chunk == nil {
+		return
+	}
+	select {
+	case pending.events <- FollowEvent{Chunk: chunk}:
+	default:
+		// The consumer is too slow to keep up with the provider. Terminating the
+		// stream with an explicit code is the only honest option: buffering
+		// without limit would exhaust Server memory, and dropping the chunk
+		// silently would present a partial stream as complete.
+		released, ok := s.releaseFollow(frame.RequestID)
+		if !ok {
+			return
+		}
+		deliverFollowEnd(released.events, &protocol.OutputEnd{ErrorCode: "consumer_overflow", ObservedAtMS: time.Now().UnixMilli()})
+	}
+}
+
+// deliverFollowEnd guarantees the terminal event reaches the consumer.
+//
+// A plain non-blocking send would drop the end event exactly when the queue is
+// full, which is the overflow case that most needs to be reported: the consumer
+// would then see neither the missing chunks nor the reason, and would treat a
+// truncated stream as a finished one. Discarding the queued chunks is acceptable
+// here because the end event already declares that data was lost.
+func deliverFollowEnd(events chan FollowEvent, end *protocol.OutputEnd) {
+	for {
+		select {
+		case events <- FollowEvent{End: end}:
+			return
+		default:
+		}
+		select {
+		case <-events:
+		default:
+			// The consumer drained the queue concurrently; retry the send.
+		}
+	}
+}
+
+// releaseFollow removes one pending follow and closes its done channel so the
+// cancellation watcher stops. It is idempotent, so a disconnect, a terminal
+// frame and a cancelled context can all race without double-closing done.
+func (s *Server) releaseFollow(requestID string) (pendingFollowRequest, bool) {
+	s.Mu.Lock()
+	pending, ok := s.pendingFollow[requestID]
+	if ok {
+		delete(s.pendingFollow, requestID)
+	}
+	s.Mu.Unlock()
+	if ok {
+		close(pending.done)
+	}
+	return pending, ok
+}
+
+// failPendingFollow reports a transport failure to every follow for one Endpoint,
+// so a disconnected Endpoint never leaves a consumer waiting for chunks that can
+// no longer arrive.
+func (s *Server) failPendingFollow(endpointID string) {
+	s.Mu.Lock()
+	requestIDs := make([]string, 0, len(s.pendingFollow))
+	for requestID, request := range s.pendingFollow {
+		if request.endpointID == endpointID {
+			requestIDs = append(requestIDs, requestID)
+		}
+	}
+	s.Mu.Unlock()
+	for _, requestID := range requestIDs {
+		released, ok := s.releaseFollow(requestID)
+		if !ok {
+			continue
+		}
+		deliverFollowEnd(released.events, &protocol.OutputEnd{ErrorCode: "endpoint_offline", ObservedAtMS: time.Now().UnixMilli()})
+	}
 }
 
 // failPendingRefresh reports a transport failure to every request for one Endpoint.
@@ -307,6 +445,45 @@ func (s *Server) RequestOutput(ctx context.Context, endpointID string, request p
 		s.Mu.Unlock()
 		return protocol.OutputSnapshotResponse{ErrorCode: "endpoint_offline"}, ctx.Err()
 	}
+}
+
+// RequestFollow starts one streaming output follow and returns its event stream.
+//
+// The returned channel delivers chunks followed by exactly one terminal end
+// event. A consumer that stops receiving events without an end event must treat
+// the stream as interrupted rather than complete, because a silent stop would
+// present a partial stream as a finished one.
+//
+// Cancelling ctx releases the pending entry and terminates the stream with a
+// cancelled end event, so an operator who stops watching never leaves a provider
+// child streaming into a queue nobody reads.
+func (s *Server) RequestFollow(ctx context.Context, endpointID string, request protocol.OutputFollowRequest) (<-chan FollowEvent, error) {
+	requestID := security.NewRequestID()
+	events := make(chan FollowEvent, followChunkBuffer)
+	done := make(chan struct{})
+	s.Mu.Lock()
+	if len(s.pendingFollow) >= maxPendingFollow {
+		s.Mu.Unlock()
+		return nil, errors.New("follow capacity exceeded")
+	}
+	s.pendingFollow[requestID] = pendingFollowRequest{endpointID: endpointID, events: events, done: done}
+	s.Mu.Unlock()
+	if err := s.SendCommand(ctx, endpointID, Frame{Type: FrameOutputFollowRequest, ProtocolVersion: ProtocolVersion, RequestID: requestID, OutputFollowRequest: &request}); err != nil {
+		s.releaseFollow(requestID)
+		return nil, err
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			released, ok := s.releaseFollow(requestID)
+			if !ok {
+				return
+			}
+			deliverFollowEnd(released.events, &protocol.OutputEnd{ErrorCode: "cancelled", ObservedAtMS: time.Now().UnixMilli()})
+		case <-done:
+		}
+	}()
+	return events, nil
 }
 
 // RequestRefresh asks an online Endpoint to collect and report a fresh inventory.
@@ -393,6 +570,11 @@ func (s *Server) remove(peer *Peer) {
 	// A disconnected Endpoint can never answer a forced collection, so fail the
 	// waiters instead of letting them block until their own deadline.
 	s.failPendingRefresh(peer.EndpointID)
+	// A disconnected Endpoint can never answer a snapshot or a follow either, so
+	// those waiters are failed immediately instead of blocking until their own
+	// deadline.
+	s.failPendingOutput(peer.EndpointID, protocol.OutputSnapshotResponse{ErrorCode: "endpoint_offline"})
+	s.failPendingFollow(peer.EndpointID)
 	if s.OnDisconnect == nil {
 		return
 	}

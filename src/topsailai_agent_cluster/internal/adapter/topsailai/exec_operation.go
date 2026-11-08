@@ -30,7 +30,7 @@ func (a *Adapter) executeCommand(ctx context.Context, intent protocol.ImmutableI
 	if err := confineArguments(payload.Argv); err != nil {
 		return adapter.ExecuteResult{Receipt: failedReceipt(intent, "argument_not_confined")}, err
 	}
-	providerKey, err := a.providerTarget(intent.Target)
+	providerKey, err := a.providerTarget(ctx, intent.Target)
 	if err != nil {
 		return adapter.ExecuteResult{Receipt: failedReceipt(intent, "unknown_target")}, err
 	}

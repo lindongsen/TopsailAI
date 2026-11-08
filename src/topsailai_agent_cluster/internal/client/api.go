@@ -77,6 +77,93 @@ func (c *APIClient) GetOutput(ctx context.Context, endpointID, resourceID, gener
 	return result, err
 }
 
+// FollowChunk is one streamed output record delivered by FollowOutput.
+//
+// Exactly one FollowChunk carries End, and it is always the last one, so a caller
+// that stops receiving records without End must treat the stream as interrupted
+// rather than complete.
+type FollowChunk struct {
+	Lines        []string
+	ObservedAtMS int64
+	Truncated    bool
+	End          bool
+	ErrorCode    string
+}
+
+// FollowOutput streams output records for a resource until the stream ends or ctx
+// is cancelled.
+//
+// The Server answers with newline-delimited JSON rather than one envelope, so this
+// method decodes records incrementally instead of reusing request(). Cancelling
+// ctx closes the response body, which releases the follow at the Server and stops
+// the provider child.
+func (c *APIClient) FollowOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (<-chan FollowChunk, error) {
+	path := fmt.Sprintf("/api/v1/output/follow?endpoint_id=%s&resource_id=%s&generation=%s&max_bytes=%d&max_lines=%d", url.QueryEscape(endpointID), url.QueryEscape(resourceID), url.QueryEscape(generation), maxBytes, maxLines)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	httpClient := c.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		var envelope struct {
+			Message string `json:"message"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&envelope)
+		return nil, fmt.Errorf("server follow failed (%d): %s", resp.StatusCode, envelope.Message)
+	}
+	records := make(chan FollowChunk, 64)
+	go func() {
+		defer resp.Body.Close()
+		defer close(records)
+		decoder := json.NewDecoder(resp.Body)
+		for {
+			var record struct {
+				Type         string   `json:"type"`
+				Lines        []string `json:"lines"`
+				ObservedAtMS int64    `json:"observed_at_ms"`
+				Truncated    bool     `json:"truncated"`
+				ErrorCode    string   `json:"error_code"`
+			}
+			if err := decoder.Decode(&record); err != nil {
+				// A stream that stops without an end record is reported as
+				// interrupted, never as a clean finish.
+				if ctx.Err() == nil {
+					select {
+					case records <- FollowChunk{End: true, ErrorCode: "stream_interrupted"}:
+					case <-ctx.Done():
+					}
+				}
+				return
+			}
+			chunk := FollowChunk{Lines: record.Lines, ObservedAtMS: record.ObservedAtMS, Truncated: record.Truncated}
+			if record.Type == "end" {
+				chunk.End = true
+				chunk.ErrorCode = record.ErrorCode
+			}
+			select {
+			case records <- chunk:
+			case <-ctx.Done():
+				return
+			}
+			if chunk.End {
+				return
+			}
+		}
+	}()
+	return records, nil
+}
+
 // AdmitCommand submits one immutable command intent.
 func (c *APIClient) AdmitCommand(ctx context.Context, intent protocol.ImmutableIntent) (map[string]any, error) {
 	var result map[string]any
