@@ -201,7 +201,8 @@ func (s *baselineFailureStub) GetInventory(ctx context.Context, endpointID strin
 // TestStartUnreadableBaselineDoesNotClaimNotYetVisible proves an unreadable
 // projection never fabricates a pending-visibility conclusion. Without a baseline
 // there is no evidence that the session is missing, so silence is the only honest
-// outcome.
+// outcome. The forced collection itself supplies the post-refresh document, so the
+// baseline is the only projection read.
 func TestStartUnreadableBaselineDoesNotClaimNotYetVisible(t *testing.T) {
 	stub := &baselineFailureStub{startRefreshStub: newStartRefreshStub()}
 	var out strings.Builder
@@ -211,7 +212,7 @@ func TestStartUnreadableBaselineDoesNotClaimNotYetVisible(t *testing.T) {
 	if strings.Contains(out.String(), "not yet visible") {
 		t.Fatalf("unreadable baseline fabricated a pending-visibility claim: %q", out.String())
 	}
-	if stub.calls < 2 {
-		t.Fatalf("projection reads=%d, want a baseline read and a post-refresh read", stub.calls)
+	if stub.calls != 1 {
+		t.Fatalf("projection reads=%d, want only the baseline read", stub.calls)
 	}
 }

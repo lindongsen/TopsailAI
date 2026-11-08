@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"topsailai_agent_cluster/internal/protocol"
@@ -95,37 +96,104 @@ func (r CommandRunner) RefreshAfterStart(ctx context.Context, out, diagnostics i
 	return nil
 }
 
+// refreshConcurrency bounds how many Endpoints are collected at once. The Server
+// admits at most 64 pending forced collections, so a larger pool would only turn
+// capacity into rejections; 16 keeps a fleet refresh well inside that budget while
+// bounding the provider discovery load one operator command can create.
+const refreshConcurrency = 16
+
+// refreshEndpointTimeout bounds one Endpoint's forced collection. It exceeds the
+// Server's own 30-second budget so the Server reports its explicit failure first,
+// and it stays below the command budget so one hung Endpoint cannot consume the
+// whole command.
+const refreshEndpointTimeout = 32 * time.Second
+
+// endpointResult is one Endpoint's forced-collection outcome. Results are stored
+// by index, so the rendered order never depends on completion order.
+type endpointResult struct {
+	endpointID string
+	report     *protocol.InventoryReport
+	err        error
+}
+
 // forceCollection asks every Endpoint in scope to collect a fresh inventory and
-// returns the committed documents. A failed Endpoint keeps its last committed
-// document and is reported through the load errors, so one slow or offline
-// Endpoint never hides the others.
+// returns the committed documents. Endpoints are collected concurrently, because
+// a serial loop makes the command cost the sum of every Endpoint instead of the
+// slowest one. A failed Endpoint keeps its last committed document and is reported
+// through the load errors, so one slow or offline Endpoint never hides the others.
 func forceCollection(ctx context.Context, api InteractiveAPI, filter string) (reportLoad, error) {
 	endpoints, err := api.ListEndpoints(ctx)
 	if err != nil {
 		return reportLoad{}, err
 	}
 	loaded := reportLoad{endpoints: endpoints, reports: make(map[string]protocol.InventoryReport), errors: make(map[string]error)}
-	refresher, forced := api.(InventoryRefresher)
+	scoped := make([]protocol.Endpoint, 0, len(endpoints))
 	for _, endpoint := range endpoints {
 		if filter != "" && endpoint.EndpointID != filter {
 			continue
 		}
-		if forced {
-			if _, refreshErr := refresher.RefreshInventory(ctx, endpoint.EndpointID); refreshErr != nil {
-				loaded.errors[endpoint.EndpointID] = refreshErr
-				// The last committed document stays visible, labelled by the failure.
-				if report, fetchErr := api.GetInventory(ctx, endpoint.EndpointID); fetchErr == nil {
-					loaded.reports[endpoint.EndpointID] = report
-				}
+		scoped = append(scoped, endpoint)
+	}
+	refresher, forced := api.(InventoryRefresher)
+	if !forced {
+		// A client without the forced-collection seam keeps the read-only path.
+		for _, endpoint := range scoped {
+			report, fetchErr := api.GetInventory(ctx, endpoint.EndpointID)
+			if fetchErr != nil {
+				loaded.errors[endpoint.EndpointID] = fetchErr
 				continue
 			}
+			loaded.reports[endpoint.EndpointID] = report
 		}
-		report, fetchErr := api.GetInventory(ctx, endpoint.EndpointID)
-		if fetchErr != nil {
-			loaded.errors[endpoint.EndpointID] = fetchErr
-			continue
+		return loaded, nil
+	}
+	// Each Endpoint is collected exactly once. The Endpoint serializes its own
+	// collection cycles, so a second request for the same Endpoint would only run
+	// provider discovery twice without producing newer data.
+	results := make([]endpointResult, len(scoped))
+	workers := refreshConcurrency
+	if workers > len(scoped) {
+		workers = len(scoped)
+	}
+	slots := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	for index := range scoped {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			results[index] = collectEndpoint(ctx, api, refresher, scoped[index].EndpointID)
+		}(index)
+	}
+	wg.Wait()
+	for _, result := range results {
+		if result.err != nil {
+			loaded.errors[result.endpointID] = result.err
 		}
-		loaded.reports[endpoint.EndpointID] = report
+		if result.report != nil {
+			loaded.reports[result.endpointID] = *result.report
+		}
 	}
 	return loaded, nil
+}
+
+// collectEndpoint forces one collection for a single Endpoint. The committed
+// report the Server returns is used directly, because the Server re-reads it from
+// storage after the commit, so a following read would return the same document.
+func collectEndpoint(parent context.Context, api InteractiveAPI, refresher InventoryRefresher, endpointID string) endpointResult {
+	ctx, cancel := context.WithTimeout(parent, refreshEndpointTimeout)
+	defer cancel()
+	report, err := refresher.RefreshInventory(ctx, endpointID)
+	if err != nil {
+		result := endpointResult{endpointID: endpointID, err: err}
+		// The last committed document stays visible, labelled by the failure. The
+		// read uses the parent budget, because the per-Endpoint budget may already
+		// be exhausted by the failed collection itself.
+		if last, fetchErr := api.GetInventory(parent, endpointID); fetchErr == nil {
+			result.report = &last
+		}
+		return result
+	}
+	return endpointResult{endpointID: endpointID, report: &report}
 }
