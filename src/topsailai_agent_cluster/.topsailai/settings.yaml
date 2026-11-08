@@ -42,6 +42,7 @@ scan:
 context:
   _:
     - LEARN.md
+    - MEMORY.md
     - docs/agent-cluster-architecture.md
     - docs/agent-cluster-protocol.md
     - docs/agent-cluster-adapters.md

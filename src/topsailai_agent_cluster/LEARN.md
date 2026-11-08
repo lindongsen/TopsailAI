@@ -1,4 +1,7 @@
-# Learn & Memory Of Project
+# Learn
+
+Lessons this project's AI learned from its own mistakes. Human-directed facts and decisions belong
+in `MEMORY.md`, not here.
 
 ## Verify the producer of a value before claiming a defect is reachable
 
@@ -18,36 +21,16 @@ values the producer actually sends. A mapping that looks operation-agnostic is n
 every operation reaches it. Checking the producer converts a plausible inference into a fact, and
 prevents reporting a latent design smell as an active user-visible bug.
 
-## StatusLabel hardcodes "stop" onto a generic delivery boundary
+## Do not infer a file convention from a sibling project without checking the intent
 
-Trigger: `internal/tui/model.go:107-109` returns `stop request sent` whenever
-`DeliveryBoundary == signal_sent && !ExitConfirmed`, before the status switch and without
-considering the operation.
+Trigger: the sibling `topsailai` project stores `MEMORY.md` as a symlink to `LEARN.md`, so the same
+layout was copied here. The human rejected it: `LEARN.md` is what the AI learned, `MEMORY.md` is
+what the human decided should be recorded. They are different audiences and must be different files.
 
-Current status: latent, not reachable today. The only shipped adapter maps `signal_sent` from
-`workspace kill`, which is `agent.stop`, so the wording is correct for every receipt that reaches
-the guard. The genuinely stop-specific provider states `stopped` / `already_stopped`
-(`internal/adapter/topsailai/adapter.go:642-648`) set `ExitConfirmed = true` and never trigger it.
+Action: when copying a layout from another project, treat the layout as a local decision rather than
+a shared convention. Ask what each file is for before mirroring it, and never collapse two documents
+into one merely because a sibling project did.
 
-Why it is still a defect: `signal_sent` is a generic boundary (`internal/protocol/command.go:82`),
-and the shared helper `internal/adapter/command.go:164-165` maps it for every adapter, so a second
-adapter reporting `signal_sent` for a non-stop operation would display the wrong wording with no
-cluster-side code change. The `default` branch at `adapter.go:666-667` reaches the same boundary for
-an unrecognized `delivery_state` carrying `signal_sent: true`.
-
-Why it cannot be fixed locally: `protocol.ExecutionReceipt`
-(`internal/protocol/command.go:124-141`) has no `Operation` field, so `StatusLabel` cannot
-distinguish operations. A fix needs either a new receipt field (protocol and stored `receipt_json`
-compatibility) or an operation parameter on every call site.
-
-Do not conflate: `internal/storage/server/command_queries.go:131` tests the same condition for a
-different and correct purpose, keeping the command at `executing` when a signal was sent but exit
-was not confirmed. The two sites must not be merged.
-
-Tests encoding the current assumption: `internal/tui/model_test.go:24` passes an empty receipt, so
-it cannot detect the operation ambiguity; `tests/bdd/steps_tui.go:28,225` asserts the wording for a
-scenario that genuinely submits a stop.
-
-Decision: documented only. Revisit at the second-adapter milestone, where adding `Operation` to the
-receipt becomes the natural choice. Recorded in
-`issues/statuslabel-signal-sent-mislabels-operation.md`.
+Why this prevents recurrence: a symlink makes two names resolve to one document, so content written
+for one audience silently appears in the other. The mistake is invisible in review because both
+paths look correct.
