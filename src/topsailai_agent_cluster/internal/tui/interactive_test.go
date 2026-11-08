@@ -462,14 +462,14 @@ func TestInteractiveHelpIncludesStart(t *testing.T) {
 func TestInteractiveSessionLifecycleAndControlCommands(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	input := "cd endpoint-1/session-1\ninject {\"text\":\"context\"}\ny\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nstop\nn\nexit\n"
+	input := "cd endpoint-1/session-1\nbtw {\"text\":\"context\"}\ny\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nstop\nn\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if stub.admit != 2 {
 		t.Fatalf("admitted %d commands, want 2 after declined stop", stub.admit)
 	}
-	for _, phrase := range []string{"inject session-1?", "interrupt session-1?", "stop cancelled"} {
+	for _, phrase := range []string{"btw session-1?", "interrupt session-1?", "stop cancelled"} {
 		if !strings.Contains(output.String(), phrase) {
 			t.Fatalf("output missing %q: %q", phrase, output.String())
 		}
@@ -478,8 +478,8 @@ func TestInteractiveSessionLifecycleAndControlCommands(t *testing.T) {
 
 func TestInteractiveSessionActionsRequireSessionScope(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-	_, diagnostics := runScope(t, stub, "inject {}\ninterrupt {}\nexit\n", ColorPolicy{})
-	for _, name := range []string{"inject", "interrupt"} {
+	_, diagnostics := runScope(t, stub, "btw {}\ninterrupt {}\nexit\n", ColorPolicy{})
+	for _, name := range []string{"btw", "interrupt"} {
 		if !strings.Contains(diagnostics, `command "`+name+`" is unavailable in workspace scope`) {
 			t.Fatalf("missing scope rejection for %s: %q", name, diagnostics)
 		}
@@ -509,10 +509,9 @@ func TestInteractiveStopRequiresTargetOutsideSessionScope(t *testing.T) {
 func TestInteractiveControlAliasesAreDocumented(t *testing.T) {
 	// An alias must answer with the spelling the operator typed, while the body
 	// stays the canonical command's body. Byte-identity would force the heading
-	// to the canonical name, so "help btw" would answer "inject" and the operator
-	// could not tell which command the help described.
+	// to the canonical name, so "help control" would answer "interrupt" and the
+	// operator could not tell which command the help described.
 	for _, testCase := range []struct{ alias, canonical string }{
-		{alias: "btw", canonical: "inject"},
 		{alias: "control", canonical: "interrupt"},
 	} {
 		t.Run(testCase.alias, func(t *testing.T) {
@@ -558,9 +557,9 @@ func TestInteractiveSessionActionValidation(t *testing.T) {
 		want  string
 	}{
 		{name: "stop arguments", input: "cd endpoint-1/session-1\nstop extra\nexit\n", want: "usage: stop"},
-		{name: "inject empty block", input: "cd endpoint-1/session-1\ninject\nEOF\nexit\n", want: "payload must not be empty"},
+		{name: "btw empty block", input: "cd endpoint-1/session-1\nbtw\nEOF\nexit\n", want: "payload must not be empty"},
 		{name: "interrupt unknown action", input: "cd endpoint-1/session-1\ninterrupt nope\nexit\n", want: "usage: interrupt [soft|hard] [message]"},
-		{name: "inject json option", input: "cd endpoint-1/session-1\ninject {} --json\nexit\n", want: "does not support --json"},
+		{name: "btw json option", input: "cd endpoint-1/session-1\nbtw {} --json\nexit\n", want: "does not support --json"},
 		{name: "interrupt hard with message", input: "cd endpoint-1/session-1\ninterrupt hard now\nexit\n", want: "hard does not accept a message"},
 	}
 	for _, testCase := range cases {
@@ -587,7 +586,7 @@ func TestInteractiveControlAliasesExecuteSharedOperations(t *testing.T) {
 	if errorsOut.Len() != 0 || stub.admit != 2 {
 		t.Fatalf("output=%q errors=%q admits=%d", output.String(), errorsOut.String(), stub.admit)
 	}
-	for _, phrase := range []string{"inject session-1?", "interrupt session-1?"} {
+	for _, phrase := range []string{"btw session-1?", "interrupt session-1?"} {
 		if !strings.Contains(output.String(), phrase) {
 			t.Fatalf("output missing %q: %q", phrase, output.String())
 		}
@@ -596,7 +595,7 @@ func TestInteractiveControlAliasesExecuteSharedOperations(t *testing.T) {
 
 // TestInteractivePlainTextActionsNeedNoJSON proves the interactive grammar never asks the
 // operator to compose a JSON payload: literal text reaches the standard payload for send,
-// inject and interrupt, and a bare interrupt is guided through the action choice.
+// btw and interrupt, and a bare interrupt is guided through the action choice.
 func TestInteractivePlainTextActionsNeedNoJSON(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -607,8 +606,8 @@ func TestInteractivePlainTextActionsNeedNoJSON(t *testing.T) {
 		{name: "send literal text", input: "cd endpoint-1/session-1\nsend hello world\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"hello world"}`},
 		{name: "send prose mentioning json flag", input: "cd endpoint-1/session-1\nsend please add --json to the config\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"please add --json to the config"}`},
 		{name: "send prose ending with json flag", input: "cd endpoint-1/session-1\nsend the flag is --json\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"the flag is --json"}`},
-		{name: "inject prose ending with json flag", input: "cd endpoint-1/session-1\ninject remember the flag is --json\ny\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"remember the flag is --json"}`},
-		{name: "inject literal text", input: "cd endpoint-1/session-1\ninject the deployment notes are in docs/\ny\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"the deployment notes are in docs/"}`},
+		{name: "btw prose ending with json flag", input: "cd endpoint-1/session-1\nbtw remember the flag is --json\ny\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"remember the flag is --json"}`},
+		{name: "btw literal text", input: "cd endpoint-1/session-1\nbtw the deployment notes are in docs/\ny\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"the deployment notes are in docs/"}`},
 		{name: "interrupt soft with message", input: "cd endpoint-1/session-1\ninterrupt soft stop and summarize now\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt","message":"stop and summarize now"}`},
 		{name: "interrupt hard", input: "cd endpoint-1/session-1\ninterrupt hard\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
 		{name: "guided interrupt defaults to soft", input: "cd endpoint-1/session-1\ninterrupt\n\n\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt"}`},
@@ -651,7 +650,7 @@ func TestInteractiveGuidedInterruptRejectsUnknownAction(t *testing.T) {
 
 func TestHelpCommandNamesReturnsStableSortedNames(t *testing.T) {
 	names := HelpCommandNames()
-	if len(names) == 0 || names[0] != "cd" || names[len(names)-1] != "watch" {
+	if len(names) == 0 || names[0] != "btw" || names[len(names)-1] != "watch" {
 		t.Fatalf("unexpected help names: %v", names)
 	}
 	for index := 1; index < len(names); index++ {

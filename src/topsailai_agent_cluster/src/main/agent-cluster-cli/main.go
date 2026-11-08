@@ -220,8 +220,8 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		return status(ctx, api, output, flags.Arg(1), *jsonMode)
 	case "drive":
 		return driveWithProgress(ctx, api, output, errors, flags.Args()[1:], *confirmed, *jsonMode, *waitTimeoutMS, *generation)
-	case "send", "btw", "inject", "control", "start", "resume", "stop":
-		// A bare send, btw, inject or start reads a multi-line block from the
+	case "send", "btw", "control", "start", "resume", "stop":
+		// A bare send, btw or start reads a multi-line block from the
 		// command input. On a terminal nothing else would prompt, so the
 		// operator would face a silent wait; the hint goes to the diagnostics
 		// stream to keep the machine-readable output clean.
@@ -651,7 +651,7 @@ func driveOperation(action string) (string, bool) {
 // forwarded unchanged as the advanced form.
 func resolveActionPayload(operation, value string) (json.RawMessage, error) {
 	switch operation {
-	case "send", "btw", "inject":
+	case "send", "btw":
 		return tui.MessagePayload(value)
 	case "control":
 		return tui.InterruptPayload(operation, value)
@@ -728,8 +728,8 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 				return err
 			}
 			payload = resolved
-		} else if operation == "btw" || operation == "inject" {
-			// A btw or inject without a text argument reads a multi-line context
+		} else if operation == "btw" {
+			// A btw without a text argument reads a multi-line context
 			// block from the command input, so context text never has to be
 			// quoted into one line. The block keeps the message payload bound,
 			// because context injection carries the same text field as send.
@@ -875,7 +875,7 @@ func rejectExtraPositionals(operation string, args []string, limit, textStart in
 }
 
 func operationName(value string) string {
-	if value == "btw" || value == "inject" {
+	if value == "btw" {
 		return "context.inject"
 	}
 	if value == "control" {
@@ -914,7 +914,7 @@ func multiLineHint(operation string, narg int, task string, terminal bool) strin
 		if narg == 3 {
 			return tui.MultiLineHint
 		}
-	case "btw", "inject":
+	case "btw":
 		// A positional text supplies the context, so no block is read.
 		if narg == 3 {
 			return tui.MultiLineContextHint

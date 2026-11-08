@@ -55,7 +55,7 @@ var messageMultiLineForm = multiLineForm{hint: MultiLineHint, prompt: multiLineP
 // task limit instead of failing later during payload validation.
 var taskMultiLineForm = multiLineForm{hint: MultiLineTaskHint, prompt: taskMultiLinePrompt, limit: protocol.MaxInitialTaskBytes, noun: "task"}
 
-// contextMultiLineForm is the multi-line context form used by inject and its btw
+// contextMultiLineForm is the multi-line context form used by btw
 // alias. Context injection carries the same message payload as send, so it keeps
 // the message bound and reports its own noun.
 var contextMultiLineForm = multiLineForm{hint: MultiLineContextHint, prompt: contextMultiLinePrompt, limit: MultiLineLimit, noun: "context"}
@@ -184,7 +184,7 @@ func readInteractiveTaskMultiLine(ctx context.Context, source <-chan lineReadRes
 }
 
 // readInteractiveContextMultiLine reads one context block from the REPL line
-// source. It is used by inject and its btw alias when no text is supplied.
+// source. It is used by btw when no text is supplied.
 func readInteractiveContextMultiLine(ctx context.Context, source <-chan lineReadResult, out io.Writer, options InteractiveOptions) (MultiLineBlock, error) {
 	return readInteractiveMultiLineForm(ctx, source, out, options, contextMultiLineForm)
 }

@@ -40,7 +40,7 @@ var commandScopeMatrix = []commandScopeRule{
 	// the two conditions are mutually exclusive and session scope stays excluded.
 	{Name: "resume", Workspace: true, Endpoint: true},
 	{Name: "stop", Workspace: true, Endpoint: true, Session: true},
-	{Name: "inject", Session: true},
+	{Name: "btw", Session: true},
 	{Name: "interrupt", Session: true},
 	{Name: "ctl", Session: true},
 	{Name: "drive", Workspace: true, Endpoint: true, Session: true},
@@ -71,7 +71,6 @@ var commandAliases = map[string]string{
 	"r":        "refresh",
 	"l":        "list",
 	"w":        "watch",
-	"btw":      "inject",
 	"control":  "interrupt",
 	sendPrefix: "send",
 }

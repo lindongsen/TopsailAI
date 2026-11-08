@@ -30,7 +30,7 @@ func TestConfirmationReadHasNoCommandDeadline(t *testing.T) {
 		// A bare send is the only form that still asks, so it is the form that
 		// exercises the confirmation read.
 		{name: "send", command: "send", block: []string{"hi", "EOF"}, op: protocol.OperationMessageSend},
-		{name: "inject", command: `inject {"text":"hi"}`, op: protocol.OperationContextInject},
+		{name: "btw", command: `btw {"text":"hi"}`, op: protocol.OperationContextInject},
 		{name: "interrupt", command: `interrupt {"action":"soft_interrupt"}`, op: protocol.OperationExecutionInterrupt},
 	}
 	for _, testCase := range cases {
