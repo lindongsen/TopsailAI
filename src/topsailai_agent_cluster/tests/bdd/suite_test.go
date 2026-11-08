@@ -7,29 +7,35 @@ import (
 	"github.com/cucumber/godog"
 )
 
+// featurePaths is the ordered list of feature files the strict BDD suite runs.
+// It is a package-level value so the registry integrity guard can inspect it:
+// a path that is dropped or duplicated here silently changes what the suite
+// verifies, so suite_registry_test.go asserts it against the files on disk.
+var featurePaths = []string{
+	"../../features/inventory.feature",
+	"../../features/command_idempotency.feature",
+	"../../features/notifications.feature",
+	"../../features/capability.feature",
+	"../../features/cancellation.feature",
+	"../../features/timeouts.feature",
+	"../../features/real_boundary.feature",
+	"../../features/command_recovery.feature",
+	"../../features/provider_response.feature",
+	"../../features/tui.feature",
+	"../../features/lifecycle.feature",
+	"../../features/commands.feature",
+	"../../features/unknown_input_offer.feature",
+	"../../features/bidirectional_channel.feature",
+	"../../features/output_follow.feature",
+	"../../features/output_scope.feature",
+}
+
 // TestFeatures runs the strict real-boundary BDD suite.
 func TestFeatures(t *testing.T) {
 	activeTest = t
 	suite := godog.TestSuite{
 		ScenarioInitializer: InitializeScenario,
-		Options: &godog.Options{Format: "progress", Paths: []string{
-			"../../features/inventory.feature",
-			"../../features/command_idempotency.feature",
-			"../../features/notifications.feature",
-			"../../features/capability.feature",
-			"../../features/cancellation.feature",
-			"../../features/timeouts.feature",
-			"../../features/real_boundary.feature",
-			"../../features/command_recovery.feature",
-			"../../features/provider_response.feature",
-			"../../features/tui.feature",
-			"../../features/lifecycle.feature",
-			"../../features/commands.feature",
-			"../../features/unknown_input_offer.feature",
-			"../../features/bidirectional_channel.feature",
-			"../../features/output_follow.feature",
-			"../../features/output_scope.feature",
-		}, Strict: true, TestingT: t},
+		Options:             &godog.Options{Format: "progress", Paths: append([]string(nil), featurePaths...), Strict: true, TestingT: t},
 	}
 	if suite.Run() != 0 {
 		t.Fatal("godog suite failed")
