@@ -235,3 +235,47 @@ func TestDiagnosticCommandNameResolvesTheDottedSpelling(t *testing.T) {
 		t.Fatalf("diagnosticCommandName = %q, want send", got)
 	}
 }
+
+// TestExecuteInteractiveLineCtlDottedShortcutAdmitsTheShortcut proves a configured
+// shortcut is reachable through the dotted spelling with no client change. The
+// Endpoint advertises one capability per catalog entry, so a shortcut arrives as
+// its own capability name and the dotted spelling sends that exact name. The
+// client never resolves the shortcut to its target, because resolution belongs to
+// the Endpoint catalog and a client-side table would drift from the file.
+func TestExecuteInteractiveLineCtlDottedShortcutAdmitsTheShortcut(t *testing.T) {
+	stub := ctlStub(
+		protocol.Capability{Name: "ctl.get_session_messages", Version: "1"},
+		protocol.Capability{Name: "ctl.session.messages", Version: "1"},
+	)
+	state := ctlState()
+	var output, diagnostics strings.Builder
+	_, err := executeInteractiveLine(context.Background(), stub, state, "ctl.session.messages", ctlLines("", "y"), &output, &output, &diagnostics, InteractiveOptions{WaitTimeoutMS: 100})
+	if err != nil {
+		t.Fatalf("executeInteractiveLine: %v", err)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted %d commands, want 1", stub.admit)
+	}
+	if got := stub.intents[0].Operation; got != "ctl.session.messages" {
+		t.Fatalf("operation = %q, want the shortcut name", got)
+	}
+	if strings.Contains(output.String(), "Control actions:") {
+		t.Fatalf("the dotted shortcut must not render the action list: %q", output.String())
+	}
+}
+
+// TestExecuteInteractiveLineCtlDottedShortcutRejectsAnUnconfiguredShortcut proves
+// a shortcut that the catalog does not carry is refused during preflight, so a
+// plausible-looking dotted name never reaches the provider.
+func TestExecuteInteractiveLineCtlDottedShortcutRejectsAnUnconfiguredShortcut(t *testing.T) {
+	stub := ctlStub(protocol.Capability{Name: "ctl.get_session_messages"})
+	state := ctlState()
+	var output, diagnostics strings.Builder
+	_, err := executeInteractiveLine(context.Background(), stub, state, "ctl.session.messages", ctlLines("y"), &output, &output, &diagnostics, InteractiveOptions{WaitTimeoutMS: 100})
+	if err == nil || !strings.Contains(err.Error(), "unsupported capability") {
+		t.Fatalf("error = %v, want an unsupported-capability rejection", err)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("unconfigured shortcut admitted %d commands", stub.admit)
+	}
+}

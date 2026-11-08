@@ -304,8 +304,16 @@ func TestShippedCatalogNamesOnlyProviderActions(t *testing.T) {
 		t.Fatalf("parse the shipped catalog: %v", err)
 	}
 	for _, action := range set.Actions() {
-		if !provider[action.Name] {
-			t.Errorf("the shipped catalog names %q, which the provider does not serve", action.Name)
+		// A shortcut never reaches the provider under its own name: it runs the
+		// argv of the action it names. The invariant is therefore about the
+		// action that actually executes, so a shortcut is checked through its
+		// target instead of its own name.
+		served := action.Name
+		if action.AliasOf != "" {
+			served = action.AliasOf
+		}
+		if !provider[served] {
+			t.Errorf("the shipped catalog names %q, which the provider does not serve", served)
 		}
 	}
 }

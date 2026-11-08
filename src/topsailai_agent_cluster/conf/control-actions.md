@@ -229,6 +229,48 @@ Two consequences are worth stating plainly.
 - **One entry means one permission.** `call_instruction` reaches read-only instructions such as `ctx.history` and mutating ones such as `ctx.clear` under a single scope. A site that needs to separate them must declare several catalog entries that share the same `command` but carry different `payload_schema` enums and different `permission` values. The catalog supports that; the shipped example keeps one entry for simplicity.
 - **The enum is a prompt, not a gate.** The provider validates the instruction name against its live registry. A name absent from the enum can still be submitted by a caller that builds the payload itself, so the enum must not be mistaken for an allowlist.
 
+## Shortcuts
+
+A shortcut is a second name for an action that already exists in the catalog. It
+exists so a frequent action can be typed quickly: with the shipped entries an
+operator types `ctl.session.messages` instead of `ctl.get_session_messages`, and
+the dotted spelling skips the action menu entirely.
+
+A shortcut declares only two fields.
+
+```json
+{"name": "session.messages", "alias_of": "get_session_messages"}
+```
+
+Everything else is inherited from the action it names: the permission, the payload
+schema, the payload selector field and the provider argv. A shortcut therefore
+cannot widen what an operator may do, cannot advertise a different schema, and
+cannot run a different command.
+
+Rules enforced at load time:
+
+- `alias_of` must name a real action declared anywhere in the file, so a forward
+  reference is allowed and file order does not matter.
+- A shortcut may not name itself.
+- A shortcut may not name another shortcut. One indirection is enough for a typing
+  shortcut, and a chain would make the effective permission depend on resolution
+  order.
+- A shortcut may not declare `permission`, `command`, `payload_schema` or
+  `payload_session_field`. Declaring one is an error rather than a silent no-op,
+  because an operator who wrote it would otherwise believe it took effect.
+- A name may appear only once, whether it is a real action or a shortcut.
+
+A shortcut is resolved into a full copy at load time, so execution never follows a
+second lookup and a reload cannot leave a shortcut pointing at a stale definition.
+Retiring the target retires the shortcut with it, because the file is validated as
+a whole.
+
+The shipped catalog carries ten shortcuts: `session.messages`,
+`session.runtime_messages`, `session.heartbeat`, `session.pause`,
+`session.unpause`, `session.interrupt`, `session.soft_interrupt`,
+`session.clear_interrupt`, `session.instruction` and `session.llm`. The list is a
+starting point, not a fixed set; nothing about a shortcut is compiled in.
+
 ## Provider gaps this catalog cannot close
 
 These are provider-side limitations. The catalog documents them rather than working around them.

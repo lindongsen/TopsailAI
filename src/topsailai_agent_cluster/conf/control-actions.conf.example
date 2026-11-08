@@ -43,6 +43,13 @@
 #   - `payload_schema` must be a JSON object when present.
 #   - A name may appear only once, and an unknown field is refused rather than
 #     ignored.
+#   - An entry is either a real action or a shortcut. A real action declares
+#     `permission`, `command` and optionally `payload_schema` and
+#     `payload_session_field`. A shortcut declares only `name` and `alias_of`.
+#   - `alias_of` must name a real action declared anywhere in this file. A
+#     shortcut may not name itself, may not name another shortcut, and may not
+#     declare `permission`, `command`, `payload_schema` or
+#     `payload_session_field`, because it inherits all of them.
 #
 # A reload parses the new file completely before it swaps the catalog. A parse
 # failure keeps the previous catalog and is logged, so a typo never leaves the
@@ -92,6 +99,21 @@
 # read history without letting them clear it needs per-instruction enforcement,
 # which the Endpoint does not implement today; splitting this entry into several
 # entries would only move the enum, not the boundary.
+#
+# Shortcuts
+#
+# A shortcut is a second name for an action that already exists here. It exists
+# so a frequent action can be typed quickly: with the entry below, an operator
+# types `ctl.session.messages` instead of `ctl.get_session_messages`, and the
+# dotted spelling skips the action menu entirely.
+#
+# A shortcut inherits the permission, the payload schema, the payload selector
+# field and the provider argv of the action it names, so it can never widen what
+# an operator may do and it can never run a different command. Retiring the
+# target retires the shortcut with it, because the file is validated as a whole.
+#
+# The shortcut list at the end of this file is a starting point, not a fixed set.
+# Add, rename or remove entries freely; nothing about a shortcut is compiled in.
 
 {
   "actions": [
@@ -230,6 +252,17 @@
         "required": ["operation"]
       },
       "command": ["runtime", "control", "llm_control", "-s", "{session}", "-a", "{payload}", "--json"]
-    }
+    },
+
+    {"name": "session.messages", "alias_of": "get_session_messages"},
+    {"name": "session.runtime_messages", "alias_of": "get_runtime_messages"},
+    {"name": "session.heartbeat", "alias_of": "heartbeat"},
+    {"name": "session.pause", "alias_of": "pause"},
+    {"name": "session.unpause", "alias_of": "clear_pause"},
+    {"name": "session.interrupt", "alias_of": "hard_interrupt"},
+    {"name": "session.soft_interrupt", "alias_of": "soft_interrupt"},
+    {"name": "session.clear_interrupt", "alias_of": "clear_interrupt"},
+    {"name": "session.instruction", "alias_of": "call_instruction"},
+    {"name": "session.llm", "alias_of": "llm_control"}
   ]
 }

@@ -51,6 +51,11 @@ type ControlAction struct {
 	// session key. It is empty for an action that does not need the selector in
 	// its payload, which is the common case.
 	PayloadSessionField string
+	// AliasOf names the action this entry is a shortcut for, or is empty for a
+	// real action. A shortcut is resolved into a full copy of its target at load
+	// time, so execution never follows a second lookup; the field is kept so a
+	// diagnostic can tell a shortcut from the action it points at.
+	AliasOf string
 }
 
 // ControlActionSet is the Endpoint-local set of enabled ctl. actions.
@@ -75,12 +80,18 @@ type controlActionFile struct {
 }
 
 // controlActionEntry is one configured action before validation.
+//
+// An entry is either a real action or a shortcut. A real action declares its own
+// permission, schema and command. A shortcut declares only `name` and `alias_of`,
+// and inherits everything else from the action it names, so a shortcut can never
+// widen a permission or change what runs.
 type controlActionEntry struct {
 	Name                string          `json:"name"`
 	Permission          string          `json:"permission"`
 	PayloadSchema       json.RawMessage `json:"payload_schema"`
 	Command             []string        `json:"command"`
 	PayloadSessionField string          `json:"payload_session_field"`
+	AliasOf             string          `json:"alias_of"`
 }
 
 // LoadControlActionSet reads and validates the control action file at path.
@@ -107,6 +118,11 @@ func LoadControlActionSet(path string) (*ControlActionSet, error) {
 // list is accepted and disables the whole ctl. family, because a security default
 // must fail closed.
 //
+// An entry is either a real action or a shortcut. A shortcut is resolved into a
+// full copy of the action it names, so the advertised capability, the payload
+// schema and the provider argv all come from one place and a shortcut can never
+// drift from its target.
+//
 // A line whose first non-space character is '#' is dropped before decoding, so the
 // shipped example can explain itself in place. Only whole lines are dropped: a
 // JSON string cannot span lines, so this rule cannot corrupt a value, and a '#'
@@ -119,18 +135,89 @@ func ParseControlActionSet(data []byte) (*ControlActionSet, error) {
 		return nil, fmt.Errorf("decode control action document: %w", err)
 	}
 	set := &ControlActionSet{actions: make(map[string]ControlAction, len(document.Actions))}
+	// The first pass validates every name and collects the real actions. A
+	// shortcut is resolved afterwards, because it may name an action declared
+	// later in the file and a forward reference must not depend on file order.
+	shortcuts := make([]controlActionEntry, 0, len(document.Actions))
+	names := make(map[string]bool, len(document.Actions))
 	for index, entry := range document.Actions {
+		name, err := validateControlActionName(entry.Name)
+		if err != nil {
+			return nil, fmt.Errorf("action %d: %w", index, err)
+		}
+		if names[name] {
+			return nil, fmt.Errorf("action %d: %q is listed more than once", index, name)
+		}
+		names[name] = true
+		if strings.TrimSpace(entry.AliasOf) != "" {
+			shortcuts = append(shortcuts, entry)
+			continue
+		}
 		action, err := validateControlActionEntry(entry)
 		if err != nil {
 			return nil, fmt.Errorf("action %d: %w", index, err)
 		}
-		if _, exists := set.actions[action.Name]; exists {
-			return nil, fmt.Errorf("action %d: %q is listed more than once", index, action.Name)
+		set.actions[action.Name] = action
+	}
+	// The second pass expands every shortcut into a copy of its target, so
+	// execution never follows a second lookup and a reload cannot leave a
+	// shortcut pointing at a stale definition.
+	for index, entry := range shortcuts {
+		action, err := resolveControlActionShortcut(entry, set.actions)
+		if err != nil {
+			return nil, fmt.Errorf("shortcut %d: %w", index, err)
 		}
 		set.actions[action.Name] = action
-		set.order = append(set.order, action.Name)
+	}
+	// The rendered order follows the file, so the menu matches what the operator
+	// reads in the catalog.
+	for _, entry := range document.Actions {
+		set.order = append(set.order, strings.TrimSpace(entry.Name))
 	}
 	return set, nil
+}
+
+// resolveControlActionShortcut expands one shortcut into a copy of its target.
+//
+// A shortcut declares only its own name and the action it points at. Everything
+// else is inherited, so a shortcut can never widen a permission, change the
+// payload schema or run a different command than the action it names. Declaring
+// any of those fields on a shortcut is rejected instead of being ignored, because
+// an operator who wrote them would otherwise believe they took effect.
+//
+// A shortcut may not point at another shortcut. A chain would make the effective
+// permission depend on resolution order, and one indirection is enough for a
+// typing shortcut.
+func resolveControlActionShortcut(entry controlActionEntry, actions map[string]ControlAction) (ControlAction, error) {
+	name, err := validateControlActionName(entry.Name)
+	if err != nil {
+		return ControlAction{}, err
+	}
+	target := strings.TrimSpace(entry.AliasOf)
+	if target == "" {
+		return ControlAction{}, fmt.Errorf("%q: alias_of is required", name)
+	}
+	if target == name {
+		return ControlAction{}, fmt.Errorf("%q: alias_of must not name itself", name)
+	}
+	if entry.Permission != "" || len(entry.Command) > 0 || len(bytes.TrimSpace(entry.PayloadSchema)) > 0 || strings.TrimSpace(entry.PayloadSessionField) != "" {
+		return ControlAction{}, fmt.Errorf("%q: a shortcut inherits permission, payload_schema, command and payload_session_field from %q and must not declare them", name, target)
+	}
+	action, ok := actions[target]
+	if !ok {
+		return ControlAction{}, fmt.Errorf("%q: alias_of names %q, which is not a configured action", name, target)
+	}
+	if action.AliasOf != "" {
+		return ControlAction{}, fmt.Errorf("%q: alias_of must name a real action, not the shortcut %q", name, target)
+	}
+	return ControlAction{
+		Name:                name,
+		Permission:          action.Permission,
+		PayloadSchema:       action.PayloadSchema,
+		Command:             append([]string(nil), action.Command...),
+		PayloadSessionField: action.PayloadSessionField,
+		AliasOf:             target,
+	}, nil
 }
 
 // stripControlActionComments removes whole-line '#' comments from a catalog.
