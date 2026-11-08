@@ -24,7 +24,7 @@ func (s *failingOutputStub) GetOutput(context.Context, string, string, string, i
 // does not trigger another automatic read: only the entry transition reads.
 func TestUnitU5LeavingSessionScopeEmitsNoSnapshot(t *testing.T) {
 	stub := singleHostStub()
-	output, _ := runNav(t, stub, "cd ai-dev/endpoint-1/res-1\ncd ..\nquit\n")
+	output, _ := runNav(t, stub, "cd ai-dev/endpoint-1/res-1\ncd ..\nexit\n")
 	if stub.outputCalls != 1 {
 		t.Fatalf("output requests after entering and leaving session scope = %d, want 1", stub.outputCalls)
 	}
@@ -40,7 +40,7 @@ func TestUnitU5LeavingSessionScopeEmitsNoSnapshot(t *testing.T) {
 // session already in scope is not a transition and therefore reads nothing.
 func TestUnitU7ReselectingSameSessionEmitsNoSnapshot(t *testing.T) {
 	stub := singleHostStub()
-	output, _ := runNav(t, stub, "cd ai-dev/endpoint-1/res-1\ncd res-1\nquit\n")
+	output, _ := runNav(t, stub, "cd ai-dev/endpoint-1/res-1\ncd res-1\nexit\n")
 	if stub.outputCalls != 1 {
 		t.Fatalf("output requests after re-selecting the same session = %d, want 1", stub.outputCalls)
 	}
@@ -53,7 +53,7 @@ func TestUnitU7ReselectingSameSessionEmitsNoSnapshot(t *testing.T) {
 // read is reported and does not roll back the already validated selection.
 func TestUnitU8FailedAutomaticReadReportsDiagnostic(t *testing.T) {
 	stub := &failingOutputStub{navStub: singleHostStub()}
-	output, _ := runNav(t, stub, "cd ai-dev/endpoint-1/res-1\nquit\n")
+	output, _ := runNav(t, stub, "cd ai-dev/endpoint-1/res-1\nexit\n")
 	if stub.outputCalls != 1 {
 		t.Fatalf("output requests = %d, want 1", stub.outputCalls)
 	}

@@ -1,6 +1,7 @@
 package topsailai
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -434,5 +435,142 @@ func TestControlActionCommandAllowsATemplateWithoutSession(t *testing.T) {
 	}
 	if len(args) != 4 {
 		t.Fatalf("argv = %v, want 4 tokens", args)
+	}
+}
+
+// TestParseControlActionSetAcceptsPayloadConstants proves a catalog entry may fix
+// a payload field itself, which is how one entry names a single instruction
+// instead of asking the operator to choose from the whole inventory.
+func TestParseControlActionSetAcceptsPayloadConstants(t *testing.T) {
+	document := `{"actions": [
+	  {"name": "git.status", "permission": "read_output",
+	   "payload_constants": {"instruction": "git.git_status"},
+	   "payload_schema": {"type": "object", "properties": {"args": {"type": "array"}}},
+	   "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]}
+	]}`
+	set := newTestControlSet(t, document)
+	action, ok := set.Get("git.status")
+	if !ok {
+		t.Fatal("git.status is not enabled")
+	}
+	if action.PayloadConstants["instruction"] != "git.git_status" {
+		t.Fatalf("payload_constants = %v, want instruction=git.git_status", action.PayloadConstants)
+	}
+}
+
+// TestParseControlActionSetRejectsATemplatedConstant proves a constant must be a
+// literal. A constant that expanded would let the catalog reintroduce the
+// operator-controlled command it exists to prevent.
+func TestParseControlActionSetRejectsATemplatedConstant(t *testing.T) {
+	document := `{"actions": [
+	  {"name": "probe", "permission": "control",
+	   "payload_constants": {"instruction": "{session}"},
+	   "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]}
+	]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("a templated constant must be rejected")
+	}
+}
+
+// TestParseControlActionSetRejectsConstantsWithoutPayload proves a constant needs
+// a {payload} placeholder, because otherwise the value would never be forwarded.
+func TestParseControlActionSetRejectsConstantsWithoutPayload(t *testing.T) {
+	document := `{"actions": [
+	  {"name": "probe", "permission": "control",
+	   "payload_constants": {"instruction": "git.git_status"},
+	   "command": ["runtime", "control", "probe", "-s", "{session}", "--json"]}
+	]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("constants without a {payload} placeholder must be rejected")
+	}
+}
+
+// TestParseControlActionSetRejectsAConstantOnTheSessionField proves the injected
+// selector and a constant cannot claim the same field, because the two would
+// disagree about who owns the value.
+func TestParseControlActionSetRejectsAConstantOnTheSessionField(t *testing.T) {
+	document := `{"actions": [
+	  {"name": "probe", "permission": "control",
+	   "payload_session_field": "session_id",
+	   "payload_constants": {"session_id": "fixed"},
+	   "command": ["runtime", "control", "probe", "-s", "{session}", "-a", "{payload}", "--json"]}
+	]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("a constant on the payload_session_field must be rejected")
+	}
+}
+
+// TestControlActionConstantPayloadFillsTheField proves the constant reaches the
+// provider payload, so the operator never has to supply it.
+func TestControlActionConstantPayloadFillsTheField(t *testing.T) {
+	action := ControlAction{Name: "git.status", PayloadConstants: map[string]string{"instruction": "git.git_status"}}
+	payload, err := controlActionConstantPayload(action, []byte(`{"args":["--short"]}`))
+	if err != nil {
+		t.Fatalf("controlActionConstantPayload: %v", err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	var instruction string
+	if err := json.Unmarshal(decoded["instruction"], &instruction); err != nil {
+		t.Fatalf("decode instruction: %v", err)
+	}
+	if instruction != "git.git_status" {
+		t.Fatalf("instruction = %q, want git.git_status", instruction)
+	}
+	if _, ok := decoded["args"]; !ok {
+		t.Fatal("the operator-supplied args were dropped")
+	}
+}
+
+// TestControlActionConstantPayloadRejectsADisagreeingValue proves a caller cannot
+// reach a different instruction through an entry that advertises one.
+func TestControlActionConstantPayloadRejectsADisagreeingValue(t *testing.T) {
+	action := ControlAction{Name: "git.status", PayloadConstants: map[string]string{"instruction": "git.git_status"}}
+	if _, err := controlActionConstantPayload(action, []byte(`{"instruction":"ctx.clear"}`)); err == nil {
+		t.Fatal("a disagreeing instruction must be rejected")
+	}
+}
+
+// TestControlActionConstantPayloadAcceptsTheSameValue proves a caller that repeats
+// the fixed value is not punished for it.
+func TestControlActionConstantPayloadAcceptsTheSameValue(t *testing.T) {
+	action := ControlAction{Name: "git.status", PayloadConstants: map[string]string{"instruction": "git.git_status"}}
+	if _, err := controlActionConstantPayload(action, []byte(`{"instruction":"git.git_status"}`)); err != nil {
+		t.Fatalf("controlActionConstantPayload: %v", err)
+	}
+}
+
+// TestParseControlActionSetRejectsConstantsOnAShortcut proves a shortcut cannot
+// pin a field, because it inherits its target's constants and a second set would
+// make the effective payload depend on which entry the operator typed.
+func TestParseControlActionSetRejectsConstantsOnAShortcut(t *testing.T) {
+	document := `{"actions": [
+	  {"name": "probe", "permission": "control", "command": ["runtime", "control", "probe", "-s", "{session}", "-a", "{payload}", "--json"]},
+	  {"name": "probe.shortcut", "alias_of": "probe", "payload_constants": {"instruction": "x"}}
+	]}`
+	if _, err := ParseControlActionSet([]byte(document)); err == nil {
+		t.Fatal("a shortcut declaring payload_constants must be rejected")
+	}
+}
+
+// TestParseControlActionSetShortcutInheritsConstants proves a shortcut of an entry
+// that fixes a field keeps that field fixed, so a shortcut never loses the
+// instruction its target names.
+func TestParseControlActionSetShortcutInheritsConstants(t *testing.T) {
+	document := `{"actions": [
+	  {"name": "git.status", "permission": "read_output",
+	   "payload_constants": {"instruction": "git.git_status"},
+	   "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]},
+	  {"name": "git.st", "alias_of": "git.status"}
+	]}`
+	set := newTestControlSet(t, document)
+	shortcut, ok := set.Get("git.st")
+	if !ok {
+		t.Fatal("git.st is not enabled")
+	}
+	if shortcut.PayloadConstants["instruction"] != "git.git_status" {
+		t.Fatalf("payload_constants = %v, want the target's instruction", shortcut.PayloadConstants)
 	}
 }

@@ -28,7 +28,7 @@ func newStartRefreshStub() *startRefreshStub {
 	}
 }
 
-const startRefreshInput = "start endpoint-1 compatibility --profile p --profile-revision r\nquit\n"
+const startRefreshInput = "start endpoint-1 compatibility --profile p --profile-revision r\nexit\n"
 
 // TestStartRefreshesOnlyTheStartedEndpoint proves a successful start forces one
 // collection for the Endpoint that accepted it, so the next list already contains
@@ -201,17 +201,18 @@ func (s *baselineFailureStub) GetInventory(ctx context.Context, endpointID strin
 // TestStartUnreadableBaselineDoesNotClaimNotYetVisible proves an unreadable
 // projection never fabricates a pending-visibility conclusion. Without a baseline
 // there is no evidence that the session is missing, so silence is the only honest
-// outcome.
+// outcome. The forced collection itself supplies the post-refresh document, so the
+// baseline is the only projection read.
 func TestStartUnreadableBaselineDoesNotClaimNotYetVisible(t *testing.T) {
 	stub := &baselineFailureStub{startRefreshStub: newStartRefreshStub()}
 	var out strings.Builder
-	if err := refreshAfterStart(context.Background(), stub, "endpoint-1", acknowledgedResult(), &out, InteractiveOptions{}); err != nil {
+	if err := refreshAfterStart(context.Background(), stub, "endpoint-1", acknowledgedResult(), &out, &out, InteractiveOptions{}); err != nil {
 		t.Fatalf("refreshAfterStart: %v", err)
 	}
 	if strings.Contains(out.String(), "not yet visible") {
 		t.Fatalf("unreadable baseline fabricated a pending-visibility claim: %q", out.String())
 	}
-	if stub.calls < 2 {
-		t.Fatalf("projection reads=%d, want a baseline read and a post-refresh read", stub.calls)
+	if stub.calls != 1 {
+		t.Fatalf("projection reads=%d, want only the baseline read", stub.calls)
 	}
 }

@@ -12,7 +12,7 @@ import (
 // from the fleet list and the stop reaches the endpoint that owns that row.
 func TestStopAcceptsRowNumberInWorkspaceScope(t *testing.T) {
 	stub := scopeStub()
-	output, diagnostics := runScope(t, stub, "list\nstop 1\ny\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "list\nstop 1\ny\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -35,7 +35,7 @@ func TestStopAcceptsRowNumberInWorkspaceScope(t *testing.T) {
 // reused and the row must belong to the current endpoint.
 func TestStopAcceptsRowNumberInEndpointScope(t *testing.T) {
 	stub := scopeStub()
-	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nlist\nstop 1\ny\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nlist\nstop 1\ny\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -69,7 +69,7 @@ func TestStopRejectsForeignRowInEndpointScope(t *testing.T) {
 // workspace scope without a rendered list.
 func TestStopResolvesSessionIDAcrossEndpoints(t *testing.T) {
 	stub := scopeStub()
-	_, diagnostics := runScope(t, stub, "stop res-2\ny\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "stop res-2\ny\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -98,7 +98,7 @@ func TestStopRejectsAmbiguousSessionIDAcrossEndpoints(t *testing.T) {
 			"endpoint-2": scopeInventory("res-shared", "generation-2"),
 		},
 	}
-	_, diagnostics := runScope(t, stub, "stop res-shared\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "stop res-shared\nexit\n", ColorPolicy{})
 	assertActionableError(t, diagnostics, `error: multiple sessions match "res-shared"; use stop <number> with a row from list`)
 	if stub.admit != 0 {
 		t.Fatalf("ambiguous target admitted %d commands", stub.admit)
@@ -115,7 +115,7 @@ func TestStopRejectsChangedGenerationBeforeConfirmation(t *testing.T) {
 	// revalidation is the fifth inventory call; only that read reports a new
 	// generation for the selected session.
 	stub.generationSequence = []string{"generation-1", "generation-1", "generation-1", "generation-1", "generation-2"}
-	_, diagnostics := runScope(t, stub, "list\nstop 1\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "list\nstop 1\nexit\n", ColorPolicy{})
 	assertActionableError(t, diagnostics, `error: session "res-1" generation changed; run list again`)
 	if stub.admit != 0 {
 		t.Fatalf("changed generation admitted %d commands", stub.admit)
@@ -127,7 +127,7 @@ func TestStopRejectsChangedGenerationBeforeConfirmation(t *testing.T) {
 func TestStopRejectsOfflineEndpoint(t *testing.T) {
 	stub := scopeStub()
 	stub.endpoints[0].ConnectionState = "offline"
-	_, diagnostics := runScope(t, stub, "list\nstop 1\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "list\nstop 1\nexit\n", ColorPolicy{})
 	assertActionableError(t, diagnostics, `error: endpoint "endpoint-1" is not online: connection_state=offline`)
 	if stub.admit != 0 {
 		t.Fatalf("offline endpoint admitted %d commands", stub.admit)
@@ -141,7 +141,7 @@ func TestStopRejectsIncompleteInventory(t *testing.T) {
 	report := scopeInventory("res-1", "generation-1")
 	report.ReportComplete = false
 	stub.reports["endpoint-1"] = report
-	_, diagnostics := runScope(t, stub, "stop res-1\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "stop res-1\nexit\n", ColorPolicy{})
 	assertActionableError(t, diagnostics, `error: endpoint "endpoint-1" inventory is unavailable`)
 	if stub.admit != 0 {
 		t.Fatalf("incomplete inventory admitted %d commands", stub.admit)
@@ -152,7 +152,7 @@ func TestStopRejectsIncompleteInventory(t *testing.T) {
 // the new scope paths.
 func TestStopDeclinedConfirmationAdmitsNothing(t *testing.T) {
 	stub := scopeStub()
-	output, diagnostics := runScope(t, stub, "list\nstop 1\nn\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "list\nstop 1\nn\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -203,5 +203,39 @@ func TestStopReportsCommandIDForStatus(t *testing.T) {
 	}
 	if state.commandID != "cmd-77" {
 		t.Fatalf("state commandID=%q, want cmd-77", state.commandID)
+	}
+}
+
+// TestStopConfirmationNamesProviderSessionIDFirst proves the workspace-scope stop
+// question names the provider session identifier before the opaque cluster resource
+// ID, so the operator can match the question against the SESSION_ID column of the
+// rendered list before answering. The opaque ID stays available for status and info.
+func TestStopConfirmationNamesProviderSessionIDFirst(t *testing.T) {
+	stub := scopeStub()
+	output, diagnostics := runScope(t, stub, "list\nstop 1\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if !strings.Contains(output, "stop session provider-res-1 (res-1)? Confirm stop?") {
+		t.Fatalf("confirmation question does not name the provider session ID first: %q", output)
+	}
+	if strings.Index(output, "provider-res-1") > strings.Index(output, "stop session provider-res-1 (res-1)?") {
+		t.Fatalf("provider session ID is not the first identifier in the question: %q", output)
+	}
+}
+
+// TestStopConfirmationDeclinedAdmitsNothing proves the reworded question keeps the
+// confirmation gate: a declined answer still admits no command.
+func TestStopConfirmationDeclinedAdmitsNothing(t *testing.T) {
+	stub := scopeStub()
+	output, diagnostics := runScope(t, stub, "list\nstop 1\nn\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("declined stop admitted %d commands", stub.admit)
+	}
+	if !strings.Contains(output, "stop cancelled") {
+		t.Fatalf("missing cancellation notice: %q", output)
 	}
 }

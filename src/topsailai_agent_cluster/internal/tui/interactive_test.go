@@ -123,7 +123,7 @@ func testInventory() protocol.InventoryReport {
 func TestInteractiveListUsesTableHeaders(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, diagnostics strings.Builder
-	if err := RunInteractive(context.Background(), stub, strings.NewReader("list\nquit\n"), &output, &diagnostics, InteractiveOptions{}); err != nil {
+	if err := RunInteractive(context.Background(), stub, strings.NewReader("list\nexit\n"), &output, &diagnostics, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, header := range tableHeaders {
@@ -136,7 +136,7 @@ func TestInteractiveListUsesTableHeaders(t *testing.T) {
 func TestInteractiveLoopContinuesAfterErrorAndQuit(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}, failList: true}
 	var output, errorsOut strings.Builder
-	err := RunInteractive(context.Background(), stub, strings.NewReader("bad\nhelp\nquit\n"), &output, &errorsOut, InteractiveOptions{LineLimit: 128})
+	err := RunInteractive(context.Background(), stub, strings.NewReader("bad\nhelp\nexit\n"), &output, &errorsOut, InteractiveOptions{LineLimit: 128})
 	if err != nil {
 		t.Fatalf("RunInteractive: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestInteractiveUseChangesPromptAndEOFIsSuccessful(t *testing.T) {
 func TestInteractiveSendDeclineDoesNotAdmitAndEscapeIsFiltered(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	err := RunInteractive(context.Background(), stub, strings.NewReader("cd endpoint-1/session-1\nsend {\"text\":\"hi\"}\nn\nlogs\nquit\n"), &output, &errorsOut, InteractiveOptions{})
+	err := RunInteractive(context.Background(), stub, strings.NewReader("cd endpoint-1/session-1\nsend\nhi\nEOF\nn\nlogs\nexit\n"), &output, &errorsOut, InteractiveOptions{})
 	if err != nil {
 		t.Fatalf("RunInteractive: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestInteractiveRejectsNilStreams(t *testing.T) {
 func TestInteractiveCommandsCoverShowLogsRefreshAndSend(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	input := "cd endpoint-1/session-1\nshow\nlogs\nrefresh\nsend {\"text\":\"hi\"}\ny\nstatus cmd-1\nquit\n"
+	input := "cd endpoint-1/session-1\nshow\nlogs\nrefresh\nsend {\"text\":\"hi\"}\nstatus cmd-1\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestInteractiveCommandsCoverShowLogsRefreshAndSend(t *testing.T) {
 func TestInteractiveLineLimitAndClear(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	input := "xxxxxxxxxxxx\ncd endpoint-1/session-1\ncd\nquit\n"
+	input := "xxxxxxxxxxxx\ncd endpoint-1/session-1\ncd\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{LineLimit: 4}); err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestSafeWriterHandlesShortWrites(t *testing.T) {
 func TestInteractiveGenerationChangePreventsAdmission(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}, changeAfter: 3}
 	var output, errorsOut strings.Builder
-	if err := RunInteractive(context.Background(), stub, strings.NewReader("cd endpoint-1/session-1\nsend {\"text\":\"hi\"}\ny\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
+	if err := RunInteractive(context.Background(), stub, strings.NewReader("cd endpoint-1/session-1\nsend {\"text\":\"hi\"}\nexit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if stub.admit != 0 {
@@ -253,7 +253,7 @@ func TestInteractiveShowRejectsSelectedGenerationChange(t *testing.T) {
 		changeAfter: 3,
 	}
 	var output, errorsOut strings.Builder
-	input := "cd endpoint-1/session-1\nshow\nquit\n"
+	input := "cd endpoint-1/session-1\nshow\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestReplacementInvalidationIsStickyAndRequiresUse(t *testing.T) {
 		generationSequence: []string{"generation-1", "generation-1", "generation-2", "generation-1", "generation-1", "generation-1"},
 	}
 	var output, errorsOut strings.Builder
-	input := "cd endpoint-1/session-1\nrefresh\nrefresh\ncd endpoint-1/session-1\nstatus\nquit\n"
+	input := "cd endpoint-1/session-1\nrefresh\nrefresh\ncd endpoint-1/session-1\nstatus\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestInvalidatedSelectionRejectsTargetOperationsWithoutAdmission(t *testing.
 		generationSequence: []string{"generation-1", "generation-1", "generation-2"},
 	}
 	var output, errorsOut strings.Builder
-	input := "cd endpoint-1/session-1\nrefresh\nshow\nlogs\nstatus\nsend {\"text\":\"blocked\"}\ny\nquit\n"
+	input := "cd endpoint-1/session-1\nrefresh\nshow\nlogs\nstatus\nsend {\"text\":\"blocked\"}\ny\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestInvalidatedSelectionRejectsTargetOperationsWithoutAdmission(t *testing.
 func TestInteractiveHelpDescribesListCleanBehavior(t *testing.T) {
 	stub := &interactiveStub{}
 	var output, errorsOut strings.Builder
-	if err := RunInteractive(context.Background(), stub, strings.NewReader("help list\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
+	if err := RunInteractive(context.Background(), stub, strings.NewReader("help list\nexit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	text := output.String()
@@ -342,7 +342,7 @@ func TestInteractiveHelpSharesListDescriptionWithCLI(t *testing.T) {
 }
 
 func TestInteractiveTableCommandReportsRemoval(t *testing.T) {
-	_, errorsOut := runInputScenario(t, &interactiveStub{}, "table\nquit\n", 8192)
+	_, errorsOut := runInputScenario(t, &interactiveStub{}, "table\nexit\n", 8192)
 	if !strings.Contains(errorsOut, `"table" has been removed; use "list --clean"`) {
 		t.Fatalf("removal error=%q", errorsOut)
 	}
@@ -350,7 +350,7 @@ func TestInteractiveTableCommandReportsRemoval(t *testing.T) {
 
 func TestInteractiveHelpTableIsUnknown(t *testing.T) {
 	var output strings.Builder
-	if err := RunInteractive(context.Background(), &interactiveStub{}, strings.NewReader("help table\nquit\n"), &output, &output, InteractiveOptions{}); err != nil {
+	if err := RunInteractive(context.Background(), &interactiveStub{}, strings.NewReader("help table\nexit\n"), &output, &output, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	text := output.String()
@@ -361,7 +361,7 @@ func TestInteractiveHelpTableIsUnknown(t *testing.T) {
 
 func TestInteractiveDetailedHelpIncludesFieldSemantics(t *testing.T) {
 	var output strings.Builder
-	if err := RunInteractive(context.Background(), &interactiveStub{}, strings.NewReader("help list\nquit\n"), &output, io.Discard, InteractiveOptions{}); err != nil {
+	if err := RunInteractive(context.Background(), &interactiveStub{}, strings.NewReader("help list\nexit\n"), &output, io.Discard, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	text := output.String()
@@ -385,7 +385,7 @@ func TestInteractiveListRowsBindSessionThroughCD(t *testing.T) {
 		}},
 	}
 	var output, errorsOut strings.Builder
-	input := "list\ncd endpoint-1/res-1\nstatus\nquit\n"
+	input := "list\ncd endpoint-1/res-1\nstatus\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func TestInteractiveListRowsBindSessionThroughCD(t *testing.T) {
 func TestInteractiveUseCommandIsRemovedAndBindsNothing(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	if err := RunInteractive(context.Background(), stub, strings.NewReader("list\nuse 1\nuse endpoint-1 session-1\nquit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
+	if err := RunInteractive(context.Background(), stub, strings.NewReader("list\nuse 1\nuse endpoint-1 session-1\nexit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	assertActionableErrors(t, errorsOut.String(),
@@ -435,7 +435,7 @@ func TestParseInteractiveStartCarriesArgumentsAndRejectsJSON(t *testing.T) {
 func TestInteractiveStartSubmitsAgentStartAndRendersReceipt(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	input := "start endpoint-1 resource-1 --profile p --profile-revision r --folder /tmp/work\nquit\n"
+	input := "start endpoint-1 resource-1 --profile p --profile-revision r --folder /tmp/work\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +462,7 @@ func TestInteractiveHelpIncludesStart(t *testing.T) {
 func TestInteractiveSessionLifecycleAndControlCommands(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	input := "cd endpoint-1/session-1\nresume\ninject {\"text\":\"context\"}\ny\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nstop\nn\nquit\n"
+	input := "cd endpoint-1/session-1\nresume\ninject {\"text\":\"context\"}\ny\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nstop\nn\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +481,7 @@ func TestInteractiveSessionLifecycleAndControlCommands(t *testing.T) {
 
 func TestInteractiveSessionActionsRequireSessionScope(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-	_, diagnostics := runScope(t, stub, "resume\ninject {}\ninterrupt {}\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "resume\ninject {}\ninterrupt {}\nexit\n", ColorPolicy{})
 	for _, name := range []string{"resume", "inject", "interrupt"} {
 		if !strings.Contains(diagnostics, `command "`+name+`" is unavailable in workspace scope`) {
 			t.Fatalf("missing scope rejection for %s: %q", name, diagnostics)
@@ -497,7 +497,7 @@ func TestInteractiveSessionActionsRequireSessionScope(t *testing.T) {
 // never fall back to a stale pinned selection.
 func TestInteractiveStopRequiresTargetOutsideSessionScope(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-	_, diagnostics := runScope(t, stub, "stop\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "stop\nexit\n", ColorPolicy{})
 	if strings.Contains(diagnostics, `command "stop" is unavailable in workspace scope`) {
 		t.Fatalf("stop must be available in workspace scope: %q", diagnostics)
 	}
@@ -535,12 +535,12 @@ func TestInteractiveSessionActionValidation(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "resume arguments", input: "cd endpoint-1/session-1\nresume extra\nquit\n", want: "usage: resume"},
-		{name: "stop arguments", input: "cd endpoint-1/session-1\nstop extra\nquit\n", want: "usage: stop"},
-		{name: "inject missing text", input: "cd endpoint-1/session-1\ninject\nquit\n", want: "usage: inject <text>"},
-		{name: "interrupt unknown action", input: "cd endpoint-1/session-1\ninterrupt nope\nquit\n", want: "usage: interrupt [soft|hard] [message]"},
-		{name: "inject json option", input: "cd endpoint-1/session-1\ninject {} --json\nquit\n", want: "does not support --json"},
-		{name: "interrupt hard with message", input: "cd endpoint-1/session-1\ninterrupt hard now\nquit\n", want: "hard does not accept a message"},
+		{name: "resume arguments", input: "cd endpoint-1/session-1\nresume extra\nexit\n", want: "usage: resume"},
+		{name: "stop arguments", input: "cd endpoint-1/session-1\nstop extra\nexit\n", want: "usage: stop"},
+		{name: "inject empty block", input: "cd endpoint-1/session-1\ninject\nEOF\nexit\n", want: "payload must not be empty"},
+		{name: "interrupt unknown action", input: "cd endpoint-1/session-1\ninterrupt nope\nexit\n", want: "usage: interrupt [soft|hard] [message]"},
+		{name: "inject json option", input: "cd endpoint-1/session-1\ninject {} --json\nexit\n", want: "does not support --json"},
+		{name: "interrupt hard with message", input: "cd endpoint-1/session-1\ninterrupt hard now\nexit\n", want: "hard does not accept a message"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -559,7 +559,7 @@ func TestInteractiveSessionActionValidation(t *testing.T) {
 func TestInteractiveControlAliasesExecuteSharedOperations(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	input := "cd endpoint-1/session-1\nbtw {\"text\":\"alias context\"}\ny\ncontrol {\"action\":\"soft_interrupt\"}\ny\nquit\n"
+	input := "cd endpoint-1/session-1\nbtw {\"text\":\"alias context\"}\ny\ncontrol {\"action\":\"soft_interrupt\"}\ny\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -583,16 +583,16 @@ func TestInteractivePlainTextActionsNeedNoJSON(t *testing.T) {
 		op      string
 		payload string
 	}{
-		{name: "send literal text", input: "cd endpoint-1/session-1\nsend hello world\ny\nquit\n", op: protocol.OperationMessageSend, payload: `{"text":"hello world"}`},
-		{name: "send prose mentioning json flag", input: "cd endpoint-1/session-1\nsend please add --json to the config\ny\nquit\n", op: protocol.OperationMessageSend, payload: `{"text":"please add --json to the config"}`},
-		{name: "send prose ending with json flag", input: "cd endpoint-1/session-1\nsend the flag is --json\ny\nquit\n", op: protocol.OperationMessageSend, payload: `{"text":"the flag is --json"}`},
-		{name: "inject prose ending with json flag", input: "cd endpoint-1/session-1\ninject remember the flag is --json\ny\nquit\n", op: protocol.OperationContextInject, payload: `{"text":"remember the flag is --json"}`},
-		{name: "inject literal text", input: "cd endpoint-1/session-1\ninject the deployment notes are in docs/\ny\nquit\n", op: protocol.OperationContextInject, payload: `{"text":"the deployment notes are in docs/"}`},
-		{name: "interrupt soft with message", input: "cd endpoint-1/session-1\ninterrupt soft stop and summarize now\ny\nquit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt","message":"stop and summarize now"}`},
-		{name: "interrupt hard", input: "cd endpoint-1/session-1\ninterrupt hard\ny\nquit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
-		{name: "guided interrupt defaults to soft", input: "cd endpoint-1/session-1\ninterrupt\n\n\ny\nquit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt"}`},
-		{name: "guided interrupt soft with message", input: "cd endpoint-1/session-1\ninterrupt\nsoft\nwrap up please\ny\nquit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt","message":"wrap up please"}`},
-		{name: "guided interrupt hard", input: "cd endpoint-1/session-1\ninterrupt\nhard\ny\nquit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
+		{name: "send literal text", input: "cd endpoint-1/session-1\nsend hello world\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"hello world"}`},
+		{name: "send prose mentioning json flag", input: "cd endpoint-1/session-1\nsend please add --json to the config\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"please add --json to the config"}`},
+		{name: "send prose ending with json flag", input: "cd endpoint-1/session-1\nsend the flag is --json\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"the flag is --json"}`},
+		{name: "inject prose ending with json flag", input: "cd endpoint-1/session-1\ninject remember the flag is --json\ny\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"remember the flag is --json"}`},
+		{name: "inject literal text", input: "cd endpoint-1/session-1\ninject the deployment notes are in docs/\ny\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"the deployment notes are in docs/"}`},
+		{name: "interrupt soft with message", input: "cd endpoint-1/session-1\ninterrupt soft stop and summarize now\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt","message":"stop and summarize now"}`},
+		{name: "interrupt hard", input: "cd endpoint-1/session-1\ninterrupt hard\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
+		{name: "guided interrupt defaults to soft", input: "cd endpoint-1/session-1\ninterrupt\n\n\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt"}`},
+		{name: "guided interrupt soft with message", input: "cd endpoint-1/session-1\ninterrupt\nsoft\nwrap up please\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt","message":"wrap up please"}`},
+		{name: "guided interrupt hard", input: "cd endpoint-1/session-1\ninterrupt\nhard\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -619,7 +619,7 @@ func TestInteractivePlainTextActionsNeedNoJSON(t *testing.T) {
 // action choice instead of silently substituting a default for a typo.
 func TestInteractiveGuidedInterruptRejectsUnknownAction(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-	_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\ninterrupt\nnope\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\ninterrupt\nnope\nexit\n", ColorPolicy{})
 	if !strings.Contains(diagnostics, "usage: interrupt [soft|hard] [message]") {
 		t.Fatalf("diagnostics=%q", diagnostics)
 	}

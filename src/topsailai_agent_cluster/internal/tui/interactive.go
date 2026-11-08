@@ -243,7 +243,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			// An armed auto-refresh loop starts before the read, because a blocking
 			// read cannot be interrupted from outside. The reader stops it on the
 			// first keypress, so the loop never outlives the prompt it serves.
-			watch := startWatch(readCtx, api, &state, options)
+			watch := startWatch(readCtx, api, &state, output, options)
 			// An armed follow stream takes precedence over an armed auto-refresh
 			// loop, because the operator asked for one specific session's output
 			// and a moving table would compete for the same terminal rows. The
@@ -420,10 +420,30 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	if err := requireCommandScope(rawName, state.Scope.Kind); err != nil {
 		return false, err
 	}
+	// "quit" outside workspace scope navigates back to workspace scope instead of
+	// leaving the REPL, and "q" is only an alias of "quit", so both spellings share
+	// this one rule rather than carrying separate behaviour. It reuses the bare-cd
+	// path, so the pinned session selection is cleared and the workspace table is
+	// re-rendered exactly like "cd". A surplus argument stays a usage error, so
+	// "quit foo" can never be read as a navigation target. "exit" is a separate
+	// canonical command and is not affected, so it always leaves the process.
+	if quitReturnsToWorkspace(name, state.Scope.Kind) {
+		if strings.TrimSpace(rest) != "" {
+			return false, fmt.Errorf("usage: %s", name)
+		}
+		return false, interactiveCD(ctx, api, state, "", lineResults, out, trustedOut, options.Color, options)
+	}
 	switch name {
 	case "help":
 		return false, printHelp(out, strings.TrimSpace(rest), state.Scope.Kind)
 	case "quit":
+		if strings.TrimSpace(rest) != "" {
+			return false, fmt.Errorf("usage: %s", name)
+		}
+		return true, nil
+	case "exit":
+		// "exit" always leaves the process from every scope, so it never navigates
+		// and never inherits the scope-aware "quit" behaviour.
 		if strings.TrimSpace(rest) != "" {
 			return false, fmt.Errorf("usage: %s", name)
 		}
@@ -435,7 +455,9 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		}
 		return false, interactiveList(ctx, api, state, filter, clean, trustedOut, errOut, options.Color)
 	case "endpoints":
-		return false, interactiveEndpoints(ctx, api, rest, out, options.Color)
+		// The endpoint table is trusted application styling over sanitized cells,
+		// so it renders through the trusted writer like list and refresh.
+		return false, interactiveEndpoints(ctx, api, rest, trustedOut, options.Color)
 	case "table":
 		return false, fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "use":
@@ -505,7 +527,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 			if err := ctx.Err(); err != nil {
 				return false, err
 			}
-			commandErr = interactiveStart(ctx, api, state, request, startOut, options)
+			commandErr = interactiveStart(ctx, api, state, request, startOut, startTrustedOut, options)
 		}
 		return false, startOutputError(commandErr, recorder, startOut, startTrustedOut, startErrOut)
 	case "resume":

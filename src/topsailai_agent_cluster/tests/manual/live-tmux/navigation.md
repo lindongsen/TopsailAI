@@ -17,6 +17,7 @@ author: DawsonLin
 | NAV-08 | `cd nonexistent`, `cd 999999`, workspace `cd ..` | useful target/row error or documented root no-op; no accidental action or binding to old row |
 | NAV-09 | endpoint: `logs <row>`, `show <row>` using a number from the latest list | the session at that row is selected; `logs` returns a genuine stdout body and `show` names the same internal resource and generation |
 | NAV-10 | workspace: `show <provider-session-id>` copied from the `SESSION_ID` column | resolves to the same internal resource and generation as the matching row; no identifier has to be retyped from another source |
+| NAV-11 | endpoint and session scope: `quit`, then `q`, then `/q`; workspace scope: `quit` and `q`; any scope: `exit` | outside workspace scope `quit` and its `q` alias are one behaviour: both return to workspace scope and re-render the workspace table with the pinned session selection cleared, exactly like a bare `cd`; in workspace scope both leave the REPL; `exit` is a separate command that leaves the REPL from every scope; `quit <extra>` and `q <extra>` are usage errors and never navigate |
 | OBS-01 | endpoint/session `show` | endpoint, collection_status, last_success_at_ms, selected session adapter/generation/state when session, capabilities and command history or no commands |
 | OBS-02 | selected test session `logs`, and the snapshot rendered automatically on entering that session | observed_at_ms: integer, truncated: boolean, then genuine stdout text; compare body with provider runtime logs; idle sessions can still have logs; the automatic snapshot is bounded by the REPL defaults and an explicit `logs -n <lines>` re-reads with its own limit |
 | OBS-03 | endpoint `logs <internal-resource>` | same body as selected session; endpoint bare logs rejects missing session |
@@ -43,3 +44,16 @@ A small terminal must not silently destroy the values an operator needs. Truncat
 | NAR-05 | provider data containing terminal control sequences, `--no-truncate` | sanitization still applies: escape sequences are stripped even though width clipping and per-column caps are disabled |
 
 Verified on 2026-11-07 in a 40x30 tmux pane against an isolated fixture endpoint. Bounded headers rendered `SES...`, `SES...`, `ENDP...`, `DATA...`; the same pane with `--no-truncate` rendered `SESSION_NAME`, `SESSION_ID`, `ENDPOINT`, `DATA_STATUS` wrapped over two lines. The standalone `endpoints` command clipped its narrow columns to `.` when bounded and printed every column name in full when unbounded. Evidence is retained under workspace `.tmp/live-tmux-audit/evidence/`.
+
+## Auto-refresh watch presentation
+
+`watch` reprints the list on a timer, so it must present exactly what a manual `list` presents. The table is rendered into an internal buffer before it reaches the terminal, which is a different write path from `list`; a sanitizing seam that drops styling there would silently strip every colour while the manual `list` stayed coloured. The same seam decides the table layout, so a render that reads the buffer's layout instead of the terminal's would never fit the table to the pane.
+
+| Case | Input and precondition | Expected output/effect |
+| --- | --- | --- |
+| WCH-01 | 180-column terminal, colour enabled, workspace `watch 2s` | every reprinted table carries the same styling as `list`: cyan bold headers, one whole-row colour per session state, coloured summary line; the `SESSION_STATUS` column stays absent because the row colour carries the state |
+| WCH-02 | 180-column terminal, `agent-cluster-cli -no-color -i`, workspace `watch 2s` | no escape sequence in any reprinted table, and `SESSION_STATUS` is present as the only textual state signal |
+| WCH-03 | 40-column terminal, colour enabled, workspace `watch 2s` | the reprinted table is fitted to the pane: every table line is at most 40 columns and headers are clipped with a trailing `...`, exactly as a bounded `list` does |
+| WCH-04 | any keypress during `watch` | the loop stops before the key is applied, `auto-refresh stopped` is printed, and the prompt returns usable |
+
+Verified on 2026-11-07 in 180x40 and 40x30 tmux panes against the live local cluster. WCH-01 reprinted 237 SGR sequences with cyan bold headers and per-state row colours; WCH-02 reprinted 0 SGR sequences with `SESSION_STATUS` present; WCH-03 bounded every table line to 40 columns with `S...`/`PR...`/`EN...`/`DA...` headers; WCH-04 printed `auto-refresh stopped` and returned a usable prompt. The same 40-column pane against the pre-fix binary printed 126-column lines, which is the regression this case guards. Evidence is retained under workspace `.tmp/live-tmux-audit/evidence/`.

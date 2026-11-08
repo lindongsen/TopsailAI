@@ -15,9 +15,9 @@ func TestListAliasRendersSameTable(t *testing.T) {
 		name, input string
 		tables      int
 	}{
-		{"workspace", "l\nquit\n", 2},
-		{"endpoint", "cd ai-dev/endpoint-1\nl\nquit\n", 3},
-		{"session", "cd ai-dev/endpoint-1/res-1\nl\nquit\n", 2},
+		{"workspace", "l\nexit\n", 2},
+		{"endpoint", "cd ai-dev/endpoint-1\nl\nexit\n", 3},
+		{"session", "cd ai-dev/endpoint-1/res-1\nl\nexit\n", 2},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -52,7 +52,7 @@ func TestListAliasMatchesCanonicalHelp(t *testing.T) {
 // same parser, so "l --clean" is not silently treated as a bare list.
 func TestListAliasKeepsListArguments(t *testing.T) {
 	var out, diagnostics strings.Builder
-	err := RunInteractive(context.Background(), singleHostStub(), strings.NewReader("l --clean\nquit\n"), &out, &diagnostics, InteractiveOptions{})
+	err := RunInteractive(context.Background(), singleHostStub(), strings.NewReader("l --clean\nexit\n"), &out, &diagnostics, InteractiveOptions{})
 	if err != nil || diagnostics.Len() != 0 {
 		t.Fatalf("err=%v diagnostics=%q", err, diagnostics.String())
 	}
@@ -65,7 +65,7 @@ func TestListAliasKeepsListArguments(t *testing.T) {
 // argument validation instead of accepting anything.
 func TestListAliasRejectsUnknownArguments(t *testing.T) {
 	var out, diagnostics strings.Builder
-	err := RunInteractive(context.Background(), singleHostStub(), strings.NewReader("l --bogus\nquit\n"), &out, &diagnostics, InteractiveOptions{})
+	err := RunInteractive(context.Background(), singleHostStub(), strings.NewReader("l --bogus\nexit\n"), &out, &diagnostics, InteractiveOptions{})
 	if err != nil {
 		t.Fatalf("RunInteractive: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestListAliasDoesNotShadowLogs(t *testing.T) {
 		t.Fatalf("canonicalCommandName(l)=%q want list", got)
 	}
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-	_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\nl\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\nl\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("diagnostics=%q", diagnostics)
 	}

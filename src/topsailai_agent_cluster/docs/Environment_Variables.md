@@ -99,7 +99,7 @@ Gates the `command.exec` operation, which backs the operator `!` command. Paths 
 resolved relative to the bundle root by the launcher.
 
 The file is line-based. Each line is one entry matched as a prefix of the argv
-array, so `git status` permits `git status --short` but not `git push`. Blank lines
+array, so `git status` permits `git status --short` but not `git commit`. Blank lines
 and `#` comments are ignored.
 
 Programs that can execute other programs require at least two tokens, because a
@@ -113,12 +113,19 @@ An unset value disables command execution entirely. The Endpoint refuses
 `command.exec` with an explicit error rather than falling back to an unrestricted
 shell.
 
-Both deployment paths install a default policy, so a fresh node starts with a
-read-only allowlist in force rather than refusing to start. The bundle installs
+Both deployment paths install a default policy, so a fresh node starts with the
+shipped allowlist in force rather than refusing to start. The bundle installs
 `conf/command-allowlist.conf.example` as `conf/command-allowlist.conf`; the Debian
 package installs it as `/etc/agent-cluster/command-allowlist.conf` and registers it
 as a conffile, so an upgrade does not replace the operator's policy. The shipped
-default permits `ls`, `pwd`, `git status`, `git log` and `git diff` only.
+default permits `ls`, `pwd`, `git status`, `git log`, `git diff`, `git show` and
+`git push`.
+
+The default is not a sandbox. `git push` accepts `--receive-pack`, which runs a
+local command, and `git show` honours `--output` and textconv filters declared in
+`.gitattributes`. Prefix matching cannot distinguish those forms, so an entry is
+only as narrow as its first tokens and every entry is reachable by anyone holding
+the `control` scope.
 
 The file is reloaded on `SIGHUP`. A reload parses the whole file before replacing
 the active set, so a malformed edit keeps the previous entries in force and is

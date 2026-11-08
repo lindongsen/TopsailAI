@@ -11,7 +11,7 @@ func TestSessionHelpAccuracy(t *testing.T) {
 	if err := PrintScopedCommandHelp(&out, "", ScopeSession); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"status [command-id]", "last submitted command, otherwise current session state", "after confirmation", "explicit endpoint must match", "Bare cd or cd / returns to workspace", "adapter capability support", "internal resource IDs", "A line beginning with ! runs one allowlisted command in the session working directory"} {
+	for _, want := range []string{"status [command-id]", "last submitted command, otherwise current session state", "an explicit text submits directly", "a bare send asks for confirmation", "explicit endpoint must match", "Bare cd or cd / returns to workspace", "adapter capability support", "internal resource IDs", "A line beginning with ! runs one allowlisted command in the session working directory"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in %q", want, out.String())
 		}

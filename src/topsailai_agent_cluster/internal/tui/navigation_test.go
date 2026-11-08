@@ -103,7 +103,7 @@ func lastPrompt(output string) string {
 
 func TestCDRowNumberUsesMostRecentList(t *testing.T) {
 	stub := scopeStub()
-	output, diagnostics := runNav(t, stub, "list\ncd 1\nquit\n")
+	output, diagnostics := runNav(t, stub, "list\ncd 1\nexit\n")
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -118,9 +118,9 @@ func TestCDRowNumberRejectsInvalidAndSessionScope(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "zero", input: "list\ncd 0\nquit\n", want: "error: row 0 is out of range; valid rows are 1-2\n"},
-		{name: "out of range", input: "list\ncd 99\nquit\n", want: "error: row 99 is out of range; valid rows are 1-2\n"},
-		{name: "session scope", input: "list\ncd 1\ncd 1\nquit\n", want: "error: row-number navigation is unavailable in session scope; use cd .. or cd <session>\n"},
+		{name: "zero", input: "list\ncd 0\nexit\n", want: "error: row 0 is out of range; valid rows are 1-2\n"},
+		{name: "out of range", input: "list\ncd 99\nexit\n", want: "error: row 99 is out of range; valid rows are 1-2\n"},
+		{name: "session scope", input: "list\ncd 1\ncd 1\nexit\n", want: "error: row-number navigation is unavailable in session scope; use cd .. or cd <session>\n"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -135,9 +135,9 @@ func TestCDWithoutArgumentsReturnsToWorkspace(t *testing.T) {
 		name  string
 		input string
 	}{
-		{name: "from session", input: "cd ai-dev/endpoint-1/res-1\ncd\nquit\n"},
-		{name: "from endpoint", input: "cd ai-dev/endpoint-1\ncd\nquit\n"},
-		{name: "from workspace", input: "cd\nquit\n"},
+		{name: "from session", input: "cd ai-dev/endpoint-1/res-1\ncd\nexit\n"},
+		{name: "from endpoint", input: "cd ai-dev/endpoint-1\ncd\nexit\n"},
+		{name: "from workspace", input: "cd\nexit\n"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -157,9 +157,9 @@ func TestCDSlashReturnsToWorkspaceFromAnyScope(t *testing.T) {
 		name  string
 		input string
 	}{
-		{name: "from session", input: "cd ai-dev/endpoint-1/res-1\ncd /\nquit\n"},
-		{name: "from endpoint", input: "cd ai-dev/endpoint-1\ncd /\nquit\n"},
-		{name: "from workspace", input: "cd /\nquit\n"},
+		{name: "from session", input: "cd ai-dev/endpoint-1/res-1\ncd /\nexit\n"},
+		{name: "from endpoint", input: "cd ai-dev/endpoint-1\ncd /\nexit\n"},
+		{name: "from workspace", input: "cd /\nexit\n"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -176,7 +176,7 @@ func TestCDSlashReturnsToWorkspaceFromAnyScope(t *testing.T) {
 
 func TestCDParentMovesOneLevelUp(t *testing.T) {
 	t.Run("session to endpoint", func(t *testing.T) {
-		output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1/res-1\ncd ..\nquit\n")
+		output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1/res-1\ncd ..\nexit\n")
 		if diagnostics != "" {
 			t.Fatalf("unexpected diagnostics: %q", diagnostics)
 		}
@@ -185,7 +185,7 @@ func TestCDParentMovesOneLevelUp(t *testing.T) {
 		}
 	})
 	t.Run("endpoint to workspace", func(t *testing.T) {
-		output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1\ncd ..\nquit\n")
+		output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1\ncd ..\nexit\n")
 		if diagnostics != "" {
 			t.Fatalf("unexpected diagnostics: %q", diagnostics)
 		}
@@ -194,7 +194,7 @@ func TestCDParentMovesOneLevelUp(t *testing.T) {
 		}
 	})
 	t.Run("workspace stays workspace", func(t *testing.T) {
-		output, diagnostics := runNav(t, singleHostStub(), "cd ..\nquit\n")
+		output, diagnostics := runNav(t, singleHostStub(), "cd ..\nexit\n")
 		if diagnostics != "" {
 			t.Fatalf("unexpected diagnostics: %q", diagnostics)
 		}
@@ -208,7 +208,7 @@ func TestCDParentMovesOneLevelUp(t *testing.T) {
 }
 
 func TestCDHostnameEntersUniqueEndpoint(t *testing.T) {
-	output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev\nquit\n")
+	output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev\nexit\n")
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -218,7 +218,7 @@ func TestCDHostnameEntersUniqueEndpoint(t *testing.T) {
 }
 
 func TestCDHostnameConflictListsStableCandidates(t *testing.T) {
-	output, diagnostics := runNav(t, conflictStub(), "cd ai-dev\ncancel\nquit\n")
+	output, diagnostics := runNav(t, conflictStub(), "cd ai-dev\ncancel\nexit\n")
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -232,7 +232,7 @@ func TestCDHostnameConflictListsStableCandidates(t *testing.T) {
 }
 
 func TestCDHostnameConflictSelectsNumberedCandidate(t *testing.T) {
-	output, diagnostics := runNav(t, conflictStub(), "cd ai-dev\n2\nquit\n")
+	output, diagnostics := runNav(t, conflictStub(), "cd ai-dev\n2\nexit\n")
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -242,7 +242,7 @@ func TestCDHostnameConflictSelectsNumberedCandidate(t *testing.T) {
 }
 
 func TestCDHostnameConflictAcceptsFullPath(t *testing.T) {
-	output, diagnostics := runNav(t, conflictStub(), "cd ai-dev\nai-dev/endpoint-2\nquit\n")
+	output, diagnostics := runNav(t, conflictStub(), "cd ai-dev\nai-dev/endpoint-2\nexit\n")
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -257,10 +257,10 @@ func TestCDHostnameConflictCancelKeepsScope(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "cancel", input: "cd ai-dev\ncancel\nquit\n", want: "scope transition cancelled\n"},
-		{name: "empty answer", input: "cd ai-dev\n\nquit\n", want: "scope transition cancelled\n"},
-		{name: "invalid index", input: "cd ai-dev\n9\nquit\n", want: "invalid selection; scope transition cancelled\n"},
-		{name: "invalid text", input: "cd ai-dev\nnope\nquit\n", want: "invalid selection; scope transition cancelled\n"},
+		{name: "cancel", input: "cd ai-dev\ncancel\nexit\n", want: "scope transition cancelled\n"},
+		{name: "empty answer", input: "cd ai-dev\n\nexit\n", want: "scope transition cancelled\n"},
+		{name: "invalid index", input: "cd ai-dev\n9\nexit\n", want: "invalid selection; scope transition cancelled\n"},
+		{name: "invalid text", input: "cd ai-dev\nnope\nexit\n", want: "invalid selection; scope transition cancelled\n"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -292,7 +292,7 @@ func TestCDHostnameConflictEOFKeepsScope(t *testing.T) {
 }
 
 func TestCDHostnameEndpointPathEntersEndpoint(t *testing.T) {
-	output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1\nquit\n")
+	output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1\nexit\n")
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -302,7 +302,7 @@ func TestCDHostnameEndpointPathEntersEndpoint(t *testing.T) {
 }
 
 func TestCDSessionInsideEndpointScope(t *testing.T) {
-	output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1\ncd res-1\nquit\n")
+	output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1\ncd res-1\nexit\n")
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -312,7 +312,7 @@ func TestCDSessionInsideEndpointScope(t *testing.T) {
 }
 
 func TestCDFullPathEntersSession(t *testing.T) {
-	output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1/res-1\nquit\n")
+	output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1/res-1\nexit\n")
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -327,10 +327,10 @@ func TestCDUnknownTargetsReportExactErrors(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "unknown endpoint", input: "cd nope\nquit\n", want: "error: endpoint \"nope\" was not found\n"},
-		{name: "unknown endpoint path", input: "cd ai-dev/nope\nquit\n", want: "error: endpoint \"ai-dev/nope\" was not found\n"},
-		{name: "unknown session", input: "cd ai-dev/endpoint-1/nope\nquit\n", want: "error: session \"nope\" was not found on endpoint \"endpoint-1\"\n"},
-		{name: "unknown session in endpoint scope", input: "cd ai-dev/endpoint-1\ncd nope\nquit\n", want: "error: session \"nope\" was not found on endpoint \"endpoint-1\"\n"},
+		{name: "unknown endpoint", input: "cd nope\nexit\n", want: "error: endpoint \"nope\" was not found\n"},
+		{name: "unknown endpoint path", input: "cd ai-dev/nope\nexit\n", want: "error: endpoint \"ai-dev/nope\" was not found\n"},
+		{name: "unknown session", input: "cd ai-dev/endpoint-1/nope\nexit\n", want: "error: session \"nope\" was not found on endpoint \"endpoint-1\"\n"},
+		{name: "unknown session in endpoint scope", input: "cd ai-dev/endpoint-1\ncd nope\nexit\n", want: "error: session \"nope\" was not found on endpoint \"endpoint-1\"\n"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -341,7 +341,7 @@ func TestCDUnknownTargetsReportExactErrors(t *testing.T) {
 }
 
 func TestCDFailureKeepsCurrentScope(t *testing.T) {
-	output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1\ncd nope\nquit\n")
+	output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1\ncd nope\nexit\n")
 	if !strings.Contains(diagnostics, "was not found") {
 		t.Fatalf("missing failure diagnostic: %q", diagnostics)
 	}
@@ -351,7 +351,7 @@ func TestCDFailureKeepsCurrentScope(t *testing.T) {
 }
 
 func TestCDFailureKeepsSessionScope(t *testing.T) {
-	output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1/res-1\ncd ai-dev/endpoint-1/nope\nquit\n")
+	output, diagnostics := runNav(t, singleHostStub(), "cd ai-dev/endpoint-1/res-1\ncd ai-dev/endpoint-1/nope\nexit\n")
 	if !strings.Contains(diagnostics, "was not found") {
 		t.Fatalf("missing failure diagnostic: %q", diagnostics)
 	}
@@ -361,7 +361,7 @@ func TestCDFailureKeepsSessionScope(t *testing.T) {
 }
 
 func TestUseCommandReportsRemoval(t *testing.T) {
-	output, diagnostics := runNav(t, singleHostStub(), "use 1\nquit\n")
+	output, diagnostics := runNav(t, singleHostStub(), "use 1\nexit\n")
 	assertActionableError(t, diagnostics, `error: "use" has been removed; use "cd" to navigate`)
 	if got := lastPrompt(output); got != "workspace>" {
 		t.Fatalf("final prompt = %q, want unchanged workspace prompt", got)
@@ -369,7 +369,7 @@ func TestUseCommandReportsRemoval(t *testing.T) {
 }
 
 func TestCDPromptFillsHostnameThroughRealListPath(t *testing.T) {
-	output, diagnostics := runNav(t, singleHostStub(), "list\ncd ai-dev/endpoint-1/res-1\nquit\n")
+	output, diagnostics := runNav(t, singleHostStub(), "list\ncd ai-dev/endpoint-1/res-1\nexit\n")
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -410,9 +410,9 @@ func TestCDPromptsUseExactAnsiSequences(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "workspace", input: "quit\n", want: ansiBoldGreen + "workspace>" + ansiReset + " "},
-		{name: "endpoint", input: "cd ai-dev/endpoint-1\nquit\n", want: ansiBoldGreen + "endpoint[ai-dev/endpoint-1]>" + ansiReset + " "},
-		{name: "session", input: "cd ai-dev/endpoint-1/res-1\nquit\n", want: ansiBoldGreen + "session[ai-dev/provider-res-1]>" + ansiReset + " "},
+		{name: "workspace", input: "exit\n", want: ansiBoldGreen + "workspace>" + ansiReset + " "},
+		{name: "endpoint", input: "cd ai-dev/endpoint-1\nexit\n", want: ansiBoldGreen + "endpoint[ai-dev/endpoint-1]>" + ansiReset + " "},
+		{name: "session", input: "cd ai-dev/endpoint-1/res-1\nexit\n", want: ansiBoldGreen + "session[ai-dev/provider-res-1]>" + ansiReset + " "},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -432,7 +432,7 @@ func TestCDPromptsUseExactAnsiSequences(t *testing.T) {
 
 func TestCDPromptHasNoAnsiWhenColorDisabled(t *testing.T) {
 	var output, diagnostics strings.Builder
-	if err := RunInteractive(context.Background(), singleHostStub(), strings.NewReader("cd ai-dev/endpoint-1/res-1\nquit\n"), &output, &diagnostics, InteractiveOptions{}); err != nil {
+	if err := RunInteractive(context.Background(), singleHostStub(), strings.NewReader("cd ai-dev/endpoint-1/res-1\nexit\n"), &output, &diagnostics, InteractiveOptions{}); err != nil {
 		t.Fatalf("RunInteractive: %v", err)
 	}
 	if strings.Contains(output.String(), "\x1b") {
@@ -445,7 +445,7 @@ func TestCDPromptHasNoAnsiWhenColorDisabled(t *testing.T) {
 
 func TestListTableKeepsHeaderAndStateColors(t *testing.T) {
 	var output, diagnostics strings.Builder
-	if err := RunInteractive(context.Background(), singleHostStub(), strings.NewReader("list\nquit\n"), &output, &diagnostics, InteractiveOptions{Color: ColorPolicy{Enabled: true}}); err != nil {
+	if err := RunInteractive(context.Background(), singleHostStub(), strings.NewReader("list\nexit\n"), &output, &diagnostics, InteractiveOptions{Color: ColorPolicy{Enabled: true}}); err != nil {
 		t.Fatalf("RunInteractive: %v", err)
 	}
 	text := output.String()

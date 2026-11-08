@@ -7,6 +7,9 @@ import (
 
 // InteractiveLineReader reads only after a prompt is written; answers are not history.
 // Implementations must honor cancellation and reject partial text on errors.
+// A prompt beginning with "\n" is a question row: the implementation must end the
+// current row before drawing it, because the caller has already written the row
+// above and relies on that break instead of writing a second one.
 type InteractiveLineReader func(context.Context, string, bool, int) (string, bool, error)
 
 type promptReaderKey struct{}
@@ -52,9 +55,11 @@ func readPromptLine(ctx context.Context, prompts ...string) (string, bool, error
 }
 
 // nextPromptLine preserves the stream fallback and makes confirmation cancellation observable.
-func nextPromptLine(ctx context.Context, source <-chan lineReadResult) (lineReadResult, bool) {
+// An optional prompt replaces the default answer prompt, so a caller whose question
+// row is itself the input row passes that row instead of printing a second prompt.
+func nextPromptLine(ctx context.Context, source <-chan lineReadResult, prompts ...string) (lineReadResult, bool) {
 	if promptReader(ctx) != nil {
-		line, overflow, err := readPromptLine(ctx)
+		line, overflow, err := readPromptLine(ctx, prompts...)
 		return lineReadResult{line: line, overflow: overflow, err: err}, true
 	}
 	select {

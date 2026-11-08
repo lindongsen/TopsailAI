@@ -305,15 +305,89 @@ func TestShippedCatalogNamesOnlyProviderActions(t *testing.T) {
 	}
 	for _, action := range set.Actions() {
 		// A shortcut never reaches the provider under its own name: it runs the
-		// argv of the action it names. The invariant is therefore about the
-		// action that actually executes, so a shortcut is checked through its
-		// target instead of its own name.
+		// argv of the action it names. An entry that pins the instruction field
+		// runs call_instruction, so its instruction name is a payload value and
+		// not a provider action. The invariant is therefore about the action that
+		// actually executes, never about the catalog entry's own name.
 		served := action.Name
 		if action.AliasOf != "" {
 			served = action.AliasOf
+		}
+		if _, pinned := action.PayloadConstants["instruction"]; pinned {
+			served = "call_instruction"
 		}
 		if !provider[served] {
 			t.Errorf("the shipped catalog names %q, which the provider does not serve", served)
 		}
 	}
+}
+
+// TestShippedCatalogPinsOnlyProviderInstructions proves every instruction a
+// catalog entry pins is one the provider actually registers. A pinned name is a
+// payload value, so a typo would only surface as "unknown instruction" at the
+// first command; this check catches it without a live provider.
+func TestShippedCatalogPinsOnlyProviderInstructions(t *testing.T) {
+	registered := providerInstructionNames(t)
+	data, err := os.ReadFile(shippedControlActionPath(t))
+	if err != nil {
+		t.Fatalf("read the shipped catalog: %v", err)
+	}
+	set, err := ParseControlActionSet(data)
+	if err != nil {
+		t.Fatalf("parse the shipped catalog: %v", err)
+	}
+	for _, action := range set.Actions() {
+		instruction, pinned := action.PayloadConstants["instruction"]
+		if !pinned {
+			continue
+		}
+		if !registered[instruction] {
+			t.Errorf("the shipped catalog pins %q for %q, which the provider does not register", instruction, action.Name)
+		}
+	}
+}
+
+// providerInstructionNames reads the instruction names the provider registers.
+//
+// A plugin module registers a dict under INSTRUCTIONS, and get_function_map
+// prefixes each key with the module name, so git.py's git_status is served as
+// git.git_status. The context runtime registers its own dotted names directly.
+// Both sources are read from the sibling provider source, so the check needs no
+// live provider installation.
+func providerInstructionNames(t *testing.T) map[string]bool {
+	t.Helper()
+	root := filepath.Join("..", "..", "..", "..", "topsailai", "workspace")
+	pluginFiles, err := filepath.Glob(filepath.Join(root, "plugin_instruction", "*.py"))
+	if err != nil {
+		t.Fatalf("list provider plugin instructions: %v", err)
+	}
+	if len(pluginFiles) == 0 {
+		t.Skipf("provider plugin instructions unavailable under %s", root)
+	}
+	blockPattern := regexp.MustCompile(`(?s)INSTRUCTIONS = (?:dict\(|\{)(.*?)(?:\n\)|\n\})`)
+	keyPattern := regexp.MustCompile(`(?m)^\s+"?([a-z_0-9]+)"?\s*[=:]`)
+	names := make(map[string]bool)
+	for _, file := range pluginFiles {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		block := blockPattern.FindSubmatch(content)
+		if block == nil {
+			continue
+		}
+		prefix := strings.TrimSuffix(filepath.Base(file), ".py")
+		for _, match := range keyPattern.FindAllSubmatch(block[1], -1) {
+			names[prefix+"."+string(match[1])] = true
+		}
+	}
+	contextFile := filepath.Join(root, "context", "instruction.py")
+	content, err := os.ReadFile(contextFile)
+	if err != nil {
+		t.Fatalf("read %s: %v", contextFile, err)
+	}
+	for _, match := range regexp.MustCompile(`"([a-z_0-9.]+)":`).FindAllStringSubmatch(string(content), -1) {
+		names[match[1]] = true
+	}
+	return names
 }

@@ -80,11 +80,56 @@ func controlActionArgs(set *ControlActionSet, operation, providerKey string, pay
 	if err != nil {
 		return nil, err
 	}
+	encoded, err = controlActionConstantPayload(action, encoded)
+	if err != nil {
+		return nil, err
+	}
 	encoded, err = controlActionTargetPayload(action, providerKey, encoded)
 	if err != nil {
 		return nil, err
 	}
 	return controlActionCommand(action, providerKey, encoded)
+}
+
+// controlActionConstantPayload merges the payload fields an action fixes itself.
+//
+// A constant is how one catalog entry names a single instruction, so the operator
+// types ctl.git.status instead of choosing git.git_status from a menu. A supplied
+// value that disagrees with the constant is rejected rather than overwritten: the
+// catalog is the authorization surface, so a caller must not be able to reach a
+// different instruction through an entry that advertises one.
+func controlActionConstantPayload(action ControlAction, payload []byte) ([]byte, error) {
+	if len(action.PayloadConstants) == 0 {
+		return payload, nil
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return nil, fmt.Errorf("control payload must be a JSON object: %w", err)
+	}
+	if envelope == nil {
+		envelope = make(map[string]json.RawMessage, len(action.PayloadConstants))
+	}
+	for field, constant := range action.PayloadConstants {
+		if supplied, ok := envelope[field]; ok {
+			var value string
+			if err := json.Unmarshal(supplied, &value); err != nil {
+				return nil, fmt.Errorf("%s must be a string: %w", field, err)
+			}
+			if value != constant {
+				return nil, fmt.Errorf("%s %q does not match the %q this action fixes", field, value, constant)
+			}
+		}
+		encodedConstant, err := json.Marshal(constant)
+		if err != nil {
+			return nil, fmt.Errorf("encode %s: %w", field, err)
+		}
+		envelope[field] = encodedConstant
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("encode control payload: %w", err)
+	}
+	return encoded, nil
 }
 
 // controlActionTargetPayload injects the target-derived selector an action needs.

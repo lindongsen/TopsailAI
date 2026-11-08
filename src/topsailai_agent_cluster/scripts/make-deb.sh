@@ -60,6 +60,12 @@ LOCAL_CERTS="${PROJECT_DIR}/.tmp/local-cluster/certs"
 # /var/lib, /var/log and /run, and appear inside OPT_DIR as symlinks.
 OPT_DIR="/opt/agent-cluster"
 SBIN_DIR="/usr/local/sbin"
+# Debian compares the epoch before every other component, so a change of version
+# scheme can never sort below an already-installed package. The hash-derived
+# versions installed before this convention (for example 4e160caf-4) sort above
+# any tag-derived 1.x version, so the epoch is what turns the tag scheme into an
+# upgrade instead of a downgrade. Bump it only when the scheme changes again.
+DEB_EPOCH="1"
 
 ROLE=""
 DEST=""
@@ -108,7 +114,15 @@ while [ $# -gt 0 ]; do
 done
 
 # A Debian version must start with a digit and must not carry a hyphen in the
-# upstream part, so a tag-derived description is normalised before use.
+# upstream part, so a tag-derived description is normalised before use. The
+# commit count keeps successive builds of the same tag ordered, and the short
+# hash keeps two builds of the same count distinguishable.
+#
+# A dirty tree sorts BELOW the clean build of the same commit: `~` is the Debian
+# "sorts before" marker, while the `+` that a plain hyphen would become sorts
+# above. A local experiment build must never outrank the committed build it was
+# derived from, otherwise installing it silently pins the host to an uncommitted
+# tree that no later clean build can upgrade.
 function default_version() {
     local described
     described=$(cd "${PROJECT_DIR}" && git describe --tags --always --dirty 2>/dev/null) || described=""
@@ -117,6 +131,7 @@ function default_version() {
         return
     fi
     described="${described#v}"
+    described="${described//-dirty/~dirty}"
     described="${described//-/+}"
     described="${described//_/+}"
     case "${described}" in
@@ -145,6 +160,10 @@ esac
 [ -n "${ARCH}" ] || ARCH=$(dpkg --print-architecture 2>/dev/null) ||
     die "cannot determine the target architecture; pass --arch"
 FULL_VERSION="${VERSION}-${REVISION}"
+# The epoch belongs in the control Version field only. A colon in a file name
+# breaks scp and several artifact steps, so the file keeps the plain version and
+# dpkg still compares the epoch carried inside the package.
+CONTROL_VERSION="${DEB_EPOCH}:${FULL_VERSION}"
 PACKAGE="agent-cluster-${ROLE}"
 MAINTAINER="DawsonLin <dawson@yunify.com>"
 
@@ -242,7 +261,7 @@ function write_control() {
 
     {
         echo "Package: ${PACKAGE}"
-        echo "Version: ${FULL_VERSION}"
+        echo "Version: ${CONTROL_VERSION}"
         echo "Architecture: ${ARCH}"
         echo "Maintainer: ${MAINTAINER}"
         echo "Installed-Size: ${installed_size}"
@@ -426,11 +445,11 @@ function build_role_package() {
 
     if [ "${ROLE}" = "endpoint" ]; then
         add_file "${SCRIPT_DIR}/deb/postinst.endpoint" "/DEBIAN/postinst" 0755
-        write_control "agent-cluster-node (= ${FULL_VERSION}), bash (>= 4.0), coreutils" \
+        write_control "agent-cluster-node (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
             "agent-cluster-server" \
             "Agent Cluster endpoint daemon and operator CLI"
     else
-        write_control "agent-cluster-node (= ${FULL_VERSION}), bash (>= 4.0), coreutils" \
+        write_control "agent-cluster-node (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
             "agent-cluster-endpoint" \
             "Agent Cluster server daemon"
     fi
@@ -448,6 +467,6 @@ dpkg-deb --root-owner-group --build "${PKG_ROOT}" "${DEB_PATH}" >/dev/null ||
 
 echo "package ready: ${DEB_PATH}"
 echo "  package : ${PACKAGE}"
-echo "  version : ${FULL_VERSION}"
+echo "  version : ${CONTROL_VERSION}"
 echo "  arch    : ${ARCH}"
 echo "  size    : $(du -k "${DEB_PATH}" | cut -f1) KiB"

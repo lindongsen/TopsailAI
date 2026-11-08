@@ -137,7 +137,7 @@ func TestUnitCBatch2QueuedTermination(t *testing.T) {
 						tailReads := reads - d.pending.n
 						// B2_TAIL_READ: physically unread tail observation sensitivity seam.
 						if tailReads != 0 {
-							t.Fatalf("C19 unread tail: reads=%d held-tail=%q", tailReads, grammar+"UNITC_QUEUE_SENTINEL\nquit\n")
+							t.Fatalf("C19 unread tail: reads=%d held-tail=%q", tailReads, grammar+"UNITC_QUEUE_SENTINEL\nexit\n")
 						}
 					}
 				})
@@ -166,14 +166,14 @@ func TestUnitCBatch2CancelAllowsQueuedStart(t *testing.T) {
 					d.startup(t, field)
 					grammar := unitC19Grammar(order)
 					if control == "interrupt" {
-						q := unitC19QueueBehind(t, d, field, grammar, "quit\n")
+						q := unitC19QueueBehind(t, d, field, grammar, "exit\n")
 						d.processedInterrupt()
 						unitC19Release(t, d, q, nil)
 					} else {
 						d.reply(t, *d.pending, "cancel\n", nil)
 						awaitExactOutput(t, d.output, d.ready+"start cancelled\nworkspace> ")
 						d.reply(t, d.next(t), grammar, nil)
-						d.reply(t, d.next(t), "quit\n", nil)
+						d.reply(t, d.next(t), "exit\n", nil)
 					}
 					unitC19Finish(t, d)
 					after, intents := d.api.snapshot()
@@ -204,7 +204,7 @@ func TestUnitCBatch2PrefetchedHelpQuit(t *testing.T) {
 		t.Run(startFieldName(field), func(t *testing.T) {
 			d := newUnitCBatch2Driver(t, "interrupt", false)
 			d.startup(t, field)
-			q := unitC19QueueBehind(t, d, field, "help\n", "quit\n")
+			q := unitC19QueueBehind(t, d, field, "help\n", "exit\n")
 			d.processedInterrupt()
 			unitC19Release(t, d, q, nil)
 			d.ledger.release()
@@ -230,18 +230,34 @@ func TestUnitCBatch2PrefetchedHelpQuit(t *testing.T) {
 // unitC19MainHelp pins the workspace overview separately from wizard help.
 func unitC19MainHelp() string {
 	return "Current scope: workspace\n\nCommands:\n" +
-		"  list [endpoint] [--clean]   list sessions across all endpoints\n  endpoints [endpoint-id]   list every registered endpoint with its connection state and freshness\n  cd [target]   navigate to an endpoint or session\n  show [endpoint-or-session]   show endpoint or session details\n  info [session]   show session detail by row number or session ID\n" + unitC19StartHelpLine() +
-		"  stop [session]   stop a session by row number or session ID\n" +
+		"  list [endpoint] [--clean]             list sessions across all endpoints\n" +
+		"  endpoints [endpoint-id]               list every registered endpoint with its connection state and freshness\n" +
+		"  cd [target]                           navigate to an endpoint or session\n" +
+		"  show [endpoint-or-session]            show endpoint or session details\n" +
+		"  info [session]                        show session detail by row number or session ID\n" +
+		unitC19StartHelpLine() +
+		"  stop [session]                        stop a session by row number or session ID\n" +
 		"  drive [start|stop|status] [session]   manage a session driver by row number or session ID; drive stop leaves the agent running\n" +
-		"  status [command-id]   show command result\n  refresh   refresh inventories\n" + unitC19WatchHelpLine() + "  help [command]   show help\n  quit   exit\n\nNext: list -> <number> or cd <number> -> show/logs. Run help list for row selection rules.\nStart example: start <endpoint> <resource> --profile <id> --profile-revision <revision>\n" + commandPrefixHelp + "\nRun help all for every command and scope.\n"
+		"  status [command-id]                   show command result\n" +
+		"  refresh                               refresh inventories\n" +
+		unitC19WatchHelpLine() +
+		"  help [command]                        show help\n" +
+		"  quit                                  leave interactive mode\n" +
+		"  exit                                  leave interactive mode from every scope\n" +
+		"\nNext: list -> <number> or cd <number> -> show/logs. Run help list for row selection rules.\n" +
+		"Start example: start <endpoint> <resource> --profile <id> --profile-revision <revision>\n" +
+		commandPrefixHelp + "\nRun help all for every command and scope.\n"
 }
 
 // unitC19WatchHelpLine is the workspace overview line for the auto-refresh command.
 func unitC19WatchHelpLine() string {
-	return "  watch [interval] [--force]   re-render the list on a timer until any key is pressed\n"
+	return "  watch [interval] [--force]            re-render the list on a timer until any key is pressed\n"
 }
 
 // unitC19StartHelpLine is a fixed independent overview line shared by two scopes.
+// Its syntax is wider than the block column, so the description hangs on the next
+// line at the shared description column.
 func unitC19StartHelpLine() string {
-	return "  start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--task <text>]   start an agent through the selected endpoint; interactive mode executes directly and does not support --json\n"
+	return "  start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--task <text>]\n" +
+		"                                        start an agent through the selected endpoint; interactive mode executes directly and does not support --json\n"
 }

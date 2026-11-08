@@ -226,8 +226,8 @@ Each catalog entry declares four things, and all four come from the file.
 
 Two consequences are worth stating plainly.
 
-- **One entry means one permission.** `call_instruction` reaches read-only instructions such as `ctx.history` and mutating ones such as `ctx.clear` under a single scope. A site that needs to separate them must declare several catalog entries that share the same `command` but carry different `payload_schema` enums and different `permission` values. The catalog supports that; the shipped example keeps one entry for simplicity.
-- **The enum is a prompt, not a gate.** The provider validates the instruction name against its live registry. A name absent from the enum can still be submitted by a caller that builds the payload itself, so the enum must not be mistaken for an allowlist.
+- **One entry means one permission.** `call_instruction` reaches read-only instructions such as `ctx.history` and mutating ones such as `ctx.clear` under a single scope. A site that needs to separate them declares several catalog entries that share the same `command` but carry different `permission` values and pin the instruction with `payload_constants`. The shipped example does exactly that; see the instruction shortcuts below.
+- **The enum is a prompt, not a gate.** The provider validates the instruction name against its live registry. A name absent from the enum can still be submitted by a caller that builds the payload itself, so the enum must not be mistaken for an allowlist. The same holds for a pinned constant: it narrows what the menu offers, not what a hand-built payload can reach, because the Endpoint does not validate a payload against the advertised schema.
 
 ## Shortcuts
 
@@ -255,21 +255,87 @@ Rules enforced at load time:
 - A shortcut may not name another shortcut. One indirection is enough for a typing
   shortcut, and a chain would make the effective permission depend on resolution
   order.
-- A shortcut may not declare `permission`, `command`, `payload_schema` or
-  `payload_session_field`. Declaring one is an error rather than a silent no-op,
-  because an operator who wrote it would otherwise believe it took effect.
+- A shortcut may not declare `permission`, `command`, `payload_schema`,
+  `payload_session_field` or `payload_constants`. Declaring one is an error rather
+  than a silent no-op, because an operator who wrote it would otherwise believe it
+  took effect.
 - A name may appear only once, whether it is a real action or a shortcut.
 
 A shortcut is resolved into a full copy at load time, so execution never follows a
 second lookup and a reload cannot leave a shortcut pointing at a stale definition.
 Retiring the target retires the shortcut with it, because the file is validated as
 a whole.
-
 The shipped catalog carries ten shortcuts: `session.messages`,
 `session.runtime_messages`, `session.heartbeat`, `session.pause`,
 `session.unpause`, `session.interrupt`, `session.soft_interrupt`,
 `session.clear_interrupt`, `session.instruction` and `session.llm`. The list is a
 starting point, not a fixed set; nothing about a shortcut is compiled in.
+
+## Instruction shortcuts
+
+`alias_of` cannot express a shortcut for one instruction. It copies the target's
+whole payload schema, so `{"name": "ctx.history", "alias_of": "call_instruction"}`
+would still ask the operator to choose from the 46-value enum and would still carry
+the `control` scope. The layer does not match: `call_instruction` is one catalog
+entry, and the instructions are values inside it.
+
+A per-instruction shortcut is therefore a real catalog entry that reuses the
+`call_instruction` argv and pins the instruction with `payload_constants`.
+
+```json
+{
+  "name": "git.status",
+  "permission": "read_output",
+  "payload_constants": {"instruction": "git.git_status"},
+  "payload_schema": {
+    "type": "object",
+    "properties": {"args": {"type": "array"}, "kwargs": {"type": "object"}}
+  },
+  "command": ["runtime", "control", "call_instruction", "-s", "{session}", "-a", "{payload}", "--json"]
+}
+```
+
+The operator types `ctl.git.status` and is asked only for `args` and `kwargs`. The
+instruction is filled by the adapter before dispatch, so the enum never appears.
+
+`payload_constants` is an object of payload field to literal value. Four rules are
+enforced when the file loads:
+
+- The value is a literal, never a template. A value containing `{` is rejected,
+  because a constant that could expand would reintroduce the operator-controlled
+  command the catalog exists to prevent.
+- The entry must still carry a `{payload}` placeholder, since the constants are
+  merged into that payload.
+- A constant may not name the `payload_session_field`, because the adapter injects
+  the selector itself.
+- A supplied value that disagrees with the constant is rejected rather than
+  overwritten. The catalog is the authorization surface, so a caller must not reach
+  a different instruction through an entry that advertises one.
+
+A shortcut inherits its target's constants and may not declare its own.
+
+The shipped catalog pins 28 instructions, split by what they do.
+
+| Permission | Shortcuts |
+|---|---|
+| `read_output` | `git.status`, `git.log`, `git.diff`, `git.show`, `git.branch`, `git.tag`, `git.remote`, `ctx.history`, `ctx.search`, `agent.tokens`, `agent.messages`, `agent.llm`, `agent.tools`, `agent.models`, `skill.show`, `skill.hooks`, `skill_repo.list`, `stat.tool_call`, `stat.tool_call_errors`, `stat.tool_call_log` |
+| `control` | `ctx.clear`, `ctx.del_msg`, `ctx.summarize`, `env.set`, `session.rename`, `skill.load`, `skill.unload`, `stat.tool_call_reset` |
+
+The git shortcuts are spelled `git.status` rather than `git.git_status`, because
+the doubled prefix is the provider's module naming and not something an operator
+should have to type. The pinned value keeps the provider spelling.
+
+Deliberately absent, because a shortcut would make a wide action too easy to reach:
+`/hosting` starts a long-lived child process, `ctx.export` and `ctx.import` touch
+files with complex arguments, `git.git_blame` is rarely used and takes many
+arguments, `agent.set_llm` changes the model, and `skill_repo.install` and
+`skill_repo.uninstall` change the installed skill set.
+
+The split narrows the menu, not the wire. The Endpoint does not validate a payload
+against the advertised schema, so a caller that builds the payload itself can still
+submit any instruction name the provider registers, whatever permission the entry
+it went through declares. Closing that gap needs Endpoint-side schema validation,
+which is not implemented today.
 
 ## Provider gaps this catalog cannot close
 

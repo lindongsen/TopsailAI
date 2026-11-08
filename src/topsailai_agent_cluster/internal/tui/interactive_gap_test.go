@@ -178,7 +178,7 @@ func TestSafeWriterBoundsUnterminatedSequence(t *testing.T) {
 func TestSendAdmissionUncertainRetainsID(t *testing.T) {
 	stub := &uncertainAdmissionStub{inventory: freshTestInventory()}
 	var output, errorsOut strings.Builder
-	input := "cd ep/session-1\nsend {\"text\":\"hi\"}\ny\nstatus\nquit\n"
+	input := "cd ep/session-1\nsend {\"text\":\"hi\"}\nstatus\nquit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestSelectedAdapterFreshnessChangesBeforeSend(t *testing.T) {
 		second:    freshTestInventoryWithAdapter(protocol.AdapterSummary{AdapterID: "adapter-1", DataKnown: true, Stale: true, CollectionStatus: protocol.CollectionSucceeded}),
 	}
 	var output, errorsOut strings.Builder
-	input := "cd ep/session-1\nsend {\"text\":\"hi\"}\ny\nquit\n"
+	input := "cd ep/session-1\nsend {\"text\":\"hi\"}\nquit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}

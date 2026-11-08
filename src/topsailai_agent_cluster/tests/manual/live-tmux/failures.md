@@ -12,11 +12,11 @@ author: DawsonLin
 | ERR-03 | malformed JSON/quotes, unsupported option, unknown command | useful error, usage and next help guidance where supported; CLI continues | PASS |
 | ERR-04 | `logs --json`, `list --json`, action --json in REPL | explicit non-interactive-only/rejected-option message, no mutation | PASS |
 | ERR-05 | unsupported capability | explicit refusal before confirmation/admission; no invented success | BLOCKED |
-| ERR-06 | selected generation changed while confirmation open | fail closed; replacement worker never operated upon | PASS |
+| ERR-06 | selected generation changed while a bare `send` confirmation is open | fail closed; replacement worker never operated upon | PASS |
 | ERR-07 | stop owned endpoint transport, list/refresh | disconnected/failed/stale data visibly distinct from successful empty inventory; restore service before dependent cases | PASS |
 | ERR-08 | logs empty actual stdout, malformed provider response | genuine empty array allowed; provider error/missing lines fails explicitly; never silently reinterpret as success | BLOCKED |
 | ERR-09 | ambiguous command admission or local timeout | preserve command ID, query status, no blind retry, distinguish local wait from actual outcome | PASS |
-| ERR-10 | quit/q/exit and terminal interrupts in separate windows | expected exit, terminal echo/canonical mode restored, no provider shutdown | PASS |
+| ERR-10 | workspace scope: quit/q/exit and terminal interrupts in separate windows; endpoint and session scope: exit | expected exit, terminal echo/canonical mode restored, no provider shutdown; `quit` and its `q` alias outside workspace scope navigate back instead of exiting, so they are covered by NAV-11 rather than here | PASS |
 | ERR-11 | leave the stop confirmation prompt unanswered past the command deadline, then answer | the CLI must not time out or exit; answering afterwards admits exactly one command | PASS |
 | ERR-12 | stop, then wait past `deadline_at_ms` with delivery sent and exit unconfirmed | converge to `unconfirmed`/`unknown` with the same command ID; never stay `executing` forever | PASS |
 | ERR-13 | stop an owned session, then inspect scope and run `refresh` | leave the removed session scope with an explicit notice; `refresh` must not report `was not found` | PASS |

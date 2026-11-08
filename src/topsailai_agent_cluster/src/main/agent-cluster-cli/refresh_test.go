@@ -82,8 +82,10 @@ func TestRefreshHelpAndDispatchContract(t *testing.T) {
 	if err := runWithIO(args, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
 		t.Fatalf("advertised syntax failed: %v diagnostics=%q", err, diagnostics.String())
 	}
-	if got, want := strings.Join(fixture.calls(), ","), "endpoint-1,endpoint-2"; got != want {
-		t.Fatalf("forced collection order=%q want=%q", got, want)
+	// The fan-out collects Endpoints concurrently, so arrival order is not a
+	// contract; the contract is that every Endpoint was forced exactly once.
+	if got := fixture.calls(); !sameStringSet(got, []string{"endpoint-1", "endpoint-2"}) {
+		t.Fatalf("forced collections=%q want endpoint-1 and endpoint-2", got)
 	}
 	if !sameStringSet(listSessionIDs(output.String()), []string{"fresh-1", "fresh-2"}) {
 		t.Fatalf("rendered rows=%q", output.String())

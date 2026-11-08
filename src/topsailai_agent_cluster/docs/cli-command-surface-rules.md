@@ -67,6 +67,20 @@ see the effect.
   reads a newer persisted document. The snapshot runs first because it uses the
   generation validated before the send, while a refresh can replace that
   generation.
+- `send` asks for confirmation only when the payload is not already on screen. An
+  explicit `send <text>`, `send {"text":"..."}` or `> <text>` submits directly,
+  because the command word and the text are both visible. A bare `send` reads a
+  multi-line block and asks once, because the assembled block is never echoed as a
+  whole and the question is the only place the operator can see it before it is
+  admitted. The confirmation gate stays on every operation that cannot be undone:
+  `stop`, `resume`, `inject`, `interrupt`, `ctl` and `drive start`.
+- A confirmation question names the provider session identifier first, followed by
+  the opaque cluster resource ID in parentheses, for example
+  `stop session provider-res-1 (res-1)? Confirm stop?`. The provider identifier is
+  the value the list renders in `SESSION_ID`, so the operator can match the question
+  against the selected row before answering; the opaque ID stays visible because
+  `status` and `info` accept it. A session with no reported provider identifier
+  falls back to the opaque ID alone, so the question never names an empty session.
 
 ## Audit
 
@@ -83,7 +97,7 @@ was dispatched rather than rejected as unknown.
 | `info` | `info` | `info` | yes |
 | `logs` | `logs`, `logs --follow` | `logs`, `logs -f` | yes |
 | `status` | `status` | `status` | yes |
-| `send` | `send` | `send`, `>` | yes |
+| `send` | `send` | `send`, `>` | yes (explicit text submits directly; a bare `send` asks once) |
 | `context.inject` | `btw`, `inject` | `inject`, `btw` | yes |
 | `execution.interrupt` | `control` | `interrupt`, `control` | yes |
 | `ctl.<action>` | `ctl` | `ctl`, `ctl.<action>` | yes |
@@ -97,7 +111,8 @@ was dispatched rather than rejected as unknown.
 | `watch` | not applicable | `watch`, `w` | yes |
 | `help` | `help` | `help`, `?` | yes |
 | `cd` | not applicable | `cd` | not applicable |
-| `quit` | not applicable | `quit`, `exit`, `q` | not applicable |
+| `quit` | not applicable | `quit`, `q` (both navigate back outside workspace scope) | not applicable |
+| `exit` | not applicable | `exit` (always leaves the loop) | not applicable |
 
 Two spellings are intentionally asymmetric:
 
@@ -113,8 +128,10 @@ surface, where `>` is a shell redirect. It is resolved before tokenisation, so
 `>hello world` and `> hello world` both send `hello world`. Because the prefix is
 disjoint from every command word, a message can never be read as a command and a
 typo can never be read as a message; an unprefixed unknown word still returns the
-unknown-command diagnostic. The alias keeps the confirmation gate and the
-session-only scope rule of `send`.
+unknown-command diagnostic. The alias keeps the session-only scope rule of
+`send` and submits directly, exactly like an explicit `send <text>`: the prefix
+already states both the action and the text, so a second question could only
+repeat what the operator typed.
 
 The `l` alias is interactive-only and resolves to `list` through the same alias
 registry as `r` and `q`. It is absent from the standalone surface, which accepts
@@ -138,6 +155,23 @@ stays a read of the persisted projection and never admits a command, while
 `start` and `stop` keep the confirmation gate and revalidate the exact generation
 before dispatch. `stop` and `drive` share one target resolver, so the two cannot
 drift into different authority checks.
+
+`quit` is scope-aware, and this is a dispatch rule rather than a scope-availability
+rule. Outside workspace scope `quit` navigates back to workspace scope and
+re-renders the list, exactly like a bare `cd`; in workspace scope it leaves the
+interactive loop. `q` is only an alias of `quit`, so it carries no rule of its own
+and the two are one behaviour rather than two: the dispatch rule keys on the
+canonical command name, so both spellings always agree. A surplus argument is still
+a usage error, so `quit foo` can never be read as a navigation target.
+
+`exit` is a separate canonical command, not an alias of `quit`, and it always
+leaves the loop from every scope. It is deliberately absent from the alias registry:
+if it were an alias it would inherit the scope-aware `quit` behaviour and stop being
+an unconditional way out. Keeping it separate means an operator always has one
+spelling that leaves the process no matter which scope they are in.
+
+The `q` spelling inside the start and launch prompts keeps abandoning the draft and
+leaving the loop, because those are prompt contexts rather than scope contexts.
 
 `watch` is interactive-only for a different reason, and it is not a gap either. It
 adds no behaviour: every tick performs exactly `list` (re-read the persisted
@@ -301,9 +335,20 @@ Such a line is offered as a `send` instead of only being rejected:
 
 ```text
 session[ai-dev/fixture-session]> hello world
-unknown command hello; send hello world as a message? [y/N]
+hello world
+>>> send the text above as a message? [y/N]
 ```
 
+- The message row comes first and the question row comes second, so the operator
+  reads exactly what would be sent before reading the question. The message row
+  carries only the payload and its own colour, so a payload can never be read as
+  the application's own question.
+- The question row is the input row. The `>>>` marker separates the application's
+  question from the message row above it, and the cursor waits after the answer
+  hint, so no separate `answer>` prompt is printed for this offer.
+- The offer does not repeat the unknown-command diagnostic inline. The message row
+  and the question row already say what would happen, and the diagnostic is still
+  reported when the offer is declined.
 - The offer applies only in session scope. `send` is unavailable in workspace and
   endpoint scope, so an offer there could never be honoured and the plain
   unknown-command diagnostic is kept.
@@ -312,6 +357,8 @@ unknown command hello; send hello world as a message? [y/N]
   silently change what is sent.
 - Accepting runs the normal `send` flow with that text and does not ask the send
   confirmation again, because the offer already named the exact text and action.
+  This is the same rule that lets an explicit `send <text>` submit directly: a
+  question is asked only when the action or the payload is not already on screen.
   Declining, an empty answer, a partial answer or an unreadable answer keeps the
   unknown-command diagnostic, so a typo is never swallowed and no mutating action
   is inferred from silence.
@@ -323,6 +370,8 @@ unknown command hello; send hello world as a message? [y/N]
   cannot be admitted.
 - The offer is interactive-only. A non-interactive caller passes the command word
   explicitly, so no prompt can appear where no human is present.
+- With colour disabled the offer is the plain form of the same two rows, so a
+  redirected run carries no escape sequence.
 
 ## Global presentation flags
 

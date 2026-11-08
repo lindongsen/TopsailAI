@@ -34,7 +34,7 @@ func interactiveStop(parent context.Context, api InteractiveAPI, state *interact
 		postSubmit := func(postCtx context.Context, result map[string]any) error {
 			return reconcileStoppedSelection(postCtx, api, state, target.sessionID, out)
 		}
-		return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentStop, "stop", target.sessionID, target.generation, payload, lines, out, trustedOut, options, nil, postSubmit)
+		return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentStop, "stop", target.confirmationTarget(), target.generation, payload, lines, out, trustedOut, options, nil, postSubmit)
 	}
 	// Outside session scope the pinned selection is not the target, so the shared
 	// confirmation path receives a detached copy that pins exactly this target.
@@ -54,7 +54,7 @@ func interactiveStop(parent context.Context, api InteractiveAPI, state *interact
 		state.commandID = pinned.commandID
 		return invalidateStopRowBindings(state, out)
 	}
-	return interactiveConfirmedAction(parent, api, &pinned, protocol.OperationAgentStop, "stop", target.sessionID, target.generation, payload, lines, out, trustedOut, options, revalidate, postSubmit)
+	return interactiveConfirmedAction(parent, api, &pinned, protocol.OperationAgentStop, "stop", target.confirmationTarget(), target.generation, payload, lines, out, trustedOut, options, revalidate, postSubmit)
 }
 
 // invalidateStopRowBindings drops the row numbers rendered before the stop, because

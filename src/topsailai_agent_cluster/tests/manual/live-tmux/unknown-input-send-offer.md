@@ -11,7 +11,7 @@ This module verifies the session-scope behaviour where text that matches no comm
 
 Precondition: the CLI is in session scope with a fresh selected session whose adapter advertises `message.send`.
 
-Type `hello world` then Enter. Expect one question naming the literal text and the `[y/N]` hint, exactly `unknown command hello; send hello world as a message? [y/N]`. Expect no command admission before the answer, and expect the prompt to return after the answer.
+Type `hello world` then Enter. Expect the message on its own row, carrying only the payload and coloured differently from the question, followed by the question row `>>> send the text above as a message? [y/N]`. Expect the cursor to wait after the answer hint on that question row, and expect no separate `answer>` prompt. Expect no `unknown command hello;` prefix on the offer. Expect no command admission before the answer, and expect the prompt to return after the answer.
 
 ## OFFER-02 Accepting the offer sends the literal line
 

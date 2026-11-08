@@ -12,10 +12,10 @@ func TestNavigationListColors(t *testing.T) {
 		name, input string
 		tables      int
 	}{
-		{"workspace", "cd ai-dev/endpoint-1/res-1\ncd\nquit\n", 2},
-		{"root", "cd ai-dev/endpoint-1/res-1\ncd /\nquit\n", 2},
-		{"parent", "cd ai-dev/endpoint-1/res-1\ncd ..\nquit\n", 2},
-		{"endpoint", "cd ai-dev/endpoint-1\nquit\n", 2},
+		{"workspace", "cd ai-dev/endpoint-1/res-1\ncd\nexit\n", 2},
+		{"root", "cd ai-dev/endpoint-1/res-1\ncd /\nexit\n", 2},
+		{"parent", "cd ai-dev/endpoint-1/res-1\ncd ..\nexit\n", 2},
+		{"endpoint", "cd ai-dev/endpoint-1\nexit\n", 2},
 	}
 	for _, c := range cases {
 		for _, enabled := range []bool{true, false} {
@@ -51,7 +51,7 @@ func TestNavigationConflictStillFiltersExternalANSI(t *testing.T) {
 		stub.endpoints[i].DisplayName = "host\x1b[31mRED\x1b[0m"
 	}
 	var out, diagnostics strings.Builder
-	err := RunInteractive(context.Background(), stub, strings.NewReader("cd ai-dev\ncancel\nquit\n"), &out, &diagnostics, InteractiveOptions{Color: ColorPolicy{Enabled: true}})
+	err := RunInteractive(context.Background(), stub, strings.NewReader("cd ai-dev\ncancel\nexit\n"), &out, &diagnostics, InteractiveOptions{Color: ColorPolicy{Enabled: true}})
 	if err != nil || diagnostics.Len() != 0 {
 		t.Fatalf("err=%v diagnostics=%q", err, diagnostics.String())
 	}

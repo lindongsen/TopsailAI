@@ -51,6 +51,11 @@ type ControlAction struct {
 	// session key. It is empty for an action that does not need the selector in
 	// its payload, which is the common case.
 	PayloadSessionField string
+	// PayloadConstants are payload fields this action fixes itself. They are
+	// merged into the payload before dispatch, so a shortcut can name one
+	// instruction without asking the operator to choose it again. The values are
+	// literals, never templates.
+	PayloadConstants map[string]string
 	// AliasOf names the action this entry is a shortcut for, or is empty for a
 	// real action. A shortcut is resolved into a full copy of its target at load
 	// time, so execution never follows a second lookup; the field is kept so a
@@ -86,12 +91,13 @@ type controlActionFile struct {
 // and inherits everything else from the action it names, so a shortcut can never
 // widen a permission or change what runs.
 type controlActionEntry struct {
-	Name                string          `json:"name"`
-	Permission          string          `json:"permission"`
-	PayloadSchema       json.RawMessage `json:"payload_schema"`
-	Command             []string        `json:"command"`
-	PayloadSessionField string          `json:"payload_session_field"`
-	AliasOf             string          `json:"alias_of"`
+	Name                string            `json:"name"`
+	Permission          string            `json:"permission"`
+	PayloadSchema       json.RawMessage   `json:"payload_schema"`
+	Command             []string          `json:"command"`
+	PayloadSessionField string            `json:"payload_session_field"`
+	PayloadConstants    map[string]string `json:"payload_constants"`
+	AliasOf             string            `json:"alias_of"`
 }
 
 // LoadControlActionSet reads and validates the control action file at path.
@@ -200,8 +206,8 @@ func resolveControlActionShortcut(entry controlActionEntry, actions map[string]C
 	if target == name {
 		return ControlAction{}, fmt.Errorf("%q: alias_of must not name itself", name)
 	}
-	if entry.Permission != "" || len(entry.Command) > 0 || len(bytes.TrimSpace(entry.PayloadSchema)) > 0 || strings.TrimSpace(entry.PayloadSessionField) != "" {
-		return ControlAction{}, fmt.Errorf("%q: a shortcut inherits permission, payload_schema, command and payload_session_field from %q and must not declare them", name, target)
+	if entry.Permission != "" || len(entry.Command) > 0 || len(bytes.TrimSpace(entry.PayloadSchema)) > 0 || strings.TrimSpace(entry.PayloadSessionField) != "" || len(entry.PayloadConstants) > 0 {
+		return ControlAction{}, fmt.Errorf("%q: a shortcut inherits permission, payload_schema, command, payload_session_field and payload_constants from %q and must not declare them", name, target)
 	}
 	action, ok := actions[target]
 	if !ok {
@@ -216,8 +222,24 @@ func resolveControlActionShortcut(entry controlActionEntry, actions map[string]C
 		PayloadSchema:       action.PayloadSchema,
 		Command:             append([]string(nil), action.Command...),
 		PayloadSessionField: action.PayloadSessionField,
+		PayloadConstants:    copyPayloadConstants(action.PayloadConstants),
 		AliasOf:             target,
 	}, nil
+}
+
+// copyPayloadConstants returns an independent copy of an action's constants.
+//
+// A shortcut shares its target's constants, so the copy keeps a later reload from
+// mutating a set that is already in force.
+func copyPayloadConstants(source map[string]string) map[string]string {
+	if len(source) == 0 {
+		return nil
+	}
+	copied := make(map[string]string, len(source))
+	for field, value := range source {
+		copied[field] = value
+	}
+	return copied
 }
 
 // stripControlActionComments removes whole-line '#' comments from a catalog.
@@ -262,12 +284,17 @@ func validateControlActionEntry(entry controlActionEntry) (ControlAction, error)
 	if err != nil {
 		return ControlAction{}, err
 	}
+	constants, err := validatePayloadConstants(name, entry.PayloadConstants, command, field)
+	if err != nil {
+		return ControlAction{}, err
+	}
 	return ControlAction{
 		Name:                name,
 		Permission:          entry.Permission,
 		PayloadSchema:       schema,
 		Command:             command,
 		PayloadSessionField: field,
+		PayloadConstants:    constants,
 	}, nil
 }
 
@@ -363,6 +390,42 @@ func validatePayloadSessionField(name, raw string, command []string) (string, er
 		}
 	}
 	return "", fmt.Errorf("%q: payload_session_field requires a %s placeholder in command", name, controlPayloadPlaceholder)
+}
+
+// validatePayloadConstants checks the payload fields an action fixes itself.
+//
+// A constant lets one catalog entry pin a payload field, so a shortcut such as
+// ctl.git.status submits the instruction it names without asking the operator to
+// choose it again. The value is a literal string, never a template, because a
+// constant that could expand would reintroduce the operator-controlled command
+// this catalog exists to prevent.
+func validatePayloadConstants(name string, raw map[string]string, command []string, sessionField string) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	constants := make(map[string]string, len(raw))
+	for field, value := range raw {
+		trimmed := strings.TrimSpace(field)
+		if trimmed == "" {
+			return nil, fmt.Errorf("%q: payload_constants has an empty field name", name)
+		}
+		if strings.ContainsAny(trimmed, " \t\r\n") {
+			return nil, fmt.Errorf("%q: payload_constants field %q must not contain whitespace", name, trimmed)
+		}
+		if trimmed == sessionField {
+			return nil, fmt.Errorf("%q: payload_constants field %q is also the payload_session_field", name, trimmed)
+		}
+		if strings.Contains(value, "{") {
+			return nil, fmt.Errorf("%q: payload_constants field %q must be a literal value, not a template", name, trimmed)
+		}
+		constants[trimmed] = value
+	}
+	for _, token := range command {
+		if strings.Contains(token, controlPayloadPlaceholder) {
+			return constants, nil
+		}
+	}
+	return nil, fmt.Errorf("%q: payload_constants requires a %s placeholder in command", name, controlPayloadPlaceholder)
 }
 
 // normalizePayloadSchema validates a payload schema and returns it as a compact

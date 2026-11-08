@@ -20,10 +20,10 @@ func TestUnitBHelpMentionsBareNumbers(t *testing.T) {
 // newline-delimited diagnostics for surplus, overflow and range errors.
 func TestUnitBB6NumericDiagnosticsHaveExactThreeLinePrecedence(t *testing.T) {
 	cases := []struct{ input, want string }{
-		{"1 foo\nquit\n", "error: invalid arguments\nusage: cd [target]\nnext: Run help cd for valid syntax.\n"},
-		{"1\tfoo\nquit\n", "error: invalid arguments\nusage: cd [target]\nnext: Run help cd for valid syntax.\n"},
-		{strings.Repeat("9", 64) + "\nquit\n", "error: row number exceeds the supported integer range\nusage: cd [target]\nnext: Run help cd for valid syntax.\n"},
-		{"99\nquit\n", "error: row 99 is out of range; valid rows are 1-2\nusage: cd [target]\nnext: Run help cd for valid syntax.\n"},
+		{"1 foo\nexit\n", "error: invalid arguments\nusage: cd [target]\nnext: Run help cd for valid syntax.\n"},
+		{"1\tfoo\nexit\n", "error: invalid arguments\nusage: cd [target]\nnext: Run help cd for valid syntax.\n"},
+		{strings.Repeat("9", 64) + "\nexit\n", "error: row number exceeds the supported integer range\nusage: cd [target]\nnext: Run help cd for valid syntax.\n"},
+		{"99\nexit\n", "error: row 99 is out of range; valid rows are 1-2\nusage: cd [target]\nnext: Run help cd for valid syntax.\n"},
 	}
 	for _, tc := range cases {
 		_, diagnostics := runNav(t, scopeStub(), tc.input)
@@ -57,7 +57,7 @@ func TestUnitBB8LogsUsesPinnedIdentityForBareAndExplicitNavigation(t *testing.T)
 		}
 		return api
 	}
-	for _, input := range []string{"list\n1\nlogs\nquit\n", "list\ncd 1\nlogs\nquit\n"} {
+	for _, input := range []string{"list\n1\nlogs\nexit\n", "list\ncd 1\nlogs\nexit\n"} {
 		api := run(input)
 		if len(api.outputRequests) != 2 {
 			t.Fatalf("output requests=%+v", api.outputRequests)

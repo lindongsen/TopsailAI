@@ -271,17 +271,20 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if err := rejectJSONFlagPayload(payloadText, "send"); err != nil {
 		return err
 	}
-	// A bare send enters multi-line input mode, so the operator can compose a
-	// message without quoting newlines into one command line.
-	if payloadText == "" {
-		block, err := readInteractiveMultiLine(parent, lineSource, out, options)
-		if err != nil {
-			return err
-		}
-		payloadText = block.Text
-	} else if len(payloadText) > options.LineLimit {
-		return fmt.Errorf("payload exceeds the maximum length")
+	// An explicit text states both the action and the payload, so a confirmation
+	// could only repeat what the operator just typed. Submitting directly keeps the
+	// gate meaningful for the operations that cannot be undone.
+	if payloadText != "" {
+		return sendSessionMessage(parent, api, state, payloadText, out, trustedOut, options)
 	}
+	// A bare send enters multi-line input mode, so the operator can compose a
+	// message without quoting newlines into one command line. The assembled block
+	// is never echoed as a whole, so this is the one form that still asks.
+	block, err := readInteractiveMultiLine(parent, lineSource, out, options)
+	if err != nil {
+		return err
+	}
+	payloadText = block.Text
 	sendPayload, err := MessagePayload(payloadText)
 	if err != nil {
 		return err
@@ -335,13 +338,14 @@ func interactiveSend(parent context.Context, api InteractiveAPI, state *interact
 	if afterCapability.Revision != beforeCapability.Revision {
 		return fmt.Errorf("capability changed after confirmation; send cancelled")
 	}
-	return submitSessionMessage(parent, api, state, session, sendPayload, out, options)
+	return submitSessionMessage(parent, api, state, session, sendPayload, out, trustedOut, options)
 }
 
-// sendSessionMessage submits one message whose text the operator has already
-// confirmed. The caller owns the confirmation, so this path performs one
-// capability preflight and never asks the same question again.
-func sendSessionMessage(parent context.Context, api InteractiveAPI, state *interactiveState, text string, out io.Writer, options InteractiveOptions) error {
+// sendSessionMessage submits one message whose text the caller already stated.
+// An explicit send command word and the unknown-input offer both reach this
+// path, so it performs one capability preflight and never asks a question the
+// caller has already answered.
+func sendSessionMessage(parent context.Context, api InteractiveAPI, state *interactiveState, text string, out, trustedOut io.Writer, options InteractiveOptions) error {
 	if err := state.requireUsable(); err != nil {
 		return err
 	}
@@ -361,13 +365,16 @@ func sendSessionMessage(parent context.Context, api InteractiveAPI, state *inter
 	if err != nil {
 		return err
 	}
-	return submitSessionMessage(parent, api, state, session, payload, out, options)
+	return submitSessionMessage(parent, api, state, session, payload, out, trustedOut, options)
 }
 
 // submitSessionMessage prepares, admits and renders one message intent for an
 // already validated session, so both the send command and the unknown-input
-// offer share one submission path.
-func submitSessionMessage(parent context.Context, api InteractiveAPI, state *interactiveState, session *protocol.Session, payload json.RawMessage, out io.Writer, options InteractiveOptions) error {
+// offer share one submission path. The receipt stays on out because it carries
+// the provider's own return document verbatim, while the automatic snapshot is
+// trusted application styling and is written through trustedOut so its colour
+// survives the REPL boundary.
+func submitSessionMessage(parent context.Context, api InteractiveAPI, state *interactiveState, session *protocol.Session, payload json.RawMessage, out, trustedOut io.Writer, options InteractiveOptions) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
@@ -396,7 +403,7 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	// The read gets its own bounded budget because the local wait may already have
 	// exhausted the command deadline, and a failed read is reported as a
 	// diagnostic instead of turning the accepted send into a failure.
-	if err := renderAutomaticSnapshot(parent, api, state, out, options.Color, options, "send completed"); err != nil {
+	if err := renderAutomaticSnapshot(parent, api, state, trustedOut, options.Color, options, "send completed"); err != nil {
 		return err
 	}
 	// The send changed the provider's state, so the persisted inventory is now
@@ -526,7 +533,10 @@ func parseInteractiveStartTokens(args []string, allowMissing bool) (interactiveS
 }
 
 // interactiveStart submits and renders an agent.start action using shared action logic.
-func interactiveStart(parent context.Context, api InteractiveAPI, state *interactiveState, request interactiveStartRequest, out io.Writer, options InteractiveOptions) error {
+// The receipt is written through out because it carries the provider's own return
+// document verbatim, while the post-start table is trusted application styling and
+// is written through trustedOut so its colour survives the REPL boundary.
+func interactiveStart(parent context.Context, api InteractiveAPI, state *interactiveState, request interactiveStartRequest, out, trustedOut io.Writer, options InteractiveOptions) error {
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
@@ -561,22 +571,25 @@ func interactiveStart(parent context.Context, api InteractiveAPI, state *interac
 	if err := renderInteractiveStartResult(out, action.CommandID, result); err != nil {
 		return err
 	}
-	return refreshAfterStart(parent, api, request.EndpointID, result, out, options)
+	return refreshAfterStart(parent, api, request.EndpointID, result, out, trustedOut, options)
 }
 
 // refreshAfterStart forces one fresh collection for the Endpoint that accepted the
 // start, so the operator's next list already contains the launched session instead
 // of waiting for the periodic collection. The shared runner implementation owns the
 // scoping, the pending-visibility decision and the failure handling; this wrapper
-// only supplies the interactive writers and budget. Both streams are the trusted
-// output because the interactive REPL reports refresh diagnostics inline, and the
-// render is informational: it leaves the row-number index untouched so navigation
-// to other Endpoints keeps working.
-func refreshAfterStart(parent context.Context, api InteractiveAPI, endpointID string, result map[string]any, out io.Writer, options InteractiveOptions) error {
+// only supplies the interactive writers and budget.
+//
+// The table is written through trustedOut and derives its layout from that same
+// boundary, because the sanitizing writer neither keeps colour nor reports a table
+// layout. Diagnostics stay on out so provider-derived error text is still stripped.
+// The render is informational: it leaves the row-number index untouched so
+// navigation to other Endpoints keeps working.
+func refreshAfterStart(parent context.Context, api InteractiveAPI, endpointID string, result map[string]any, out, trustedOut io.Writer, options InteractiveOptions) error {
 	ctx, cancel := context.WithTimeout(parent, refreshCommandTimeout)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy}
-	return runner.RefreshAfterStart(ctx, out, out, endpointID, result, false, tableOptionsFor(out, options.Color, false, nil))
+	return runner.RefreshAfterStart(ctx, trustedOut, out, endpointID, result, false, tableOptionsFor(trustedOut, options.Color, false, nil))
 }
 
 // sessionIDs reads the committed projection and returns its standard session IDs.
@@ -672,7 +685,7 @@ func interactiveSessionLifecycle(parent context.Context, api InteractiveAPI, sta
 		revalidate := func(revalidateCtx context.Context) error {
 			return validateResumeSelectionAbsent(revalidateCtx, api, state)
 		}
-		return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentResume, name, state.SessionID, state.Generation, payload, lines, out, trustedOut, options, revalidate, nil)
+		return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentResume, name, confirmationTargetForSelection(state), state.Generation, payload, lines, out, trustedOut, options, revalidate, nil)
 	}
 	_, _, session, err := findSelected(ctx, api, state)
 	cancel()
@@ -682,7 +695,7 @@ func interactiveSessionLifecycle(parent context.Context, api InteractiveAPI, sta
 	postSubmit := func(postCtx context.Context, result map[string]any) error {
 		return reconcileStoppedSelection(postCtx, api, state, session.SessionID, out)
 	}
-	return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentStop, name, session.SessionID, session.Generation, payload, lines, out, trustedOut, options, nil, postSubmit)
+	return interactiveConfirmedAction(parent, api, state, protocol.OperationAgentStop, name, confirmationTargetFor(*session), session.Generation, payload, lines, out, trustedOut, options, nil, postSubmit)
 }
 
 // reconcileStoppedSelection leaves the session scope once a fresh inventory proves the
@@ -752,7 +765,8 @@ func validateResumeSelectionAbsent(ctx context.Context, api InteractiveAPI, stat
 // interactiveSessionPayload executes context injection or interruption with confirmation.
 // Selection authority is resolved under the command deadline; the confirmation itself is
 // read with the cancel-only parent context. Context injection takes literal text, and a
-// bare interrupt guides the operator through the action choice instead of demanding JSON.
+// bare inject or btw reads a multi-line context block instead of demanding JSON. A bare
+// interrupt guides the operator through the action choice.
 func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, rest string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) error {
 	payloadText := strings.TrimSpace(rest)
 	// A bare --json option or a JSON object followed by a stray --json option is rejected,
@@ -764,7 +778,18 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	var err error
 	if op == protocol.OperationContextInject {
 		if payloadText == "" {
-			return fmt.Errorf("usage: %s <text>", name)
+			// A bare inject or btw enters multi-line input mode, so context text
+			// never has to be quoted into one command line. The selection is
+			// validated first, because reading a whole block only to reject the
+			// invocation would waste the operator's input.
+			if err := state.requireUsable(); err != nil {
+				return err
+			}
+			block, readErr := readInteractiveContextMultiLine(parent, lines, out, options)
+			if readErr != nil {
+				return readErr
+			}
+			payloadText = block.Text
 		}
 		payload, err = MessagePayload(payloadText)
 	} else if payloadText == "" {
@@ -785,7 +810,7 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	if err != nil {
 		return err
 	}
-	return interactiveConfirmedAction(parent, api, state, op, name, session.SessionID, session.Generation, payload, lines, out, trustedOut, options, nil, nil)
+	return interactiveConfirmedAction(parent, api, state, op, name, confirmationTargetFor(*session), session.Generation, payload, lines, out, trustedOut, options, nil, nil)
 }
 
 // promptInterruptPayload guides a bare interrupt through the action choice and, for a soft
@@ -828,9 +853,11 @@ func promptInterruptPayload(parent context.Context, name string, lines <-chan li
 // starts only after the answer has been accepted. postSubmit runs after the durable
 // receipt has been rendered and may reconcile the interactive scope with that receipt.
 // The question is written through trustedOut because it carries application styling;
-// the interpolated resource identifier is provider data and is sanitized first.
-func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, state *interactiveState, op, name, resource, generation string, payload json.RawMessage, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions, revalidate func(context.Context) error, postSubmit func(context.Context, map[string]any) error) error {
-	question := name + " " + sanitizeInlineText(resource) + "? Confirm " + name + "? " + confirmationHint + " "
+// the interpolated target label is provider data and is sanitized first. The label
+// names the provider session identifier before the opaque cluster resource ID, so the
+// operator can match the question against the SESSION_ID column of the rendered list.
+func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, state *interactiveState, op, name string, target confirmationTarget, generation string, payload json.RawMessage, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions, revalidate func(context.Context) error, postSubmit func(context.Context, map[string]any) error) error {
+	question := name + " " + sanitizeInlineText(target.label()) + "? Confirm " + name + "? " + confirmationHint + " "
 	if err := writeConfirmationQuestion(trustedOut, question, options.Color); err != nil {
 		return err
 	}
@@ -863,7 +890,7 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 		return err
 	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: resource, Generation: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
+	intent, err := runner.PrepareAction(ctx, ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.SessionID, Generation: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS})
 	if err != nil {
 		return err
 	}

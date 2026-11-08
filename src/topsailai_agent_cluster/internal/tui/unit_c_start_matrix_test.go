@@ -464,7 +464,7 @@ func TestUnitCStartRunInteractiveTerminationMatrix(t *testing.T) {
 					if closes != 0 {
 						d.fail(t, "field interrupt closed caller-owned input")
 					}
-					d.answer(t, "quit\n", nil)
+					d.answer(t, "exit\n", nil)
 					d.quitSent = true
 					got = d.finishQuit(t)
 					if got != nil {
@@ -563,7 +563,7 @@ func TestUnitCStartTerminationQueuedInputs(t *testing.T) {
 
 func TestUnitCStartCancelAllowsNextCommand(t *testing.T) {
 	var out, diagnostics strings.Builder
-	if err := RunInteractive(context.Background(), newUnitCAPI(), strings.NewReader("start\ncancel\nquit\n"), &out, &diagnostics, InteractiveOptions{}); err != nil {
+	if err := RunInteractive(context.Background(), newUnitCAPI(), strings.NewReader("start\ncancel\nexit\n"), &out, &diagnostics, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 }

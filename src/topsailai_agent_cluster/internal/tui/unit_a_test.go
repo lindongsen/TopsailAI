@@ -13,7 +13,7 @@ func TestUnitAContextHelpAndHelpAll(t *testing.T) {
 	if err := PrintScopedCommandHelp(&workspace, "", ScopeWorkspace); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(workspace.String(), "inject <text>") || strings.Contains(workspace.String(), "interrupt [soft|hard]") {
+	if strings.Contains(workspace.String(), "inject [text]") || strings.Contains(workspace.String(), "interrupt [soft|hard]") {
 		t.Fatalf("workspace help exposed session commands: %q", workspace.String())
 	}
 	if !strings.Contains(workspace.String(), "Start example:") || !strings.Contains(workspace.String(), "Run help all") {
@@ -22,7 +22,7 @@ func TestUnitAContextHelpAndHelpAll(t *testing.T) {
 	if err := PrintScopedCommandHelp(&all, "all", ScopeWorkspace); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"inject <text>", "interrupt [soft|hard] [message]", "Aliases: ", ">=send", "?=help", "l=list", "btw=inject", "control=interrupt", "r=refresh", "q=quit"} {
+	for _, name := range []string{"inject [text]", "interrupt [soft|hard] [message]", "Aliases: ", ">=send", "?=help", "l=list", "btw=inject", "control=interrupt", "r=refresh", "q=quit"} {
 		if !strings.Contains(all.String(), name) {
 			t.Fatalf("help all missing %q: %q", name, all.String())
 		}
@@ -61,7 +61,7 @@ func TestUnitAPrimaryHelpHidesCompatibilityAliases(t *testing.T) {
 	if err := PrintScopedCommandHelp(&output, "all", ScopeSession); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"inject <text>", "interrupt [soft|hard] [message]"} {
+	for _, name := range []string{"inject [text]", "interrupt [soft|hard] [message]"} {
 		if !strings.Contains(output.String(), name) {
 			t.Fatalf("canonical command missing from help all: %q", name)
 		}
@@ -132,20 +132,30 @@ func TestUnitACommandMetadataIsConsistent(t *testing.T) {
 	lines := strings.Split(strings.TrimSuffix(all.String(), "\n"), "\n")
 	var actualCommands, actualAliases []string
 	inAliases := false
-	for _, line := range lines {
+	for index, line := range lines {
 		if strings.HasPrefix(line, "Aliases: ") {
 			inAliases = true
 			actualAliases = strings.Split(strings.TrimPrefix(line, "Aliases: "), ", ")
 			continue
 		}
-		if !inAliases && strings.HasPrefix(line, "  ") {
-			actualCommands = append(actualCommands, strings.TrimSpace(line))
+		if inAliases || !strings.HasPrefix(line, helpLineIndent) {
+			continue
 		}
+		rest := strings.TrimPrefix(line, helpLineIndent)
+		if rest == "" || strings.HasPrefix(rest, " ") {
+			// A hung description line belongs to the previous command row.
+			continue
+		}
+		row := strings.TrimSpace(line)
+		if !strings.Contains(row, "scopes: ") && index+1 < len(lines) {
+			row += " " + strings.TrimSpace(lines[index+1])
+		}
+		actualCommands = append(actualCommands, normalizeHelpRow(row))
 	}
 	var expectedCommands []string
 	for _, name := range commandHelpOrder {
 		entry := commandHelpCatalog[name]
-		expectedCommands = append(expectedCommands, entry.syntax+"   scopes: "+strings.Join(commandScopes(name), ", ")+"   "+entry.description)
+		expectedCommands = append(expectedCommands, normalizeHelpRow(entry.syntax+" scopes: "+strings.Join(commandScopes(name), ", ")+" "+entry.description))
 	}
 	sort.Strings(actualCommands)
 	sort.Strings(expectedCommands)
@@ -161,6 +171,12 @@ func TestUnitACommandMetadataIsConsistent(t *testing.T) {
 	if len(actualAliases) != len(uniqueStrings(actualAliases)) || !equalStrings(actualAliases, expectedAliases) {
 		t.Fatalf("help all aliases=%v, want exact unique set=%v", actualAliases, expectedAliases)
 	}
+}
+
+// normalizeHelpRow collapses the alignment padding of one help row, so the row
+// content can be compared exactly without pinning the chosen description column.
+func normalizeHelpRow(row string) string {
+	return strings.Join(strings.Fields(row), " ")
 }
 
 func uniqueStrings(values []string) []string {
@@ -204,12 +220,21 @@ func TestUnitANonInteractiveAliasHelpRetainsDescriptions(t *testing.T) {
 	for _, alias := range []string{"btw", "control"} {
 		prefix := "agent-cluster-cli [options] " + alias + " <endpoint> <resource> [text] [generation]"
 		found := 0
-		for _, line := range strings.Split(overview.String(), "\n") {
-			if !strings.HasPrefix(line, prefix) {
+		lines := strings.Split(overview.String(), "\n")
+		for index, line := range lines {
+			if !strings.HasPrefix(line, helpLineIndent+prefix) {
 				continue
 			}
 			found++
-			description := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			description := strings.TrimSpace(strings.TrimPrefix(line, helpLineIndent+prefix))
+			if description == "" {
+				// A syntax wider than the block column hangs its description on
+				// the next line, indented to the description column.
+				if index+1 >= len(lines) {
+					t.Fatalf("overview %s has no description line: %q", alias, overview.String())
+				}
+				description = strings.TrimSpace(lines[index+1])
+			}
 			if description == "" {
 				t.Fatalf("overview %s has empty description: %q", alias, overview.String())
 			}

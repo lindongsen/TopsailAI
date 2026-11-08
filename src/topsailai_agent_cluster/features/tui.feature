@@ -94,3 +94,8 @@ Feature: non-interactive TUI
     Then the auto-refresh loop reports its interval and mode
     And the first keypress stops the auto-refresh loop
     And the REPL keeps running after the loop stops
+
+  Scenario: interactive q returns to workspace scope from session scope
+    Given a real cluster with a healthy provider for the TUI
+    When the interactive REPL enters a session and types q
+    Then the REPL returns to workspace scope and keeps running

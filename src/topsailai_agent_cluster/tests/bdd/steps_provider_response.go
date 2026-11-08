@@ -23,9 +23,10 @@ func registerProviderResponseSteps(ctx *godog.ScenarioContext) {
 }
 
 // interactiveSendScript navigates to the first session row, sends one literal
-// message, confirms it, and quits. Row navigation is used because the startup
-// list already rendered the visible numbering.
-const interactiveSendScript = "cd 1\nsend bdd provider response probe\ny\nquit\n"
+// message and quits. An explicit send submits directly, so no answer line is
+// needed. Row navigation is used because the startup list already rendered the
+// visible numbering.
+const interactiveSendScript = "cd 1\nsend bdd provider response probe\nquit\n"
 
 // startInteractiveCluster starts a real cluster whose provider succeeds.
 func startInteractiveCluster() error {

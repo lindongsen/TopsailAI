@@ -16,12 +16,12 @@ func TestSendPrefixAliasAdmitsMessage(t *testing.T) {
 		input   string
 		payload string
 	}{
-		{name: "with space", input: "cd endpoint-1/session-1\n> hello world\ny\nquit\n", payload: `{"text":"hello world"}`},
-		{name: "without space", input: "cd endpoint-1/session-1\n>hello world\ny\nquit\n", payload: `{"text":"hello world"}`},
-		{name: "single character", input: "cd endpoint-1/session-1\n> x\ny\nquit\n", payload: `{"text":"x"}`},
-		{name: "reserved word as first word", input: "cd endpoint-1/session-1\n> stop and summarize\ny\nquit\n", payload: `{"text":"stop and summarize"}`},
-		{name: "command-like typo", input: "cd endpoint-1/session-1\n> sned hello world\ny\nquit\n", payload: `{"text":"sned hello world"}`},
-		{name: "leading spaces preserved after prefix", input: "cd endpoint-1/session-1\n>   padded\ny\nquit\n", payload: `{"text":"padded"}`},
+		{name: "with space", input: "cd endpoint-1/session-1\n> hello world\nexit\n", payload: `{"text":"hello world"}`},
+		{name: "without space", input: "cd endpoint-1/session-1\n>hello world\nexit\n", payload: `{"text":"hello world"}`},
+		{name: "single character", input: "cd endpoint-1/session-1\n> x\nexit\n", payload: `{"text":"x"}`},
+		{name: "reserved word as first word", input: "cd endpoint-1/session-1\n> stop and summarize\nexit\n", payload: `{"text":"stop and summarize"}`},
+		{name: "command-like typo", input: "cd endpoint-1/session-1\n> sned hello world\nexit\n", payload: `{"text":"sned hello world"}`},
+		{name: "leading spaces preserved after prefix", input: "cd endpoint-1/session-1\n>   padded\nexit\n", payload: `{"text":"padded"}`},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -44,19 +44,20 @@ func TestSendPrefixAliasAdmitsMessage(t *testing.T) {
 	}
 }
 
-// TestSendPrefixKeepsConfirmation proves the alias does not bypass the
-// confirmation gate that every mutating command uses.
-func TestSendPrefixKeepsConfirmation(t *testing.T) {
+// TestSendPrefixSubmitsWithoutConfirmation proves the alias submits directly,
+// like an explicit send: the prefix already states the action and the text, so a
+// second question could only repeat what the operator typed.
+func TestSendPrefixSubmitsWithoutConfirmation(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-	output, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\n> hello world\nn\nquit\n", ColorPolicy{})
+	output, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\n> hello world\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("diagnostics=%q", diagnostics)
 	}
-	if stub.admit != 0 {
-		t.Fatalf("declined confirmation admitted %d commands", stub.admit)
+	if stub.admit != 1 {
+		t.Fatalf("admitted %d commands, want 1", stub.admit)
 	}
-	if !strings.Contains(output, "send cancelled") {
-		t.Fatalf("cancellation not reported: %q", output)
+	if count := strings.Count(output, "Confirm send?"); count != 0 {
+		t.Fatalf("alias asked %d confirmations, want 0: %q", count, output)
 	}
 }
 
@@ -71,13 +72,13 @@ func TestSendPrefixIsRejectedOutsideSessionScope(t *testing.T) {
 	}{
 		{
 			name:  "workspace",
-			input: "> hello world\nquit\n",
-			want:  `error: command "send" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, stop, drive, status, refresh, watch, help, quit`,
+			input: "> hello world\nexit\n",
+			want:  `error: command "send" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, stop, drive, status, refresh, watch, help, quit, exit`,
 		},
 		{
 			name:  "endpoint",
-			input: "cd host-one/endpoint-1\n> hello world\nquit\n",
-			want:  `error: command "send" is unavailable in endpoint scope; available commands: list, cd, show, info, start, stop, drive, logs, status, refresh, watch, help, quit`,
+			input: "cd host-one/endpoint-1\n> hello world\nexit\n",
+			want:  `error: command "send" is unavailable in endpoint scope; available commands: list, cd, show, info, start, stop, drive, logs, status, refresh, watch, help, quit, exit`,
 		},
 	}
 	for _, testCase := range cases {
@@ -97,7 +98,7 @@ func TestSendPrefixIsRejectedOutsideSessionScope(t *testing.T) {
 // behaviour, so the alias cannot fail open.
 func TestSendPrefixDoesNotReinterpretCommands(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-	_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\nsned hello world\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\nsned hello world\nexit\n", ColorPolicy{})
 	assertActionableError(t, diagnostics, `error: unknown command "sned" (try help)`)
 	if stub.admit != 0 {
 		t.Fatalf("typo admitted %d commands", stub.admit)
@@ -108,7 +109,7 @@ func TestSendPrefixDoesNotReinterpretCommands(t *testing.T) {
 // multi-line composer instead of submitting an empty message.
 func TestSendPrefixBareFormReadsMultiLine(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-	_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\n>\nfirst line\nsecond line\nEOF\ny\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\n>\nfirst line\nsecond line\nEOF\ny\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("diagnostics=%q", diagnostics)
 	}
@@ -165,7 +166,7 @@ func TestSendPrefixCompletionOffersSend(t *testing.T) {
 // nothing instead of sending blank text.
 func TestSendPrefixEmptyMessageIsRejected(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-	_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\n>   \nEOF\nquit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\n>   \nEOF\nexit\n", ColorPolicy{})
 	if !strings.Contains(diagnostics, "payload must not be empty") {
 		t.Fatalf("diagnostics=%q", diagnostics)
 	}
@@ -181,7 +182,6 @@ func TestSendPrefixDirectDispatch(t *testing.T) {
 	state := interactiveState{}
 	state.enterSession(protocol.Endpoint{EndpointID: "endpoint-1"}, "session-1", "generation-1")
 	lines := make(chan lineReadResult, 1)
-	lines <- lineReadResult{line: "y"}
 	var output, diagnostics strings.Builder
 	if _, err := executeInteractiveLine(context.Background(), stub, &state, ">tight message", lines, &output, &output, &diagnostics, InteractiveOptions{LineLimit: 8192}); err != nil {
 		t.Fatalf("executeInteractiveLine: %v", err)

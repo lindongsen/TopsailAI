@@ -1,0 +1,32 @@
+# Author: DawsonLin
+# Purpose: Keep the image build context to the sources the server binary needs.
+#
+# The repository carries a 183 MB .tmp tree holding SQLite databases, logs and
+# TLS private keys. Sending it to the daemon would slow every build and copy
+# secrets into the build cache, so it is excluded along with every other artifact
+# that is produced rather than authored.
+
+# Version control and editor state
+.git/
+.gitignore
+.dockerignore
+
+# Build and runtime artifacts, including TLS private keys and databases
+.tmp/
+bin/
+*.deb
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.log
+certs/
+
+# Tests, fixtures and documentation are not compiled into the server binary
+tests/
+docs/
+features/
+issues/
+.task/
+
+# The image definition itself is read by the daemon, not by the build
+docker/

@@ -13,7 +13,7 @@ import (
 // sendScenario is the confirmed send used by the trigger tests. Entering the
 // session already renders one bounded snapshot, so the automatic post-send read
 // is the second output request and the first one is the entry snapshot.
-const sendScenario = "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\ny\nquit\n"
+const sendScenario = "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\nexit\n"
 
 // sendOutputRequests returns the recorded output requests after the entry
 // snapshot, which are the reads the send itself caused.
@@ -83,7 +83,7 @@ func TestUnitSendAutoLogsIsBoundedByTheReplDefaults(t *testing.T) {
 // read with its own limit.
 func TestUnitSendAutoLogsKeepsTheExplicitLogsRead(t *testing.T) {
 	stub := scopeStub()
-	input := "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\ny\nlogs -n 7\nquit\n"
+	input := "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\nlogs -n 7\nexit\n"
 	if _, diagnostics := runScope(t, stub, input, ColorPolicy{}); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
@@ -111,12 +111,12 @@ func TestUnitSendAutoLogsSkipsEveryRejectedSend(t *testing.T) {
 		{
 			name:  "declined confirmation",
 			stub:  func() InteractiveAPI { return scopeStub() },
-			input: "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\nn\nquit\n",
+			input: "cd host-one/endpoint-1/res-1\nsend\nhi\nEOF\nn\nexit\n",
 		},
 		{
 			name:  "invalid payload",
 			stub:  func() InteractiveAPI { return scopeStub() },
-			input: "cd host-one/endpoint-1/res-1\nsend {\nquit\n",
+			input: "cd host-one/endpoint-1/res-1\nsend {\nexit\n",
 		},
 		{
 			name: "uncertain admission",
@@ -125,7 +125,7 @@ func TestUnitSendAutoLogsSkipsEveryRejectedSend(t *testing.T) {
 				stub.admitErr = errors.New("transport timeout")
 				return stub
 			},
-			input: "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\ny\nquit\n",
+			input: "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\nexit\n",
 		},
 		{
 			name: "capability change",
@@ -135,7 +135,7 @@ func TestUnitSendAutoLogsSkipsEveryRejectedSend(t *testing.T) {
 					revisions:       []string{"r1", "r2"},
 				}
 			},
-			input: "cd endpoint-1/session-1\nsend {\"text\":\"hi\"}\ny\nquit\n",
+			input: "cd endpoint-1/session-1\nsend\nhi\nEOF\ny\nexit\n",
 		},
 		{
 			name: "generation change",
@@ -146,7 +146,7 @@ func TestUnitSendAutoLogsSkipsEveryRejectedSend(t *testing.T) {
 				stub.changeAfter = 3
 				return stub
 			},
-			input: "cd endpoint-1/session-1\nsend {\"text\":\"hi\"}\ny\nquit\n",
+			input: "cd endpoint-1/session-1\nsend {\"text\":\"hi\"}\nexit\n",
 		},
 	}
 	for _, testCase := range cases {
@@ -216,10 +216,10 @@ func TestUnitSendAutoLogsDoesNotTriggerOnOtherActions(t *testing.T) {
 		name  string
 		input string
 	}{
-		{name: "inject", input: "cd host-one/endpoint-1/res-1\ninject {\"text\":\"hi\"}\ny\nquit\n"},
-		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nquit\n"},
-		{name: "resume", input: "cd host-one/endpoint-1/res-1\nresume\ny\nquit\n"},
-		{name: "stop", input: "cd host-one/endpoint-1/res-1\nstop\ny\nquit\n"},
+		{name: "inject", input: "cd host-one/endpoint-1/res-1\ninject {\"text\":\"hi\"}\ny\nexit\n"},
+		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nexit\n"},
+		{name: "resume", input: "cd host-one/endpoint-1/res-1\nresume\ny\nexit\n"},
+		{name: "stop", input: "cd host-one/endpoint-1/res-1\nstop\ny\nexit\n"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -379,9 +379,9 @@ func TestUnitSendAutoRefreshSkipsEveryRejectedSend(t *testing.T) {
 		input string
 		admit error
 	}{
-		{name: "declined confirmation", input: "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\nn\nquit\n"},
-		{name: "invalid payload", input: "cd host-one/endpoint-1/res-1\nsend {\nquit\n"},
-		{name: "uncertain admission", input: "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\ny\nquit\n", admit: errors.New("transport timeout")},
+		{name: "declined confirmation", input: "cd host-one/endpoint-1/res-1\nsend\nhi\nEOF\nn\nexit\n"},
+		{name: "invalid payload", input: "cd host-one/endpoint-1/res-1\nsend {\nexit\n"},
+		{name: "uncertain admission", input: "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\nexit\n", admit: errors.New("transport timeout")},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -402,10 +402,10 @@ func TestUnitSendAutoRefreshDoesNotTriggerOnOtherActions(t *testing.T) {
 		name  string
 		input string
 	}{
-		{name: "inject", input: "cd host-one/endpoint-1/res-1\ninject {\"text\":\"hi\"}\ny\nquit\n"},
-		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nquit\n"},
-		{name: "resume", input: "cd host-one/endpoint-1/res-1\nresume\ny\nquit\n"},
-		{name: "stop", input: "cd host-one/endpoint-1/res-1\nstop\ny\nquit\n"},
+		{name: "inject", input: "cd host-one/endpoint-1/res-1\ninject {\"text\":\"hi\"}\ny\nexit\n"},
+		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nexit\n"},
+		{name: "resume", input: "cd host-one/endpoint-1/res-1\nresume\ny\nexit\n"},
+		{name: "stop", input: "cd host-one/endpoint-1/res-1\nstop\ny\nexit\n"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -488,7 +488,7 @@ func TestUnitSendAutoRefreshInvalidatesAChangedGeneration(t *testing.T) {
 // and must not become a path that skips the read or the forced collection.
 func TestUnitSendAutoRefreshInheritsTheSendPrefixAlias(t *testing.T) {
 	stub := newSendRefreshStub()
-	input := "cd host-one/endpoint-1/res-1\n> hello world\ny\nquit\n"
+	input := "cd host-one/endpoint-1/res-1\n> hello world\nexit\n"
 	if _, diagnostics := runScope(t, stub, input, ColorPolicy{}); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}

@@ -105,9 +105,11 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	if err := flags.Parse(hoistTrailingFlags(args)); err != nil {
 		return err
 	}
-	// The output boundary owns the truncation policy, so every render path
-	// inherits the flag without threading it through each command.
-	output = terminalOutput{Writer: output, full: *noTruncate}
+	// The output boundary owns the truncation and colour policy, so every render
+	// path inherits the flags without threading them through each command.
+	// Colour eligibility follows the output stream: a redirected stdout cannot
+	// render escape sequences even when stdin is an interactive terminal.
+	output = terminalOutput{Writer: output, full: *noTruncate, color: resolveOutputColor(output, *noColor)}
 	interactiveSelected, err := resolveInteractiveSelection(*interactiveShort, flags.Args())
 	if err != nil {
 		return err
@@ -129,7 +131,9 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return editorErr
 		}
 		defer closeEditor()
-		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: *lines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)}
+		// Colour follows the output boundary, so a REPL whose stdout is redirected
+		// stays plain even though interactive mode requires a terminal on stdin.
+		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: *lines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output)}
 		return tui.RunInteractive(ctx, api, input, output, errors, wireEditorReaders(options, editor))
 	}
 	switch flags.Arg(0) {
@@ -147,18 +151,18 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if err != nil {
 			return err
 		}
-		return list(ctx, api, output, errors, *filter, listClean, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
+		return list(ctx, api, output, errors, *filter, listClean, *jsonMode, tui.OutputColorPolicy(output))
 	case "refresh":
 		if err := parseRefreshArgs(flags.Args()[1:]); err != nil {
 			return err
 		}
-		return refresh(ctx, api, output, errors, *filter, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
+		return refresh(ctx, api, output, errors, *filter, *jsonMode, tui.OutputColorPolicy(output))
 	case "endpoints":
 		endpointFilter, err := parseEndpointsArgs(flags.Args()[1:], *filter)
 		if err != nil {
 			return err
 		}
-		return endpoints(ctx, api, output, endpointFilter, *jsonMode, tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true))
+		return endpoints(ctx, api, output, endpointFilter, *jsonMode, tui.OutputColorPolicy(output))
 	case "table":
 		return fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "show":
@@ -175,7 +179,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if flags.NArg() != 3 {
 			return fmt.Errorf("usage: logs <endpoint-id> <session-id>")
 		}
-		color := tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)
+		color := tui.OutputColorPolicy(output)
 		if *follow || *followShort {
 			// The process installs a SIGINT handler, so the default termination is
 			// disabled. A standalone follow therefore has to observe the interrupt
@@ -193,16 +197,18 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	case "drive":
 		return drive(ctx, api, output, flags.Args()[1:], *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	case "send", "btw", "inject", "control", "start", "resume", "stop":
-		// A bare send or start reads a multi-line block from the command input.
-		// On a terminal nothing else would prompt, so the operator would face a
-		// silent wait; the hint goes to the diagnostics stream to keep the
-		// machine-readable output clean.
+		// A bare send, btw, inject or start reads a multi-line block from the
+		// command input. On a terminal nothing else would prompt, so the
+		// operator would face a silent wait; the hint goes to the diagnostics
+		// stream to keep the machine-readable output clean.
 		if hint := multiLineHint(flags.Arg(0), flags.NArg(), *task, terminal); hint != "" {
 			if _, err := fmt.Fprintln(errors, hint); err != nil {
 				return err
 			}
 		}
-		color := tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)
+		// Colour follows the output boundary, so a redirected stdout stays plain
+		// even when stdin is an interactive terminal.
+		color := tui.OutputColorPolicy(output)
 		return action(ctx, api, output, input, errors, color, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
 	case "ctl":
 		return ctlCommand(ctx, api, output, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
@@ -583,6 +589,20 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 				return err
 			}
 			payload = resolved
+		} else if operation == "btw" || operation == "inject" {
+			// A btw or inject without a text argument reads a multi-line context
+			// block from the command input, so context text never has to be
+			// quoted into one line. The block keeps the message payload bound,
+			// because context injection carries the same text field as send.
+			block, err := tui.ReadContextMultiLineBlock(input, 0)
+			if err != nil {
+				return err
+			}
+			resolved, err := resolveActionPayload(operation, block.Text)
+			if err != nil {
+				return err
+			}
+			payload = resolved
 		} else if operation == "start" && task == "" {
 			// A start without a task reads a multi-line task block, so a task
 			// never has to be quoted into one line. The accepted task is echoed
@@ -734,6 +754,11 @@ func multiLineHint(operation string, narg int, task string, terminal bool) strin
 	case "send":
 		if narg == 3 {
 			return tui.MultiLineHint
+		}
+	case "btw", "inject":
+		// A positional text supplies the context, so no block is read.
+		if narg == 3 {
+			return tui.MultiLineContextHint
 		}
 	case "start":
 		// A positional task or --task supplies the text, so no block is read.

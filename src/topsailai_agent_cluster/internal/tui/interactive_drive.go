@@ -52,7 +52,7 @@ func interactiveDrive(parent context.Context, api InteractiveAPI, state *interac
 	// driver is not stopping the agent and the operator must not confuse them.
 	label := "drive " + action
 	if state.Scope.Kind == ScopeSession {
-		return interactiveConfirmedAction(parent, api, state, operation, label, target.sessionID, target.generation, json.RawMessage(`{}`), lines, out, trustedOut, options, nil, nil)
+		return interactiveConfirmedAction(parent, api, state, operation, label, target.confirmationTarget(), target.generation, json.RawMessage(`{}`), lines, out, trustedOut, options, nil, nil)
 	}
 	// Outside session scope the pinned selection is not the target, so the shared
 	// confirmation path receives a detached copy that pins exactly this target.
@@ -72,7 +72,7 @@ func interactiveDrive(parent context.Context, api InteractiveAPI, state *interac
 		state.commandID = pinned.commandID
 		return nil
 	}
-	return interactiveConfirmedAction(parent, api, &pinned, operation, label, target.sessionID, target.generation, json.RawMessage(`{}`), lines, out, trustedOut, options, revalidate, postSubmit)
+	return interactiveConfirmedAction(parent, api, &pinned, operation, label, target.confirmationTarget(), target.generation, json.RawMessage(`{}`), lines, out, trustedOut, options, revalidate, postSubmit)
 }
 
 // parseDriveArguments splits the optional action from the optional session target.

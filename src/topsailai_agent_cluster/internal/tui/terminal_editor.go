@@ -83,7 +83,10 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 	t.blockRows, t.blockCursorRow = 0, 0
 	defer t.editor.reset()
 	// Only question-style prompts request a new row; named prompts are already printed.
-	if strings.HasPrefix(prompt, "\n") {
+	// The marker is captured before it is stripped, because a question row is allowed
+	// the whole row width while a named prompt keeps the half-row budget.
+	questionRow := strings.HasPrefix(prompt, "\n")
+	if questionRow {
 		prompt = strings.TrimPrefix(prompt, "\n")
 		if _, err = io.WriteString(t.output, "\r\n"); err != nil {
 			return
@@ -100,12 +103,12 @@ func (t *TerminalEditor) readLine(ctx context.Context, prompt string, history bo
 			if err := t.applyWatch(watch); err != nil {
 				return err
 			}
-			return t.redraw(prompt)
+			return t.redraw(prompt, questionRow)
 		}
 	}
 	reader := bufio.NewReaderSize(byteReader, 16)
 	for {
-		if err = t.redraw(prompt); err != nil {
+		if err = t.redraw(prompt, questionRow); err != nil {
 			return
 		}
 		byteReader.escapeDeadline = time.Time{}
@@ -268,7 +271,10 @@ func toCRLF(payload []byte) []byte {
 // redraw renders the input as a soft-wrapped block, so a long edit keeps its
 // head visible instead of scrolling out of a single row. The previous block is
 // erased in the same write, so a shorter block never leaves stale rows behind.
-func (t *TerminalEditor) redraw(prompt string) error {
+// A question row carries the whole question, so it may use the full row instead
+// of the half-row budget that keeps a named prompt short; otherwise a long
+// question would lose its trailing answer hint.
+func (t *TerminalEditor) redraw(prompt string, questionRow bool) error {
 	width := t.width()
 	if width < 4 {
 		width = 4
@@ -277,8 +283,20 @@ func (t *TerminalEditor) redraw(prompt string) error {
 	if green {
 		prompt = strings.TrimSuffix(strings.TrimPrefix(prompt, ansiBoldGreen), ansiReset+" ") + " "
 	}
-	prompt = clipCell(prompt, max(1, width/2))
-	promptWidth := displayWidth(prompt)
+	budgetWidth := max(1, width/2)
+	if questionRow {
+		budgetWidth = max(1, width-1)
+	}
+	// A question row must keep its trailing answer hint, because the hint is the
+	// only cue telling the operator what to type. A named prompt has no hint, so
+	// the plain clip is used there. Styled prompts are measured and clipped by
+	// visible columns, so escape bytes never shift the cursor.
+	if questionRow {
+		prompt = clipStyledCellKeepHint(prompt, budgetWidth)
+	} else {
+		prompt = clipStyledCell(prompt, budgetWidth)
+	}
+	promptWidth := styledDisplayWidth(prompt)
 	// The first row shares its width with the prompt; continuation rows use the
 	// whole width, and one column stays reserved so a full row never wraps.
 	firstBudget := max(1, width-promptWidth-1)
