@@ -24,6 +24,8 @@ func registerFollowSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the interrupt ends the stream cleanly$`, assertFollowInterruptedCleanly)
 	ctx.Step(`^the interactive REPL runs logs follow and the operator presses enter$`, runInteractiveFollowEnter)
 	ctx.Step(`^the enter key stops the follow stream$`, assertFollowStoppedByEnter)
+	ctx.Step(`^the standalone logs follow command runs while the endpoint disconnects$`, runStandaloneFollowThenStopEndpoint)
+	ctx.Step(`^the disconnect is reported as an interrupted stream$`, assertFollowInterruptedByDisconnect)
 }
 
 // followPause is the gap between scripted input chunks. The fixture writes five
@@ -178,6 +180,54 @@ func assertFollowInterruptedCleanly() error {
 	text := string(activeScenario.lastBody)
 	if !strings.Contains(text, "follow stopped") {
 		return fmt.Errorf("the interrupt did not report a clean stop: %s", text)
+	}
+	return nil
+}
+
+// runStandaloneFollowThenStopEndpoint runs a standalone follow and stops the
+// Endpoint once the first record arrives, so the stream is interrupted by a
+// disconnect instead of by the operator.
+func runStandaloneFollowThenStopEndpoint() error {
+	if activeScenario.realCluster == nil {
+		return fmt.Errorf("real cluster is not running")
+	}
+	resourceID, err := tuiResourceID()
+	if err != nil {
+		return err
+	}
+	stdout, stderr, code, err := activeScenario.realCluster.RunTUIFollowThenStopEndpoint("fixture follow", 10*time.Second, "logs", "endpoint-1", resourceID, "--follow")
+	activeScenario.lastBody = []byte(stdout)
+	activeScenario.lastStatus = code
+	if err != nil && code == 0 {
+		return fmt.Errorf("run standalone follow with endpoint stop: %v; stderr=%s", err, stderr)
+	}
+	if code != 0 {
+		return fmt.Errorf("standalone follow exit code=%d stderr=%s output=%s", code, stderr, stdout)
+	}
+	return nil
+}
+
+// assertFollowInterruptedByDisconnect proves a disconnect is reported as an
+// interrupted stream, never as a clean finish.
+//
+// The Endpoint never delivered its terminal frame, so the only reason the CLI can
+// report anything is the Server releasing the pending follow with
+// endpoint_offline. Asserting that code proves the Server-inferred path is what
+// the contract relies on, and asserting the absence of a clean end proves the
+// client does not mistake a missing terminal frame for a finished stream.
+func assertFollowInterruptedByDisconnect() error {
+	if activeScenario.lastStatus != 0 {
+		return fmt.Errorf("the disconnect was reported as a failure: exit=%d output=%s", activeScenario.lastStatus, string(activeScenario.lastBody))
+	}
+	text := string(activeScenario.lastBody)
+	if !strings.Contains(text, "follow ended: endpoint_offline") {
+		return fmt.Errorf("the disconnect did not report the Server-inferred endpoint_offline code: %s", text)
+	}
+	if strings.Contains(text, "follow ended\n") {
+		return fmt.Errorf("the disconnect was reported as a clean finish: %s", text)
+	}
+	if strings.Contains(text, "follow stopped") {
+		return fmt.Errorf("the disconnect was reported as an operator stop: %s", text)
 	}
 	return nil
 }

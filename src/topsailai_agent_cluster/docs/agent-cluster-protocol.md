@@ -213,6 +213,42 @@ SSE uses resource changes, command updates and freshness events. MVP does not pe
 
 Output follow is implemented as a real stream over the existing authenticated WebSocket, not as a timer-driven snapshot. One `output_follow_request` frame starts a stream; the Endpoint answers with repeated `output_chunk` frames and exactly one terminal `output_end` frame, all correlated by the same request ID. The Server exposes it as `GET /api/v1/output/follow`, which writes newline-delimited JSON: chunk records followed by exactly one end record. A transport that cannot stream returns `503 unsupported` rather than degrading into a snapshot, because a snapshot presented as a stream would look complete while silently missing everything written after it.
 
+## Implemented output follow terminal frame delivery
+
+The Endpoint's terminal `output_end` frame is **best-effort**, not guaranteed. This
+is a deliberate decision, not an oversight, and it is the contract a consumer must
+rely on.
+
+The Endpoint keeps no follow journal. A terminal frame that cannot be sent is
+never queued, never retried and never replayed on reconnect, because retaining it
+would require a durable record type, a reconnect flush order and a retention bound
+on the command deduplication journal. That is a larger change than the contract
+needs, and the safety property it would add is already provided elsewhere.
+
+The property that makes best-effort safe lives on the Server. When an Endpoint
+disconnects, `failPendingFollow` releases every pending follow for that Endpoint
+with the Server-inferred `endpoint_offline` code. A consumer therefore always
+learns that the stream was interrupted rather than finished, even though the
+Endpoint never stated how it ended. The Endpoint's own terminal code is advisory:
+it is delivered when the channel is up, and its absence is never a clean end.
+
+Consequences a consumer must respect:
+
+- A stream that stops without a terminal frame is interrupted, never complete.
+  The client already fails closed this way and reports `stream_interrupted`.
+- A disconnect always terminates a follow with `endpoint_offline`, which is
+  inferred by the Server rather than reported by the Endpoint. A consumer must not
+  expect the Endpoint's own code, such as `cancelled` or `provider_error`, to
+  survive a disconnect.
+- A lost terminal frame is a contract event, not routine noise. The Endpoint logs
+  `output follow terminal frame lost` with the request ID and the undelivered
+  code, at WARN for an offline channel and at ERROR for any other transport
+  failure. It never claims the frame was deferred, because no retry exists.
+
+A normal stop is unaffected: it still delivers exactly one terminal frame with a
+clean code, and a regression test guards that path so disconnect handling cannot
+mask it.
+
 The `POST`/`DELETE /api/v1/output/subscriptions` routes above remain unimplemented proposals. They are not required for follow, because a follow stream is bounded by its own request and ends with its terminal frame; a durable subscription would add retained state that the current design does not need.
 
 ## Command lifecycle and uncertain effects

@@ -22,3 +22,12 @@ Feature: output follow
     When the interactive REPL runs logs follow and the operator presses enter
     Then the streamed records arrive while the editor waits
     And the enter key stops the follow stream
+
+  Scenario: a disconnect interrupts the stream instead of finishing it
+    The Endpoint never delivers its terminal frame when the channel is already
+    gone, so the Server releases the pending follow with its own inferred code.
+    This scenario proves the client reports that interruption rather than
+    presenting a truncated stream as a finished one.
+    Given a real cluster with a streaming provider for the TUI
+    When the standalone logs follow command runs while the endpoint disconnects
+    Then the disconnect is reported as an interrupted stream

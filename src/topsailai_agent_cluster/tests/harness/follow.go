@@ -140,3 +140,61 @@ func waitForMarker(out *syncBuffer, marker string, wait time.Duration) error {
 	}
 	return fmt.Errorf("stream marker %q was not observed before the deadline; output=%s", marker, out.String())
 }
+
+// RunTUIFollowThenStopEndpoint runs one CLI follow, waits until the marker
+// appears on stdout, then stops the Endpoint so the stream is interrupted by a
+// disconnect rather than by the operator.
+//
+// This is the only way to prove the disconnect contract end to end: an in-process
+// transport cannot drop a live stream, and a follow stopped by the operator takes
+// the clean path instead. The Endpoint is stopped, never killed with a signal the
+// Server cannot observe, so the Server sees a real disconnect and releases the
+// pending follow itself.
+func (c *Cluster) RunTUIFollowThenStopEndpoint(marker string, wait time.Duration, args ...string) (stdout string, stderr string, exitCode int, err error) {
+	if c.TUIPath == "" {
+		return "", "", -1, fmt.Errorf("TUI binary has not been built; call BuildTUI first")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, c.TUIPath, args...)
+	cmd.Dir = ModuleRootForRun()
+	cmd.Env = append(os.Environ(),
+		"AGENT_CLUSTER_SERVER_URL="+c.URL(""),
+		"AGENT_CLUSTER_TOKEN=secret",
+		"AGENT_CLUSTER_TLS_CA_FILE="+c.Certs.CA,
+		"AGENT_CLUSTER_TLS_CERTIFICATE_FILE="+c.Certs.ClientCert,
+		"AGENT_CLUSTER_TLS_KEY_FILE="+c.Certs.ClientKey,
+	)
+	var out, stderrBuffer syncBuffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderrBuffer
+	if err := cmd.Start(); err != nil {
+		return "", "", -1, err
+	}
+	if err := waitForMarker(&out, marker, wait); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return out.String(), stderrBuffer.String(), -1, err
+	}
+	// Stop the Endpoint so the Server observes a disconnect while the follow is
+	// still open. The CLI is left running: it must end on its own once the
+	// Server releases the stream.
+	if err := StopProcessE(c.Endpoint); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return out.String(), stderrBuffer.String(), -1, fmt.Errorf("stop endpoint mid-follow: %w", err)
+	}
+	runErr := cmd.Wait()
+	if ctx.Err() != nil {
+		return out.String(), stderrBuffer.String(), -1, ctx.Err()
+	}
+	exitCode = 0
+	if runErr != nil {
+		exitCode = 1
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+	}
+	return out.String(), stderrBuffer.String(), exitCode, runErr
+}

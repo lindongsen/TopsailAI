@@ -3,6 +3,7 @@ package endpoint
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"topsailai_agent_cluster/internal/adapter"
@@ -100,6 +101,22 @@ func (s *Service) runFollow(ctx context.Context, requestID string, follower Outp
 }
 
 // sendFollowEnd emits the single terminal frame for a follow request.
+//
+// Delivery is best-effort. The Endpoint keeps no follow journal, so a terminal
+// frame that cannot be sent is never queued and never replayed on reconnect.
+// That is deliberate: retaining it would add a durable record type, a reconnect
+// flush order and a retention bound to the command deduplication journal, which
+// is a larger change than the contract requires.
+//
+// The contract that makes best-effort safe is on the Server: a disconnected
+// Endpoint always terminates its pending follows with the Server-inferred
+// endpoint_offline code, so the consumer still learns the stream was interrupted
+// rather than finished. The Endpoint's own terminal code is therefore advisory,
+// and a consumer must never treat a missing terminal frame as a clean end.
+//
+// A lost terminal frame is a contract event, not routine noise, so it is
+// recorded with the request ID and the code that was never delivered. Logging it
+// as a deferred retry would be false, because no retry exists.
 func (s *Service) sendFollowEnd(ctx context.Context, requestID, code string, truncated bool) {
 	end := protocol.OutputEnd{ErrorCode: code, ObservedAtMS: time.Now().UnixMilli(), Truncated: truncated}
 	if err := s.channel.SendFrame(ctx, channel.Frame{
@@ -108,8 +125,26 @@ func (s *Service) sendFollowEnd(ctx context.Context, requestID, code string, tru
 		RequestID:       requestID,
 		OutputEnd:       &end,
 	}); err != nil {
-		s.logTransportError("send output follow end", err)
+		s.logFollowEndLost(requestID, code, err)
 	}
+}
+
+// logFollowEndLost records that a follow terminal frame never reached the Server.
+//
+// An offline channel stays at WARN because it is a connectivity state rather
+// than an operation failure, but the message states the loss explicitly instead
+// of claiming the frame was deferred. Any other transport failure is a genuine
+// error and stays at ERROR.
+func (s *Service) logFollowEndLost(requestID, code string, err error) {
+	if s.logger == nil {
+		return
+	}
+	level := slog.LevelWarn
+	if !errors.Is(err, channel.ErrOffline) {
+		level = slog.LevelError
+	}
+	s.logger.Log(context.Background(), level, "output follow terminal frame lost",
+		"request_id", requestID, "error_code", code, "error", err)
 }
 
 // stopFollows cancels every active follow. It runs during shutdown so a provider
