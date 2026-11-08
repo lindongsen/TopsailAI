@@ -51,6 +51,11 @@ func NewCollector(ctx context.Context, bindings []Binding, timeout time.Duration
 }
 
 // Collect executes all bindings independently and returns the latest composite report.
+//
+// The caller's context governs the whole cycle, including the resource-mapping
+// store calls. When it is cancelled or its deadline expires the cycle is aborted
+// and the context error is returned, so a shutdown never publishes a degraded
+// report that describes work the Endpoint had already abandoned.
 func (c *Collector) Collect(ctx context.Context, observedAtMS int64) (protocol.InventoryReport, error) {
 	if observedAtMS < 1 {
 		return protocol.InventoryReport{}, fmt.Errorf("observation time must be positive")
@@ -62,7 +67,11 @@ func (c *Collector) Collect(ctx context.Context, observedAtMS int64) (protocol.I
 	}
 	for range c.bindings {
 		result := <-results
-		c.apply(result, observedAtMS)
+		if err := c.apply(ctx, result, observedAtMS); err != nil {
+			// The results channel is buffered for every binding, so the remaining
+			// discovery goroutines can still send and exit without a leak.
+			return protocol.InventoryReport{}, err
+		}
 	}
 	return c.compose(observedAtMS), nil
 }
@@ -81,7 +90,16 @@ func (c *Collector) discover(parent context.Context, binding Binding, nowMS int6
 	results <- discoveryResult{binding: binding, result: result, err: err, atMS: nowMS}
 }
 
-func (c *Collector) apply(item discoveryResult, nowMS int64) {
+// apply folds one discovery result into the source cache and persists it.
+//
+// It returns a non-nil error only when the cycle was aborted by its own context.
+// A cancelled cycle mutates nothing, so an abandoned collection cannot leave a
+// half-applied source behind. A store failure that is not caused by cancellation
+// stays a collection failure, because that is a real defect the operator must see.
+func (c *Collector) apply(ctx context.Context, item discoveryResult, nowMS int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	previous, hadPrevious := c.sources[item.binding.AdapterID]
@@ -117,11 +135,18 @@ func (c *Collector) apply(item discoveryResult, nowMS int64) {
 			for index := range snapshot.Sessions {
 				session := &snapshot.Sessions[index]
 				providerKey := session.SessionID
-				mapping, lookupErr := c.store.LookupResourceID(context.Background(), providerKey)
+				mapping, lookupErr := c.store.LookupResourceID(ctx, providerKey)
 				if lookupErr != nil || mapping.AdapterID != item.binding.AdapterID {
-					mapping, lookupErr = c.store.GetOrCreateResourceID(context.Background(), item.binding.AdapterID, providerKey, nowMS)
+					mapping, lookupErr = c.store.GetOrCreateResourceID(ctx, item.binding.AdapterID, providerKey, nowMS)
 				}
 				if lookupErr != nil {
+					// A cancelled store call means the cycle was abandoned, not
+					// that the provider returned bad data. Reporting it as a
+					// mapping failure would publish a degraded report for work
+					// nobody is waiting for any more.
+					if ctxErr := ctx.Err(); ctxErr != nil {
+						return ctxErr
+					}
 					snapshot.CollectionStatus = protocol.CollectionFailed
 					snapshot.ReportComplete = false
 					snapshot.DataKnown = false
@@ -151,8 +176,15 @@ func (c *Collector) apply(item discoveryResult, nowMS int64) {
 			snapshot.LastSuccessAtMS = &lastSuccessMS
 		}
 	}
+	// Re-check before mutating the cache so an aborted cycle leaves no trace.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.sources[item.binding.AdapterID] = snapshot
 	if c.store != nil {
-		_ = c.store.ApplySourceSnapshot(context.Background(), snapshot, nowMS)
+		if err := c.store.ApplySourceSnapshot(ctx, snapshot, nowMS); err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
 	}
+	return nil
 }

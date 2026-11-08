@@ -261,6 +261,13 @@ func (s *Service) collectionLoop(ctx context.Context) {
 	publish := func() {
 		report, err := s.collector.Collect(ctx, time.Now().UnixMilli())
 		if err != nil {
+			// A cancelled cycle is an aborted collection, not a failure: the
+			// Endpoint is shutting down or the request was abandoned, so there
+			// is nobody to publish to and nothing to report as broken.
+			if ctx.Err() != nil {
+				s.loggerInfo("inventory collection aborted")
+				return
+			}
 			s.logError("collect inventory", err)
 			return
 		}
@@ -378,6 +385,14 @@ func (s *Service) channelLoop(ctx context.Context) {
 func (s *Service) publishRefresh(ctx context.Context, requestID string) {
 	report, err := s.collector.Collect(ctx, time.Now().UnixMilli())
 	if err != nil {
+		// Same rule as the periodic loop: a cancelled cycle is an aborted
+		// collection, not a failure. The Server correlates the reply by request
+		// ID and will fail the request on its own deadline, so logging an ERROR
+		// here would only make a healthy shutdown look broken.
+		if ctx.Err() != nil {
+			s.loggerInfo("refresh inventory aborted")
+			return
+		}
 		s.logError("refresh inventory", err)
 		return
 	}
