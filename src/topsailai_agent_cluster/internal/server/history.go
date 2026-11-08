@@ -19,9 +19,15 @@ type HistoryRequester interface {
 // projection and never caches a result. The Server forwards the query verbatim
 // and returns the adapter's answer unchanged: it does not interpret provider
 // status words, re-derive resumability or correlate rows with the inventory.
+//
+// The authorization check runs before the transport is consulted, so an
+// unauthorized caller cannot infer Endpoint reachability from the response.
 func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.writeError(w, 405, "method_not_allowed", "GET required")
+		return
+	}
+	if !h.authorizeHistoryRead(w, r) {
 		return
 	}
 	endpointID := r.URL.Query().Get("endpoint_id")

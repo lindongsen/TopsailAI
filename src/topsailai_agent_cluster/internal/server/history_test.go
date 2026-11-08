@@ -178,3 +178,53 @@ func TestHistoryDisconnectIsNotReportedAsProviderError(t *testing.T) {
 		t.Fatalf("disconnect was reported as a provider failure: %s", out.Body.String())
 	}
 }
+
+// TestHistoryRequiresViewScope proves history metadata is not reachable with any
+// valid credential. A history row carries the session name, the recorded task
+// text and the project workspace, so a credential narrowed to an unrelated scope
+// must be refused before the transport is consulted.
+func TestHistoryRequiresViewScope(t *testing.T) {
+	for _, item := range []struct {
+		name   string
+		scopes security.ScopeSet
+		status int
+	}{
+		{name: "unrestricted", scopes: security.ScopeSet{}, status: http.StatusOK},
+		{name: "view", scopes: security.NewScopeSet(security.ScopeView), status: http.StatusOK},
+		{name: "read_output only", scopes: security.NewScopeSet(security.ScopeReadOutput), status: http.StatusForbidden},
+		{name: "send_message only", scopes: security.NewScopeSet(security.ScopeSendMessage), status: http.StatusForbidden},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			h := &Handler{
+				Authenticator: security.BearerAuthenticator{Token: "test", Scopes: item.scopes},
+				Output:        historyRequester{},
+			}
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/history?endpoint_id=e", nil)
+			req.Header.Set("Authorization", "Bearer test")
+			out := httptest.NewRecorder()
+			h.ServeHTTP(out, req)
+			if out.Code != item.status {
+				t.Fatalf("status=%d want=%d body=%s", out.Code, item.status, out.Body.String())
+			}
+			if item.status == http.StatusForbidden && !strings.Contains(out.Body.String(), `"permission_denied"`) {
+				t.Fatalf("body=%s want code permission_denied", out.Body.String())
+			}
+		})
+	}
+}
+
+// TestHistoryAuthorizationPrecedesTransport proves an unauthorized caller cannot
+// infer Endpoint reachability. The handler is built without a history channel, so
+// a missing check would answer 503 unavailable instead of 403 permission_denied.
+func TestHistoryAuthorizationPrecedesTransport(t *testing.T) {
+	h := &Handler{
+		Authenticator: security.BearerAuthenticator{Token: "test", Scopes: security.NewScopeSet(security.ScopeSendMessage)},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/history?endpoint_id=e", nil)
+	req.Header.Set("Authorization", "Bearer test")
+	out := httptest.NewRecorder()
+	h.ServeHTTP(out, req)
+	if out.Code != http.StatusForbidden {
+		t.Fatalf("status=%d want=%d body=%s", out.Code, http.StatusForbidden, out.Body.String())
+	}
+}
