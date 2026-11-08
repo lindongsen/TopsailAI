@@ -91,6 +91,9 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	maxBytes := flags.Int("max-bytes", 64<<10, "maximum output snapshot size in bytes")
 	lines := flags.Int("lines", 100, "maximum number of output lines returned by logs")
 	follow := flags.Bool("follow", false, "stream output records until interrupted; logs only")
+	// -f is the short spelling of --follow. Both surfaces accept it, so an
+	// operator who learned it in the interactive REPL can use it here too.
+	followShort := flags.Bool("f", false, "short form of --follow")
 	noColor := flags.Bool("no-color", false, "disable terminal colors")
 	noTruncate := flags.Bool("no-truncate", false, "disable table truncation; a narrow terminal wraps instead of clipping")
 	profile := flags.String("profile", "", "launch profile ID for start")
@@ -173,7 +176,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return fmt.Errorf("usage: logs <endpoint-id> <session-id>")
 		}
 		color := tui.ResolveColorPolicy(terminal, noColorPresent(), *noColor, strings.EqualFold(os.Getenv("TERM"), "dumb"), true)
-		if *follow {
+		if *follow || *followShort {
 			// The process installs a SIGINT handler, so the default termination is
 			// disabled. A standalone follow therefore has to observe the interrupt
 			// itself, or Ctrl-C would be swallowed and the stream would never end.
@@ -236,13 +239,13 @@ var globalOptionNames = map[string]bool{
 	"json": true, "endpoint": true, "yes": true, "server-url": true, "token": true,
 	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "no-color": true,
 	"profile": true, "profile-revision": true, "folder": true, "task": true,
-	"generation": true, "i": true,
+	"generation": true, "i": true, "follow": true, "f": true,
 }
 
 // booleanGlobalOptions lists the hoisted options that take no value, so hoisting
 // never swallows the following argument as if it were that option's value.
 var booleanGlobalOptions = map[string]bool{
-	"json": true, "yes": true, "no-color": true, "i": true,
+	"json": true, "yes": true, "no-color": true, "i": true, "follow": true, "f": true,
 }
 
 // hoistTrailingFlags moves recognized global options that appear after the
