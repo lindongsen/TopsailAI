@@ -451,3 +451,60 @@ func TestInteractiveResumeWithoutHistoryNamespaceExplainsTheFix(t *testing.T) {
 		t.Fatalf("history-less resume admitted %d commands", stub.admit)
 	}
 }
+
+// TestInteractiveHistoryRowNumberRejectedInSessionScope proves a bare number in
+// session scope reports the scope error instead of resolving against the history
+// table. The call is direct because the guard itself is under test: a dispatch
+// layer that happens to reject the number first would hide a missing guard.
+func TestInteractiveHistoryRowNumberRejectedInSessionScope(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{
+			{ProviderSessionID: "wa-live", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning},
+			{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"},
+		},
+		historyReport(historyLiveSession("res-live", "wa-live", "gen-1")),
+	)
+	state := &interactiveState{}
+	state.Scope = ScopeState{Kind: ScopeSession, EndpointID: "endpoint-1", SessionID: "res-live", Generation: "gen-1"}
+	state.history = &historyNamespace{
+		EndpointID: "endpoint-1",
+		Rows:       map[int]HistoryViewRow{1: {No: 1, EndpointID: "endpoint-1", ProviderSessionID: "wa-live", Joined: true, Live: true, ResourceID: "res-live", Generation: "gen-1"}},
+	}
+
+	err := cdHistoryRowNumber(state, stub, context.Background(), 1)
+	want := "row-number navigation is unavailable in session scope; use cd .. or cd <session>"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err=%v, want %q", err, want)
+	}
+	if state.Scope.Kind != ScopeSession {
+		t.Fatalf("scope=%v, want the session scope to be unchanged", state.Scope.Kind)
+	}
+}
+
+// TestInteractiveHistoryNamespaceClearedAfterEnteringSession proves the history
+// row numbers do not survive the transition into a session, so a later number can
+// never address a table the operator can no longer see.
+func TestInteractiveHistoryNamespaceClearedAfterEnteringSession(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{
+			{ProviderSessionID: "wa-live", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning},
+			{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"},
+		},
+		historyReport(historyLiveSession("res-live", "wa-live", "gen-1")),
+	)
+	state := &interactiveState{}
+	state.history = &historyNamespace{
+		EndpointID: "endpoint-1",
+		Rows:       map[int]HistoryViewRow{1: {No: 1, EndpointID: "endpoint-1", ProviderSessionID: "wa-live", Joined: true, Live: true, ResourceID: "res-live", Generation: "gen-1"}},
+	}
+
+	if err := cdHistoryRowNumber(state, stub, context.Background(), 1); err != nil {
+		t.Fatalf("cdHistoryRowNumber: %v", err)
+	}
+	if state.Scope.Kind != ScopeSession {
+		t.Fatalf("scope=%v, want session scope", state.Scope.Kind)
+	}
+	if state.history != nil {
+		t.Fatalf("history namespace survived the session transition: %#v", state.history)
+	}
+}

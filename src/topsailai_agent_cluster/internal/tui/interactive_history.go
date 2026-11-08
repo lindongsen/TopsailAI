@@ -105,7 +105,16 @@ func historyEndpointID(ctx context.Context, api InteractiveAPI, state *interacti
 // A history row is never a routing identity, so the transition reuses the joined
 // resource ID and generation and revalidates them against the current inventory.
 // A row that is not live has no generation at all, so it can never be entered.
+//
+// Session scope rejects row-number navigation for the same reason the live list
+// does: the operator is already inside one session, so a bare number has no table
+// to address. Without this guard a number typed in session scope resolved against
+// the history table left behind by the previous render and reported a history-row
+// error instead of the scope error.
 func cdHistoryRowNumber(state *interactiveState, api InteractiveAPI, parent context.Context, number int) error {
+	if state.Scope.Kind == ScopeSession {
+		return fmt.Errorf("row-number navigation is unavailable in session scope; use cd .. or cd <session>")
+	}
 	namespace := state.history
 	if namespace == nil {
 		return fmt.Errorf("no history table is available for row navigation; run history first")
@@ -126,7 +135,14 @@ func cdHistoryRowNumber(state *interactiveState, api InteractiveAPI, parent cont
 		return fmt.Errorf("history row %d has no routable identity; run history again", number)
 	}
 	sessionRow := SessionRow{No: row.No, EndpointID: row.EndpointID, SessionID: row.ResourceID, ProviderSessionID: row.ProviderSessionID, Generation: row.Generation, State: row.State}
-	return cdSessionRow(state, api, parent, number, sessionRow)
+	if err := cdSessionRow(state, api, parent, number, sessionRow); err != nil {
+		return err
+	}
+	// The history table is no longer on screen once a session is entered, so its
+	// row numbers must not survive the transition. Keeping them would let a later
+	// number resolve against a table the operator can no longer see.
+	state.history = nil
+	return nil
 }
 
 // interactiveResume resumes one stopped history row by its row number.
