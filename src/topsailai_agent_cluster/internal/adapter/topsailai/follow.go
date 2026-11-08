@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"topsailai_agent_cluster/internal/adapter"
 )
@@ -174,26 +173,11 @@ func readFollowRecord(reader *bufio.Reader, limit int) (followRecord, bool, erro
 	}
 }
 
-// truncateUTF8 returns at most limit bytes of data without splitting a rune, so
-// a truncated record stays valid UTF-8 instead of ending in half a character.
-// At most one rune's worth of bytes is removed, so data that is not UTF-8 at all
-// is not wiped out.
+// truncateUTF8 is the shared rune-safe truncation helper. It lives in the adapter
+// package so the snapshot and follow output paths cannot drift apart: a raw byte
+// slice on either path would leave the caller with half a character.
 func truncateUTF8(data []byte, limit int) []byte {
-	if limit <= 0 {
-		return nil
-	}
-	if len(data) <= limit {
-		return data
-	}
-	trimmed := data[:limit]
-	for i := 0; i < utf8.UTFMax-1 && len(trimmed) > 0; i++ {
-		r, size := utf8.DecodeLastRune(trimmed)
-		if r != utf8.RuneError || size > 1 {
-			return trimmed
-		}
-		trimmed = trimmed[:len(trimmed)-1]
-	}
-	return trimmed
+	return adapter.TruncateUTF8(data, limit)
 }
 
 // followEnvironment returns base with PYTHONUNBUFFERED set and the provider

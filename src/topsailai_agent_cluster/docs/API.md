@@ -193,6 +193,11 @@ invalid value keeps the provider default, and an explicit value is clamped to th
 10000 lines. The two budgets are independent because providers differ: a line-oriented provider
 uses `max_lines`, a byte-oriented provider uses `max_bytes`.
 
+A snapshot longer than `max_bytes` is truncated on a UTF-8 boundary and labelled `truncated: true`,
+so a shortened payload never ends in half a character. The follow route uses the same truncation
+rule, because a caller that receives invalid UTF-8 cannot tell a corrupt provider from a truncated
+read.
+
 The result is one bounded snapshot with its observation time. It is not a stream, not a follow and
 not a durable subscription. A provider that cannot answer returns `503` with the provider's error
 code, so an unavailable read is never reported as an empty successful read.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"topsailai_agent_cluster/internal/adapter"
 	"topsailai_agent_cluster/internal/protocol"
@@ -703,5 +704,84 @@ func TestResumeStillInspectsLive(t *testing.T) {
 	}
 	if instance.executions != 1 {
 		t.Fatalf("provider executions=%d, want 1", instance.executions)
+	}
+}
+
+// TestReadOutputTruncatesOnRuneBoundary proves the snapshot route never returns
+// half a character. A raw byte slice at the budget would cut the third byte of a
+// three-byte rune and leave the caller with bytes that no longer decode, which is
+// exactly what the follow route was already fixed to avoid.
+func TestReadOutputTruncatesOnRuneBoundary(t *testing.T) {
+	store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	registry := adapter.NewRegistry()
+	if err := registry.RegisterType("fixture", func(context.Context, adapter.Config) (adapter.Adapter, error) {
+		return outputTestAdapter{output: adapter.OutputResult{Lines: []string{"中中中"}}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := NewExecutor(store, registry)
+	response, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, Generation: "g1", MaxBytes: 4})
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if !response.Truncated {
+		t.Fatalf("truncated=false, want a truncated snapshot")
+	}
+	if !utf8.ValidString(response.Data) {
+		t.Fatalf("data=%q is not valid UTF-8", response.Data)
+	}
+	if response.Data != "中" {
+		t.Fatalf("data=%q, want exactly one whole rune", response.Data)
+	}
+	if len(response.Data) > 4 {
+		t.Fatalf("data length=%d exceeds the 4-byte budget", len(response.Data))
+	}
+}
+
+// TestReadOutputKeepsWholeRunesWhenBudgetFallsInsideARune proves the truncation
+// backs off to the previous rune boundary instead of dropping the whole payload,
+// so a budget that lands mid-character still returns the characters that fit.
+// "中文abc" is nine bytes, so a five-byte budget lands inside the second rune and
+// only the first whole rune fits.
+func TestReadOutputKeepsWholeRunesWhenBudgetFallsInsideARune(t *testing.T) {
+	store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	registry := adapter.NewRegistry()
+	if err := registry.RegisterType("fixture", func(context.Context, adapter.Config) (adapter.Adapter, error) {
+		return outputTestAdapter{output: adapter.OutputResult{Lines: []string{"中文abc"}}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := NewExecutor(store, registry)
+	response, err := e.ReadOutput(context.Background(), protocol.OutputSnapshotRequest{ResourceID: mapping.ResourceID, Generation: "g1", MaxBytes: 5})
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if !utf8.ValidString(response.Data) {
+		t.Fatalf("data=%q is not valid UTF-8", response.Data)
+	}
+	if response.Data != "中" {
+		t.Fatalf("data=%q, want the single whole rune that fits in 5 bytes", response.Data)
 	}
 }

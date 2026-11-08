@@ -73,3 +73,21 @@ Why this prevents recurrence: forwarding code is mechanical and easy to write co
 plumbing looks complete while the behaviour is absent. The defect is invisible in a diff review
 because every changed line is correct; only the missing consumer is wrong, and a missing line does not
 appear in a diff.
+
+## A helper duplicated across two routes drifts
+
+Trigger: the follow output route was fixed to truncate on a UTF-8 rune boundary, while the snapshot
+route kept a raw byte slice. The same protocol field therefore produced valid UTF-8 on one route and
+half a character on the other, and the snapshot defect survived because the only test guarding it
+used an ASCII fixture that is valid UTF-8 at every byte offset.
+
+Action: when the same logic is needed on two code paths, extract it into a package both paths already
+import and have each path call it. A local wrapper that delegates is acceptable; a second copy is not.
+When fixing one of two parallel paths, immediately check whether the sibling path has the same defect
+instead of assuming the fix is local.
+
+Why this prevents recurrence: a copied helper only postpones the divergence, because the next fix
+lands on one copy and the other silently keeps the old behaviour. Sharing the implementation makes
+the drift structurally impossible rather than dependent on someone remembering to change both. The
+corollary is that a test whose fixture cannot express the failure mode is not coverage, it is a lock
+on the current behaviour.
