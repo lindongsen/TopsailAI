@@ -13,6 +13,7 @@ created: 2026-10-27
 - `docs/agent-cluster-protocol.md`: abstract resources, capability negotiation, APIs, commands, synchronization and recovery; discussion draft.
 - `docs/agent-cluster-adapters.md`: Endpoint-private TopsailAI mapping and integration questions; discussion draft.
 - `docs/agent-cluster-database.md`: three Server business tables, constraints, transactions and retention; discussion draft.
+- `docs/agent-cluster-history.md`: provider session history read, resume addressing and the inventory join; implemented contract.
 
 These design documents are not implemented features or an approved final specification. Naming, machine-level Endpoint scope, required lifecycle support and the absence of periodic stdout snapshot refresh are human-confirmed decisions; other proposals remain under discussion. Implementation and verification planning is tracked separately in `.task/plan_20261027T153140_agent-cluster-delivery.md` (project-relative path).
 

@@ -212,6 +212,47 @@ reported as an error, never as an empty successful list.
 The query is forwarded through the existing Endpoint channel, bound to the exact connection
 generation and request ID, and waits at most 10 seconds. At most 64 launch queries may be pending.
 
+## Session history
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/history` | Read one bounded live provider session-history window |
+
+`endpoint_id` is required. The route is a live provider read, not a stored projection: it never
+serves persisted inventory and never caches a result. The Server forwards the query verbatim and
+returns the adapter's answer unchanged, so it does not interpret provider status words, re-derive
+resumability or correlate rows with the inventory.
+
+The response `data` contains `rows`, `observed_at_ms` and an optional `truncated`. Each row carries
+`provider_session_id`, an optional `resource_id`, descriptive `display_name`, `project_workspace`,
+`task`, `provider_status`, `provider_no`, `created_at_ms`, `modified_at_ms`, `resumable` and an
+optional `resume_blocked_reason`.
+
+A history row is deliberately not a routable resource. It carries an opaque cluster handle so a
+resume request can address it, but it never carries a provider generation, because a past session is
+not running and therefore has no generation to validate. Routing still requires `resource_id` plus
+`generation`, and only the inventory join can supply that pair.
+
+`truncated` reports that the provider returned its own capped window rather than everything that
+exists, so a bounded window is never presented as a complete history. Accepted rows are bounded by
+1000, the provider document by 512 KiB and one task text by 8192 bytes.
+
+Failure outcomes keep their own status, because an unsupported adapter is not an outage and an empty
+history is not an error:
+
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `invalid_target` | `endpoint_id` is missing |
+| 404 | `endpoint_not_found` | The endpoint identifier is not registered |
+| 501 | `history_unsupported` | No configured adapter can list history |
+| 502 | `provider_error` | The provider call failed |
+| 502 | `history_response_too_large` | The provider document exceeded the configured bound |
+| 503 | `unavailable` | The Server has no history query channel configured |
+| 503 | `endpoint_unavailable` | The endpoint is registered but has no live connection |
+
+The query is forwarded through the existing Endpoint channel, bound to the exact connection
+generation and request ID, and waits at most 10 seconds.
+
 ## Events and manifest
 
 | Method | Path | Purpose |

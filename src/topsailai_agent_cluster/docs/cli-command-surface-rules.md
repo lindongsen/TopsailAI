@@ -92,6 +92,7 @@ was dispatched rather than rejected as unknown.
 |---|---|---|---|
 | `list` | `list` | `list`, `l` | yes |
 | `refresh` | `refresh` | `refresh`, `r` | yes |
+| `history` | `history <endpoint-id-or-hostname>` | `history [endpoint-id-or-hostname]` | yes (standalone requires the endpoint argument; interactive requires it in workspace scope, and in endpoint scope it defaults to the current endpoint while rejecting a different one) |
 | `endpoints` | `endpoints` | `endpoints` | yes |
 | `show` | `show` | `show` | yes |
 | `info` | `info` | `info` | yes |
