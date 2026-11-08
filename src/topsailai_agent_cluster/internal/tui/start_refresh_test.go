@@ -53,12 +53,14 @@ func TestStartRefreshesOnlyTheStartedEndpoint(t *testing.T) {
 // the forced collection, so the operator sees the launched session immediately.
 func TestStartRendersTheFreshlyCollectedSession(t *testing.T) {
 	stub := newStartRefreshStub()
-	stub.fresh["endpoint-1"] = scopeInventory("fresh-session", "fresh-generation")
+	fresh := scopeInventory("fresh-session", "fresh-generation")
+	fresh.Sessions[0].DisplayName = "fresh work"
+	stub.fresh["endpoint-1"] = fresh
 	output, diagnostics := runScope(t, stub, startRefreshInput, ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "provider-fresh-session") {
+	if !strings.Contains(output, "fresh work") {
 		t.Fatalf("post-start table did not show the freshly collected session: %q", output)
 	}
 }
@@ -169,7 +171,9 @@ func TestStartReportsSessionNotYetVisible(t *testing.T) {
 // never described as pending.
 func TestStartDoesNotClaimNotYetVisibleWhenSessionAppears(t *testing.T) {
 	stub := newStartRefreshStub()
-	stub.fresh["endpoint-1"] = inventoryWithSessions("res-1", "res-new")
+	appeared := inventoryWithSessions("res-1", "res-new")
+	appeared.Sessions[1].DisplayName = "launched work"
+	stub.fresh["endpoint-1"] = appeared
 	output, diagnostics := runScope(t, stub, startRefreshInput, ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
@@ -177,7 +181,7 @@ func TestStartDoesNotClaimNotYetVisibleWhenSessionAppears(t *testing.T) {
 	if strings.Contains(output, "not yet visible") {
 		t.Fatalf("a visible launch was reported as pending: %q", output)
 	}
-	if !strings.Contains(output, "provider-res-new") {
+	if !strings.Contains(output, "launched work") {
 		t.Fatalf("the launched session was not rendered: %q", output)
 	}
 }
