@@ -123,6 +123,13 @@ func cdHistoryRowNumber(state *interactiveState, api InteractiveAPI, parent cont
 	if !ok {
 		return fmt.Errorf("row %d is out of range; valid history rows are 1-%d", number, len(namespace.Rows))
 	}
+	// An ambiguous row and an unjoined row are both unusable, but they are not the
+	// same unknown. Ambiguity means the inventory answered with several live
+	// sessions for one provider session ID, so the operator must inspect the
+	// endpoint inventory; no client-side retry can resolve contradictory data.
+	if row.Ambiguous {
+		return fmt.Errorf("history row %d is ambiguous: endpoint %q reports several live sessions for provider session %q, so the row cannot be entered; inspect the endpoint inventory", number, namespace.EndpointID, row.ProviderSessionID)
+	}
 	if !row.Joined {
 		return fmt.Errorf("history row %d is unjoined: the inventory for endpoint %q is unavailable, so the row cannot be entered; run refresh and history again", number, namespace.EndpointID)
 	}
@@ -170,6 +177,13 @@ func interactiveResume(parent context.Context, api InteractiveAPI, state *intera
 	row, ok := namespace.Rows[number]
 	if !ok {
 		return fmt.Errorf("row %d is out of range; valid history rows are 1-%d", number, len(namespace.Rows))
+	}
+	// An ambiguous row is not live, but the inventory did report live sessions for
+	// this provider session ID. Resuming would therefore start a second runtime for
+	// a session that is already running, so the row is refused before the adapter
+	// verdict is consulted.
+	if row.Ambiguous {
+		return fmt.Errorf("history row %d is ambiguous: endpoint %q reports several live sessions for provider session %q, so it cannot be resumed; inspect the endpoint inventory instead", number, namespace.EndpointID, row.ProviderSessionID)
 	}
 	if row.Live {
 		return fmt.Errorf("history row %d is live on endpoint %q, so it cannot be resumed; use cd %d to enter it", number, namespace.EndpointID, number)

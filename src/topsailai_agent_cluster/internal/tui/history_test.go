@@ -158,8 +158,35 @@ func TestJoinHistoryRejectsAmbiguousSameEndpointMatch(t *testing.T) {
 	if row.Joined || row.Live {
 		t.Fatalf("ambiguous match must stay unjoined: %+v", row)
 	}
+	if !row.Ambiguous {
+		t.Fatalf("ambiguous match must be marked ambiguous: %+v", row)
+	}
 	if row.ResourceID != "" || row.Generation != "" {
 		t.Fatalf("ambiguous match must supply no routing identity: %+v", row)
+	}
+}
+
+// TestJoinHistorySeparatesAmbiguityFromUnavailableInventory proves the two
+// unjoined outcomes are distinguishable, because they need different remedies: an
+// unavailable inventory can be refreshed, while contradictory inventory data
+// cannot.
+func TestJoinHistorySeparatesAmbiguityFromUnavailableInventory(t *testing.T) {
+	rows := []protocol.HistoryRow{{ProviderSessionID: "wa-dup", Resumable: true}}
+	ambiguousReport := protocol.InventoryReport{Sessions: []protocol.Session{
+		historyLiveSession("res_1", "wa-dup", "gen-1"),
+		historyLiveSession("res_2", "wa-dup", "gen-2"),
+	}}
+
+	ambiguous := JoinHistory("ep-1", rows, ambiguousReport, true).Rows[0]
+	unavailable := JoinHistory("ep-1", rows, protocol.InventoryReport{}, false).Rows[0]
+	if !ambiguous.Ambiguous {
+		t.Fatalf("ambiguous row must be marked ambiguous: %+v", ambiguous)
+	}
+	if unavailable.Ambiguous {
+		t.Fatalf("an unavailable inventory must not be reported as ambiguous: %+v", unavailable)
+	}
+	if ambiguous.Joined || unavailable.Joined {
+		t.Fatalf("neither row may be joined: ambiguous=%+v unavailable=%+v", ambiguous, unavailable)
 	}
 }
 

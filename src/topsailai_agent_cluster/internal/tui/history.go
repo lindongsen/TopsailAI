@@ -41,6 +41,12 @@ type HistoryViewRow struct {
 	// Joined reports whether the inventory join could be evaluated at all. A
 	// false value means the row is unknown, never that it is stopped.
 	Joined bool `json:"joined"`
+	// Ambiguous reports that the join was evaluated but found several live
+	// sessions sharing one provider session ID. It is a different unknown from an
+	// unavailable inventory: the inventory answered, and its answer was
+	// contradictory. The two are kept apart so a caller never tells the operator
+	// to refresh data that a refresh cannot disambiguate.
+	Ambiguous bool `json:"ambiguous,omitempty"`
 	// Live reports whether the same provider session is present in the current
 	// inventory for this endpoint. Only a live row can be entered.
 	Live bool `json:"live"`
@@ -81,9 +87,11 @@ type HistoryView struct {
 // call.
 //
 // A provider session ID that matches more than one live session inside the same
-// endpoint is ambiguous, so the row is left unjoined instead of picking one. A
-// missing inventory leaves every row unjoined, because an unavailable observation
-// is unknown, not an empty inventory.
+// endpoint is ambiguous, so the row is left unjoined instead of picking one and is
+// marked Ambiguous. A missing inventory leaves every row unjoined, because an
+// unavailable observation is unknown, not an empty inventory. The two outcomes are
+// reported separately because they need different remedies: an unavailable
+// inventory can be refreshed, while contradictory inventory data cannot.
 func JoinHistory(endpointID string, rows []protocol.HistoryRow, report protocol.InventoryReport, inventoryAvailable bool) HistoryView {
 	view := HistoryView{EndpointID: endpointID, Rows: make([]HistoryViewRow, 0, len(rows)), Joined: inventoryAvailable}
 	live := make(map[string][]protocol.Session, len(report.Sessions))
@@ -115,7 +123,8 @@ func JoinHistory(endpointID string, rows []protocol.HistoryRow, report protocol.
 		}
 		if inventoryAvailable && row.ProviderSessionID != "" {
 			// Exactly one live match is a usable join. Several matches are
-			// ambiguous, so the row stays unjoined rather than being guessed.
+			// ambiguous, so the row stays unjoined rather than being guessed, and
+			// the ambiguity is recorded so the caller can report the real cause.
 			if matches := live[row.ProviderSessionID]; len(matches) == 1 {
 				viewRow.Joined = true
 				viewRow.Live = true
@@ -124,6 +133,8 @@ func JoinHistory(endpointID string, rows []protocol.HistoryRow, report protocol.
 				viewRow.State = matches[0].State
 			} else if len(matches) == 0 {
 				viewRow.Joined = true
+			} else {
+				viewRow.Ambiguous = true
 			}
 		}
 		view.Rows = append(view.Rows, viewRow)
@@ -166,7 +177,14 @@ func historyCells(row HistoryViewRow) map[string]string {
 }
 
 // historyLiveCell states the join outcome without implying a stopped session.
+//
+// An ambiguous row is labelled separately from an unjoined row, because the two
+// tell the operator different things: "unjoined" means the inventory could not be
+// read, while "ambiguous" means it was read and contradicted itself.
 func historyLiveCell(row HistoryViewRow) string {
+	if row.Ambiguous {
+		return "ambiguous"
+	}
 	if !row.Joined {
 		return "unjoined"
 	}

@@ -508,3 +508,63 @@ func TestInteractiveHistoryNamespaceClearedAfterEnteringSession(t *testing.T) {
 		t.Fatalf("history namespace survived the session transition: %#v", state.history)
 	}
 }
+
+// TestInteractiveHistoryCDRejectsAmbiguousRow proves an ambiguous row is refused
+// with the real cause. The inventory answered, so telling the operator to refresh
+// would send them to a remedy that cannot disambiguate the data.
+func TestInteractiveHistoryCDRejectsAmbiguousRow(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport())
+	state := &interactiveState{}
+	state.history = &historyNamespace{
+		EndpointID: "endpoint-1",
+		Rows:       map[int]HistoryViewRow{1: {No: 1, EndpointID: "endpoint-1", ProviderSessionID: "wa-dup", Ambiguous: true}},
+	}
+
+	err := cdHistoryRowNumber(state, stub, context.Background(), 1)
+	if err == nil {
+		t.Fatal("an ambiguous row must not be entered")
+	}
+	if !strings.Contains(err.Error(), "is ambiguous") {
+		t.Fatalf("err=%v, want an ambiguity error", err)
+	}
+	if strings.Contains(err.Error(), "refresh") {
+		t.Fatalf("err=%v, must not offer a refresh that cannot disambiguate", err)
+	}
+	if state.Scope.Kind == ScopeSession {
+		t.Fatalf("scope=%v, an ambiguous row must not be entered", state.Scope.Kind)
+	}
+}
+
+// TestInteractiveResumeRejectsAmbiguousRow proves an ambiguous row is never
+// resumed. The inventory reported live sessions for the same provider session ID,
+// so resuming would start a second runtime for a session that is already running.
+func TestInteractiveResumeRejectsAmbiguousRow(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport())
+	state := &interactiveState{}
+	state.history = &historyNamespace{
+		EndpointID: "endpoint-1",
+		Rows: map[int]HistoryViewRow{1: {
+			No:                1,
+			EndpointID:        "endpoint-1",
+			ProviderSessionID: "wa-dup",
+			Ambiguous:         true,
+			Resumable:         true,
+			ResumeResourceID:  "res-dup",
+		}},
+	}
+
+	// A closed channel makes the confirmation path return immediately, so the test
+	// observes the guard under test instead of blocking on an interactive prompt.
+	lines := make(chan lineReadResult)
+	close(lines)
+	err := interactiveResume(context.Background(), stub, state, "1", lines, io.Discard, io.Discard, InteractiveOptions{})
+	if err == nil {
+		t.Fatal("an ambiguous row must not be resumed")
+	}
+	if !strings.Contains(err.Error(), "is ambiguous") {
+		t.Fatalf("err=%v, want an ambiguity error", err)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("ambiguous resume admitted %d commands", stub.admit)
+	}
+}

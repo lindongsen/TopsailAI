@@ -230,10 +230,19 @@ rather than degrade:
 | Provider returns no rows | Successful empty result, distinct from an error |
 | Result is capped | Successful result with `truncated = true` |
 | Inventory unavailable during join | History rows still render, marked as not joined, and `cd` is refused |
+| Inventory reports several live sessions for one provider session ID | History rows still render, marked as ambiguous, and both `cd` and `resume` are refused |
 
-The last case matters: history is a live provider read and the inventory is a persisted
-document, so they can fail independently. A history row whose join could not be
-evaluated is shown as unjoined rather than guessed to be live or dead.
+The last two cases matter: history is a live provider read and the inventory is a
+persisted document, so they can fail independently. A history row whose join could
+not be evaluated is shown as unjoined rather than guessed to be live or dead.
+
+An ambiguous row is a different unknown from an unjoined row, and the two are
+reported separately because they need different remedies. An unavailable inventory
+can be refreshed. Contradictory inventory data cannot: the inventory answered, and
+its answer was that several live sessions share one provider session ID. The
+operator must inspect the endpoint inventory instead. `resume` is refused for the
+same reason, because the provider session is already running and resuming it would
+start a second runtime.
 
 ## Implemented surfaces
 
