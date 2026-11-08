@@ -180,6 +180,8 @@ type OutputFollowRequest struct {
 
 // OutputChunk carries one bounded batch of followed output lines. Lines are
 // already complete records, so a consumer never has to reassemble a partial line.
+// Truncated reports that a record exceeded the byte budget and was shortened, so a
+// consumer never presents a shortened record as complete.
 type OutputChunk struct {
 	Lines        []string `json:"lines"`
 	ObservedAtMS int64    `json:"observed_at_ms"`

@@ -204,7 +204,13 @@ code, so an unavailable read is never reported as an empty successful read.
 | GET | `/api/v1/output/follow` | Stream output records for one resource |
 
 Required query parameters are `endpoint_id` and `resource_id`. Optional parameters are
-`generation`, `max_bytes` and `max_lines`, with the same defaults and clamps as the snapshot route.
+`generation`, `max_bytes` and `max_lines`. `max_bytes` defaults to 64 KiB and is clamped to 1 MiB;
+`max_lines` keeps the provider default when absent or invalid and is clamped to 10000 lines.
+
+`max_bytes` bounds one record, because one record is one chunk. A record longer than the budget is
+truncated on a UTF-8 boundary and labelled `truncated: true`, and the stream continues with the next
+record. An oversized record is therefore never reported as a provider failure, and it never hides
+the records that follow it.
 
 The response is `application/x-ndjson` with `Cache-Control: no-store`: one JSON record per line,
 chunk records first and exactly one terminal record last. Each record carries `lines`,

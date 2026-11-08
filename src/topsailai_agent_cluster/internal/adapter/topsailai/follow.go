@@ -5,26 +5,41 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"topsailai_agent_cluster/internal/adapter"
 )
 
-// followMaxLineBytes bounds one followed record. A provider that writes a longer
-// line is truncated and labelled rather than buffered without limit, because an
-// unbounded line would let one provider record exhaust Endpoint memory.
-const followMaxLineBytes = 64 << 10
+// followDefaultRecordBytes is the per-record byte budget used when a caller does
+// not request one. It matches the Server default so an unspecified budget behaves
+// the same on both sides of the channel.
+const followDefaultRecordBytes = 64 << 10
+
+// followMaxRecordBytes is the absolute per-record ceiling. It matches the Server
+// clamp: a larger request is reduced here rather than silently honoured, because
+// one provider record must never be able to exhaust Endpoint memory.
+const followMaxRecordBytes = 1 << 20
 
 // followWaitDelay bounds how long Wait blocks after cancellation, so a
 // grandchild that inherited the pipe cannot keep the Endpoint waiting forever.
 const followWaitDelay = 5 * time.Second
 
+// followRecord is one followed provider record. Truncated reports that the
+// provider wrote more than the byte budget, so the consumer knows the record is
+// shortened instead of complete.
+type followRecord struct {
+	Line      string
+	Truncated bool
+}
+
 // followRunner streams provider output records as they are written.
 type followRunner interface {
-	Follow(context.Context, string, []string, func(string) error) error
+	Follow(context.Context, string, []string, int, func(followRecord) error) error
 }
 
 // execFollowRunner runs one provider follow command and delivers complete lines.
@@ -33,7 +48,7 @@ type execFollowRunner struct {
 }
 
 // Follow starts the provider follow command and calls emit once per complete
-// record.
+// record, truncating any record longer than limit bytes.
 //
 // The child environment sets PYTHONUNBUFFERED so records arrive as they are
 // written. Without it the provider buffers stdout when it is not attached to a
@@ -43,7 +58,7 @@ type execFollowRunner struct {
 //
 // The provider rejects --json together with --follow, so the caller passes plain
 // text arguments and this runner never parses a document.
-func (r execFollowRunner) Follow(parent context.Context, executable string, args []string, emit func(string) error) error {
+func (r execFollowRunner) Follow(parent context.Context, executable string, args []string, limit int, emit func(followRecord) error) error {
 	timeout := r.timeout
 	if timeout <= 0 {
 		timeout = defaultTimeout
@@ -62,7 +77,7 @@ func (r execFollowRunner) Follow(parent context.Context, executable string, args
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start follow command: %w", err)
 	}
-	readErr := scanFollowLines(stdout, emit)
+	readErr := scanFollowLines(stdout, limit, emit)
 	if readErr != nil && !errors.Is(readErr, adapter.ErrFollowStopped) {
 		// A consumer that stopped on purpose still needs the child reaped, so
 		// termination is requested and the wait below still runs.
@@ -84,18 +99,101 @@ func (r execFollowRunner) Follow(parent context.Context, executable string, args
 // scanFollowLines delivers complete newline-terminated records and holds the
 // unterminated remainder until the stream ends, so a consumer never receives a
 // partial line as if it were complete.
-func scanFollowLines(reader interface{ Read([]byte) (int, error) }, emit func(string) error) error {
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64<<10), followMaxLineBytes)
-	for scanner.Scan() {
-		if err := emit(scanner.Text()); err != nil {
-			return err
+//
+// A record longer than limit is truncated on a UTF-8 boundary and labelled, and
+// the rest of that record is discarded up to the next newline. The stream then
+// continues. Ending the stream instead would report a provider failure for what
+// is only an oversized record, and the operator would lose every later record
+// because one line was long.
+func scanFollowLines(reader io.Reader, limit int, emit func(followRecord) error) error {
+	if limit <= 0 {
+		limit = followDefaultRecordBytes
+	}
+	if limit > followMaxRecordBytes {
+		limit = followMaxRecordBytes
+	}
+	buffered := bufio.NewReaderSize(reader, 64<<10)
+	for {
+		record, ok, err := readFollowRecord(buffered, limit)
+		if ok {
+			if emitErr := emit(record); emitErr != nil {
+				return emitErr
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("read follow output: %w", err)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read follow output: %w", err)
+}
+
+// readFollowRecord reads one record, bounded by limit bytes. It reports ok=false
+// only when the stream ended with no remaining bytes, so a blank line is still a
+// record and a trailing unterminated record is still delivered.
+func readFollowRecord(reader *bufio.Reader, limit int) (followRecord, bool, error) {
+	var record followRecord
+	var collected []byte
+	discarding := false
+	for {
+		piece, err := reader.ReadSlice('\n')
+		if len(piece) > 0 {
+			terminated := piece[len(piece)-1] == '\n'
+			if terminated {
+				piece = piece[:len(piece)-1]
+			}
+			if !discarding {
+				room := limit - len(collected)
+				if len(piece) <= room {
+					collected = append(collected, piece...)
+				} else {
+					collected = append(collected, truncateUTF8(piece, room)...)
+					record.Truncated = true
+					discarding = true
+				}
+			}
+			if terminated {
+				record.Line = string(collected)
+				return record, true, nil
+			}
+		}
+		if err != nil {
+			if errors.Is(err, bufio.ErrBufferFull) {
+				continue
+			}
+			if errors.Is(err, io.EOF) {
+				if len(collected) > 0 || record.Truncated {
+					record.Line = string(collected)
+					return record, true, nil
+				}
+				return record, false, io.EOF
+			}
+			return record, false, err
+		}
 	}
-	return nil
+}
+
+// truncateUTF8 returns at most limit bytes of data without splitting a rune, so
+// a truncated record stays valid UTF-8 instead of ending in half a character.
+// At most one rune's worth of bytes is removed, so data that is not UTF-8 at all
+// is not wiped out.
+func truncateUTF8(data []byte, limit int) []byte {
+	if limit <= 0 {
+		return nil
+	}
+	if len(data) <= limit {
+		return data
+	}
+	trimmed := data[:limit]
+	for i := 0; i < utf8.UTFMax-1 && len(trimmed) > 0; i++ {
+		r, size := utf8.DecodeLastRune(trimmed)
+		if r != utf8.RuneError || size > 1 {
+			return trimmed
+		}
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	return trimmed
 }
 
 // followEnvironment returns base with PYTHONUNBUFFERED set and the provider

@@ -213,6 +213,18 @@ SSE uses resource changes, command updates and freshness events. MVP does not pe
 
 Output follow is implemented as a real stream over the existing authenticated WebSocket, not as a timer-driven snapshot. One `output_follow_request` frame starts a stream; the Endpoint answers with repeated `output_chunk` frames and exactly one terminal `output_end` frame, all correlated by the same request ID. The Server exposes it as `GET /api/v1/output/follow`, which writes newline-delimited JSON: chunk records followed by exactly one end record. A transport that cannot stream returns `503 unsupported` rather than degrading into a snapshot, because a snapshot presented as a stream would look complete while silently missing everything written after it.
 
+## Implemented output follow byte budget
+
+`max_bytes` bounds one followed record, because one record is one chunk. The
+Endpoint forwards the requested budget to the adapter, and the adapter truncates an
+oversized record on a UTF-8 boundary and labels it `truncated` instead of ending
+the stream. Ending the stream would report a provider failure for what is only a
+long line, and the operator would lose every record written after it.
+
+The budget defaults to 64 KiB and is clamped to 1 MiB, matching the Server clamp so
+a caller cannot request a bound the Endpoint would silently reduce. Truncation is
+always labelled, because a shortened record must never be presented as complete.
+
 ## Implemented output follow terminal frame delivery
 
 The Endpoint's terminal `output_end` frame is **best-effort**, not guaranteed. This
