@@ -168,7 +168,7 @@ def test_handler_forwards_the_selector_to_the_table(monkeypatch):
     )
 
     assert code == 0
-    table.assert_called_once_with(include_completed=False, session_ids=["alpha", "beta"])
+    table.assert_called_once_with(include_completed=False, session_ids=["alpha", "beta"], local_only=False)
 
 
 def test_handler_forwards_the_selector_to_json(monkeypatch):
@@ -181,7 +181,7 @@ def test_handler_forwards_the_selector_to_json(monkeypatch):
     )
 
     assert code == 0
-    printer.assert_called_once_with(include_completed=False, session_ids=["alpha"])
+    printer.assert_called_once_with(include_completed=False, session_ids=["alpha"], local_only=False)
 
 
 def test_handler_keeps_all_flag_with_a_selector(monkeypatch):
@@ -193,7 +193,7 @@ def test_handler_keeps_all_flag_with_a_selector(monkeypatch):
         Namespace(workspace_command="list", format=None, all=True, session="alpha"),
     )
 
-    table.assert_called_once_with(include_completed=True, session_ids=["alpha"])
+    table.assert_called_once_with(include_completed=True, session_ids=["alpha"], local_only=False)
 
 
 def test_handler_rejects_an_empty_selector(monkeypatch, capsys):
@@ -223,8 +223,8 @@ def test_cli_registers_the_short_and_long_option(monkeypatch):
     assert short.value.code == 0
     assert long.value.code == 0
     assert table.call_args_list == [
-        ((), {"include_completed": False, "session_ids": ["alpha"]}),
-        ((), {"include_completed": False, "session_ids": ["alpha"]}),
+        ((), {"include_completed": False, "session_ids": ["alpha"], "local_only": False}),
+        ((), {"include_completed": False, "session_ids": ["alpha"], "local_only": False}),
     ]
 
 

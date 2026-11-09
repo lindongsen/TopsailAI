@@ -50,3 +50,32 @@ def enrich_workspace_hostnames(files: list[dict], home: str) -> None:
         row["_workspace_session_meta_data"] = data
         if data is not None and isinstance(data.get("hostname"), str):
             row["hostname"] = data["hostname"]
+
+
+def filter_workspace_rows_by_hostname(files: list[dict], local_hostname: str) -> list[dict]:
+    """Keep only rows produced on the local host.
+
+    A row is local when its resolved ``hostname`` equals ``local_hostname`` or is
+    empty. An empty value means the origin host is unknown, which happens for a
+    row whose metadata record is absent or carries no usable hostname; such a row
+    is kept so a local session is never hidden merely because its metadata is
+    missing. The comparison is exact and case-sensitive, because a hostname is an
+    operating-system identifier rather than a display label.
+
+    Args:
+        files: Rows already enriched by ``enrich_workspace_hostnames``.
+        local_hostname: The hostname of the machine running the CLI.
+
+    Returns:
+        The retained rows in their original order.
+    """
+    if not isinstance(local_hostname, str):
+        return list(files)
+    retained = []
+    for row in files:
+        hostname = row.get("hostname")
+        # A non-string value is an unresolved origin, not a foreign host, so it
+        # is kept for the same reason an empty value is kept.
+        if not isinstance(hostname, str) or hostname in ("", local_hostname):
+            retained.append(row)
+    return retained

@@ -356,6 +356,7 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
     if workspace_command == "list" and getattr(args, "json", False):
         output_format = "json"
     include_completed = bool(getattr(args, "all", False))
+    local_only = bool(getattr(args, "local", False))
     from cli_topsailai.log_files import SessionSelectorError, parse_session_selector
 
     try:
@@ -363,17 +364,19 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
     except SessionSelectorError as error:
         print(
             f"{Colors.RED}[ERROR] Invalid session selector: {error}. "
-            f"Usage: topsailai workspace list [-s ID1,ID2] [--json]{Colors.RESET}",
+            f"Usage: topsailai workspace list [-s ID1,ID2] [--local] [--json]{Colors.RESET}",
             file=sys.stderr,
         )
         return 2
     if output_format == "json":
         _print_workspace_json(
             include_completed=include_completed, session_ids=session_ids,
+            local_only=local_only,
         )
     else:
         _print_workspace_table(
             include_completed=include_completed, session_ids=session_ids,
+            local_only=local_only,
         )
     return 0
 
@@ -1224,18 +1227,21 @@ def prompt_selection(
 def _print_workspace_table(
     include_completed: bool = False,
     session_ids: Optional[List[str]] = None,
+    local_only: bool = False,
 ) -> None:
     """Print the workspace task list and return.
 
     This helper is used by the ``-w`` / ``--workspace`` flag to display the
     same table that normally appears at the ``[workspace]>`` prompt without
-    entering interactive mode. ``include_completed`` mirrors ``r all``, and
-    ``session_ids`` restricts the table to the named sessions.
+    entering interactive mode. ``include_completed`` mirrors ``r all``,
+    ``session_ids`` restricts the table to the named sessions, and
+    ``local_only`` keeps only rows produced on this host.
     """
     from cli_topsailai.formatting import print_header, print_table
     from cli_topsailai.log_files import discover_workspace_log_files as discover_log_files
     from cli_topsailai.paths import get_topsailai_home
     from cli_topsailai.session_info import enrich_files_with_session_names
+    from cli_topsailai.workspace_hostname import filter_workspace_rows_by_hostname
 
     topsailai_home = get_topsailai_home()
     driver_authority = _driver_authority(os.environ)
@@ -1252,12 +1258,24 @@ def _print_workspace_table(
     )
     enrich_files_with_session_names(log_files)
     _enrich_driver_rows(log_files, topsailai_home, driver_authority)
+    if local_only:
+        # The filter runs after enrichment so it reads the same resolved
+        # hostname the table renders, never a partially populated row.
+        log_files = filter_workspace_rows_by_hostname(log_files, socket.gethostname())
     if log_files:
         print_table(log_files)
     elif session_ids is not None:
         print(
             f"\n{Colors.YELLOW}[WARN] No log files found for the selected "
             f"sessions: {', '.join(session_ids)}{Colors.RESET}"
+        )
+        print(f"  {task_dir}")
+    elif local_only:
+        # Files may exist while every one of them came from another host, so
+        # this warning names the host instead of claiming the directory is empty.
+        print(
+            f"\n{Colors.YELLOW}[WARN] No log files found for this host: "
+            f"{socket.gethostname()}{Colors.RESET}"
         )
         print(f"  {task_dir}")
     else:
@@ -1327,15 +1345,19 @@ def _workspace_json_item(file_info: dict, index: int) -> dict:
 def _print_workspace_json(
     include_completed: bool = False,
     session_ids: Optional[List[str]] = None,
+    local_only: bool = False,
 ) -> None:
     """Print the workspace task list as one JSON document.
 
     ``session_ids`` restricts the document to the named sessions, so ``items``
     and ``total`` describe the same filtered subset the table would show.
+    ``local_only`` keeps only rows produced on this host, and ``total`` counts
+    that retained subset.
     """
     from cli_topsailai.log_files import discover_workspace_log_files as discover_log_files
     from cli_topsailai.paths import get_topsailai_home
     from cli_topsailai.session_info import enrich_files_with_session_names
+    from cli_topsailai.workspace_hostname import filter_workspace_rows_by_hostname
 
     topsailai_home = get_topsailai_home()
     driver_authority = _driver_authority(os.environ)
@@ -1345,6 +1367,10 @@ def _print_workspace_json(
     )
     enrich_files_with_session_names(log_files)
     _enrich_driver_rows(log_files, topsailai_home, driver_authority)
+    if local_only:
+        # The filter runs after enrichment so it reads the same resolved
+        # hostname the JSON item reports, never a partially populated row.
+        log_files = filter_workspace_rows_by_hostname(log_files, socket.gethostname())
     items = [
         _workspace_json_item(file_info, index)
         for index, file_info in enumerate(log_files, start=1)
@@ -1659,6 +1685,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         dest="session",
         metavar="ID1,ID2",
         help="only show the listed comma-separated session IDs",
+    )
+    workspace_list_parser.add_argument(
+        "--local",
+        action="store_true",
+        dest="local",
+        help="only show rows produced on this host",
     )
     workspace_list_parser.set_defaults(func=_handle_workspace_subcommand)
     workspace_subparsers.add_parser(
