@@ -35,6 +35,10 @@ _SESSION_ADD_MESSAGE = "topsailai_session_add_message"
 # Exit status used when a required child command is not installed.
 _COMMAND_MISSING = 127
 
+# One shared explanation for ``--json``. Every subcommand that accepts the flag
+# reuses this sentence so the help text states the contract once instead of
+# repeating a slightly different wording per subcommand.
+_JSON_HELP = "emit one structured JSON result instead of human-readable text"
 
 class SessionUsageError(ValueError):
     """Reject syntax without exposing submitted values in diagnostics."""
@@ -298,19 +302,28 @@ def _valid_pid(pid: object) -> bool:
     return 0 < pid <= 2147483647
 
 
-def _invalid_stdout_target(task_dir, session_id, pid, *, pid_state, in_use):
+def _invalid_stdout_target(task_dir, session_id, pid, *, pid_state, in_use,
+                           heartbeat=None):
     """Prove one stdout file is an invalid leftover before it is deleted.
 
     Returns ``(path, None, None)`` when the file may be deleted, otherwise
     ``(None, error_code, message)``.  Liveness is three-state on purpose: an
     unverifiable owner is refused, because "cannot prove it is gone" is not
     "it is gone".
+
+    The control channel is consulted first.  A session may run in a sibling
+    container that shares this filesystem, so the local process table cannot
+    see its owner and would report a live session as dead.  A heartbeat that
+    answers for the expected identity is therefore the strongest proof of
+    liveness, and it is the only probe that crosses that boundary.
     """
     from cli_topsailai.process_liveness import ProcessState
 
     path = os.path.join(task_dir, f"{session_id}.{pid}.session.stdout")
     if not os.path.isfile(path):
         return None, "target_not_found", "No such session stdout file"
+    if heartbeat is not None and heartbeat(session_id, pid) is True:
+        return None, "target_alive", "The control channel answered a heartbeat"
     state = pid_state(pid)
     if state is ProcessState.ALIVE:
         return None, "target_alive", "The owning process is still alive"
@@ -325,7 +338,7 @@ def _handle_delete(args) -> int:
     """Delete one invalid session stdout located precisely by session ID and PID."""
     from cli_topsailai.log_files import is_file_in_use
     from cli_topsailai.paths import get_topsailai_home
-    from cli_topsailai.process_liveness import pid_state
+    from cli_topsailai.process_liveness import pid_state, socket_heartbeat_alive
 
     if not _valid_pid(args.pid):
         raise SessionUsageError("PID must be a positive integer")
@@ -333,8 +346,13 @@ def _handle_delete(args) -> int:
     home = getattr(args, "home", None) or get_topsailai_home()
     task_dir = os.path.join(home, "workspace", "task")
 
+    def heartbeat(target_session_id, target_pid):
+        """Probe the control channel of the exact target identity."""
+        return socket_heartbeat_alive(target_session_id, target_pid, home=home)
+
     path, error_code, message = _invalid_stdout_target(
         task_dir, session_id, args.pid, pid_state=pid_state, in_use=is_file_in_use,
+        heartbeat=heartbeat,
     )
     if error_code is not None:
         if args.json:
@@ -394,8 +412,7 @@ def _handle_delete(args) -> int:
 
 def _add_detail_options(parser) -> None:
     """Add the options shared by every command that reads a session record."""
-    parser.add_argument("--json", action="store_true",
-                        help="emit structured JSON instead of human-readable text")
+    parser.add_argument("--json", action="store_true", help=_JSON_HELP)
     parser.add_argument("--no-color", action="store_true",
                         help="disable colored output")
     parser.add_argument("--db-conn", dest="db_conn", action=UniqueValue,
@@ -422,6 +439,8 @@ def build_parser() -> SessionParser:
             "  topsailai session search 20261107021807 timeout\n"
             "  topsailai session add-msg 20261107021807 -m 'please retry'\n"
             "  topsailai session delete 20261107021807 2175537\n\n"
+            "--json is accepted by every command that prints a result and emits\n"
+            "one structured JSON object instead of human-readable text.\n\n"
             "Session scope is interactive and stateful, so it cannot be entered "
             "by a subcommand. These commands are its stateless equivalents.\n"
             "Operations on a live session belong to: topsailai runtime\n"
@@ -442,8 +461,7 @@ def build_parser() -> SessionParser:
         "list", help="list stored sessions",
         description="List stored sessions from the session database.",
     )
-    list_parser.add_argument("--json", action="store_true",
-                             help="emit a JSON array instead of session cards")
+    list_parser.add_argument("--json", action="store_true", help=_JSON_HELP)
     list_parser.add_argument("--no-color", action="store_true",
                              help="disable colored output")
     list_parser.add_argument("--has-project", dest="has_project", action="store_true",
@@ -475,8 +493,7 @@ def build_parser() -> SessionParser:
     )
     status_parser.add_argument("session_id", metavar="SESSION_ID",
                                help="the session identifier to check")
-    status_parser.add_argument("--json", action="store_true",
-                               help="emit one structured JSON result")
+    status_parser.add_argument("--json", action="store_true", help=_JSON_HELP)
 
     history_parser = subparsers.add_parser(
         "history", help="print the stored context messages of one session",
@@ -487,8 +504,7 @@ def build_parser() -> SessionParser:
     history_parser.add_argument("--max-chars", dest="max_chars", type=int,
                                 action=UniqueValue, default=argparse.SUPPRESS,
                                 help="truncate each displayed message to N characters")
-    history_parser.add_argument("--json", action="store_true",
-                                help="emit one structured JSON result")
+    history_parser.add_argument("--json", action="store_true", help=_JSON_HELP)
     history_parser.add_argument("--db-conn", dest="db_conn", action=UniqueValue,
                                 default=argparse.SUPPRESS,
                                 help="override the session database connection string")
@@ -517,8 +533,7 @@ def build_parser() -> SessionParser:
     add_msg_parser.add_argument("-m", "--message", dest="message", required=True,
                                 action=UniqueValue, default=argparse.SUPPRESS,
                                 help="the message text to append")
-    add_msg_parser.add_argument("--json", action="store_true",
-                                help="emit one structured JSON result")
+    add_msg_parser.add_argument("--json", action="store_true", help=_JSON_HELP)
 
     delete_parser = subparsers.add_parser(
         "delete", help="delete one invalid session stdout by session ID and PID",
@@ -534,8 +549,7 @@ def build_parser() -> SessionParser:
                                help="the session identifier; use (temp) for a temporary session")
     delete_parser.add_argument("pid", metavar="PID", type=int,
                                help="the exact PID embedded in the stdout filename")
-    delete_parser.add_argument("--json", action="store_true",
-                               help="emit one structured JSON result")
+    delete_parser.add_argument("--json", action="store_true", help=_JSON_HELP)
     delete_parser.add_argument("--home", dest="home", action=UniqueValue,
                                default=argparse.SUPPRESS,
                                help="override the TOPSAILAI_HOME directory")
