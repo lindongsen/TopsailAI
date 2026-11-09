@@ -60,10 +60,13 @@ func isQuotedLaunchAnswer(trimmed string) bool {
 
 // launchAnswer reads literal, history-free input with explicit cancellation and control words.
 // Help and unavailable-command answers are reported and the same field is asked again.
-func launchAnswer(ctx context.Context, lines <-chan lineReadResult, out io.Writer, state *interactiveState, field string) (string, launchAnswerOutcome, error) {
-	prompt := "start." + field + "> "
+// The field prompt carries application styling, so it is written through the trusted
+// writer; the sanitizing writer would strip the colour and leave this wizard prompt as
+// the only unstyled prompt in the session.
+func launchAnswer(ctx context.Context, lines <-chan lineReadResult, out, trustedOut io.Writer, state *interactiveState, field string, color ColorPolicy) (string, launchAnswerOutcome, error) {
+	prompt := RenderNamedPrompt("start."+field+">", color)
 	for {
-		if _, err := io.WriteString(out, prompt); err != nil {
+		if _, err := io.WriteString(trustedOut, prompt); err != nil {
 			return "", launchAnswerCancel, &startPromptTermination{kind: startPromptFatal, cause: err}
 		}
 		line, err := readStartAnswer(ctx, lines, prompt)
@@ -120,8 +123,8 @@ func handleLaunchAnswerControl(out io.Writer, state *interactiveState, line stri
 
 // launchAnswerValueOrControl returns the literal value or the REPL control signal.
 // A cancelled answer returns an empty value and no error, because it already reported itself.
-func launchAnswerValueOrControl(ctx context.Context, lines <-chan lineReadResult, out io.Writer, state *interactiveState, field string) (string, error) {
-	value, outcome, err := launchAnswer(ctx, lines, out, state, field)
+func launchAnswerValueOrControl(ctx context.Context, lines <-chan lineReadResult, out, trustedOut io.Writer, state *interactiveState, field string, color ColorPolicy) (string, error) {
+	value, outcome, err := launchAnswer(ctx, lines, out, trustedOut, state, field, color)
 	if err != nil {
 		return "", err
 	}
@@ -143,9 +146,9 @@ func launchAnswerValueOrControl(ctx context.Context, lines <-chan lineReadResult
 // verify exactly what will be sent. The word "cancel" still cancels, because an
 // empty answer now means "compose a multi-line task" rather than "abort".
 func launchTaskAnswer(ctx context.Context, lines <-chan lineReadResult, out, trustedOut io.Writer, state *interactiveState, options InteractiveOptions) (string, error) {
-	prompt := "start.task> "
+	prompt := RenderNamedPrompt("start.task>", options.Color)
 	for {
-		if _, err := io.WriteString(out, prompt); err != nil {
+		if _, err := io.WriteString(trustedOut, prompt); err != nil {
 			return "", &startPromptTermination{kind: startPromptFatal, cause: err}
 		}
 		line, err := readStartAnswer(ctx, lines, prompt)
@@ -227,7 +230,7 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 			return err
 		}
 	}
-	endpointID, err = resolveLaunchEndpoint(ctx, api, state, endpointID, lines, out)
+	endpointID, err = resolveLaunchEndpoint(ctx, api, state, endpointID, lines, out, trustedOut, options.Color)
 	if err != nil || endpointID == "" {
 		return err
 	}
@@ -250,7 +253,7 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 				return err
 			}
 		}
-		answer, err := launchAnswerValueOrControl(ctx, lines, out, state, "adapter")
+		answer, err := launchAnswerValueOrControl(ctx, lines, out, trustedOut, state, "adapter", options.Color)
 		if err != nil || answer == "" {
 			return err
 		}
@@ -280,7 +283,7 @@ func projectLaunch(ctx context.Context, api InteractiveAPI, query LaunchQuerier,
 	if _, err := fmt.Fprintln(out, "Choose a project number or enter a folder; empty/cancel cancels."); err != nil {
 		return err
 	}
-	folder, err := launchAnswerValueOrControl(ctx, lines, out, state, "folder")
+	folder, err := launchAnswerValueOrControl(ctx, lines, out, trustedOut, state, "folder", options.Color)
 	if err != nil || folder == "" {
 		return err
 	}

@@ -29,8 +29,8 @@ func TestWorkspaceColumnKeepsItsTail(t *testing.T) {
 		t.Fatal(err)
 	}
 	cell := workspaceCell(t, out.String())
-	if displayWidth(cell) > 48 {
-		t.Fatalf("workspace cell exceeds its cap: %q", cell)
+	if got := displayWidth(cell); got != workspaceColumnCap {
+		t.Fatalf("workspace cell width=%d, want %d: %q", got, workspaceColumnCap, cell)
 	}
 	if !strings.HasPrefix(cell, "...") {
 		t.Fatalf("workspace cell is not left-clipped: %q", cell)

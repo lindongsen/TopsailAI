@@ -201,9 +201,13 @@ func readInteractiveMultiLineForm(ctx context.Context, source <-chan lineReadRes
 		return MultiLineBlock{}, err
 	}
 	limit := lineLimitOrDefault(options.LineLimit)
+	// The continuation prompt waits for operator input like every other prompt, so
+	// it carries the same styling. It is resolved once here instead of per line,
+	// because the form's prompt is a constant.
+	prompt := styleNamedPrompt(form.prompt, options.Color)
 	next := func() (lineReadResult, bool) {
 		if read != nil {
-			line, overflow, err := read(ctx, form.prompt, false, limit)
+			line, overflow, err := read(ctx, prompt, false, limit)
 			return lineReadResult{line: line, overflow: overflow, err: err}, true
 		}
 		select {

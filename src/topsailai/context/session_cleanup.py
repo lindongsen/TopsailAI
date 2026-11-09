@@ -4,6 +4,18 @@ from datetime import datetime, timedelta
 
 from topsailai.logger import logger
 from topsailai.context.session_activity import ActivityState
+from topsailai.ai_base.constants import SESSION_CATEGORY_AGENT_DRIVER
+
+# Soft count limit for automatically retained historical sessions.
+SESSION_RETENTION_LIMIT = 100
+
+# Categories that never consume the retention budget and are never evicted by it.
+RETENTION_EXCLUDED_CATEGORIES = frozenset({SESSION_CATEGORY_AGENT_DRIVER})
+
+
+def _is_retention_excluded(session_row):
+    """Return True when a row must not count toward the retention threshold."""
+    return (getattr(session_row, "category", "") or "") in RETENTION_EXCLUDED_CATEGORIES
 
 
 class HistoryCleanupManager:
@@ -70,10 +82,14 @@ class SessionCleanupManager:
     def evict_sessions(self, new_id):
         """Check only oldest excess rows; protected rows keep the limit soft."""
         sessions = self.storage.list_sessions(order_by="create_time")
-        excess = len(sessions) - 100
+        # Excluded categories never consume the retention budget, so they are
+        # removed before the threshold is computed and before candidates are
+        # selected; otherwise a driver backlog would evict ordinary sessions.
+        counted = [row for row in sessions if not _is_retention_excluded(row)]
+        excess = len(counted) - SESSION_RETENTION_LIMIT
         if excess <= 0:
             return
-        candidates = [row for row in sessions if row.session_id != new_id][:excess]
+        candidates = [row for row in counted if row.session_id != new_id][:excess]
         by_home = {}
         for candidate in candidates:
             by_home.setdefault(candidate.topsailai_home or "", []).append(candidate.session_id)

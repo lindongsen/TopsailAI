@@ -182,7 +182,7 @@ func TestCommandPrefixDoesNotAffectWizardAnswers(t *testing.T) {
 	var out strings.Builder
 	lines := make(chan lineReadResult, 1)
 	lines <- lineReadResult{line: "/start"}
-	value, err := launchAnswerValueOrControl(context.Background(), lines, &out, &state, startFieldName(startFieldEndpoint))
+	value, err := launchAnswerValueOrControl(context.Background(), lines, &out, &out, &state, startFieldName(startFieldEndpoint), ColorPolicy{})
 	if err != nil {
 		t.Fatalf("launchAnswerValueOrControl: %v", err)
 	}

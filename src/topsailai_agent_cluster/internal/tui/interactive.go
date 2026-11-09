@@ -578,7 +578,7 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		startOut := newRecordingWriter(out, recorder)
 		startTrustedOut := newRecordingWriter(trustedOut, recorder)
 		startErrOut := newRecordingWriter(errOut, recorder)
-		outcome, request, promptErr := runStartPrompt(ctx, *state, draft, lineResults, startOut, startErrOut, options.Color)
+		outcome, request, promptErr := runStartPrompt(ctx, *state, draft, lineResults, startOut, startTrustedOut, startErrOut, options.Color)
 		if promptErr != nil {
 			return false, startOutputError(promptErr, recorder, startOut, startTrustedOut, startErrOut)
 		}

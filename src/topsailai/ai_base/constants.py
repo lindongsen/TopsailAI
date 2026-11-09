@@ -44,3 +44,14 @@ AGENT_ROLE_MANAGER = "manager"
 AGENT_ROLE_WORKER = "worker"
 DEFAULT_AGENT_ROLE = AGENT_ROLE_WORKER
 AGENT_ROLE_VALUES = (AGENT_ROLE_MANAGER, AGENT_ROLE_WORKER)
+
+# session category
+# Common session categories stored in the session `category` column.
+SESSION_CATEGORY_AGENT = "agent"                # Agent chat sessions (agent_shell default)
+SESSION_CATEGORY_CHAT = "chat"                  # Direct LLM chat sessions (llm_shell default)
+SESSION_CATEGORY_AGENT_DRIVER = "agent_driver"  # Sessions created by the session agent driver
+SESSION_CATEGORY_VALUES = (
+    SESSION_CATEGORY_AGENT,
+    SESSION_CATEGORY_CHAT,
+    SESSION_CATEGORY_AGENT_DRIVER,
+)

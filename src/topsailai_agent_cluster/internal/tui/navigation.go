@@ -76,7 +76,7 @@ func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiv
 	case 1:
 		// The disambiguation prompt is a human answer, so it must not inherit the
 		// command deadline; only the inventory load above is bounded.
-		resolveErr = cdSingle(parent, state, loaded, parts[0], lineSource, out)
+		resolveErr = cdSingle(parent, state, loaded, parts[0], lineSource, out, trustedOut, color)
 	case 2:
 		resolveErr = cdPair(state, loaded, parts[0], parts[1])
 	default:
@@ -284,7 +284,9 @@ func cdParent(state *interactiveState, out io.Writer) error {
 }
 
 // cdSingle resolves a bare target, preferring the current endpoint for sessions.
-func cdSingle(ctx context.Context, state *interactiveState, loaded reportLoad, target string, lineSource <-chan lineReadResult, out io.Writer) error {
+// The disambiguation question is a prompt that waits for operator input, so it is
+// written through the trusted writer with the same styling as every other prompt.
+func cdSingle(ctx context.Context, state *interactiveState, loaded reportLoad, target string, lineSource <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) error {
 	var sessionErr error
 	if state.Scope.Kind != ScopeWorkspace {
 		outcome, err := resolveSessionInEndpoint(state, loaded, state.Scope.EndpointID, target)
@@ -293,7 +295,7 @@ func cdSingle(ctx context.Context, state *interactiveState, loaded reportLoad, t
 		}
 		sessionErr = fmt.Errorf("session %q was not found on endpoint %q", target, state.Scope.EndpointID)
 	}
-	outcome, err := resolveEndpoint(ctx, state, loaded, target, lineSource, out)
+	outcome, err := resolveEndpoint(ctx, state, loaded, target, lineSource, out, trustedOut, color)
 	if outcome == outcomeResolved || err != nil {
 		return err
 	}
@@ -336,7 +338,7 @@ func cdTriple(state *interactiveState, loaded reportLoad, hostname, endpointID, 
 }
 
 // resolveEndpoint enters an endpoint by exact ID or by unique hostname.
-func resolveEndpoint(ctx context.Context, state *interactiveState, loaded reportLoad, target string, lineSource <-chan lineReadResult, out io.Writer) (resolveOutcome, error) {
+func resolveEndpoint(ctx context.Context, state *interactiveState, loaded reportLoad, target string, lineSource <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) (resolveOutcome, error) {
 	if endpoint, ok := endpointByID(loaded, target); ok {
 		state.enterEndpoint(endpoint)
 		return outcomeResolved, nil
@@ -355,12 +357,17 @@ func resolveEndpoint(ctx context.Context, state *interactiveState, loaded report
 		return outcomeResolved, nil
 	default:
 		sort.Slice(matches, func(i, j int) bool { return matches[i].EndpointID < matches[j].EndpointID })
-		return chooseEndpoint(ctx, state, matches, target, lineSource, out)
+		return chooseEndpoint(ctx, state, matches, target, lineSource, out, trustedOut, color)
 	}
 }
 
-// chooseEndpoint asks the operator to disambiguate a hostname conflict.
-func chooseEndpoint(ctx context.Context, state *interactiveState, matches []protocol.Endpoint, hostname string, lineSource <-chan lineReadResult, out io.Writer) (resolveOutcome, error) {
+// chooseEndpoint asks the operator to disambiguate a hostname conflict. The
+// question is a prompt that waits for operator input, so it is written through the
+// trusted writer with the confirmation styling; the sanitizing writer would strip
+// the colour. The question is written here and not passed to the read, because the
+// terminal editor draws its own styled answer prompt on the next row and passing
+// this question as well would print it twice.
+func chooseEndpoint(ctx context.Context, state *interactiveState, matches []protocol.Endpoint, hostname string, lineSource <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) (resolveOutcome, error) {
 	if _, err := fmt.Fprintf(out, "multiple endpoints match hostname %q:\n", hostname); err != nil {
 		return outcomeCancelled, err
 	}
@@ -373,7 +380,8 @@ func chooseEndpoint(ctx context.Context, state *interactiveState, matches []prot
 			return outcomeCancelled, err
 		}
 	}
-	if _, err := fmt.Fprintf(out, "select endpoint [1-%d] or 'cancel': ", len(matches)); err != nil {
+	question := fmt.Sprintf("select endpoint [1-%d] or 'cancel': ", len(matches))
+	if err := writeConfirmationQuestion(trustedOut, question, color); err != nil {
 		return outcomeCancelled, err
 	}
 	answer, ok := nextPromptLine(ctx, lineSource)

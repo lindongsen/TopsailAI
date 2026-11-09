@@ -87,7 +87,7 @@ func TestUnitCStartPromptRunsEveryMissingFieldMask(t *testing.T) {
 			}
 			close(lines)
 			var output, diagnostics strings.Builder
-			outcome, request, err := runStartPrompt(context.Background(), interactiveState{}, draft, lines, &output, &diagnostics, ColorPolicy{})
+			outcome, request, err := runStartPrompt(context.Background(), interactiveState{}, draft, lines, &output, &output, &diagnostics, ColorPolicy{})
 			if err != nil || outcome != startPromptReady {
 				t.Fatalf("runStartPrompt outcome=%v err=%v", outcome, err)
 			}
@@ -192,7 +192,7 @@ func TestUnitCStartAllMasksExactRequest(t *testing.T) {
 			}
 		}
 		close(lines)
-		_, got, err := runStartPrompt(context.Background(), interactiveState{}, draft, lines, io.Discard, io.Discard, ColorPolicy{})
+		_, got, err := runStartPrompt(context.Background(), interactiveState{}, draft, lines, io.Discard, io.Discard, io.Discard, ColorPolicy{})
 		if err != nil || got.Folder != "work" || string(got.Payload) != `{"tag":"existing"}` {
 			t.Fatalf("mask=%d got=%+v err=%v", mask, got, err)
 		}
@@ -205,7 +205,7 @@ func TestUnitCStartDiagnosticsAndRefreshExact(t *testing.T) {
 	lines <- lineReadResult{line: "two values"}
 	lines <- lineReadResult{line: "cancel"}
 	var out, diagnostics strings.Builder
-	outcome, _, err := runStartPrompt(context.Background(), interactiveState{}, startDraft{missing: [4]bool{true, false, false, false}}, lines, &out, &diagnostics, ColorPolicy{})
+	outcome, _, err := runStartPrompt(context.Background(), interactiveState{}, startDraft{missing: [4]bool{true, false, false, false}}, lines, &out, &out, &diagnostics, ColorPolicy{})
 	if err != nil || outcome != startPromptCancel {
 		t.Fatalf("outcome=%v err=%v", outcome, err)
 	}
@@ -239,7 +239,7 @@ func TestUnitCStartObservedFatalWinsParentCancellation(t *testing.T) {
 	lines := make(chan lineReadResult, 1)
 	lines <- lineReadResult{err: sentinel}
 	var output, diagnostics strings.Builder
-	_, _, err := runStartPrompt(ctx, interactiveState{}, startDraft{missing: [4]bool{true}}, lines, &output, &diagnostics, ColorPolicy{})
+	_, _, err := runStartPrompt(ctx, interactiveState{}, startDraft{missing: [4]bool{true}}, lines, &output, &output, &diagnostics, ColorPolicy{})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("runStartPrompt error=%v, want observed fatal %v", err, sentinel)
 	}
@@ -333,7 +333,7 @@ func (s *unitCScriptSink) Write(p []byte) (int, error) {
 func TestStartFieldPromptsDistinguishWizardFromREPL(t *testing.T) {
 	for _, field := range []startDraftField{startFieldEndpoint, startFieldResource, startFieldProfile, startFieldRevision} {
 		var out strings.Builder
-		if err := writeStartHelp(&out, field, interactiveState{}, ColorPolicy{}); err != nil {
+		if err := writeStartHelp(&out, &out, field, interactiveState{}, ColorPolicy{}); err != nil {
 			t.Fatal(err)
 		}
 		if !strings.HasSuffix(out.String(), "start."+startFieldName(field)+"> ") || strings.Contains(out.String(), "workspace>") {
@@ -355,7 +355,7 @@ func (fieldPromptFailureWriter) Write(data []byte) (int, error) {
 
 // TestStartFieldPromptFailure propagates a failure after the field description.
 func TestStartFieldPromptFailure(t *testing.T) {
-	if err := writeStartHelp(fieldPromptFailureWriter{}, startFieldEndpoint, interactiveState{}, ColorPolicy{}); err != errTableFixture {
+	if err := writeStartHelp(fieldPromptFailureWriter{}, fieldPromptFailureWriter{}, startFieldEndpoint, interactiveState{}, ColorPolicy{}); err != errTableFixture {
 		t.Fatalf("error=%v", err)
 	}
 }

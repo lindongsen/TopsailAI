@@ -376,3 +376,90 @@ func TestInteractiveDriveRejectsUnknownActionsAndOptions(t *testing.T) {
 		})
 	}
 }
+
+// namedDriveStub returns the drive fixture with a reported session name, so a test
+// can prove the confirmation question and the progress header both name the
+// session the operator selected.
+func namedDriveStub() *interactiveStub {
+	stub := driveStub()
+	report := stub.reports["endpoint-1"]
+	report.Sessions[0].DisplayName = "Daily work"
+	stub.reports["endpoint-1"] = report
+	return stub
+}
+
+// TestDriveStartConfirmationNamesTheSession proves the drive start question names
+// the reported session name first, then the provider session identifier, then the
+// opaque cluster resource ID. The interactive table hides SESSION_ID, so the
+// question is the only place the operator sees the provider identifier, and the
+// reported name is the only value they saw in the table.
+func TestDriveStartConfirmationNamesTheSession(t *testing.T) {
+	stub := driveCapabilityStub{interactiveStub: namedDriveStub()}
+	output, diagnostics := runScope(t, stub, "drive start res-1\ny\nquit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	const question = `drive start session "Daily work" provider-res-1 (res-1)? Confirm drive start?`
+	if !strings.Contains(output, question) {
+		t.Fatalf("drive start question does not name the session: %q", output)
+	}
+	// The reported name must precede both identifiers, because it is the value the
+	// operator can match against the row they selected.
+	if strings.Index(question, "Daily work") > strings.Index(question, "provider-res-1") {
+		t.Fatalf("reported name is not the first value in the question: %q", question)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted %d commands, want 1", stub.admit)
+	}
+}
+
+// TestDriveStopConfirmationNamesTheSession proves the sibling drive action uses the
+// same wording, because both share one confirmation label. A fix applied to only
+// one of the two actions would leave the operator reading two different target
+// descriptions for the same session.
+func TestDriveStopConfirmationNamesTheSession(t *testing.T) {
+	stub := driveCapabilityStub{interactiveStub: namedDriveStub()}
+	output, diagnostics := runScope(t, stub, "drive stop res-1\ny\nquit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	const question = `drive stop session "Daily work" provider-res-1 (res-1)? Confirm drive stop?`
+	if !strings.Contains(output, question) {
+		t.Fatalf("drive stop question does not name the session: %q", output)
+	}
+}
+
+// TestDriveConfirmationKeepsTheOldWordingWithoutAName proves a session the provider
+// reported no name for keeps the previous wording exactly. The name is descriptive
+// report data, so its absence must not change the question an operator answers.
+func TestDriveConfirmationKeepsTheOldWordingWithoutAName(t *testing.T) {
+	stub := driveCapabilityStub{interactiveStub: driveStub()}
+	output, diagnostics := runScope(t, stub, "drive start res-1\ny\nquit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	const question = "drive start session provider-res-1 (res-1)? Confirm drive start?"
+	if !strings.Contains(output, question) {
+		t.Fatalf("unnamed session changed the question: %q", output)
+	}
+}
+
+// TestDriveConfirmationSanitizesTheReportedName proves the reported name is
+// untrusted provider text. It is interpolated into a trusted styled line, so an
+// escape sequence must be stripped instead of reaching the terminal.
+func TestDriveConfirmationSanitizesTheReportedName(t *testing.T) {
+	stub := driveCapabilityStub{interactiveStub: driveStub()}
+	report := stub.reports["endpoint-1"]
+	report.Sessions[0].DisplayName = "evil\x1b[31mname"
+	stub.reports["endpoint-1"] = report
+	output, diagnostics := runScope(t, stub, "drive start res-1\ny\nquit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if strings.Contains(output, "\x1b[31m") {
+		t.Fatalf("reported name reached the terminal unsanitized: %q", output)
+	}
+	if !strings.Contains(output, "evilname") {
+		t.Fatalf("sanitized name is missing from the question: %q", output)
+	}
+}

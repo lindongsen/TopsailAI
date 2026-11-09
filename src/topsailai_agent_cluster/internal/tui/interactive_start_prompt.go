@@ -186,14 +186,16 @@ func startPromptControl(line string) (startPromptOutcome, bool) {
 	}
 }
 
-func writeStartHelp(out io.Writer, field startDraftField, state interactiveState, color ColorPolicy) error {
+// writeStartHelp prints the field description and then the field prompt. The
+// description is plain text, so it goes to the sanitizing writer; the prompt
+// carries application styling, so it goes to the trusted writer. Writing the
+// styled prompt to the sanitizing writer would strip the colour and leave the
+// wizard prompt as the only unstyled prompt in the session.
+func writeStartHelp(out, trustedOut io.Writer, field startDraftField, state interactiveState, color ColorPolicy) error {
 	if _, err := fmt.Fprintln(out, startFieldDescription(field)); err != nil {
 		return err
 	}
-	if err := writeStyled(out, ansiBoldGreen, "start."+startFieldName(field)+">", color); err != nil {
-		return err
-	}
-	_, err := io.WriteString(out, " ")
+	_, err := io.WriteString(trustedOut, RenderNamedPrompt("start."+startFieldName(field)+">", color))
 	return err
 }
 
@@ -233,7 +235,10 @@ func readStartAnswer(ctx context.Context, lines <-chan lineReadResult, prompts .
 	}
 }
 
-func runStartPrompt(ctx context.Context, state interactiveState, draft startDraft, lines <-chan lineReadResult, out, errOut io.Writer, color ColorPolicy) (startPromptOutcome, interactiveStartRequest, error) {
+// runStartPrompt asks for each missing field of a start draft. The field prompt
+// carries application styling, so it is written through the trusted writer; the
+// description and diagnostics stay on the sanitizing writer.
+func runStartPrompt(ctx context.Context, state interactiveState, draft startDraft, lines <-chan lineReadResult, out, trustedOut, errOut io.Writer, color ColorPolicy) (startPromptOutcome, interactiveStartRequest, error) {
 	if lines == nil && promptReader(ctx) == nil {
 		return startPromptCancel, interactiveStartRequest{}, &startPromptTermination{kind: startPromptFatal, cause: errors.New("start input is unavailable")}
 	}
@@ -248,7 +253,7 @@ func runStartPrompt(ctx context.Context, state interactiveState, draft startDraf
 			}
 			return startPromptReady, draft.request, nil
 		}
-		if err := writeStartHelp(out, field, state, color); err != nil {
+		if err := writeStartHelp(out, trustedOut, field, state, color); err != nil {
 			return startPromptCancel, interactiveStartRequest{}, &startPromptTermination{kind: startPromptFatal, cause: err}
 		}
 		line, err := readStartAnswer(ctx, lines, "start."+startFieldName(field)+"> ")

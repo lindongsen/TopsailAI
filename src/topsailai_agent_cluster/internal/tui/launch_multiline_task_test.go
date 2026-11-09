@@ -58,7 +58,10 @@ func TestLaunchMultiLineTaskEchoesVerbatim(t *testing.T) {
 }
 
 // TestLaunchMultiLineTaskEchoIsPlainWithoutColor proves the echo is byte
-// identical plain text when colour is disabled, so a piped run stays clean.
+// identical plain text when colour is disabled, so a piped run stays clean. The
+// wizard prompts also travel on the trusted writer, because they carry the same
+// styling when colour is enabled, so the echo is asserted as the stream suffix
+// instead of the whole stream.
 func TestLaunchMultiLineTaskEchoIsPlainWithoutColor(t *testing.T) {
 	_, trusted, stub := runLaunchMultiLineTask(t, launchMultiLineTaskInput, InteractiveOptions{})
 	if stub.admit != 1 {
@@ -67,8 +70,8 @@ func TestLaunchMultiLineTaskEchoIsPlainWithoutColor(t *testing.T) {
 	if strings.Contains(trusted, "\x1b[") {
 		t.Fatalf("plain echo carries ANSI styling: %q", trusted)
 	}
-	if got, want := trusted, TaskEchoHeader+"\nfirst line\n  indented line\n"; got != want {
-		t.Fatalf("echo=%q want=%q", got, want)
+	if want := TaskEchoHeader + "\nfirst line\n  indented line\n"; !strings.HasSuffix(trusted, want) {
+		t.Fatalf("echo=%q want suffix=%q", trusted, want)
 	}
 }
 

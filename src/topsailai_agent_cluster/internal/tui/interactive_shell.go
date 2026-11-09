@@ -142,6 +142,7 @@ func runShellCommand(parent context.Context, api InteractiveAPI, state *interact
 		OperationLabel: "exec",
 		EndpointID:     state.EndpointID,
 		ResourceID:     session.SessionID,
+		DisplayName:    session.DisplayName,
 		Generation:     session.Generation,
 		Payload:        payload,
 		Confirmed:      true,

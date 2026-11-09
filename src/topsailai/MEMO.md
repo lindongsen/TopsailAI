@@ -117,3 +117,7 @@ Summary: the LLM mock server supports opt-in native `tool_calls` SSE deltas whil
 The field reference for `{TOPSAILAI_HOME}/workspace/stats/*.model.stats.json` lives in [docs/Model_Stats_Document.md](./docs/Model_Stats_Document.md).
 
 Summary: one cumulative document per model name records turn, tool, request, token and first-byte totals merged under an advisory lock, and the document explains every field, its source tracker, the derived values and the retention rules.
+
+## MEMO: Retention-Excluded Session Categories
+
+[MEMO.AgentCore.md](MEMO.AgentCore.md#memo-retention-excluded-session-categories) — `agent_driver` sessions are filtered out before the retention threshold is computed and before eviction candidates are selected, so they neither consume the budget nor get evicted.

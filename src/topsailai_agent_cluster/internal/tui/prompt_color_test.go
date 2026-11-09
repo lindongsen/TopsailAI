@@ -133,3 +133,112 @@ func TestInteractiveSendConfirmationIsStyled(t *testing.T) {
 		})
 	}
 }
+
+// TestNamedPromptStyling pins the shared named-prompt renderer used by every
+// prompt that waits for operator input. With colour enabled the prompt carries the
+// bold-green wrapper the terminal editor recognises; with colour disabled it is
+// byte-identical to the previous plain literal, so a piped run stays clean.
+func TestNamedPromptStyling(t *testing.T) {
+	if got := RenderNamedPrompt("start.endpoint>", ColorPolicy{}); got != "start.endpoint> " {
+		t.Fatalf("plain named prompt=%q want the unchanged literal", got)
+	}
+	colored := RenderNamedPrompt("start.endpoint>", ColorPolicy{Enabled: true})
+	if colored != ansiBoldGreen+"start.endpoint>"+ansiReset+" " {
+		t.Fatalf("colored named prompt=%q", colored)
+	}
+	stripped := strings.ReplaceAll(strings.ReplaceAll(colored, ansiBoldGreen, ""), ansiReset, "")
+	if stripped != "start.endpoint> " {
+		t.Fatalf("stripped=%q", stripped)
+	}
+}
+
+// TestStyleNamedPromptOnlyStylesPlainNamedPrompts proves the caller-supplied
+// prompt path styles a plain named prompt and leaves every other shape untouched,
+// so a question row and an already styled prompt are never wrapped twice.
+func TestStyleNamedPromptOnlyStylesPlainNamedPrompts(t *testing.T) {
+	enabled := ColorPolicy{Enabled: true}
+	cases := []struct {
+		name   string
+		prompt string
+		want   string
+	}{
+		{"named", "ctl.action> ", ansiBoldGreen + "ctl.action>" + ansiReset + " "},
+		{"named with dotted field", "ctl.session_id> ", ansiBoldGreen + "ctl.session_id>" + ansiReset + " "},
+		{"operation action", "interrupt.action> ", ansiBoldGreen + "interrupt.action>" + ansiReset + " "},
+		{"question row", "\nanswer> ", "\nanswer> "},
+		{"already styled", ansiBoldGreen + "start.task>" + ansiReset + " ", ansiBoldGreen + "start.task>" + ansiReset + " "},
+		{"not a named prompt", "select endpoint [1-2] or 'cancel': ", "select endpoint [1-2] or 'cancel': "},
+		{"empty", "", ""},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := styleNamedPrompt(testCase.prompt, enabled); got != testCase.want {
+				t.Fatalf("styleNamedPrompt(%q)=%q want=%q", testCase.prompt, got, testCase.want)
+			}
+			// A disabled policy must never introduce styling.
+			if got := styleNamedPrompt(testCase.prompt, ColorPolicy{}); got != testCase.prompt {
+				t.Fatalf("disabled styleNamedPrompt(%q)=%q", testCase.prompt, got)
+			}
+		})
+	}
+}
+
+// TestStartWizardPromptsAreStyled proves the start wizard writes its field prompt
+// through the trusted writer with colour, because writing a styled prompt to the
+// sanitizing writer silently strips the colour and leaves the wizard as the only
+// unstyled prompt in the session.
+func TestStartWizardPromptsAreStyled(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(map[bool]string{true: "colored", false: "plain"}[enabled], func(t *testing.T) {
+			var safe, trusted strings.Builder
+			if err := writeStartHelp(&safe, &trusted, startFieldEndpoint, interactiveState{}, ColorPolicy{Enabled: enabled}); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(safe.String(), "\x1b") {
+				t.Fatalf("sanitizing writer received styling: %q", safe.String())
+			}
+			prompt := trusted.String()
+			if enabled {
+				if prompt != ansiBoldGreen+"start.endpoint>"+ansiReset+" " {
+					t.Fatalf("colored wizard prompt=%q", prompt)
+				}
+			} else if prompt != "start.endpoint> " {
+				t.Fatalf("plain wizard prompt=%q", prompt)
+			}
+		})
+	}
+}
+
+// TestReadPromptLineStylesCallerPrompt proves the shared read path styles a
+// caller-supplied named prompt, so every prompt that waits for operator input is
+// covered by one choke point instead of each caller opting in. It also proves the
+// default answer prompt and the disabled policy keep their previous behaviour.
+func TestReadPromptLineStylesCallerPrompt(t *testing.T) {
+	cases := []struct {
+		name   string
+		policy ColorPolicy
+		prompt []string
+		want   string
+	}{
+		{"caller prompt colored", ColorPolicy{Enabled: true}, []string{"ctl.action> "}, ansiBoldGreen + "ctl.action>" + ansiReset + " "},
+		{"caller prompt plain", ColorPolicy{}, []string{"ctl.action> "}, "ctl.action> "},
+		{"default prompt colored", ColorPolicy{Enabled: true}, nil, "\n" + ansiBoldGreen + "answer>" + ansiReset + " "},
+		{"default prompt plain", ColorPolicy{}, nil, "\nanswer> "},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var seen string
+			read := func(_ context.Context, prompt string, _ bool, _ int) (string, bool, error) {
+				seen = prompt
+				return "answer", false, nil
+			}
+			ctx := context.WithValue(context.Background(), promptReaderKey{}, promptReaderConfig{read: read, limit: 8192, color: testCase.policy})
+			if _, _, err := readPromptLine(ctx, testCase.prompt...); err != nil {
+				t.Fatal(err)
+			}
+			if seen != testCase.want {
+				t.Fatalf("prompt=%q want=%q", seen, testCase.want)
+			}
+		})
+	}
+}

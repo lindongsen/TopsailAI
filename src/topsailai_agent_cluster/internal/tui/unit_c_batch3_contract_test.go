@@ -41,7 +41,7 @@ func TestUnitCBatch3AllMasks(t *testing.T) {
 				expected += unitCFieldToken(field)
 			}
 			var out, diag strings.Builder
-			outcome, got, err := runStartPrompt(context.Background(), interactiveState{}, draft, lines, &out, &diag, ColorPolicy{})
+			outcome, got, err := runStartPrompt(context.Background(), interactiveState{}, draft, lines, &out, &out, &diag, ColorPolicy{})
 			if err != nil || outcome != startPromptReady || !reflect.DeepEqual(got, want) || out.String() != expected || diag.Len() != 0 {
 				t.Fatalf("F6 mask: outcome=%v request=%+v want=%+v err=%v out=%q wantout=%q diag=%q", outcome, got, want, err, out.String(), expected, diag.String())
 			}
@@ -57,7 +57,7 @@ func TestUnitCBatch3QuotedControls(t *testing.T) {
 			draft.missing[startFieldRevision] = true
 			lines := make(chan lineReadResult, 1)
 			lines <- lineReadResult{line: answer}
-			outcome, got, err := runStartPrompt(context.Background(), interactiveState{}, draft, lines, io.Discard, io.Discard, ColorPolicy{})
+			outcome, got, err := runStartPrompt(context.Background(), interactiveState{}, draft, lines, io.Discard, io.Discard, io.Discard, ColorPolicy{})
 			if err != nil || outcome != startPromptReady || got.ProfileRevision != answer[1:len(answer)-1] {
 				t.Fatalf("F6 literal: outcome=%v got=%+v err=%v", outcome, got, err)
 			}

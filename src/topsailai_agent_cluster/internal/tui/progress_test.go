@@ -403,3 +403,56 @@ func TestRefreshWithNilProgressKeepsBehaviour(t *testing.T) {
 		t.Fatal("expected the refresh to render a table")
 	}
 }
+
+// TestProgressHeaderNamesTheSession proves the progress header names the reported
+// session name first, matching the confirmation question. The operator therefore
+// reads the same target description before and after answering, instead of an
+// opaque identifier that the interactive table never showed.
+func TestProgressHeaderNamesTheSession(t *testing.T) {
+	out := newProgressStub()
+	request := ActionRequest{Operation: protocol.OperationAgentDriveStart, EndpointID: "ep-1", ResourceID: "s-1", DisplayName: "Daily work"}
+	progress := NewActionProgress(out, request)
+	pastThreshold(progress)
+	progress.Stage("server received")
+	progress.Tick()
+	want := `starting drive controller for session "Daily work" s-1 (ep-1)...` + "\n" +
+		progressStageIndent + "server received\n"
+	if got := out.String(); got != want {
+		t.Fatalf("unexpected progress block:\n got %q\nwant %q", got, want)
+	}
+}
+
+// TestProgressHeaderKeepsTheOldWordingWithoutAName proves an unnamed session keeps
+// the previous header exactly, so the descriptive name never becomes a required
+// field of the progress line.
+func TestProgressHeaderKeepsTheOldWordingWithoutAName(t *testing.T) {
+	out := newProgressStub()
+	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: "ep-1", ResourceID: "s-1"}
+	progress := NewActionProgress(out, request)
+	pastThreshold(progress)
+	progress.Stage("server received")
+	progress.Tick()
+	want := "sending message to session s-1 (ep-1)...\n" + progressStageIndent + "server received\n"
+	if got := out.String(); got != want {
+		t.Fatalf("unnamed session changed the header:\n got %q\nwant %q", got, want)
+	}
+}
+
+// TestProgressHeaderSanitizesTheReportedName proves the reported name is sanitized
+// before it reaches a trusted styled line, so a provider cannot inject terminal
+// control sequences through a session name.
+func TestProgressHeaderSanitizesTheReportedName(t *testing.T) {
+	out := newProgressStub()
+	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: "ep-1", ResourceID: "s-1", DisplayName: "evil\x1b[31mname"}
+	progress := NewActionProgress(out, request)
+	pastThreshold(progress)
+	progress.Stage("server received")
+	progress.Tick()
+	got := out.String()
+	if strings.Contains(got, "\x1b[31m") {
+		t.Fatalf("reported name reached the terminal unsanitized: %q", got)
+	}
+	if !strings.Contains(got, `"evilname"`) {
+		t.Fatalf("sanitized name is missing from the header: %q", got)
+	}
+}

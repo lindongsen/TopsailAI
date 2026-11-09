@@ -172,6 +172,7 @@ for _path in (SRC_DIR, PROJECT_DIR, CLI_DIR, str(SCRIPT_DIR)):
 
 from topsailai.context import ctx_manager  # noqa: E402
 from topsailai.workspace.agent_shell import get_agent_chat  # noqa: E402
+from topsailai.ai_base.constants import SESSION_CATEGORY_AGENT_DRIVER  # noqa: E402
 from ai_base.agent_types.exception import AgentEndProcess  # noqa: E402
 from cli_topsailai.log_files import discover_log_files, is_session_pipe_open  # noqa: E402
 from cli_topsailai.paths import get_topsailai_home  # noqa: E402
@@ -459,7 +460,7 @@ def _run_analysis_agent(session_id: str) -> None:
                 message=prompt,
                 disabled_tools=["agent_tool", "human_tool", "file_tool"],
                 need_project_workspace_lock=False,  # P2: avoid lock contention
-                session_category="agent_driver",
+                session_category=SESSION_CATEGORY_AGENT_DRIVER,
                 need_input_message=False,
             )
             old_handler = signal.signal(signal.SIGALRM, _timeout_handler)

@@ -74,14 +74,18 @@ see the effect.
   whole and the question is the only place the operator can see it before it is
   admitted. The confirmation gate stays on every operation that cannot be undone:
   `stop`, `btw`, `interrupt`, `ctl`, `drive start` and `drive stop`.
-- A confirmation question names the provider session identifier first, followed by
-  the opaque cluster resource ID in parentheses, for example
-  `stop session provider-res-1 (res-1)? Confirm stop?`. The provider identifier is
-  the provider's own name for the session, so the operator can match the question
-  against the selected row before answering even though the interactive table hides
-  the `SESSION_ID` column; the opaque ID stays visible because `status` and `info`
-  accept it. A session with no reported provider identifier falls back to the opaque
-  ID alone, so the question never names an empty session.
+- A confirmation question names the reported session name first, then the provider
+  session identifier, then the opaque cluster resource ID in parentheses, for
+  example `stop session "Daily work" provider-res-1 (res-1)? Confirm stop?`. The
+  reported name is the only value the interactive table shows, because that table
+  hides the `SESSION_ID` column, so naming it first lets the operator match the
+  question against the row they selected. The provider identifier follows because
+  it is the provider's own name for the session, and the opaque ID stays visible
+  because `status` and `info` accept it. A name never replaces an identifier: it
+  can be empty, duplicated or changed between collections. A session with no
+  reported name keeps the previous wording exactly, and a session with neither a
+  name nor a provider identifier falls back to the opaque ID alone, so the question
+  never names an empty session.
 
 - The interactive tables hide the `SESSION_ID` column, because the provider session
   identifier is a long opaque value that only widens the table while the operator
@@ -470,10 +474,15 @@ and the terminal wraps it. The switch does not weaken sanitization: terminal
 control sequences in provider data are still stripped.
 
 `PROJECT_WORKSPACE` is clipped from the left, so an over-wide path keeps its
-identifying tail (`...topsailai_agent_cluster/internal/tui`) instead of a prefix
-that every sibling path shares. Every other column keeps its head. The rule
+identifying tail (`...cluster/internal/tui`) instead of a prefix that every
+sibling path shares. Every other column keeps its head. The rule
 applies to both the framed and the narrow layout, and `--no-truncate` still
 prints the complete path.
+
+The column is capped at 23 display cells by default, because a workspace path is
+descriptive context rather than a selector and must not push the fleet table past
+the terminal. The `list` and `history` layouts read the same constant, so the two
+tables cannot drift apart.
 
 The output boundary owns the policy. The CLI writer reports a `TableLayout` of
 width plus truncation state, so every render path inherits the switch without
@@ -559,6 +568,16 @@ the wording comes from the same label the final receipt uses. A progress row
 therefore never claims more than the receipt will: it reports delivery and
 execution stages, and it never reports success before the receipt does. A repeated
 stage is not a new fact and is printed once.
+
+The header names the same target the confirmation question named, in the same
+order: the reported session name first, then the opaque resource ID, then the
+endpoint, for example
+`starting drive controller for session "Daily work" res-1 (ep-1)...`. The operator
+therefore reads one target description before answering and the same one while
+waiting, instead of an opaque identifier the interactive table never showed. The
+name is descriptive report data: it is sanitized like every other provider value,
+it never replaces the resource ID, and an unnamed session keeps the previous
+header exactly.
 
 Progress never animates. The interactive diagnostics writer strips carriage
 returns and cursor control, so an in-place animation would be printed as

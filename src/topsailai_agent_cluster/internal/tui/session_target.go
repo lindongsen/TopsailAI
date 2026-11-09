@@ -9,18 +9,20 @@ import (
 // sessionTarget is the exact endpoint-scoped session identity a mutating command
 // names. The endpoint is carried explicitly because workspace scope has no current
 // endpoint, so the target cannot be derived from the navigation scope. The provider
-// session identifier is carried so the confirmation question can name the row the
-// operator selected instead of only the opaque cluster resource ID.
+// session identifier and the reported display name are carried so the confirmation
+// question can name the row the operator selected instead of only the opaque cluster
+// resource ID.
 type sessionTarget struct {
 	endpointID        string
 	sessionID         string
 	providerSessionID string
+	displayName       string
 	generation        string
 }
 
 // confirmationTarget names this target for the confirmation question.
 func (t sessionTarget) confirmationTarget() confirmationTarget {
-	return confirmationTarget{ProviderSessionID: t.providerSessionID, SessionID: t.sessionID}
+	return confirmationTarget{DisplayName: t.displayName, ProviderSessionID: t.providerSessionID, SessionID: t.sessionID}
 }
 
 // resolveSessionTarget maps the operator argument to one exact session identity for
@@ -41,7 +43,7 @@ func resolveSessionTarget(ctx context.Context, api InteractiveAPI, state *intera
 		if err != nil {
 			return sessionTarget{}, err
 		}
-		return sessionTarget{endpointID: state.EndpointID, sessionID: session.SessionID, providerSessionID: session.ProviderSessionID, generation: session.Generation}, nil
+		return sessionTarget{endpointID: state.EndpointID, sessionID: session.SessionID, providerSessionID: session.ProviderSessionID, displayName: session.DisplayName, generation: session.Generation}, nil
 	}
 	var row SessionRow
 	var resolved bool
@@ -95,7 +97,7 @@ func resolveSessionTargetAcrossEndpoints(ctx context.Context, api InteractiveAPI
 			continue
 		}
 		if _, _, session, findErr := findSessionInEndpoint(loaded, endpoint.EndpointID, token); findErr == nil {
-			matches = append(matches, sessionTarget{endpointID: endpoint.EndpointID, sessionID: session.SessionID, providerSessionID: session.ProviderSessionID, generation: session.Generation})
+			matches = append(matches, sessionTarget{endpointID: endpoint.EndpointID, sessionID: session.SessionID, providerSessionID: session.ProviderSessionID, displayName: session.DisplayName, generation: session.Generation})
 		}
 	}
 	switch len(matches) {
@@ -165,7 +167,7 @@ func sessionTargetFromLoaded(loaded reportLoad, endpointID, sessionID, expectedG
 		if expectedGeneration != "" && session.Generation != expectedGeneration {
 			return sessionTarget{}, fmt.Errorf("session %q generation changed; run list again", sessionID)
 		}
-		return sessionTarget{endpointID: endpointID, sessionID: sessionID, providerSessionID: session.ProviderSessionID, generation: session.Generation}, nil
+		return sessionTarget{endpointID: endpointID, sessionID: sessionID, providerSessionID: session.ProviderSessionID, displayName: session.DisplayName, generation: session.Generation}, nil
 	}
 	return sessionTarget{}, fmt.Errorf("session %q was not found on endpoint %q; run list again", sessionID, endpointID)
 }
