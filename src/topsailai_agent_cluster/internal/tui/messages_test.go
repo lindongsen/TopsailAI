@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 
@@ -322,5 +324,174 @@ func TestBuildMessagesViewNumbersRows(t *testing.T) {
 	}
 	if view.EndpointID != "ep-1" || view.ProviderSessionID != "wa-1" || view.MessageCount != 2 {
 		t.Fatalf("view = %+v", view)
+	}
+}
+
+// messagesRunnerStub adds the optional MessagesQuerier seam to the shared history
+// stub, so the standalone runner can be exercised with the same endpoint and
+// inventory fixtures every other runner test uses.
+type messagesRunnerStub struct {
+	*historyStubAPI
+	messages      map[string]protocol.MessagesResult
+	messagesEr    map[string]error
+	messagesCalls []string
+	// maxChars records the caller bound of every read, so a test can prove the
+	// standalone flag reached the seam instead of being dropped on the way.
+	maxChars []int
+}
+
+// GetMessages records the queried endpoint and bound.
+func (s *messagesRunnerStub) GetMessages(_ context.Context, endpointID, _ string, maxChars int) (protocol.MessagesResult, error) {
+	s.messagesCalls = append(s.messagesCalls, endpointID)
+	s.maxChars = append(s.maxChars, maxChars)
+	if err := s.messagesEr[endpointID]; err != nil {
+		return protocol.MessagesResult{}, err
+	}
+	return s.messages[endpointID], nil
+}
+
+// messagesRunnerScenario builds one online endpoint whose conversation is the
+// given result.
+func messagesRunnerScenario(result protocol.MessagesResult) *messagesRunnerStub {
+	return &messagesRunnerStub{
+		historyStubAPI: &historyStubAPI{endpoints: []protocol.Endpoint{{EndpointID: "ep-1", Hostname: "host-one"}}},
+		messages:       map[string]protocol.MessagesResult{"ep-1": result},
+	}
+}
+
+// TestCommandRunnerMessagesRequiresEndpointArgument proves a blank endpoint is a
+// usage error rather than a fleet-wide read.
+//
+// A conversation read is endpoint-scoped, so an empty target must never fan out:
+// provider session IDs may collide across endpoints, and a merged read could not
+// identify the session the operator asked for.
+func TestCommandRunnerMessagesRequiresEndpointArgument(t *testing.T) {
+	stub := messagesRunnerScenario(protocol.MessagesResult{})
+	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "  ", "wa-1", 0, false, ColorPolicy{})
+	if err == nil || !strings.Contains(err.Error(), "usage: messages") {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.messagesCalls) != 0 {
+		t.Fatalf("usage error must not query: %v", stub.messagesCalls)
+	}
+}
+
+// TestCommandRunnerMessagesRequiresSessionArgument proves a blank session is a
+// usage error rather than a read of whatever session happens to be first.
+func TestCommandRunnerMessagesRequiresSessionArgument(t *testing.T) {
+	stub := messagesRunnerScenario(protocol.MessagesResult{})
+	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "ep-1", "   ", 0, false, ColorPolicy{})
+	if err == nil || !strings.Contains(err.Error(), "usage: messages") {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.messagesCalls) != 0 {
+		t.Fatalf("usage error must not query: %v", stub.messagesCalls)
+	}
+}
+
+// TestCommandRunnerMessagesReportsMissingSeam proves a client without the seam
+// reports the missing capability instead of rendering an empty conversation.
+//
+// An empty conversation is a successful answer for a session that recorded
+// nothing, so silently degrading to it would present a missing capability as a
+// real observation.
+func TestCommandRunnerMessagesReportsMissingSeam(t *testing.T) {
+	api := &historyStubAPI{endpoints: []protocol.Endpoint{{EndpointID: "ep-1"}}}
+	err := (CommandRunner{API: api, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "ep-1", "wa-1", 0, false, ColorPolicy{})
+	if err == nil || !strings.Contains(err.Error(), "messages is unavailable") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// TestCommandRunnerMessagesRejectsUnknownEndpoint proves an unknown endpoint is
+// reported before any provider read is attempted.
+func TestCommandRunnerMessagesRejectsUnknownEndpoint(t *testing.T) {
+	stub := messagesRunnerScenario(protocol.MessagesResult{})
+	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "ep-missing", "wa-1", 0, false, ColorPolicy{})
+	if err == nil || !strings.Contains(err.Error(), "was not found") {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.messagesCalls) != 0 {
+		t.Fatalf("unknown endpoint must not query: %v", stub.messagesCalls)
+	}
+}
+
+// TestCommandRunnerMessagesForwardsMaxChars proves the standalone bound reaches
+// the seam, so --max-chars is not silently dropped on the way to the provider.
+func TestCommandRunnerMessagesForwardsMaxChars(t *testing.T) {
+	stub := messagesRunnerScenario(protocol.MessagesResult{ProviderSessionID: "wa-1"})
+	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), io.Discard, io.Discard, "ep-1", "wa-1", 1234, false, ColorPolicy{})
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.maxChars) != 1 || stub.maxChars[0] != 1234 {
+		t.Fatalf("maxChars=%v", stub.maxChars)
+	}
+}
+
+// TestCommandRunnerMessagesReportsResultErrorCode proves a result carrying an
+// error code is a failure, not an empty conversation.
+//
+// The adapter reports a provider failure in the result rather than as a transport
+// error, so a runner that ignored the code would print "no messages recorded" for
+// a session it never read.
+func TestCommandRunnerMessagesReportsResultErrorCode(t *testing.T) {
+	stub := messagesRunnerScenario(protocol.MessagesResult{ProviderSessionID: "wa-1", ErrorCode: protocol.MessagesProviderError})
+	var out strings.Builder
+	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), &out, io.Discard, "ep-1", "wa-1", 0, false, ColorPolicy{})
+	if err == nil || !strings.Contains(err.Error(), protocol.MessagesProviderError) {
+		t.Fatalf("err=%v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("failed read wrote to stdout: %q", out.String())
+	}
+}
+
+// TestCommandRunnerMessagesRendersConversation proves the text form prints one
+// block per message with its role.
+func TestCommandRunnerMessagesRendersConversation(t *testing.T) {
+	stub := messagesRunnerScenario(protocol.MessagesResult{
+		ProviderSessionID: "wa-1",
+		MessageCount:      2,
+		Messages: []protocol.Message{
+			{Role: "user", Content: "first question"},
+			{Role: "assistant", Content: "second answer"},
+		},
+	})
+	var out strings.Builder
+	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), &out, io.Discard, "ep-1", "wa-1", 0, false, ColorPolicy{})
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	rendered := out.String()
+	for _, fragment := range []string{"[1] user", "[2] assistant", "first question", "second answer"} {
+		if !strings.Contains(rendered, fragment) {
+			t.Fatalf("rendered output missing %q: %s", fragment, rendered)
+		}
+	}
+}
+
+// TestCommandRunnerMessagesJSONMode proves --json emits the machine document
+// instead of the rendered text, so a script never parses prose.
+func TestCommandRunnerMessagesJSONMode(t *testing.T) {
+	stub := messagesRunnerScenario(protocol.MessagesResult{
+		ProviderSessionID: "wa-1",
+		MessageCount:      1,
+		Messages:          []protocol.Message{{Role: "user", Content: "only message"}},
+	})
+	var out strings.Builder
+	err := (CommandRunner{API: stub, Policy: LegacyPolicy}).Messages(context.Background(), &out, io.Discard, "ep-1", "wa-1", 0, true, ColorPolicy{})
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	var decoded MessagesView
+	if err := json.Unmarshal([]byte(out.String()), &decoded); err != nil {
+		t.Fatalf("json mode must emit one document: %v output=%s", err, out.String())
+	}
+	if decoded.EndpointID != "ep-1" || decoded.ProviderSessionID != "wa-1" || len(decoded.Rows) != 1 {
+		t.Fatalf("decoded=%+v", decoded)
+	}
+	if strings.Contains(out.String(), "[1] user") {
+		t.Fatalf("json mode must not render prose: %s", out.String())
 	}
 }

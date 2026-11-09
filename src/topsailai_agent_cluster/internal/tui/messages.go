@@ -155,12 +155,18 @@ func (r CommandRunner) Messages(ctx context.Context, out, errors io.Writer, targ
 	if !ok {
 		return fmt.Errorf("messages is unavailable: this client cannot read provider conversations")
 	}
-	endpoint, err := resolveHistoryEndpoint(ctx, r.API, target)
-	if err != nil {
-		return err
+	// The blank-target check runs before endpoint resolution, because the shared
+	// resolver reports its own command name. Delegating first would tell the
+	// operator to run "history" when they typed "messages".
+	if strings.TrimSpace(target) == "" {
+		return fmt.Errorf("usage: messages <endpoint-id-or-hostname> <session-id>")
 	}
 	if strings.TrimSpace(sessionID) == "" {
 		return fmt.Errorf("usage: messages <endpoint-id-or-hostname> <session-id>")
+	}
+	endpoint, err := resolveHistoryEndpoint(ctx, r.API, target)
+	if err != nil {
+		return err
 	}
 	result, err := querier.GetMessages(ctx, endpoint.EndpointID, sessionID, maxChars)
 	if err != nil {
