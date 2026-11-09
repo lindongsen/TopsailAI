@@ -51,10 +51,12 @@ symlink in `/usr/local/sbin`, which is on the default `PATH`:
   run/                          pid files             (created at runtime)
 ```
 
-The binary package owns the program payload and creates the five layout directories so the tree is
-complete after an install. The config package owns `conf/` and `certs/` and creates only those two,
-because two packages claiming one directory makes `dpkg` report a file conflict on a path neither of
-them actually populates. State, logs and pid files are created at runtime and belong to no package.
+The binary package owns the program payload and declares all six layout directories (`bin/`, `conf/`,
+`certs/`, `data/`, `logs/`, `run/`) so the tree is complete after an install. The config package
+declares only `conf/` and `certs/`, the two directories it actually populates. Two packages may
+declare the same directory: `dpkg` reports a conflict only when they ship the same file, so the
+overlap on `conf/` and `certs/` is intentional and harmless. State, logs and pid files are created at
+runtime and belong to no package.
 
 Configuration, TLS material, state, logs and pid files are real directories, not symlinks into
 `/etc`, `/var/lib`, `/var/log` and `/run`. A symlinked layout silently redirects a write to whatever

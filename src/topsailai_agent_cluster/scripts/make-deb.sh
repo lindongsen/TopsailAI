@@ -300,10 +300,11 @@ function add_layout_dirs() {
     add_dir "${OPT_DIR}/run" 0755
 }
 
-# Adds only the directories the config package owns. State, logs and pid files
-# belong to the binary package, so a config package must not claim them: two
-# packages owning one directory makes dpkg report a file conflict on a path that
-# neither of them actually populates.
+# Adds only the directories the config package populates. State, logs and pid
+# files belong to the binary package, so a config package does not claim them.
+# Declaring conf/ and certs/ in both packages is intentional: dpkg reports a
+# conflict only when two packages ship the same file, not when they share a
+# directory.
 function add_config_layout_dirs() {
     add_dir "${OPT_DIR}/conf" 0755
     add_dir "${OPT_DIR}/certs" 0755
