@@ -52,12 +52,27 @@ cat README.md | topsailai_count_tokens
 | `--text <text>` | Raw text to count tokens for. Use `-` to read the text from stdin. Mutually exclusive with `--file` and positional file arguments. |
 | `--file <path>` | Path to a single file to count. Use `-` to read from stdin. Mutually exclusive with `--text` and positional file arguments. |
 | `--encoding <name>` | Tiktoken encoding name (default: `cl100k_base`). |
+| `--json` | Emit one structured JSON result instead of bare numbers. |
 | `files` | Positional arguments: one or more file paths to count. Use `-` to read from stdin. |
 
 ## Output
 
 - For `--text`, `--file` (including `-`), or no input argument, prints a single integer token count.
 - For multiple positional files, prints one line per file: `<count> <path>`. When `-` is used as a path, it is printed as `-`.
+
+With `--json`, the command prints exactly one JSON object instead of those lines:
+
+```json
+{"encoding": "cl100k_base", "source": "text", "count": 2, "results": null}
+```
+
+`source` is `text` for a literal `--text` value, `file` for a single `--file` path, `stdin` for any input read from standard input (`--text -`, `--file -`, or the implicit stdin fallback), and `files` for positional file arguments. `count` carries the single token count for the first three sources and is `null` for `files`, where `results` holds one entry per positional argument instead:
+
+```json
+{"encoding": "cl100k_base", "source": "files", "count": null, "results": [{"path": "a.txt", "count": 2, "error": null}, {"path": "missing.txt", "count": null, "error": "file_not_found"}]}
+```
+
+Each `results` entry contains `path` as the caller wrote it, `count` as the token count or `null`, and `error` as `null` or `file_not_found`. A missing file therefore stays a per-entry error while stdout remains one valid JSON document, and the exit code is still `1`. Usage errors keep stdout empty and report on stderr in both modes.
 
 ## Exit Codes
 
@@ -91,4 +106,8 @@ cat README.md | topsailai_count_tokens --file -
 
 # Use a different encoding
 topsailai_count_tokens --encoding o200k_base --file README.md
+
+# Emit one structured JSON result
+topsailai_count_tokens --text "hello world" --json
+topsailai_count_tokens README.md docs/*.md --json
 ```

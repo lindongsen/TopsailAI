@@ -3,6 +3,7 @@
 """Unit tests for topsailai_count_tokens.py."""
 
 import io
+import json
 import os
 import sys
 from pathlib import Path
@@ -428,3 +429,158 @@ class TestCountTokensCLI:
         assert code == 0
         assert captured.out.strip() == "0 -"
         assert captured.err == ""
+
+
+class TestCountTokensJSON:
+    """Tests for the structured ``--json`` output mode."""
+
+    def test_json_text(self, capsys):
+        """``--text --json`` emits one object describing the text source."""
+        with patch.object(
+            sys, "argv", ["topsailai_count_tokens", "--text", "hello world", "--json"]
+        ):
+            code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        payload = json.loads(captured.out)
+        assert payload == {
+            "encoding": "cl100k_base",
+            "source": "text",
+            "count": 2,
+            "results": None,
+        }
+        assert captured.err == ""
+
+    def test_json_file(self, tmp_path, capsys):
+        """``--file --json`` emits one object describing the file source."""
+        file_path = tmp_path / "sample.txt"
+        file_path.write_text("hello world", encoding="utf-8")
+
+        with patch.object(
+            sys,
+            "argv",
+            ["topsailai_count_tokens", "--file", str(file_path), "--json"],
+        ):
+            code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        payload = json.loads(captured.out)
+        assert payload["source"] == "file"
+        assert payload["count"] == 2
+        assert payload["results"] is None
+        assert captured.err == ""
+
+    def test_json_stdin_implicit(self, capsys):
+        """Implicit stdin with ``--json`` reports the stdin source."""
+        stdin = io.StringIO("hello world")
+        with patch.object(sys, "stdin", stdin):
+            with patch.object(
+                sys, "argv", ["topsailai_count_tokens", "--json"]
+            ):
+                code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        payload = json.loads(captured.out)
+        assert payload["source"] == "stdin"
+        assert payload["count"] == 2
+        assert captured.err == ""
+
+    def test_json_text_dash_reads_stdin(self, capsys):
+        """``--text - --json`` reads stdin and reports the stdin source."""
+        stdin = io.StringIO("hello world")
+        with patch.object(sys, "stdin", stdin):
+            with patch.object(
+                sys, "argv", ["topsailai_count_tokens", "--text", "-", "--json"]
+            ):
+                code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        payload = json.loads(captured.out)
+        assert payload["source"] == "stdin"
+        assert payload["count"] == 2
+
+    def test_json_multiple_files(self, tmp_path, capsys):
+        """Multiple files with ``--json`` emit one object with a results array."""
+        file1 = tmp_path / "first.txt"
+        file2 = tmp_path / "second.txt"
+        file1.write_text("hello world", encoding="utf-8")
+        file2.write_text("another sample file content", encoding="utf-8")
+
+        with patch.object(
+            sys,
+            "argv",
+            ["topsailai_count_tokens", str(file1), str(file2), "--json"],
+        ):
+            code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        payload = json.loads(captured.out)
+        assert payload["source"] == "files"
+        assert payload["count"] is None
+        assert payload["results"] == [
+            {"path": str(file1), "count": 2, "error": None},
+            {"path": str(file2), "count": 4, "error": None},
+        ]
+        assert captured.err == ""
+
+    def test_json_multiple_files_with_missing_file(self, tmp_path, capsys):
+        """A missing file becomes a per-entry error while stdout stays valid JSON."""
+        existing = tmp_path / "existing.txt"
+        existing.write_text("hello world", encoding="utf-8")
+        missing = tmp_path / "missing.txt"
+
+        with patch.object(
+            sys,
+            "argv",
+            ["topsailai_count_tokens", str(existing), str(missing), "--json"],
+        ):
+            code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 1
+        payload = json.loads(captured.out)
+        assert payload["results"] == [
+            {"path": str(existing), "count": 2, "error": None},
+            {"path": str(missing), "count": None, "error": "file_not_found"},
+        ]
+        assert "file not found" in captured.err
+
+    def test_json_encoding_is_reported(self, capsys):
+        """The requested encoding is echoed in the JSON payload."""
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "topsailai_count_tokens",
+                "--text",
+                "hello world",
+                "--encoding",
+                "o200k_base",
+                "--json",
+            ],
+        ):
+            code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        payload = json.loads(captured.out)
+        assert payload["encoding"] == "o200k_base"
+
+    def test_json_usage_error_keeps_stdout_empty(self, capsys):
+        """An invalid argument combination reports on stderr only."""
+        with patch.object(
+            sys,
+            "argv",
+            ["topsailai_count_tokens", "--text", "hello", "file.txt", "--json"],
+        ):
+            code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 2
+        assert captured.out == ""
+        assert "cannot be used with positional file arguments" in captured.err

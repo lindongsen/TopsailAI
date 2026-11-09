@@ -4,6 +4,7 @@
 
 import argparse
 import os
+import json
 import sys
 
 import _import_topsailai
@@ -58,6 +59,11 @@ def parse_args() -> argparse.Namespace:
         default="cl100k_base",
         help="Tiktoken encoding name to use (default: cl100k_base).",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit one structured JSON result instead of bare numbers",
+    )
     return parser.parse_args()
 
 
@@ -80,6 +86,11 @@ def count_file(path: str, encoding: str) -> int:
     return count_tokens(text, encoding_name=encoding)
 
 
+def _emit_json(payload: dict) -> None:
+    """Print one structured JSON result instead of human-readable numbers."""
+    print(json.dumps(payload, ensure_ascii=True))
+
+
 def main() -> int:
     """Entry point for the token counting CLI."""
     args = parse_args()
@@ -92,7 +103,15 @@ def main() -> int:
             )
             return 2
         text = sys.stdin.read() if args.text == "-" else args.text
-        print(count_tokens(text, encoding_name=args.encoding))
+        token_count = count_tokens(text, encoding_name=args.encoding)
+        if args.json:
+            # ``--text -`` reads stdin, so it reports the same source label as
+            # ``--file -`` and the implicit stdin fallback.
+            source = "stdin" if args.text == "-" else "text"
+            _emit_json({"encoding": args.encoding, "source": source,
+                        "count": token_count, "results": None})
+            return 0
+        print(token_count)
         return 0
 
     if args.file is not None:
@@ -103,13 +122,23 @@ def main() -> int:
             )
             return 2
         if args.file == "-":
-            print(count_tokens(sys.stdin.read(), encoding_name=args.encoding))
+            token_count = count_tokens(sys.stdin.read(), encoding_name=args.encoding)
+            if args.json:
+                _emit_json({"encoding": args.encoding, "source": "stdin",
+                            "count": token_count, "results": None})
+                return 0
+            print(token_count)
             return 0
         file_path = resolve_path(args.file)
         if not os.path.isfile(file_path):
             print(f"Error: file not found: {args.file}", file=sys.stderr)
             return 1
-        print(count_file(file_path, args.encoding))
+        token_count = count_file(file_path, args.encoding)
+        if args.json:
+            _emit_json({"encoding": args.encoding, "source": "file",
+                        "count": token_count, "results": None})
+            return 0
+        print(token_count)
         return 0
 
     if not args.files:
@@ -121,24 +150,41 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
-        print(count_tokens(sys.stdin.read(), encoding_name=args.encoding))
+        token_count = count_tokens(sys.stdin.read(), encoding_name=args.encoding)
+        if args.json:
+            _emit_json({"encoding": args.encoding, "source": "stdin",
+                        "count": token_count, "results": None})
+            return 0
+        print(token_count)
         return 0
 
     exit_code = 0
+    results = []
     for path in args.files:
         if path == "-":
             text = sys.stdin.read()
             token_count = count_tokens(text, encoding_name=args.encoding)
-            print(f"{token_count} -")
+            if args.json:
+                results.append({"path": "-", "count": token_count, "error": None})
+            else:
+                print(f"{token_count} -")
             continue
         resolved = resolve_path(path)
         if not os.path.isfile(resolved):
             print(f"Error: file not found: {path}", file=sys.stderr)
             exit_code = 1
+            if args.json:
+                results.append({"path": path, "count": None, "error": "file_not_found"})
             continue
         token_count = count_file(resolved, args.encoding)
-        print(f"{token_count} {path}")
+        if args.json:
+            results.append({"path": path, "count": token_count, "error": None})
+        else:
+            print(f"{token_count} {path}")
 
+    if args.json:
+        _emit_json({"encoding": args.encoding, "source": "files",
+                    "count": None, "results": results})
     return exit_code
 
 

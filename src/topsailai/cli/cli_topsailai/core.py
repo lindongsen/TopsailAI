@@ -381,9 +381,12 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
     return 0
 
 
-def _handle_docs_list_subcommand(_args: argparse.Namespace) -> int:
+def _handle_docs_list_subcommand(args: argparse.Namespace) -> int:
     """Handle the non-interactive ``docs list`` subcommand."""
     docs = build_doc_list()
+    if getattr(args, "json_output", False):
+        print(json.dumps(docs, ensure_ascii=True))
+        return 0
     print_doc_table(docs)
     return 0
 
@@ -392,6 +395,9 @@ def _handle_docs_read_subcommand(args: argparse.Namespace) -> int:
     """Handle the non-interactive ``docs read <name>`` subcommand."""
     name = args.name
     result = resolve_doc(name)
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=True))
+        return 0 if result["status"] == "ok" else 1
     if result["status"] == "not_found":
         print(f"Doc not found: {name}")
         return 1
@@ -1734,12 +1740,16 @@ def main(argv: Optional[List[str]] = None) -> None:
         "list",
         help="list documentation files and exit",
     )
+    docs_list_parser.add_argument("--json", dest="json_output", action="store_true",
+                                  help="emit one structured JSON result")
     docs_list_parser.set_defaults(func=_handle_docs_list_subcommand)
     docs_read_parser = docs_subparsers.add_parser(
         "read",
         help="read a documentation file by folder/name.md or name and exit",
     )
     docs_read_parser.add_argument("name", help="documentation file name")
+    docs_read_parser.add_argument("--json", dest="json_output", action="store_true",
+                                  help="emit one structured JSON result")
     docs_read_parser.set_defaults(func=_handle_docs_read_subcommand)
 
     project_parser = subparsers.add_parser(

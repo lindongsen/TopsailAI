@@ -442,8 +442,8 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `workspace agent [<folder>] [-m MODE] [-b/--background] [--task MESSAGE] [--non-interactive] [--json]` | Launch a configured agent in the foreground; the folder defaults to the caller's working directory. `--task` supplies the initial user task so a fresh agent starts without manual input. Background defaults to raw and honors an explicit `-m raw|tmux|dtach`, failing closed with exit code 4 when that mechanism is unavailable. `--non-interactive` suppresses launcher prompts for this launch only. |
 | `workspace resume -s SESSION [-d DRIVER] [-m MODE] [-b/--background] [--json]` | Resume one exact persisted idle session; background success means submission rather than readiness. |
 | `workspace driver <start/status/stop> -s SESSION [-p PID] [--json]` | Start, inspect or stop one exact session driver; see below. |
-| `docs list` | List all usage documentation files and exit. |
-| `docs read <name>` | Read a specific usage documentation file and exit. |
+| `docs list [--json]` | List all usage documentation files and exit. `--json` outputs a JSON array of document records instead of a table. |
+| `docs read <name> [--json]` | Read a specific usage documentation file and exit. `--json` outputs one structured result object instead of the raw content. |
 | `project add <path> [name]` | Add a project to the managed project list. |
 | `project del <path>` | Remove a project from the managed project list. |
 | `project list [--json]` | Display all managed projects; `--json` outputs a JSON array instead of a table. |
@@ -458,6 +458,10 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `models current` | Show the workspace model selection. |
 | `models select <number-or-name>` | Set the workspace default model selection. |
 | `models clear` | Clear the workspace model selection. |
+
+The `docs list --json` document is a JSON array of document records, ordered oldest-first by creation time. Each record contains `row_number`, `folder`, `rel_path`, `path`, `title`, `size_bytes`, and `created`. `row_number` is the 1-based row number that matches the table row, so a caller can pass it to the interactive doc browser. An empty documentation folder returns `[]` and exit code `0`.
+
+The `docs read --json` document is one result object containing `status`, `content`, `path`, `rel_path`, and `options`. `status` is `ok`, `not_found`, or `conflict`. `content` is the document text for `ok` and `null` otherwise. `options` lists the candidate `folder/name.md` paths for `conflict` and is `null` otherwise. Exit code is `0` for `ok` and `1` for `not_found` or `conflict`, so a caller never has to distinguish an error message from document content on stdout.
 
 The JSON workspace document contains `host`, `pwd`, `home`, `task_dir`, `items`, and `total`. Each item contains `no`, `filename`, `session_name`, `session_id`, `is_task`, `pid`, `process_generation`, `status`, `completed`, `driver`, `created_at`, `project_workspace`, and `hostname`. `session_name`, `project_workspace`, and `pid` follow the same primary-then-metadata resolution documented in [Field resolution and metadata fallback](#field-resolution-and-metadata-fallback), so `pid` may be the metadata PID of an exited row. `hostname` is the origin host recorded in the row's exact metadata record, which lets callers distinguish sessions that appear in a task directory shared between several hosts or containers; it is the raw stored value, so it is `""` when the record is absent or the stored value is not a string, and the local hostname is never substituted for a missing value. The document-level `host` is the host running the CLI, so `hostname` and `host` differ for a row produced elsewhere. `hostname` is display evidence only and grants no signal authority. `process_generation` is the positive operating-system process generation required by non-interactive `workspace kill`; it is present only when an ordinary session process is currently verified to hold that exact session stdout file, and otherwise is `null`. A non-null `pid` therefore never implies signal authority, and callers must not substitute a PID, timestamp, row number, or older generation. `created_at` is the local creation time in ISO 8601 format with a timezone offset (`YYYY-MM-DDTHH:MM:SS+/-HHMM`), or `null` when the creation time is unavailable. Items retain the default oldest-first order. An empty workspace returns `"items": []` and `"total": 0`.
 
@@ -496,6 +500,12 @@ topsailai workspace list -s 20261107021807,20261107023139 --json
 
 # Read a specific usage documentation file
 ./topsailai_cli.py docs read topsailai.md
+
+# List usage documentation files as JSON
+./topsailai_cli.py docs list --json
+
+# Read a usage documentation file as JSON
+./topsailai_cli.py docs read topsailai.md --json
 
 # Add the current directory to the managed project list
 ./topsailai_cli.py project add .
