@@ -18,12 +18,17 @@ type interactiveHistoryStub struct {
 	history      map[string]protocol.HistoryResult
 	historyEr    map[string]error
 	historyCalls []string
+	// historyLimits records the caller limit of every interactive read. The REPL
+	// always passes zero, so a non-zero value would mean the surface narrowed a
+	// table the operator selects rows from.
+	historyLimits []int
 }
 
 // GetHistory records the queried endpoint so a test can prove which endpoint the
 // interactive surface addressed.
-func (s *interactiveHistoryStub) GetHistory(_ context.Context, endpointID string) (protocol.HistoryResult, error) {
+func (s *interactiveHistoryStub) GetHistory(_ context.Context, endpointID string, limit int) (protocol.HistoryResult, error) {
 	s.historyCalls = append(s.historyCalls, endpointID)
+	s.historyLimits = append(s.historyLimits, limit)
 	if err := s.historyEr[endpointID]; err != nil {
 		return protocol.HistoryResult{}, err
 	}
@@ -461,5 +466,158 @@ func TestInteractiveResumeWithoutHistoryNamespaceExplainsTheFix(t *testing.T) {
 	}
 	if stub.admit != 0 {
 		t.Fatalf("history-less resume admitted %d commands", stub.admit)
+	}
+}
+
+// TestInteractiveHistoryRowNumberRejectedInSessionScope proves a bare number in
+// session scope reports the scope error instead of resolving against the history
+// table. The call is direct because the guard itself is under test: a dispatch
+// layer that happens to reject the number first would hide a missing guard.
+func TestInteractiveHistoryRowNumberRejectedInSessionScope(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{
+			{ProviderSessionID: "wa-live", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning},
+			{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"},
+		},
+		historyReport(historyLiveSession("res-live", "wa-live", "gen-1")),
+	)
+	state := &interactiveState{}
+	state.Scope = ScopeState{Kind: ScopeSession, EndpointID: "endpoint-1", SessionID: "res-live", Generation: "gen-1"}
+	state.history = &historyNamespace{
+		EndpointID: "endpoint-1",
+		Rows:       map[int]HistoryViewRow{1: {No: 1, EndpointID: "endpoint-1", ProviderSessionID: "wa-live", Joined: true, Live: true, ResourceID: "res-live", Generation: "gen-1"}},
+	}
+
+	err := cdHistoryRowNumber(state, stub, context.Background(), 1)
+	want := "row-number navigation is unavailable in session scope; use cd .. or cd <session>"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err=%v, want %q", err, want)
+	}
+	if state.Scope.Kind != ScopeSession {
+		t.Fatalf("scope=%v, want the session scope to be unchanged", state.Scope.Kind)
+	}
+}
+
+// TestInteractiveHistoryNamespaceClearedAfterEnteringSession proves the history
+// row numbers do not survive the transition into a session, so a later number can
+// never address a table the operator can no longer see.
+func TestInteractiveHistoryNamespaceClearedAfterEnteringSession(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{
+			{ProviderSessionID: "wa-live", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning},
+			{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"},
+		},
+		historyReport(historyLiveSession("res-live", "wa-live", "gen-1")),
+	)
+	state := &interactiveState{}
+	state.history = &historyNamespace{
+		EndpointID: "endpoint-1",
+		Rows:       map[int]HistoryViewRow{1: {No: 1, EndpointID: "endpoint-1", ProviderSessionID: "wa-live", Joined: true, Live: true, ResourceID: "res-live", Generation: "gen-1"}},
+	}
+
+	if err := cdHistoryRowNumber(state, stub, context.Background(), 1); err != nil {
+		t.Fatalf("cdHistoryRowNumber: %v", err)
+	}
+	if state.Scope.Kind != ScopeSession {
+		t.Fatalf("scope=%v, want session scope", state.Scope.Kind)
+	}
+	if state.history != nil {
+		t.Fatalf("history namespace survived the session transition: %#v", state.history)
+	}
+}
+
+// TestInteractiveHistoryCDRejectsAmbiguousRow proves an ambiguous row is refused
+// with the real cause. The inventory answered, so telling the operator to refresh
+// would send them to a remedy that cannot disambiguate the data.
+func TestInteractiveHistoryCDRejectsAmbiguousRow(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport())
+	state := &interactiveState{}
+	state.history = &historyNamespace{
+		EndpointID: "endpoint-1",
+		Rows:       map[int]HistoryViewRow{1: {No: 1, EndpointID: "endpoint-1", ProviderSessionID: "wa-dup", Ambiguous: true}},
+	}
+
+	err := cdHistoryRowNumber(state, stub, context.Background(), 1)
+	if err == nil {
+		t.Fatal("an ambiguous row must not be entered")
+	}
+	if !strings.Contains(err.Error(), "is ambiguous") {
+		t.Fatalf("err=%v, want an ambiguity error", err)
+	}
+	if strings.Contains(err.Error(), "refresh") {
+		t.Fatalf("err=%v, must not offer a refresh that cannot disambiguate", err)
+	}
+	if state.Scope.Kind == ScopeSession {
+		t.Fatalf("scope=%v, an ambiguous row must not be entered", state.Scope.Kind)
+	}
+}
+
+// TestInteractiveResumeRejectsAmbiguousRow proves an ambiguous row is never
+// resumed. The inventory reported live sessions for the same provider session ID,
+// so resuming would start a second runtime for a session that is already running.
+func TestInteractiveResumeRejectsAmbiguousRow(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport())
+	state := &interactiveState{}
+	state.history = &historyNamespace{
+		EndpointID: "endpoint-1",
+		Rows: map[int]HistoryViewRow{1: {
+			No:                1,
+			EndpointID:        "endpoint-1",
+			ProviderSessionID: "wa-dup",
+			Ambiguous:         true,
+			Resumable:         true,
+			ResumeResourceID:  "res-dup",
+		}},
+	}
+
+	// A closed channel makes the confirmation path return immediately, so the test
+	// observes the guard under test instead of blocking on an interactive prompt.
+	lines := make(chan lineReadResult)
+	close(lines)
+	err := interactiveResume(context.Background(), stub, state, "1", lines, io.Discard, io.Discard, InteractiveOptions{})
+	if err == nil {
+		t.Fatal("an ambiguous row must not be resumed")
+	}
+	if !strings.Contains(err.Error(), "is ambiguous") {
+		t.Fatalf("err=%v, want an ambiguity error", err)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("ambiguous resume admitted %d commands", stub.admit)
+	}
+}
+
+// TestInteractiveHistoryRejectsOfflineEndpoint proves endpoint scope revalidates
+// connectivity at query time, not at entry time.
+//
+// Entering an endpoint does not require it to be online, so an endpoint can be
+// entered while connected and disconnect before the history query is dispatched.
+// The query therefore resolves the endpoint again instead of trusting the scope.
+func TestInteractiveHistoryRejectsOfflineEndpoint(t *testing.T) {
+	stub := historyScenarioStub([]protocol.HistoryRow{{ProviderSessionID: "wa-past", Resumable: true}}, historyReport())
+	stub.interactiveStub.endpoints[0].ConnectionState = "offline"
+
+	_, diagnostics := runScope(t, stub, "cd host-one/endpoint-1\nhistory\nexit\n", ColorPolicy{})
+	want := `endpoint "endpoint-1" is not online: connection_state=offline`
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+	if len(stub.historyCalls) != 0 {
+		t.Fatalf("offline endpoint reached the history API: %v", stub.historyCalls)
+	}
+}
+
+// TestInteractiveHistoryReadsWholeProviderWindow proves the REPL never narrows a
+// history read. An operator selects a row from what is rendered, so a hidden limit
+// would make a row unreachable with no way to ask for it.
+func TestInteractiveHistoryReadsWholeProviderWindow(t *testing.T) {
+	stub := historyScenarioStub([]protocol.HistoryRow{
+		{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"},
+	}, historyReport())
+
+	if _, diagnostics := runScope(t, stub, "history endpoint-1\nexit\n", ColorPolicy{}); diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if len(stub.historyLimits) != 1 || stub.historyLimits[0] != 0 {
+		t.Fatalf("limits=%v want=[0]", stub.historyLimits)
 	}
 }

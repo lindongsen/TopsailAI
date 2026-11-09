@@ -334,6 +334,36 @@ func TestHelpAndQuitRemainAvailableInEveryScope(t *testing.T) {
 	}
 }
 
+// TestCompletableCommandsAddOnlyMultiCharacterAliases proves completion offers
+// every canonical command plus each alias that is genuinely partial while it is
+// typed. A one-character alias is already complete, so offering it would only
+// turn a unique completion into a false ambiguity.
+func TestCompletableCommandsAddOnlyMultiCharacterAliases(t *testing.T) {
+	for _, testCase := range []struct {
+		kind ScopeKind
+		want string
+	}{
+		{ScopeWorkspace, "list, endpoints, cd, show, info, start, resume, stop, drive, status, refresh, watch, history, help, quit, exit"},
+		{ScopeEndpoint, "list, cd, show, info, start, resume, stop, drive, logs, status, refresh, watch, history, help, quit, exit"},
+		{ScopeSession, "list, cd, show, info, stop, btw, interrupt, ctl, drive, logs, send, status, refresh, help, quit, exit, control"},
+	} {
+		t.Run(testCase.kind.String(), func(t *testing.T) {
+			if got := strings.Join(completableCommands(testCase.kind), ", "); got != testCase.want {
+				t.Fatalf("completableCommands(%s)=%q want %q", testCase.kind, got, testCase.want)
+			}
+		})
+	}
+	// Every canonical command stays completable, so the alias set is additive.
+	for _, kind := range []ScopeKind{ScopeWorkspace, ScopeEndpoint, ScopeSession} {
+		completable := completableCommands(kind)
+		for _, name := range availableCommands(kind) {
+			if !containsCommand(completable, name) {
+				t.Fatalf("scope=%s lost canonical command %q", kind, name)
+			}
+		}
+	}
+}
+
 func TestAvailableCommandsUseStableOrder(t *testing.T) {
 	cases := []struct {
 		kind ScopeKind
@@ -341,7 +371,7 @@ func TestAvailableCommandsUseStableOrder(t *testing.T) {
 	}{
 		{kind: ScopeWorkspace, want: "list, endpoints, cd, show, info, start, resume, stop, drive, status, refresh, watch, history, help, quit, exit"},
 		{kind: ScopeEndpoint, want: "list, cd, show, info, start, resume, stop, drive, logs, status, refresh, watch, history, help, quit, exit"},
-		{kind: ScopeSession, want: "list, cd, show, info, stop, inject, interrupt, ctl, drive, logs, send, status, refresh, help, quit, exit"},
+		{kind: ScopeSession, want: "list, cd, show, info, stop, btw, interrupt, ctl, drive, logs, send, status, refresh, help, quit, exit"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.kind.String(), func(t *testing.T) {

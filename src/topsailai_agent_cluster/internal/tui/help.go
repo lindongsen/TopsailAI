@@ -40,8 +40,8 @@ var commandHelpCatalog = map[string]commandHelp{
 	"start":     {"start <endpoint> <resource> [--profile <id>] [--profile-revision <revision>] [--folder <path>] [--task <text>]", "start an agent through the selected endpoint; interactive mode executes directly and does not support --json", []string{"endpoint: endpoint ID", "resource: compatibility resource identifier", "--profile: launch profile ID (required)", "--profile-revision: launch profile revision (required)", "--folder: optional working folder; empty value is treated as omitted", "--task: optional literal initial task text; no JSON is required", "without --task and without a positional task: read a multi-line task and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the task, and the accepted task is echoed verbatim with colour so it can be verified before submission", "an empty multi-line task is rejected instead of submitting nothing", "--json: rejected in interactive mode"}, []string{"start", "start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1", `start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1 --task "summarize the open issues"`}},
 	"resume":    {"resume [row]", "resume a stopped session selected from the history table; the endpoint must prove from a complete fresh inventory that the session has no live generation", []string{"row: bare history row number from the most recently rendered history table; required, because resume authorizes on a proven absence rather than on a live generation", "a live row is rejected instead of resumed; run history again to refresh the row numbers", "a read-only row, or a row the adapter reports as non-resumable, is rejected with the adapter's reason", "--json: rejected in interactive mode"}, []string{"resume 3"}},
 	"stop":      {"stop [session]", "stop a session after confirmation; session scope stops the selected session", []string{"session: optional session/resource ID, provider session ID, or a bare list row number; required outside session scope and rejected inside it", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID", "workspace scope resolves the row's own endpoint; a token matching sessions on several endpoints is rejected", "--json: rejected in interactive mode"}, []string{"stop", "stop 1", "stop res_abc"}},
-	"inject":    {"inject [text]", "inject context into the selected session; a bare inject reads a multi-line context block", []string{"text: literal context text; no JSON is required", "without text: read a multi-line context block and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the context", "an empty multi-line context block is rejected instead of submitting nothing", "--json: rejected in interactive mode"}, []string{"inject the deployment notes are in docs/", `inject {"text":"context"}`}},
-	"interrupt": {"interrupt [soft|hard] [message]", "request a soft or hard execution interrupt for the selected session", []string{"soft: soft interrupt, optionally followed by a literal message; empty input prompts for the action", "hard: hard interrupt; accepts no message", "--json: rejected in interactive mode"}, []string{"interrupt", "interrupt soft stop and summarize now", "interrupt hard"}},
+	"btw":       {"btw [text]", "inject context into the selected session; a bare btw reads a multi-line context block", []string{"text: literal context text; no JSON is required", "without text: read a multi-line context block and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the context", "an empty multi-line context block is rejected instead of submitting nothing", "--json: rejected in interactive mode"}, []string{"btw the deployment notes are in docs/", `btw {"text":"context"}`}},
+	"interrupt": {"interrupt [soft|hard] [message]", "request a soft or hard execution interrupt for the selected session", []string{"soft: soft interrupt, optionally followed by a literal message", "hard: hard interrupt; accepts no message; this is the default when no action word is given", "--json: rejected in interactive mode"}, []string{"interrupt", "interrupt soft stop and summarize now", "interrupt hard"}},
 	"ctl":       {"ctl [action] [key=value ...] | ctl.<action> [key=value ...]", "send one provider control action to the selected session; the action list is rendered from the capabilities the endpoint advertises, so an unsupported action is never offered", []string{"action: advertised control action name, or its number in the rendered list; empty prompts for the action", "ctl.<action>: dotted spelling that names the action in the command word, so the action prompt is skipped", "key=value: optional parameters separated by spaces; empty sends no parameters, and a bare word without = is rejected", "a value is read as a JSON scalar when it is one, so 300 is a number and true is a boolean; wrap it in double quotes to send the literal text", "when no parameter is supplied the prompt asks for them, so no JSON document is ever typed in interactive mode", "the action is a mutating request and needs explicit confirmation", "--json: rejected in interactive mode"}, []string{"ctl", "ctl heartbeat", "ctl.heartbeat", "ctl pause reason=maintenance", `ctl.pause reason=maintenance timeout_seconds=300`}},
 	"drive":     {"drive [start|stop|status] [session]", "manage the resident driver of one session; a driver injects input on the operator's behalf and is not the agent, so drive stop leaves the agent running", []string{"start: start a driver for the target session; the driver runs autonomously and needs explicit confirmation", "stop: stop only the driver controller; the agent keeps running", "status: report the standard drive state from the persisted inventory; it never probes the provider", "an omitted action reports status, so a bare drive never mutates anything", "session: optional session/resource ID, provider session ID, or a bare list row number; required outside session scope and rejected inside it", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID", "workspace scope resolves the row's own endpoint; a token matching sessions on several endpoints is rejected", "--json: rejected in interactive mode"}, []string{"drive", "drive 1", "drive res_abc", "drive status 1", "drive start 1", "drive stop res_abc"}},
 	"logs":      {"logs [-n <lines>] [-f|--follow] [session]", "show bounded output for a session in the current endpoint, or stream it until a key is pressed", []string{"-n, --lines: maximum number of trailing output lines to show; defaults to the REPL budget, which is 0300 unless the startup --lines option set 0100-1000", "-f, --follow: stream new output records until any key is pressed; the stream is bound to the session generation resolved now, so a replaced session is never followed", "session: optional session/resource ID, provider session ID, or a bare list row number; defaults to the current session", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID"}, []string{"logs", "logs -n 0250", "logs 1", "logs res_abc", "logs -f", "logs --follow 1"}},
@@ -114,7 +114,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"logs":      "show current session output, or another session in this endpoint; -n <lines> bounds the trailing lines and -f streams until a key is pressed",
 		"send":      "send a message to the current session; an explicit text submits directly, and a bare send asks for confirmation; unrecognized text offers this action",
 		"stop":      "stop the current session",
-		"inject":    "inject context into the current session",
+		"btw":       "inject context into the current session",
 		"interrupt": "interrupt the current session",
 		"drive":     "manage the current session driver; drive stop leaves the agent running",
 		"status":    "explicit ID: command result; omitted: last submitted command, otherwise current session state",
@@ -228,12 +228,12 @@ func CommandHelpLines() []string {
 	return formatHelpBlock(cells, descriptions)
 }
 
-var nonInteractiveHelpOrder = []string{"list", "refresh", "history", "endpoints", "show", "info", "logs", "status", "send", "btw", "control", "ctl", "exec", "start", "resume", "stop", "drive", "help", "interactive"}
+var nonInteractiveHelpOrder = []string{"list", "refresh", "history", "endpoints", "show", "info", "logs", "status", "send", "btw", "interrupt", "ctl", "exec", "start", "resume", "stop", "drive", "help", "interactive"}
 
 // nonInteractiveHelpAliases maps accepted standalone spellings to the advertised
 // command. The advertised list keeps one spelling per surface, while an accepted
 // alias still resolves to the same detailed help.
-var nonInteractiveHelpAliases = map[string]string{"inject": "btw"}
+var nonInteractiveHelpAliases = map[string]string{"control": "ctl"}
 
 // NonInteractiveCommandHelpLines returns only commands dispatched by the standalone CLI.
 func NonInteractiveCommandHelpLines() []string {
@@ -328,29 +328,43 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		// argument and writes the joined document instead of a numbered table.
 		entry.syntax = "agent-cluster-cli [options] history <endpoint-id-or-hostname>"
 		entry.description = "read bounded provider session history for one endpoint; the result is a live provider read, never a persisted projection"
-		entry.parameters = []string{"endpoint-id-or-hostname: endpoint to query; a hostname shared by several endpoints is rejected with the candidate list", "--json: write the joined history document instead of the rendered table"}
+		entry.parameters = []string{"endpoint-id-or-hostname: endpoint to query; a hostname shared by several endpoints is rejected with the candidate list", "--limit: maximum number of history rows returned; 0 keeps the provider's own window and a positive value never raises it", "--json: write the joined history document instead of the rendered table"}
 		entry.examples = []string{"history endpoint-1", "history ai-dev"}
 	case "endpoints":
 		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] endpoints [endpoint-id]"
 	case "send":
+		// The standalone entry replaces the interactive parameter list instead of
+		// appending to it. The catalog entry rejects --json because the REPL has no
+		// machine output, and appending would also repeat the "without text"
+		// parameter that the catalog already states.
 		entry.syntax = "agent-cluster-cli [options] send <endpoint> <resource> [text] [generation]"
 		entry.description = "send a message to one session; without text it reads a multi-line message from stdin"
-		entry.parameters = append(entry.parameters, "without text: read a multi-line message from stdin and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the message")
+		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID", "text: message text, or a JSON object with a text field; an explicit text is submitted without a confirmation question", "without text: read a multi-line message from stdin and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the message", "generation: optional expected generation", "--json: write the structured receipt instead of the rendered one"}
 	case "btw":
+		// btw is the only spelling of context injection, so the standalone entry
+		// replaces the interactive parameter list instead of appending to it. The
+		// catalog entry rejects --json because the REPL has no machine output, and
+		// appending would also repeat the "without text" parameter that the
+		// catalog already states.
 		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [text] [generation]"
-		entry.parameters = append(entry.parameters, "without text: read a multi-line context block from stdin and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the context")
-	case "control":
+		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID", "text: literal context text; no JSON is required", "without text: read a multi-line context block from stdin and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the context", "generation: optional expected generation", "--json: write the structured receipt instead of the rendered one"}
+		entry.examples = []string{"btw endpoint-1 res_abc the deployment notes are in docs/", `btw endpoint-1 res_abc {"text":"context"}`}
+	case "interrupt":
+		// interrupt is the only spelling of execution interruption, so the
+		// standalone entry replaces the interactive parameter list instead of
+		// appending to it. The catalog entry rejects --json because the REPL has
+		// no machine output, while the standalone surface accepts it.
 		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [text] [generation]"
-		// The catalog entry is the interactive spelling, so its parameters and
-		// examples describe the REPL form: an action word followed by free text,
-		// with --json rejected. The standalone surface separates the payload by
-		// argv position and accepts --json, so both lists are replaced instead of
-		// inherited. An example that names "interrupt" would be unusable here,
-		// because the standalone CLI rejects that spelling as an unknown command.
-		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID", "text: optional action word soft or hard, optionally followed by a literal message; hard accepts no message", "generation: optional expected generation", "--yes: confirm the interrupt, which is required because it cannot be undone", "--json: write the structured receipt instead of the rendered one"}
-		entry.examples = []string{"control endpoint-1 res_abc soft", "control endpoint-1 res_abc soft stop and summarize now", "control endpoint-1 res_abc hard"}
+		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID", "text: optional action word soft or hard, optionally followed by a literal message; hard accepts no message and is the default when no action word is given", "generation: optional expected generation", "--yes: confirm the interrupt, which is required because it cannot be undone", "--json: write the structured receipt instead of the rendered one"}
+		entry.examples = []string{"interrupt endpoint-1 res_abc", "interrupt endpoint-1 res_abc soft", "interrupt endpoint-1 res_abc soft stop and summarize now", "interrupt endpoint-1 res_abc hard"}
 	case "ctl":
 		entry.syntax = "agent-cluster-cli [options] ctl <endpoint> <resource> <action> [json] [generation]"
+		// The catalog entry is the interactive spelling, so its parameters
+		// describe the REPL form and reject --json. The standalone surface
+		// separates the payload by argv position and accepts --json, so both
+		// lists are replaced instead of inherited.
+		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID", "action: advertised control action name", "json: optional JSON object payload; empty sends no parameters", "generation: optional expected generation", "--yes: confirm the control action, which is required because it mutates the session", "--json: write the structured receipt instead of the rendered one"}
+		entry.examples = []string{"ctl endpoint-1 res_abc heartbeat", `ctl endpoint-1 res_abc pause {"reason":"maintenance"}`}
 	case "exec":
 		// exec is a standalone-only spelling: it has no interactive command word
 		// because the interactive form is the "!" input prefix. It therefore has
@@ -426,7 +440,7 @@ func helpTarget(target string) string {
 // helpSpelling returns the spelling the operator typed, normalized the same way
 // helpTarget normalizes it but without alias canonicalization. An alias must
 // answer with the name the operator used, so "help btw" is headed "btw" rather
-// than the canonical "inject" it resolves to.
+// than the canonical command it resolves to.
 func helpSpelling(target string) string {
 	return trimCommandPrefix(strings.ToLower(strings.TrimSpace(target)))
 }
@@ -557,6 +571,9 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 			return err
 		}
 	}
+	if _, err := fmt.Fprintln(out, "\nAliases: "+scopeAliasHelp(kind)); err != nil {
+		return err
+	}
 	workflow := "Next: list -> <number> or cd <number> -> show/logs. Run help list for row selection rules."
 	if kind == ScopeSession {
 		workflow = "Bare cd or cd / returns to workspace; cd .. returns to endpoint. Numeric row navigation is unavailable in session scope.\n" +
@@ -615,6 +632,21 @@ func commandAliasHelp() string {
 	aliases := make([]string, 0, len(commandAliases))
 	for alias, canonical := range commandAliases {
 		aliases = append(aliases, alias+"="+canonical)
+	}
+	sort.Strings(aliases)
+	return strings.Join(aliases, ", ")
+}
+
+// scopeAliasHelp renders the aliases usable in one scope, so the first-use
+// overview names them instead of hiding them until help all. An alias outside
+// the current scope is omitted, because advertising a spelling the scope rejects
+// would send the operator straight into a scope error.
+func scopeAliasHelp(kind ScopeKind) string {
+	aliases := make([]string, 0, len(commandAliases))
+	for alias, canonical := range commandAliases {
+		if commandAllowed(alias, kind) {
+			aliases = append(aliases, alias+"="+canonical)
+		}
 	}
 	sort.Strings(aliases)
 	return strings.Join(aliases, ", ")
@@ -703,17 +735,13 @@ func scopedHelpEntry(name string, kind ScopeKind) commandHelp {
 		entry.parameters = []string{"command-id: optional submitted command identifier", "without an ID: last submitted command takes precedence over current session state"}
 		entry.examples = []string{"status", "status cmd_123"}
 	}
-	if name == "send" || name == "inject" {
+	if name == "send" || name == "btw" {
 		// The REPL takes the rest of the line as literal content, so these two
 		// commands accept no options at all. --help is not an option here: it is
 		// sent as literal text, and help <command> is the only help entry. The
 		// standalone command keeps --help, because argv position separates the
 		// command word from the payload there.
-		spelling := name
-		if name == "inject" {
-			spelling = "btw"
-		}
-		entry.parameters = append(entry.parameters, "no options: the rest of the line is literal content, so "+spelling+" --help sends the text --help; run help "+spelling+" for this help")
+		entry.parameters = append(entry.parameters, "no options: the rest of the line is literal content, so "+name+" --help sends the text --help; run help "+name+" for this help")
 	}
 	return entry
 }

@@ -246,6 +246,7 @@ func unitC19MainHelp() string {
 		"  help [command]                        show help\n" +
 		"  quit                                  leave interactive mode\n" +
 		"  exit                                  leave interactive mode from every scope\n" +
+		"\nAliases: ?=help, l=list, q=quit, r=refresh, w=watch\n" +
 		"\nNext: list -> <number> or cd <number> -> show/logs. Run help list for row selection rules.\n" +
 		"Start example: start <endpoint> <resource> --profile <id> --profile-revision <revision>\n" +
 		commandPrefixHelp + "\nRun help all for every command and scope.\n"

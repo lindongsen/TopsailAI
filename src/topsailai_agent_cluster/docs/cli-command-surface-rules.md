@@ -110,9 +110,9 @@ was dispatched rather than rejected as unknown.
 | `logs` | `logs`, `logs --follow` | `logs`, `logs -f` | yes |
 | `status` | `status` | `status` | yes |
 | `send` | `send` | `send`, `>` | yes (explicit text submits directly; a bare `send` asks once) |
-| `context.inject` | `btw`, `inject` | `inject`, `btw` | yes |
-| `execution.interrupt` | `control` | `interrupt`, `control` | yes |
-| `ctl.<action>` | `ctl` | `ctl`, `ctl.<action>` | yes |
+| `context.inject` | `btw` | `btw` | yes |
+| `execution.interrupt` | `interrupt` | `interrupt` | yes |
+| `ctl.<action>` | `ctl` | `ctl`, `control`, `ctl.<action>` | yes |
 | `command.exec` | `exec` | `!<argv...>` | yes |
 | `agent.start` | `start` | `start` | yes |
 | `agent.resume` | `resume` | not applicable | yes (standalone only: session scope requires a live generation while resume authorizes on a proven absence, so the interactive spelling was removed) |
@@ -126,14 +126,18 @@ was dispatched rather than rejected as unknown.
 | `quit` | not applicable | `quit`, `q` (both navigate back outside workspace scope) | not applicable |
 | `exit` | not applicable | `exit` (always leaves the loop) | not applicable |
 
-Two spellings are intentionally asymmetric:
+No spelling is asymmetric any more. Every command word is accepted on both
+surfaces, so an operator never has to remember which surface owns a spelling:
 
-- `interrupt` is interactive-only as a spelling, but its behaviour is reachable
-  standalone through `control`, which maps to the same `execution.interrupt`
-  operation. The standalone surface therefore covers the behaviour even though it
-  does not accept the interactive word.
-- `inject` is accepted standalone as an alias of `btw`; both map to
-  `context.inject`.
+- `interrupt` is the single spelling of `execution.interrupt` on both surfaces.
+  It takes an optional `soft`/`hard` action word and defaults to `hard`.
+- `btw` is the single spelling of `context.inject`. The older `inject` spelling
+  was removed rather than kept as an alias, because two spellings of one command
+  forced every help, completion and diagnostic path to answer for both.
+- `control` is an alias of `ctl`, not a second command. `ctl` stays canonical
+  because the dotted form `ctl.<action>` is recognised from the raw command word
+  before alias resolution, so a canonical `control` would make `ctl.heartbeat`
+  work while `control.heartbeat` failed.
 
 The `>` prefix is interactive-only and is deliberately absent from the standalone
 surface, where `>` is a shell redirect. It is resolved before tokenisation, so
@@ -472,11 +476,11 @@ different feature per command.
   `--help`, and `ctl ep res action -- {"k":"v"}` accepts a payload that begins
   with a dash. `exec` keeps its own `--` because the terminator is part of its
   documented syntax.
-- The interactive REPL has no `--help`. `send`, `btw`, `inject`, `interrupt` and
-  `control` take the rest of the line as literal content, so `send --help` sends
-  the text `--help`; `help send` is the only help entry there. The standalone
-  command can separate the command word from the payload by argv position, which
-  is why the option exists only there.
+- The interactive REPL has no `--help`. `send`, `btw` and `interrupt` take the
+  rest of the line as literal content, so `send --help` sends the text `--help`;
+  `help send` is the only help entry there. The standalone command can separate
+  the command word from the payload by argv position, which is why the option
+  exists only there.
 
 ### Exception: interactive `send` and `btw` accept no options
 
@@ -498,9 +502,10 @@ an oversight, and it applies only to the interactive surface.
   separates the command word from the payload there. `agent-cluster-cli send
   --help` renders the same detail as `agent-cluster-cli help send`, and the
   standalone help does not advertise the interactive restriction.
-- `inject` is the same command as `btw`, so the exception covers both spellings.
-  `interrupt` and `control` also take literal content, but they are not part of
-  this exception because their first token is an action word, not free text.
+- `interrupt` also takes literal content, but it is not part of this exception
+  because its first token is an action word, not free text. A message without an
+  explicit `soft` is rejected rather than guessed, so `interrupt please summarize`
+  reports a usage error instead of silently choosing an action.
 
 ## Progress lines
 
@@ -555,11 +560,22 @@ which is what an operator needs in order to review what was actually typed.
   block end before writing the newline, so the operator's input is never split.
 - A Tab completion candidate list is printed below the erased block rather than
   inside it, so the next redraw cannot erase the candidates.
+- Completion offers every canonical command plus each multi-character alias the
+  scope permits, so `con` completes to `control` in session scope. A
+  one-character alias is excluded because it is already complete the moment it is
+  typed: offering it would never add a character and would only turn a unique
+  completion into a false ambiguity. Completion and dispatch therefore agree on
+  the same spelling set, and an advertised alias is always reachable by Tab.
 - Unsafe runes are dropped, matching `sanitizeTerminal`, so the rendered block is
   byte-identical to the sanitized form of the typed text.
 
 ## Verification
 
+- The first-use `help` overview must list the aliases the current scope accepts,
+  filtered by the same availability rule the dispatcher uses, so a scope never
+  advertises a spelling it rejects.
+- Completion must offer every canonical command plus each multi-character alias,
+  so an advertised alias is always reachable by Tab.
 - The standalone help order and the dispatch switch must list the same commands.
 - A test must prove each advertised syntax is executable, not merely printed.
 - A test must prove a command that cannot perform its action returns an error

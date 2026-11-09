@@ -256,6 +256,18 @@ serves persisted inventory and never caches a result. The Server forwards the qu
 returns the adapter's answer unchanged, so it does not interpret provider status words, re-derive
 resumability or correlate rows with the inventory.
 
+`limit` is optional and narrows the caller's view only. It is parsed at the Server boundary and
+forwarded as an explicit protocol value, so the transport layer never re-reads the request. An absent,
+non-numeric or negative value keeps the provider's own window instead of silently narrowing the read
+to zero rows. A positive value can never raise the provider's own cap, and the adapter judges provider
+truncation before applying it, so a narrowed view is never presented as a complete history.
+
+Reading history requires the `view` scope. A history row carries the session name, the recorded task
+text and the project workspace, which is metadata rather than session output, so `view` is the
+required scope and reading a session's actual output still needs the separate `read_output` scope.
+The check runs before the transport is consulted, so an unauthorized caller cannot infer Endpoint
+reachability from the response.
+
 The response `data` contains `rows`, `observed_at_ms` and an optional `truncated`. Each row carries
 `provider_session_id`, an optional `resource_id`, descriptive `display_name`, `project_workspace`,
 `task`, `provider_status`, `provider_no`, `created_at_ms`, `modified_at_ms`, `resumable` and an
@@ -276,6 +288,7 @@ history is not an error:
 | Status | Code | Meaning |
 |---|---|---|
 | 400 | `invalid_target` | `endpoint_id` is missing |
+| 403 | `permission_denied` | The credential does not hold the `view` scope |
 | 404 | `endpoint_not_found` | The endpoint identifier is not registered |
 | 501 | `history_unsupported` | No configured adapter can list history |
 | 502 | `provider_error` | The provider call failed |

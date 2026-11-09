@@ -118,7 +118,7 @@ func TestStandaloneHistoryKeepsSessionIDColumn(t *testing.T) {
 		}}},
 	}
 	var out strings.Builder
-	if err := (CommandRunner{API: api}).History(context.Background(), &out, io.Discard, "ep", false, TableOptions{}); err != nil {
+	if err := (CommandRunner{API: api}).History(context.Background(), &out, io.Discard, "ep", 0, false, TableOptions{}); err != nil {
 		t.Fatalf("History: %v", err)
 	}
 	rendered := out.String()

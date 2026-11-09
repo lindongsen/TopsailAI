@@ -356,12 +356,12 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, command := range []string{"list", "refresh", "show", "info", "logs", "status", "send", "btw", "control", "start", "resume", "stop", "drive", "help"} {
+	for _, command := range []string{"list", "refresh", "show", "info", "logs", "status", "send", "btw", "interrupt", "start", "resume", "stop", "drive", "help"} {
 		if !strings.Contains(text, " "+command) {
 			t.Fatalf("help missing dispatched command %q: %q", command, text)
 		}
 	}
-	for _, interactiveOnly := range []string{"inject", "interrupt", "cd", "quit"} {
+	for _, interactiveOnly := range []string{"inject", "cd", "quit"} {
 		if strings.Contains(text, "[options] "+interactiveOnly+" ") {
 			t.Fatalf("non-interactive help leaked command %q: %q", interactiveOnly, text)
 		}
@@ -378,29 +378,27 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 		t.Fatalf("standalone start detail is inconsistent: %q", output.String())
 	}
 	output.Reset()
-	if err := runWithIO([]string{"help", "inject"}, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
-		t.Fatalf("accepted alias help failed: %v", err)
+	if err := runWithIO([]string{"help", "inject"}, strings.NewReader(""), &output, &diagnostics, false, nil); err == nil {
+		t.Fatal("non-interactive help accepted the removed inject spelling")
 	}
-	if !strings.Contains(output.String(), "Syntax: agent-cluster-cli [options] btw <endpoint> <resource> [text] [generation]") || !strings.Contains(output.String(), "Alias of: btw") {
-		t.Fatalf("alias help=%q", output.String())
+	if err := runWithIO([]string{"help", "interrupt"}, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
+		t.Fatalf("non-interactive help rejected the dispatched interrupt command: %v", err)
 	}
-	if err := runWithIO([]string{"help", "interrupt"}, strings.NewReader(""), io.Discard, io.Discard, false, nil); err == nil {
-		t.Fatal("non-interactive help accepted undispatched interrupt command")
+	if !strings.Contains(output.String(), "Syntax: agent-cluster-cli [options] interrupt <endpoint> <resource> [text] [generation]") {
+		t.Fatalf("standalone interrupt help=%q", output.String())
 	}
 }
 
-// TestInjectAliasMatchesBtwDispatch proves the accepted alias reaches the same
-// confirmation gate as the advertised spelling without contacting a Server.
-func TestInjectAliasMatchesBtwDispatch(t *testing.T) {
-	for _, command := range []string{"btw", "inject"} {
-		var output, diagnostics strings.Builder
-		err := runWithIO([]string{"--server-url", "http://127.0.0.1:1", command, "ep", "res", `{"text":"x"}`}, strings.NewReader(""), &output, &diagnostics, false, nil)
-		if err == nil {
-			t.Fatalf("%s unexpectedly succeeded", command)
-		}
-		if !strings.Contains(err.Error(), "confirmation required for "+command+" target=res") {
-			t.Fatalf("%s error=%v", command, err)
-		}
+// TestBtwReachesConfirmationGate proves the only context injection spelling
+// reaches the confirmation gate without contacting a Server.
+func TestBtwReachesConfirmationGate(t *testing.T) {
+	var output, diagnostics strings.Builder
+	err := runWithIO([]string{"--server-url", "http://127.0.0.1:1", "btw", "ep", "res", `{"text":"x"}`}, strings.NewReader(""), &output, &diagnostics, false, nil)
+	if err == nil {
+		t.Fatal("btw unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "confirmation required for btw target=res") {
+		t.Fatalf("btw error=%v", err)
 	}
 }
 
@@ -412,9 +410,8 @@ func TestStandalonePlainTextPayloadsNeedNoJSON(t *testing.T) {
 	}{
 		{"send", "hello world", `{"text":"hello world"}`},
 		{"btw", "the notes are in docs/", `{"text":"the notes are in docs/"}`},
-		{"inject", "context", `{"text":"context"}`},
-		{"control", "soft stop now", `{"action":"soft_interrupt","message":"stop now"}`},
-		{"control", "hard", `{"action":"hard_interrupt"}`},
+		{"interrupt", "soft stop now", `{"action":"soft_interrupt","message":"stop now"}`},
+		{"interrupt", "hard", `{"action":"hard_interrupt"}`},
 		{"start", "summarize the open issues", `{"task":"summarize the open issues"}`},
 	} {
 		got, err := resolveActionPayload(tc.operation, tc.value)
@@ -425,7 +422,7 @@ func TestStandalonePlainTextPayloadsNeedNoJSON(t *testing.T) {
 			t.Fatalf("%s %q payload=%s want=%s", tc.operation, tc.value, got, tc.want)
 		}
 	}
-	if _, err := resolveActionPayload("control", "hard with a message"); err == nil {
+	if _, err := resolveActionPayload("interrupt", "hard with a message"); err == nil {
 		t.Fatal("hard interrupt accepted a message")
 	}
 	if _, err := resolveActionPayload("start", "   "); err == nil {
@@ -923,7 +920,7 @@ func TestStandaloneSendWithTextDoesNotReadInput(t *testing.T) {
 }
 
 // allCapabilityStub advertises every text-carrying operation so a test can
-// reach the payload path of btw, inject and control.
+// reach the payload path of btw and control.
 type allCapabilityStub struct {
 	actionPathStub
 }
@@ -937,12 +934,12 @@ func (s *allCapabilityStub) GetCapabilities(context.Context, string) (protocol.C
 }
 
 // TestStandaloneControlKeepsItsGrammar proves control keeps its previous
-// grammar: only send, btw and inject gain multi-line input.
+// grammar: only send and btw gain multi-line input.
 func TestStandaloneControlKeepsItsGrammar(t *testing.T) {
 	stub := &allCapabilityStub{}
 	var out strings.Builder
 	input := &unreadableInput{}
-	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"control", "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
+	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"interrupt", "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
 		t.Fatalf("control: %v", err)
 	}
 	if input.reads != 0 {
@@ -953,11 +950,11 @@ func TestStandaloneControlKeepsItsGrammar(t *testing.T) {
 	}
 }
 
-// TestStandaloneContextInjectMultiLineReadsBlock proves a bare btw or inject
+// TestStandaloneContextInjectMultiLineReadsBlock proves a bare btw
 // reads a multi-line context block from the command input, so context text never
 // has to be quoted into one line.
 func TestStandaloneContextInjectMultiLineReadsBlock(t *testing.T) {
-	for _, operation := range []string{"btw", "inject"} {
+	for _, operation := range []string{"btw"} {
 		stub := &allCapabilityStub{}
 		var out strings.Builder
 		input := strings.NewReader("first line\n  indented line\nEOF\n")
@@ -976,7 +973,7 @@ func TestStandaloneContextInjectMultiLineReadsBlock(t *testing.T) {
 // TestStandaloneContextInjectMultiLineRejectsEmptyBlock proves an immediately
 // terminated context block submits nothing instead of an empty context.
 func TestStandaloneContextInjectMultiLineRejectsEmptyBlock(t *testing.T) {
-	for _, operation := range []string{"btw", "inject"} {
+	for _, operation := range []string{"btw"} {
 		for _, input := range []string{"EOF\n", "", "\n\nEOF\n"} {
 			stub := &allCapabilityStub{}
 			var out strings.Builder
@@ -1007,7 +1004,7 @@ func TestStandaloneContextInjectMultiLineEndsAtEndOfInput(t *testing.T) {
 // TestStandaloneContextInjectWithTextDoesNotReadInput proves an explicit text
 // argument keeps its previous behaviour and never consumes the command input.
 func TestStandaloneContextInjectWithTextDoesNotReadInput(t *testing.T) {
-	for _, operation := range []string{"btw", "inject"} {
+	for _, operation := range []string{"btw"} {
 		stub := &allCapabilityStub{}
 		var out strings.Builder
 		input := &unreadableInput{}

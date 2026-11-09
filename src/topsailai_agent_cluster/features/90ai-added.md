@@ -32,8 +32,10 @@ that can execute other programs requiring at least two tokens. `allowlist_file.g
 loads the file at startup and reloads it on `SIGHUP`, parsing the whole document
 before swapping so a malformed edit keeps the previous policy in force. A missing
 file disables the operation with an explicit error rather than falling back to an
-unrestricted shell, and the deployment scripts install a read-only default policy so
-a fresh node starts with the feature available.
+unrestricted shell, and the deployment scripts install a mostly read-only default
+policy so a fresh node starts with the feature available. That default is not a
+sandbox: it includes `git push`, `git pull`, `git fetch` and `hostname`, whose
+permissive forms are recorded in `conf/command-allowlist.conf.example`.
 
 ## Allowlisted command execution
 

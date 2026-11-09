@@ -174,6 +174,12 @@ The cluster does not paginate around it, does not request more, and does not pre
 result as a complete history. The result carries an explicit `truncated` flag so the
 operator can see that the list is a bounded window rather than everything that exists.
 
+The adapter sets `truncated` when the provider answer reaches the provider's own cap,
+because the provider offers no way to ask for one more row and a full window therefore
+cannot be proven complete. The cap is judged before the caller's `limit` is applied, so a
+narrowed view never turns a capped provider answer into an apparently complete one. A
+provider answer below the cap is not labelled truncated, so the warning keeps its meaning.
+
 `HistoryResult` carries the rows, the observation time, the `truncated` flag and an
 optional `error_code`. A failed provider call is an explicit error, never an empty
 successful list, because an empty list would read as "this Endpoint has no history".
@@ -194,7 +200,12 @@ would merge rows from different machines into one table, where the duplicate
 Endpoint, which is also what makes the join well defined.
 
 Hostname resolution reuses the existing endpoint resolver, including its ambiguity
-prompt when several Endpoints share a hostname.
+prompt when several Endpoints share a hostname. The resolved Endpoint must also be
+online: a history query is a live provider read forwarded through the endpoint
+channel, so an offline Endpoint can only fail after the transport budget expires.
+Both scopes therefore resolve the Endpoint again at query time instead of trusting
+the scope, because an Endpoint that was online when it was entered can disconnect
+before the query is dispatched.
 
 ## Row-number namespace
 
@@ -219,15 +230,24 @@ rather than degrade:
 | Situation | Behaviour |
 |---|---|
 | Endpoint has no history-capable adapter | Explicit `history_unsupported` error |
-| Endpoint is offline | Explicit `endpoint_unavailable` error |
+| Endpoint is offline | Explicit `endpoint_unavailable` error, rejected before dispatch so no transport budget is spent |
 | Provider call fails | Explicit error with the provider's bounded diagnostic |
 | Provider returns no rows | Successful empty result, distinct from an error |
 | Result is capped | Successful result with `truncated = true` |
 | Inventory unavailable during join | History rows still render, marked as not joined, and `cd` is refused |
+| Inventory reports several live sessions for one provider session ID | History rows still render, marked as ambiguous, and both `cd` and `resume` are refused |
 
-The last case matters: history is a live provider read and the inventory is a persisted
-document, so they can fail independently. A history row whose join could not be
-evaluated is shown as unjoined rather than guessed to be live or dead.
+The last two cases matter: history is a live provider read and the inventory is a
+persisted document, so they can fail independently. A history row whose join could
+not be evaluated is shown as unjoined rather than guessed to be live or dead.
+
+An ambiguous row is a different unknown from an unjoined row, and the two are
+reported separately because they need different remedies. An unavailable inventory
+can be refreshed. Contradictory inventory data cannot: the inventory answered, and
+its answer was that several live sessions share one provider session ID. The
+operator must inspect the endpoint inventory instead. `resume` is refused for the
+same reason, because the provider session is already running and resuming it would
+start a second runtime.
 
 ## Implemented surfaces
 
@@ -265,8 +285,10 @@ It returns the adapter's result verbatim; it does not join, filter or interpret.
 - Should the history view show the provider's own row number as a separate column, so an
   operator can cross-reference the provider's own listing? Recommended: yes, as
   descriptive data only, never as a selection key.
-- Should `history` accept a `--limit` bound below the provider cap? Recommended: yes,
-  as a caller-side narrowing only; it never raises the cap.
-- Which permission scope should `history` require? Not yet decided. The rows carry
-  session names, task text and workspace paths, but no stdout and no conversation
-  content.
+- Should `history` accept a `--limit` bound below the provider cap? Decided and implemented:
+  yes, as a caller-side narrowing only; it never raises the cap. The standalone surface exposes
+  `--limit`, the interactive surface always reads the whole provider window because a REPL operator
+  selects a row from what is rendered, and an absent or invalid value keeps the provider's window.
+- Which permission scope should `history` require? Decided and implemented: `view`. The rows carry
+  session names, task text and workspace paths, but no stdout and no conversation content, so `view`
+  is the required scope and reading a session's actual output still needs `read_output`.

@@ -13,7 +13,7 @@ func TestUnitAContextHelpAndHelpAll(t *testing.T) {
 	if err := PrintScopedCommandHelp(&workspace, "", ScopeWorkspace); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(workspace.String(), "inject [text]") || strings.Contains(workspace.String(), "interrupt [soft|hard]") {
+	if strings.Contains(workspace.String(), "btw [text]") || strings.Contains(workspace.String(), "interrupt [soft|hard]") {
 		t.Fatalf("workspace help exposed session commands: %q", workspace.String())
 	}
 	if !strings.Contains(workspace.String(), "Start example:") || !strings.Contains(workspace.String(), "Run help all") {
@@ -22,7 +22,7 @@ func TestUnitAContextHelpAndHelpAll(t *testing.T) {
 	if err := PrintScopedCommandHelp(&all, "all", ScopeWorkspace); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"inject [text]", "interrupt [soft|hard] [message]", "Aliases: ", ">=send", "?=help", "l=list", "btw=inject", "control=interrupt", "r=refresh", "q=quit"} {
+	for _, name := range []string{"btw [text]", "interrupt [soft|hard] [message]", "Aliases: ", ">=send", "?=help", "l=list", "control=ctl", "r=refresh", "q=quit"} {
 		if !strings.Contains(all.String(), name) {
 			t.Fatalf("help all missing %q: %q", name, all.String())
 		}
@@ -55,13 +55,13 @@ func TestUnitAPrimaryHelpHidesCompatibilityAliases(t *testing.T) {
 	// The compatibility aliases must not be advertised as commands. The check is
 	// anchored to the rendered command line, because a canonical description may
 	// legitimately contain the word "control" (ctl sends a provider control action).
-	if strings.Contains(output.String(), "\n  btw ") || strings.Contains(output.String(), "\n  control ") {
+	if strings.Contains(output.String(), "\n  control ") {
 		t.Fatalf("primary session help exposed compatibility aliases: %q", output.String())
 	}
 	if err := PrintScopedCommandHelp(&output, "all", ScopeSession); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"inject [text]", "interrupt [soft|hard] [message]"} {
+	for _, name := range []string{"btw [text]", "interrupt [soft|hard] [message]"} {
 		if !strings.Contains(output.String(), name) {
 			t.Fatalf("canonical command missing from help all: %q", name)
 		}
@@ -215,7 +215,7 @@ func equalStrings(left, right []string) bool {
 }
 
 func TestUnitANonInteractiveAliasHelpRetainsDescriptions(t *testing.T) {
-	for _, alias := range []string{"btw", "control"} {
+	for _, alias := range []string{"control"} {
 		var detail strings.Builder
 		if err := PrintNonInteractiveCommandHelp(&detail, alias); err != nil {
 			t.Fatal(err)
@@ -224,38 +224,24 @@ func TestUnitANonInteractiveAliasHelpRetainsDescriptions(t *testing.T) {
 			t.Fatalf("help %s has empty description: %q", alias, detail.String())
 		}
 	}
+	// An alias is not a canonical overview row: the overview lists canonical
+	// commands only, so the alias must resolve through the detail path and
+	// declare the canonical spelling it stands for.
 	var overview strings.Builder
 	if err := PrintNonInteractiveCommandHelp(&overview, ""); err != nil {
 		t.Fatal(err)
 	}
-	for _, alias := range []string{"btw", "control"} {
-		prefix := "agent-cluster-cli [options] " + alias + " <endpoint> <resource> [text] [generation]"
-		found := 0
-		lines := strings.Split(overview.String(), "\n")
-		for index, line := range lines {
-			if !strings.HasPrefix(line, helpLineIndent+prefix) {
-				continue
-			}
-			found++
-			description := strings.TrimSpace(strings.TrimPrefix(line, helpLineIndent+prefix))
-			if description == "" {
-				// A syntax wider than the block column hangs its description on
-				// the next line, indented to the description column.
-				if index+1 >= len(lines) {
-					t.Fatalf("overview %s has no description line: %q", alias, overview.String())
-				}
-				description = strings.TrimSpace(lines[index+1])
-			}
-			if description == "" {
-				t.Fatalf("overview %s has empty description: %q", alias, overview.String())
-			}
-			canonical := commandAliases[alias]
-			if want := commandHelpCatalog[canonical].description; description != want {
-				t.Fatalf("overview %s description=%q, want %q", alias, description, want)
-			}
+	for _, alias := range []string{"control"} {
+		canonical := commandAliases[alias]
+		if !strings.Contains(overview.String(), " "+canonical+" ") {
+			t.Fatalf("overview omits canonical %s for alias %s: %q", canonical, alias, overview.String())
 		}
-		if found != 1 {
-			t.Fatalf("overview has %d rows for alias %s, want exactly one: %q", found, alias, overview.String())
+		var detail strings.Builder
+		if err := PrintNonInteractiveCommandHelp(&detail, alias); err != nil {
+			t.Fatal(err)
+		}
+		if want := "Alias of: " + canonical; !strings.Contains(detail.String(), want) {
+			t.Fatalf("help %s missing %q: %q", alias, want, detail.String())
 		}
 	}
 }
@@ -305,7 +291,7 @@ func TestUnitAHelpAndErrorWriterBranches(t *testing.T) {
 	if err := PrintCommandHelp(&out, "missing"); err == nil {
 		t.Fatal("missing help target unexpectedly succeeded")
 	}
-	if err := PrintNonInteractiveCommandHelp(&out, "interrupt"); err == nil {
+	if err := PrintNonInteractiveCommandHelp(&out, "cd"); err == nil {
 		t.Fatal("interactive-only help target unexpectedly succeeded")
 	}
 	out.Reset()

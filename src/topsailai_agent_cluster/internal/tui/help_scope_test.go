@@ -365,7 +365,6 @@ func TestNonInteractiveHelpCatalogMatchesStandaloneDispatch(t *testing.T) {
 		"agent-cluster-cli [options] status <command-id>",
 		"agent-cluster-cli [options] send <endpoint> <resource> [text] [generation]",
 		"agent-cluster-cli [options] btw <endpoint> <resource> [text] [generation]",
-		"agent-cluster-cli [options] control <endpoint> <resource> [text] [generation]",
 		"agent-cluster-cli [options] start <endpoint> <resource> [text] [generation]",
 		"agent-cluster-cli [options] resume <endpoint> <resource> [text] [generation]",
 		"agent-cluster-cli [options] stop <endpoint> <resource> <generation>",
@@ -377,7 +376,7 @@ func TestNonInteractiveHelpCatalogMatchesStandaloneDispatch(t *testing.T) {
 	}
 	for _, line := range lines {
 		name := strings.Fields(line)[2]
-		for _, forbidden := range []string{"inject", "interrupt", "cd", "quit"} {
+		for _, forbidden := range []string{"inject", "cd", "quit"} {
 			if name == forbidden {
 				t.Fatalf("standalone help leaked interactive command %q: %q", forbidden, joined)
 			}
@@ -404,17 +403,55 @@ func TestPrintNonInteractiveCommandHelp(t *testing.T) {
 		}
 	}
 	out.Reset()
-	if err := PrintNonInteractiveCommandHelp(&out, "inject"); err != nil {
-		t.Fatalf("accepted alias help failed: %v", err)
+	if err := PrintNonInteractiveCommandHelp(&out, "inject"); err == nil || !strings.Contains(err.Error(), "unknown help command") {
+		t.Fatalf("removed spelling inject still resolved: %v", err)
 	}
-	if !strings.Contains(out.String(), "Syntax: agent-cluster-cli [options] btw <endpoint> <resource> [text] [generation]") || !strings.Contains(out.String(), `Alias of: btw`) {
-		t.Fatalf("alias help=%q", out.String())
+	if err := PrintNonInteractiveCommandHelp(&out, "interrupt"); err != nil {
+		t.Fatalf("standalone interrupt help failed: %v", err)
 	}
-	if err := PrintNonInteractiveCommandHelp(&out, "interrupt"); err == nil || !strings.Contains(err.Error(), "unknown help command") {
-		t.Fatalf("unknown help error=%v", err)
+	if !strings.Contains(out.String(), "Syntax: agent-cluster-cli [options] interrupt <endpoint> <resource> [text] [generation]") {
+		t.Fatalf("standalone interrupt help=%q", out.String())
 	}
 	if !containsCommand(nonInteractiveHelpOrder, "start") || containsCommand(nonInteractiveHelpOrder, "inject") {
 		t.Fatal("standalone command membership is inconsistent")
+	}
+}
+
+// TestContextHelpListsOnlyScopeAliases proves the first-use overview names the
+// aliases the current scope accepts and never advertises one it rejects. A
+// spelling that the scope refuses would send the operator straight into a scope
+// error, so the alias line is filtered by the same availability rule the
+// dispatcher uses.
+func TestContextHelpListsOnlyScopeAliases(t *testing.T) {
+	for _, testCase := range []struct {
+		kind ScopeKind
+		want string
+	}{
+		{ScopeWorkspace, "Aliases: ?=help, l=list, q=quit, r=refresh, w=watch"},
+		{ScopeEndpoint, "Aliases: ?=help, l=list, q=quit, r=refresh, w=watch"},
+		{ScopeSession, "Aliases: >=send, ?=help, control=ctl, l=list, q=quit, r=refresh"},
+	} {
+		t.Run(testCase.kind.String(), func(t *testing.T) {
+			var out strings.Builder
+			if err := PrintScopedCommandHelp(&out, "", testCase.kind); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), testCase.want) {
+				t.Fatalf("scope=%s missing %q in %q", testCase.kind, testCase.want, out.String())
+			}
+		})
+	}
+	// The session-only spellings must never reach a scope that rejects them.
+	for _, kind := range []ScopeKind{ScopeWorkspace, ScopeEndpoint} {
+		var out strings.Builder
+		if err := PrintScopedCommandHelp(&out, "", kind); err != nil {
+			t.Fatal(err)
+		}
+		for _, leaked := range []string{">=send", "control=ctl"} {
+			if strings.Contains(out.String(), leaked) {
+				t.Fatalf("scope=%s advertised %q: %q", kind, leaked, out.String())
+			}
+		}
 	}
 }
 

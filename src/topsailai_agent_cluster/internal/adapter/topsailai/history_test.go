@@ -3,6 +3,7 @@ package topsailai
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -205,5 +206,63 @@ func TestHistoryTaskIsBounded(t *testing.T) {
 	}
 	if len(result.Rows[0].Task) > protocol.MaxHistoryTaskBytes {
 		t.Fatalf("task length = %d", len(result.Rows[0].Task))
+	}
+}
+
+// historyDocumentWithRows builds a provider document holding count rows.
+func historyDocumentWithRows(count int) string {
+	rows := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		rows = append(rows, `{"session_id":"s`+strconv.Itoa(i)+`","status":"Idle"}`)
+	}
+	return "[" + strings.Join(rows, ",") + "]"
+}
+
+// TestHistoryFullProviderWindowIsTruncated proves a provider answer that reaches
+// the provider's own cap is labelled as a bounded window. The provider offers no
+// way to ask for one more row, so a full window cannot be proven complete, and
+// presenting it as complete would hide older sessions from the operator.
+func TestHistoryFullProviderWindowIsTruncated(t *testing.T) {
+	adapter := historyAdapter(t, &fakeRunner{out: []byte(historyDocumentWithRows(providerHistoryRowCap))})
+	result, err := adapter.History(context.Background(), protocol.HistoryQuery{})
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(result.Rows) != providerHistoryRowCap {
+		t.Fatalf("rows = %d, want %d", len(result.Rows), providerHistoryRowCap)
+	}
+	if !result.Truncated {
+		t.Fatal("a full provider window must be reported as truncated")
+	}
+}
+
+// TestHistoryShortProviderWindowIsComplete proves a provider answer below the cap
+// is not labelled truncated, so the warning keeps its meaning.
+func TestHistoryShortProviderWindowIsComplete(t *testing.T) {
+	adapter := historyAdapter(t, &fakeRunner{out: []byte(historyDocumentWithRows(providerHistoryRowCap - 1))})
+	result, err := adapter.History(context.Background(), protocol.HistoryQuery{})
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if result.Truncated {
+		t.Fatal("a provider window below the cap must not be reported as truncated")
+	}
+}
+
+// TestHistoryCallerLimitDoesNotHideProviderTruncation proves a narrowed caller
+// view cannot turn a capped provider answer into a complete one. The provider cap
+// is judged before the caller's limit is applied, so the operator still learns
+// that older sessions exist.
+func TestHistoryCallerLimitDoesNotHideProviderTruncation(t *testing.T) {
+	adapter := historyAdapter(t, &fakeRunner{out: []byte(historyDocumentWithRows(providerHistoryRowCap))})
+	result, err := adapter.History(context.Background(), protocol.HistoryQuery{Limit: 5})
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(result.Rows) != 5 {
+		t.Fatalf("rows = %d, want 5", len(result.Rows))
+	}
+	if !result.Truncated {
+		t.Fatal("a caller limit must not hide provider truncation")
 	}
 }

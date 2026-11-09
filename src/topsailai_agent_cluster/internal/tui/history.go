@@ -14,9 +14,11 @@ import (
 // HistoryQuerier reads bounded provider session history for one Endpoint.
 //
 // History is a live provider read, so this seam never returns a persisted
-// projection and never caches a result.
+// projection and never caches a result. The limit narrows the caller's view
+// only: zero means the whole provider window, and a positive value can never
+// raise the provider's own cap.
 type HistoryQuerier interface {
-	GetHistory(context.Context, string) (protocol.HistoryResult, error)
+	GetHistory(context.Context, string, int) (protocol.HistoryResult, error)
 }
 
 // HistoryViewRow is one rendered history row: provider evidence plus the cluster
@@ -41,6 +43,12 @@ type HistoryViewRow struct {
 	// Joined reports whether the inventory join could be evaluated at all. A
 	// false value means the row is unknown, never that it is stopped.
 	Joined bool `json:"joined"`
+	// Ambiguous reports that the join was evaluated but found several live
+	// sessions sharing one provider session ID. It is a different unknown from an
+	// unavailable inventory: the inventory answered, and its answer was
+	// contradictory. The two are kept apart so a caller never tells the operator
+	// to refresh data that a refresh cannot disambiguate.
+	Ambiguous bool `json:"ambiguous,omitempty"`
 	// Live reports whether the same provider session is present in the current
 	// inventory for this endpoint. Only a live row can be entered.
 	Live bool `json:"live"`
@@ -81,9 +89,11 @@ type HistoryView struct {
 // call.
 //
 // A provider session ID that matches more than one live session inside the same
-// endpoint is ambiguous, so the row is left unjoined instead of picking one. A
-// missing inventory leaves every row unjoined, because an unavailable observation
-// is unknown, not an empty inventory.
+// endpoint is ambiguous, so the row is left unjoined instead of picking one and is
+// marked Ambiguous. A missing inventory leaves every row unjoined, because an
+// unavailable observation is unknown, not an empty inventory. The two outcomes are
+// reported separately because they need different remedies: an unavailable
+// inventory can be refreshed, while contradictory inventory data cannot.
 func JoinHistory(endpointID string, rows []protocol.HistoryRow, report protocol.InventoryReport, inventoryAvailable bool) HistoryView {
 	view := HistoryView{EndpointID: endpointID, Rows: make([]HistoryViewRow, 0, len(rows)), Joined: inventoryAvailable}
 	live := make(map[string][]protocol.Session, len(report.Sessions))
@@ -115,7 +125,8 @@ func JoinHistory(endpointID string, rows []protocol.HistoryRow, report protocol.
 		}
 		if inventoryAvailable && row.ProviderSessionID != "" {
 			// Exactly one live match is a usable join. Several matches are
-			// ambiguous, so the row stays unjoined rather than being guessed.
+			// ambiguous, so the row stays unjoined rather than being guessed, and
+			// the ambiguity is recorded so the caller can report the real cause.
 			if matches := live[row.ProviderSessionID]; len(matches) == 1 {
 				viewRow.Joined = true
 				viewRow.Live = true
@@ -124,6 +135,8 @@ func JoinHistory(endpointID string, rows []protocol.HistoryRow, report protocol.
 				viewRow.State = matches[0].State
 			} else if len(matches) == 0 {
 				viewRow.Joined = true
+			} else {
+				viewRow.Ambiguous = true
 			}
 		}
 		view.Rows = append(view.Rows, viewRow)
@@ -166,7 +179,14 @@ func historyCells(row HistoryViewRow) map[string]string {
 }
 
 // historyLiveCell states the join outcome without implying a stopped session.
+//
+// An ambiguous row is labelled separately from an unjoined row, because the two
+// tell the operator different things: "unjoined" means the inventory could not be
+// read, while "ambiguous" means it was read and contradicted itself.
 func historyLiveCell(row HistoryViewRow) string {
+	if row.Ambiguous {
+		return "ambiguous"
+	}
 	if !row.Joined {
 		return "unjoined"
 	}
@@ -241,7 +261,11 @@ func historyResumableState(row HistoryViewRow) string {
 // The endpoint argument is mandatory on the standalone surface, because a history
 // query is endpoint-scoped: fanning out across endpoints would multiply provider
 // calls and would mix rows whose provider session IDs may collide.
-func (r CommandRunner) History(ctx context.Context, out, errors io.Writer, target string, jsonMode bool, options TableOptions) error {
+//
+// The limit narrows the caller's view only. Zero keeps the whole provider window,
+// and a positive value can never raise the provider's own cap, so a narrowed view
+// is never presented as a complete history.
+func (r CommandRunner) History(ctx context.Context, out, errors io.Writer, target string, limit int, jsonMode bool, options TableOptions) error {
 	querier, ok := r.API.(HistoryQuerier)
 	if !ok {
 		return fmt.Errorf("history is unavailable: this client cannot query provider history")
@@ -250,7 +274,7 @@ func (r CommandRunner) History(ctx context.Context, out, errors io.Writer, targe
 	if err != nil {
 		return err
 	}
-	result, err := querier.GetHistory(ctx, endpoint.EndpointID)
+	result, err := querier.GetHistory(ctx, endpoint.EndpointID, limit)
 	if err != nil {
 		return err
 	}
@@ -282,6 +306,12 @@ func (r CommandRunner) History(ctx context.Context, out, errors io.Writer, targe
 // A hostname shared by several endpoints is rejected with the candidate list
 // instead of picking one, because the operator asked for a specific machine and a
 // silent choice would query the wrong provider.
+//
+// The resolved endpoint must be online. A history query is a live provider read
+// forwarded through the endpoint channel, so an offline endpoint can only fail after
+// the transport budget expires. Rejecting it here reports the real cause immediately
+// and matches every other endpoint-scoped command, which validates connectivity
+// before dispatch.
 func resolveHistoryEndpoint(ctx context.Context, api CommandAPI, target string) (protocol.Endpoint, error) {
 	if strings.TrimSpace(target) == "" {
 		return protocol.Endpoint{}, fmt.Errorf("usage: history <endpoint-id-or-hostname>")
@@ -292,7 +322,7 @@ func resolveHistoryEndpoint(ctx context.Context, api CommandAPI, target string) 
 	}
 	for _, endpoint := range endpoints {
 		if endpoint.EndpointID == target {
-			return endpoint, nil
+			return requireOnlineHistoryEndpoint(endpoint)
 		}
 	}
 	matches := make([]protocol.Endpoint, 0, 2)
@@ -305,7 +335,7 @@ func resolveHistoryEndpoint(ctx context.Context, api CommandAPI, target string) 
 	case 0:
 		return protocol.Endpoint{}, fmt.Errorf("endpoint %q was not found", target)
 	case 1:
-		return matches[0], nil
+		return requireOnlineHistoryEndpoint(matches[0])
 	}
 	sort.Slice(matches, func(i, j int) bool { return matches[i].EndpointID < matches[j].EndpointID })
 	ids := make([]string, len(matches))
@@ -313,4 +343,17 @@ func resolveHistoryEndpoint(ctx context.Context, api CommandAPI, target string) 
 		ids[i] = endpoint.EndpointID
 	}
 	return protocol.Endpoint{}, fmt.Errorf("hostname %q matches several endpoints (%s); pass the endpoint ID instead", target, strings.Join(ids, ", "))
+}
+
+// requireOnlineHistoryEndpoint rejects a disconnected endpoint before a history
+// query is dispatched.
+//
+// The check reuses the shared connectivity rule, so history reports the same
+// connection_state diagnostic as every other endpoint-scoped command instead of
+// inventing its own wording.
+func requireOnlineHistoryEndpoint(endpoint protocol.Endpoint) (protocol.Endpoint, error) {
+	if err := validateEndpointOnline(endpoint); err != nil {
+		return protocol.Endpoint{}, err
+	}
+	return endpoint, nil
 }

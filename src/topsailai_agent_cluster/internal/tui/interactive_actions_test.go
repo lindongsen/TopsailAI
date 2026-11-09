@@ -31,7 +31,7 @@ func TestInteractiveStartExactIntent(t *testing.T) {
 
 // TestInteractiveSessionExactIntents checks every lifecycle/control operation and alias.
 func TestInteractiveSessionExactIntents(t *testing.T) {
-	for command, op := range map[string]string{"stop": protocol.OperationAgentStop, "inject": protocol.OperationContextInject, "btw": protocol.OperationContextInject, "interrupt": protocol.OperationExecutionInterrupt, "control": protocol.OperationExecutionInterrupt} {
+	for command, op := range map[string]string{"stop": protocol.OperationAgentStop, "btw": protocol.OperationContextInject, "interrupt": protocol.OperationExecutionInterrupt} {
 		t.Run(command, func(t *testing.T) {
 			stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 			payload := `{}`
@@ -69,7 +69,7 @@ func TestInteractiveArgumentErrors(t *testing.T) {
 			t.Fatalf("accepted %q", input)
 		}
 	}
-	for _, command := range []string{"stop", "inject", "interrupt", "btw", "control"} {
+	for _, command := range []string{"stop", "interrupt", "btw"} {
 		stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 		_, diagnostics := runScope(t, stub, "cd endpoint-1/session-1\n"+command+" --json\nquit\n", ColorPolicy{})
 		if !strings.Contains(diagnostics, "non-interactive") && !strings.Contains(diagnostics, "does not support --json") {
@@ -121,7 +121,7 @@ func TestStandaloneResumeHelpSurvivesRemoval(t *testing.T) {
 
 // TestInteractiveNewCommandHelpAndScope covers every newly exposed session command.
 func TestInteractiveNewCommandHelpAndScope(t *testing.T) {
-	for _, name := range []string{"inject", "btw", "interrupt", "control"} {
+	for _, name := range []string{"btw", "interrupt", "control"} {
 		var out strings.Builder
 		if err := PrintCommandHelp(&out, name); err != nil {
 			t.Fatal(err)

@@ -209,14 +209,14 @@ func TestUnitSendAutoLogsUsesItsOwnBudget(t *testing.T) {
 }
 
 // TestUnitSendAutoLogsDoesNotTriggerOnOtherActions proves the trigger stays
-// scoped to send: inject, interrupt, resume and stop keep their previous
+// scoped to send: btw, interrupt, resume and stop keep their previous
 // behaviour and read no output of their own.
 func TestUnitSendAutoLogsDoesNotTriggerOnOtherActions(t *testing.T) {
 	cases := []struct {
 		name  string
 		input string
 	}{
-		{name: "inject", input: "cd host-one/endpoint-1/res-1\ninject {\"text\":\"hi\"}\ny\nexit\n"},
+		{name: "btw", input: "cd host-one/endpoint-1/res-1\nbtw {\"text\":\"hi\"}\ny\nexit\n"},
 		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nexit\n"},
 		{name: "resume", input: "cd host-one/endpoint-1/res-1\nresume\ny\nexit\n"},
 		{name: "stop", input: "cd host-one/endpoint-1/res-1\nstop\ny\nexit\n"},
@@ -402,7 +402,7 @@ func TestUnitSendAutoRefreshDoesNotTriggerOnOtherActions(t *testing.T) {
 		name  string
 		input string
 	}{
-		{name: "inject", input: "cd host-one/endpoint-1/res-1\ninject {\"text\":\"hi\"}\ny\nexit\n"},
+		{name: "btw", input: "cd host-one/endpoint-1/res-1\nbtw {\"text\":\"hi\"}\ny\nexit\n"},
 		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nexit\n"},
 		{name: "resume", input: "cd host-one/endpoint-1/res-1\nresume\ny\nexit\n"},
 		{name: "stop", input: "cd host-one/endpoint-1/res-1\nstop\ny\nexit\n"},

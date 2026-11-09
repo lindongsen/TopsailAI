@@ -43,7 +43,9 @@ func interactiveHistory(parent context.Context, api InteractiveAPI, state *inter
 	if err != nil {
 		return err
 	}
-	result, err := querier.GetHistory(ctx, endpointID)
+	// The interactive surface always reads the whole provider window, because a
+	// REPL operator selects a row from what is rendered and cannot pass a limit.
+	result, err := querier.GetHistory(ctx, endpointID, 0)
 	if err != nil {
 		return err
 	}
@@ -91,13 +93,15 @@ func interactiveHistory(parent context.Context, api InteractiveAPI, state *inter
 //
 // Endpoint scope already names one machine, so an explicit argument may only
 // repeat it. Workspace scope has no current endpoint, so the argument is
-// mandatory and is resolved through the same resolver the standalone command uses.
+// mandatory. Both scopes resolve through the same resolver the standalone command
+// uses, so connectivity is validated on both paths: an endpoint that was online
+// when it was entered can disconnect before the query is dispatched.
 func historyEndpointID(ctx context.Context, api InteractiveAPI, state *interactiveState, target string) (string, error) {
 	if state.Scope.Kind == ScopeEndpoint {
 		if target != "" && target != state.Scope.EndpointID {
 			return "", fmt.Errorf("history %q does not match the current endpoint %q; run cd .. to query another endpoint", target, state.Scope.EndpointID)
 		}
-		return state.Scope.EndpointID, nil
+		target = state.Scope.EndpointID
 	}
 	endpoint, err := resolveHistoryEndpoint(ctx, api, target)
 	if err != nil {
@@ -112,7 +116,16 @@ func historyEndpointID(ctx context.Context, api InteractiveAPI, state *interacti
 // A history row is never a routing identity, so the transition reuses the joined
 // resource ID and generation and revalidates them against the current inventory.
 // A row that is not live has no generation at all, so it can never be entered.
+//
+// Session scope rejects row-number navigation for the same reason the live list
+// does: the operator is already inside one session, so a bare number has no table
+// to address. Without this guard a number typed in session scope resolved against
+// the history table left behind by the previous render and reported a history-row
+// error instead of the scope error.
 func cdHistoryRowNumber(state *interactiveState, api InteractiveAPI, parent context.Context, number int) error {
+	if state.Scope.Kind == ScopeSession {
+		return fmt.Errorf("row-number navigation is unavailable in session scope; use cd .. or cd <session>")
+	}
 	namespace := state.history
 	if namespace == nil {
 		return fmt.Errorf("no history table is available for row navigation; run history first")
@@ -120,6 +133,13 @@ func cdHistoryRowNumber(state *interactiveState, api InteractiveAPI, parent cont
 	row, ok := namespace.Rows[number]
 	if !ok {
 		return fmt.Errorf("row %d is out of range; valid history rows are 1-%d", number, len(namespace.Rows))
+	}
+	// An ambiguous row and an unjoined row are both unusable, but they are not the
+	// same unknown. Ambiguity means the inventory answered with several live
+	// sessions for one provider session ID, so the operator must inspect the
+	// endpoint inventory; no client-side retry can resolve contradictory data.
+	if row.Ambiguous {
+		return fmt.Errorf("history row %d is ambiguous: endpoint %q reports several live sessions for provider session %q, so the row cannot be entered; inspect the endpoint inventory", number, namespace.EndpointID, row.ProviderSessionID)
 	}
 	if !row.Joined {
 		return fmt.Errorf("history row %d is unjoined: the inventory for endpoint %q is unavailable, so the row cannot be entered; run refresh and history again", number, namespace.EndpointID)
@@ -133,7 +153,14 @@ func cdHistoryRowNumber(state *interactiveState, api InteractiveAPI, parent cont
 		return fmt.Errorf("history row %d has no routable identity; run history again", number)
 	}
 	sessionRow := SessionRow{No: row.No, EndpointID: row.EndpointID, SessionID: row.ResourceID, ProviderSessionID: row.ProviderSessionID, Generation: row.Generation, State: row.State}
-	return cdSessionRow(state, api, parent, number, sessionRow)
+	if err := cdSessionRow(state, api, parent, number, sessionRow); err != nil {
+		return err
+	}
+	// The history table is no longer on screen once a session is entered, so its
+	// row numbers must not survive the transition. Keeping them would let a later
+	// number resolve against a table the operator can no longer see.
+	state.history = nil
+	return nil
 }
 
 // interactiveResume resumes one stopped history row by its row number.
@@ -161,6 +188,13 @@ func interactiveResume(parent context.Context, api InteractiveAPI, state *intera
 	row, ok := namespace.Rows[number]
 	if !ok {
 		return fmt.Errorf("row %d is out of range; valid history rows are 1-%d", number, len(namespace.Rows))
+	}
+	// An ambiguous row is not live, but the inventory did report live sessions for
+	// this provider session ID. Resuming would therefore start a second runtime for
+	// a session that is already running, so the row is refused before the adapter
+	// verdict is consulted.
+	if row.Ambiguous {
+		return fmt.Errorf("history row %d is ambiguous: endpoint %q reports several live sessions for provider session %q, so it cannot be resumed; inspect the endpoint inventory instead", number, namespace.EndpointID, row.ProviderSessionID)
 	}
 	if row.Live {
 		return fmt.Errorf("history row %d is live on endpoint %q, so it cannot be resumed; use cd %d to enter it", number, namespace.EndpointID, number)

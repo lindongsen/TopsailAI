@@ -15,13 +15,18 @@
 # python3, perl, ruby and node. Such an entry is refused when the file is
 # loaded, so a mistake fails at startup rather than at the first execution.
 #
-# The default below is mostly read-only, but it is not a sandbox. `git push`
-# and `git show` are included because operators need to publish work and to
-# inspect arbitrary revisions. Both are more powerful than they look: `git push`
-# accepts `--receive-pack`, which runs a local command, and `git show` honours
-# `--output` and textconv filters declared in `.gitattributes`. Prefix matching
-# cannot distinguish those forms, so every entry here is reachable by anyone
-# holding the `control` scope and must be treated as local code execution.
+# The default below is mostly read-only, but it is not a sandbox. `git push`,
+# `git pull`, `git fetch` and `git show` are included because operators need to
+# publish work, synchronise a checkout and inspect arbitrary revisions. All four
+# are more powerful than they look: `git push` accepts `--receive-pack` and
+# `git fetch`/`git pull` accept `--upload-pack`, both of which run a local
+# command, `git pull` also runs the repository's `post-merge` hook and any
+# configured merge driver, and `git show` honours `--output` and textconv filters
+# declared in `.gitattributes`. `hostname` is included for the common read-only
+# query, but the same entry permits `hostname NAME`, which renames the machine
+# when the Endpoint runs as root. Prefix matching cannot distinguish those forms,
+# so every entry here is reachable by anyone holding the `control` scope and must
+# be treated as local code execution.
 #
 # To disable command execution entirely, remove this file and unset
 # COMMAND_ALLOWLIST_FILE in the node configuration. An Endpoint with no
@@ -35,3 +40,6 @@ git log
 git diff
 git show
 git push
+git pull
+git fetch
+hostname

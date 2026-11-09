@@ -33,7 +33,7 @@ func TestHistoryHTTPClient(t *testing.T) {
 	server := httptest.NewServer(h)
 	defer server.Close()
 	api := client.NewAPIClient(server.URL, "test")
-	result, err := api.GetHistory(context.Background(), "e /1")
+	result, err := api.GetHistory(context.Background(), "e /1", 0)
 	if err != nil || len(result.Rows) != 1 || result.Rows[0].DisplayName != "e /1" {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -145,5 +145,155 @@ func TestHistoryEmptySuccessIsNotAnError(t *testing.T) {
 	}
 	if strings.Contains(out.Body.String(), "error_code") {
 		t.Fatalf("empty success carried an error: %s", out.Body.String())
+	}
+}
+
+// historyDisconnectRequester reproduces the real disconnect path: the channel
+// reports a lost endpoint as an error code with no Go error, so the handler must
+// classify the code rather than fall through to the provider default.
+type historyDisconnectRequester struct{ historyRequester }
+
+// RequestHistory returns the channel's disconnect result unchanged.
+func (historyDisconnectRequester) RequestHistory(context.Context, string, protocol.HistoryQuery) (protocol.HistoryResult, error) {
+	return protocol.HistoryResult{ErrorCode: "endpoint_unavailable"}, nil
+}
+
+// TestHistoryDisconnectIsNotReportedAsProviderError proves a lost endpoint is an
+// availability failure, never a provider failure. The channel signals a
+// disconnect with an error code and a nil error, so this path is distinct from
+// the transport-error path and must reach the same 503 outcome.
+func TestHistoryDisconnectIsNotReportedAsProviderError(t *testing.T) {
+	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: historyDisconnectRequester{}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/history?endpoint_id=e", nil)
+	req.Header.Set("Authorization", "Bearer test")
+	out := httptest.NewRecorder()
+	h.ServeHTTP(out, req)
+	if out.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want=%d body=%s", out.Code, http.StatusServiceUnavailable, out.Body.String())
+	}
+	if !strings.Contains(out.Body.String(), `"endpoint_unavailable"`) {
+		t.Fatalf("body=%s want code endpoint_unavailable", out.Body.String())
+	}
+	if strings.Contains(out.Body.String(), `"`+protocol.HistoryProviderError+`"`) {
+		t.Fatalf("disconnect was reported as a provider failure: %s", out.Body.String())
+	}
+}
+
+// TestHistoryRequiresViewScope proves history metadata is not reachable with any
+// valid credential. A history row carries the session name, the recorded task
+// text and the project workspace, so a credential narrowed to an unrelated scope
+// must be refused before the transport is consulted.
+func TestHistoryRequiresViewScope(t *testing.T) {
+	for _, item := range []struct {
+		name   string
+		scopes security.ScopeSet
+		status int
+	}{
+		{name: "unrestricted", scopes: security.ScopeSet{}, status: http.StatusOK},
+		{name: "view", scopes: security.NewScopeSet(security.ScopeView), status: http.StatusOK},
+		{name: "read_output only", scopes: security.NewScopeSet(security.ScopeReadOutput), status: http.StatusForbidden},
+		{name: "send_message only", scopes: security.NewScopeSet(security.ScopeSendMessage), status: http.StatusForbidden},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			h := &Handler{
+				Authenticator: security.BearerAuthenticator{Token: "test", Scopes: item.scopes},
+				Output:        historyRequester{},
+			}
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/history?endpoint_id=e", nil)
+			req.Header.Set("Authorization", "Bearer test")
+			out := httptest.NewRecorder()
+			h.ServeHTTP(out, req)
+			if out.Code != item.status {
+				t.Fatalf("status=%d want=%d body=%s", out.Code, item.status, out.Body.String())
+			}
+			if item.status == http.StatusForbidden && !strings.Contains(out.Body.String(), `"permission_denied"`) {
+				t.Fatalf("body=%s want code permission_denied", out.Body.String())
+			}
+		})
+	}
+}
+
+// TestHistoryAuthorizationPrecedesTransport proves an unauthorized caller cannot
+// infer Endpoint reachability. The handler is built without a history channel, so
+// a missing check would answer 503 unavailable instead of 403 permission_denied.
+func TestHistoryAuthorizationPrecedesTransport(t *testing.T) {
+	h := &Handler{
+		Authenticator: security.BearerAuthenticator{Token: "test", Scopes: security.NewScopeSet(security.ScopeSendMessage)},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/history?endpoint_id=e", nil)
+	req.Header.Set("Authorization", "Bearer test")
+	out := httptest.NewRecorder()
+	h.ServeHTTP(out, req)
+	if out.Code != http.StatusForbidden {
+		t.Fatalf("status=%d want=%d body=%s", out.Code, http.StatusForbidden, out.Body.String())
+	}
+}
+
+// historyLimitRequester records the query the Server forwarded, so a test can
+// prove the limit was parsed at the boundary and passed down as an explicit value.
+type historyLimitRequester struct {
+	historyRequester
+	queries []protocol.HistoryQuery
+}
+
+// RequestHistory records one forwarded query and answers with a truncated result,
+// so the same test can also prove a caller limit never clears provider truncation.
+func (r *historyLimitRequester) RequestHistory(_ context.Context, _ string, query protocol.HistoryQuery) (protocol.HistoryResult, error) {
+	r.queries = append(r.queries, query)
+	return protocol.HistoryResult{
+		Rows:      []protocol.HistoryRow{{ProviderSessionID: "wa-1", Resumable: true}},
+		Truncated: true,
+	}, nil
+}
+
+// TestHistoryLimitReachesTheEndpoint proves the limit travels from the HTTP query
+// string to the forwarded protocol query. Without the wiring the Server sent an
+// empty query, so the capability existed but was unreachable from every surface.
+func TestHistoryLimitReachesTheEndpoint(t *testing.T) {
+	requester := &historyLimitRequester{}
+	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: requester}
+	server := httptest.NewServer(h)
+	defer server.Close()
+	api := client.NewAPIClient(server.URL, "test")
+	for _, item := range []struct {
+		limit int
+		want  int
+	}{
+		{0, 0},
+		{5, 5},
+		{100, 100},
+	} {
+		result, err := api.GetHistory(context.Background(), "ep-1", item.limit)
+		if err != nil {
+			t.Fatalf("limit=%d err=%v", item.limit, err)
+		}
+		if got := requester.queries[len(requester.queries)-1].Limit; got != item.want {
+			t.Fatalf("limit=%d forwarded=%d want=%d", item.limit, got, item.want)
+		}
+		// A narrowed view must never be presented as a complete provider answer.
+		if !result.Truncated {
+			t.Fatalf("limit=%d truncated=false want=true", item.limit)
+		}
+	}
+}
+
+// TestHistoryInvalidLimitKeepsProviderWindow proves an unusable limit is ignored
+// rather than silently narrowing the read to zero rows.
+func TestHistoryInvalidLimitKeepsProviderWindow(t *testing.T) {
+	requester := &historyLimitRequester{}
+	h := &Handler{Authenticator: security.BearerAuthenticator{Token: "test"}, Output: requester}
+	server := httptest.NewServer(h)
+	defer server.Close()
+	for _, value := range []string{"abc", "-3", ""} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/history?endpoint_id=ep-1&limit="+value, nil)
+		req.Header.Set("Authorization", "Bearer test")
+		out := httptest.NewRecorder()
+		h.ServeHTTP(out, req)
+		if out.Code != http.StatusOK {
+			t.Fatalf("limit=%q status=%d body=%s", value, out.Code, out.Body.String())
+		}
+		if got := requester.queries[len(requester.queries)-1].Limit; got != 0 {
+			t.Fatalf("limit=%q forwarded=%d want=0", value, got)
+		}
 	}
 }

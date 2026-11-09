@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -40,7 +41,7 @@ var commandScopeMatrix = []commandScopeRule{
 	// the two conditions are mutually exclusive and session scope stays excluded.
 	{Name: "resume", Workspace: true, Endpoint: true},
 	{Name: "stop", Workspace: true, Endpoint: true, Session: true},
-	{Name: "inject", Session: true},
+	{Name: "btw", Session: true},
 	{Name: "interrupt", Session: true},
 	{Name: "ctl", Session: true},
 	{Name: "drive", Workspace: true, Endpoint: true, Session: true},
@@ -71,8 +72,7 @@ var commandAliases = map[string]string{
 	"r":        "refresh",
 	"l":        "list",
 	"w":        "watch",
-	"btw":      "inject",
-	"control":  "interrupt",
+	"control":  "ctl",
 	sendPrefix: "send",
 }
 
@@ -125,6 +125,27 @@ func availableCommands(kind ScopeKind) []string {
 		}
 	}
 	return names
+}
+
+// completableCommands returns the command words completion may offer in a scope:
+// every canonical command plus each multi-character alias the scope permits.
+//
+// A one-character alias is already complete the moment it is typed, so offering
+// it would never add a character and would only turn a unique completion into a
+// false ambiguity. A multi-character alias such as "control" is genuinely
+// partial while it is being typed, so it must be completable; otherwise the
+// operator has to know a spelling that the help text advertises.
+func completableCommands(kind ScopeKind) []string {
+	names := availableCommands(kind)
+	aliases := make([]string, 0, len(commandAliases))
+	for alias := range commandAliases {
+		if len(alias) < 2 || !commandAllowed(alias, kind) {
+			continue
+		}
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	return append(names, aliases...)
 }
 
 // scopeUnavailableError builds the uniform scope rejection message.

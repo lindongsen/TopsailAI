@@ -33,13 +33,18 @@ func ctlCommandWithProgress(ctx context.Context, api tui.CommandAPI, output, dia
 	if len(args) < 1 {
 		return fmt.Errorf("usage: ctl <endpoint-id> <resource-id> <action> [json] [generation]")
 	}
+	// control is an accepted alias of ctl, so every message names the spelling the
+	// operator typed. A usage error that answered "ctl" to a "control" line would
+	// point at a command the operator did not write.
+	command := args[0]
+	usage := "usage: " + command + " <endpoint-id> <resource-id> <action> [json] [generation]"
 	head, tail := splitTerminator(args)
 	if err := rejectMisplacedFlags(args[0], head); err != nil {
 		return err
 	}
 	args = append(append([]string{}, head...), tail...)
 	if len(args) < 4 {
-		return fmt.Errorf("usage: ctl <endpoint-id> <resource-id> <action> [json] [generation]")
+		return fmt.Errorf("%s", usage)
 	}
 	endpointID, resourceID, action := args[1], args[2], args[3]
 	operation, err := tui.CtlOperation(action)
@@ -55,7 +60,7 @@ func ctlCommandWithProgress(ctx context.Context, api tui.CommandAPI, output, dia
 		generation = args[5]
 	}
 	if len(args) > 6 {
-		return fmt.Errorf("unexpected arguments %q; run help ctl for valid syntax", strings.Join(args[6:], " "))
+		return fmt.Errorf("unexpected arguments %q; run help %s for valid syntax", strings.Join(args[6:], " "), command)
 	}
 	payload, err := tui.CtlPayload(payloadText)
 	if err != nil {
@@ -63,7 +68,7 @@ func ctlCommandWithProgress(ctx context.Context, api tui.CommandAPI, output, dia
 	}
 	return submitActionWithProgress(ctx, api, output, diagnostics, tui.ActionRequest{
 		Operation:      operation,
-		OperationLabel: "ctl " + action,
+		OperationLabel: command + " " + action,
 		EndpointID:     endpointID,
 		ResourceID:     resourceID,
 		Generation:     generation,

@@ -94,6 +94,10 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	noColor := flags.Bool("no-color", false, "disable terminal colors")
 	noTruncate := flags.Bool("no-truncate", false, "disable table truncation; a narrow terminal wraps instead of clipping")
 	noProgress := flags.Bool("no-progress", false, "disable progress lines for long-running commands")
+	// --limit narrows a history read. It is a separate quantity from --lines
+	// because history rows are provider session records, not output lines, and
+	// conflating them would let an output setting silently reshape a history table.
+	historyLimit := flags.Int("limit", 0, "maximum number of history rows returned; 0 keeps the provider's own window")
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
 	folder := flags.String("folder", "", "working folder for start")
@@ -186,7 +190,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		if flags.NArg() != 2 {
 			return fmt.Errorf("usage: history <endpoint-id-or-hostname>")
 		}
-		return history(ctx, api, output, errors, flags.Arg(1), *jsonMode, tui.OutputColorPolicy(output))
+		return history(ctx, api, output, errors, flags.Arg(1), *historyLimit, *jsonMode, tui.OutputColorPolicy(output))
 	case "table":
 		return fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "show":
@@ -220,8 +224,8 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		return status(ctx, api, output, flags.Arg(1), *jsonMode)
 	case "drive":
 		return driveWithProgress(ctx, api, output, errors, flags.Args()[1:], *confirmed, *jsonMode, *waitTimeoutMS, *generation)
-	case "send", "btw", "inject", "control", "start", "resume", "stop":
-		// A bare send, btw, inject or start reads a multi-line block from the
+	case "send", "btw", "interrupt", "start", "resume", "stop":
+		// A bare send, btw or start reads a multi-line block from the
 		// command input. On a terminal nothing else would prompt, so the
 		// operator would face a silent wait; the hint goes to the diagnostics
 		// stream to keep the machine-readable output clean.
@@ -234,7 +238,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		// even when stdin is an interactive terminal.
 		color := tui.OutputColorPolicy(output)
 		return action(ctx, api, output, input, errors, color, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
-	case "ctl":
+	case "ctl", "control":
 		return ctlCommandWithProgress(ctx, api, output, errors, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	case "exec":
 		return execCommandWithProgress(ctx, api, output, errors, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
@@ -470,10 +474,10 @@ func legacyRunner(api tui.CommandAPI) tui.CommandRunner {
 // The endpoint argument is mandatory because a history query is endpoint-scoped:
 // provider session IDs may collide across endpoints, so a fleet-wide merge could
 // not be joined to the persisted inventory unambiguously.
-func history(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target string, jsonMode bool, color tui.ColorPolicy) error {
+func history(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target string, limit int, jsonMode bool, color tui.ColorPolicy) error {
 	options := tui.TableOptionsFor(output)
 	options.Color = color
-	return legacyRunner(api).History(ctx, output, errors, target, jsonMode, options)
+	return legacyRunner(api).History(ctx, output, errors, target, limit, jsonMode, options)
 }
 
 func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, jsonMode bool, color tui.ColorPolicy) error {
@@ -651,9 +655,9 @@ func driveOperation(action string) (string, bool) {
 // forwarded unchanged as the advanced form.
 func resolveActionPayload(operation, value string) (json.RawMessage, error) {
 	switch operation {
-	case "send", "btw", "inject":
+	case "send", "btw":
 		return tui.MessagePayload(value)
-	case "control":
+	case "interrupt":
 		return tui.InterruptPayload(operation, value)
 	case "start":
 		return tui.TaskPayload(value)
@@ -728,8 +732,8 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 				return err
 			}
 			payload = resolved
-		} else if operation == "btw" || operation == "inject" {
-			// A btw or inject without a text argument reads a multi-line context
+		} else if operation == "btw" {
+			// A btw without a text argument reads a multi-line context
 			// block from the command input, so context text never has to be
 			// quoted into one line. The block keeps the message payload bound,
 			// because context injection carries the same text field as send.
@@ -738,6 +742,15 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 				return err
 			}
 			resolved, err := resolveActionPayload(operation, block.Text)
+			if err != nil {
+				return err
+			}
+			payload = resolved
+		} else if operation == "interrupt" {
+			// A bare interrupt submits the hard default, so the operator does not
+			// have to spell the action word. A message without an explicit action
+			// word is rejected by InterruptPayload instead of being guessed.
+			resolved, err := resolveActionPayload(operation, "")
 			if err != nil {
 				return err
 			}
@@ -875,10 +888,10 @@ func rejectExtraPositionals(operation string, args []string, limit, textStart in
 }
 
 func operationName(value string) string {
-	if value == "btw" || value == "inject" {
+	if value == "btw" {
 		return "context.inject"
 	}
-	if value == "control" {
+	if value == "interrupt" {
 		return "execution.interrupt"
 	}
 	if value == "start" {
@@ -914,7 +927,7 @@ func multiLineHint(operation string, narg int, task string, terminal bool) strin
 		if narg == 3 {
 			return tui.MultiLineHint
 		}
-	case "btw", "inject":
+	case "btw":
 		// A positional text supplies the context, so no block is read.
 		if narg == 3 {
 			return tui.MultiLineContextHint
