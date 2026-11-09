@@ -16,9 +16,9 @@ material. Three packages exist because a machine has one role.
 | `agent-cluster-server` | `agent-cluster-server` | Server daemon |
 | `agent-cluster-endpoint` | `agent-cluster-endpoint`, `agent-cluster-cli`, `topsailai_agent_cluster` and `topsailai2` (symlinks) | Endpoint daemon and operator CLI |
 
-Every installed file is visible in one directory. The program payload lives under
-`/opt/agent-cluster`, and each entry point is a symlink in `/usr/local/sbin`, which is on the
-default `PATH`:
+Every installed file is visible in one real directory. The program payload, configuration, TLS
+material, state, logs and pid files all live under `/opt/agent-cluster`, and each entry point is a
+symlink in `/usr/local/sbin`, which is on the default `PATH`:
 
 ```text
 /opt/agent-cluster/
@@ -27,25 +27,27 @@ default `PATH`:
   bin/agent-cluster-cli         operator CLI (endpoint only)
   bin/agent-cluster-node-setup  env-file regenerator
   lib/cli-env.sh                shared env writer
-  conf  -> /etc/agent-cluster
-  certs -> /etc/agent-cluster/certs
-  data  -> /var/lib/agent-cluster
-  logs  -> /var/log/agent-cluster
-  run   -> /run/agent-cluster
+  conf/                         configuration conffiles
+  certs/                        TLS material
+  data/                         SQLite state
+  logs/                         log files
+  run/                          pid files
 ```
 
-Configuration, TLS material, state, logs and pid files stay in `/etc`, `/var/lib`, `/var/log`
-and `/run`. A conffile must live in `/etc` to survive an upgrade, and mutable state must not share
-a directory with immutable payload. They appear inside `/opt/agent-cluster` as symlinks, so the
-operator still sees one folder while `dpkg` and backup tooling see the policy locations.
+Configuration, TLS material, state, logs and pid files are real directories, not symlinks into
+`/etc`, `/var/lib`, `/var/log` and `/run`. A symlinked layout silently redirects a write to whatever
+filesystem the link names, so a state directory can land on a full root filesystem while the
+operator believes it lives under `/opt`. One real tree also makes backup, removal and inspection a
+single-path operation. `dpkg` honours a conffile at any absolute path, so an operator edit under
+`conf/` still survives an upgrade.
 
-Because `conf` is a symlink, the controller finds its configuration beside itself in both the
-bundle and the package layout, and the configuration keeps the same relative paths in both.
+The controller finds its configuration beside itself in both the bundle and the package layout, and
+the configuration keeps the same relative paths in both.
 
 A bundle install is not the same file set. `install-node.sh` copies only the role binary and, for
 an endpoint, the operator CLI into `/opt/agent-cluster/bin`, then links them from
 `/usr/local/sbin`. The controller, `lib/cli-env.sh`, `agent-cluster-node-setup` and the five
-layout symlinks stay in the bundle, which is run in place. A bundle install therefore adds the
+layout directories stay in the bundle, which is run in place. A bundle install therefore adds the
 commands to `PATH` without replacing the bundle as the node's configuration source, and
 `agent-clusterctl` is not on `PATH` until the node package is installed.
 
@@ -85,7 +87,7 @@ the Server address and token. Re-generate that file after a token rotation with
 `agent-cluster-node-setup`.
 
 Removing a package does not remove its state. `dpkg --purge` deletes the shipped files and the
-conffiles, but `/var/lib/agent-cluster` (the SQLite database) and `/var/log/agent-cluster` are
+conffiles, but `/opt/agent-cluster/data` (the SQLite database) and `/opt/agent-cluster/logs` are
 left in place, because deleting a node's state during a package purge is destructive and cannot
 be undone. Remove those two directories by hand when a node is decommissioned.
 

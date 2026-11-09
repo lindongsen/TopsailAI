@@ -34,14 +34,20 @@ IMAGE_NAME := $(IMAGE_REPO):$(IMAGE_TAG)
 # Runtime wiring for `make image-run`. The container publishes both ports on the
 # host so endpoints reach it through a bridge gateway address instead of the
 # container IP, which changes on every recreate. TLS material and the SQLite
-# database are mounted from the workspace so the image stays deployment-neutral.
+# database are mounted from /opt/agent-cluster, the same real directories the
+# packaged node uses, so the image stays deployment-neutral and the container and
+# a package never disagree about where state lives.
 IMAGE_CONTAINER := agent-cluster-server
 IMAGE_NET := bind9-net
 IMAGE_API_PORT := 53680
 IMAGE_CHANNEL_PORT := 53943
-IMAGE_CERTS_DIR := .tmp/docker/certs
-IMAGE_DATA_DIR := .tmp/docker/data
-IMAGE_TOKEN := $(shell sed -n 's/^AUTH_TOKEN=//p' .tmp/local-cluster/conf/endpoint.conf 2>/dev/null | head -1)
+IMAGE_CERTS_DIR := /opt/agent-cluster/certs
+# Absolute path on purpose: the container state directory must be a real
+# directory on a filesystem with free space. /opt/agent-cluster/data is now a real
+# directory, so it is the single state location for both the packaged node and the
+# container.
+IMAGE_DATA_DIR := /opt/agent-cluster/data
+IMAGE_TOKEN := $(shell sed -n 's/^AUTH_TOKEN=//p' /opt/agent-cluster/conf/node.conf 2>/dev/null | head -1)
 
 SERVER_PKG := ./src/main/agent-cluster-server
 ENDPOINT_PKG := ./src/main/agent-cluster-endpoint
@@ -255,8 +261,8 @@ image-run:
 	docker run -d --name $(IMAGE_CONTAINER) --network $(IMAGE_NET) \
 		-p $(IMAGE_API_PORT):53680 -p $(IMAGE_CHANNEL_PORT):53943 \
 		-e AGENT_CLUSTER_AUTH_TOKEN=$(IMAGE_TOKEN) \
-		-v $(CURDIR)/$(IMAGE_CERTS_DIR):/etc/agent-cluster/certs:ro \
-		-v $(CURDIR)/$(IMAGE_DATA_DIR):/var/lib/agent-cluster \
+		-v $(IMAGE_CERTS_DIR):/etc/agent-cluster/certs:ro \
+		-v $(IMAGE_DATA_DIR):/var/lib/agent-cluster \
 		--restart unless-stopped \
 		$(IMAGE_NAME)
 	@echo "waiting for the health probe"

@@ -17,7 +17,7 @@
 
 set -uo pipefail
 
-CONFIG_FILE="/etc/agent-cluster/node.conf"
+CONFIG_FILE="/opt/agent-cluster/conf/node.conf"
 CLI_ENV_LIB="/opt/agent-cluster/lib/cli-env.sh"
 
 function warn() {

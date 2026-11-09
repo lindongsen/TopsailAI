@@ -11,7 +11,7 @@
 #
 # Usage: agent-cluster-node-setup [--config <file>] [--home <dir>] [--force]
 #
-#   --config  installed node configuration (default /etc/agent-cluster/node.conf)
+#   --config  installed node configuration (default /opt/agent-cluster/conf/node.conf)
 #   --home    home directory that receives the env file (default $HOME)
 #   --force   replace an existing env file whose content differs
 #
@@ -20,7 +20,7 @@
 
 set -uo pipefail
 
-CONFIG_FILE="/etc/agent-cluster/node.conf"
+CONFIG_FILE="/opt/agent-cluster/conf/node.conf"
 TARGET_HOME="${HOME:-}"
 FORCE=0
 CLI_ENV_LIB="/opt/agent-cluster/lib/cli-env.sh"

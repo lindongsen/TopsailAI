@@ -11,29 +11,34 @@ import (
 
 // The program payload lives under one directory so a node can be inspected,
 // backed up or removed as a unit. Configuration, TLS material, state, logs and
-// pid files stay in the Debian policy locations and appear inside the payload
-// directory as symlinks. These constants pin that contract, so a packaging
+// pid files are real directories beside the controller, not symlinks into the
+// Debian policy locations. These constants pin that contract, so a packaging
 // change that scatters the payload again fails here instead of on a node.
 const (
 	debOptDir  = "./opt/agent-cluster"
 	debSbinDir = "./usr/local/sbin"
 )
 
-// debLayoutLinks is the symlink set that makes one directory show the whole
-// product. The targets are absolute because they live outside the payload.
-var debLayoutLinks = map[string]string{
-	debOptDir + "/conf":  "/etc/agent-cluster",
-	debOptDir + "/certs": "/etc/agent-cluster/certs",
-	debOptDir + "/data":  "/var/lib/agent-cluster",
-	debOptDir + "/logs":  "/var/log/agent-cluster",
-	debOptDir + "/run":   "/run/agent-cluster",
+// debLayoutDirs is the real directory set that makes one directory show the
+// whole product, with the permission string dpkg-deb reports. A symlink here
+// would silently redirect a write to whatever filesystem the link names, which
+// is how a state directory ends up on a full root filesystem while the operator
+// believes it lives under /opt.
+var debLayoutDirs = map[string]string{
+	debOptDir + "/conf":  "rwxr-xr-x",
+	debOptDir + "/certs": "rwxr-xr-x",
+	debOptDir + "/data":  "rwxr-x---",
+	debOptDir + "/logs":  "rwxr-x---",
+	debOptDir + "/run":   "rwxr-xr-x",
 }
 
-// debEntry is one path in a package payload. target is empty for a real file
-// and holds the link destination for a symlink.
+// debEntry is one path in a package payload. target is empty for a real file or
+// directory and holds the link destination for a symlink. mode is the permission
+// string dpkg-deb prints, such as "0750".
 type debEntry struct {
 	path   string
 	target string
+	mode   string
 }
 
 // debPackage is one built package and its parsed payload.
@@ -236,7 +241,16 @@ func readDebPackage(dest, role string) (*debPackage, error) {
 		if len(fields) < 6 {
 			continue
 		}
-		entry := debEntry{path: fields[5]}
+		// dpkg-deb prints a directory with a trailing slash, so the key is
+		// normalised to the bare path. Without this a directory entry never
+		// matches a path written without the slash.
+		entry := debEntry{path: strings.TrimSuffix(fields[5], "/")}
+		// The first field is the permission string, such as "drwxr-x---" for a
+		// directory or "-rw-r-----" for a file. The leading character is the
+		// entry type, so the mode is the remaining nine characters.
+		if len(fields[0]) == 10 {
+			entry.mode = fields[0][1:]
+		}
 		// A symlink line ends with "path -> target".
 		if len(fields) >= 8 && fields[6] == "->" {
 			entry.target = fields[7]
@@ -362,31 +376,35 @@ func TestDebPackagesKeepTheOptLayout(t *testing.T) {
 	}
 }
 
-// TestDebRolePackagesExposeTheLayoutLinks proves the role packages carry the
-// five symlinks that make /opt/agent-cluster show configuration, TLS material,
-// state, logs and pid files. The node package deliberately omits them: it ships
-// the controller without a role, so /etc/agent-cluster does not exist and the
-// links would dangle.
-func TestDebRolePackagesExposeTheLayoutLinks(t *testing.T) {
+// TestDebRolePackagesExposeTheLayoutDirs proves the role packages carry the five
+// real directories that make /opt/agent-cluster show configuration, TLS material,
+// state, logs and pid files, and that none of them is a symlink into the Debian
+// policy locations. The node package deliberately omits them: it ships the
+// controller without a role, so a conf/ directory would imply a role that is not
+// installed.
+func TestDebRolePackagesExposeTheLayoutDirs(t *testing.T) {
 	packages := buildDebPackages(t)
 
 	for _, role := range []string{"server", "endpoint"} {
 		pkg := packages[role]
-		for path, want := range debLayoutLinks {
+		for path, want := range debLayoutDirs {
 			entry, ok := pkg.entries[path]
 			if !ok {
-				t.Fatalf("the %s package is missing the layout link %s", role, path)
+				t.Fatalf("the %s package is missing the layout directory %s", role, path)
 			}
-			if entry.target != want {
-				t.Fatalf("%s points at %q, want %q", path, entry.target, want)
+			if entry.target != "" {
+				t.Fatalf("%s must be a real directory, not a symlink to %s", path, entry.target)
+			}
+			if entry.mode != want {
+				t.Fatalf("%s has mode %q, want %q", path, entry.mode, want)
 			}
 		}
 	}
 
 	node := packages["node"]
-	for path := range debLayoutLinks {
+	for path := range debLayoutDirs {
 		if entry, ok := node.entries[path]; ok {
-			t.Fatalf("the node package must not ship %s (it would dangle), found %q", path, entry.target)
+			t.Fatalf("the node package must not ship %s (it implies a role), found %q", path, entry.target)
 		}
 	}
 }
@@ -433,7 +451,7 @@ func TestDebPackagedConfigReferencesEveryShippedConffile(t *testing.T) {
 
 	for _, role := range []string{"server", "endpoint"} {
 		pkg := packages[role]
-		config := readPackagedFile(t, pkg, "./etc/agent-cluster/node.conf")
+		config := readPackagedFile(t, pkg, "./opt/agent-cluster/conf/node.conf")
 
 		if len(pkg.conffiles) == 0 {
 			t.Fatalf("the %s package declares no conffiles", role)
@@ -453,14 +471,14 @@ func TestDebPackagedConfigReferencesEveryShippedConffile(t *testing.T) {
 }
 
 // TestDebPackagedConfigUsesRelativePaths proves the packaged configuration
-// resolves through the layout links instead of hardcoding the policy locations.
-// Relative paths are what let a bundle and a package share one configuration
-// shape, and they keep working when the payload directory moves.
+// resolves through the layout directories instead of hardcoding absolute policy
+// locations. Relative paths are what let a bundle and a package share one
+// configuration shape, and they keep working when the payload directory moves.
 func TestDebPackagedConfigUsesRelativePaths(t *testing.T) {
 	packages := buildDebPackages(t)
 
 	for _, role := range []string{"server", "endpoint"} {
-		config := readPackagedFile(t, packages[role], "./etc/agent-cluster/node.conf")
+		config := readPackagedFile(t, packages[role], "./opt/agent-cluster/conf/node.conf")
 		for _, absolute := range []string{
 			"/etc/agent-cluster/",
 			"/var/lib/agent-cluster/",

@@ -11,22 +11,24 @@
 #     bin/agent-cluster-cli        operator CLI (endpoint only)
 #     bin/agent-cluster-node-setup env-file regenerator
 #     lib/cli-env.sh               shared env writer
-#     conf -> /etc/agent-cluster   configuration conffiles
-#     certs -> /etc/agent-cluster/certs
-#     data -> /var/lib/agent-cluster
-#     logs -> /var/log/agent-cluster
-#     run -> /run/agent-cluster
+#     conf/                        configuration conffiles
+#     certs/                       TLS material
+#     data/                        SQLite state
+#     logs/                        log files
+#     run/                         pid files
 #   /usr/local/sbin/agent-clusterctl, agent-cluster-<role>, agent-cluster-cli,
 #   topsailai_agent_cluster, topsailai2, agent-cluster-node-setup
 #                                  symlinks to the payload above
 #
-# Configuration, TLS material, state, logs and pid files stay in /etc, /var/lib,
-# /var/log and /run: conffiles must live in /etc to survive an upgrade, and
-# mutable state must not share a directory with immutable payload. They appear
-# inside /opt/agent-cluster as symlinks, so the operator still sees one folder.
+# Configuration, TLS material, state, logs and pid files are real directories
+# inside /opt/agent-cluster, not symlinks into /etc, /var/lib, /var/log and /run.
+# A symlinked layout silently redirects a write to whatever filesystem the link
+# names, so a state directory can land on a full root filesystem while the
+# operator believes it lives under /opt. dpkg honours a conffile at any absolute
+# path, so an operator edit under conf/ still survives an upgrade.
 #
 # A machine has one role, so the two role packages conflict: they both own
-# /etc/agent-cluster/node.conf and the single agent-clusterctl entry point. A
+# /opt/agent-cluster/conf/node.conf and the single agent-clusterctl entry point. A
 # host that must run both roles uses the bundle path instead.
 #
 # Binaries are built statically (CGO disabled) so the package does not depend on
@@ -44,7 +46,7 @@
 #   --config    role configuration template (default: conf/node.<role>.conf.example)
 #   --cert      leaf certificate to embed (default: development certificate)
 #   --key       private key paired with --cert (default: development key)
-#   --ca        CA certificate (default: .tmp/local-cluster/certs/ca.pem)
+#   --ca        CA certificate (default: /opt/agent-cluster/certs/ca.pem)
 #   --adapters  adapter JSON for the endpoint role; replaces the template value
 #   --keep      keep the staging tree for inspection
 
@@ -52,12 +54,12 @@ set -uo pipefail
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 PROJECT_DIR=$(dirname "${SCRIPT_DIR}")
-LOCAL_CERTS="${PROJECT_DIR}/.tmp/local-cluster/certs"
+LOCAL_CERTS="/opt/agent-cluster/certs"
 
 # The program payload lives in one directory so a node can be inspected, backed
 # up or removed as a unit. Entry points are symlinks in /usr/local/sbin, which is
-# on the default PATH. Configuration, state, logs and pid files stay in /etc,
-# /var/lib, /var/log and /run, and appear inside OPT_DIR as symlinks.
+# on the default PATH. Configuration, state, logs and pid files are real
+# directories inside OPT_DIR, so the whole product is one real tree.
 OPT_DIR="/opt/agent-cluster"
 SBIN_DIR="/usr/local/sbin"
 # Debian compares the epoch before every other component, so a change of version
@@ -210,21 +212,28 @@ function add_link() {
     ln -sfn "${destination}" "${PKG_ROOT}${target}" || die "cannot link ${target}"
 }
 
-# Adds the /opt layout links that make one directory show the whole product.
+# Adds the /opt layout directories that make one directory show the whole product.
 #
-# The program payload lives under /opt/agent-cluster. Configuration, TLS material,
-# state, logs and pid files stay where Debian policy puts them, and appear inside
-# /opt/agent-cluster as symlinks. The controller resolves every relative path
-# against its own directory, so conf/node.conf, certs/, data/, logs/ and run/ all
-# resolve through these links without any absolute override in the configuration.
+# The program payload lives under /opt/agent-cluster, and configuration, TLS
+# material, state, logs and pid files are real directories beside the controller
+# rather than symlinks into /etc, /var/lib, /var/log and /run. The controller
+# resolves every relative path against its own directory, so conf/node.conf,
+# certs/, data/, logs/ and run/ resolve without any absolute override in the
+# configuration.
 #
-# The links are absolute because their targets are outside /opt/agent-cluster.
-function add_layout_links() {
-    add_link "${OPT_DIR}/conf" "/etc/agent-cluster"
-    add_link "${OPT_DIR}/certs" "/etc/agent-cluster/certs"
-    add_link "${OPT_DIR}/data" "/var/lib/agent-cluster"
-    add_link "${OPT_DIR}/logs" "/var/log/agent-cluster"
-    add_link "${OPT_DIR}/run" "/run/agent-cluster"
+# Real directories are deliberate: a symlinked layout silently redirects a write
+# to whatever filesystem the link names, so a state directory can land on a full
+# root filesystem while the operator believes it lives under /opt. One real tree
+# also makes backup, removal and inspection a single-path operation.
+#
+# run/ is created empty on purpose. It holds pid files only, so a package must not
+# ship a stale pid that would make the controller believe a daemon is running.
+function add_layout_dirs() {
+    add_dir "${OPT_DIR}/conf" 0755
+    add_dir "${OPT_DIR}/certs" 0755
+    add_dir "${OPT_DIR}/data" 0750
+    add_dir "${OPT_DIR}/logs" 0750
+    add_dir "${OPT_DIR}/run" 0755
 }
 
 # Builds one static binary into the package tree.
@@ -283,13 +292,19 @@ function write_control() {
 
 # Installs the role configuration as the conffile. The template's relative paths
 # are kept unchanged: the packaged controller resolves them against
-# /opt/agent-cluster, where conf, certs, data, logs and run are symlinks to the
-# policy locations. One configuration shape therefore serves both the bundle and
-# the package, and no absolute override has to be appended.
+# /opt/agent-cluster, where conf, certs, data, logs and run are real directories
+# beside the controller. One configuration shape therefore serves both the bundle
+# and the package, and no absolute override has to be appended.
+#
+# The conffiles live under /opt/agent-cluster/conf rather than /etc. dpkg honours
+# a conffile at any absolute path, so an operator edit still survives an upgrade;
+# keeping them beside the controller is what makes the whole product one real
+# directory instead of a directory of links into the policy locations.
 function write_role_config() {
     local template="$1"
+    local config="${OPT_DIR}/conf/node.conf"
 
-    add_file "${template}" "/etc/agent-cluster/node.conf" 0640
+    add_file "${template}" "${config}" 0640
 
     # The endpoint package ships command-allowlist.conf, so the packaged
     # configuration must reference it. A site configuration replaces the template
@@ -299,26 +314,24 @@ function write_role_config() {
     # not already set one, so a site that points elsewhere keeps its own value.
     if [ "${ROLE}" = "endpoint" ]; then
         if ! grep -qE '^[[:space:]]*COMMAND_ALLOWLIST_FILE=' \
-            "${PKG_ROOT}/etc/agent-cluster/node.conf"; then
+            "${PKG_ROOT}${config}"; then
             {
                 echo ""
-                echo "# The package ships this conffile; conf/ resolves through the"
-                echo "# /opt/agent-cluster layout to /etc/agent-cluster."
+                echo "# The package ships this conffile beside the controller."
                 echo "COMMAND_ALLOWLIST_FILE=conf/command-allowlist.conf"
-            } >>"${PKG_ROOT}/etc/agent-cluster/node.conf" ||
+            } >>"${PKG_ROOT}${config}" ||
                 die "cannot append the allowlist path"
         fi
         # The control action catalog is the only source of ctl. actions. Without the
         # key the Endpoint advertises no ctl. action, so the packaged configuration
         # must reference the shipped catalog or the feature is silently absent.
         if ! grep -qE '^[[:space:]]*CONTROL_ACTION_FILE=' \
-            "${PKG_ROOT}/etc/agent-cluster/node.conf"; then
+            "${PKG_ROOT}${config}"; then
             {
                 echo ""
-                echo "# The package ships this conffile; conf/ resolves through the"
-                echo "# /opt/agent-cluster layout to /etc/agent-cluster."
+                echo "# The package ships this conffile beside the controller."
                 echo "CONTROL_ACTION_FILE=conf/control-actions.conf"
-            } >>"${PKG_ROOT}/etc/agent-cluster/node.conf" ||
+            } >>"${PKG_ROOT}${config}" ||
                 die "cannot append the control action catalog path"
         fi
     fi
@@ -334,20 +347,20 @@ function write_role_config() {
             echo ""
             echo "# Adapter override supplied when the package was built."
             echo "ADAPTERS='${ADAPTERS}'"
-        } >>"${PKG_ROOT}/etc/agent-cluster/node.conf" ||
+        } >>"${PKG_ROOT}${config}" ||
             die "cannot append the adapter override"
     fi
 
-    echo "/etc/agent-cluster/node.conf" >"${PKG_ROOT}/DEBIAN/conffiles" ||
+    echo "${config}" >"${PKG_ROOT}/DEBIAN/conffiles" ||
         die "cannot write conffiles"
     # The allowlist is a conffile too: an operator edits it in place, so an upgrade
     # must not silently replace the policy in force with the shipped default.
     if [ "${ROLE}" = "endpoint" ]; then
-        echo "/etc/agent-cluster/command-allowlist.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
+        echo "${OPT_DIR}/conf/command-allowlist.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
             die "cannot register the allowlist conffile"
         # The catalog is a conffile for the same reason: an operator edits the
         # action surface in place, so an upgrade must not replace it.
-        echo "/etc/agent-cluster/control-actions.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
+        echo "${OPT_DIR}/conf/control-actions.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
             die "cannot register the control action catalog conffile"
     fi
     chmod 0644 "${PKG_ROOT}/DEBIAN/conffiles"
@@ -370,14 +383,14 @@ function resolve_tls() {
     if [ -z "${CERT}" ]; then
         case "${ROLE}" in
             server) CERT="${LOCAL_CERTS}/server.pem" ;;
-            endpoint) CERT="${LOCAL_CERTS}/client.pem" ;;
+            endpoint) CERT="${LOCAL_CERTS}/node.pem" ;;
         esac
         [ -n "${CERT}" ] && warn "using the development certificate ${CERT}; pass --cert for a real deployment"
     fi
     if [ -z "${KEY}" ]; then
         case "${ROLE}" in
             server) KEY="${LOCAL_CERTS}/server-key.pem" ;;
-            endpoint) KEY="${LOCAL_CERTS}/client-key.pem" ;;
+            endpoint) KEY="${LOCAL_CERTS}/node-key.pem" ;;
         esac
         [ -n "${KEY}" ] && warn "using the development key ${KEY}; pass --key for a real deployment"
     fi
@@ -422,25 +435,23 @@ function build_role_package() {
     fi
 
     write_role_config "${template}"
-    add_file "${CA}" "/etc/agent-cluster/certs/ca.pem" 0644
-    add_file "${CERT}" "/etc/agent-cluster/certs/node.pem" 0644
-    add_file "${KEY}" "/etc/agent-cluster/certs/node-key.pem" 0600
-    # The endpoint configuration names conf/command-allowlist.conf, which resolves
-    # through the /opt layout to this conffile. Without it the Endpoint refuses to
-    # start, because a missing allowlist is a configuration error rather than an
-    # implicit unrestricted policy.
+    add_file "${CA}" "${OPT_DIR}/certs/ca.pem" 0644
+    add_file "${CERT}" "${OPT_DIR}/certs/node.pem" 0644
+    add_file "${KEY}" "${OPT_DIR}/certs/node-key.pem" 0600
+    # The endpoint configuration names conf/command-allowlist.conf, which is a real
+    # file beside the controller. Without it the Endpoint refuses to start, because
+    # a missing allowlist is a configuration error rather than an implicit
+    # unrestricted policy.
     if [ "${ROLE}" = "endpoint" ]; then
         add_file "${PROJECT_DIR}/conf/command-allowlist.conf.example" \
-            "/etc/agent-cluster/command-allowlist.conf" 0640
+            "${OPT_DIR}/conf/command-allowlist.conf" 0640
         # The control action catalog is the only source of ctl. actions. A missing
         # file fails closed by advertising no ctl. action, so the package ships the
         # reviewed catalog to keep the feature available on a fresh install.
         add_file "${PROJECT_DIR}/conf/control-actions.conf.example" \
-            "/etc/agent-cluster/control-actions.conf" 0640
+            "${OPT_DIR}/conf/control-actions.conf" 0640
     fi
-    add_dir "/var/lib/agent-cluster" 0750
-    add_dir "/var/log/agent-cluster" 0750
-    add_layout_links
+    add_layout_dirs
     add_copyright
 
     if [ "${ROLE}" = "endpoint" ]; then

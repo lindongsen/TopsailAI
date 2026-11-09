@@ -116,7 +116,7 @@ shell.
 Both deployment paths install a default policy, so a fresh node starts with the
 shipped allowlist in force rather than refusing to start. The bundle installs
 `conf/command-allowlist.conf.example` as `conf/command-allowlist.conf`; the Debian
-package installs it as `/etc/agent-cluster/command-allowlist.conf` and registers it
+package installs it as `/opt/agent-cluster/conf/command-allowlist.conf` and registers it
 as a conffile, so an upgrade does not replace the operator's policy. The shipped
 default permits `ls`, `pwd`, `git status`, `git log`, `git diff`, `git show`,
 `git push`, `git pull`, `git fetch` and `hostname`.
@@ -167,7 +167,7 @@ catalog cannot be talked into running an action nobody configured.
 Both deployment paths install the shipped catalog, so a fresh node keeps the
 feature. The bundle installs `conf/control-actions.conf.example` as
 `conf/control-actions.conf`; the Debian package installs it as
-`/etc/agent-cluster/control-actions.conf` and registers it as a conffile, so an
+`/opt/agent-cluster/conf/control-actions.conf` and registers it as a conffile, so an
 upgrade does not replace the operator's action surface.
 
 The file is reloaded on `SIGHUP`. A reload parses the whole document before

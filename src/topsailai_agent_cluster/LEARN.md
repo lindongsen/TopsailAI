@@ -34,3 +34,103 @@ into one merely because a sibling project did.
 Why this prevents recurrence: a symlink makes two names resolve to one document, so content written
 for one audience silently appears in the other. The mistake is invisible in review because both
 paths look correct.
+
+## A restart-looping container can mean its bind mount is empty, not that the image is broken
+
+Trigger: the server container was restart-looping with
+`read CA certificate: open /etc/agent-cluster/certs/ca.pem: no such file or directory`.
+The image was fine. `.tmp/docker/certs` was an empty directory, so the read-only bind
+mount supplied nothing. The CA private key was absent from the project, so no new
+certificate could be minted, and the obvious "regenerate the certs" fix was not
+available.
+
+Action: when a container fails on a missing file that should come from a mount, check
+the host side of the mount before touching the image. Then search for an existing
+artifact that already satisfies the trust relationship instead of minting new
+credentials: verify the candidate certificate against the live CA, confirm the subject
+and SAN match the identity the peer pins, and confirm the private key matches the
+certificate by comparing public-key digests. Also match the file ownership to the
+container's runtime uid, because a read-only mount still has to be readable.
+
+Why this prevents recurrence: a missing mount looks identical to a broken image from
+the logs, so rebuilding the image wastes time and changes nothing. Reusing a verified
+existing certificate preserves the trust chain that the already-installed endpoints
+depend on; minting a new CA would silently invalidate every deployed endpoint
+certificate. Checking ownership avoids a second failure that looks like a TLS error but
+is really a permission error.
+
+## A protocol change on the server makes older endpoints look like a network fault
+
+Trigger: after the server was restored, all three endpoints stayed `offline` while the
+server logged `invalid hello attached`. The endpoints were healthy and reachable; they
+were simply 56 commits behind and never sent the `hello_attached` confirmation frame
+that the newer server requires (`internal/channel/server.go:164-172`).
+
+Action: when endpoints fail to connect right after a server upgrade, compare the
+installed endpoint version against the server build before investigating networking or
+certificates. Read the rejection reason in the server log and locate the exact
+validation site in the source, so the mismatch is proven rather than assumed.
+
+Why this prevents recurrence: a handshake rejection is reported to the client as a
+generic close frame, so the endpoint log only shows a reconnect loop and looks like a
+transport problem. The server-side reason string is the only direct evidence, and
+matching it to the validation site turns a guess into a fact. Upgrading the endpoints
+is then the correct fix, and no network or TLS change is needed.
+
+## A convenient data directory can be a symlink onto the filesystem that is already full
+
+Trigger: the server database had to move off a 100% full root filesystem. The obvious
+target `/opt/agent-cluster/data` looked correct because it sits under `/opt`, but it is a
+symlink to `/var/lib/agent-cluster`, which is on the same full root filesystem. Copying the
+database there would have changed nothing while appearing to fix the problem.
+
+Action: before choosing a persistence location, resolve it with `readlink -f` and check the
+filesystem of the resolved path with `df -h`, not the filesystem of the path as typed. A
+directory that is a symlink is not a location, it is an alias for another location. Create a
+real directory instead, and confirm the resolved path is the one that was created.
+
+Why this prevents recurrence: `df` on the typed path follows the symlink and reports the
+target filesystem, so the mistake is visible only if the resolved path is inspected
+deliberately. A migration that silently lands on the same full filesystem looks successful
+until the next write fails, and the failure then appears unrelated to the move.
+
+## A connection generation kept only in memory makes a server restart look like a network fault
+
+Trigger: after the server container was recreated, all three endpoints stayed `offline` and
+reconnected every 10 seconds with `channel connection was superseded by a newer link`. The
+network and certificates were fine. `Fence.Acquire` (`internal/channel/fencing.go:24-29`)
+increments a generation held only in an in-memory map, so a restarted server starts again at
+1, while the never-restarted endpoint still holds the higher generation it adopted before the
+restart. `EndpointClient.Attach` (`internal/channel/endpoint.go:118-124`) then rejects every
+new link because `c.Generation > generation`.
+
+Action: when endpoints stop connecting right after a server restart, read the endpoint's own
+rejection reason and locate the comparison in the source before investigating transport. If
+the generation is not persisted, restart the endpoints as well, because only that clears the
+in-memory value they are comparing against.
+
+Why this prevents recurrence: the endpoint reports a reconnect loop and a broken pipe, which
+looks exactly like a transport or TLS problem, so the real cause is invisible from the
+symptom. The generation comparison is one-sided: the server has no memory of the value it
+issued, so it cannot recognise the endpoint's value as stale. Restarting the endpoints is the
+only recovery that does not require a code change, and the underlying defect remains until the
+generation is persisted or renegotiated.
+
+## Moving a conffile keeps the old file, so its stale comments survive the upgrade
+
+Trigger: after the packaged configuration moved from `/etc/agent-cluster/node.conf` to
+`/opt/agent-cluster/conf/node.conf`, both container endpoints kept a `node.conf` whose header
+still said "conf, certs, data, logs and run are symlinks to the policy locations". dpkg had
+correctly preserved the operator-edited conffile and written the new template beside it as
+`node.conf.dpkg-dist`, so the shipped wording never reached the file in force.
+
+Action: after changing a conffile path or its shipped content, inspect the installed file on every
+node instead of assuming the package content is what is running. Compare it with the `.dpkg-dist`
+sibling, and treat any surviving description of the old layout as a defect to fix in place. Fix the
+site source that produced the file as well, otherwise the next rebuild reintroduces the stale text.
+
+Why this prevents recurrence: a conffile is deliberately never overwritten, so an upgrade that
+changes only comments looks successful while the running configuration still describes the previous
+layout. The `.dpkg-dist` file is the only evidence that the package content differs, and it is easy
+to mistake for leftover noise. Reading the installed file is what distinguishes "the package is
+correct" from "the node is correct".

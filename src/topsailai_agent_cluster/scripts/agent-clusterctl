@@ -20,9 +20,9 @@
 # outside this script because they differ per site.
 #
 # The same script is installed by the Debian package, where the controller lives
-# in /opt/agent-cluster and conf/ is a symlink to the conffile directory
-# /etc/agent-cluster. Because the configuration is found beside the controller in
-# both layouts, one path rule serves both; -c still overrides it.
+# in /opt/agent-cluster and conf/ is a real directory beside it. Because the
+# configuration is found beside the controller in both layouts, one path rule
+# serves both; -c still overrides it.
 #
 # Actions: start, stop, restart, status, doctor.
 # Usage:   agent-clusterctl [-c <config>] <action>
@@ -32,8 +32,8 @@ set -uo pipefail
 CTL_DIR=$(dirname "$(readlink -f "$0")")
 
 # The configuration is always beside the controller: a copied bundle keeps
-# conf/node.conf in the bundle, and the package makes conf a symlink to
-# /etc/agent-cluster. One rule therefore serves both layouts.
+# conf/node.conf in the bundle, and the package installs conf as a real directory
+# beside the controller. One rule therefore serves both layouts.
 CONFIG_FILE="${CTL_DIR}/conf/node.conf"
 ACTION=""
 
