@@ -296,3 +296,59 @@ test that counts the expensive operation, and that test must be shown failing
 against the regressed implementation. Also compare timings in one process on
 identical inputs, because host load and a shrinking directory can otherwise be
 mistaken for a fix.
+
+## A line-range overwrite with `end_num=0` replaces to end of file
+
+### Trigger
+
+While updating one test class, I passed `end_num=0` to the line-range overwrite
+tool, believing it meant "no upper bound". It actually means "replace through
+the end of the file", so a 2181-line test module was truncated to 69 lines.
+
+### Action taken
+
+Restored the file from `git show HEAD:<path>` redirected into the original
+location, then verified the line count and that `git status --porcelain` reported
+no change for that path. Re-did the edit with explicit start and end line numbers
+located by `grep -n` and `awk`.
+
+### Why this prevents recurrence
+
+A destructive range edit must be bounded by numbers that were read from the file,
+not by a sentinel whose meaning is assumed. Before any multi-line replacement,
+locate the exact start and end with `grep -n`/`awk`, confirm the file length, and
+prefer replacing the smallest block that contains the change. When a tool
+parameter can mean "to the end", treat it as destructive and verify the file
+length immediately after the write.
+
+## A shared filesystem makes the local process table an unreliable liveness proof
+
+### Trigger
+
+`topsailai session delete` classified five running sessions as deletable. Their
+owners ran in a sibling container (`topsail`), while the CLI ran in `ai-dev`.
+Both containers share `~/.topsailai` through a host mount, so the stdout files
+were visible but the owning PIDs were absent from the local `/proc`, which holds
+only 28 processes and whose PID 1 is `/pause`.
+
+### Action taken
+
+Added a control-channel heartbeat as the first-priority liveness probe: when
+`{session_id}.{pid}.session.sock` exists, send a bounded `heartbeat` request and
+accept any correlated reply as proof of life without inspecting its payload,
+because the answering process may live in a sibling container whose PID
+namespace differs from the one recorded in the filename.
+A refused connection proves the listener is gone and falls through to the process
+table; a timeout or an unexpected error falls back
+without asserting absence. Verified with an A/B comparison on real data: the old
+logic would have deleted all five live sessions, the new logic refuses each with
+`target_alive`, and the stdout file count stayed at 10.
+
+### Why this prevents recurrence
+
+"Not visible in `/proc`" is evidence about this process namespace, not about the
+process. Any liveness or ownership decision over a shared filesystem must use a
+probe that crosses the namespace boundary, and the control channel is that probe
+because it answers for its own process. Keep the fallback ordering explicit:
+a positive answer is proof of life, a refused connection is proof of death, and
+anything unverifiable must fall through rather than be read as absence.

@@ -17,6 +17,7 @@ module already owns the zombie and absence proofs.
 
 from __future__ import annotations
 
+import errno
 import os
 from enum import Enum
 from typing import List, Optional
@@ -142,6 +143,65 @@ def _session_stdout_candidates(task_dir: str, session_id: str) -> List[str]:
     return candidates
 
 
+#: Bounded budget for one control-channel heartbeat. A healthy endpoint answers
+#: in about 10-15 ms, so this only bounds a busy or wedged handler.
+HEARTBEAT_TIMEOUT_SECONDS = 3.0
+
+
+def _connection_refused(error: Exception) -> bool:
+    """Return whether *error* was caused by a refused connection.
+
+    The control transport re-raises with the original ``OSError`` as its
+    cause, so the errno survives classification and no locale-dependent
+    message text is inspected.
+    """
+    cause = error.__cause__
+    return getattr(cause, "errno", None) == errno.ECONNREFUSED
+
+def socket_heartbeat_alive(
+    session_id: str, pid: object, *, home: Optional[str] = None,
+    timeout: float = HEARTBEAT_TIMEOUT_SECONDS,
+) -> Optional[bool]:
+    """Probe one session control socket with a bounded heartbeat.
+
+    This is the first-priority liveness method: a live control channel answers
+    for the process that owns it, which is stronger and far cheaper than
+    scanning the process table or every open descriptor.
+
+    A successful heartbeat means the session is alive. The answering identity is
+    deliberately not compared with the PID embedded in the socket filename: the
+    channel is what proves the session is in use, and a session that answers is
+    never a deletable leftover even when its recorded PID differs.
+
+    Returns:
+        ``True`` when the endpoint answered, ``False`` when the endpoint is
+        provably gone, and ``None`` when the socket is absent or the answer
+        cannot be trusted. ``None`` means the caller must fall back to the
+        process-table probe instead of treating an unanswerable question as
+        absence.
+    """
+    if not session_id or not _valid_pid(pid):
+        return None
+    base = home or get_topsailai_home()
+    socket_path = os.path.join(
+        base, "workspace", "task", f"{session_id}.{pid}.session.sock"
+    )
+    if not os.path.exists(socket_path):
+        return None
+    from cli_topsailai.runtime_control import ControlDeliveryError, send_to_control
+
+    try:
+        send_to_control(socket_path, "heartbeat", {}, timeout=timeout)
+    except ControlDeliveryError as error:
+        # A refused connection proves the listener is gone. The transport
+        # classifies by errno, so this check never depends on locale text.
+        if _connection_refused(error):
+            return False
+        return None
+    # A correlated ok response is proof that a live process owns this channel.
+    return True
+
+
 def session_liveness(session_id: str, *, home: Optional[str] = None) -> str:
     """Return ``live``, ``idle`` or ``unknown`` for one session identity.
 
@@ -161,7 +221,12 @@ def session_liveness(session_id: str, *, home: Optional[str] = None) -> str:
         return "idle"
     unknown = False
     for path in candidates:
-        state = pid_state(_get_pid_from_stdout_path(path))
+        pid = _get_pid_from_stdout_path(path)
+        # The control channel answers for its own process, so a successful
+        # heartbeat is the strongest available proof of a live session.
+        if socket_heartbeat_alive(session_id, pid, home=base) is True:
+            return "live"
+        state = pid_state(pid)
         if state is ProcessState.ALIVE:
             return "live"
         if state is ProcessState.UNKNOWN:

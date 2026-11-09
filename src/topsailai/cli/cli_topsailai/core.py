@@ -79,14 +79,13 @@ def _make_readline_safe_prompt(prompt: str) -> str:
 def _resume_from_workspace_log(value, log_files, agent_mode, *, driver=None):
     """Resume an idle session selected from the workspace task list.
 
-    Validates the 1-based row number, resolves the session ID and project
-    workspace, and delegates to ``resume_session`` with a synthetic entry.
-    Returns True if resume was attempted, False otherwise.
+    Validates the 1-based row number, resolves the session ID, and delegates to
+    the strict resume boundary. The strict path re-reads the persisted record
+    and re-checks liveness instead of trusting the list snapshot, so a session
+    that started after the list was built is refused rather than resumed twice.
+    Returns True when the resume succeeded, False otherwise.
     """
-    from cli_topsailai.project_scope import (
-        load_project_workspace_lookup,
-        resume_session,
-    )
+    from cli_topsailai.project_scope import resume_session_result
 
     if not value.isdigit():
         print(f"\n{Colors.RED}[ERROR] Usage: /resume <number>{Colors.RESET}")
@@ -104,21 +103,11 @@ def _resume_from_workspace_log(value, log_files, agent_mode, *, driver=None):
             f"\n{Colors.RED}[ERROR] Selected entry has no resumable session ID.{Colors.RESET}"
         )
         return False
-    project_workspace = selected_file.get("project_workspace", "")
-    if not project_workspace:
-        project_workspace = load_project_workspace_lookup().get(session_id, "")
-    if not project_workspace:
-        print(
-            f"\n{Colors.RED}[ERROR] Selected session has no project workspace.{Colors.RESET}"
-        )
-        return False
-    synthetic_entry = {
-        "session_id": session_id,
-        "status": selected_file.get("status", "Idle"),
-        "project_workspace": project_workspace,
-    }
-    resume_session("1", [synthetic_entry], agent_mode=agent_mode, driver=driver)
-    return True
+    resume_options = {"agent_mode": agent_mode, "emit_status": False}
+    if driver is not None:
+        resume_options["driver"] = driver
+    return resume_session_result(session_id, **resume_options) == 0
+
 
 def _read_input_with_prompt(prompt: str) -> str:
     """Read a line, using readline when possible so the prompt is protected.
@@ -231,17 +220,12 @@ def _try_handle_project_subcommand(
         launch_agent_in_folder(target, agent_mode=agent_mode)
         return 0
     if subcmd == "resume":
-        from cli_topsailai.project_scope import build_project_list, resume_session
+        from cli_topsailai.project_scope import resume_session_result
 
-        entries = build_project_list(limit=None, session_id=target)
-        if not entries:
-            print(f"{Colors.RED}[ERROR] Session not found: {target}{Colors.RESET}")
-            return 1
         resume_options = {"agent_mode": agent_mode}
         if driver is not None:
             resume_options["driver"] = driver
-        resumed = resume_session("1", entries, **resume_options)
-        return 0 if resumed else 1
+        return resume_session_result(target, **resume_options)
     if subcmd == "add":
         name = " ".join(argv[3:]).strip() or None
         if add_project(target, name=name):
@@ -1893,7 +1877,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         print_managed_project_table,
         print_project_table,
         resolve_agent_folder,
-        resume_session,
+        resume_session_result,
     )
     from cli_topsailai.session_info import (
         enrich_files_with_session_names,
@@ -2217,11 +2201,11 @@ def main(argv: Optional[List[str]] = None) -> None:
                 if parsed is None:
                     continue
                 if state.current_scope == "project":
-                    resume_session(
+                    resume_session_result(
                         parsed.session_id,
-                        project_entries,
                         agent_mode=args.agent_mode,
                         driver=parsed.driver,
+                        emit_status=False,
                     )
                 elif state.current_scope == "workspace":
                     _resume_from_workspace_log(

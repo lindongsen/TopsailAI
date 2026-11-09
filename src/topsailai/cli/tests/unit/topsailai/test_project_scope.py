@@ -1757,10 +1757,11 @@ class TestResumeSession(unittest.TestCase):
 
 
 class TestWorkspaceResumeDelegation(unittest.TestCase):
-    """Tests for workspace-scope /resume delegating to resume_session."""
+    """Tests for workspace-scope /resume delegating to resume_session_result."""
 
-    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.project_scope.resume_session_result")
     def test_resume_from_log_entry_with_workspace(self, mock_resume):
+        mock_resume.return_value = 0
         log_files = [
             {
                 "no": 1,
@@ -1769,25 +1770,21 @@ class TestWorkspaceResumeDelegation(unittest.TestCase):
                 "project_workspace": "/work/project-a",
             }
         ]
-        core._resume_from_workspace_log(
+        result = core._resume_from_workspace_log(
             "1", log_files, agent_mode="dtach", driver="ai-team-flow-dev"
         )
+        self.assertTrue(result)
         mock_resume.assert_called_once()
         args = mock_resume.call_args
-        self.assertEqual(args[0][0], "1")
-        entry = args[0][1][0]
-        self.assertEqual(entry["session_id"], "s-idle")
-        self.assertEqual(entry["project_workspace"], "/work/project-a")
-        self.assertEqual(entry["status"], "Idle")
+        self.assertEqual(args[0][0], "s-idle")
         self.assertEqual(args[1]["agent_mode"], "dtach")
         self.assertEqual(args[1]["driver"], "ai-team-flow-dev")
+        self.assertIs(args[1]["emit_status"], False)
 
-    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
-    @patch("cli_topsailai.project_scope.resume_session")
-    def test_resume_from_log_entry_uses_history_lookup(
-        self, mock_resume, mock_lookup
-    ):
-        mock_lookup.return_value = {"s-idle": "/work/from-history"}
+    @patch("cli_topsailai.project_scope.resume_session_result")
+    def test_resume_from_log_entry_ignores_stale_snapshot(self, mock_resume):
+        """The strict path must not trust the list snapshot's status or workspace."""
+        mock_resume.return_value = 0
         log_files = [
             {
                 "no": 1,
@@ -1796,19 +1793,15 @@ class TestWorkspaceResumeDelegation(unittest.TestCase):
                 "project_workspace": "",
             }
         ]
-        core._resume_from_workspace_log("1", log_files, agent_mode="tmux")
-        mock_lookup.assert_called_once()
+        result = core._resume_from_workspace_log("1", log_files, agent_mode="tmux")
+        self.assertTrue(result)
         mock_resume.assert_called_once()
-        entry = mock_resume.call_args[0][1][0]
-        self.assertEqual(entry["project_workspace"], "/work/from-history")
+        self.assertEqual(mock_resume.call_args[0][0], "s-idle")
+        self.assertNotIn("driver", mock_resume.call_args[1])
 
-    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
-    @patch("cli_topsailai.project_scope.resume_session")
-    @patch("builtins.print")
-    def test_resume_from_log_entry_missing_workspace_prints_error(
-        self, mock_print, mock_resume, mock_lookup
-    ):
-        mock_lookup.return_value = {}
+    @patch("cli_topsailai.project_scope.resume_session_result")
+    def test_resume_from_log_entry_returns_false_on_failure(self, mock_resume):
+        mock_resume.return_value = 3
         log_files = [
             {
                 "no": 1,
@@ -1819,11 +1812,30 @@ class TestWorkspaceResumeDelegation(unittest.TestCase):
         ]
         result = core._resume_from_workspace_log("1", log_files, agent_mode="raw")
         self.assertFalse(result)
-        mock_lookup.assert_called_once()
+        mock_resume.assert_called_once()
+
+    @patch("cli_topsailai.project_scope.resume_session_result")
+    @patch("builtins.print")
+    def test_resume_from_log_entry_rejects_temp_session(self, mock_print, mock_resume):
+        log_files = [{"no": 1, "session_id": "(temp)", "status": "Idle"}]
+        result = core._resume_from_workspace_log("1", log_files, agent_mode="raw")
+        self.assertFalse(result)
         mock_resume.assert_not_called()
         self.assertTrue(
-            any("Selected session has no project workspace" in str(call) for call in mock_print.call_args_list)
+            any("no resumable session ID" in str(call) for call in mock_print.call_args_list)
         )
+
+    @patch("cli_topsailai.project_scope.resume_session_result")
+    @patch("builtins.print")
+    def test_resume_from_log_entry_rejects_out_of_range(self, mock_print, mock_resume):
+        log_files = [{"no": 1, "session_id": "s-idle", "status": "Idle"}]
+        result = core._resume_from_workspace_log("9", log_files, agent_mode="raw")
+        self.assertFalse(result)
+        mock_resume.assert_not_called()
+        self.assertTrue(
+            any("Invalid number" in str(call) for call in mock_print.call_args_list)
+        )
+
 class TestManagedProjectWrappers(unittest.TestCase):
     """Tests for managed-project helpers in project_scope."""
 

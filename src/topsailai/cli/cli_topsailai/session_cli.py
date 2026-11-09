@@ -302,19 +302,33 @@ def _valid_pid(pid: object) -> bool:
     return 0 < pid <= 2147483647
 
 
-def _invalid_stdout_target(task_dir, session_id, pid, *, pid_state, in_use):
+def _invalid_stdout_target(task_dir, session_id, pid, *, pid_state, in_use,
+                           heartbeat=None):
     """Prove one stdout file is an invalid leftover before it is deleted.
 
     Returns ``(path, None, None)`` when the file may be deleted, otherwise
     ``(None, error_code, message)``.  Liveness is three-state on purpose: an
     unverifiable owner is refused, because "cannot prove it is gone" is not
     "it is gone".
+
+    The control channel is consulted first.  A session may run in a sibling
+    container that shares this filesystem, so the local process table cannot
+    see its owner and would report a live session as dead.  A heartbeat that
+    answers is therefore the strongest proof of liveness, and it is the only
+    probe that crosses that boundary.
     """
     from cli_topsailai.process_liveness import ProcessState
 
     path = os.path.join(task_dir, f"{session_id}.{pid}.session.stdout")
+    # A session identity is a filename component, never a path. Reject any
+    # value that escapes the task directory so a crafted identity cannot
+    # reach an unrelated file.
+    if os.path.dirname(os.path.abspath(path)) != os.path.abspath(task_dir):
+        return None, "target_not_found", "No such session stdout file"
     if not os.path.isfile(path):
         return None, "target_not_found", "No such session stdout file"
+    if heartbeat is not None and heartbeat(session_id, pid) is True:
+        return None, "target_alive", "The control channel answered a heartbeat"
     state = pid_state(pid)
     if state is ProcessState.ALIVE:
         return None, "target_alive", "The owning process is still alive"
@@ -329,7 +343,7 @@ def _handle_delete(args) -> int:
     """Delete one invalid session stdout located precisely by session ID and PID."""
     from cli_topsailai.log_files import is_file_in_use
     from cli_topsailai.paths import get_topsailai_home
-    from cli_topsailai.process_liveness import pid_state
+    from cli_topsailai.process_liveness import pid_state, socket_heartbeat_alive
 
     if not _valid_pid(args.pid):
         raise SessionUsageError("PID must be a positive integer")
@@ -337,8 +351,13 @@ def _handle_delete(args) -> int:
     home = getattr(args, "home", None) or get_topsailai_home()
     task_dir = os.path.join(home, "workspace", "task")
 
+    def heartbeat(target_session_id, target_pid):
+        """Probe the control channel of the exact target identity."""
+        return socket_heartbeat_alive(target_session_id, target_pid, home=home)
+
     path, error_code, message = _invalid_stdout_target(
         task_dir, session_id, args.pid, pid_state=pid_state, in_use=is_file_in_use,
+        heartbeat=heartbeat,
     )
     if error_code is not None:
         if args.json:

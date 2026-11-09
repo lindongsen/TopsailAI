@@ -1327,8 +1327,7 @@ class TestResumeCommand(unittest.TestCase):
         cli_state.history_manager = None
         cli_state._child_processes.clear()
 
-    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
-    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.project_scope.resume_session_result")
     @patch("cli_topsailai.core.prompt_selection")
     @patch("cli_topsailai.log_files.discover_log_files")
     @patch("cli_topsailai.session_info.enrich_files_with_session_names")
@@ -1348,8 +1347,8 @@ class TestResumeCommand(unittest.TestCase):
         mock_discover: MagicMock,
         mock_prompt: MagicMock,
         mock_resume: MagicMock,
-        mock_lookup: MagicMock,
     ) -> None:
+        """Workspace-scope /resume delegates to the strict resume boundary."""
         from cli_topsailai.core import main
 
         log_file = {
@@ -1362,7 +1361,7 @@ class TestResumeCommand(unittest.TestCase):
             "mtime": 1710000000,
         }
         mock_discover.return_value = [log_file]
-        mock_lookup.return_value = {}
+        mock_resume.return_value = 0
         mock_prompt.side_effect = [("resume", "1"), ("quit", None)]
 
         main(["--agent-mode", "tmux"])
@@ -1370,15 +1369,10 @@ class TestResumeCommand(unittest.TestCase):
         mock_resume.assert_called_once()
         positional, kwargs = mock_resume.call_args
         self.assertEqual(kwargs.get("agent_mode"), "tmux")
-        self.assertEqual(positional[0], "1")
-        synthetic_entries = positional[1]
-        self.assertEqual(len(synthetic_entries), 1)
-        self.assertEqual(synthetic_entries[0]["session_id"], "s1")
-        self.assertEqual(synthetic_entries[0]["project_workspace"], "/work/a")
-        self.assertEqual(synthetic_entries[0]["status"], "Idle")
+        self.assertEqual(positional[0], "s1")
+        self.assertIs(kwargs.get("emit_status"), False)
 
-    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
-    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.project_scope.resume_session_result")
     @patch("cli_topsailai.core.prompt_selection")
     @patch("cli_topsailai.log_files.discover_log_files")
     @patch("cli_topsailai.session_info.enrich_files_with_session_names")
@@ -1398,7 +1392,6 @@ class TestResumeCommand(unittest.TestCase):
         mock_discover: MagicMock,
         mock_prompt: MagicMock,
         mock_resume: MagicMock,
-        mock_lookup: MagicMock,
     ) -> None:
         """/resume with an out-of-range number in workspace prints an error."""
         from cli_topsailai.core import main
@@ -1418,10 +1411,8 @@ class TestResumeCommand(unittest.TestCase):
         main([])
 
         mock_resume.assert_not_called()
-        mock_lookup.assert_not_called()
 
-    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
-    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.project_scope.resume_session_result")
     @patch("cli_topsailai.core.prompt_selection")
     @patch("cli_topsailai.log_files.discover_log_files")
     @patch("cli_topsailai.session_info.enrich_files_with_session_names")
@@ -1441,7 +1432,6 @@ class TestResumeCommand(unittest.TestCase):
         mock_discover: MagicMock,
         mock_prompt: MagicMock,
         mock_resume: MagicMock,
-        mock_lookup: MagicMock,
     ) -> None:
         """/resume for a temporary session in workspace is rejected."""
         from cli_topsailai.core import main
@@ -1461,10 +1451,8 @@ class TestResumeCommand(unittest.TestCase):
         main([])
 
         mock_resume.assert_not_called()
-        mock_lookup.assert_not_called()
 
-    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
-    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.project_scope.resume_session_result")
     @patch("cli_topsailai.core.prompt_selection")
     @patch("cli_topsailai.log_files.discover_log_files")
     @patch("cli_topsailai.session_info.enrich_files_with_session_names")
@@ -1484,9 +1472,8 @@ class TestResumeCommand(unittest.TestCase):
         mock_discover: MagicMock,
         mock_prompt: MagicMock,
         mock_resume: MagicMock,
-        mock_lookup: MagicMock,
     ) -> None:
-        """/resume falls back to project history when the log entry lacks project_workspace."""
+        """A workspace-less entry is resolved by the strict boundary, not the CLI."""
         from cli_topsailai.core import main
 
         log_file = {
@@ -1498,20 +1485,17 @@ class TestResumeCommand(unittest.TestCase):
             "mtime": 1710000000,
         }
         mock_discover.return_value = [log_file]
-        mock_lookup.return_value = {"s1": "/work/from-history"}
+        mock_resume.return_value = 0
         mock_prompt.side_effect = [("resume", "1"), ("quit", None)]
 
         main([])
 
-        mock_lookup.assert_called_once()
         mock_resume.assert_called_once()
-        positional, _kwargs = mock_resume.call_args
-        synthetic_entries = positional[1]
-        self.assertEqual(synthetic_entries[0]["project_workspace"], "/work/from-history")
+        self.assertEqual(mock_resume.call_args[0][0], "s1")
+
 
     @patch("builtins.print")
-    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
-    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.project_scope.resume_session_result")
     @patch("cli_topsailai.core.prompt_selection")
     @patch("cli_topsailai.log_files.discover_log_files")
     @patch("cli_topsailai.session_info.enrich_files_with_session_names")
@@ -1531,10 +1515,9 @@ class TestResumeCommand(unittest.TestCase):
         mock_discover: MagicMock,
         mock_prompt: MagicMock,
         mock_resume: MagicMock,
-        mock_lookup: MagicMock,
         mock_print: MagicMock,
     ) -> None:
-        """/resume prints an error when no project workspace can be resolved."""
+        """A workspace-less entry still reaches the strict boundary, which decides."""
         from cli_topsailai.core import main
 
         log_file = {
@@ -1546,19 +1529,16 @@ class TestResumeCommand(unittest.TestCase):
             "mtime": 1710000000,
         }
         mock_discover.return_value = [log_file]
-        mock_lookup.return_value = {}
+        mock_resume.return_value = 4
         mock_prompt.side_effect = [("resume", "1"), ("quit", None)]
 
         main([])
 
-        mock_lookup.assert_called_once()
-        mock_resume.assert_not_called()
-        self.assertTrue(
-            any("Selected session has no project workspace" in str(call) for call in mock_print.call_args_list)
-        )
+        mock_resume.assert_called_once()
+        self.assertEqual(mock_resume.call_args[0][0], "s1")
 
-    @patch("cli_topsailai.project_scope.build_project_list")
-    @patch("cli_topsailai.project_scope.resume_session")
+
+    @patch("cli_topsailai.project_scope.resume_session_result")
     @patch("cli_topsailai.core.prompt_selection")
     @patch("cli_topsailai.log_files.discover_log_files")
     @patch("cli_topsailai.session_info.enrich_files_with_session_names")
@@ -1578,8 +1558,8 @@ class TestResumeCommand(unittest.TestCase):
         mock_discover: MagicMock,
         mock_prompt: MagicMock,
         mock_resume: MagicMock,
-        mock_build_project_list: MagicMock,
     ) -> None:
+        """Project-scope /resume delegates to the strict resume boundary."""
         from cli_topsailai.core import main
         cli_state.current_scope = "project"
 
@@ -1591,21 +1571,16 @@ class TestResumeCommand(unittest.TestCase):
             "ctime": 1710000000,
             "mtime": 1710000000,
         }
-        project_entry = {
-            "no": 1,
-            "session_id": "s1",
-            "project_workspace": "/work/a",
-            "status": "Idle",
-        }
         mock_discover.return_value = [log_file]
-        mock_build_project_list.return_value = [project_entry]
+        mock_resume.return_value = 0
         mock_prompt.side_effect = [("resume", "1"), ("quit", None)]
 
         main(["--agent-mode", "tmux"])
 
         mock_resume.assert_called_once()
-        _, kwargs = mock_resume.call_args
+        _positional, kwargs = mock_resume.call_args
         self.assertEqual(kwargs.get("agent_mode"), "tmux")
+        self.assertIs(kwargs.get("emit_status"), False)
 
 
 class TestWorkspaceFlag(unittest.TestCase):
@@ -2314,45 +2289,35 @@ class TestProjectSubcommand(unittest.TestCase):
         self.assertEqual(code, 0)
         mock_launch.assert_called_once_with("/work/project-a", agent_mode="tmux")
 
-    @patch("cli_topsailai.project_scope.resume_session")
-    @patch("cli_topsailai.project_scope.build_project_list")
-    def test_resume_session_reuses_project_scope_resume(self, mock_build, mock_resume):
-        """``project resume <session>`` resolves and resumes that session."""
-        mock_build.return_value = [{"session_id": "session-a", "status": "Idle"}]
-        mock_resume.return_value = True
+    @patch("cli_topsailai.project_scope.resume_session_result")
+    def test_resume_session_reuses_project_scope_resume(self, mock_resume):
+        """``project resume <session>`` delegates to the strict resume boundary."""
+        mock_resume.return_value = 0
         code = _try_handle_project_subcommand(
             ["project", "resume", "session-a"], agent_mode="dtach"
         )
         self.assertEqual(code, 0)
-        mock_build.assert_called_once_with(limit=None, session_id="session-a")
-        mock_resume.assert_called_once_with("1", mock_build.return_value, agent_mode="dtach")
+        mock_resume.assert_called_once_with("session-a", agent_mode="dtach")
 
-    @patch("cli_topsailai.project_scope.resume_session")
-    @patch("cli_topsailai.project_scope.build_project_list")
-    @patch("sys.stdout", new_callable=io.StringIO)
-    def test_resume_unknown_session_returns_error(
-        self, mock_stdout, mock_build, mock_resume
-    ):
-        """``project resume`` rejects a session that cannot be found."""
-        mock_build.return_value = []
+    @patch("cli_topsailai.project_scope.resume_session_result")
+    def test_resume_unknown_session_returns_error(self, mock_resume):
+        """``project resume`` propagates the strict not-found exit code."""
+        mock_resume.return_value = 3
         code = _try_handle_project_subcommand(
             ["project", "resume", "missing-session"], agent_mode="raw"
         )
-        self.assertEqual(code, 1)
-        mock_resume.assert_not_called()
-        self.assertIn("Session not found", mock_stdout.getvalue())
+        self.assertEqual(code, 3)
+        mock_resume.assert_called_once_with("missing-session", agent_mode="raw")
 
-    @patch("cli_topsailai.project_scope.resume_session")
-    @patch("cli_topsailai.project_scope.build_project_list")
-    def test_resume_running_session_uses_existing_rejection(self, mock_build, mock_resume):
-        """Running-session rejection remains delegated to ``resume_session``."""
-        mock_build.return_value = [{"session_id": "session-running", "status": "Running"}]
-        mock_resume.return_value = False
+    @patch("cli_topsailai.project_scope.resume_session_result")
+    def test_resume_running_session_uses_existing_rejection(self, mock_resume):
+        """Running-session rejection remains delegated to the strict boundary."""
+        mock_resume.return_value = 5
         code = _try_handle_project_subcommand(
             ["project", "resume", "session-running"], agent_mode="raw"
         )
-        self.assertEqual(code, 1)
-        mock_resume.assert_called_once_with("1", mock_build.return_value, agent_mode="raw")
+        self.assertEqual(code, 5)
+        mock_resume.assert_called_once_with("session-running", agent_mode="raw")
 
 
 if __name__ == "__main__":

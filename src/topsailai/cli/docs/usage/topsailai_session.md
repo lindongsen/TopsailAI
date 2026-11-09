@@ -149,8 +149,25 @@ The file is deleted **only** when it is provably invalid:
 2. The owning process is proven dead.
 3. No process holds the file open.
 
+Liveness is checked in this order:
+
+1. **Control-channel heartbeat (first priority).** When
+   `{session_id}.{pid}.session.sock` exists, a bounded `heartbeat` request is
+   sent with a 3-second timeout. Any correlated `ok` reply proves the session is
+   running and the deletion is refused with `target_alive`. The reply payload is
+   deliberately not inspected: the answering process may live in a sibling
+   container whose PID namespace differs from the one recorded in the filename,
+   so a session that answers is alive even when its recorded PID differs. This
+   is the only probe that sees a session running in a sibling container that
+   shares the same filesystem, because the local process table cannot observe
+   that owner.
+2. **Process table.** When the socket is absent, the heartbeat times out, or
+   the endpoint is refused, the process-table probe decides instead.
+
 A live owner is refused. An owner whose state cannot be verified is also
-refused, because "cannot prove it is gone" is not "it is gone".
+refused, because "cannot prove it is gone" is not "it is gone". A refused
+connection (`ECONNREFUSED`) proves the listener is gone and falls through to the
+process-table probe rather than being treated as a live session.
 
 Related `stderr`, `pipe` and `inject` files are **not** deleted. They are
 reported as `remaining_related_files` and left to the existing orphan cleanup.

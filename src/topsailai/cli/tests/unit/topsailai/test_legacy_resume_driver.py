@@ -40,22 +40,25 @@ def test_conflicting_driver_is_rejected_before_lookup():
 
 def test_project_resume_forwards_explicit_driver():
     """The direct project route forwards the selected driver."""
-    entries = [{"session_id": "session-1", "status": "Idle", "project_workspace": "/tmp"}]
-    with patch("cli_topsailai.project_scope.build_project_list", return_value=entries), patch(
-        "cli_topsailai.project_scope.resume_session", return_value=True
+    with patch(
+        "cli_topsailai.project_scope.resume_session_result", return_value=0
     ) as resume:
         result = core._try_handle_project_subcommand(
             ["project", "resume", "session-1", "-d", "topsailai_agent_plan_tasks"]
         )
     assert result == 0
     assert resume.call_args.kwargs["driver"] == "topsailai_agent_plan_tasks"
+    assert resume.call_args.args[0] == "session-1"
 
 
 def test_workspace_log_forwards_explicit_driver():
-    """The workspace adapter forwards a parsed driver to the legacy boundary."""
+    """The workspace adapter forwards a parsed driver to the strict boundary."""
     logs = [{"session_id": "session-1", "status": "Idle", "project_workspace": "/tmp"}]
-    with patch("cli_topsailai.project_scope.resume_session") as resume:
+    with patch(
+        "cli_topsailai.project_scope.resume_session_result", return_value=0
+    ) as resume:
         assert core._resume_from_workspace_log(
             "1", logs, agent_mode="raw", driver="ai-team-flow-dev"
         ) is True
     assert resume.call_args.kwargs["driver"] == "ai-team-flow-dev"
+    assert resume.call_args.args[0] == "session-1"
