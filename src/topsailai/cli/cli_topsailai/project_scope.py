@@ -1608,6 +1608,66 @@ def _validate_resume_workspace(record: Dict[str, Any]) -> str:
     return workspace
 
 
+def _delete_invalid_session_stdout(
+    session_id: str, *, home: Optional[str] = None,
+) -> List[str]:
+    """Delete stdout files that are proven invalid for one resumed session.
+
+    A resume only succeeds after every stdout candidate of the session was
+    proven idle, so those candidates are exactly the leftovers that the resume
+    already validated. Each candidate is re-proven here instead of trusting the
+    earlier observation: the control channel is consulted first because a
+    session may run in a sibling container that shares this filesystem, then the
+    process table, then the open-descriptor check.
+
+    Returns:
+        The deleted paths. A candidate that cannot be proven invalid is kept,
+        and a failed removal is reported as a warning instead of raising, so a
+        cleanup problem never changes the resume result.
+    """
+    from cli_topsailai.log_files import is_file_in_use
+    from cli_topsailai.process_liveness import (
+        _get_pid_from_stdout_path,
+        _session_stdout_candidates,
+        pid_state,
+        socket_heartbeat_alive,
+    )
+
+    base = home or get_topsailai_home()
+    task_dir = os.path.join(base, "workspace", "task")
+    try:
+        candidates = _session_stdout_candidates(task_dir, session_id)
+    except OSError as error:
+        print(
+            f"{Colors.YELLOW}[WARN] Cannot list session stdout files for "
+            f"'{session_id}': {error}{Colors.RESET}"
+        )
+        return []
+    deleted: List[str] = []
+    for path in candidates:
+        pid = _get_pid_from_stdout_path(path)
+        # A heartbeat that answers proves the session is in use, so the file is
+        # never a leftover even when the recorded PID differs.
+        if socket_heartbeat_alive(session_id, pid, home=base) is True:
+            continue
+        if pid_state(pid) is not ProcessState.DEAD:
+            continue
+        if is_file_in_use(path):
+            continue
+        try:
+            os.remove(path)
+        except OSError as error:
+            print(
+                f"{Colors.YELLOW}[WARN] Failed to delete invalid session stdout "
+                f"{path}: {error}{Colors.RESET}"
+            )
+            continue
+        # A deletion must always be logged, so the removed path stays auditable.
+        print(f"[INFO] Deleted invalid session stdout: {path}")
+        deleted.append(path)
+    return deleted
+
+
 def resume_session_result(
     session_id: str, *, agent_mode: Optional[str] = None, background: bool = False,
     spawn=None, prompt_driver: bool = False, driver: Optional[str] = None,
@@ -1717,14 +1777,23 @@ def resume_session_result(
     if background:
         from cli_topsailai.agent_launch import launch_configured_agent
 
-        return launch_configured_agent(
+        code = launch_configured_agent(
             workspace, mode=effective_mode, background=True, spawn=spawn,
             session_id=session_id, driver=selected_driver,
             entrypoint_base=entrypoint_base, prelaunch_check=late_check,
             receipt=receipt, child_stdout=child_stdout,
         )
-    return launch_agent_driver(
-        workspace, selected_driver, session_id, agent_mode=effective_mode,
-        spawn=spawn, emit_status=False, prelaunch_check=late_check,
-        receipt=receipt, child_stdout=child_stdout,
-    )
+    else:
+        code = launch_agent_driver(
+            workspace, selected_driver, session_id, agent_mode=effective_mode,
+            spawn=spawn, emit_status=False, prelaunch_check=late_check,
+            receipt=receipt, child_stdout=child_stdout,
+        )
+    # The resume already proved every stdout candidate of this session idle, so
+    # the leftovers are removed only after the launch succeeded. A cleanup
+    # problem is reported but never changes the resume result.
+    if code == 0:
+        record_receipt(
+            cleaned_stdout=_delete_invalid_session_stdout(session_id, home=home)
+        )
+    return code

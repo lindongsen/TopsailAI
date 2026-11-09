@@ -75,6 +75,7 @@ def _receipt_response(facts: dict) -> dict:
         "log_path": facts.get("log_path"),
         "startup_confirmed": facts.get("startup_confirmed", False),
         "child_exit_code": facts.get("child_exit_code"),
+        "cleaned_stdout": facts.get("cleaned_stdout", []),
     }
 
 

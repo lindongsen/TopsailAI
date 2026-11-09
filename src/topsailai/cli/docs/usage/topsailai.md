@@ -750,3 +750,15 @@ and workspace/liveness are checked again before launch. These local checks do
 not provide a runtime lock: concurrent external starts and PID reuse remain
 possible. Task storage must be trusted and available; permission and I/O errors
 are not interpreted as an idle session. Interactive `/resume` and `project resume` use chats by default, accept the same built-in `-d/--driver` choices, and retain their boolean/refusal behavior.
+
+A successful resume also removes the session's own invalid stdout leftovers. The
+resume already proved every stdout candidate of that session idle, so those
+candidates are exactly the files it validated. Each candidate is re-proven
+immediately before removal: the control channel is consulted first, then the
+process table, then the open-descriptor check. A session that answers a heartbeat
+is never removed, even when the local process table cannot see its owner because
+it runs in a sibling container that shares this filesystem. Cleanup is scoped to
+the resumed session and runs only after the launch returned `0`; a cleanup
+problem is reported as a warning and never changes the resume result. Every
+removal prints `[INFO] Deleted invalid session stdout: <path>`, and the `--json`
+receipt reports the removed paths in `cleaned_stdout`.

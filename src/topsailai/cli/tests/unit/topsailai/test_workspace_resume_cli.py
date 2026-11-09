@@ -532,7 +532,11 @@ def test_lookup_issues_exactly_one_query_and_bounded_candidates(tmp_path):
                 "session-123", query=query, agent_mode="raw", home=str(tmp_path),
             ) == 0
     query.assert_called_once_with("session-123")
-    assert len(probes) == 5
+    # The resume probes the five candidates once to prove the session is idle,
+    # then the post-launch cleanup re-proves the same five before removing them.
+    # Both passes are O(K) in the candidate count, so the cost stays bounded and
+    # never becomes an N+1 scan over the whole task directory.
+    assert len(probes) == 10
 
 
 def _wait_for_file(path, timeout=10.0):
@@ -994,7 +998,7 @@ def test_json_resume_foreground_receipt_uses_stdout_only_for_json(capsys):
         "workspace": "/work/project", "mode": "raw", "driver": None,
         "background": False, "resumed": True, "launcher_pid": 4321,
         "log_path": None, "startup_confirmed": False,
-        "child_exit_code": 0,
+        "child_exit_code": 0, "cleaned_stdout": [],
     }
     assert captured.err == "resume output\n"
 
