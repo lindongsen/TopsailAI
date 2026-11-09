@@ -10,15 +10,28 @@ The implementation is functional but still under active development. The design 
 
 ## Deployment
 
-A node is provisioned from a Debian package. The package carries the same payload as a
-relocatable bundle: the node controller, the role binary, the role configuration and the TLS
-material. Three packages exist because a machine has one role.
+A node is provisioned from Debian packages. The payload is split into a binary package that is
+identical on every machine and a configuration package that carries this site's identity. Five
+packages exist because a machine has one role and each role has two packages.
 
 | Package | Installs | Role |
 |---|---|---|
-| `agent-cluster-node` | `agent-clusterctl`, `agent-cluster-node-setup`, the shared env writer | controller, required by both role packages |
-| `agent-cluster-server` | `agent-cluster-server` | Server daemon |
-| `agent-cluster-endpoint` | `agent-cluster-endpoint`, `agent-cluster-cli`, `topsailai_agent_cluster` and `topsailai2` (symlinks) | Endpoint daemon and operator CLI |
+| `agent-cluster-node` | `agent-clusterctl`, `agent-cluster-node-setup`, the shared env writer | controller, required by every other package |
+| `agent-cluster-server` | `agent-cluster-server` | Server daemon binary |
+| `agent-cluster-endpoint` | `agent-cluster-endpoint`, `agent-cluster-cli`, `topsailai_agent_cluster` and `topsailai2` (symlinks) | Endpoint daemon and operator CLI binaries |
+| `agent-cluster-config-server` | `conf/node.conf`, `certs/ca.pem`, `certs/node.pem`, `certs/node-key.pem` | Server site configuration and TLS identity |
+| `agent-cluster-config-endpoint` | the same four files plus `conf/command-allowlist.conf` and `conf/control-actions.conf` | Endpoint site configuration and TLS identity |
+
+The split exists because a site replaces the shipped certificate with its own identity, and a
+certificate that lives in the binary package is overwritten on every upgrade. Keeping the identity
+in its own package means a binary upgrade cannot revert it, and it keeps a private key out of an
+artifact that is copied to every node. The binary packages therefore carry no configuration and no
+TLS material, so one build serves every machine of the same architecture.
+
+A binary package depends on the matching config package exactly, because the daemon cannot start
+without `node.conf` and its TLS material. The two config packages conflict with each other, because
+they install the same `node.conf` and the same certificate paths; a host that must run both roles
+uses the bundle path instead.
 
 Every installed file is visible in one real directory. The program payload, configuration, TLS
 material, state, logs and pid files all live under `/opt/agent-cluster`, and each entry point is a
@@ -26,17 +39,22 @@ symlink in `/usr/local/sbin`, which is on the default `PATH`:
 
 ```text
 /opt/agent-cluster/
-  agent-clusterctl              controller
-  bin/agent-cluster-<role>      role binary
-  bin/agent-cluster-cli         operator CLI (endpoint only)
-  bin/agent-cluster-node-setup  env-file regenerator
-  lib/cli-env.sh                shared env writer
-  conf/                         configuration conffiles
-  certs/                        TLS material
-  data/                         SQLite state
-  logs/                         log files
-  run/                          pid files
+  agent-clusterctl              controller            (node package)
+  bin/agent-cluster-<role>      role binary           (binary package)
+  bin/agent-cluster-cli         operator CLI          (endpoint binary package)
+  bin/agent-cluster-node-setup  env-file regenerator  (node package)
+  lib/cli-env.sh                shared env writer     (node package)
+  conf/                         configuration         (config package)
+  certs/                        TLS material          (config package)
+  data/                         SQLite state          (created at runtime)
+  logs/                         log files             (created at runtime)
+  run/                          pid files             (created at runtime)
 ```
+
+The binary package owns the program payload and creates the five layout directories so the tree is
+complete after an install. The config package owns `conf/` and `certs/` and creates only those two,
+because two packages claiming one directory makes `dpkg` report a file conflict on a path neither of
+them actually populates. State, logs and pid files are created at runtime and belong to no package.
 
 Configuration, TLS material, state, logs and pid files are real directories, not symlinks into
 `/etc`, `/var/lib`, `/var/log` and `/run`. A symlinked layout silently redirects a write to whatever
@@ -75,34 +93,45 @@ output directory never contains build intermediates:
 make deb DEB_DIR=/srv/artifacts/deb DEB_BUILD_DIR=/var/tmp/agent-cluster-build
 ```
 
-A real deployment supplies its own site configuration and
-TLS material, because the default build uses the example configuration and the development
-certificates:
+A real deployment supplies its own site configuration and TLS material to the config package,
+because the default build uses the example configuration and the development certificates:
 
 ```bash
-make deb DEB_CONFIG=conf/site/node.conf DEB_CERT=site/node.pem DEB_KEY=site/node-key.pem
+make deb-config-endpoint DEB_CONFIG=conf/site/node.conf DEB_CERT=site/node.pem DEB_KEY=site/node-key.pem
 ```
 
-One `make deb` run resolves the version once and pins it for all three packages, so the set is
-always internally consistent: the role packages depend on the exact controller version that was
-built beside them. Pass `DEB_VERSION` to label a release explicitly:
+The site arguments apply only to the config packages. The binary packages ignore them, so a binary
+built once can be reused for every machine while each site rebuilds only its own config package.
+
+One `make deb` run resolves the version once and pins it for every package, so the set is always
+internally consistent: each package depends on the exact controller version that was built beside
+it. Pass `DEB_VERSION` to label a release explicitly:
 
 ```bash
 make deb DEB_VERSION=1.0.0
 ```
 
-Install on the target node:
+Install on the target node. The binary package pulls its config package, so both are named
+explicitly here to make the pairing visible:
 
 ```bash
-dpkg -i agent-cluster-node_<version>_amd64.deb agent-cluster-endpoint_<version>_amd64.deb
+dpkg -i agent-cluster-node_<version>_amd64.deb \
+        agent-cluster-endpoint_<version>_amd64.deb \
+        agent-cluster-config-endpoint_<version>_amd64.deb
 ```
 
 The endpoint package also installs the operator CLI as `/opt/agent-cluster/bin/agent-cluster-cli`,
 with `/usr/local/sbin/agent-cluster-cli`, `/usr/local/sbin/topsailai_agent_cluster` and
-`/usr/local/sbin/topsailai2` as symlinks to it, and writes
+`/usr/local/sbin/topsailai2` as symlinks to it. The config package writes
 `${HOME}/.topsailai/.topsailai_agent_cluster.env`, which is how the CLI learns
 the Server address and token. Re-generate that file after a token rotation with
 `agent-cluster-node-setup`.
+
+The TLS material is registered as a conffile, so an upgrade keeps the certificate the site
+installed and leaves the shipped copy beside it as a `.dpkg-dist` file to compare against. Without
+that registration an upgrade would revert the certificate to the build host's name while
+`node.conf` kept the site `ENDPOINT_ID`, and the peer would reject the connection because the
+certificate subject no longer matched the identity in the hello frame.
 
 Removing a package does not remove its state. `dpkg --purge` deletes the shipped files and the
 conffiles, but `/opt/agent-cluster/data` (the SQLite database) and `/opt/agent-cluster/logs` are

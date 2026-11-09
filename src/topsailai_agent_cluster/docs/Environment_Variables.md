@@ -28,11 +28,20 @@ which of them is authoritative:
 | Deployment | Configuration source | Consequence |
 |---|---|---|
 | Bundle | `conf/node.conf`, read by `scripts/agent-clusterctl` and passed as flags | the conffile is authoritative for every key the launcher forwards, and the environment is not consulted for those keys |
-| Debian package | `/opt/agent-cluster/conf/node.conf`, registered as a conffile | an upgrade does not replace the operator's file |
+| Debian package | `/opt/agent-cluster/conf/node.conf` and the TLS material, installed by the role's config package and registered as conffiles | an upgrade does not replace the operator's file or certificate |
 | Container image | `ENV` in `docker/Dockerfile` plus `-e` at run time | no conffile exists, so the environment is the only source |
 
 Both node deployments use the same file name, `conf/node.conf`; `conf/node.server.conf.example` and
-`conf/node.endpoint.conf.example` are the role templates the package copies into place.
+`conf/node.endpoint.conf.example` are the role templates the config package copies into place. The
+binary packages carry no configuration, so `agent-cluster-config-server` and
+`agent-cluster-config-endpoint` are the only artifacts that differ between machines.
+
+The launcher forwards a fixed set of keys, so a key present in `node.conf` but absent from that set is
+silently ignored rather than passed to the process. `CONTROL_ACTION_FILE` is currently such a key: the
+template ships it and the binary accepts it, but the launcher never reads it, so a packaged node
+advertises no `ctl.` action. See `AGENT_CLUSTER_CONTROL_ACTION_FILE` below and
+`issues/agent-clusterctl-drops-control-action-file.md`. A key that must reach the process regardless of
+the launcher can be exported directly, because the binary reads the environment as well.
 
 A container image carries no `conf/` directory at all. `internal/config/config.go` reads only the
 process environment, so a `node.conf` placed in the image would be inert, and the image fixes the
@@ -165,8 +174,16 @@ the explicit empty directive. Each successful reload logs the entry count.
 Defines the `ctl.<action>` surface. This file is the only source of control
 actions: the action name, its permission, its payload schema and the provider
 command each action runs all come from here, so changing the action surface never
-requires a code change. Paths are resolved relative to the bundle root by the
-launcher.
+requires a code change.
+
+The launcher does not forward this key. `scripts/agent-clusterctl` resolves
+`COMMAND_ALLOWLIST_FILE` and passes it as a flag, but it never reads
+`CONTROL_ACTION_FILE`, so a node started through the launcher receives no catalog
+path even when `node.conf` names one. A packaged node therefore advertises no `ctl.`
+action until the path reaches the process another way: export
+`AGENT_CLUSTER_CONTROL_ACTION_FILE`, or pass `--control-action-file` directly. The
+gap is recorded in `issues/agent-clusterctl-drops-control-action-file.md`; this
+paragraph describes the current behaviour, not the intended one.
 
 The file is one JSON document. Whole-line `#` comments are ignored, so the shipped
 example can explain itself; trailing comments are not supported. Each entry carries:
