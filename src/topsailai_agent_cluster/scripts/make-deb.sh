@@ -48,6 +48,7 @@
 #   --key       private key paired with --cert (default: development key)
 #   --ca        CA certificate (default: /opt/agent-cluster/certs/ca.pem)
 #   --adapters  adapter JSON for the endpoint role; replaces the template value
+#   --build-dir staging tree root (default: .tmp/deb/build)
 #   --keep      keep the staging tree for inspection
 
 set -uo pipefail
@@ -79,6 +80,11 @@ CERT=""
 KEY=""
 CA="${LOCAL_CERTS}/ca.pem"
 ADAPTERS=""
+# The staging tree is where the package payload is assembled before dpkg-deb
+# packs it. It is separate from --dest so the output directory holds only
+# finished packages, and so a caller can place the staging tree on a different
+# filesystem than the artifacts.
+BUILD_DIR="${PROJECT_DIR}/.tmp/deb/build"
 KEEP=0
 PRINT_VERSION=0
 
@@ -108,6 +114,7 @@ while [ $# -gt 0 ]; do
         --key) KEY="${2:-}"; shift 2 ;;
         --ca) CA="${2:-}"; shift 2 ;;
         --adapters) ADAPTERS="${2:-}"; shift 2 ;;
+        --build-dir) BUILD_DIR="${2:-}"; shift 2 ;;
         --keep) KEEP=1; shift ;;
         --print-version) PRINT_VERSION=1; shift ;;
         -h | --help) usage ;;
@@ -158,6 +165,16 @@ case "${ROLE}" in
 esac
 [ -n "${DEST}" ] || die "--dest is required"
 
+# Both directories are resolved to absolute paths before use. A relative value is
+# taken against the caller's working directory, which is what a shell user
+# expects, and resolving it here keeps the staging tree and the artifact path
+# stable even though the builder changes directory while assembling the payload.
+# readlink -m normalises the path without requiring it to exist yet.
+DEST=$(readlink -m "${DEST}") || die "cannot resolve --dest ${DEST}"
+BUILD_DIR=$(readlink -m "${BUILD_DIR}") || die "cannot resolve --build-dir ${BUILD_DIR}"
+[ "${DEST}" != "${BUILD_DIR}" ] ||
+    die "--dest and --build-dir must differ; the staging tree must not sit in the output directory"
+
 [ -n "${VERSION}" ] || VERSION=$(default_version)
 [ -n "${ARCH}" ] || ARCH=$(dpkg --print-architecture 2>/dev/null) ||
     die "cannot determine the target architecture; pass --arch"
@@ -169,7 +186,7 @@ CONTROL_VERSION="${DEB_EPOCH}:${FULL_VERSION}"
 PACKAGE="agent-cluster-${ROLE}"
 MAINTAINER="DawsonLin <dawson@yunify.com>"
 
-BUILD_ROOT="${PROJECT_DIR}/.tmp/deb/build/${ROLE}"
+BUILD_ROOT="${BUILD_DIR}/${ROLE}"
 PKG_ROOT="${BUILD_ROOT}/root"
 DEB_PATH="${DEST}/${PACKAGE}_${FULL_VERSION}_${ARCH}.deb"
 

@@ -123,6 +123,14 @@ func buildDebPackagesOnce() (map[string]*debPackage, error) {
 		return nil, err
 	}
 
+	// The staging tree is kept outside the output directory, mirroring the
+	// Makefile default. Passing it explicitly also proves the builder honours
+	// --build-dir instead of writing into the project .tmp tree.
+	buildDir := filepath.Join(work, "build")
+	if err := os.MkdirAll(buildDir, 0o755); err != nil {
+		return nil, err
+	}
+
 	// The endpoint package is built from a site configuration that omits the
 	// allowlist key, because that is what a real deployment supplies: a site file
 	// replaces the example template wholesale and carries only the values the
@@ -139,6 +147,7 @@ func buildDebPackagesOnce() (map[string]*debPackage, error) {
 			filepath.Join(root, "scripts", "make-deb.sh"),
 			"--role", role,
 			"--dest", dest,
+			"--build-dir", buildDir,
 			"--version", "0.0.0-test",
 			"--revision", "1",
 		}

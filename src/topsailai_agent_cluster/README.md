@@ -57,7 +57,21 @@ Build the packages with the Makefile:
 make deb
 ```
 
-The packages are written to `.tmp/deb/`. A real deployment supplies its own site configuration and
+The packages are written to `DEB_DIR`, which defaults to `.tmp/deb/`. Override it to write the
+artifacts outside the source tree, for example into a mounted volume or a CI artifact directory:
+
+```bash
+make deb DEB_DIR=/srv/artifacts/deb
+```
+
+The staging tree is controlled separately by `DEB_BUILD_DIR` (default `.tmp/deb/build`), so the
+output directory never contains build intermediates:
+
+```bash
+make deb DEB_DIR=/srv/artifacts/deb DEB_BUILD_DIR=/var/tmp/agent-cluster-build
+```
+
+A real deployment supplies its own site configuration and
 TLS material, because the default build uses the example configuration and the development
 certificates:
 

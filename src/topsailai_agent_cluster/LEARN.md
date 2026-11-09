@@ -134,3 +134,26 @@ changes only comments looks successful while the running configuration still des
 layout. The `.dpkg-dist` file is the only evidence that the package content differs, and it is easy
 to mistake for leftover noise. Reading the installed file is what distinguishes "the package is
 correct" from "the node is correct".
+
+## A hardcoded output path is invisible until someone needs a different one
+
+Trigger: the human asked for the package output directory to be configurable instead of hardcoded.
+`Makefile` used `DEB_DIR := .tmp/deb`, and `scripts/make-deb.sh` hardcoded the staging tree as
+`${PROJECT_DIR}/.tmp/deb/build`. The `:=` assignment was the real defect: it overrides an
+environment variable, so `DEB_DIR=/srv/out make deb` silently wrote to `.tmp/deb` while the caller
+believed the override took effect. Only a command-line assignment won, which is not what a
+`VAR=value make target` caller expects.
+
+Action: when a path is meant to be configurable, use `?=` so both the environment and the command
+line can override it, and give every related path its own variable instead of deriving one from
+another. Then check the whole target family, not only the build target: `deb-clean` still removed
+`$(DEB_DIR)/build`, which stopped being the staging location the moment staging became independent,
+so a clean after an override would have deleted the wrong directory and left the real staging tree
+behind. Guard destructive targets against an empty value, because `rm -rf $(DEB_DIR)/build` with an
+empty variable becomes `rm -rf /build`.
+
+Why this prevents recurrence: a hardcoded default looks harmless because it works for the author's
+own workflow, and `:=` versus `?=` is a one-character difference that no test exercises. The failure
+is silent in both directions: the build succeeds into the wrong place, and the clean succeeds on the
+wrong place. Verifying with `make -n` plus one real build into a throwaway directory is what turns
+"the variable is used somewhere" into "the artifact actually landed there".

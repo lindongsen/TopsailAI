@@ -5,16 +5,29 @@
 # loads them from there. The test-hooks variant stays in .tmp/artifacts/ so that
 # building instrumented binaries never overwrites the ones a running cluster uses.
 #
-# Debian packages are built into .tmp/deb/ and are the deployment artifact: a node
+# Debian packages are built into DEB_DIR and are the deployment artifact: a node
 # is provisioned with `dpkg -i` instead of copying a bundle directory. The package
 # carries the same payload as a bundle (controller, role binary, configuration and
 # TLS material), laid out according to Debian policy.
+#
+# DEB_DIR and DEB_BUILD_DIR are overridable so a release build can write the
+# artifacts outside the source tree, for example into a mounted volume or a CI
+# artifact directory. Both default to .tmp/, which is ignored by git. Override
+# them on the command line or through the environment:
+#
+#   make deb DEB_DIR=/srv/artifacts/deb
+#   DEB_DIR=/srv/artifacts/deb make deb
+#
+# The staging tree is kept separate from the output directory on purpose: a
+# staging tree inside the output directory would be swept by `deb-clean` and
+# would also be picked up by a `dpkg -i *.deb` glob if it ever held a package.
 
 SHELL := /bin/bash
 
 BIN_DIR := bin
 TESTHOOKS_DIR := .tmp/artifacts
-DEB_DIR := .tmp/deb
+DEB_DIR ?= .tmp/deb
+DEB_BUILD_DIR ?= .tmp/deb/build
 LAUNCHER := scripts/start-local-cluster.sh
 DEB_BUILDER := scripts/make-deb.sh
 # Container image for the server. The tag defaults to the commit the image was
@@ -118,6 +131,10 @@ help:
 	@echo ""
 	@echo "  Site values: DEB_VERSION DEB_REVISION DEB_ARCH DEB_CONFIG DEB_CERT"
 	@echo "               DEB_KEY DEB_CA DEB_ADAPTERS"
+	@echo "  Output paths: DEB_DIR (default $(DEB_DIR))"
+	@echo "                DEB_BUILD_DIR (default $(DEB_BUILD_DIR))"
+	@echo "                override either to write outside the source tree,"
+	@echo "                e.g. make deb DEB_DIR=/srv/artifacts/deb"
 	@echo ""
 	@echo "Container image (server)"
 	@echo "  image             build the server image as $(IMAGE_NAME)"
@@ -184,15 +201,15 @@ fmt:
 # empty, so a package always identifies the commit it was built from.
 deb-node:
 	@mkdir -p $(DEB_DIR)
-	@bash $(DEB_BUILDER) --role node --dest $(DEB_DIR) $(DEB_COMMON_ARGS)
+	@bash $(DEB_BUILDER) --role node --dest $(DEB_DIR) --build-dir $(DEB_BUILD_DIR) $(DEB_COMMON_ARGS)
 
 deb-server:
 	@mkdir -p $(DEB_DIR)
-	@bash $(DEB_BUILDER) --role server --dest $(DEB_DIR) $(DEB_COMMON_ARGS) $(DEB_SITE_ARGS)
+	@bash $(DEB_BUILDER) --role server --dest $(DEB_DIR) --build-dir $(DEB_BUILD_DIR) $(DEB_COMMON_ARGS) $(DEB_SITE_ARGS)
 
 deb-endpoint:
 	@mkdir -p $(DEB_DIR)
-	@bash $(DEB_BUILDER) --role endpoint --dest $(DEB_DIR) $(DEB_COMMON_ARGS) $(DEB_SITE_ARGS) \
+	@bash $(DEB_BUILDER) --role endpoint --dest $(DEB_DIR) --build-dir $(DEB_BUILD_DIR) $(DEB_COMMON_ARGS) $(DEB_SITE_ARGS) \
 		$(call deb_arg,--adapters,$(DEB_ADAPTERS))
 
 # Builds every package. Packages left by an earlier version are removed first: a
@@ -206,6 +223,8 @@ deb-endpoint:
 # a set whose role packages depend on a controller version that was never built,
 # and dpkg then refuses to install the endpoint.
 deb:
+	@[ -n "$(DEB_DIR)" ] || { echo "DEB_DIR is empty; refusing to build" >&2; exit 1; }
+	@[ -n "$(DEB_BUILD_DIR)" ] || { echo "DEB_BUILD_DIR is empty; refusing to build" >&2; exit 1; }
 	@rm -f $(DEB_DIR)/agent-cluster-*.deb
 	@version=$$(bash $(DEB_BUILDER) --print-version $(call deb_arg,--version,$(DEB_VERSION))) || exit 1; \
 	echo "building version $$version"; \
@@ -234,10 +253,17 @@ deb-inspect:
 # Removes the staging tree and the built packages, which is what the help text
 # promises. Keeping the packages would leave a stale version behind for the next
 # `dpkg -i *.deb`.
+#
+# The staging tree is removed from DEB_BUILD_DIR, not from inside DEB_DIR, because
+# the two are independent overrides. Both are guarded against an empty value: an
+# empty override would turn the removal into a path relative to the filesystem
+# root, which is never what the caller meant.
 deb-clean:
-	rm -rf $(DEB_DIR)/build
+	@[ -n "$(DEB_DIR)" ] || { echo "DEB_DIR is empty; refusing to clean" >&2; exit 1; }
+	@[ -n "$(DEB_BUILD_DIR)" ] || { echo "DEB_BUILD_DIR is empty; refusing to clean" >&2; exit 1; }
+	rm -rf $(DEB_BUILD_DIR)
 	rm -f $(DEB_DIR)/agent-cluster-*.deb
-	@echo "removed $(DEB_DIR)/build and $(DEB_DIR)/*.deb"
+	@echo "removed $(DEB_BUILD_DIR) and $(DEB_DIR)/*.deb"
 
 # Builds the server image. The context is the project directory and .dockerignore
 # keeps the 183 MB .tmp tree, the databases and the TLS private keys out of it.
