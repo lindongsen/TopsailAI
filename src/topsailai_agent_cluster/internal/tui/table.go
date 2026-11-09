@@ -49,6 +49,14 @@ const (
 	columnDataStatus = "data_status"
 )
 
+// workspaceColumnCap bounds the PROJECT_WORKSPACE column. A workspace path is
+// descriptive context, not a selector, so it must not push the fleet table past
+// the terminal: 23 display cells keep the identifying tail of a path visible
+// while leaving room for the columns that address a row. Both the session and
+// the history layouts read this one constant, because two copies of the number
+// would drift apart on the next change.
+const workspaceColumnCap = 23
+
 // tableColumn describes one column: its header, its width cap, whether it is
 // never truncated, whether it keeps its own warning colour, and which end a
 // clipped value keeps.
@@ -71,7 +79,7 @@ var allColumns = []tableColumn{
 	{key: columnName, header: "SESSION_NAME", cap: 64, wide: true},
 	{key: columnID, header: "SESSION_ID", cap: 36},
 	{key: columnDrive, header: "DRIVER", cap: 10},
-	{key: columnWorkspace, header: "PROJECT_WORKSPACE", cap: 48, leftClip: true},
+	{key: columnWorkspace, header: "PROJECT_WORKSPACE", cap: workspaceColumnCap, leftClip: true},
 	{key: columnEndpoint, header: "ENDPOINT", cap: 20},
 	{key: columnDataStatus, header: "DATA_STATUS", cap: 35, warn: true},
 }

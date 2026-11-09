@@ -445,10 +445,15 @@ and the terminal wraps it. The switch does not weaken sanitization: terminal
 control sequences in provider data are still stripped.
 
 `PROJECT_WORKSPACE` is clipped from the left, so an over-wide path keeps its
-identifying tail (`...topsailai_agent_cluster/internal/tui`) instead of a prefix
-that every sibling path shares. Every other column keeps its head. The rule
+identifying tail (`...cluster/internal/tui`) instead of a prefix that every
+sibling path shares. Every other column keeps its head. The rule
 applies to both the framed and the narrow layout, and `--no-truncate` still
 prints the complete path.
+
+The column is capped at 23 display cells by default, because a workspace path is
+descriptive context rather than a selector and must not push the fleet table past
+the terminal. The `list` and `history` layouts read the same constant, so the two
+tables cannot drift apart.
 
 The output boundary owns the policy. The CLI writer reports a `TableLayout` of
 width plus truncation state, so every render path inherits the switch without
