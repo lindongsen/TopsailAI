@@ -138,7 +138,6 @@ type workspaceItem struct {
 	SessionID         string          `json:"session_id"`
 	SessionName       string          `json:"session_name"`
 	ProcessGeneration json.RawMessage `json:"process_generation"`
-	Generation        json.RawMessage `json:"generation"`
 	State             string          `json:"state"`
 	Status            string          `json:"status"`
 	AgentID           string          `json:"agent_id"`
@@ -274,9 +273,6 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 	result := adapter.DiscoverResult{Complete: true, CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: nowMS, LastSuccessAtMS: nowMS, DataKnown: true}
 	for _, item := range response.Items {
 		generation, err := workspaceGeneration(item.ProcessGeneration)
-		if generation == "" {
-			generation, err = workspaceGeneration(item.Generation)
-		}
 		if err != nil {
 			return adapter.DiscoverResult{}, fmt.Errorf("decode workspace generation: %w", err)
 		}
@@ -329,13 +325,17 @@ func (a *Adapter) resourceID(ctx context.Context, providerKey string) (string, e
 
 // Inspect revalidates a mapped resource and reports its current provider state.
 //
-// A generation is not required. Resume authorizes on the absence of a target, and
-// a history row has no generation because the session is not running, so demanding
-// one would make every history resume fail before the provider was ever asked. The
-// absence proof still comes from the provider's own answer: a session that is
-// running is reported as found, and only a genuinely absent one is reported as not
-// found. Callers that need a generation match compare the returned value
-// themselves, so this relaxation cannot silently authorize a stale generation.
+// A generation is not required. Resume authorizes on the absence of a live target,
+// and a history row has no generation because the session is not running, so
+// demanding one would make every history resume fail before the provider was ever
+// asked. The absence proof still comes from the provider's own answer, which is
+// reported as two separate facts: Found means the provider still lists the record,
+// and Live means it also proved a process currently holds that session output file.
+// A listed record without that proof is found but not live, so resume reads Live
+// rather than Found; reading Found would refuse to resume exactly the sessions
+// whose process is gone, which is the only case resume exists for. Callers that
+// need a generation match compare the returned value themselves, so this
+// relaxation cannot silently authorize a stale generation.
 func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (adapter.InspectResult, error) {
 	if request.Target.ResourceID == "" {
 		return adapter.InspectResult{}, errors.New("resource ID is required")
@@ -350,11 +350,18 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 	// Query only the requested provider session. A full workspace discovery scans
 	// the complete provider history, which costs seconds per command, so the
 	// targeted list is used instead; it reports the same generation evidence for
-	// the one session being revalidated. --local keeps this read in the same host
-	// scope as Discover: without it a session recorded on another machine would be
-	// reported as found here, and revalidation would authorize a target this
-	// Endpoint cannot reach.
-	output, err := a.run(ctx, []string{"workspace", "list", "-s", mapping.ProviderKey, "--json", "--local"}, nil)
+	// the one session being revalidated.
+	//
+	// --local is deliberately NOT passed here, unlike Discover. The inventory lists
+	// only what this Endpoint can control, so it stays local. Inspect must not,
+	// because resume authorizes on the absence of a live target: a session recorded
+	// on another machine is absent from a --local read, so --local would report it
+	// as not found and authorize a resume the operator asked for. A task directory
+	// shared between hosts is exactly the case where resuming another host's
+	// session is intended, and the provider applies no host filter to resume. Such
+	// a row still reports an empty generation, because this host cannot verify a
+	// process it cannot see, so it is found but not live.
+	output, err := a.run(ctx, []string{"workspace", "list", "-s", mapping.ProviderKey, "--json"}, nil)
 	if err != nil {
 		return adapter.InspectResult{}, err
 	}
@@ -367,9 +374,6 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 			continue
 		}
 		generation, err := workspaceGeneration(item.ProcessGeneration)
-		if generation == "" {
-			generation, err = workspaceGeneration(item.Generation)
-		}
 		if err != nil {
 			return adapter.InspectResult{}, fmt.Errorf("decode workspace generation: %w", err)
 		}

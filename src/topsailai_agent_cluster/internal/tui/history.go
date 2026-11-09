@@ -173,7 +173,7 @@ var historyColumns = []tableColumn{
 	{key: "provider_status", header: "PROVIDER_STATUS", cap: 16},
 	{key: columnName, header: "SESSION_NAME", cap: 64, wide: true},
 	{key: columnID, header: "SESSION_ID", cap: 36},
-	{key: columnWorkspace, header: "PROJECT_WORKSPACE", cap: workspaceColumnCap, leftClip: true},
+	{key: columnWorkspace, header: "PROJECT_WORKSPACE", cap: workspaceColumnCap, grow: true, leftClip: true},
 	{key: "live", header: "LIVE", cap: 8},
 	{key: "resumable", header: "RESUMABLE", cap: 24, warn: true},
 }

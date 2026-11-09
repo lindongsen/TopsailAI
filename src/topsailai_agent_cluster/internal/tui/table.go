@@ -24,7 +24,12 @@ type TableOptions struct {
 	Width int
 	// Full disables every truncation: the width bound and the per-column caps.
 	// A narrow terminal then wraps instead of losing data.
-	Full   bool
+	Full bool
+	// Grow lets a growable column spend the width the table does not need, so a
+	// value is printed in full when the terminal has room for it. It is set only
+	// by a real terminal boundary: a redirected stream and an unknown width keep
+	// the capped layout, because their width is not a budget that can be spent.
+	Grow   bool
 	Color  ColorPolicy
 	Clean  bool
 	OnRows func([]SessionRow)
@@ -55,17 +60,25 @@ const (
 // while leaving room for the columns that address a row. Both the session and
 // the history layouts read this one constant, because two copies of the number
 // would drift apart on the next change.
+//
+// The cap is a default, not a ceiling. A terminal with width to spare grows the
+// column back towards the complete path (see growColumns), so a wide screen shows
+// the whole value while a narrow one still keeps the identifying tail.
 const workspaceColumnCap = 23
 
 // tableColumn describes one column: its header, its width cap, whether it is
-// never truncated, whether it keeps its own warning colour, and which end a
-// clipped value keeps.
+// never truncated, whether it keeps its own warning colour, whether it may spend
+// spare width, and which end a clipped value keeps.
 type tableColumn struct {
 	key    string
 	header string
 	cap    int
 	wide   bool
 	warn   bool
+	// grow marks a column that may widen past its cap into width the table does
+	// not need. Only a descriptive column is marked: a selector column must keep
+	// a predictable width so the columns that address a row stay aligned.
+	grow bool
 	// leftClip keeps the tail of an over-wide value instead of its head. A path
 	// shares a long prefix with its siblings, so its tail identifies it.
 	leftClip bool
@@ -79,7 +92,7 @@ var allColumns = []tableColumn{
 	{key: columnName, header: "SESSION_NAME", cap: 64, wide: true},
 	{key: columnID, header: "SESSION_ID", cap: 36},
 	{key: columnDrive, header: "DRIVER", cap: 10},
-	{key: columnWorkspace, header: "PROJECT_WORKSPACE", cap: workspaceColumnCap, leftClip: true},
+	{key: columnWorkspace, header: "PROJECT_WORKSPACE", cap: workspaceColumnCap, grow: true, leftClip: true},
 	{key: columnEndpoint, header: "ENDPOINT", cap: 20},
 	{key: columnDataStatus, header: "DATA_STATUS", cap: 35, warn: true},
 }
@@ -171,15 +184,84 @@ func measureColumns(cells [][]string, columns []tableColumn, full bool) []int {
 // writeTable renders one measured table. A full layout never applies the
 // terminal bound, so a narrow terminal wraps the complete values instead of
 // clipping them; a bounded layout keeps the existing fitting and narrow rules.
+//
+// Growth runs before fitting, so the shrinker stays the final safety net: a
+// column can only spend width the table does not need, and a table that still
+// does not fit is reduced exactly as before.
 func writeTable(out io.Writer, headers []string, cells, states [][]string, rowStyles []string, widths []int, columns []tableColumn, options TableOptions) error {
 	if options.Full {
 		return writeFramedTable(out, headers, cells, states, rowStyles, widths, columns, options.Color)
+	}
+	if options.Grow {
+		growColumns(widths, cells, columns, options.Width)
 	}
 	fitTableWidths(widths, options.Width)
 	if options.Width > 0 && options.Width < minimumTableWidth(len(widths)) {
 		return writeNarrowTable(out, cells, states, rowStyles, columns, options.Width, options.Color)
 	}
 	return writeFramedTable(out, headers, cells, states, rowStyles, widths, columns, options.Color)
+}
+
+// growColumns spends the width a table does not need on the columns that may
+// grow, so a value is printed in full when the terminal has room for it.
+//
+// The spare width is what the terminal offers beyond the measured table, so a
+// table that already fills the terminal grows nothing and keeps its capped
+// layout. Columns are visited in layout order and each takes only what it needs
+// to reach its natural width, so the result never depends on which column
+// happens to be widest. A zero limit means the width is unknown, which is not a
+// budget that can be spent, so nothing grows.
+func growColumns(widths []int, cells [][]string, columns []tableColumn, limit int) {
+	if limit <= 0 {
+		return
+	}
+	spare := limit - tableWidth(widths)
+	if spare <= 0 {
+		return
+	}
+	for j, column := range columns {
+		if spare <= 0 {
+			return
+		}
+		if !column.grow {
+			continue
+		}
+		natural := naturalColumnWidth(cells, j, widths[j])
+		if natural <= widths[j] {
+			continue
+		}
+		add := minInt(natural-widths[j], spare)
+		widths[j] += add
+		spare -= add
+	}
+}
+
+// naturalColumnWidth reports the widest rendered value of one column, so a
+// growable column can be widened to exactly the width its content needs.
+func naturalColumnWidth(cells [][]string, index, current int) int {
+	natural := current
+	for _, row := range cells {
+		if index >= len(row) {
+			continue
+		}
+		if n := displayWidth(row[index]); n > natural {
+			natural = n
+		}
+	}
+	return natural
+}
+
+// tableWidth reports the rendered width of one measured table, including the
+// separators between columns.
+func tableWidth(widths []int) int {
+	if len(widths) == 0 {
+		return 0
+	}
+	total := 3 * (len(widths) - 1)
+	for _, width := range widths {
+		total += width
+	}
+	return total
 }
 
 // tableHeaders lists the plain layout headers, used by callers that render

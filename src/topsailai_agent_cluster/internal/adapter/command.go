@@ -92,10 +92,15 @@ func (a *commandAdapter) Discover(parent context.Context, _ DiscoverRequest) (Di
 }
 
 // Inspect verifies that a resource exists and returns its current state.
-
+//
+// A generation is not required, matching the TopsailAI adapter. Resume authorizes
+// on the absence of a live target, and a history row has no generation because the
+// session is not running, so demanding one would make every history resume fail
+// before the provider was ever asked. The result still separates Found from Live,
+// so a caller that needs a generation match compares the returned value itself.
 func (a *commandAdapter) Inspect(ctx context.Context, request InspectRequest) (InspectResult, error) {
-	if request.Target.ResourceID == "" || request.Target.Generation == "" {
-		return InspectResult{}, fmt.Errorf("resource ID and generation are required")
+	if request.Target.ResourceID == "" {
+		return InspectResult{}, fmt.Errorf("resource ID is required")
 	}
 	if a.config.ResourceMapper != nil {
 		mapping, err := a.config.ResourceMapper.LookupResourceID(ctx, request.Target.ResourceID)

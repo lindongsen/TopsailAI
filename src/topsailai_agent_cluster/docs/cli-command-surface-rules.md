@@ -249,6 +249,18 @@ around `list`, which is strictly more expressive because it controls the exit
 condition and the output format. The loop therefore has no standalone contract to
 pin, and inventing one would duplicate `list` behind a second name.
 
+The loop collects once immediately on start, before the first tick, so the operator
+sees the current inventory at once instead of waiting a whole interval for a table
+that is already available. The immediate collection is the same bounded collection a
+tick performs, including the forced-collection path under `--force`, so it adds no
+new capability and no new failure mode. A repeated identical failure is still
+reported once, because the de-duplication applies to the immediate collection too.
+
+The presentation policy is re-read on every render rather than sampled once when the
+loop starts, so a terminal resize during a watch run is honoured on the next tick.
+Sampling it once would freeze the width at the moment the operator entered the
+command, which is the same defect as caching a terminal width anywhere else.
+
 Two consequences follow, and both are enforced:
 
 - `watch` rejects `--json` in interactive mode instead of silently ignoring it, so
@@ -259,7 +271,9 @@ Two consequences follow, and both are enforced:
 
 The behaviour `watch` drives is pinned by the standalone tests for `list` and
 `refresh`; the loop itself is pinned by the editor-level tests that inject a tick
-channel, so no part of it depends on manual keystrokes for verification.
+channel, so no part of it depends on manual keystrokes for verification. Those tests
+assert the immediate collection without delivering a tick, and assert that a layout
+change between ticks reaches the next render.
 
 Removed spellings must stay rejected rather than silently reinterpreted: `table`
 returns an explicit removal message pointing at `list --clean`, and `use` is
@@ -530,10 +544,24 @@ descriptive context rather than a selector and must not push the fleet table pas
 the terminal. The `list` and `history` layouts read the same constant, so the two
 tables cannot drift apart.
 
+The cap is a default, not a ceiling. A terminal with width to spare grows the
+column back towards the complete path, so a wide screen shows the whole value
+while a narrow one still keeps the identifying tail. Growth spends only the width
+the table does not need: a table that already fills the terminal grows nothing,
+and a table that cannot fit the whole value grows by the spare width and stays
+clipped. Growth runs before the width fitting, so the shrinker remains the final
+safety net and a table can never exceed the terminal.
+
+Growth is enabled only where the width is a real budget. A redirected stream
+reports no width, so it keeps the capped layout and its output stays
+byte-identical to the previous behaviour; a script that parses that output is
+therefore unaffected. `--no-truncate` is unaffected too, because a full layout
+already prints every value in full.
+
 The output boundary owns the policy. The CLI writer reports a `TableLayout` of
-width plus truncation state, so every render path inherits the switch without
-threading a new parameter through each command, and the interactive prompt editor
-keeps the real terminal width as its editing budget.
+width, truncation state and growth state, so every render path inherits the
+switches without threading a new parameter through each command, and the
+interactive prompt editor keeps the real terminal width as its editing budget.
 
 ## Help option and the literal terminator
 
