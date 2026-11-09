@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -228,7 +229,7 @@ func TestFollowSessionIdleNeverBlocks(t *testing.T) {
 }
 
 // TestFollowSessionIdleDrainsAvailableRecords proves one poll applies every
-// record that is already available, so a burst is not replayed one per poll.
+// record the pump has accumulated, so a burst is not replayed one per poll.
 func TestFollowSessionIdleDrainsAvailableRecords(t *testing.T) {
 	stub := &followStub{records: []protocol.OutputFollowRecord{
 		{Lines: []string{"first"}},
@@ -240,6 +241,9 @@ func TestFollowSessionIdleDrainsAvailableRecords(t *testing.T) {
 		t.Fatalf("newFollowSession: %v", err)
 	}
 	defer session.Stop()
+	// The pump is asynchronous, so the burst is observed as finished before the
+	// single poll that must return all of it.
+	waitEnded(t, session)
 	payload, idleErr := session.Idle()
 	if idleErr != nil {
 		t.Fatalf("Idle: %v", idleErr)
@@ -257,6 +261,25 @@ func TestFollowSessionIdleDrainsAvailableRecords(t *testing.T) {
 	}
 	if len(again) != 0 {
 		t.Fatalf("finished stream reprinted: %q", again)
+	}
+}
+
+// waitEnded blocks until the pump has recorded the terminal state, without
+// consuming the accumulated payload.
+func waitEnded(t *testing.T, session *followSession) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		session.mu.Lock()
+		ended := session.ended
+		session.mu.Unlock()
+		if ended {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the stream never reached a terminal state")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -418,12 +441,10 @@ func TestFollowSessionIdleReportsRenderFailure(t *testing.T) {
 	channel := make(chan protocol.OutputFollowRecord, 1)
 	channel <- protocol.OutputFollowRecord{Lines: []string{"line"}, End: true}
 	close(channel)
-	session := &followSession{records: channel, cancel: func() {}}
-	payload, err := session.Idle()
-	if err != nil {
-		t.Fatalf("Idle: %v", err)
-	}
-	if !strings.Contains(string(payload), "line") {
+	session := newFollowSessionWithRecords(channel, func() {}, ColorPolicy{})
+	defer session.Stop()
+	payload := idleUntil(t, session, "line")
+	if !strings.Contains(payload, "line") {
 		t.Fatalf("payload=%q", payload)
 	}
 	// A finished stream reports nothing further, so the editor does not reprint.
@@ -433,5 +454,63 @@ func TestFollowSessionIdleReportsRenderFailure(t *testing.T) {
 	}
 	if len(again) != 0 {
 		t.Fatalf("reprinted: %q", again)
+	}
+}
+
+// TestFollowSessionDrainsBurstWithoutAnEditorPoll proves the transport is drained
+// continuously, so a provider burst cannot fill the bounded transport queues and
+// terminate the stream with consumer_overflow while the editor is between polls.
+//
+// The record channel is deliberately tiny. A reader that only drained on the
+// editor tick would block the producer after that many records, which is exactly
+// how the upstream queue overflows: the server keeps writing while the consumer
+// is not reading. The pump must consume the whole burst with no Idle call at all.
+func TestFollowSessionDrainsBurstWithoutAnEditorPoll(t *testing.T) {
+	const burst = DefaultInteractiveMaxLines
+	records := make(chan protocol.OutputFollowRecord, 1)
+	session := newFollowSessionWithRecords(records, func() {}, ColorPolicy{})
+	defer session.Stop()
+	sent := make(chan struct{})
+	go func() {
+		defer close(sent)
+		for index := 0; index < burst; index++ {
+			records <- protocol.OutputFollowRecord{Lines: []string{fmt.Sprintf("line-%d", index)}}
+		}
+		records <- protocol.OutputFollowRecord{End: true}
+	}()
+	select {
+	case <-sent:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the burst was not drained without an editor poll")
+	}
+	payload := idleUntil(t, session, "follow ended")
+	for index := 0; index < burst; index++ {
+		want := fmt.Sprintf("line-%d", index)
+		if !strings.Contains(payload, want) {
+			t.Fatalf("missing %q in the drained burst", want)
+		}
+	}
+}
+
+// idleUntil polls the editor seam until the accumulated payload contains want.
+// The pump is asynchronous, so a test cannot assume that one poll observes a
+// record that was just handed to the stream.
+func idleUntil(t *testing.T, session *followSession, want string) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var accumulated strings.Builder
+	for {
+		payload, err := session.Idle()
+		if err != nil {
+			t.Fatalf("Idle: %v", err)
+		}
+		accumulated.Write(payload)
+		if strings.Contains(accumulated.String(), want) {
+			return accumulated.String()
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("payload never contained %q: %q", want, accumulated.String())
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

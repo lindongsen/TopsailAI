@@ -108,17 +108,36 @@ func (r CommandRunner) FollowLogs(ctx context.Context, out io.Writer, endpointID
 	}
 }
 
+// followPendingBytes bounds the rendered output that may wait for the editor to
+// print it. The pump keeps reading the stream while the editor is between polls,
+// so a provider burst is absorbed here instead of overflowing the transport
+// queue. The bound is deliberately larger than one requested tail, because the
+// default REPL tail is 300 lines and a burst of that size must never be reported
+// as a consumer overflow.
+const followPendingBytes = 4 << 20
+
 // followSession streams provider output while the editor waits for a key. It
 // implements WatchSession, so the existing editor loop observes it between
 // polls and stops it on the first decoded key without a second goroutine
 // writing to the terminal.
+//
+// A pump goroutine is the only reader of the record stream. It renders each
+// record as it arrives and holds the bytes until the editor prints them, so the
+// transport is drained continuously instead of once per editor poll. Draining
+// only on the poll tick let a provider burst fill the bounded transport queues
+// and terminate the stream with consumer_overflow, even though the operator's
+// terminal was keeping up.
 type followSession struct {
 	records <-chan protocol.OutputFollowRecord
 	cancel  context.CancelFunc
 	color   ColorPolicy
+	done    chan struct{}
 
-	mu    sync.Mutex
-	ended bool
+	mu      sync.Mutex
+	cond    *sync.Cond
+	pending []byte
+	ended   bool
+	err     error
 
 	stopOnce sync.Once
 }
@@ -136,38 +155,100 @@ func newFollowSession(parent context.Context, api InteractiveAPI, request follow
 		cancel()
 		return nil, err
 	}
-	return &followSession{records: records, cancel: cancel, color: color}, nil
+	return newFollowSessionWithRecords(records, cancel, color), nil
 }
 
-// Idle drains every record that is already available and returns the bytes to
-// print. It never blocks, so a keypress is never delayed behind a slow stream.
-func (s *followSession) Idle() ([]byte, error) {
+// newFollowSessionWithRecords starts the pump for an already opened stream. It is
+// the single construction path, so a session can never exist without a reader
+// that drains the transport between editor polls.
+func newFollowSessionWithRecords(records <-chan protocol.OutputFollowRecord, cancel context.CancelFunc, color ColorPolicy) *followSession {
+	session := &followSession{records: records, cancel: cancel, color: color, done: make(chan struct{})}
+	session.cond = sync.NewCond(&session.mu)
+	go session.pump()
+	return session
+}
+
+// pump is the only reader of the record stream. It renders every record as it
+// arrives, so the transport never waits for the editor's poll tick.
+func (s *followSession) pump() {
+	for {
+		select {
+		case <-s.done:
+			return
+		case record, open := <-s.records:
+			if !open {
+				// A channel that closes without a terminal record is an
+				// interrupted stream, never a clean finish.
+				s.finish([]byte("follow ended: stream_interrupted\n"), nil)
+				return
+			}
+			var buffer bytes.Buffer
+			if err := renderFollowRecord(&buffer, record, s.color, false); err != nil {
+				s.finish(nil, err)
+				return
+			}
+			if !s.append(buffer.Bytes(), record.End) {
+				return
+			}
+			if record.End {
+				return
+			}
+		}
+	}
+}
+
+// append holds one rendered record until the editor prints it. It reports false
+// when the stream was stopped, so the pump exits instead of accumulating output
+// nobody will read.
+//
+// The pending bound applies backpressure rather than dropping data: a consumer
+// that genuinely cannot keep up must be reported as an overflow by the transport,
+// never silently presented with a partial stream. A single record larger than the
+// bound is still accepted once the buffer is empty, because waiting for room that
+// can never be freed would deadlock the pump.
+func (s *followSession) append(payload []byte, end bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for !s.ended && len(s.pending) > 0 && len(s.pending)+len(payload) > followPendingBytes {
+		s.cond.Wait()
+	}
+	if s.ended {
+		return false
+	}
+	s.pending = append(s.pending, payload...)
+	if end {
+		s.ended = true
+	}
+	return true
+}
+
+// finish records the terminal state of the stream and wakes any waiter.
+func (s *followSession) finish(payload []byte, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ended {
-		return nil, nil
+		return
 	}
-	var buffer bytes.Buffer
-	for {
-		select {
-		case record, open := <-s.records:
-			if !open {
-				s.ended = true
-				buffer.WriteString("follow ended: stream_interrupted\n")
-				return emptyToNil(buffer.Bytes()), nil
-			}
-			if err := renderFollowRecord(&buffer, record, s.color, false); err != nil {
-				s.ended = true
-				return emptyToNil(buffer.Bytes()), err
-			}
-			if record.End {
-				s.ended = true
-				return emptyToNil(buffer.Bytes()), nil
-			}
-		default:
-			return emptyToNil(buffer.Bytes()), nil
-		}
+	s.pending = append(s.pending, payload...)
+	s.err = err
+	s.ended = true
+	s.cond.Broadcast()
+}
+
+// Idle returns every byte the pump has accumulated and clears them. It never
+// blocks, so a keypress is never delayed behind a slow stream.
+func (s *followSession) Idle() ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	payload := s.pending
+	s.pending = nil
+	err := s.err
+	s.err = nil
+	if len(payload) > 0 {
+		// The pump may be waiting for room, so releasing the buffer must wake it.
+		s.cond.Signal()
 	}
+	return emptyToNil(payload), err
 }
 
 // emptyToNil reports no payload when nothing was accumulated, so the editor
@@ -181,8 +262,20 @@ func emptyToNil(payload []byte) []byte {
 
 // Stop ends the stream. It is idempotent, because the editor stops the session
 // on a keypress and the REPL stops it again when the prompt returns.
+//
+// The session is marked ended and the pump is released before the context is
+// cancelled, so a pump waiting for room in the pending buffer, or waiting on a
+// record that will never arrive, exits instead of holding the goroutine after
+// the operator stopped watching.
 func (s *followSession) Stop() {
-	s.stopOnce.Do(s.cancel)
+	s.stopOnce.Do(func() {
+		s.mu.Lock()
+		s.ended = true
+		s.cond.Broadcast()
+		s.mu.Unlock()
+		close(s.done)
+		s.cancel()
+	})
 }
 
 // StopLabel names this session in the editor's stop message, so the operator
