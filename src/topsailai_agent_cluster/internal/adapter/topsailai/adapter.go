@@ -138,7 +138,6 @@ type workspaceItem struct {
 	SessionID         string          `json:"session_id"`
 	SessionName       string          `json:"session_name"`
 	ProcessGeneration json.RawMessage `json:"process_generation"`
-	Generation        json.RawMessage `json:"generation"`
 	State             string          `json:"state"`
 	Status            string          `json:"status"`
 	AgentID           string          `json:"agent_id"`
@@ -274,9 +273,6 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 	result := adapter.DiscoverResult{Complete: true, CollectionStatus: protocol.CollectionSucceeded, LastAttemptAtMS: nowMS, LastSuccessAtMS: nowMS, DataKnown: true}
 	for _, item := range response.Items {
 		generation, err := workspaceGeneration(item.ProcessGeneration)
-		if generation == "" {
-			generation, err = workspaceGeneration(item.Generation)
-		}
 		if err != nil {
 			return adapter.DiscoverResult{}, fmt.Errorf("decode workspace generation: %w", err)
 		}
@@ -378,9 +374,6 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 			continue
 		}
 		generation, err := workspaceGeneration(item.ProcessGeneration)
-		if generation == "" {
-			generation, err = workspaceGeneration(item.Generation)
-		}
 		if err != nil {
 			return adapter.InspectResult{}, fmt.Errorf("decode workspace generation: %w", err)
 		}
