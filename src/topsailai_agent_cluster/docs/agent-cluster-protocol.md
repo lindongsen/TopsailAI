@@ -14,7 +14,7 @@ created: 2026-10-27
 | Endpoint | One machine with one registered OS management daemon and multiple adapters | endpoint_id, display_name, labels, instance_id, connection_state, observed_at_ms |
 | LaunchProfile | Endpoint-published standard execution preset | launch_profile_id, display_name, profile_revision, permitted standard inputs |
 | Agent | Provider runtime identity or logical worker | agent_id, generation, state, state_reason |
-| Session | A conversation/execution context | session_id, agent_id, generation, state, observed_at_ms |
+| Session | A conversation/execution context | session_id, agent_id, generation, state, observed_at_ms, provider_pid |
 | Task | Optional unit of provider work | task_id, session_id nullable, parent_task_id nullable, state, progress nullable |
 | Command | One admitted user intent | command_id, target, operation, payload_schema_version, deadline_at_ms, state |
 | Observation | One typed state change or snapshot fact | endpoint_epoch, sequence, resource_id, resource_revision, observed_at_ms |

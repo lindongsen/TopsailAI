@@ -37,6 +37,14 @@ Precondition: session scope.
 
 Type `help` then Enter. Expect the session-scope `send` description to mention that unrecognized text offers the action, and expect the session workflow block to state that declining keeps the unknown-command diagnostic.
 
+## OFFER-06 A bare number is message text, not navigation
+
+Precondition: same as OFFER-01.
+
+Type `1` then Enter. Expect the same offer as OFFER-01, with the message row showing the literal text `1`, and expect no `row-number navigation is unavailable in session scope` diagnostic. Type `y` then Enter and expect exactly one admitted `message.send` whose payload text is `1`. Repeat with `01` and with `1 foo`, and expect the whole literal line to be the payload in each case, because session scope has no row table to navigate and the shorthand's surplus rule belongs to navigation.
+
+Then type `cd 1` then Enter. Expect the diagnostic `row-number navigation is unavailable in session scope; use cd .. or cd <session>` and expect no command admission, because the explicit command word still reaches the row-number rule.
+
 ## Evidence
 
 Record case ID, exact keystrokes, captured output, admitted command ID, payload text, elapsed time and the tmux target under workspace `.tmp/live-tmux-audit/`. Stop only the tmux session and service processes created by this run.

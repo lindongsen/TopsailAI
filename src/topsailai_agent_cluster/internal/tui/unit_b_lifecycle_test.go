@@ -380,6 +380,9 @@ func assertUnitBStateEqual(t *testing.T, got, want interactiveState) {
 
 // TestUnitBB2BareAndExplicitRejectionsUseIndependentStateSnapshots compares
 // every required rejection and authority branch through both numeric spellings.
+// The two spellings are equivalent only where the numeric shorthand exists, so the
+// session-scope row asserts the split contract instead: the bare number is message
+// text and the explicit "cd" form is the one that reaches the row-number rule.
 func TestUnitBB2BareAndExplicitRejectionsUseIndependentStateSnapshots(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -428,7 +431,11 @@ func TestUnitBB2BareAndExplicitRejectionsUseIndependentStateSnapshots(t *testing
 				tc.setup(stub, &state)
 				before := cloneUnitBState(state)
 				var output, diagnostics strings.Builder
-				_, err := executeInteractiveLine(context.Background(), stub, &state, input, nil, &output, &output, &diagnostics, InteractiveOptions{})
+				// The session-scope offer reads its answer from the line source, so a
+				// closed source declines the offer instead of blocking the test.
+				answers := make(chan lineReadResult)
+				close(answers)
+				_, err := executeInteractiveLine(context.Background(), stub, &state, input, answers, &output, &output, &diagnostics, InteractiveOptions{})
 				if err == nil {
 					t.Fatalf("%q unexpectedly succeeded", input)
 				}
@@ -444,6 +451,20 @@ func TestUnitBB2BareAndExplicitRejectionsUseIndependentStateSnapshots(t *testing
 					wantExplicitErr := fmt.Sprintf("endpoint %q was not found", tc.input)
 					if err.Error() != wantExplicitErr || stub.listCalls != 1 || stub.inventoryCalls != 2 {
 						t.Fatalf("explicit surplus mismatch input=%q err=%q want=%q calls=%d/%d", input, err, wantExplicitErr, stub.listCalls, stub.inventoryCalls)
+					}
+					continue
+				}
+				if tc.name == "session-scope" {
+					// The bare number is message text, so it reports the unknown-command
+					// diagnostic; the explicit form is the one that reports the
+					// session-scope row-number rejection.
+					wantBareErr := fmt.Sprintf("unknown command %q (try help)", tc.input)
+					wantExplicitErr := "row-number navigation is unavailable in session scope; use cd .. or cd <session>"
+					if wantErr != wantBareErr || err.Error() != wantExplicitErr {
+						t.Fatalf("session-scope split mismatch bare=%q explicit=%q want bare=%q explicit=%q", wantErr, err, wantBareErr, wantExplicitErr)
+					}
+					if stub.listCalls != wantList || stub.inventoryCalls != wantInventory {
+						t.Fatalf("session-scope calls differ: explicit=%d/%d bare=%d/%d", stub.listCalls, stub.inventoryCalls, wantList, wantInventory)
 					}
 					continue
 				}

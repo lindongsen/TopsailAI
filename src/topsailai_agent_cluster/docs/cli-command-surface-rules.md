@@ -444,6 +444,13 @@ hello world
 - The offer applies only in session scope. `send` is unavailable in workspace and
   endpoint scope, so an offer there could never be honoured and the plain
   unknown-command diagnostic is kept.
+- A bare ASCII number is message text in session scope, not a navigation attempt.
+  The numeric shorthand is a navigation form, and session scope has no row table to
+  navigate, so `1` reaches this same offer and is sent as the literal text `1`. Only
+  the explicit `cd 1` spelling reaches the row-number rule, which still rejects it
+  with `row-number navigation is unavailable in session scope`. Rewriting a bare
+  number into `cd <number>` would answer the operator's message with a navigation
+  error instead of offering to send it.
 - The whole literal line is the message, not the words after the unrecognized
   word. The operator typed one piece of text, and dropping its first word would
   silently change what is sent.
@@ -594,6 +601,13 @@ Progress never animates. The interactive diagnostics writer strips carriage
 returns and cursor control, so an in-place animation would be printed as
 replacement runes; and a spinner unrelated to real progress would be a fabricated
 signal. Stages are printed as discrete lines instead.
+
+That rule governs diagnostics this application writes, not provider log content.
+Provider output is rendered through a separate boundary that normalizes a carriage
+return to a line break, because a provider progress frame such as
+`\rGenerating... 0 chars` is ordinary log content the operator must be able to
+read. A raw carriage return is still never emitted, because it would move the
+cursor to column zero and let provider data overwrite a trusted prompt row.
 
 Progress is presentation only. A write failure is ignored, so a closed diagnostics
 stream never changes the outcome of the command it describes, and a caller that

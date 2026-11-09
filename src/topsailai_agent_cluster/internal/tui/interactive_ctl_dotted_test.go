@@ -225,14 +225,30 @@ func TestHelpTargetResolvesTheDottedSpelling(t *testing.T) {
 // TestDiagnosticCommandNameResolvesTheDottedSpelling proves a rejected dotted line
 // points at the ctl help rather than at a command that does not exist.
 func TestDiagnosticCommandNameResolvesTheDottedSpelling(t *testing.T) {
-	if got := diagnosticCommandName("ctl.heartbeat"); got != "ctl" {
+	if got := diagnosticCommandName("ctl.heartbeat", ScopeSession); got != "ctl" {
 		t.Fatalf("diagnosticCommandName = %q, want ctl", got)
 	}
-	if got := diagnosticCommandName("ctl heartbeat"); got != "ctl" {
+	if got := diagnosticCommandName("ctl heartbeat", ScopeSession); got != "ctl" {
 		t.Fatalf("diagnosticCommandName = %q, want ctl", got)
 	}
-	if got := diagnosticCommandName("send hello"); got != "send" {
+	if got := diagnosticCommandName("send hello", ScopeSession); got != "send" {
 		t.Fatalf("diagnosticCommandName = %q, want send", got)
+	}
+}
+
+// TestDiagnosticCommandNameKeepsNumericShorthandOutOfSessionScope proves a bare
+// number is reported under its own literal word in session scope, because the
+// numeric shorthand is a navigation form that scope does not offer. Reporting it
+// as "cd" would point the operator at a command the scope rejects.
+func TestDiagnosticCommandNameKeepsNumericShorthandOutOfSessionScope(t *testing.T) {
+	if got := diagnosticCommandName("1", ScopeWorkspace); got != "cd" {
+		t.Fatalf("workspace diagnosticCommandName = %q, want cd", got)
+	}
+	if got := diagnosticCommandName("1", ScopeEndpoint); got != "cd" {
+		t.Fatalf("endpoint diagnosticCommandName = %q, want cd", got)
+	}
+	if got := diagnosticCommandName("1", ScopeSession); got != "1" {
+		t.Fatalf("session diagnosticCommandName = %q, want the literal word", got)
 	}
 }
 

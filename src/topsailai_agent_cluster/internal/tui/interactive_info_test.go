@@ -328,3 +328,42 @@ func TestInfoSanitizesDriveValues(t *testing.T) {
 		}
 	}
 }
+
+// TestInfoRendersProviderPID proves the provider-reported session PID reaches the
+// operator. The PID is the provider's own process identity, so it is the only
+// value that lets an operator correlate a cluster row with a local process.
+func TestInfoRendersProviderPID(t *testing.T) {
+	stub := infoStub()
+	stub.reports["endpoint-1"].Sessions[0].ProviderPID = 4242
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\ninfo\nquit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	segment := segmentBeforePrompt(output, "res-1> ")
+	if !strings.Contains(segment, "provider_pid: 4242") {
+		t.Fatalf("missing provider PID in info output: %q", segment)
+	}
+}
+
+// TestInfoLeavesUnreportedProviderPIDEmpty proves an absent PID is never printed
+// as "0". A zero would read as a real process identity that happens to be
+// unusable, so the value is left empty, matching every other unreported field in
+// this detail view.
+func TestInfoLeavesUnreportedProviderPIDEmpty(t *testing.T) {
+	stub := infoStub()
+	stub.reports["endpoint-1"].Sessions[0].ProviderPID = 0
+	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\ninfo\nquit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	segment := segmentBeforePrompt(output, "res-1> ")
+	if !strings.Contains(segment, "provider_pid: \n") {
+		t.Fatalf("missing empty provider_pid line: %q", segment)
+	}
+	if strings.Contains(segment, "provider_pid: 0") {
+		t.Fatalf("unreported PID printed as a process identity: %q", segment)
+	}
+	if strings.Contains(segment, "provider_pid: not_reported") {
+		t.Fatalf("unreported PID printed as a label instead of empty: %q", segment)
+	}
+}

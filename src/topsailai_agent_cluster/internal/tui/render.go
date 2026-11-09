@@ -75,8 +75,13 @@ func RenderSnapshot(w io.Writer, observedAtMS int64, content string, truncated b
 // policy is enabled. Every other escape sequence is still stripped, because the
 // body is provider data and must never be able to move the cursor, retitle the
 // window or open a hyperlink.
+//
+// Carriage returns are normalized before the line budget is applied, because one
+// provider line can carry several in-place redraw frames. Trimming first would
+// count those frames as one line and then print all of them, so the operator
+// would receive more lines than the requested limit.
 func RenderSnapshotStyled(w io.Writer, observedAtMS int64, content string, truncated bool, maxLines int, policy ColorPolicy) {
-	bounded, clipped := TrimTailLines(content, maxLines)
+	bounded, clipped := TrimTailLines(normalizeCarriageReturns(content), maxLines)
 	fmt.Fprintf(w, "observed_at_ms: %d\ntruncated: %t\n%s\n", observedAtMS, truncated || clipped, filterProviderOutput(bounded, policy))
 }
 

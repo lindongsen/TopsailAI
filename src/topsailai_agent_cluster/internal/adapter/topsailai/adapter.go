@@ -142,6 +142,11 @@ type workspaceItem struct {
 	State             string          `json:"state"`
 	Status            string          `json:"status"`
 	AgentID           string          `json:"agent_id"`
+	// PID is the provider's own process identity for this session. It is forwarded
+	// as display evidence only: a provider PID is not a cluster generation, so it
+	// never selects a target or authorizes a signal. A null value decodes to zero,
+	// which is reported as "no PID reported" rather than as a process identity.
+	PID int64 `json:"pid"`
 	// ProjectWorkspace is the workspace this session is working on. It is
 	// forwarded as descriptive report data, never as a routing input.
 	ProjectWorkspace string `json:"project_workspace"`
@@ -300,7 +305,7 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 			stateReason = protocol.StateReasonLivenessUnverified
 		}
 		observedAtMS := time.Now().UnixMilli()
-		result.Sessions = append(result.Sessions, protocol.Session{SessionID: resourceID, ProviderSessionID: item.SessionID, DisplayName: item.SessionName, ProjectWorkspace: item.ProjectWorkspace, AgentID: item.AgentID, Generation: generation, AdapterID: a.config.AdapterID, State: state, StateReason: stateReason, ObservedAtMS: observedAtMS, Drive: driveSummary(item.Driver, observedAtMS)})
+		result.Sessions = append(result.Sessions, protocol.Session{SessionID: resourceID, ProviderSessionID: item.SessionID, ProviderPID: item.PID, DisplayName: item.SessionName, ProjectWorkspace: item.ProjectWorkspace, AgentID: item.AgentID, Generation: generation, AdapterID: a.config.AdapterID, State: state, StateReason: stateReason, ObservedAtMS: observedAtMS, Drive: driveSummary(item.Driver, observedAtMS)})
 	}
 	if response.Total != nil && *response.Total > len(response.Items) {
 		result.Complete = false

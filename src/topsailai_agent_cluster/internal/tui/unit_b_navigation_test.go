@@ -398,7 +398,10 @@ func TestUnitBB2EveryRejectionPreservesStateAndCalls(t *testing.T) {
 }
 
 // TestUnitBB3ZeroQueryMatrixAcrossScopes verifies that local numeric parsing
-// does not perform endpoint-name lookup before rejecting an overflow token.
+// does not perform endpoint-name lookup before rejecting an overflow token. The
+// numeric shorthand exists only outside session scope, so the session case asserts
+// the other half of the same rule: a bare number there is message text, and it
+// still performs no endpoint-name lookup.
 func TestUnitBB3ZeroQueryMatrixAcrossScopes(t *testing.T) {
 	for _, kind := range []ScopeKind{ScopeWorkspace, ScopeEndpoint, ScopeSession} {
 		t.Run(kind.String(), func(t *testing.T) {
@@ -406,8 +409,19 @@ func TestUnitBB3ZeroQueryMatrixAcrossScopes(t *testing.T) {
 			state := interactiveState{Scope: ScopeState{Kind: kind, EndpointID: "endpoint-1", SessionID: "res-1"}}
 			state.setRows([]SessionRow{{No: 1, EndpointID: "endpoint-1", SessionID: "res-1", Generation: "generation-1"}})
 			var output, diagnostics strings.Builder
-			_, err := executeInteractiveLine(context.Background(), stub, &state, strings.Repeat("9", 64), nil, &output, &output, &diagnostics, InteractiveOptions{})
-			if err == nil || !strings.Contains(err.Error(), "supported integer range") {
+			// The session-scope offer reads its answer from the line source, so a
+			// closed source declines the offer instead of blocking.
+			answers := make(chan lineReadResult)
+			close(answers)
+			_, err := executeInteractiveLine(context.Background(), stub, &state, strings.Repeat("9", 64), answers, &output, &output, &diagnostics, InteractiveOptions{})
+			if err == nil {
+				t.Fatalf("overflow token was accepted in %s scope", kind)
+			}
+			if kind == ScopeSession {
+				if err.Error() != `unknown command "`+strings.Repeat("9", 64)+`" (try help)` {
+					t.Fatalf("session-scope error=%v, want the unknown-command diagnostic", err)
+				}
+			} else if !strings.Contains(err.Error(), "supported integer range") {
 				t.Fatalf("error=%v", err)
 			}
 			if stub.listCalls != 0 || stub.inventoryCalls != 0 {
@@ -478,6 +492,9 @@ func TestUnitBB1EndpointAndSessionLeadingZeroEquivalence(t *testing.T) {
 		t.Fatalf("endpoint leading-zero calls differ: one=%+v leading=%+v", oneAPI, leadingAPI)
 	}
 
+	// The explicit "cd" form is used here because the leading-zero equivalence
+	// belongs to the row-number rule, and a bare number in session scope is
+	// message text rather than a navigation attempt.
 	selectSession := func(input string) (string, interactiveState, *interactiveStub) {
 		t.Helper()
 		stub := scopeStub()
@@ -494,8 +511,8 @@ func TestUnitBB1EndpointAndSessionLeadingZeroEquivalence(t *testing.T) {
 		}
 		return "", state, stub
 	}
-	errOne, sessionOne, apiOne := selectSession("1")
-	errLeading, sessionLeading, apiLeading := selectSession("01")
+	errOne, sessionOne, apiOne := selectSession("cd 1")
+	errLeading, sessionLeading, apiLeading := selectSession("cd 01")
 	if errOne != errLeading || errOne != "row-number navigation is unavailable in session scope; use cd .. or cd <session>" {
 		t.Fatalf("session leading-zero errors differ: one=%q leading=%q", errOne, errLeading)
 	}
@@ -553,9 +570,11 @@ func TestUnitBB5NumericQualifiedEndpointPath(t *testing.T) {
 	}
 }
 
-// TestUnitBB5SessionListThenBareNumberRejects verifies list does not enable row
-// navigation after entering session scope.
-func TestUnitBB5SessionListThenBareNumberRejects(t *testing.T) {
+// TestUnitBB5SessionListThenBareNumberIsMessageText verifies list does not enable
+// row navigation after entering session scope, and that a bare number typed there
+// is message text rather than a navigation attempt. A declined offer therefore
+// leaves the selection and the API call counts untouched.
+func TestUnitBB5SessionListThenBareNumberIsMessageText(t *testing.T) {
 	stub := scopeStub()
 	state := interactiveState{}
 	var output, diagnostics strings.Builder
@@ -566,9 +585,16 @@ func TestUnitBB5SessionListThenBareNumberRejects(t *testing.T) {
 	}
 	before := state
 	beforeList, beforeInventory := stub.listCalls, stub.inventoryCalls
-	_, err := executeInteractiveLine(context.Background(), stub, &state, "1", nil, &output, &output, &diagnostics, InteractiveOptions{})
-	if err == nil || err.Error() != "row-number navigation is unavailable in session scope; use cd .. or cd <session>" {
+	// The offer reads its answer from the line source, so a closed source makes
+	// the answer unreadable and the offer is declined without a send.
+	answers := make(chan lineReadResult)
+	close(answers)
+	_, err := executeInteractiveLine(context.Background(), stub, &state, "1", answers, &output, &output, &diagnostics, InteractiveOptions{})
+	if err == nil || err.Error() != `unknown command "1" (try help)` {
 		t.Fatalf("session bare number error=%v", err)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("declined offer admitted %d commands", stub.admit)
 	}
 	if state.Scope != before.Scope || state.EndpointID != before.EndpointID || state.SessionID != before.SessionID || state.Generation != before.Generation || stub.listCalls != beforeList || stub.inventoryCalls != beforeInventory {
 		t.Fatalf("session bare number changed state/calls: before=%+v after=%+v calls=%d/%d -> %d/%d", before, state, beforeList, beforeInventory, stub.listCalls, stub.inventoryCalls)
@@ -590,8 +616,10 @@ func (s *recordingOutputAPI) GetOutput(ctx context.Context, endpointID, resource
 
 // TestUnitBB1SessionLeadingZeroPreservesEachRejectedSnapshot compares each
 // rejected spelling with its own pre-command snapshot, not only with its peer.
+// The explicit "cd" form is used because a bare number is message text in session
+// scope, so only the explicit command word still reaches the row-number rule.
 func TestUnitBB1SessionLeadingZeroPreservesEachRejectedSnapshot(t *testing.T) {
-	for _, input := range []string{"1", "01"} {
+	for _, input := range []string{"cd 1", "cd 01"} {
 		t.Run(input, func(t *testing.T) {
 			stub := scopeStub()
 			state := interactiveState{}

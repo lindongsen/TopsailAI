@@ -34,6 +34,7 @@ func infoTestServer(t *testing.T) *httptest.Server {
 				Sessions: []protocol.Session{{
 					SessionID:         "res-1",
 					ProviderSessionID: "shared-provider",
+					ProviderPID:       4242,
 					ProjectWorkspace:  "/work/project-one",
 					Generation:        "gen-1",
 					State:             "running",
@@ -84,7 +85,7 @@ func TestInfoHelpAndDispatchContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"session_id: res-1", "project_workspace: /work/project-one", "endpoint_id: endpoint-1"} {
+	for _, want := range []string{"session_id: res-1", "provider_pid: 4242", "project_workspace: /work/project-one", "endpoint_id: endpoint-1"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("output=%q missing %q", output, want)
 		}
