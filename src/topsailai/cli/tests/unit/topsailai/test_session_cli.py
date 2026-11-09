@@ -314,6 +314,82 @@ class TestChildCommandForwarding:
         assert command == cli._RETRIEVE_MESSAGES
         assert argv == ["abc", "--max-chars", "200"]
 
+    def test_history_json_forwards_json_flag(self):
+        """--json is forwarded to the backing retrieval script."""
+        with patch.object(cli, "_capture_script", return_value=(0, "[]", "")) as cap:
+            assert cli.run_session_cli(["history", "abc", "--json"]) == 0
+        command, argv = cap.call_args.args
+        assert command == cli._RETRIEVE_MESSAGES
+        assert argv == ["abc", "--json"]
+
+    def test_history_json_forwards_db_conn_and_limit(self):
+        """The JSON path keeps the same options as the human-readable path."""
+        with patch.object(cli, "_capture_script", return_value=(0, "[]", "")) as cap:
+            assert cli.run_session_cli(
+                ["history", "abc", "--db-conn", "sqlite:///custom.db",
+                 "--max-chars", "200", "--json"]
+            ) == 0
+        command, argv = cap.call_args.args
+        assert command == cli._RETRIEVE_MESSAGES
+        assert argv == ["abc", "sqlite:///custom.db", "--max-chars", "200", "--json"]
+
+    def test_history_json_success_document(self, capsys):
+        """A successful read emits one structured document with the messages."""
+        payload = json.dumps([{"role": "user", "content": "hello"}])
+        with patch.object(cli, "_capture_script", return_value=(0, payload, "")):
+            assert cli.run_session_cli(["history", "abc", "--json"]) == 0
+        document = json.loads(capsys.readouterr().out)
+        assert document["ok"] is True
+        assert document["exit_code"] == 0
+        assert document["action"] == "history"
+        assert document["session_id"] == "abc"
+        assert document["message_count"] == 1
+        assert document["messages"] == [{"role": "user", "content": "hello"}]
+        assert document["error_code"] is None
+        assert document["message"] is None
+
+    def test_history_json_empty_history_is_zero_count(self, capsys):
+        """An empty history is an empty array with a zero count."""
+        with patch.object(cli, "_capture_script", return_value=(0, "[]", "")):
+            assert cli.run_session_cli(["history", "abc", "--json"]) == 0
+        document = json.loads(capsys.readouterr().out)
+        assert document["ok"] is True
+        assert document["messages"] == []
+        assert document["message_count"] == 0
+
+    def test_history_json_retrieval_failure_is_classified(self, capsys):
+        """A child failure is reported as a classified result, not a document."""
+        with patch.object(cli, "_capture_script",
+                          return_value=(1, "", "Error: database error")):
+            assert cli.run_session_cli(["history", "abc", "--json"]) == 1
+        captured = capsys.readouterr()
+        document = json.loads(captured.out)
+        assert document["ok"] is False
+        assert document["exit_code"] == 1
+        assert document["error_code"] == "history_unavailable"
+        assert document["messages"] is None
+        assert document["message_count"] is None
+        assert "database error" in document["message"]
+
+    def test_history_json_unusable_document_is_rejected(self, capsys):
+        """A non-array document is rejected instead of being passed through."""
+        with patch.object(cli, "_capture_script",
+                          return_value=(0, "Messages:\n----\n", "")):
+            assert cli.run_session_cli(["history", "abc", "--json"]) == 1
+        document = json.loads(capsys.readouterr().out)
+        assert document["ok"] is False
+        assert document["error_code"] == "history_unavailable"
+        assert document["messages"] is None
+
+    def test_history_json_missing_command_reports_127(self, capsys):
+        """A missing child command is reported as command_missing."""
+        with patch.object(cli, "_capture_script",
+                          return_value=(cli._COMMAND_MISSING, "", "Command not found")):
+            assert cli.run_session_cli(["history", "abc", "--json"]) == cli._COMMAND_MISSING
+        document = json.loads(capsys.readouterr().out)
+        assert document["ok"] is False
+        assert document["error_code"] == "command_missing"
+
     def test_search_uses_registered_instruction(self):
         with patch.object(cli, "_run_script", return_value=0) as run:
             assert cli.run_session_cli(["search", "abc", "timeout"]) == 0

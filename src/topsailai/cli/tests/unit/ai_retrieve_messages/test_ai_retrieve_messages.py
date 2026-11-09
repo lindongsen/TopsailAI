@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 """Unit tests for ai_retrieve_messages.py."""
 
+import io
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -129,6 +131,20 @@ class TestParseArgs(unittest.TestCase):
         self.assertEqual(args.db_conn, "sqlite:///custom.db")
         self.assertEqual(args.max_chars, 25)
 
+    def test_json_defaults_to_false(self):
+        """--json is off unless it is requested."""
+        args = ai_retrieve_messages.parse_args(["abc123"])
+        self.assertFalse(args.json)
+
+    def test_json_flag_is_parsed(self):
+        """--json is accepted together with the other options."""
+        args = ai_retrieve_messages.parse_args(
+            ["abc123", "sqlite:///custom.db", "--max-chars", "25", "--json"]
+        )
+        self.assertTrue(args.json)
+        self.assertEqual(args.db_conn, "sqlite:///custom.db")
+        self.assertEqual(args.max_chars, 25)
+
 
 class TestFormatMessages(unittest.TestCase):
     """Tests for format_messages helper."""
@@ -242,6 +258,76 @@ class TestMain(unittest.TestCase):
 
         self.assertEqual(cm.exception.code, 1)
         mock_print.assert_not_called()
+
+
+class TestMainJson(unittest.TestCase):
+    """Tests for the machine-readable ``--json`` output of main."""
+
+    @patch("ai_retrieve_messages.print_context_messages")
+    @patch("ai_retrieve_messages.get_session_manager")
+    def test_json_prints_one_array(self, mock_get_manager, mock_print):
+        """--json prints the stored messages as one JSON array."""
+        mock_manager = MagicMock()
+        mock_manager.retrieve_messages.return_value = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+        mock_get_manager.return_value = mock_manager
+
+        with patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            ai_retrieve_messages.main(["abc123", "--json"])
+
+        document = json.loads(stdout.getvalue())
+        self.assertEqual(document, [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ])
+        mock_print.assert_not_called()
+
+    @patch("ai_retrieve_messages.print_context_messages")
+    @patch("ai_retrieve_messages.get_session_manager")
+    def test_json_applies_max_chars(self, mock_get_manager, mock_print):
+        """--max-chars keeps its meaning in JSON mode."""
+        mock_manager = MagicMock()
+        mock_manager.retrieve_messages.return_value = [
+            {"role": "user", "content": "hello world"},
+        ]
+        mock_get_manager.return_value = mock_manager
+
+        with patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            ai_retrieve_messages.main(["abc123", "--json", "--max-chars", "5"])
+
+        document = json.loads(stdout.getvalue())
+        self.assertEqual(document, [{"role": "user", "content": "hello..."}])
+        mock_print.assert_not_called()
+
+    @patch("ai_retrieve_messages.print_context_messages")
+    @patch("ai_retrieve_messages.get_session_manager")
+    def test_json_empty_history_is_empty_array(self, mock_get_manager, mock_print):
+        """An empty history is an empty array, not a human-readable notice."""
+        mock_manager = MagicMock()
+        mock_manager.retrieve_messages.return_value = []
+        mock_get_manager.return_value = mock_manager
+
+        with patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            ai_retrieve_messages.main(["abc123", "--json"])
+
+        self.assertEqual(json.loads(stdout.getvalue()), [])
+        mock_print.assert_not_called()
+
+    @patch("ai_retrieve_messages.get_session_manager")
+    def test_json_error_keeps_stdout_clean(self, mock_get_manager):
+        """A failure writes the diagnostic to stderr and exits 1."""
+        mock_get_manager.side_effect = RuntimeError("database error")
+
+        with patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                with self.assertRaises(SystemExit) as cm:
+                    ai_retrieve_messages.main(["abc123", "--json"])
+
+        self.assertEqual(cm.exception.code, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("database error", stderr.getvalue())
 
 
 if __name__ == "__main__":

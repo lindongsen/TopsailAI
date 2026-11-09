@@ -168,13 +168,8 @@ def _handle_status(args) -> int:
     return 0
 
 
-def _handle_history(args) -> int:
-    """Print the stored context messages of one session.
-
-    The backing script changes the working directory while it is imported and
-    resolves its default database relative to that directory, so it must run as
-    a child process instead of being imported into this one.
-    """
+def _history_argv(args) -> List[str]:
+    """Translate the history options into the backing script's own flags."""
     argv: List[str] = [args.session_id]
     db_conn = getattr(args, "db_conn", None)
     if db_conn is not None:
@@ -182,7 +177,73 @@ def _handle_history(args) -> int:
     max_chars = getattr(args, "max_chars", None)
     if max_chars is not None:
         argv.extend(["--max-chars", str(max_chars)])
-    return _run_script(_RETRIEVE_MESSAGES, argv)
+    return argv
+
+
+def _history_document(args, code: int, messages, error_code, message) -> dict:
+    """Build the single structured result of one history read."""
+    return {
+        "ok": code == 0,
+        "exit_code": code,
+        "action": "history",
+        "session_id": args.session_id,
+        "message_count": None if messages is None else len(messages),
+        "messages": messages,
+        "error_code": error_code,
+        "message": message,
+    }
+
+
+def _handle_history_json(args) -> int:
+    """Read one session's history and print it as one structured JSON object.
+
+    The child is asked for its own JSON array so the stored message objects are
+    parsed rather than re-parsed from a human-readable report. A child failure
+    or an unusable document is reported as a classified result instead of being
+    printed as a partial document.
+    """
+    argv = [*_history_argv(args), "--json"]
+    code, stdout, stderr = _capture_script(_RETRIEVE_MESSAGES, argv)
+    if code == _COMMAND_MISSING:
+        document = _history_document(
+            args, code, None, "command_missing",
+            stderr.strip() or f"Command not found: {_RETRIEVE_MESSAGES}",
+        )
+        print(json.dumps(document, ensure_ascii=True))
+        return code
+    if code != 0:
+        document = _history_document(
+            args, code, None, "history_unavailable",
+            stderr.strip() or "Unable to read the session history",
+        )
+        print(json.dumps(document, ensure_ascii=True))
+        return code
+    try:
+        messages = json.loads(stdout)
+    except ValueError:
+        messages = None
+    if not isinstance(messages, list):
+        document = _history_document(
+            args, 1, None, "history_unavailable",
+            "The retrieval command returned an unusable document",
+        )
+        print(json.dumps(document, ensure_ascii=True))
+        return 1
+    print(json.dumps(_history_document(args, 0, messages, None, None),
+                     ensure_ascii=True))
+    return 0
+
+
+def _handle_history(args) -> int:
+    """Print the stored context messages of one session.
+
+    The backing script changes the working directory while it is imported and
+    resolves its default database relative to that directory, so it must run as
+    a child process instead of being imported into this one.
+    """
+    if getattr(args, "json", False):
+        return _handle_history_json(args)
+    return _run_script(_RETRIEVE_MESSAGES, _history_argv(args))
 
 
 def _handle_search(args) -> int:
@@ -357,6 +418,7 @@ def build_parser() -> SessionParser:
             "  topsailai session list --limit 20\n"
             "  topsailai session status 20261107021807 --json\n"
             "  topsailai session history 20261107021807 --max-chars 200\n"
+            "  topsailai session history 20261107021807 --json\n"
             "  topsailai session search 20261107021807 timeout\n"
             "  topsailai session add-msg 20261107021807 -m 'please retry'\n"
             "  topsailai session delete 20261107021807 2175537\n\n"
@@ -425,6 +487,8 @@ def build_parser() -> SessionParser:
     history_parser.add_argument("--max-chars", dest="max_chars", type=int,
                                 action=UniqueValue, default=argparse.SUPPRESS,
                                 help="truncate each displayed message to N characters")
+    history_parser.add_argument("--json", action="store_true",
+                                help="emit one structured JSON result")
     history_parser.add_argument("--db-conn", dest="db_conn", action=UniqueValue,
                                 default=argparse.SUPPRESS,
                                 help="override the session database connection string")

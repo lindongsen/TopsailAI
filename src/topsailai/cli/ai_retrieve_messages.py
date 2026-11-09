@@ -7,7 +7,7 @@ This module provides command-line functionality to retrieve all messages
 associated with a given session from the database.
 
 Usage:
-    retrieve_messages.py <session_id> [database_connection_string]
+    retrieve_messages.py <session_id> [database_connection_string] [--json]
 
 Arguments:
     session_id: Required session identifier
@@ -17,6 +17,7 @@ Arguments:
 Examples:
     retrieve_messages.py abc123
     retrieve_messages.py abc123 sqlite:///custom.db
+    retrieve_messages.py abc123 --json
 
 Author: DawsonLin
 Email: lin_dongsen@126.com
@@ -24,6 +25,7 @@ Email: lin_dongsen@126.com
 
 import argparse
 import copy
+import json
 import sys
 import os
 
@@ -163,7 +165,25 @@ def parse_args(argv=None):
         help="Truncate each message's displayed content to at most N characters. "
              "Truncation is applied by the shared formatter and does not affect counts.",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the retrieved messages as one JSON array instead of a "
+             "human-readable report.",
+    )
     return parser.parse_args(argv)
+
+
+def _print_json(messages, max_chars):
+    """Print the retrieved messages as one JSON array on stdout.
+
+    ``--max-chars`` keeps the same meaning as in human-readable mode: each
+    message ``content`` is limited to that many characters. The limit is applied
+    to the stored message objects before serialization, so a machine consumer
+    sees exactly the truncation a human would see.
+    """
+    print(json.dumps(truncate_message_content(messages, max_chars),
+                     ensure_ascii=False, indent=2))
 
 
 def main(argv=None):
@@ -174,7 +194,8 @@ def main(argv=None):
     1. Validates command-line arguments (requires session_id)
     2. Creates a session manager with optional database connection
     3. Retrieves all messages for the specified session
-    4. Displays the messages using print_context_messages
+    4. Displays the messages using print_context_messages, or as one JSON
+       array when ``--json`` is given
 
     Returns:
         None
@@ -191,12 +212,18 @@ def main(argv=None):
         # Retrieve messages
         messages = manager.retrieve_messages(args.session_id)
 
+        if args.json:
+            _print_json(messages, args.max_chars)
+            return
+
         # Display results using the shared formatter, passing through the
         # truncation limit so counts remain based on the original content.
         print_context_messages(messages, content_max_length=args.max_chars)
 
     except Exception as e:
-        print(f"Error: {e}")
+        # A machine consumer must never receive a partial document on stdout,
+        # so the diagnostic goes to stderr in JSON mode.
+        print(f"Error: {e}", file=sys.stderr if args.json else sys.stdout)
         sys.exit(1)
 
 

@@ -42,7 +42,7 @@ and exit with status 0.
 | `info <SESSION_ID> [<SESSION_ID> ...]` | Show one session's detail, or several sessions' detail in one call. One identifier uses the single-session renderer; two or more use the batch renderer. |
 | `list [OPTIONS]` | List stored sessions from the session database. |
 | `status <SESSION_ID>` | Report the lock-based `idle` or `processing` state of one session. |
-| `history <SESSION_ID> [--max-chars N]` | Print the stored context messages of one session. |
+| `history <SESSION_ID> [--max-chars N] [--json]` | Print the stored context messages of one session. |
 | `search <SESSION_ID> <KEYWORD>` | Search one session's context by keyword. |
 | `add-msg <SESSION_ID> -m <TEXT>` | Append one persistent user-to-agent message to a session. |
 | `delete <SESSION_ID> <PID>` | Delete exactly one invalid session stdout file. |
@@ -91,9 +91,18 @@ stdout file is present. Use `status` for "is a task running" and `info` for
 ```bash
 topsailai session history 20261107021807
 topsailai session history 20261107021807 --max-chars 200
+topsailai session history 20261107021807 --json
 ```
 
-Options: `--max-chars <N>`, `--db-conn <string>`.
+Options: `--max-chars <N>`, `--json`, `--db-conn <string>`.
+
+`--max-chars` keeps one meaning in both modes: each message `content` is
+limited to N characters and an ellipsis is appended when truncation happens.
+In `--json` mode the limit is applied to the message objects before they are
+serialized, so a machine consumer sees exactly the truncation a human sees.
+
+A session with no stored messages is an empty array with `message_count` `0`,
+not an error.
 
 ### `search`
 
@@ -157,6 +166,7 @@ the on-disk prefix `topsailai`.
 | Code | Meaning |
 |------|---------|
 | 0 | Success. |
+| 1 | `history` only: the stored messages could not be read, or the retrieval command returned an unusable document. |
 | 2 | Usage error: unknown action, missing or invalid argument, conflicting repeated option, empty message. |
 | 3 | `delete` only: the target is not a deletable invalid stdout (`target_not_found`, `target_alive`, `target_identity_unavailable`, `file_in_use`). |
 | 4 | `delete` only: the file exists and is invalid, but removal failed. |
@@ -164,7 +174,7 @@ the on-disk prefix `topsailai`.
 
 ## JSON output
 
-`info`, `list`, `status`, `add-msg` and `delete` accept `--json`.
+`info`, `list`, `status`, `history`, `add-msg` and `delete` accept `--json`.
 
 `delete` and `status` emit one JSON object:
 
@@ -183,6 +193,29 @@ the on-disk prefix `topsailai`.
 ```
 
 A refusal sets `ok` to `false` and fills `error_code` and `message`.
+
+`history` emits one JSON object whose `messages` is the stored message array:
+
+```json
+{
+  "ok": true,
+  "exit_code": 0,
+  "action": "history",
+  "session_id": "20261107021807",
+  "message_count": 2,
+  "messages": [
+    {"role": "user", "content": "hello"},
+    {"role": "assistant", "content": "hi"}
+  ],
+  "error_code": null,
+  "message": null
+}
+```
+
+A failed read keeps stdout a single parseable object: `ok` is `false`,
+`messages` and `message_count` are `null`, and `error_code` is
+`history_unavailable` or `command_missing`. A child diagnostic is never mixed
+into stdout.
 
 ## Relationship to session scope
 
