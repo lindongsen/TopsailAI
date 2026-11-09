@@ -19,6 +19,11 @@ const (
 	debSbinDir = "./usr/local/sbin"
 )
 
+// debTestSite is the site identifier the test builds config packages with. A
+// config package name carries it, so two sites produce distinguishable
+// artifacts instead of two packages that differ only in content.
+const debTestSite = "test-site"
+
 // debLayoutDirs is the real directory set that makes one directory show the
 // whole product, with the permission string dpkg-deb reports. A symlink here
 // would silently redirect a write to whatever filesystem the link names, which
@@ -46,6 +51,7 @@ type debPackage struct {
 	path      string
 	version   string
 	depends   string
+	provides  string
 	entries   map[string]debEntry
 	conffiles []string
 }
@@ -145,16 +151,21 @@ func buildDebPackagesOnce() (map[string]*debPackage, error) {
 	// The binary packages carry no site data, so they are built without a
 	// configuration or certificate. The config packages carry both, so they are
 	// built with the throwaway material and the site configuration.
+	//
+	// A config package name carries the site identifier, so the build needs one.
+	// The test uses a single site, which is enough to prove the suffix reaches
+	// the package name and the virtual name stays stable.
 	builds := []struct {
 		key        string
 		role       string
 		configRole string
+		site       string
 	}{
 		{key: "node", role: "node"},
 		{key: "server", role: "server"},
 		{key: "endpoint", role: "endpoint"},
-		{key: "config-server", role: "config", configRole: "server"},
-		{key: "config-endpoint", role: "config", configRole: "endpoint"},
+		{key: "config-server", role: "config", configRole: "server", site: debTestSite},
+		{key: "config-endpoint", role: "config", configRole: "endpoint", site: debTestSite},
 	}
 	for _, build := range builds {
 		args := []string{
@@ -167,6 +178,9 @@ func buildDebPackagesOnce() (map[string]*debPackage, error) {
 		}
 		if build.configRole != "" {
 			args = append(args, "--config-role", build.configRole)
+		}
+		if build.site != "" {
+			args = append(args, "--site", build.site)
 		}
 		if build.role != "node" {
 			args = append(args,
@@ -183,7 +197,7 @@ func buildDebPackagesOnce() (map[string]*debPackage, error) {
 		if output, err := command.CombinedOutput(); err != nil {
 			return nil, &debBuildFailure{role: build.key, err: err, output: string(output)}
 		}
-		pkg, err := readDebPackage(dest, build.key)
+		pkg, err := readDebPackage(dest, build.key, build.site)
 		if err != nil {
 			return nil, err
 		}
@@ -247,9 +261,15 @@ func generateTestCertificate(dir string) error {
 	return os.WriteFile(filepath.Join(dir, "ca.pem"), body, 0o644)
 }
 
-// readDebPackage parses one built package into its payload and conffiles.
-func readDebPackage(dest, role string) (*debPackage, error) {
-	matches, err := filepath.Glob(filepath.Join(dest, "agent-cluster-"+role+"_*.deb"))
+// readDebPackage parses one built package into its payload and conffiles. A
+// config package name carries the site suffix, so the site is part of the glob;
+// an empty site matches the binary packages, whose names carry no suffix.
+func readDebPackage(dest, role, site string) (*debPackage, error) {
+	name := "agent-cluster-" + role
+	if site != "" {
+		name += "-" + site
+	}
+	matches, err := filepath.Glob(filepath.Join(dest, name+"_*.deb"))
 	if err != nil {
 		return nil, err
 	}
@@ -290,9 +310,10 @@ func readDebPackage(dest, role string) (*debPackage, error) {
 	}
 	pkg.conffiles = readConffiles(control)
 
-	// The version and dependency fields are read separately because the epoch
-	// only exists in the control metadata, never in the file name.
-	fields, err := exec.Command("dpkg-deb", "-f", pkg.path, "Version", "Depends").Output()
+	// The version, dependency and virtual-name fields are read separately
+	// because the epoch only exists in the control metadata, never in the file
+	// name.
+	fields, err := exec.Command("dpkg-deb", "-f", pkg.path, "Version", "Depends", "Provides").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -302,6 +323,8 @@ func readDebPackage(dest, role string) (*debPackage, error) {
 			pkg.version = strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
 		case strings.HasPrefix(line, "Depends:"):
 			pkg.depends = strings.TrimSpace(strings.TrimPrefix(line, "Depends:"))
+		case strings.HasPrefix(line, "Provides:"):
+			pkg.provides = strings.TrimSpace(strings.TrimPrefix(line, "Provides:"))
 		}
 	}
 	return pkg, nil
@@ -625,6 +648,52 @@ func TestDebPackagesCarryAMonotonicEpoch(t *testing.T) {
 			t.Fatalf("the %s package Depends %q does not pin the node version with the "+
 				"epoch (%q); the pin would never match the installed node package",
 				role, packages[role].depends, pin)
+		}
+	}
+}
+
+// TestDebConfigPackageNamesCarryTheSite proves a config package name carries the
+// site identifier and still provides the unsuffixed name.
+//
+// This guards a real defect: every site built a package called
+// agent-cluster-config-endpoint with the same version, so the three artifacts
+// differed only in content. dpkg compares names and versions, so installing the
+// wrong site's package was accepted silently, and dpkg -l could not show which
+// site a machine carried. The suffix makes the artifact self-describing; the
+// virtual name keeps the generic binary package's dependency stable, so the
+// binary package still names no site.
+func TestDebConfigPackageNamesCarryTheSite(t *testing.T) {
+	packages := buildDebPackages(t)
+
+	for _, role := range []string{"config-server", "config-endpoint"} {
+		pkg := packages[role]
+		base := "agent-cluster-" + role
+
+		if !strings.HasPrefix(filepath.Base(pkg.path), base+"-"+debTestSite+"_") {
+			t.Fatalf("the %s package file is %q, want a name starting with %q;\n"+
+				"without the site suffix two sites build indistinguishable packages",
+				role, filepath.Base(pkg.path), base+"-"+debTestSite+"_")
+		}
+
+		want := base + " (= " + pkg.version + ")"
+		if pkg.provides != want {
+			t.Fatalf("the %s package Provides %q, want %q;\n"+
+				"the binary package depends on the unsuffixed name, so a missing or "+
+				"differently versioned Provides makes the dependency unsatisfiable",
+				role, pkg.provides, want)
+		}
+	}
+
+	// The binary packages must keep depending on the unsuffixed name, so a
+	// generic package never names a site.
+	for role, want := range map[string]string{
+		"endpoint": "agent-cluster-config-endpoint (= ",
+		"server":   "agent-cluster-config-server (= ",
+	} {
+		if !strings.Contains(packages[role].depends, want) {
+			t.Fatalf("the %s package Depends %q does not name the unsuffixed config "+
+				"package %q; a generic binary package must not depend on a site",
+				role, packages[role].depends, want)
 		}
 	}
 }

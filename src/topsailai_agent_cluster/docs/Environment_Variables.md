@@ -33,8 +33,11 @@ which of them is authoritative:
 
 Both node deployments use the same file name, `conf/node.conf`; `conf/node.server.conf.example` and
 `conf/node.endpoint.conf.example` are the role templates the config package copies into place. The
-binary packages carry no configuration, so `agent-cluster-config-server` and
-`agent-cluster-config-endpoint` are the only artifacts that differ between machines.
+binary packages carry no configuration, so `agent-cluster-config-server-<site>` and
+`agent-cluster-config-endpoint-<site>` are the only artifacts that differ between machines. The site
+suffix is part of the package name because two sites build packages with the same role and version
+but different contents, so an unsuffixed name would let dpkg accept the wrong site's package
+silently.
 
 The launcher forwards a fixed set of keys, so a key present in `node.conf` but absent from that set is
 silently ignored rather than passed to the process. `CONTROL_ACTION_FILE` was such a key until it was

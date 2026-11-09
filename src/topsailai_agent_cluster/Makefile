@@ -68,13 +68,17 @@ SERVER_PKG := ./src/main/agent-cluster-server
 ENDPOINT_PKG := ./src/main/agent-cluster-endpoint
 CLI_PKG := ./src/main/agent-cluster-cli
 
-# Site values baked into a package. A package carries its configuration and TLS
-# material, exactly like a bundle, so a real deployment overrides these:
+# Site values baked into a config package. The binary packages carry no site
+# data, so a real deployment overrides these only when building the config
+# package for one site:
 #
-#   make deb DEB_CONFIG=conf/site/node.conf DEB_CERT=... DEB_KEY=... DEB_CA=...
+#   make deb-config-endpoint DEB_SITE=ai-dev DEB_CONFIG=conf/site/node.conf \
+#        DEB_CERT=... DEB_KEY=... DEB_CA=...
 #
-# The defaults build a package from the example configuration and the development
-# certificates, which is enough to exercise the packaging path locally.
+# The defaults build a config package from the example configuration and the
+# development certificates, which is enough to exercise the packaging path
+# locally. DEB_SITE has no default because a config package name must name its
+# site; the builder refuses a config build without it.
 DEB_VERSION :=
 DEB_REVISION := 1
 DEB_ARCH :=
@@ -83,6 +87,10 @@ DEB_CERT :=
 DEB_KEY :=
 DEB_CA :=
 DEB_ADAPTERS :=
+# Site identifier that suffixes a config package name. Two sites build config
+# packages with identical names and versions but different contents, so without
+# this suffix dpkg cannot tell them apart and accepts the wrong one silently.
+DEB_SITE :=
 
 # Passes one optional builder argument only when the variable is non-empty, so an
 # unset variable never becomes an empty positional value.
@@ -94,7 +102,8 @@ deb_arg = $(if $(strip $(2)),$(1) $(2))
 DEB_COMMON_ARGS = $(call deb_arg,--version,$(DEB_VERSION)) \
                   $(call deb_arg,--revision,$(DEB_REVISION)) \
                   $(call deb_arg,--arch,$(DEB_ARCH))
-DEB_SITE_ARGS = $(call deb_arg,--config,$(DEB_CONFIG)) \
+DEB_SITE_ARGS = $(call deb_arg,--site,$(DEB_SITE)) \
+                $(call deb_arg,--config,$(DEB_CONFIG)) \
                 $(call deb_arg,--cert,$(DEB_CERT)) \
                 $(call deb_arg,--key,$(DEB_KEY)) \
                 $(call deb_arg,--ca,$(DEB_CA))
@@ -136,6 +145,8 @@ help:
 	@echo ""
 	@echo "  Site values: DEB_VERSION DEB_REVISION DEB_ARCH DEB_CONFIG DEB_CERT"
 	@echo "               DEB_KEY DEB_CA DEB_ADAPTERS"
+	@echo "  Config package: DEB_SITE is required and suffixes the package name,"
+	@echo "                  so two sites produce distinguishable artifacts"
 	@echo "  Output paths: DEB_DIR (default $(DEB_DIR))"
 	@echo "                DEB_BUILD_DIR (default $(DEB_BUILD_DIR))"
 	@echo "                override either to write outside the source tree,"
@@ -243,9 +254,14 @@ deb-config-endpoint:
 # The config packages are built last because they depend on nothing else and are
 # the only artifacts that carry site data. A site that only needs to change its
 # certificate rebuilds one config package instead of the whole set.
+#
+# DEB_SITE is required because a config package name carries its site. Building
+# the whole set without one would produce a config package that cannot be told
+# apart from another site's, which is the defect the suffix exists to prevent.
 deb:
 	@[ -n "$(DEB_DIR)" ] || { echo "DEB_DIR is empty; refusing to build" >&2; exit 1; }
 	@[ -n "$(DEB_BUILD_DIR)" ] || { echo "DEB_BUILD_DIR is empty; refusing to build" >&2; exit 1; }
+	@[ -n "$(DEB_SITE)" ] || { echo "DEB_SITE is empty; a config package name carries its site, so pass DEB_SITE=<site>" >&2; exit 1; }
 	@rm -f $(DEB_DIR)/agent-cluster-*.deb
 	@version=$$(bash $(DEB_BUILDER) --print-version $(call deb_arg,--version,$(DEB_VERSION))) || exit 1; \
 	echo "building version $$version"; \

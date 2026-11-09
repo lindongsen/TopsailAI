@@ -55,6 +55,8 @@
 #   --config    role configuration template (default: conf/node.<role>.conf.example)
 #   --config-role  role a config package configures: server or endpoint (required
 #               for --role config; it also selects the default template)
+#   --site      site identifier that suffixes a config package name, so two sites
+#               produce distinguishable artifacts (required for --role config)
 #   --cert      leaf certificate to embed (default: development certificate)
 #   --key       private key paired with --cert (default: development key)
 #   --ca        CA certificate (default: /opt/agent-cluster/certs/ca.pem)
@@ -91,6 +93,11 @@ CONFIG=""
 # from the package name. --config-role names it explicitly and also selects the
 # default template.
 CONFIG_ROLE=""
+# A config package carries one site's identity, so two sites build packages with
+# identical names and versions but different contents. dpkg cannot tell them
+# apart, and installing the wrong one is accepted silently. --site suffixes the
+# package name so the artifact itself states which site it belongs to.
+SITE=""
 CERT=""
 KEY=""
 CA="${LOCAL_CERTS}/ca.pem"
@@ -126,6 +133,7 @@ while [ $# -gt 0 ]; do
         --arch) ARCH="${2:-}"; shift 2 ;;
         --config) CONFIG="${2:-}"; shift 2 ;;
         --config-role) CONFIG_ROLE="${2:-}"; shift 2 ;;
+        --site) SITE="${2:-}"; shift 2 ;;
         --cert) CERT="${2:-}"; shift 2 ;;
         --key) KEY="${2:-}"; shift 2 ;;
         --ca) CA="${2:-}"; shift 2 ;;
@@ -209,11 +217,19 @@ FULL_VERSION="${VERSION}-${REVISION}"
 # breaks scp and several artifact steps, so the file keeps the plain version and
 # dpkg still compares the epoch carried inside the package.
 CONTROL_VERSION="${DEB_EPOCH}:${FULL_VERSION}"
-# A config package is named after the role it configures, so the server and
-# endpoint config packages are distinct artifacts rather than one name that the
-# second build overwrites.
+# A config package is named after the role it configures and the site it belongs
+# to. The role keeps the server and endpoint config packages distinct; the site
+# keeps two sites' packages distinct, because they carry identical names and
+# versions but different contents and dpkg would accept the wrong one silently.
+# The unsuffixed name stays available as a virtual package, so a generic binary
+# package can depend on it without naming any site.
 if [ "${ROLE}" = "config" ]; then
-    PACKAGE="agent-cluster-config-${CONFIG_ROLE}"
+    [ -n "${SITE}" ] || die "--site is required for --role config; without it two sites build indistinguishable packages"
+    case "${SITE}" in
+        *[!a-z0-9-]* | "") die "--site must be lowercase letters, digits and hyphens, got '${SITE}'" ;;
+    esac
+    CONFIG_PACKAGE_BASE="agent-cluster-config-${CONFIG_ROLE}"
+    PACKAGE="${CONFIG_PACKAGE_BASE}-${SITE}"
 else
     PACKAGE="agent-cluster-${ROLE}"
 fi
@@ -351,6 +367,12 @@ function write_control() {
         echo "Section: admin"
         echo "Priority: optional"
         echo "Depends: ${depends}"
+        # A site-suffixed config package also provides the unsuffixed name, so a
+        # generic binary package can depend on one stable name instead of naming
+        # a site. The version is included because the binary package pins it.
+        if [ -n "${CONFIG_PACKAGE_BASE:-}" ]; then
+            echo "Provides: ${CONFIG_PACKAGE_BASE} (= ${CONTROL_VERSION})"
+        fi
         if [ -n "${conflicts}" ]; then
             echo "Conflicts: ${conflicts}"
         fi
@@ -577,15 +599,17 @@ function build_config_package() {
 
     # Two config packages install the same certificate paths, so they cannot
     # coexist on one machine. Declaring the conflict turns a dpkg file clash into
-    # an explicit refusal.
+    # an explicit refusal. The conflict names the unsuffixed virtual package,
+    # because every site-suffixed config package provides it, so one entry covers
+    # every site without naming any of them.
     if [ "${EFFECTIVE_ROLE}" = "endpoint" ]; then
         write_control "agent-cluster-node (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
             "agent-cluster-config-server" \
-            "Agent Cluster endpoint configuration and TLS identity"
+            "Agent Cluster endpoint configuration and TLS identity for site ${SITE}"
     else
         write_control "agent-cluster-node (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
             "agent-cluster-config-endpoint" \
-            "Agent Cluster server configuration and TLS identity"
+            "Agent Cluster server configuration and TLS identity for site ${SITE}"
     fi
 }
 

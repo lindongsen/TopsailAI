@@ -19,8 +19,8 @@ packages exist because a machine has one role and each role has two packages.
 | `agent-cluster-node` | `agent-clusterctl`, `agent-cluster-node-setup`, the shared env writer | controller, required by every other package |
 | `agent-cluster-server` | `agent-cluster-server` | Server daemon binary |
 | `agent-cluster-endpoint` | `agent-cluster-endpoint`, `agent-cluster-cli`, `topsailai_agent_cluster` and `topsailai2` (symlinks) | Endpoint daemon and operator CLI binaries |
-| `agent-cluster-config-server` | `conf/node.conf`, `certs/ca.pem`, `certs/node.pem`, `certs/node-key.pem` | Server site configuration and TLS identity |
-| `agent-cluster-config-endpoint` | the same four files plus `conf/command-allowlist.conf` and `conf/control-actions.conf` | Endpoint site configuration and TLS identity |
+| `agent-cluster-config-server-<site>` | `conf/node.conf`, `certs/ca.pem`, `certs/node.pem`, `certs/node-key.pem` | Server site configuration and TLS identity |
+| `agent-cluster-config-endpoint-<site>` | the same four files plus `conf/command-allowlist.conf` and `conf/control-actions.conf` | Endpoint site configuration and TLS identity |
 
 The split exists because a site replaces the shipped certificate with its own identity, and a
 certificate that lives in the binary package is overwritten on every upgrade. Keeping the identity
@@ -28,10 +28,17 @@ in its own package means a binary upgrade cannot revert it, and it keeps a priva
 artifact that is copied to every node. The binary packages therefore carry no configuration and no
 TLS material, so one build serves every machine of the same architecture.
 
+A config package name carries the site it belongs to, because two sites build packages with the same
+role and version but different contents. Without the suffix dpkg compares only the name and the
+version, so it accepts the wrong site's package silently and `dpkg -l` cannot show which site a
+machine carries. Each suffixed package also provides the unsuffixed name as a virtual package, so a
+generic binary package depends on one stable name and never names a site.
+
 A binary package depends on the matching config package exactly, because the daemon cannot start
 without `node.conf` and its TLS material. The two config packages conflict with each other, because
 they install the same `node.conf` and the same certificate paths; a host that must run both roles
-uses the bundle path instead.
+uses the bundle path instead. The conflict names the unsuffixed virtual package, so one entry covers
+every site.
 
 Every installed file is visible in one real directory. The program payload, configuration, TLS
 material, state, logs and pid files all live under `/opt/agent-cluster`, and each entry point is a
@@ -96,10 +103,12 @@ make deb DEB_DIR=/srv/artifacts/deb DEB_BUILD_DIR=/var/tmp/agent-cluster-build
 ```
 
 A real deployment supplies its own site configuration and TLS material to the config package,
-because the default build uses the example configuration and the development certificates:
+because the default build uses the example configuration and the development certificates. The site
+identifier is required, because it suffixes the package name:
 
 ```bash
-make deb-config-endpoint DEB_CONFIG=conf/site/node.conf DEB_CERT=site/node.pem DEB_KEY=site/node-key.pem
+make deb-config-endpoint DEB_SITE=ai-dev DEB_CONFIG=conf/site/node.conf \
+     DEB_CERT=site/node.pem DEB_KEY=site/node-key.pem
 ```
 
 The site arguments apply only to the config packages. The binary packages ignore them, so a binary
@@ -107,10 +116,11 @@ built once can be reused for every machine while each site rebuilds only its own
 
 One `make deb` run resolves the version once and pins it for every package, so the set is always
 internally consistent: each package depends on the exact controller version that was built beside
-it. Pass `DEB_VERSION` to label a release explicitly:
+it. Pass `DEB_VERSION` to label a release explicitly, and `DEB_SITE` because the set includes a
+config package:
 
 ```bash
-make deb DEB_VERSION=1.0.0
+make deb DEB_VERSION=1.0.0 DEB_SITE=ai-dev
 ```
 
 Install on the target node. The binary package pulls its config package, so both are named
@@ -119,7 +129,7 @@ explicitly here to make the pairing visible:
 ```bash
 dpkg -i agent-cluster-node_<version>_amd64.deb \
         agent-cluster-endpoint_<version>_amd64.deb \
-        agent-cluster-config-endpoint_<version>_amd64.deb
+        agent-cluster-config-endpoint-<site>_<version>_amd64.deb
 ```
 
 The endpoint package also installs the operator CLI as `/opt/agent-cluster/bin/agent-cluster-cli`,
