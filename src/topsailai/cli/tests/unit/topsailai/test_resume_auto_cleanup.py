@@ -28,6 +28,7 @@ from cli_topsailai import project_scope
 from cli_topsailai.process_liveness import ProcessState
 from cli_topsailai.project_scope import (
     _delete_invalid_session_stdout,
+    _session_stdout_snapshot,
     resume_session_result,
 )
 
@@ -65,7 +66,9 @@ class DeleteInvalidSessionStdoutTest(unittest.TestCase):
                 patch("cli_topsailai.process_liveness.socket_heartbeat_alive", return_value=None), \
                 patch("cli_topsailai.log_files.is_file_in_use", return_value=False), \
                 patch("sys.stdout") as stdout:
-            deleted = _delete_invalid_session_stdout("s1", home=self.home)
+            deleted = _delete_invalid_session_stdout(
+                "s1", _session_stdout_snapshot("s1", home=self.home), home=self.home
+            )
 
         self.assertEqual(deleted, [path])
         self.assertFalse(os.path.exists(path))
@@ -79,7 +82,9 @@ class DeleteInvalidSessionStdoutTest(unittest.TestCase):
         with patch("cli_topsailai.process_liveness.pid_state", return_value=ProcessState.DEAD), \
                 patch("cli_topsailai.process_liveness.socket_heartbeat_alive", return_value=True), \
                 patch("cli_topsailai.log_files.is_file_in_use", return_value=False):
-            deleted = _delete_invalid_session_stdout("s1", home=self.home)
+            deleted = _delete_invalid_session_stdout(
+                "s1", _session_stdout_snapshot("s1", home=self.home), home=self.home
+            )
 
         self.assertEqual(deleted, [])
         self.assertTrue(os.path.exists(path))
@@ -90,7 +95,9 @@ class DeleteInvalidSessionStdoutTest(unittest.TestCase):
         with patch("cli_topsailai.process_liveness.pid_state", return_value=ProcessState.ALIVE), \
                 patch("cli_topsailai.process_liveness.socket_heartbeat_alive", return_value=None), \
                 patch("cli_topsailai.log_files.is_file_in_use", return_value=False):
-            deleted = _delete_invalid_session_stdout("s1", home=self.home)
+            deleted = _delete_invalid_session_stdout(
+                "s1", _session_stdout_snapshot("s1", home=self.home), home=self.home
+            )
 
         self.assertEqual(deleted, [])
         self.assertTrue(os.path.exists(path))
@@ -101,7 +108,9 @@ class DeleteInvalidSessionStdoutTest(unittest.TestCase):
         with patch("cli_topsailai.process_liveness.pid_state", return_value=ProcessState.UNKNOWN), \
                 patch("cli_topsailai.process_liveness.socket_heartbeat_alive", return_value=None), \
                 patch("cli_topsailai.log_files.is_file_in_use", return_value=False):
-            deleted = _delete_invalid_session_stdout("s1", home=self.home)
+            deleted = _delete_invalid_session_stdout(
+                "s1", _session_stdout_snapshot("s1", home=self.home), home=self.home
+            )
 
         self.assertEqual(deleted, [])
         self.assertTrue(os.path.exists(path))
@@ -112,7 +121,9 @@ class DeleteInvalidSessionStdoutTest(unittest.TestCase):
         with patch("cli_topsailai.process_liveness.pid_state", return_value=ProcessState.DEAD), \
                 patch("cli_topsailai.process_liveness.socket_heartbeat_alive", return_value=None), \
                 patch("cli_topsailai.log_files.is_file_in_use", return_value=True):
-            deleted = _delete_invalid_session_stdout("s1", home=self.home)
+            deleted = _delete_invalid_session_stdout(
+                "s1", _session_stdout_snapshot("s1", home=self.home), home=self.home
+            )
 
         self.assertEqual(deleted, [])
         self.assertTrue(os.path.exists(path))
@@ -133,7 +144,9 @@ class DeleteInvalidSessionStdoutTest(unittest.TestCase):
                 patch("cli_topsailai.log_files.is_file_in_use", return_value=False), \
                 patch.object(project_scope.os, "remove", side_effect=failing_remove), \
                 patch("sys.stdout") as stdout:
-            deleted = _delete_invalid_session_stdout("s1", home=self.home)
+            deleted = _delete_invalid_session_stdout(
+                "s1", _session_stdout_snapshot("s1", home=self.home), home=self.home
+            )
 
         self.assertEqual(deleted, [second])
         self.assertTrue(os.path.exists(first))
@@ -145,7 +158,9 @@ class DeleteInvalidSessionStdoutTest(unittest.TestCase):
         """An unreadable task directory yields no deletion and no exception."""
         with patch.object(project_scope.os, "listdir", side_effect=OSError("boom")), \
                 patch("sys.stdout") as stdout:
-            deleted = _delete_invalid_session_stdout("s1", home=self.home)
+            deleted = _delete_invalid_session_stdout(
+                "s1", _session_stdout_snapshot("s1", home=self.home), home=self.home
+            )
 
         self.assertEqual(deleted, [])
         logged = "".join(call.args[0] for call in stdout.write.call_args_list)
@@ -159,7 +174,9 @@ class DeleteInvalidSessionStdoutTest(unittest.TestCase):
                 patch("cli_topsailai.process_liveness.socket_heartbeat_alive", return_value=None), \
                 patch("cli_topsailai.log_files.is_file_in_use", return_value=False), \
                 patch("sys.stdout"):
-            deleted = _delete_invalid_session_stdout("s1", home=self.home)
+            deleted = _delete_invalid_session_stdout(
+                "s1", _session_stdout_snapshot("s1", home=self.home), home=self.home
+            )
 
         self.assertEqual(deleted, [mine])
         self.assertFalse(os.path.exists(mine))
@@ -180,12 +197,24 @@ class ResumeCleanupWiringTest(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _resume(self, launch_code, **kwargs):
-        """Run one resume with a stubbed launch boundary and record cleanup."""
+    def _resume(self, launch_code, confirmed=None, **kwargs):
+        """Run one resume with stubbed launch and startup-confirmation boundaries.
+
+        ``confirmed`` defaults to the real boundary's own rule, so a failed
+        launch is never reported as a confirmed startup by the stub itself.
+        """
+        if confirmed is None:
+            confirmed = launch_code == 0
         record = {"project_workspace": self.workspace}
+        startup = {
+            "startup_confirmed": confirmed,
+            "startup_pid": 4242 if confirmed else None,
+            "startup_reason": "heartbeat_answered" if confirmed else "heartbeat_unreachable",
+        }
         with patch.object(project_scope, "lookup_persisted_session", return_value=record), \
                 patch.object(project_scope, "session_liveness", return_value="idle"), \
                 patch.object(project_scope, "launch_agent_driver", return_value=launch_code), \
+                patch.object(project_scope, "_confirm_resumed_startup", return_value=startup), \
                 patch.object(project_scope, "_delete_invalid_session_stdout") as cleanup, \
                 patch("sys.stdout"):
             cleanup.return_value = [self.stdout_path]
@@ -195,11 +224,37 @@ class ResumeCleanupWiringTest(unittest.TestCase):
         return code, cleanup
 
     def test_successful_resume_cleans_leftovers(self):
-        """A zero exit code triggers exactly one cleanup for this session."""
+        """A confirmed startup triggers exactly one cleanup for this session."""
         code, cleanup = self._resume(0)
 
         self.assertEqual(code, 0)
-        cleanup.assert_called_once_with("s1", home=self.home)
+        cleanup.assert_called_once_with(
+            "s1", [self.stdout_path], home=self.home
+        )
+
+    def test_unconfirmed_startup_does_not_clean(self):
+        """A launcher that exited without a reachable channel must not clean."""
+        code, cleanup = self._resume(0, confirmed=False)
+
+        self.assertEqual(code, 4)
+        cleanup.assert_not_called()
+        self.assertTrue(os.path.exists(self.stdout_path))
+
+    def test_unconfirmed_startup_keeps_the_launch_failure_status(self):
+        """A failed launch keeps its own status instead of becoming a refusal."""
+        code, cleanup = self._resume(5, confirmed=False)
+
+        self.assertEqual(code, 5)
+        cleanup.assert_not_called()
+
+    def test_startup_facts_are_published_in_the_receipt(self):
+        """The receipt records the confirmation evidence, not just the exit code."""
+        receipt = {}
+        self._resume(0, receipt=receipt)
+
+        self.assertTrue(receipt.get("startup_confirmed"))
+        self.assertEqual(receipt.get("startup_pid"), 4242)
+        self.assertEqual(receipt.get("startup_reason"), "heartbeat_answered")
 
     def test_failed_resume_does_not_clean(self):
         """A non-zero exit code must not delete anything."""
@@ -222,6 +277,13 @@ class ResumeCleanupWiringTest(unittest.TestCase):
         with patch.object(project_scope, "lookup_persisted_session", return_value=record), \
                 patch.object(project_scope, "session_liveness", return_value="idle"), \
                 patch.object(project_scope, "launch_agent_driver", return_value=0), \
+                patch.object(
+                    project_scope, "_confirm_resumed_startup",
+                    return_value={
+                        "startup_confirmed": True, "startup_pid": 4242,
+                        "startup_reason": "heartbeat_answered",
+                    },
+                ), \
                 patch.object(
                     project_scope, "_delete_invalid_session_stdout",
                     side_effect=OSError("boom"),
@@ -254,6 +316,71 @@ class ResumeCleanupWiringTest(unittest.TestCase):
 
         self.assertEqual(code, 4)
         cleanup.assert_not_called()
+
+    def test_snapshot_excludes_files_created_during_launch(self):
+        """The output of the resumed run itself is never a cleanup candidate."""
+        new_path = os.path.join(self.task_dir, "s1.535353.session.stdout")
+
+        def _launch(*_args, **_kwargs):
+            """Create the resumed run's own stdout, then report success."""
+            with open(new_path, "w", encoding="utf-8") as handle:
+                handle.write("this run\n")
+            return 0
+
+        record = {"project_workspace": self.workspace}
+        with patch.object(project_scope, "lookup_persisted_session", return_value=record), \
+                patch.object(project_scope, "session_liveness", return_value="idle"), \
+                patch.object(project_scope, "launch_agent_driver", side_effect=_launch), \
+                patch.object(
+                    project_scope, "_confirm_resumed_startup",
+                    return_value={
+                        "startup_confirmed": True, "startup_pid": 4242,
+                        "startup_reason": "heartbeat_answered",
+                    },
+                ), \
+                patch.object(project_scope, "_delete_invalid_session_stdout") as cleanup, \
+                patch("sys.stdout"):
+            cleanup.return_value = []
+            code = resume_session_result("s1", home=self.home, emit_status=False)
+
+        self.assertEqual(code, 0)
+        candidates = cleanup.call_args[0][1]
+        self.assertIn(self.stdout_path, candidates)
+        self.assertNotIn(new_path, candidates)
+        self.assertTrue(os.path.exists(new_path))
+
+    def test_snapshot_is_taken_before_the_launch(self):
+        """The candidate list must be captured before the launch runs."""
+        order = []
+        record = {"project_workspace": self.workspace}
+
+        def _launch(*_args, **_kwargs):
+            """Record that the launch ran after the snapshot."""
+            order.append("launch")
+            return 0
+
+        def _snapshot(*_args, **_kwargs):
+            """Record that the snapshot ran before the launch."""
+            order.append("snapshot")
+            return [self.stdout_path]
+
+        with patch.object(project_scope, "lookup_persisted_session", return_value=record), \
+                patch.object(project_scope, "session_liveness", return_value="idle"), \
+                patch.object(project_scope, "launch_agent_driver", side_effect=_launch), \
+                patch.object(project_scope, "_session_stdout_snapshot", side_effect=_snapshot), \
+                patch.object(
+                    project_scope, "_confirm_resumed_startup",
+                    return_value={
+                        "startup_confirmed": True, "startup_pid": 4242,
+                        "startup_reason": "heartbeat_answered",
+                    },
+                ), \
+                patch.object(project_scope, "_delete_invalid_session_stdout") as cleanup, \
+                patch("sys.stdout"):
+            cleanup.return_value = []
+            resume_session_result("s1", home=self.home, emit_status=False)
+
+        self.assertEqual(order, ["snapshot", "launch"])
 
 
 if __name__ == "__main__":

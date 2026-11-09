@@ -252,15 +252,20 @@ def test_background_resume_preserves_identity_and_attempt_log(tmp_path, capsys):
     from cli_topsailai import project_scope as scope
 
     record = {"session_id": "persisted", "project_workspace": str(tmp_path)}
+    startup = {
+        "startup_confirmed": True, "startup_pid": 12345,
+        "startup_reason": "heartbeat_answered",
+    }
     with patch.object(agent_launch, "_session_id", side_effect=AssertionError("fresh identity")):
         with patch.object(agent_launch, "_apply_selected_model_environment", return_value=({}, set())):
             with patch.object(bg, "launch_background", return_value={
                 "launcher_pid": 12345, "log_path": "attempt.agent-launch.log",
             }) as launch:
-                assert scope.resume_session_result(
-                    "persisted", background=True, query=lambda sid: [record],
-                    home=str(tmp_path), entrypoint_base="/startup",
-                ) == 0
+                with patch.object(scope, "_confirm_resumed_startup", return_value=startup):
+                    assert scope.resume_session_result(
+                        "persisted", background=True, query=lambda sid: [record],
+                        home=str(tmp_path), entrypoint_base="/startup",
+                    ) == 0
     assert launch.call_count == 1
     assert launch.call_args.args == (str(tmp_path), "persisted")
     options = launch.call_args.kwargs
@@ -998,6 +1003,7 @@ def test_json_resume_foreground_receipt_uses_stdout_only_for_json(capsys):
         "workspace": "/work/project", "mode": "raw", "driver": None,
         "background": False, "resumed": True, "launcher_pid": 4321,
         "log_path": None, "startup_confirmed": False,
+        "startup_pid": None, "startup_reason": None,
         "child_exit_code": 0, "cleaned_stdout": [],
     }
     assert captured.err == "resume output\n"

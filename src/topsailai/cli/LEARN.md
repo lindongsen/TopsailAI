@@ -380,3 +380,37 @@ needs to handle is the one case it cannot parse. Keep failure records minimal an
 self-describing (`error_code` plus `message`) instead of emitting empty success
 fields, and assert the exact key set in tests so a later "just reuse the success
 shape" change cannot silently make a failure look like a real record.
+
+## A wrapper exit status cannot prove the wrapped command started
+
+### Trigger
+
+The resume cleanup was gated on `code == 0`, so it treated a launcher exit
+status as proof that the resumed agent was running. A real pty run with a driver
+that exited `1` immediately still returned `0`, and the repository's own
+`launch_delivery_state()` never reports more than `submitted` while
+`startup_confirmed` was assigned `False` at every one of its four sites.
+
+### Action taken
+
+Replaced the exit-status gate with a control-channel heartbeat: after a launch
+that returned `0`, the session's own socket is probed every `0.2` seconds for up
+to `7` seconds, and only an answer confirms the startup. Only PIDs that appeared
+after the launch are probed, using the pre-launch stdout snapshot as the
+baseline, and both the stdout file and the socket file are inspected because
+either may be published first. A foreground `raw` resume is exempt because the
+agent itself is the child and no channel survives it. A launch that already
+failed keeps its own status instead of being downgraded to an unconfirmed
+startup. Verified with a real `ControlServer` (confirmed in 1.89s for a channel
+published 1.5s late, and 7.01s to fail when no channel ever appears) plus a
+negative control proving a single-probe implementation fails the periodic test.
+
+### Why this prevents recurrence
+
+`dtach` and `tmux` exit as soon as they detach, so their status describes the
+wrapper, not the agent; a background submission describes delivery, not
+readiness. Whenever a command is launched through a wrapper, the only honest
+success evidence is something the wrapped process itself produces, such as its
+own control channel. Also keep the pre-launch baseline: enumerating candidates
+after the launch silently includes the run's own new files, which turns a
+cleanup into data loss and makes a leftover PID look like a fresh startup.

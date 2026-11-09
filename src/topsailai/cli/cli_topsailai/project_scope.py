@@ -1608,17 +1608,41 @@ def _validate_resume_workspace(record: Dict[str, Any]) -> str:
     return workspace
 
 
-def _delete_invalid_session_stdout(
+def _session_stdout_snapshot(
     session_id: str, *, home: Optional[str] = None,
 ) -> List[str]:
-    """Delete stdout files that are proven invalid for one resumed session.
+    """Return the stdout files that exist for *session_id* before a launch.
 
-    A resume only succeeds after every stdout candidate of the session was
-    proven idle, so those candidates are exactly the leftovers that the resume
-    already validated. Each candidate is re-proven here instead of trusting the
-    earlier observation: the control channel is consulted first because a
-    session may run in a sibling container that shares this filesystem, then the
-    process table, then the open-descriptor check.
+    The snapshot is taken before the launch so a file created by the resumed
+    run itself can never be mistaken for a leftover. A directory that cannot be
+    listed yields an empty snapshot, which disables cleanup for this resume
+    instead of guessing.
+    """
+    from cli_topsailai.process_liveness import _session_stdout_candidates
+
+    base = home or get_topsailai_home()
+    task_dir = os.path.join(base, "workspace", "task")
+    try:
+        return _session_stdout_candidates(task_dir, session_id)
+    except OSError as error:
+        print(
+            f"{Colors.YELLOW}[WARN] Cannot list session stdout files for "
+            f"'{session_id}': {error}{Colors.RESET}"
+        )
+        return []
+
+
+def _delete_invalid_session_stdout(
+    session_id: str, candidates: List[str], *, home: Optional[str] = None,
+) -> List[str]:
+    """Delete the pre-launch stdout leftovers that are proven invalid.
+
+    Only *candidates* captured before the launch are considered, so the output
+    of the resumed run itself is never removed. Each candidate is re-proven
+    immediately before removal instead of trusting the earlier observation: the
+    control channel is consulted first because a session may run in a sibling
+    container that shares this filesystem, then the process table, then the
+    open-descriptor check.
 
     Returns:
         The deleted paths. A candidate that cannot be proven invalid is kept,
@@ -1628,21 +1652,11 @@ def _delete_invalid_session_stdout(
     from cli_topsailai.log_files import is_file_in_use
     from cli_topsailai.process_liveness import (
         _get_pid_from_stdout_path,
-        _session_stdout_candidates,
         pid_state,
         socket_heartbeat_alive,
     )
 
     base = home or get_topsailai_home()
-    task_dir = os.path.join(base, "workspace", "task")
-    try:
-        candidates = _session_stdout_candidates(task_dir, session_id)
-    except OSError as error:
-        print(
-            f"{Colors.YELLOW}[WARN] Cannot list session stdout files for "
-            f"'{session_id}': {error}{Colors.RESET}"
-        )
-        return []
     deleted: List[str] = []
     for path in candidates:
         pid = _get_pid_from_stdout_path(path)
@@ -1666,6 +1680,156 @@ def _delete_invalid_session_stdout(
         print(f"[INFO] Deleted invalid session stdout: {path}")
         deleted.append(path)
     return deleted
+
+
+#: Bounded window for the resumed process to publish its control channel. A
+#: healthy agent creates its socket within a few hundred milliseconds, so this
+#: only bounds a slow or wedged startup.
+RESUME_STARTUP_CONFIRM_SECONDS = 7.0
+
+#: Poll interval while waiting for the resumed control channel to appear.
+RESUME_STARTUP_POLL_SECONDS = 0.2
+
+
+def _session_socket_pids(task_dir: str, session_id: str) -> List[int]:
+    """Return the PIDs that published a control socket for *session_id*.
+
+    A socket file outlives its owner, so this only enumerates candidates; the
+    heartbeat decides whether one of them is actually reachable.
+    """
+    from cli_topsailai.process_liveness import _matches_session
+
+    pids: List[int] = []
+    try:
+        entries = os.listdir(task_dir)
+    except OSError:
+        return pids
+    suffix = ".session.sock"
+    for entry in entries:
+        if not entry.endswith(suffix):
+            continue
+        parts = entry[: -len(suffix)].split(".")
+        if len(parts) < 2:
+            continue
+        try:
+            pid = int(parts[-1])
+        except ValueError:
+            continue
+        if pid <= 0 or not _matches_session(".".join(parts[:-1]), session_id):
+            continue
+        pids.append(pid)
+    return pids
+
+
+def _new_session_pids(
+    session_id: str, snapshot: List[str], *, home: Optional[str] = None,
+) -> List[int]:
+    """Return the PIDs that appeared for *session_id* after the launch.
+
+    The pre-launch snapshot is the baseline, so a leftover PID is never mistaken
+    for the process this resume started. Both the stdout file and the control
+    socket are inspected because either one may be published first.
+    """
+    from cli_topsailai.process_liveness import (
+        _get_pid_from_stdout_path,
+        _session_stdout_candidates,
+    )
+
+    base = home or get_topsailai_home()
+    task_dir = os.path.join(base, "workspace", "task")
+    known = set()
+    for path in snapshot:
+        pid = _get_pid_from_stdout_path(path)
+        if pid is not None:
+            known.add(pid)
+    found: List[int] = []
+    try:
+        current = _session_stdout_candidates(task_dir, session_id)
+    except OSError:
+        current = []
+    for path in current:
+        pid = _get_pid_from_stdout_path(path)
+        if pid is not None and pid not in known and pid not in found:
+            found.append(pid)
+    for pid in _session_socket_pids(task_dir, session_id):
+        if pid not in known and pid not in found:
+            found.append(pid)
+    return found
+
+
+def _confirm_resumed_startup(
+    session_id: str, snapshot: List[str], *, code: int, mode: str,
+    background: bool, home: Optional[str] = None,
+    timeout: float = RESUME_STARTUP_CONFIRM_SECONDS,
+) -> Dict[str, Any]:
+    """Prove the resumed process is reachable on its own control channel.
+
+    A launcher exit code only reports what the wrapper did, so it cannot prove
+    the resumed agent is running: ``dtach`` and ``tmux`` exit as soon as they
+    have detached, and a background submission only proves delivery. The control
+    channel is the authority instead, because the resumed process publishes its
+    own socket and answers a heartbeat on it.
+
+    A foreground ``raw`` resume is the one exception: the agent itself is the
+    child, so its exit status already reports the completed run and no channel
+    survives it.
+
+    Returns:
+        The confirmation facts: ``startup_confirmed``, ``startup_pid`` and
+        ``startup_reason``.
+    """
+    from cli_topsailai.process_liveness import (
+        HEARTBEAT_TIMEOUT_SECONDS,
+        socket_heartbeat_alive,
+    )
+
+    if code != 0:
+        return {
+            "startup_confirmed": False,
+            "startup_pid": None,
+            "startup_reason": "launch_failed",
+        }
+    if mode == "raw" and not background:
+        return {
+            "startup_confirmed": True,
+            "startup_pid": None,
+            "startup_reason": "foreground_raw_exited",
+        }
+    base = home or get_topsailai_home()
+    deadline = time.monotonic() + max(timeout, 0.0)
+    # At least one probe is always attempted, so a zero-length window still
+    # performs an immediate check instead of reporting a failure it never tried.
+    first_pass = True
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 and not first_pass:
+            break
+        for pid in _new_session_pids(session_id, snapshot, home=base):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 and not first_pass:
+                break
+            # Each probe is bounded by what is left of the window, so a socket
+            # that accepts a connection but never answers cannot stretch the
+            # confirmation past the stated deadline.
+            budget = min(HEARTBEAT_TIMEOUT_SECONDS, remaining) if remaining > 0 else 0.0
+            if socket_heartbeat_alive(
+                session_id, pid, home=base, timeout=budget,
+            ) is True:
+                return {
+                    "startup_confirmed": True,
+                    "startup_pid": pid,
+                    "startup_reason": "heartbeat_answered",
+                }
+        first_pass = False
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(RESUME_STARTUP_POLL_SECONDS, remaining))
+    return {
+        "startup_confirmed": False,
+        "startup_pid": None,
+        "startup_reason": "heartbeat_unreachable",
+    }
 
 
 def resume_session_result(
@@ -1774,6 +1938,9 @@ def resume_session_result(
             f"{Colors.GREEN}[INFO] Resuming session '{session_id}' with driver "
             f"'{selected_driver}' in {workspace} (mode: {effective_mode}) ...{Colors.RESET}"
         )
+    # Snapshot the leftovers before the launch so the output produced by the
+    # resumed run itself can never be mistaken for an invalid leftover.
+    stdout_snapshot = _session_stdout_snapshot(session_id, home=home)
     if background:
         from cli_topsailai.agent_launch import launch_configured_agent
 
@@ -1789,11 +1956,30 @@ def resume_session_result(
             spawn=spawn, emit_status=False, prelaunch_check=late_check,
             receipt=receipt, child_stdout=child_stdout,
         )
-    # The resume already proved every stdout candidate of this session idle, so
-    # the leftovers are removed only after the launch succeeded. A cleanup
-    # problem is reported but never changes the resume result.
-    if code == 0:
-        record_receipt(
-            cleaned_stdout=_delete_invalid_session_stdout(session_id, home=home)
+    # A launcher exit code only reports what the wrapper did, so the resumed
+    # process must prove itself on its own control channel before the resume is
+    # reported as successful.
+    startup = _confirm_resumed_startup(
+        session_id, stdout_snapshot, code=code, mode=effective_mode,
+        background=background, home=home,
+    )
+    record_receipt(**startup)
+    if not startup["startup_confirmed"]:
+        # A launch that already failed keeps its own status, so the caller can
+        # still tell a spawn failure from an unreachable control channel.
+        if code != 0:
+            return code
+        print(
+            f"{Colors.RED}[ERROR] Session '{session_id}' did not answer on its "
+            f"control channel; the resumed agent is not running.{Colors.RESET}"
         )
+        return 4
+    # The resume already proved every stdout candidate of this session idle, so
+    # the leftovers are removed only after the resumed process answered. A
+    # cleanup problem is reported but never changes the resume result.
+    record_receipt(
+        cleaned_stdout=_delete_invalid_session_stdout(
+            session_id, stdout_snapshot, home=home
+        )
+    )
     return code

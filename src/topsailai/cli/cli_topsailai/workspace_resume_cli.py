@@ -74,6 +74,8 @@ def _receipt_response(facts: dict) -> dict:
         "launcher_pid": facts.get("launcher_pid"),
         "log_path": facts.get("log_path"),
         "startup_confirmed": facts.get("startup_confirmed", False),
+        "startup_pid": facts.get("startup_pid"),
+        "startup_reason": facts.get("startup_reason"),
         "child_exit_code": facts.get("child_exit_code"),
         "cleaned_stdout": facts.get("cleaned_stdout", []),
     }
@@ -130,9 +132,9 @@ def run_workspace_resume_cli(argv, *, startup_cwd=None) -> int:
     if receipt["delivery_state"] == "delivery_unknown":
         receipt["delivery_unknown"] = True
         receipt["message"] = "Resume effects are uncertain; do not retry blindly"
-    elif receipt["delivery_state"] == "submitted" and code == 0:
-        receipt["message"] = "Resume submitted; startup is not confirmed"
-    elif receipt["delivery_state"] == "launcher_exited" and code == 0:
-        receipt["message"] = "Resume launcher exited"
+    elif facts.get("startup_confirmed") and code == 0:
+        receipt["message"] = "Resume confirmed; the agent answered on its control channel"
+    elif code == 0:
+        receipt["message"] = "Resume not confirmed; the agent did not answer"
     emit_receipt(receipt)
     return code

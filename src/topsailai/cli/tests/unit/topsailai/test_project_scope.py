@@ -1997,6 +1997,10 @@ class ResumeBackgroundMechanismTests(unittest.TestCase):
         with patch.object(scope, "lookup_persisted_session", return_value=record), \
              patch.object(scope, "_validate_resume_workspace", return_value="/work/proj"), \
              patch.object(scope, "session_liveness", return_value="idle"), \
+             patch.object(scope, "_confirm_resumed_startup",
+                          return_value={"startup_confirmed": True,
+                                        "startup_pid": 4242,
+                                        "startup_reason": "heartbeat_answered"}), \
              patch("cli_topsailai.agent_launch.launch_configured_agent",
                    return_value=0) as launch:
             status = scope.resume_session_result("session-1", **options)
@@ -2024,6 +2028,10 @@ class ResumeBackgroundMechanismTests(unittest.TestCase):
         with patch.object(scope, "lookup_persisted_session", return_value=record), \
              patch.object(scope, "_validate_resume_workspace", return_value="/work/proj"), \
              patch.object(scope, "session_liveness", return_value="idle"), \
+             patch.object(scope, "_confirm_resumed_startup",
+                          return_value={"startup_confirmed": True,
+                                        "startup_pid": 4242,
+                                        "startup_reason": "heartbeat_answered"}), \
              patch.object(scope, "launch_agent_driver", return_value=0) as launch:
             status = scope.resume_session_result("session-1")
         self.assertEqual(status, 0)

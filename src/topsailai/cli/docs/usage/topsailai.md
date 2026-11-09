@@ -440,7 +440,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `workspace [-f json] [list [-s ID1,ID2] [--json]]` | Display the workspace task list and exit. The default is the human-readable table; `-f/--format json` sets the workspace-scope format, while `list --json` explicitly selects JSON and takes precedence. `list -s/--session ID1,ID2` restricts the output to the named comma-separated sessions, including their task rows, and is applied before any metadata read. |
 | `workspace kill <session_id> -g GENERATION [--json]` | Send SIGTERM without confirmation only when the exact session process generation is still verified. Obtain `GENERATION` from `workspace list --json` or `workspace -f json`; success means the OS accepted the signal, not that process exit was confirmed. |
 | `workspace agent [<folder>] [-m MODE] [-b/--background] [--task MESSAGE] [--non-interactive] [--json]` | Launch a configured agent in the foreground; the folder defaults to the caller's working directory. `--task` supplies the initial user task so a fresh agent starts without manual input. Background defaults to raw and honors an explicit `-m raw|tmux|dtach`, failing closed with exit code 4 when that mechanism is unavailable. `--non-interactive` suppresses launcher prompts for this launch only. |
-| `workspace resume -s SESSION [-d DRIVER] [-m MODE] [-b/--background] [--json]` | Resume one exact persisted idle session; background success means submission rather than readiness. |
+| `workspace resume -s SESSION [-d DRIVER] [-m MODE] [-b/--background] [--json]` | Resume one exact persisted idle session; success requires the resumed process to answer on its control channel within 7 seconds. |
 | `workspace driver <start/status/stop> -s SESSION [-p PID] [--json]` | Start, inspect or stop one exact session driver; see below. |
 | `docs list [--json]` | List all usage documentation files and exit. `--json` outputs a JSON array of document records instead of a table. |
 | `docs read <name> [--json]` | Read a specific usage documentation file and exit. `--json` outputs one structured result object instead of the raw content. |
@@ -751,14 +751,44 @@ not provide a runtime lock: concurrent external starts and PID reuse remain
 possible. Task storage must be trusted and available; permission and I/O errors
 are not interpreted as an idle session. Interactive `/resume` and `project resume` use chats by default, accept the same built-in `-d/--driver` choices, and retain their boolean/refusal behavior.
 
-A successful resume also removes the session's own invalid stdout leftovers. The
+### Startup confirmation
+
+A launcher exit status only reports what the wrapper did, so it cannot prove the
+resumed agent is running: `dtach` and `tmux` exit as soon as they have detached,
+and a background submission only proves delivery. The resumed process therefore
+has to prove itself on the control channel it publishes.
+
+After a launch that returned `0`, the command probes the session's control
+channel every `0.2` seconds for up to `7` seconds. A heartbeat answer confirms the
+startup and reports the answering PID in `startup_pid` with
+`startup_reason: heartbeat_answered`. The answering identity is deliberately not
+compared with the PID in the socket filename, because a channel that answers
+proves the session is in use even when its owner runs in a sibling container.
+
+Only PIDs that appeared after the launch are probed. The pre-launch stdout
+snapshot is the baseline, so a leftover socket or stdout file from an earlier run
+is never mistaken for the process this resume started. Both the stdout file and
+the socket file are inspected, because either one may be published first.
+
+A foreground `raw` resume is the one exception: the agent itself is the child, so
+its exit status already reports the completed run and no channel survives it.
+That case reports `startup_reason: foreground_raw_exited`.
+
+When no channel answers inside the window, the resume is not confirmed and
+returns 4 with `startup_reason: heartbeat_unreachable`. A launch that already
+failed keeps its own status (5, 6, or 130) instead of being reported as an
+unconfirmed startup.
+
+### Leftover cleanup
+
+A confirmed resume also removes the session's own invalid stdout leftovers. The
 resume already proved every stdout candidate of that session idle, so those
 candidates are exactly the files it validated. Each candidate is re-proven
 immediately before removal: the control channel is consulted first, then the
 process table, then the open-descriptor check. A session that answers a heartbeat
 is never removed, even when the local process table cannot see its owner because
 it runs in a sibling container that shares this filesystem. Cleanup is scoped to
-the resumed session and runs only after the launch returned `0`; a cleanup
+the resumed session and runs only after the startup was confirmed; a cleanup
 problem is reported as a warning and never changes the resume result. Every
 removal prints `[INFO] Deleted invalid session stdout: <path>`, and the `--json`
 receipt reports the removed paths in `cleaned_stdout`.

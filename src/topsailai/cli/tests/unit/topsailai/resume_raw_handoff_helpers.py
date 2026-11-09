@@ -283,6 +283,7 @@ def launch(
     original_background_launch = background.launch_background
     original_validator = background._validate_launcher_cleanup_ack
     original_model = project_scope._apply_selected_model_environment
+    original_confirm = project_scope._confirm_resumed_startup
     import cli_topsailai.agent_launch as agent_launch
     original_agent_model = agent_launch._apply_selected_model_environment
     original_environment = os.environ.copy()
@@ -577,6 +578,14 @@ def launch(
         background._validate_launcher_cleanup_ack = validate_u5
     project_scope._apply_selected_model_environment = lambda _folder: ({}, set())
     agent_launch._apply_selected_model_environment = lambda _folder: ({}, set())
+    # This fixture proves submission identity and detach, not startup
+    # confirmation: its driver never publishes a control channel, so the real
+    # heartbeat window would always expire and mask the behaviour under test.
+    project_scope._confirm_resumed_startup = lambda *args, **kwargs: {
+        "startup_confirmed": True,
+        "startup_pid": None,
+        "startup_reason": "heartbeat_answered",
+    }
     custody.production_entry_cwd = os.getcwd()
     custody.production_entry_environment = os.environ.copy()
     try:
@@ -604,6 +613,7 @@ def launch(
         background.launch_background = original_background_launch
         background._validate_launcher_cleanup_ack = original_validator
         project_scope._apply_selected_model_environment = original_model
+        project_scope._confirm_resumed_startup = original_confirm
         agent_launch._apply_selected_model_environment = original_agent_model
         os.environ.clear()
         os.environ.update(original_environment)
