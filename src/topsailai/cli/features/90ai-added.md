@@ -112,7 +112,7 @@ The workspace CLI provides `/env.search <term> [term...]` to fuzzy-search config
 
 ## JSON Output for `topsailai docs list` and `topsailai docs read`
 
-`topsailai docs list` and `topsailai docs read` accept `--json`, so documentation discovery and retrieval are machine-readable. `docs list` emits the full record array with `row_number`, `folder`, `rel_path`, `path`, `title`, `size_bytes` and `created`. `docs read` emits one result object carrying `status`, `content`, `path`, `rel_path` and `options`, and returns exit code `1` when the status is not `ok`, so a caller can distinguish a resolved document from a missing or ambiguous name without parsing text.
+`topsailai docs list` and `topsailai docs read` accept `--json`, so documentation discovery and retrieval are machine-readable. `docs list` emits the full record array with `row_number`, `filename`, `folder`, `rel_path`, `path`, `title`, `size_bytes` and `created`. `docs read` emits one result object carrying `status`, `content`, `path`, `rel_path` and `options`, and returns exit code `1` when the status is not `ok`, so a caller can distinguish a resolved document from a missing or ambiguous name without parsing text.
 
 ## One Shared `--json` Help Sentence
 
