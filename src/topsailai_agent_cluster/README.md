@@ -115,3 +115,37 @@ agent-clusterctl stop
 ```
 
 `make deb-inspect` reports the control fields, conffiles and contents of every built package.
+
+## Container image
+
+The Server also runs as a container image, built from `docker/Dockerfile`:
+
+```bash
+make image-build
+make image-run
+```
+
+The image uses the same `/opt/agent-cluster` tree as the package, and every mount point is the same
+path on both sides, so a host path and a container path are never two names for one file:
+
+```text
+/opt/agent-cluster/
+  bin/agent-cluster-server      role binary
+  certs/                        mounted read-only from the host
+  data/                         mounted read-write from the host
+  logs/                         unused, because logs go to stderr
+```
+
+The image differs from a package only where the difference is real. It carries no `conf/`, because
+it is configured by environment variables rather than a conffile, and it writes no pid file, because
+the container runtime supervises the process. Creating those directories empty would suggest a
+`node.conf` or a pid file is honoured inside the container, which it is not.
+
+`make image-run` publishes both ports on the host, so endpoints dial a bridge gateway address and a
+new container IP after a recreate changes nothing on their side. It mounts
+`/opt/agent-cluster/certs` read-only and `/opt/agent-cluster/data` read-write, which are the same
+directories the packaged node uses. Ownership is granted per entry rather than recursively: the
+directory and the server database belong to the image's unprivileged uid `10001`, while the endpoint
+database keeps its own owner, so the container cannot read it. A recursive chown would hand that
+database to the container and weaken the isolation. SQLite reports a permission failure as
+`out of memory (14)`, which hides the real cause.

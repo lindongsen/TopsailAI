@@ -48,8 +48,10 @@ IMAGE_NAME := $(IMAGE_REPO):$(IMAGE_TAG)
 # host so endpoints reach it through a bridge gateway address instead of the
 # container IP, which changes on every recreate. TLS material and the SQLite
 # database are mounted from /opt/agent-cluster, the same real directories the
-# packaged node uses, so the image stays deployment-neutral and the container and
-# a package never disagree about where state lives.
+# packaged node uses, and each mount point is the same path inside the container.
+# A host path that differs from the container path makes an operator translate
+# between two names for one file, so the image and a package would disagree about
+# where state lives even while pointing at the same bytes.
 IMAGE_CONTAINER := agent-cluster-server
 IMAGE_NET := bind9-net
 IMAGE_API_PORT := 53680
@@ -277,18 +279,24 @@ image-build:
 
 # Runs the image with the ports published on the host. Publishing is what makes
 # the container address-independent: endpoints dial a bridge gateway address, so
-# a new container IP after a recreate changes nothing on their side. The state
-# directory is chowned to the image's unprivileged uid because SQLite reports a
+# a new container IP after a recreate changes nothing on their side.
+#
+# The state directory is shared with the host endpoint, so ownership is granted
+# per entry instead of recursively: the directory and the server database belong
+# to the image's unprivileged uid, while the endpoint database keeps its own
+# owner. A recursive chown would hand the endpoint database to the container and
+# weaken the isolation that keeps it unreadable there. SQLite reports a
 # permission failure as "out of memory (14)", which hides the real cause.
 image-run:
 	@test -n "$(IMAGE_TOKEN)" || { echo "ERROR: no AUTH_TOKEN found; set IMAGE_TOKEN"; exit 1; }
 	@mkdir -p $(IMAGE_CERTS_DIR) $(IMAGE_DATA_DIR)
-	@chown -R 10001:10001 $(IMAGE_DATA_DIR)
+	@chown 10001:10001 $(IMAGE_DATA_DIR)
+	@chown 10001:10001 $(IMAGE_DATA_DIR)/server.sqlite* 2>/dev/null || true
 	docker run -d --name $(IMAGE_CONTAINER) --network $(IMAGE_NET) \
 		-p $(IMAGE_API_PORT):53680 -p $(IMAGE_CHANNEL_PORT):53943 \
 		-e AGENT_CLUSTER_AUTH_TOKEN=$(IMAGE_TOKEN) \
-		-v $(IMAGE_CERTS_DIR):/etc/agent-cluster/certs:ro \
-		-v $(IMAGE_DATA_DIR):/var/lib/agent-cluster \
+		-v $(IMAGE_CERTS_DIR):/opt/agent-cluster/certs:ro \
+		-v $(IMAGE_DATA_DIR):/opt/agent-cluster/data \
 		--restart unless-stopped \
 		$(IMAGE_NAME)
 	@echo "waiting for the health probe"

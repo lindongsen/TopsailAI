@@ -199,12 +199,13 @@ function doctor() {
 
 # Creates one directory that a configured path needs.
 #
-# A packaged node keeps data, logs and run inside /opt/agent-cluster as symlinks
-# to /var/lib, /var/log and /run. /run is a tmpfs, so its link dangles after every
-# reboot, and `mkdir -p` on a dangling symlink fails with "File exists" instead of
-# creating the target. Resolve the link first and create the directory it names;
-# a path that does not exist yet resolves to itself, so the bundle layout is
-# unaffected.
+# A packaged node keeps data, logs and run inside /opt/agent-cluster as real
+# directories beside the controller, so no configured path normally needs
+# creating. The resolution step is kept because an operator can still point a
+# path at a symlink, and `mkdir -p` on a dangling symlink fails with "File
+# exists" instead of creating the target. Resolve the link first and create the
+# directory it names; a path that does not exist yet resolves to itself, so the
+# bundle layout is unaffected.
 function ensure_dir() {
     local path="$1"
     [ -n "${path}" ] || return 0

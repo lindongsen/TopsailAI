@@ -7,6 +7,15 @@
 # instead of being baked in, so one image serves every deployment and rotating a
 # certificate never requires a rebuild.
 #
+# The image uses the same /opt/agent-cluster tree as the Debian package, and every
+# mount point is the same path on both sides. A container that kept state in
+# /var/lib while the package kept it in /opt/agent-cluster forced an operator to
+# translate between two names for one file, and made a container and a package
+# look like different products. The image still differs from a package where the
+# difference is real: it carries no conffile because it is configured by
+# environment variables, and it writes no pid file because the container runtime
+# supervises the process.
+#
 # The container listens on every interface. A loopback-only bind would make the
 # published port unreachable from other containers, which is the whole point of
 # publishing it: endpoints reach the server through a bridge gateway address and
@@ -46,22 +55,34 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifica
 COPY --from=build /out/agent-cluster-server /opt/agent-cluster/bin/agent-cluster-server
 
 # A fixed unprivileged identity keeps the container from running as root. The
-# state and log directories are owned by it so a mounted volume is writable
-# without a chown on the host.
+# state and log directories are owned by it here so the image is usable on its
+# own; a bind mount replaces that ownership with the host directory's, which is
+# why the run command grants it again per entry instead of recursively.
+#
+# The directory tree mirrors the package layout under /opt/agent-cluster, so the
+# container path and the host path are the same string and an operator inspecting
+# either side sees one shape. conf/ and run/ are deliberately absent: the image
+# takes its configuration from environment variables rather than a conffile, and
+# the container runtime supervises the process so no pid file is written. Creating
+# them empty would suggest a node.conf or a pid file is honoured here, which it is
+# not.
 RUN addgroup -S -g 10001 agent-cluster \
-    && adduser -S -u 10001 -G agent-cluster -h /var/lib/agent-cluster agent-cluster \
-    && mkdir -p /etc/agent-cluster/certs /var/lib/agent-cluster /var/log/agent-cluster \
-    && chown -R agent-cluster:agent-cluster /var/lib/agent-cluster /var/log/agent-cluster
+    && adduser -S -u 10001 -G agent-cluster -h /opt/agent-cluster/data agent-cluster \
+    && mkdir -p /opt/agent-cluster/bin /opt/agent-cluster/certs \
+        /opt/agent-cluster/data /opt/agent-cluster/logs \
+    && chown -R agent-cluster:agent-cluster /opt/agent-cluster/data /opt/agent-cluster/logs
 
 # The database path and the TLS paths are fixed here so the run command only has
-# to supply the token and the mounts. Logs go to stderr because a container
-# should not own a log file: the Docker log driver rotates it.
+# to supply the token and the mounts. Every path is under /opt/agent-cluster,
+# which is the same directory the package uses, so the container path and the
+# host path are identical. Logs go to stderr because a container should not own a
+# log file: the Docker log driver rotates it.
 ENV AGENT_CLUSTER_API_LISTEN_ADDR=:53680 \
     AGENT_CLUSTER_CHANNEL_LISTEN_ADDR=:53943 \
-    AGENT_CLUSTER_DATABASE_PATH=/var/lib/agent-cluster/server.sqlite \
-    AGENT_CLUSTER_TLS_CA_FILE=/etc/agent-cluster/certs/ca.pem \
-    AGENT_CLUSTER_TLS_CERTIFICATE_FILE=/etc/agent-cluster/certs/server.pem \
-    AGENT_CLUSTER_TLS_KEY_FILE=/etc/agent-cluster/certs/server-key.pem \
+    AGENT_CLUSTER_DATABASE_PATH=/opt/agent-cluster/data/server.sqlite \
+    AGENT_CLUSTER_TLS_CA_FILE=/opt/agent-cluster/certs/ca.pem \
+    AGENT_CLUSTER_TLS_CERTIFICATE_FILE=/opt/agent-cluster/certs/server.pem \
+    AGENT_CLUSTER_TLS_KEY_FILE=/opt/agent-cluster/certs/server-key.pem \
     AGENT_CLUSTER_LOG_OUTPUT=stderr
 
 USER agent-cluster
