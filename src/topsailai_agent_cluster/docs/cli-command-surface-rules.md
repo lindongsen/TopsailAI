@@ -433,6 +433,13 @@ hello world
 - The offer applies only in session scope. `send` is unavailable in workspace and
   endpoint scope, so an offer there could never be honoured and the plain
   unknown-command diagnostic is kept.
+- A bare ASCII number is message text in session scope, not a navigation attempt.
+  The numeric shorthand is a navigation form, and session scope has no row table to
+  navigate, so `1` reaches this same offer and is sent as the literal text `1`. Only
+  the explicit `cd 1` spelling reaches the row-number rule, which still rejects it
+  with `row-number navigation is unavailable in session scope`. Rewriting a bare
+  number into `cd <number>` would answer the operator's message with a navigation
+  error instead of offering to send it.
 - The whole literal line is the message, not the words after the unrecognized
   word. The operator typed one piece of text, and dropping its first word would
   silently change what is sent.

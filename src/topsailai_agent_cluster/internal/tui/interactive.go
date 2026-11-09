@@ -394,7 +394,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 				if consecutivePromptFailures >= maxConsecutivePromptFailures {
 					return promptFailure
 				}
-				if writeErr := writeInteractiveError(errOut, diagnosticCommandName(line), promptFailure); writeErr != nil {
+				if writeErr := writeInteractiveError(errOut, diagnosticCommandName(line, state.Scope.Kind), promptFailure); writeErr != nil {
 					return writeErr
 				}
 				continue
@@ -427,7 +427,7 @@ func RunInteractive(parent context.Context, api InteractiveAPI, input io.Reader,
 			return nil
 		}
 		if execErr != nil {
-			commandName := diagnosticCommandName(line)
+			commandName := diagnosticCommandName(line, state.Scope.Kind)
 			if writeErr := writeInteractiveError(errOut, commandName, execErr); writeErr != nil {
 				return writeErr
 			}
@@ -476,7 +476,12 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	// never reinterpret a command or a typo as a message.
 	if strings.HasPrefix(line, sendPrefix) {
 		rawName, rest = sendPrefix, strings.TrimPrefix(line, sendPrefix)
-	} else if candidate, token, surplus := numericInput(line); candidate {
+	} else if candidate, token, surplus := numericInput(line); candidate && state.Scope.Kind != ScopeSession {
+		// The numeric shorthand is a navigation form, so it exists only where a
+		// row table can be navigated. Session scope has no such table, and a
+		// number typed there is message text like any other unrecognized line:
+		// rewriting it into "cd <number>" would answer the operator's message
+		// with a navigation error instead of offering to send it.
 		if surplus {
 			return false, fmt.Errorf("usage: cd [target]")
 		}
@@ -633,9 +638,12 @@ func numericInput(line string) (candidate bool, token string, surplus bool) {
 
 // diagnosticCommandName keeps numeric shorthand errors on the cd help path and
 // reports the dotted control spelling under the ctl help, so a rejected dotted
-// line points at the command that actually owns the syntax.
-func diagnosticCommandName(line string) string {
-	if candidate, _, _ := numericInput(line); candidate {
+// line points at the command that actually owns the syntax. The numeric shorthand
+// exists only outside session scope, so a bare number typed there is reported
+// under its own literal word instead of pointing at a navigation command the
+// scope does not offer.
+func diagnosticCommandName(line string, kind ScopeKind) string {
+	if candidate, _, _ := numericInput(line); candidate && kind != ScopeSession {
 		return "cd"
 	}
 	name, _ := commandToken(line)

@@ -181,6 +181,85 @@ func TestUnknownInputOfferRevalidatesSelection(t *testing.T) {
 	}
 }
 
+// TestUnknownInputBareNumberIsOfferedAsMessage proves a bare number typed in
+// session scope is message text, not a navigation attempt. Session scope has no
+// row table to navigate, so the number must reach the same send offer as any other
+// unrecognized line and, when accepted, admit the literal numeric text.
+func TestUnknownInputBareNumberIsOfferedAsMessage(t *testing.T) {
+	for _, number := range []string{"1", "01", "42"} {
+		t.Run(number, func(t *testing.T) {
+			stub := scopeStub()
+			output, diagnostics := runScope(t, stub, sessionScopeInput+number+"\ny\nexit\n", ColorPolicy{})
+			if diagnostics != "" {
+				t.Fatalf("unexpected diagnostics: %q", diagnostics)
+			}
+			if strings.Contains(diagnostics, "row-number navigation") {
+				t.Fatalf("bare number was parsed as navigation: %q", diagnostics)
+			}
+			if !strings.Contains(output, "as a message?") {
+				t.Fatalf("missing send offer for %q: %q", number, output)
+			}
+			if stub.admit != 1 {
+				t.Fatalf("admitted %d commands, want 1", stub.admit)
+			}
+			if got := intentPayloadText(t, stub.intents[0]); got != number {
+				t.Fatalf("payload text = %q, want the literal number %q", got, number)
+			}
+			if stub.intents[0].Operation != protocol.OperationMessageSend {
+				t.Fatalf("operation = %q, want %q", stub.intents[0].Operation, protocol.OperationMessageSend)
+			}
+		})
+	}
+}
+
+// TestUnknownInputBareNumberDeclinedKeepsDiagnostic proves a declined numeric offer
+// reports the unknown-command diagnostic and admits nothing, so a number can never
+// silently become a navigation or a send.
+func TestUnknownInputBareNumberDeclinedKeepsDiagnostic(t *testing.T) {
+	stub := scopeStub()
+	_, diagnostics := runScope(t, stub, sessionScopeInput+"1\nn\nexit\n", ColorPolicy{})
+	if stub.admit != 0 {
+		t.Fatalf("declined numeric offer admitted %d commands", stub.admit)
+	}
+	assertActionableError(t, diagnostics, `error: unknown command "1" (try help)`)
+}
+
+// TestExplicitCDNumberStillRejectsInSessionScope proves the explicit command word
+// keeps the row-number rule, so only the bare spelling changed meaning. Without
+// this assertion the fix could silently remove the session-scope guard entirely.
+func TestExplicitCDNumberStillRejectsInSessionScope(t *testing.T) {
+	stub := scopeStub()
+	_, diagnostics := runScope(t, stub, sessionScopeInput+"cd 1\nexit\n", ColorPolicy{})
+	if stub.admit != 0 {
+		t.Fatalf("explicit cd admitted %d commands", stub.admit)
+	}
+	assertActionableError(t, diagnostics, "error: row-number navigation is unavailable in session scope; use cd .. or cd <session>")
+}
+
+// TestUnknownInputBareNumberWithSurplusIsMessageText proves the surplus branch of
+// the numeric shorthand is unreachable in session scope, so "1 foo" is one message
+// rather than a usage error. The shorthand's surplus rule belongs to navigation,
+// and session scope performs no navigation, so the whole line is the payload.
+func TestUnknownInputBareNumberWithSurplusIsMessageText(t *testing.T) {
+	stub := scopeStub()
+	output, diagnostics := runScope(t, stub, sessionScopeInput+"1 foo\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if strings.Contains(diagnostics, "usage: cd") {
+		t.Fatalf("surplus number reported a navigation usage error: %q", diagnostics)
+	}
+	if !strings.Contains(output, "as a message?") {
+		t.Fatalf("missing send offer: %q", output)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted %d commands, want 1", stub.admit)
+	}
+	if got := intentPayloadText(t, stub.intents[0]); got != "1 foo" {
+		t.Fatalf("payload text = %q, want the whole literal line", got)
+	}
+}
+
 // intentPayloadText decodes the text field of one admitted message payload.
 func intentPayloadText(t *testing.T, intent protocol.ImmutableIntent) string {
 	t.Helper()
