@@ -29,6 +29,7 @@ from topsailai.workspace.session_meta import (
 )
 from topsailai.context import ctx_manager
 from topsailai.context.session_category import load_session_category
+from topsailai.ai_base.constants import SESSION_CATEGORY_AGENT
 from topsailai.context.agent_startup import AgentStartupState
 from topsailai.workspace.input_tool import (
     get_message,
@@ -387,7 +388,7 @@ def get_agent_chat(
     session_id = initialize_session_id(session_id)
     startup_state = AgentStartupState()
     resolved_session_category = (
-        load_session_category(os.environ, default="agent")
+        load_session_category(os.environ, default=SESSION_CATEGORY_AGENT)
         if session_category is None
         else session_category
     )

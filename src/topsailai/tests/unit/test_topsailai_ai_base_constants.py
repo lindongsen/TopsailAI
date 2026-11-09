@@ -66,5 +66,53 @@ class TestRoleConstants(unittest.TestCase):
         self.assertIn(DEFAULT_AGENT_ROLE, AGENT_ROLE_VALUES)
 
 
+class TestSessionCategoryConstants(unittest.TestCase):
+    """Test cases for session category constants."""
+
+    def test_session_category_values(self):
+        """Test each session category constant has the stored value."""
+        from topsailai.ai_base.constants import (
+            SESSION_CATEGORY_AGENT,
+            SESSION_CATEGORY_CHAT,
+            SESSION_CATEGORY_AGENT_DRIVER,
+        )
+
+        self.assertEqual(SESSION_CATEGORY_AGENT, "agent")
+        self.assertEqual(SESSION_CATEGORY_CHAT, "chat")
+        self.assertEqual(SESSION_CATEGORY_AGENT_DRIVER, "agent_driver")
+
+    def test_session_category_values_tuple(self):
+        """Test SESSION_CATEGORY_VALUES lists every defined category once."""
+        from topsailai.ai_base.constants import (
+            SESSION_CATEGORY_AGENT,
+            SESSION_CATEGORY_CHAT,
+            SESSION_CATEGORY_AGENT_DRIVER,
+            SESSION_CATEGORY_VALUES,
+        )
+
+        self.assertEqual(
+            set(SESSION_CATEGORY_VALUES),
+            {SESSION_CATEGORY_AGENT, SESSION_CATEGORY_CHAT, SESSION_CATEGORY_AGENT_DRIVER},
+        )
+        self.assertEqual(len(SESSION_CATEGORY_VALUES), 3)
+
+    def test_session_category_values_match_storage_pattern(self):
+        """Test every category satisfies the stored lowercase pattern."""
+        import re
+
+        from topsailai.ai_base.constants import SESSION_CATEGORY_VALUES
+
+        for category in SESSION_CATEGORY_VALUES:
+            self.assertIsInstance(category, str)
+            self.assertRegex(category, re.compile(r"[a-z0-9_]+"))
+
+    def test_retention_exclusion_uses_the_shared_constant(self):
+        """Test the retention exclusion set cannot drift from the constant."""
+        from topsailai.ai_base.constants import SESSION_CATEGORY_AGENT_DRIVER
+        from topsailai.context.session_cleanup import RETENTION_EXCLUDED_CATEGORIES
+
+        self.assertEqual(RETENTION_EXCLUDED_CATEGORIES, frozenset({SESSION_CATEGORY_AGENT_DRIVER}))
+
+
 if __name__ == "__main__":
     unittest.main()

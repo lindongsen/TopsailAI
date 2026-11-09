@@ -938,3 +938,44 @@ When adding new logging around LLM behavior, prefer these constants over ad-hoc 
 ## MEMO: SQL Manager Methods Must Stay Pure
 
 Human requires: “sql的相关逻辑必须保持纯净，只有sql的逻辑”. SQL manager methods must contain only database-related logic: queries, relation lookups, and mutations such as DELETE. Database schema introspection and queries that retrieve stored fields are legitimate SQL-manager logic; interpreting those fields for runtime authority or cleanup policy belongs to the management layer. Running-state detection, task-file/PID probing, cleanup policy, and cleanup orchestration belong to the context/session management layer, not SQL managers. CLIs consume that management layer and must not duplicate its decision rules. Ordinary `del_messages()` retains its original behavior so active-session summarization remains possible. Review storage diffs for this dependency boundary before accepting cleanup changes.
+
+## MEMO: Retention-Excluded Session Categories
+
+**Date:** 2026-11-09
+**Files:**
+- `/TopsailAI/src/topsailai/context/session_cleanup.py`
+- `/TopsailAI/src/topsailai/context/session_manager/__base.py`
+
+Human requires: sessions whose `session_category` is `agent_driver` must not be counted by the automatic session-retention threshold. With 120 stored sessions of which 50 are `agent_driver`, only the remaining 70 count, so nothing is evicted.
+
+`SessionCleanupManager.evict_sessions()` filters excluded categories **before** both the threshold computation and the candidate selection:
+
+```python
+counted = [row for row in sessions if not _is_retention_excluded(row)]
+excess = len(counted) - SESSION_RETENTION_LIMIT
+candidates = [row for row in counted if row.session_id != new_id][:excess]
+```
+
+Filtering only the count would be wrong: excluded rows would stay eligible as eviction victims, so a large driver backlog would push ordinary sessions out — the opposite of the requirement. The negative control proves this: with the filter disabled, the same 50-driver/70-counted input evicts 20 `agent_driver` sessions.
+
+Scope is the count-based automatic eviction only. The age-based `clean_sessions(before_seconds)` path and the `ai_clean_sessions` CLI are explicit operator actions with an explicit time argument and are intentionally unchanged. `SESSION_RETENTION_LIMIT` is a module-level constant; no environment variable was added, so `docs/Environment_Variables.md` needs no update.
+
+All existing protections are preserved unchanged: RUNNING/UNKNOWN owners remain protected, the just-created session is excluded from candidates, candidates are screened in batches grouped by recorded home, and each deletion is freshly revalidated through `delete_session` → `_can_clean`.
+
+## MEMO: Session Category Constants
+
+**Date:** 2026-11-09
+**Files:**
+- `/TopsailAI/src/topsailai/ai_base/constants.py`
+
+The common session categories are defined once in `ai_base/constants.py` and referenced everywhere instead of repeating string literals:
+
+| Constant | Value | Producer |
+|---|---|---|
+| `SESSION_CATEGORY_AGENT` | `agent` | `workspace/agent_shell.py::get_agent_chat()` default |
+| `SESSION_CATEGORY_CHAT` | `chat` | `workspace/llm_shell.py::get_llm_chat()` default |
+| `SESSION_CATEGORY_AGENT_DRIVER` | `agent_driver` | `scripts/session_agent_driver/session_agent_driver.py` |
+
+`SESSION_CATEGORY_VALUES` lists all three. `context/session_cleanup.py::RETENTION_EXCLUDED_CATEGORIES` is built from `SESSION_CATEGORY_AGENT_DRIVER`, so the retention exclusion cannot drift from the constant.
+
+`ai_base/constants.py` has no imports, and `context/` already imports it elsewhere, so the dependency direction stays `context`/`workspace` → `ai_base` with no cycle. Categories are free-form validated values (`[a-z0-9_]+`), not an enum: `SESSION_CATEGORY_VALUES` documents the common ones and must not be used to reject other valid categories.

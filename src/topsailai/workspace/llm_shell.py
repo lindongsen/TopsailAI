@@ -30,6 +30,7 @@ from topsailai.utils import (
 from topsailai.workspace.input_tool import get_message
 from topsailai.context import ctx_manager
 from topsailai.context.session_category import load_session_category
+from topsailai.ai_base.constants import SESSION_CATEGORY_CHAT
 
 
 class LLMChat(object):
@@ -185,7 +186,7 @@ def get_llm_chat(
         >>> print(response)
     """
     resolved_session_category = (
-        load_session_category(os.environ, default="chat")
+        load_session_category(os.environ, default=SESSION_CATEGORY_CHAT)
         if session_category is None
         else session_category
     )

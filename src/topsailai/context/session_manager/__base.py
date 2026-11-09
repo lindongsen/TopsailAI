@@ -143,7 +143,9 @@ class SessionStorageBase(object):
         Create a new session and maintain historical limit.
 
         This method persists a new session to the storage backend and ensures
-        that only the most recent 100 sessions are retained. Older sessions
+        that only the most recent 100 counted sessions are retained. Sessions
+        whose category is excluded from retention (for example `agent_driver`)
+        are neither counted nor removed by this limit. Older counted sessions
         beyond this limit should be automatically removed.
 
         Args:
