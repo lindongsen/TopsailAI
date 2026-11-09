@@ -19,7 +19,13 @@ import (
 // execCluster is one Server plus one Endpoint bound to the TopsailAI fixture.
 type execCluster struct {
 	root, api, serverDB, endpointDB, sessionDir, allowlist string
-	server, endpoint                                       *exec.Cmd
+	// controlActions is the ctl. catalog file the Endpoint loads. It is always
+	// written, because the catalog is the only source of ctl. actions: an
+	// Endpoint without one advertises no action and refuses every ctl.
+	// operation, so a control test would fail on a missing fixture rather than
+	// on the behaviour it asserts.
+	controlActions   string
+	server, endpoint *exec.Cmd
 }
 
 // execCommandView is the durable command projection this test asserts on.
@@ -30,6 +36,25 @@ type execCommandView struct {
 	ErrorCode        string `json:"error_code"`
 	ProviderResponse string `json:"provider_response"`
 }
+
+// controlActionCatalog is the Endpoint-local ctl. catalog the fixture node uses.
+//
+// The catalog is the only source of ctl. actions, so a fixture Endpoint without
+// one advertises no action and refuses every ctl. operation. The two entries
+// below are the ones the control tests exercise, and their permissions differ on
+// purpose: heartbeat requires control while get_session_messages requires
+// read_output, so a scope test can prove a refusal is specific to the missing
+// scope instead of a blanket denial.
+const controlActionCatalog = `{"actions": [
+  {"name": "heartbeat", "permission": "control",
+   "payload_schema": {"type": "object", "properties": {}},
+   "command": ["runtime", "control", "heartbeat", "-s", "{session}", "-a", "{payload}", "--json"]},
+  {"name": "get_session_messages", "permission": "read_output",
+   "payload_schema": {"type": "object", "properties": {}},
+   "payload_session_field": "session_id",
+   "command": ["runtime", "control", "get_session_messages", "-s", "{session}", "-a", "{payload}", "--json"]}
+]}
+`
 
 // TestCommandExecRunsInSessionDirectory proves an allowlisted argv array executes
 // in the session working directory and reports a confirmed exit.
@@ -130,6 +155,15 @@ func startExecClusterWithScopes(t *testing.T, allowlist, scopes string) *execClu
 			t.Fatal(err)
 		}
 	}
+	// The ctl. catalog is written for every cluster, not only for the control
+	// tests, because the Endpoint advertises its capabilities once at startup and
+	// the inventory the tests wait for is the same document. A catalog that
+	// appeared only for some tests would make the advertised capability list
+	// depend on which test ran first.
+	c.controlActions = filepath.Join(root, "control-actions.conf")
+	if err := os.WriteFile(c.controlActions, []byte(controlActionCatalog), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	channel := free(t)
 	c.server = exec.Command(serverBinary)
 	c.server.Dir = moduleRoot(t)
@@ -165,6 +199,11 @@ func startExecClusterWithScopes(t *testing.T, allowlist, scopes string) *execClu
 	if c.allowlist != "" {
 		endpointEnv = append(endpointEnv, "AGENT_CLUSTER_COMMAND_ALLOWLIST_FILE="+c.allowlist)
 	}
+	// The catalog path is passed explicitly so the Endpoint advertises the ctl.
+	// actions the control tests address. Without it the Endpoint fails closed and
+	// every ctl. operation is refused, which would make the control tests assert
+	// the fail-closed default instead of the control channel.
+	endpointEnv = append(endpointEnv, "AGENT_CLUSTER_CONTROL_ACTION_FILE="+c.controlActions)
 	c.endpoint = exec.Command(endpointBinary)
 	c.endpoint.Dir = moduleRoot(t)
 	c.endpoint.Env = endpointEnv
