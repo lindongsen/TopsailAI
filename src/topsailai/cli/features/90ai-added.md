@@ -117,3 +117,7 @@ The workspace CLI provides `/env.search <term> [term...]` to fuzzy-search config
 ## One Shared `--json` Help Sentence
 
 Every `topsailai session` subcommand that accepts `--json` now reuses one shared help sentence instead of repeating a slightly different wording per subcommand, and the parent command states the contract once in its epilog. The flag keeps identical behaviour; only the help text changed, so the contract is stated once and the per-subcommand output is no longer noisy.
+
+## JSON Failure Output for `topsailai_session_info`
+
+`topsailai_session_info --json` now prints exactly one JSON object on stdout even when the lookup fails, instead of a colored `[INFO] Session not found: <id>` or `[ERROR] <message>` text line. A failure object carries only `session_id`, `error_code` (`session_not_found` or `lookup_failed`) and `message`, so a consumer decides on `error_code` and can never mistake a failure for a real session whose fields happen to be empty. Text mode is unchanged, and the exit code stays `1` for both failure kinds.

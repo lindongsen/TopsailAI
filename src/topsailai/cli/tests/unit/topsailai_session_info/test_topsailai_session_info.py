@@ -422,6 +422,7 @@ class TestMain:
                 pass
 
     def test_main_session_not_found_json(self, tmp_path: Path, capsys):
+        """A missing session must still produce one parseable JSON object."""
         db_fd, db_path = tempfile.mkstemp(suffix=".db")
         os.close(db_fd)
         db_conn = f"sqlite:///{db_path}"
@@ -429,12 +430,44 @@ class TestMain:
             code = si.main(["missing", "--db-conn", db_conn, "--home", str(tmp_path), "--json"])
             captured = capsys.readouterr()
             assert code == 1
-            assert "Session not found" in captured.out
+            parsed = json.loads(captured.out)
+            assert parsed["session_id"] == "missing"
+            assert parsed["error_code"] == "session_not_found"
+            assert "Session not found" in parsed["message"]
+            assert "\x1b[" not in captured.out
         finally:
             try:
                 os.remove(db_path)
             except OSError:
                 pass
+
+    def test_main_session_not_found_json_has_no_session_fields(self, tmp_path: Path, capsys):
+        """A failure record must not be mistakable for an empty real session."""
+        db_fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(db_fd)
+        db_conn = f"sqlite:///{db_path}"
+        try:
+            si.main(["missing", "--db-conn", db_conn, "--home", str(tmp_path), "--json"])
+            parsed = json.loads(capsys.readouterr().out)
+            assert set(parsed.keys()) == {"session_id", "error_code", "message"}
+        finally:
+            try:
+                os.remove(db_path)
+            except OSError:
+                pass
+
+    def test_main_invalid_db_conn_json(self, tmp_path: Path, capsys):
+        """A storage failure must also stay parseable in JSON mode."""
+        code = si.main(
+            ["s1", "--db-conn", "invalid://bad", "--home", str(tmp_path), "--json"]
+        )
+        captured = capsys.readouterr()
+        assert code == 1
+        parsed = json.loads(captured.out)
+        assert parsed["session_id"] == "s1"
+        assert parsed["error_code"] == "lookup_failed"
+        assert parsed["message"]
+        assert "\x1b[" not in captured.out
 
     def test_main_invalid_db_conn(self, tmp_path: Path, capsys):
         code = si.main(["s1", "--db-conn", "invalid://bad", "--home", str(tmp_path)])

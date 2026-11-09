@@ -352,3 +352,31 @@ probe that crosses the namespace boundary, and the control channel is that probe
 because it answers for its own process. Keep the fallback ordering explicit:
 a positive answer is proof of life, a refused connection is proof of death, and
 anything unverifiable must fall through rather than be read as absence.
+
+## A `--json` flag must cover the failure paths, not only the success path
+
+### Trigger
+
+`topsailai_session_info <unknown-id> --json` printed a colored
+`[INFO] Session not found: <id>` text line on stdout and exited `1`, so a
+machine consumer that asked for JSON received an unparseable document. The
+storage-error path had the same defect with `[ERROR] <message>`.
+
+### Action taken
+
+Added `_format_failure_json()` and routed both failure branches through it when
+`--json` is set, keeping text mode byte-identical. A failure object carries only
+`session_id`, `error_code` (`session_not_found` / `lookup_failed`) and `message`,
+so it can never be mistaken for a real session whose fields happen to be empty.
+Verified with the real command (parseable JSON, no ANSI escapes, exit `1`) and
+with unit tests that parse stdout and assert the exact key set.
+
+### Why this prevents recurrence
+
+`--json` is a promise about the output channel, not about the happy path. Any
+branch that prints before the success formatter runs — not found, storage error,
+usage error — must honour the same promise, otherwise the one case a script most
+needs to handle is the one case it cannot parse. Keep failure records minimal and
+self-describing (`error_code` plus `message`) instead of emitting empty success
+fields, and assert the exact key set in tests so a later "just reuse the success
+shape" change cannot silently make a failure look like a real record.

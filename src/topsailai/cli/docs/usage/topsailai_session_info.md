@@ -60,6 +60,34 @@ topsailai_session_info <session_id>
 
 The human-readable card labels these metrics as `Prompt Tokens`, `Completion Tokens`, `Total Usage Tokens`, and `Cached Prompt Tokens`. The JSON result does not expose the ambiguous `total_tokens` name. No additional database columns are used: `total_prompt_tokens` maps the internal legacy prompt-only `total_tokens` column to an explicit query field, and `total_usage_tokens` is calculated from prompt plus completion totals.
 
+## Failure Output
+
+`--json` always prints exactly one JSON object on stdout, including when the lookup fails. A failure object carries only the identity and the failure facts, because a session that was never found has no name, task, or token totals:
+
+```json
+{
+  "session_id": "missing",
+  "error_code": "session_not_found",
+  "message": "Session not found: missing"
+}
+```
+
+| `error_code` | Meaning |
+|--------------|---------|
+| `session_not_found` | No stored session has this identifier. |
+| `lookup_failed` | The session storage could not be queried; `message` carries the error. |
+
+A failure object never contains the success fields, so a consumer decides on `error_code` instead of mistaking a failure for a real session whose fields happen to be empty. No ANSI escape sequence is written in JSON mode, so the output is always parseable.
+
+Without `--json` the same failures are printed as the human-readable `[INFO] Session not found: <id>` or `[ERROR] <message>` line.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | The session was found and printed. |
+| 1 | The session was not found, or the session storage could not be queried. |
+
 ## Examples
 
 ```bash

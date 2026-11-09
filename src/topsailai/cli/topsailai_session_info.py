@@ -153,6 +153,22 @@ def _format_session_json(session: SessionData, home: str) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
+def _format_failure_json(session_id: str, error_code: str, message: str) -> str:
+    """Format a failed lookup as one JSON object.
+
+    Only identity and failure facts are reported, because a session that was
+    never found has no name, task, or token totals to report. Inventing empty
+    session fields would make a failure indistinguishable from a real session
+    whose fields happen to be empty, so a consumer decides on ``error_code``.
+    """
+    payload = {
+        "session_id": session_id,
+        "error_code": error_code,
+        "message": message,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
 def _format_session(
     session: SessionData,
     home: str,
@@ -301,13 +317,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         manager = get_session_manager(args.db_conn)
         session = manager.get_session(args.session_id)
     except Exception as e:
-        print(f"{Colors.RED}[ERROR] {e}{Colors.RESET}")
+        if args.json:
+            print(_format_failure_json(args.session_id, "lookup_failed", str(e)))
+        else:
+            print(f"{Colors.RED}[ERROR] {e}{Colors.RESET}")
         return 1
 
     if session is None:
-        print(
-            f"{Colors.YELLOW}[INFO] Session not found: {args.session_id}{Colors.RESET}"
-        )
+        message = f"Session not found: {args.session_id}"
+        if args.json:
+            print(_format_failure_json(args.session_id, "session_not_found", message))
+        else:
+            print(f"{Colors.YELLOW}[INFO] {message}{Colors.RESET}")
         return 1
 
     if args.json:
