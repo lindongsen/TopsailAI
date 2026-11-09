@@ -115,7 +115,16 @@ def get_unified_diff(file1_path, file2_path):
         lineterm=''
     )
 
-    return ''.join(diff)
+    # difflib emits the header lines without a terminator while content lines keep
+    # the terminator they had in the file. Joining with '' therefore fuses the
+    # headers together and with the first content line, producing a diff that
+    # cannot be read. Strip the terminators and join with '\n' so every diff line
+    # occupies its own line, including when a file has no trailing newline.
+    diff_lines = [line.rstrip('\r\n') for line in diff]
+    if not diff_lines:
+        return ''
+
+    return '\n'.join(diff_lines) + '\n'
 
 
 def compare_files_strived(file1_path, file2_path, context_lines=3) -> str:
