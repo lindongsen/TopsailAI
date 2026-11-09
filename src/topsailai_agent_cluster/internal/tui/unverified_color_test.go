@@ -127,10 +127,11 @@ func TestUnverifiedRowIsDimAndKeepsTheReportedState(t *testing.T) {
 	}
 }
 
-// TestUnverifiedSummaryLabelIsDim proves the summary subset label is coloured
-// like the rows it counts, so the label and the rows it names read as one
-// condition instead of two.
-func TestUnverifiedSummaryLabelIsDim(t *testing.T) {
+// TestUnverifiedSummaryLabelIsAbsent proves the summary line never names the
+// unverified subset, with colour enabled as well as disabled. The unknown bucket
+// keeps its dim colour, because the rows it counts are still dim; only the extra
+// label is gone, so the line reports one dimension.
+func TestUnverifiedSummaryLabelIsAbsent(t *testing.T) {
 	rows := []SessionRow{
 		{SessionID: "a", State: "unknown", Unverified: true},
 		{SessionID: "b", State: "unknown"},
@@ -140,8 +141,8 @@ func TestUnverifiedSummaryLabelIsDim(t *testing.T) {
 		t.Fatal(err)
 	}
 	summary := out.String()
-	if !strings.Contains(summary, ansiDim+"unverified(1)"+ansiReset) {
-		t.Fatalf("unverified label must use the dim colour, got %q", summary)
+	if strings.Contains(summary, "unverified") {
+		t.Fatalf("summary must not name the unverified subset, got %q", summary)
 	}
 	if !strings.Contains(summary, ansiDim+"unknown(2)"+ansiReset) {
 		t.Fatalf("unknown bucket must use the dim colour, got %q", summary)

@@ -58,13 +58,15 @@ The TUI keeps the row visible and labels it `unverified`. Entering it is refused
 and the resume hint, never with "session not found" and never with "generation changed", because
 neither is true and both hide the only recovery step.
 
-The fleet summary names the subset instead of hiding it inside the unknown bucket. An unverified
-session is reported as `unknown`, so it is counted there like any other unknown state, and the
-summary appends `unverified(n)` after the state tally. The bucket count is unchanged, so the
-numbers still add up to the row count, while an operator can tell "the provider restarted and
-every session needs a resume" from "the provider reported an unknown state". The count is derived
-from `state_reason` at render time rather than stored in the report, so one fact has one source of
-truth and no protocol or schema change is needed.
+The fleet summary reports the reported state only. An unverified session is reported as `unknown`, so
+it is counted in the unknown bucket like any other unknown state, and the summary line names no
+subset. The line therefore reports one dimension, the reported state, and its numbers add up to the
+row count. An earlier version appended `unverified(n)` after the state tally; that was removed on
+2026-11-09 because a second label on the same line made the numbers ambiguous about which dimension
+each one counted. The per-row distinction is carried by the table row, the `info` detail and the
+refusal message instead, so dropping the label hides nothing. The flag is derived from `state_reason`
+at render time rather than stored in the report, so one fact has one source of truth and no protocol
+or schema change is needed.
 
 The session-state colour mapping is deliberately small, because a colour is read before any label
 is. Green means running, dim means a state that needs no attention, red means a state that needs
@@ -80,8 +82,8 @@ attention, and yellow is the remaining uncertain middle:
 `idle`, `unknown` and `unverified` share dim on purpose. They are all states where nothing is
 actively running and nothing has failed, so an operator scanning the table should not have to read
 them. The difference between an unverified session and a provider-reported unknown session is carried
-by the `unverified(n)` summary subset label and by the refusal message, not by the row colour. A
-colour therefore identifies a family of conditions rather than exactly one condition, and the label
+by the `info` detail and by the refusal message, not by the row colour and not by the summary line. A
+colour therefore identifies a family of conditions rather than exactly one condition, and the detail
 carries the finer distinction.
 
 `offline` is red rather than yellow because it is a definite negative, not an uncertain middle. The

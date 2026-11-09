@@ -89,6 +89,8 @@ contract and `unknown` is the correct standard state for an unverified session.
    (`internal/tui/table.go`), for example `unknown(3) | unverified(2)`, so the merged bucket
    stays visible while the unverified subset is named. `unverifiedCount` counts the subset and
    the label is omitted entirely when no row is unverified, so a healthy fleet sees no noise.
+   **Superseded on 2026-11-09:** the human directed that the status line must not show
+   `unverified` at all. See "Superseded by human direction" below.
 3. Keep `statusCounts` keyed on `State` alone. Splitting the tally by a second dimension would
    make the summary line ambiguous about which dimension each number counts.
 
@@ -125,7 +127,39 @@ an unmarked row. They pass after restoring the implementation.
 `go build ./...` passes, `gofmt -l internal/tui/` is clean, and `go test ./...` passes across
 every package.
 
+## Superseded by human direction
+
+On 2026-11-09 the human directed that the status line must not display `unverified` at all. The
+instruction, quoted verbatim:
+
+> unverified 不显示出来，状态栏里面不需要它。我是说状态栏不显示，不是说 sessions 不显示。
+
+The scope is the summary line only. Session rows keep rendering, the `unverified` colour key and
+the `SessionRow.Unverified` flag stay, and the `info` detail plus the refusal messages still carry
+the per-row distinction. Only the aggregate label is gone.
+
+What changed:
+
+- `writeStatusSummary` (`internal/tui/table.go`) no longer appends the subset label, and the
+  `unverifiedCount` helper was deleted because nothing else read it.
+- `TestStatusSummaryNamesTheUnverifiedSubset` became
+  `TestStatusSummaryMergesUnverifiedIntoUnknown`, asserting `unknown(3)` is present and
+  `unverified` is absent.
+- `TestUnverifiedSummaryLabelIsDim` became `TestUnverifiedSummaryLabelIsAbsent`, asserting no
+  `unverified` text while the unknown bucket keeps its dim colour.
+
+The rationale recorded by the human's direction is that the line reports one dimension, the
+reported state. A second label on the same line made the numbers ambiguous about which dimension
+each one counted, and the per-row distinction was already available on three other surfaces.
+
+Verification: `make test-unit-cli` passes (`internal/client`, `internal/tui`,
+`src/main/agent-cluster-cli`). The two tests were proven to fail by temporarily restoring the
+label, which produced the exact old output `running(1) | unknown(3) | unverified(2)` and
+`unknown(2) | unverified(1)`; the probe was then removed and `gofmt -l internal/tui/` is clean.
+
 ## Status
 
-Implemented. The visibility fix is committed in `922d8be4`; this aggregate count closes the
-remaining observability gap from that work.
+Implemented, then partially superseded. The visibility fix is committed in `922d8be4`. The
+aggregate count was implemented and has now been removed from the status line by human direction;
+the observability it provided is carried by the table row, the `info` detail and the refusal
+message instead.

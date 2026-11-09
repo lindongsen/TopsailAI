@@ -7,12 +7,13 @@ import (
 	"topsailai_agent_cluster/internal/protocol"
 )
 
-// TestStatusSummaryNamesTheUnverifiedSubset proves the summary distinguishes an
-// unverified session from any other unknown state. Both land in the unknown
-// bucket, so without the subset label an operator cannot tell "the provider
-// restarted and every session needs a resume" from "the provider reported an
-// unknown state".
-func TestStatusSummaryNamesTheUnverifiedSubset(t *testing.T) {
+// TestStatusSummaryMergesUnverifiedIntoUnknown proves the summary line reports
+// the reported state only. An unverified session is reported as unknown, so it
+// lands in the unknown bucket like any other unknown state, and the line must not
+// name that subset: a second label on the same line made the numbers ambiguous
+// about which dimension each one counted. The per-row distinction stays visible
+// in the table, in the info detail and in the refusal message.
+func TestStatusSummaryMergesUnverifiedIntoUnknown(t *testing.T) {
 	rows := []SessionRow{
 		{SessionID: "a", State: "running"},
 		{SessionID: "b", State: "unknown", Unverified: true},
@@ -27,8 +28,8 @@ func TestStatusSummaryNamesTheUnverifiedSubset(t *testing.T) {
 	if !strings.Contains(summary, "unknown(3)") {
 		t.Fatalf("unknown bucket must still count every unknown row, got %q", summary)
 	}
-	if !strings.Contains(summary, "unverified(2)") {
-		t.Fatalf("summary must name the unverified subset, got %q", summary)
+	if strings.Contains(summary, "unverified") {
+		t.Fatalf("summary must not name the unverified subset, got %q", summary)
 	}
 	if !strings.Contains(summary, "running(1)") {
 		t.Fatalf("summary lost the running bucket, got %q", summary)

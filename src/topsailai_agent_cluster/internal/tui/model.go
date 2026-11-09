@@ -25,8 +25,9 @@ type SessionRow struct {
 	// Unverified marks a session the provider listed but whose liveness it could
 	// not verify, so no generation was reported. Such a session is reported as
 	// unknown rather than dropped, and only resume may address it. The flag is
-	// derived from state_reason so the summary can name the subset instead of
-	// hiding it inside the unknown bucket.
+	// derived from state_reason so the row, the info detail and the refusal
+	// message can name the subset; the status summary line deliberately does not,
+	// because it reports the reported state only.
 	Unverified       bool   `json:"unverified,omitempty"`
 	LastSuccessAtMS  *int64 `json:"last_success_at_ms,omitempty"`
 	CollectionStatus string `json:"collection_status"`
