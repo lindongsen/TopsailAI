@@ -376,6 +376,8 @@ func (s *Service) channelLoop(ctx context.Context) {
 			s.launchFrame(ctx, frame)
 		case channel.FrameHistoryRequest:
 			s.historyFrame(ctx, frame)
+		case channel.FrameMessagesRequest:
+			s.messagesFrame(ctx, frame)
 		case channel.FrameOutputRequest:
 			s.outputFrame(ctx, frame)
 		case channel.FrameOutputFollowRequest:

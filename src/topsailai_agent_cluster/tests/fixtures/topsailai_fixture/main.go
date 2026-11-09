@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -34,11 +35,156 @@ func main() {
 		})
 	case "project":
 		emit([]map[string]any{})
+	case "session":
+		session(args[1:])
 	case "runtime":
 		runtime(args[1:])
 	default:
 		fail("unsupported subcommand " + args[0])
 	}
+}
+
+// session answers the two persisted-data reads the adapter uses to fetch a
+// conversation: an existence pre-check and the history read itself.
+//
+// Both are answered from configuration rather than from a live process, because
+// the real provider reads persisted messages. That is the property the adapter
+// depends on, so a fixture that required a running session would prove nothing
+// about the case the command exists for.
+func session(args []string) {
+	if len(args) == 0 {
+		fail("unsupported session subcommand")
+	}
+	switch args[0] {
+	case "info":
+		sessionInfo(args[1:])
+	case "history":
+		sessionHistory(args[1:])
+	default:
+		fail("unsupported session subcommand " + args[0])
+	}
+}
+
+// sessionInfo answers one existence pre-check.
+//
+// A missing session reports session_not_found on stdout and exits non-zero, and a
+// configured storage fault reports lookup_failed the same way. The two are
+// deliberately distinct: the adapter must never present a storage fault as a
+// deleted session, so the fixture has to be able to produce both.
+func sessionInfo(args []string) {
+	sessionID := firstPositional(args)
+	if sessionID == "" {
+		fail("missing session identifier")
+	}
+	if failure := os.Getenv("AGENT_CLUSTER_TEST_MESSAGES_FAILURE"); failure != "" {
+		emit(map[string]any{"session_id": sessionID, "error_code": failure, "message": "fixture storage failure"})
+		os.Exit(1)
+	}
+	if !fixtureSessionExists(sessionID) {
+		emit(map[string]any{"session_id": sessionID, "error_code": "session_not_found", "message": "Session not found: " + sessionID})
+		os.Exit(1)
+	}
+	emit(map[string]any{"session_id": sessionID, "session_name": "fixture", "project_workspace": "/fixture"})
+}
+
+// sessionHistory answers one conversation read.
+//
+// The document mirrors the provider envelope, including the successful empty
+// document a missing session produces. That empty success is exactly why the
+// adapter runs the existence pre-check first, so the fixture reproduces it rather
+// than hiding it.
+func sessionHistory(args []string) {
+	sessionID := firstPositional(args)
+	if sessionID == "" {
+		fail("missing session identifier")
+	}
+	maxChars := 0
+	for index := 0; index < len(args); index++ {
+		if args[index] == "--max-chars" && index+1 < len(args) {
+			if parsed, err := strconv.Atoi(args[index+1]); err == nil && parsed > 0 {
+				maxChars = parsed
+			}
+			index++
+		}
+	}
+	if !fixtureSessionExists(sessionID) {
+		emit(map[string]any{"ok": true, "exit_code": 0, "action": "history", "session_id": sessionID, "message_count": 0, "messages": []map[string]any{}, "error_code": nil, "message": nil})
+		return
+	}
+	count := 2
+	if raw := os.Getenv("AGENT_CLUSTER_TEST_MESSAGES_COUNT"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+			count = parsed
+		}
+	}
+	body := "fixture message body"
+	if raw := os.Getenv("AGENT_CLUSTER_TEST_MESSAGES_BODY"); raw != "" {
+		body = raw
+	}
+	messages := make([]map[string]any, 0, count)
+	for index := 0; index < count; index++ {
+		role := "user"
+		if index%2 == 1 {
+			role = "assistant"
+		}
+		messages = append(messages, map[string]any{
+			"role":        role,
+			"content":     truncateFixtureContent(body, maxChars),
+			"create_time": "2026-11-09 10:00:0" + strconv.Itoa(index%10) + ".000",
+		})
+	}
+	emit(map[string]any{"ok": true, "exit_code": 0, "action": "history", "session_id": sessionID, "message_count": count, "messages": messages, "error_code": nil, "message": nil})
+}
+
+// fixtureSessionExists reports whether the fixture treats a session as recorded.
+//
+// The default set includes a session the workspace document never lists, so a test
+// can read a conversation for a session that is absent from the inventory. That is
+// the stopped-session case the command exists for.
+func fixtureSessionExists(sessionID string) bool {
+	configured := os.Getenv("AGENT_CLUSTER_TEST_MESSAGES_SESSIONS")
+	if configured == "" {
+		configured = "fixture-session,stopped-session"
+	}
+	for _, candidate := range strings.Split(configured, ",") {
+		if strings.TrimSpace(candidate) == sessionID {
+			return true
+		}
+	}
+	return false
+}
+
+// firstPositional returns the first argument that is not a flag or a flag value.
+func firstPositional(args []string) string {
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--json":
+			continue
+		case "--max-chars":
+			index++
+			continue
+		}
+		if !strings.HasPrefix(args[index], "-") {
+			return args[index]
+		}
+	}
+	return ""
+}
+
+// truncateFixtureContent applies the provider's per-message character bound.
+//
+// The provider shortens an oversized body and marks it with an ellipsis, so the
+// fixture does the same. A fixture that ignored the bound would let the adapter's
+// forwarding of --max-chars go unproven.
+func truncateFixtureContent(content string, maxChars int) string {
+	if maxChars <= 0 {
+		return content
+	}
+	runes := []rune(content)
+	if len(runes) <= maxChars {
+		return content
+	}
+	return string(runes[:maxChars]) + "..."
 }
 
 // runtime dispatches the runtime subcommands the adapter invokes.
