@@ -118,7 +118,11 @@ func configureCapabilityAdapter(pidfd bool) error {
 	}
 	root := activeScenario.world.Root
 	script := filepath.Join(root, "capability-provider")
-	content := "#!/bin/sh\nif [ \"$1 $2\" = \"workspace --format\" ]; then printf '%s' '{\"items\":[{\"session_id\":\"provider-session\",\"process_generation\":\"g1\"}]}'\nelse printf '%s' '{\"signal_sent\":true,\"exit_confirmed\":false}'\nfi\n"
+	// The adapter reads the workspace inventory through `workspace list --json
+	// --local`, so the double dispatches on that subcommand. Discovery and the
+	// targeted revalidation both use it and both expect an items document; only
+	// the stop invocation must answer with a receipt.
+	content := "#!/bin/sh\nif [ \"$1 $2\" = \"workspace list\" ]; then printf '%s' '{\"items\":[{\"session_id\":\"provider-session\",\"process_generation\":\"g1\"}]}'\nelse printf '%s' '{\"signal_sent\":true,\"exit_confirmed\":false}'\nfi\n"
 	if err := os.WriteFile(script, []byte(content), 0o700); err != nil {
 		return err
 	}

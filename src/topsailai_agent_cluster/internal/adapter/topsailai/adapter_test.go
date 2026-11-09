@@ -87,7 +87,7 @@ func TestDiscoverUsesOpaqueIDsAndRejectsMalformedOrTruncatedResults(t *testing.T
 	if result.Sessions[0].SessionID == "provider-secret" || result.Sessions[0].Generation != "g1" {
 		t.Fatalf("provider identity leaked or generation missing: %#v", result.Sessions[0])
 	}
-	if !reflect.DeepEqual(runner.args, []string{"workspace", "--format", "json"}) {
+	if !reflect.DeepEqual(runner.args, []string{"workspace", "list", "--json", "--local"}) {
 		t.Fatalf("unexpected discover argv: %#v", runner.args)
 	}
 

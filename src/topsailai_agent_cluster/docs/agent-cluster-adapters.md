@@ -13,7 +13,7 @@ This table describes help/documentation inspected on 2026-10-27, not successful 
 
 | Abstract need | Documented CLI entry | Constraint |
 |---|---|---|
-| Discover session/task rows | topsailai workspace --format json | One document with host, pwd, home, task_dir, items and total; no verified pagination/checkpoint |
+| Discover session/task rows | topsailai workspace list --json --local | One document with host, pwd, home, task_dir, items and total; no verified pagination/checkpoint. `--local` keeps only rows recorded on this host, which is the scope one Endpoint owns; the flag is accepted only on the `list` subcommand, and the parent `workspace --format json` form parses unknown flags silently and would ignore it |
 | Session locator | item session_id and pid | Row no is presentation only; PID alone is not stable identity |
 | Provider relationships | is_task, session_name, project_workspace | Parent relations and stable task IDs need live fixtures; do not infer solely from display names |
 | Submit input | topsailai runtime send -s SESSION -p PID --message=TEXT --json | pipe_written is delivery, not consumption; 1 MiB UTF-8 body bound and standalone EOF-line restriction |
@@ -145,7 +145,7 @@ standard Session `drive` summary; Server never parses a provider driver field.
 |---|---|---|
 | Start a controller | `workspace driver start -s SESSION --json` | The provider selects the unique live row and rejects an ambiguous target itself; the adapter passes no PID because a cluster generation is not a provider PID |
 | Stop a controller | `workspace driver stop -s SESSION --json` | Addresses the recorded controller, including a residual record whose process is gone, so it does not require a live target |
-| Observe controller state | the `driver` object in `workspace --format json` | `null` means no observation, not a confirmed absence |
+| Observe controller state | the `driver` object in `workspace list --json --local` | `null` means no observation, not a confirmed absence |
 
 Provider state mapping: `ON` becomes `running`, `STALE` becomes `stale`, `EXIT`
 becomes `exited`, `FAIL` becomes `failed`, `-` becomes `none`, and `?` or any

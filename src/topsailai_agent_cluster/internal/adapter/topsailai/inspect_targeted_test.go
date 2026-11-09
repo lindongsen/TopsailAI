@@ -54,7 +54,7 @@ func TestInspectUsesTargetedProviderQuery(t *testing.T) {
 	if len(runner.calls) != 1 {
 		t.Fatalf("provider invocations=%d, want 1: %q", len(runner.calls), runner.calls)
 	}
-	want := []string{"workspace", "list", "-s", "provider-session", "--json"}
+	want := []string{"workspace", "list", "-s", "provider-session", "--json", "--local"}
 	if got := runner.calls[0]; len(got) != len(want) {
 		t.Fatalf("argv=%q want=%q", got, want)
 	} else {

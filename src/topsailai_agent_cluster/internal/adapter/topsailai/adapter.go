@@ -245,8 +245,16 @@ func workspaceGeneration(raw json.RawMessage) (string, error) {
 }
 
 // Discover reads the bounded workspace JSON and returns opaque session resources.
+//
+// The provider only accepts --local on its `workspace list` subcommand; the
+// parent `workspace --format json` form parses unknown flags silently and would
+// ignore it. Both forms emit the same document, so the list form is used to
+// carry the flag. --local keeps only rows produced on this host, which is the
+// scope an Endpoint owns: a row recorded on another machine describes a session
+// this Endpoint cannot address, and its provider key would resolve to a process
+// that does not exist here.
 func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adapter.DiscoverResult, error) {
-	output, err := a.run(ctx, []string{"workspace", "--format", "json"}, nil)
+	output, err := a.run(ctx, []string{"workspace", "list", "--json", "--local"}, nil)
 	if err != nil {
 		return adapter.DiscoverResult{}, err
 	}
@@ -337,8 +345,11 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 	// Query only the requested provider session. A full workspace discovery scans
 	// the complete provider history, which costs seconds per command, so the
 	// targeted list is used instead; it reports the same generation evidence for
-	// the one session being revalidated.
-	output, err := a.run(ctx, []string{"workspace", "list", "-s", mapping.ProviderKey, "--json"}, nil)
+	// the one session being revalidated. --local keeps this read in the same host
+	// scope as Discover: without it a session recorded on another machine would be
+	// reported as found here, and revalidation would authorize a target this
+	// Endpoint cannot reach.
+	output, err := a.run(ctx, []string{"workspace", "list", "-s", mapping.ProviderKey, "--json", "--local"}, nil)
 	if err != nil {
 		return adapter.InspectResult{}, err
 	}
