@@ -130,6 +130,7 @@ func RenderSessionInfo(w io.Writer, endpoint protocol.Endpoint, session protocol
 	lines := []detailLine{
 		{"session_id", session.SessionID},
 		{"provider_session_id", session.ProviderSessionID},
+		{"provider_pid", providerPIDLabel(session.ProviderPID)},
 		{"display_name", session.DisplayName},
 		{"project_workspace", session.ProjectWorkspace},
 		{"agent_id", session.AgentID},
@@ -151,4 +152,20 @@ func RenderSessionInfo(w io.Writer, endpoint protocol.Endpoint, session protocol
 		}
 	}
 	return nil
+}
+
+// providerPIDLabel renders the provider-reported session PID.
+//
+// A provider that reports no PID decodes to zero, and printing "0" would read as
+// a real process identity that happens to be unusable. The label is therefore
+// empty, matching every other unreported field in this detail view, so an absent
+// value is visibly absent instead of being mistaken for a process identity. The
+// value is display evidence only: it is never a routing identity, never a
+// generation, and never a signal authority, so an operator must not copy it into
+// a command that expects a cluster generation.
+func providerPIDLabel(pid int64) string {
+	if pid <= 0 {
+		return ""
+	}
+	return fmt.Sprint(pid)
 }

@@ -498,6 +498,54 @@ func TestDiscoverLeavesProjectWorkspaceEmptyWhenAbsent(t *testing.T) {
 	}
 }
 
+// TestDiscoverForwardsProviderPID proves the provider's own session PID reaches
+// the standard Session as display evidence instead of being dropped while the
+// workspace document is decoded.
+func TestDiscoverForwardsProviderPID(t *testing.T) {
+	runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"provider-secret","pid":4242,"process_generation":"g1","status":"running"}]}`)}
+	a := newTestAdapter(t, runner)
+	result, err := a.Discover(context.Background(), adapter.DiscoverRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Sessions) != 1 {
+		t.Fatalf("sessions = %#v", result.Sessions)
+	}
+	if got := result.Sessions[0].ProviderPID; got != 4242 {
+		t.Fatalf("provider PID = %d, want 4242", got)
+	}
+}
+
+// TestDiscoverLeavesProviderPIDZeroWhenAbsent keeps an unreported PID at zero so
+// the renderer can leave the field empty instead of presenting a process identity
+// the provider never supplied. A JSON null must decode the same way as an absent
+// field, because the provider uses null for a session with no live process.
+func TestDiscoverLeavesProviderPIDZeroWhenAbsent(t *testing.T) {
+	cases := []struct {
+		name string
+		item string
+	}{
+		{name: "absent", item: `{"session_id":"provider-secret","process_generation":"g1","status":"running"}`},
+		{name: "null", item: `{"session_id":"provider-secret","pid":null,"process_generation":"g1","status":"running"}`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			runner := &fakeRunner{out: []byte(`{"items":[` + testCase.item + `]}`)}
+			a := newTestAdapter(t, runner)
+			result, err := a.Discover(context.Background(), adapter.DiscoverRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Sessions) != 1 {
+				t.Fatalf("sessions = %#v", result.Sessions)
+			}
+			if got := result.Sessions[0].ProviderPID; got != 0 {
+				t.Fatalf("provider PID = %d, want 0", got)
+			}
+		})
+	}
+}
+
 func TestTopsailaiAdapterStartCommandOptionalFolderAndNonInteractive(t *testing.T) {
 	cases := []struct {
 		name   string

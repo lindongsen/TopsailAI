@@ -18,7 +18,13 @@ type Session struct {
 	// ProviderSessionID is the provider-native session identifier reported by the
 	// adapter. SessionID stays the opaque cluster resource ID used for routing.
 	ProviderSessionID string `json:"provider_session_id,omitempty"`
-	DisplayName       string `json:"display_name,omitempty"`
+	// ProviderPID is the provider-native process identity the provider reported for
+	// this session. It is display evidence only: it never participates in routing,
+	// generation validation or signalling, because a reused PID cannot prove which
+	// process an operation would reach. Zero means the provider reported no PID,
+	// which is not the same as a session with no process.
+	ProviderPID int64  `json:"provider_pid,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
 	// ProjectWorkspace is the workspace the session is working on, as reported by
 	// the provider. It is descriptive report data only: it never participates in
 	// routing, capability selection, or authorization.

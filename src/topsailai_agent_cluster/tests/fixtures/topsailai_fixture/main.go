@@ -28,6 +28,7 @@ func main() {
 				"process_generation": "fixture-generation",
 				"state":              "idle",
 				"agent_id":           "fixture-agent",
+				"pid":                4242,
 			}},
 			"total": 1,
 		})
