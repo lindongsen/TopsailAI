@@ -112,7 +112,7 @@ The CLI and agent processes share a single workspace root referred to as `TOPSAI
 
 JSONL history files (`.topsailai_cli.history.jsonl`, `.input_history.jsonl`, `.project_history.jsonl`) are size-bounded and rotated automatically:
 
-- `TOPSAILAI_HISTORY_MAX_SIZE_MB` / `TOPSAILAI_HISTORY_MAX_ENTRIES` / `TOPSAILAI_HISTORY_MAX_BACKUPS` control `.topsailai_cli.history.jsonl` rotation in `topsailai_cli.py`.
+- `TOPSAILAI_CLI_HISTORY_MAX_SIZE_MB` / `TOPSAILAI_CLI_HISTORY_MAX_ENTRIES` / `TOPSAILAI_CLI_HISTORY_MAX_BACKUPS` control `.topsailai_cli.history.jsonl` rotation in `topsailai_cli.py`.
 - `TOPSAILAI_INPUT_HISTORY_MAX_SIZE` controls `.input_history.jsonl` rotation.
 - `TOPSAILAI_PROJECT_HISTORY_MAX_SIZE` controls `.project_history.jsonl` rotation.
 - `TOPSAILAI_HISTORY_LOAD_MAX_ENTRIES` limits how many recent records are loaded into memory from `.input_history.jsonl` and `.project_history.jsonl`.

@@ -643,8 +643,8 @@ def _handle_driver_action(action, index, rows, home, authority, environment, dis
                                discover=discover)
         if result.reason == "authority_unavailable":
             print("[ERROR] Driver launch blocked: configuration unavailable; "
-                  "check TOPSAILAI_SESSION_DRIVER_ENTRY and "
-                  "TOPSAILAI_SESSION_DRIVER_PYTHON diagnostics and restart the CLI")
+                  "check TOPSAILAI_CLI_SESSION_DRIVER_ENTRY and "
+                  "TOPSAILAI_CLI_SESSION_DRIVER_PYTHON diagnostics and restart the CLI")
         else:
             print(f"[INFO] Driver: {result.outcome}; reason={result.reason}; "
                   f"exit_code={result.exit_code}")

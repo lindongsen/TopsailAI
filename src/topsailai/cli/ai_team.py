@@ -13,7 +13,7 @@
     @SYSTEM_PROMPT: file or content;
     @TOPSAILAI_TEAM_PROMPT: required, file or content;
     @TOPSAILAI_TEAM_PATH: required, the team folder;
-    @TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: team_agent can store the first message (task) and the last message (final_answer)
+    @TOPSAILAI_CLI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: team_agent can store the first message (task) and the last message (final_answer)
 '''
 
 import os

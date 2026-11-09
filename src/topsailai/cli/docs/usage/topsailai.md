@@ -607,8 +607,8 @@ Each CLI-specific environment variable independently overrides its default when 
 
 | Variable | Meaning |
 |---|---|
-| `TOPSAILAI_SESSION_DRIVER_ENTRY` | Optional absolute path to a driver entry file; `.py` requires read access, compiled entries require execute access; defaults to the standard sibling scripts layout. |
-| `TOPSAILAI_SESSION_DRIVER_PYTHON` | Optional absolute path to a compatible executable Python interpreter whose filename starts with `python`; defaults to the validated CLI runtime for `.py` entries and is unused for compiled entries. |
+| `TOPSAILAI_CLI_SESSION_DRIVER_ENTRY` | Optional absolute path to a driver entry file; `.py` requires read access, compiled entries require execute access; defaults to the standard sibling scripts layout. |
+| `TOPSAILAI_CLI_SESSION_DRIVER_PYTHON` | Optional absolute path to a compatible executable Python interpreter whose filename starts with `python`; defaults to the validated CLI runtime for `.py` entries and is unused for compiled entries. |
 
 The CLI validates these files once at its configuration boundary. An invalid explicit override is rejected rather than silently replaced with a default. Missing default files or an invalid interpreter print an `[ERROR]` with correction guidance and safely block launch. The chosen interpreter must have the driver dependencies installed; file validation alone does not prove import compatibility. Read-only metadata remains available, but unverifiable running evidence shows `?`. Configuration changes require restarting the CLI. The driver receives the resolved `TOPSAILAI_HOME` explicitly, with noninteractive detached standard streams. Environment contents and process command lines are not printed.
 
@@ -778,6 +778,15 @@ When no channel answers inside the window, the resume is not confirmed and
 returns 4 with `startup_reason: heartbeat_unreachable`. A launch that already
 failed keeps its own status (5, 6, or 130) instead of being reported as an
 unconfirmed startup.
+
+The window is configurable through `TOPSAILAI_CLI_RESUME_CONFIRM_SECONDS`. The
+default is `7` seconds and `7` is also the enforced minimum: a smaller configured
+value is raised to `7` seconds with a warning, because a shorter window would
+report a healthy but slow startup as unreachable. An unset, non-numeric, or
+non-positive value falls back to the default. The value is read when the
+confirmation starts, so it applies to the current run without restarting
+anything. An explicit `timeout` argument passed by a caller takes precedence over
+the environment variable.
 
 ### Leftover cleanup
 

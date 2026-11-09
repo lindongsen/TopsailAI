@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Unit tests for the TOPSAILAI_SCAN_MAX_TOKENS folder-tree budget.
+"""Unit tests for the TOPSAILAI_CLI_SCAN_MAX_TOKENS folder-tree budget.
 
 The budget bounds the workspace folder tree appended to the agent context so a
 large repository cannot consume the whole first-turn context window.
@@ -33,9 +33,9 @@ def _char_counter(text):
 
 
 class ScanMaxTokensEnvMixin(unittest.TestCase):
-    """Isolate TOPSAILAI_SCAN_MAX_TOKENS for every test in subclasses."""
+    """Isolate TOPSAILAI_CLI_SCAN_MAX_TOKENS for every test in subclasses."""
 
-    ENV_KEY = "TOPSAILAI_SCAN_MAX_TOKENS"
+    ENV_KEY = "TOPSAILAI_CLI_SCAN_MAX_TOKENS"
 
     def setUp(self):
         self._saved_max_tokens = os.environ.pop(self.ENV_KEY, None)
@@ -48,7 +48,7 @@ class ScanMaxTokensEnvMixin(unittest.TestCase):
 
 
 class TestResolveScanMaxTokens(ScanMaxTokensEnvMixin):
-    """Verify resolution of TOPSAILAI_SCAN_MAX_TOKENS."""
+    """Verify resolution of TOPSAILAI_CLI_SCAN_MAX_TOKENS."""
 
     def test_unset_returns_default(self):
         self.assertEqual(launcher._resolve_scan_max_tokens(), 20000)
@@ -76,7 +76,7 @@ class TestResolveScanMaxTokens(ScanMaxTokensEnvMixin):
         with patch.object(sys, "stderr", stderr):
             value = launcher._resolve_scan_max_tokens()
         self.assertEqual(value, 20000)
-        self.assertIn("Invalid TOPSAILAI_SCAN_MAX_TOKENS", stderr.getvalue())
+        self.assertIn("Invalid TOPSAILAI_CLI_SCAN_MAX_TOKENS", stderr.getvalue())
 
     def test_float_value_warns_and_uses_default(self):
         os.environ[self.ENV_KEY] = "1.5"
@@ -84,7 +84,7 @@ class TestResolveScanMaxTokens(ScanMaxTokensEnvMixin):
         with patch.object(sys, "stderr", stderr):
             value = launcher._resolve_scan_max_tokens()
         self.assertEqual(value, 20000)
-        self.assertIn("Invalid TOPSAILAI_SCAN_MAX_TOKENS", stderr.getvalue())
+        self.assertIn("Invalid TOPSAILAI_CLI_SCAN_MAX_TOKENS", stderr.getvalue())
 
 
 class TestScanTokenCounter(ScanMaxTokensEnvMixin):
@@ -204,7 +204,7 @@ class TestScanTokenBudget(unittest.TestCase):
         budget.allows("entry")
         notice = budget.truncation_notice()
         self.assertIn("truncated at 1 tokens", notice)
-        self.assertIn("TOPSAILAI_SCAN_MAX_TOKENS", notice)
+        self.assertIn("TOPSAILAI_CLI_SCAN_MAX_TOKENS", notice)
         self.assertIn("1 used", notice)
         self.assertIn("1 entries listed", notice)
 

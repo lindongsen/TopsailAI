@@ -89,13 +89,13 @@ class TestHistoryManagerLimitedLoad(unittest.TestCase):
             self.assertEqual(manager.entries[-1]["text"], "cmd149")
 
     def test_env_var_controls_limit(self):
-        """TOPSAILAI_HISTORY_MAX_ENTRIES controls how many entries are loaded."""
+        """TOPSAILAI_CLI_HISTORY_MAX_ENTRIES controls how many entries are loaded."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "history.jsonl")
             self._write_history(path, 100)
             manager = HistoryManager(path)
             with patch.dict(
-                os.environ, {"TOPSAILAI_HISTORY_MAX_ENTRIES": "10"}
+                os.environ, {"TOPSAILAI_CLI_HISTORY_MAX_ENTRIES": "10"}
             ):
                 manager.load_all()
             self.assertEqual(len(manager.entries), 10)
@@ -109,7 +109,7 @@ class TestHistoryManagerLimitedLoad(unittest.TestCase):
             self._write_history(path, 5)
             manager = HistoryManager(path)
             with patch.dict(
-                os.environ, {"TOPSAILAI_HISTORY_MAX_ENTRIES": "not-a-number"}
+                os.environ, {"TOPSAILAI_CLI_HISTORY_MAX_ENTRIES": "not-a-number"}
             ):
                 manager.load_all()
             self.assertEqual(len(manager.entries), 5)
@@ -121,7 +121,7 @@ class TestHistoryManagerLimitedLoad(unittest.TestCase):
             self._write_history(path, 5)
             manager = HistoryManager(path)
             with patch.dict(
-                os.environ, {"TOPSAILAI_HISTORY_MAX_ENTRIES": "0"}
+                os.environ, {"TOPSAILAI_CLI_HISTORY_MAX_ENTRIES": "0"}
             ):
                 manager.load_all()
             self.assertEqual(len(manager.entries), 5)
@@ -147,7 +147,7 @@ class TestHistoryManagerLimitedLoad(unittest.TestCase):
                     f.write("\n")
             manager = HistoryManager(path)
             with patch.dict(
-                os.environ, {"TOPSAILAI_HISTORY_MAX_ENTRIES": "5"}
+                os.environ, {"TOPSAILAI_CLI_HISTORY_MAX_ENTRIES": "5"}
             ):
                 manager.load_all()
             self.assertEqual(len(manager.entries), 5)
@@ -171,8 +171,8 @@ class TestHistoryManagerRotation(unittest.TestCase):
             with patch.dict(
                 os.environ,
                 {
-                    "TOPSAILAI_HISTORY_MAX_SIZE_MB": "1",
-                    "TOPSAILAI_HISTORY_MAX_BACKUPS": "1",
+                    "TOPSAILAI_CLI_HISTORY_MAX_SIZE_MB": "1",
+                    "TOPSAILAI_CLI_HISTORY_MAX_BACKUPS": "1",
                 },
             ):
                 manager.add("after-rotation")
@@ -196,8 +196,8 @@ class TestHistoryManagerRotation(unittest.TestCase):
             with patch.dict(
                 os.environ,
                 {
-                    "TOPSAILAI_HISTORY_MAX_SIZE_MB": "1",
-                    "TOPSAILAI_HISTORY_MAX_BACKUPS": "1",
+                    "TOPSAILAI_CLI_HISTORY_MAX_SIZE_MB": "1",
+                    "TOPSAILAI_CLI_HISTORY_MAX_BACKUPS": "1",
                 },
             ):
                 for i in range(3):
@@ -224,8 +224,8 @@ class TestHistoryManagerRotation(unittest.TestCase):
             with patch.dict(
                 os.environ,
                 {
-                    "TOPSAILAI_HISTORY_MAX_SIZE_MB": "1",
-                    "TOPSAILAI_HISTORY_MAX_BACKUPS": "1",
+                    "TOPSAILAI_CLI_HISTORY_MAX_SIZE_MB": "1",
+                    "TOPSAILAI_CLI_HISTORY_MAX_BACKUPS": "1",
                 },
             ):
                 manager.add("third")
@@ -247,8 +247,8 @@ class TestHistoryManagerRotation(unittest.TestCase):
             with patch.dict(
                 os.environ,
                 {
-                    "TOPSAILAI_HISTORY_MAX_SIZE_MB": "1",
-                    "TOPSAILAI_HISTORY_MAX_BACKUPS": "1",
+                    "TOPSAILAI_CLI_HISTORY_MAX_SIZE_MB": "1",
+                    "TOPSAILAI_CLI_HISTORY_MAX_BACKUPS": "1",
                 },
             ):
                 manager.add("another")

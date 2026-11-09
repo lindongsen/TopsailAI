@@ -13,6 +13,8 @@ from pathlib import Path
 
 from typing import Any, Callable, Dict, List, Optional
 
+from cli_topsailai.env_compat import get_env
+
 try:
     import termios
     import tty
@@ -20,7 +22,7 @@ except ImportError:
     termios = None  # type: ignore[assignment]
     tty = None  # type: ignore[assignment]
 
-_DEBUG_INPUT = os.environ.get("TOPSAILAI_DEBUG_INPUT")
+_DEBUG_INPUT = get_env("TOPSAILAI_CLI_DEBUG_INPUT")
 
 from cli_topsailai.colors import (
     Colors,

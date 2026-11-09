@@ -7,6 +7,8 @@ import os
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from cli_topsailai.env_compat import get_env
+
 if TYPE_CHECKING:
     from typing import Any, Dict, List, Optional
 
@@ -26,7 +28,7 @@ class HistoryManager:
 
     def _max_entries(self) -> int:
         """Return the maximum number of entries to keep in memory."""
-        value = os.environ.get("TOPSAILAI_HISTORY_MAX_ENTRIES")
+        value = get_env("TOPSAILAI_CLI_HISTORY_MAX_ENTRIES")
         if value is None:
             return DEFAULT_HISTORY_MAX_ENTRIES
         try:
@@ -37,7 +39,7 @@ class HistoryManager:
 
     def _max_size_bytes(self) -> int:
         """Return the maximum active history file size in bytes."""
-        value = os.environ.get("TOPSAILAI_HISTORY_MAX_SIZE_MB")
+        value = get_env("TOPSAILAI_CLI_HISTORY_MAX_SIZE_MB")
         if value is None:
             return DEFAULT_HISTORY_MAX_SIZE_MB * 1024 * 1024
         try:
@@ -50,7 +52,7 @@ class HistoryManager:
 
     def _max_backups(self) -> int:
         """Return the maximum number of rotated history backups to keep."""
-        value = os.environ.get("TOPSAILAI_HISTORY_MAX_BACKUPS")
+        value = get_env("TOPSAILAI_CLI_HISTORY_MAX_BACKUPS")
         if value is None:
             return DEFAULT_HISTORY_MAX_BACKUPS
         try:

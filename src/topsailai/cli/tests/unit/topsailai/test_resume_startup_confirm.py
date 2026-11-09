@@ -325,5 +325,86 @@ class BoundedWindowTest(unittest.TestCase):
         self.assertEqual(result["startup_reason"], "heartbeat_unreachable")
         self.assertLess(elapsed, window + 0.3)
 
+
+class ConfirmWindowEnvironmentTest(unittest.TestCase):
+    """Pin how the confirmation window is resolved from the environment."""
+
+    def setUp(self):
+        self._saved = os.environ.get(project_scope.RESUME_STARTUP_CONFIRM_ENV)
+        os.environ.pop(project_scope.RESUME_STARTUP_CONFIRM_ENV, None)
+
+    def tearDown(self):
+        os.environ.pop(project_scope.RESUME_STARTUP_CONFIRM_ENV, None)
+        if self._saved is not None:
+            os.environ[project_scope.RESUME_STARTUP_CONFIRM_ENV] = self._saved
+
+    def _resolve(self, value):
+        """Resolve the window for one configured value."""
+        if value is None:
+            os.environ.pop(project_scope.RESUME_STARTUP_CONFIRM_ENV, None)
+        else:
+            os.environ[project_scope.RESUME_STARTUP_CONFIRM_ENV] = value
+        return project_scope._resolve_resume_confirm_seconds()
+
+    def test_the_variable_uses_the_cli_namespace(self):
+        """A CLI-only knob must carry the TOPSAILAI_CLI_ prefix."""
+        self.assertEqual(
+            project_scope.RESUME_STARTUP_CONFIRM_ENV,
+            "TOPSAILAI_CLI_RESUME_CONFIRM_SECONDS",
+        )
+
+    def test_the_minimum_is_seven_seconds(self):
+        """The operator set seven seconds as the smallest accepted window."""
+        self.assertEqual(project_scope.RESUME_STARTUP_CONFIRM_MIN_SECONDS, 7.0)
+
+    def test_an_unset_variable_uses_the_default(self):
+        """No configuration must fall back to the documented default."""
+        self.assertEqual(self._resolve(None), 7.0)
+
+    def test_a_value_below_the_minimum_is_raised_to_the_minimum(self):
+        """A shorter window would misreport a slow startup, so it is raised."""
+        self.assertEqual(self._resolve("3"), 7.0)
+
+    def test_a_value_above_the_minimum_is_honoured(self):
+        """A longer window is a legitimate operator choice."""
+        self.assertEqual(self._resolve("15"), 15.0)
+
+    def test_a_non_numeric_value_falls_back_to_the_default(self):
+        """A malformed value must not disable the confirmation."""
+        self.assertEqual(self._resolve("abc"), 7.0)
+
+    def test_a_non_positive_value_falls_back_to_the_default(self):
+        """Zero and negative windows cannot bound a wait."""
+        self.assertEqual(self._resolve("0"), 7.0)
+        self.assertEqual(self._resolve("-5"), 7.0)
+
+    def test_an_explicit_timeout_wins_over_the_variable(self):
+        """A caller-supplied window takes precedence over the environment."""
+        os.environ[project_scope.RESUME_STARTUP_CONFIRM_ENV] = "20"
+        with tempfile.TemporaryDirectory() as home:
+            task_dir = _make_task_dir(home)
+            leftover = _make_stdout(task_dir, "s1", 4242)
+            _make_socket(task_dir, "s1", 5353)
+            granted = []
+
+            def _heartbeat(session_id, pid, **kwargs):
+                """Record the granted timeout, then stay silent."""
+                granted.append(kwargs.get("timeout"))
+                return None
+
+            with patch(
+                "cli_topsailai.process_liveness.socket_heartbeat_alive",
+                side_effect=_heartbeat,
+            ), patch.object(project_scope, "RESUME_STARTUP_POLL_SECONDS", 0.0):
+                _confirm_resumed_startup(
+                    "s1", [leftover], code=0, mode="dtach", background=False,
+                    home=home, timeout=0.5,
+                )
+
+        self.assertTrue(granted)
+        for timeout in granted:
+            self.assertLessEqual(timeout, 0.5)
+
+
 if __name__ == "__main__":
     unittest.main()

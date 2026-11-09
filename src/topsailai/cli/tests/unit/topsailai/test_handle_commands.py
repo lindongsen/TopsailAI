@@ -2412,10 +2412,10 @@ class TestWorkspaceDriverCommands(unittest.TestCase):
         """Preserve explicit overrides and fail closed on invalid configuration."""
         from cli_topsailai.core import _driver_authority
         with patch("pathlib.Path.is_file", return_value=True), patch("cli_topsailai.session_driver_config.os", new=type("Access", (), {"R_OK": 4, "access": staticmethod(lambda *args: True)})()), patch("cli_topsailai.session_driver_launcher.DriverAuthority.validate"):
-            authority = _driver_authority({"TOPSAILAI_SESSION_DRIVER_ENTRY": "/installed/driver.py", "TOPSAILAI_SESSION_DRIVER_PYTHON": "/installed/python3"})
+            authority = _driver_authority({"TOPSAILAI_CLI_SESSION_DRIVER_ENTRY": "/installed/driver.py", "TOPSAILAI_CLI_SESSION_DRIVER_PYTHON": "/installed/python3"})
             self.assertEqual(str(authority.entry), "/installed/driver.py")
         with patch("cli_topsailai.session_driver_launcher.DriverAuthority.validate", side_effect=ValueError("bad")):
-            self.assertIsNone(_driver_authority({"TOPSAILAI_SESSION_DRIVER_ENTRY": "relative", "TOPSAILAI_SESSION_DRIVER_PYTHON": "relative"}))
+            self.assertIsNone(_driver_authority({"TOPSAILAI_CLI_SESSION_DRIVER_ENTRY": "relative", "TOPSAILAI_CLI_SESSION_DRIVER_PYTHON": "relative"}))
 
     def test_launch_dispatch(self):
         """Pass explicit context and retain the live child without killing it."""

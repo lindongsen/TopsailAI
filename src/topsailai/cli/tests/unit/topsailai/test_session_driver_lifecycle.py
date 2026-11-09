@@ -183,8 +183,8 @@ def test_public_stop_lifecycle(fixture_owner, capsys, interface):
                                               dict(os.environ), rows) is None
             assert "Driver stop: stopped" in capsys.readouterr().out
         else:
-            environment = dict(os.environ, TOPSAILAI_SESSION_DRIVER_ENTRY=str(authority.entry),
-                               TOPSAILAI_SESSION_DRIVER_PYTHON=str(authority.interpreter))
+            environment = dict(os.environ, TOPSAILAI_CLI_SESSION_DRIVER_ENTRY=str(authority.entry),
+                               TOPSAILAI_CLI_SESSION_DRIVER_PYTHON=str(authority.interpreter))
             assert workspace_driver_cli.run_workspace_driver_cli(
                 ["stop", "-s", "fixture", "-p", str(os.getpid()), "--json"],
                 environment=environment, home_resolver=lambda: str(home)) == 0

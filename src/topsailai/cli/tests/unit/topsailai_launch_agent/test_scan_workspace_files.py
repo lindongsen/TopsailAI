@@ -245,9 +245,9 @@ class TestScanEnvExclusions(unittest.TestCase):
     """Verify env-var-driven name filtering in _scan_workspace_files."""
 
     EXCLUDE_ENV = [
-        "TOPSAILAI_SCAN_EXCLUDE",
-        "TOPSAILAI_SCAN_EXCLUDE_DIRS",
-        "TOPSAILAI_SCAN_EXCLUDE_FILES",
+        "TOPSAILAI_CLI_SCAN_EXCLUDE",
+        "TOPSAILAI_CLI_SCAN_EXCLUDE_DIRS",
+        "TOPSAILAI_CLI_SCAN_EXCLUDE_FILES",
     ]
 
     def setUp(self):
@@ -281,7 +281,7 @@ class TestScanEnvExclusions(unittest.TestCase):
     def test_exclude_applies_to_files_and_dirs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self._make_tree(tmpdir)
-            os.environ["TOPSAILAI_SCAN_EXCLUDE"] = "skip_dir,report.log"
+            os.environ["TOPSAILAI_CLI_SCAN_EXCLUDE"] = "skip_dir,report.log"
             tree = launcher._scan_workspace_files(tmpdir, include_files=True)
             self.assertIn("keep_dir", tree)
             self.assertIn("keep.txt", tree)
@@ -293,7 +293,7 @@ class TestScanEnvExclusions(unittest.TestCase):
     def test_exclude_dirs_only(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self._make_tree(tmpdir)
-            os.environ["TOPSAILAI_SCAN_EXCLUDE_DIRS"] = "skip_dir"
+            os.environ["TOPSAILAI_CLI_SCAN_EXCLUDE_DIRS"] = "skip_dir"
             tree = launcher._scan_workspace_files(tmpdir, include_files=True)
             self.assertNotIn("skip_dir", tree)
             self.assertNotIn("inner.txt", tree)
@@ -303,7 +303,7 @@ class TestScanEnvExclusions(unittest.TestCase):
     def test_exclude_files_only(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self._make_tree(tmpdir)
-            os.environ["TOPSAILAI_SCAN_EXCLUDE_FILES"] = "report.log"
+            os.environ["TOPSAILAI_CLI_SCAN_EXCLUDE_FILES"] = "report.log"
             tree = launcher._scan_workspace_files(tmpdir, include_files=True)
             self.assertNotIn("report.log", tree)
             self.assertIn("skip_dir", tree)
@@ -313,7 +313,7 @@ class TestScanEnvExclusions(unittest.TestCase):
     def test_wildcard_patterns(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self._make_tree(tmpdir)
-            os.environ["TOPSAILAI_SCAN_EXCLUDE_FILES"] = "*.log"
+            os.environ["TOPSAILAI_CLI_SCAN_EXCLUDE_FILES"] = "*.log"
             tree = launcher._scan_workspace_files(tmpdir, include_files=True)
             self.assertNotIn("report.log", tree)
             self.assertIn("notes.txt", tree)
@@ -322,9 +322,9 @@ class TestScanEnvExclusions(unittest.TestCase):
     def test_empty_values_filter_nothing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self._make_tree(tmpdir)
-            os.environ["TOPSAILAI_SCAN_EXCLUDE"] = ""
-            os.environ["TOPSAILAI_SCAN_EXCLUDE_DIRS"] = ", ,"
-            os.environ["TOPSAILAI_SCAN_EXCLUDE_FILES"] = ""
+            os.environ["TOPSAILAI_CLI_SCAN_EXCLUDE"] = ""
+            os.environ["TOPSAILAI_CLI_SCAN_EXCLUDE_DIRS"] = ", ,"
+            os.environ["TOPSAILAI_CLI_SCAN_EXCLUDE_FILES"] = ""
             tree = launcher._scan_workspace_files(tmpdir, include_files=True)
             self.assertIn("skip_dir", tree)
             self.assertIn("inner.txt", tree)
@@ -357,9 +357,9 @@ class TestScanSelfEnvirons(unittest.TestCase):
     """Verify the --scan path honors self_environs from settings.yaml."""
 
     SCAN_EXCLUDE_ENVS = [
-        "TOPSAILAI_SCAN_EXCLUDE",
-        "TOPSAILAI_SCAN_EXCLUDE_DIRS",
-        "TOPSAILAI_SCAN_EXCLUDE_FILES",
+        "TOPSAILAI_CLI_SCAN_EXCLUDE",
+        "TOPSAILAI_CLI_SCAN_EXCLUDE_DIRS",
+        "TOPSAILAI_CLI_SCAN_EXCLUDE_FILES",
     ]
 
     def setUp(self):
@@ -385,12 +385,12 @@ class TestScanSelfEnvirons(unittest.TestCase):
     def test_load_settings_if_exists_returns_dict(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg_path = self._write_settings(
-                tmpdir, "self_environs:\n  TOPSAILAI_SCAN_EXCLUDE_DIRS: vendor\n"
+                tmpdir, "self_environs:\n  TOPSAILAI_CLI_SCAN_EXCLUDE_DIRS: vendor\n"
             )
             settings = launcher._load_settings_if_exists(cfg_path)
             self.assertEqual(
                 settings.get("self_environs", {}),
-                {"TOPSAILAI_SCAN_EXCLUDE_DIRS": "vendor"},
+                {"TOPSAILAI_CLI_SCAN_EXCLUDE_DIRS": "vendor"},
             )
 
     def test_load_settings_if_exists_missing_returns_empty(self):
@@ -403,7 +403,7 @@ class TestScanSelfEnvirons(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg_path = self._write_settings(
                 tmpdir,
-                "self_environs:\n  TOPSAILAI_SCAN_EXCLUDE_DIRS: \"vendor,dist\"\n",
+                "self_environs:\n  TOPSAILAI_CLI_SCAN_EXCLUDE_DIRS: \"vendor,dist\"\n",
             )
             # Build a tree with a vendor dir that must be excluded.
             os.makedirs(os.path.join(tmpdir, "vendor"))
@@ -443,9 +443,9 @@ class TestExcludeOption(unittest.TestCase):
     """Verify the --exclude option filters names from the scanned tree."""
 
     EXCLUDE_ENV = [
-        "TOPSAILAI_SCAN_EXCLUDE",
-        "TOPSAILAI_SCAN_EXCLUDE_DIRS",
-        "TOPSAILAI_SCAN_EXCLUDE_FILES",
+        "TOPSAILAI_CLI_SCAN_EXCLUDE",
+        "TOPSAILAI_CLI_SCAN_EXCLUDE_DIRS",
+        "TOPSAILAI_CLI_SCAN_EXCLUDE_FILES",
     ]
 
     def setUp(self):
@@ -509,10 +509,10 @@ class TestExcludeOption(unittest.TestCase):
             self.assertIn("build", tree)
 
     def test_exclude_names_merge_with_env_exclusions(self):
-        """CLI names extend (not replace) TOPSAILAI_SCAN_EXCLUDE."""
+        """CLI names extend (not replace) TOPSAILAI_CLI_SCAN_EXCLUDE."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._make_tree(tmpdir)
-            os.environ["TOPSAILAI_SCAN_EXCLUDE"] = "dist"
+            os.environ["TOPSAILAI_CLI_SCAN_EXCLUDE"] = "dist"
             tree = launcher._scan_workspace_files(tmpdir, exclude_names=["build"], include_files=True)
             self.assertNotIn("build", tree)
             self.assertNotIn("dist", tree)
@@ -522,7 +522,7 @@ class TestExcludeOption(unittest.TestCase):
     def test_exclude_names_none_keeps_env_behavior(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self._make_tree(tmpdir)
-            os.environ["TOPSAILAI_SCAN_EXCLUDE_DIRS"] = "build"
+            os.environ["TOPSAILAI_CLI_SCAN_EXCLUDE_DIRS"] = "build"
             tree = launcher._scan_workspace_files(tmpdir, include_files=True)
             self.assertNotIn("build", tree)
             self.assertIn("dist", tree)
@@ -630,7 +630,7 @@ class TestExcludeOption(unittest.TestCase):
 class TestScanFoldersOnlyDefault(unittest.TestCase):
     """Verify the folders-only scan default and the opt-in file listing."""
 
-    INCLUDE_FILES_ENV = "TOPSAILAI_SCAN_INCLUDE_FILES"
+    INCLUDE_FILES_ENV = "TOPSAILAI_CLI_SCAN_INCLUDE_FILES"
 
     def setUp(self):
         self._saved = os.environ.pop(self.INCLUDE_FILES_ENV, None)
@@ -769,7 +769,7 @@ class TestScanFoldersOnlyDefault(unittest.TestCase):
             self.assertIn("main.py", stdout.getvalue())
 
     def test_main_scan_folders_only_overrides_env(self):
-        """An explicit --folders-only wins over TOPSAILAI_SCAN_INCLUDE_FILES."""
+        """An explicit --folders-only wins over TOPSAILAI_CLI_SCAN_INCLUDE_FILES."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._make_tree(tmpdir)
             os.chdir(tmpdir)
@@ -822,7 +822,7 @@ class TestScanFoldersOnlyDefault(unittest.TestCase):
 class TestResolveScanIncludeFiles(unittest.TestCase):
     """Verify resolution of the scan include-files mode."""
 
-    INCLUDE_FILES_ENV = "TOPSAILAI_SCAN_INCLUDE_FILES"
+    INCLUDE_FILES_ENV = "TOPSAILAI_CLI_SCAN_INCLUDE_FILES"
 
     def setUp(self):
         self._saved = os.environ.pop(self.INCLUDE_FILES_ENV, None)
@@ -862,7 +862,7 @@ class TestResolveScanIncludeFiles(unittest.TestCase):
                 None, {self.INCLUDE_FILES_ENV: "maybe"}
             )
         self.assertFalse(value)
-        self.assertIn("Invalid TOPSAILAI_SCAN_INCLUDE_FILES", stderr.getvalue())
+        self.assertIn("Invalid TOPSAILAI_CLI_SCAN_INCLUDE_FILES", stderr.getvalue())
 
     def test_reads_process_environment_when_mapping_omitted(self):
         os.environ[self.INCLUDE_FILES_ENV] = "yes"

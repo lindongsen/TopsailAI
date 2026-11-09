@@ -8,10 +8,22 @@ import os
 import sys
 from typing import Mapping
 
+from cli_topsailai.env_compat import get_env
 from cli_topsailai.session_driver_launcher import DriverAuthority
 
-ENTRY_ENV = "TOPSAILAI_SESSION_DRIVER_ENTRY"
-PYTHON_ENV = "TOPSAILAI_SESSION_DRIVER_PYTHON"
+ENTRY_ENV = "TOPSAILAI_CLI_SESSION_DRIVER_ENTRY"
+PYTHON_ENV = "TOPSAILAI_CLI_SESSION_DRIVER_PYTHON"
+
+
+def _resolve_override(environment: Mapping[str, str], name: str) -> str | None:
+    """Return a driver override, accepting its legacy name as a fallback.
+
+    The prefixed name wins so a caller can migrate one variable at a time. The
+    legacy name is still honoured because an operator may export it from an
+    older installation.
+    """
+    value = get_env(name, environ=environment)
+    return value
 
 
 def resolve_driver_authority(environment: Mapping[str, str], *,
@@ -22,7 +34,8 @@ def resolve_driver_authority(environment: Mapping[str, str], *,
     package = Path(__file__).resolve().parent if package_dir is None else package_dir
     directory = package.parent.parent / "scripts" / "session_agent_driver"
     compiled = directory / "session_agent_driver"
-    entry = (Path(environment[ENTRY_ENV]) if ENTRY_ENV in environment else
+    entry_override = _resolve_override(environment, ENTRY_ENV)
+    entry = (Path(entry_override) if entry_override is not None else
              compiled if compiled.exists() else directory / "session_agent_driver.py")
     if not entry.is_absolute() or not entry.is_file():
         raise ValueError(f"{ENTRY_ENV}: entry must be an existing absolute file; "
@@ -39,8 +52,9 @@ def resolve_driver_authority(environment: Mapping[str, str], *,
             raise ValueError(f"{ENTRY_ENV}: compiled entry must be executable; "
                              "correct permissions or set a valid absolute entry and restart the CLI") from error
         return authority
-    if PYTHON_ENV in environment:
-        candidates = [environment[PYTHON_ENV]]
+    python_override = _resolve_override(environment, PYTHON_ENV)
+    if python_override is not None:
+        candidates = [python_override]
     else:
         candidates = [sys.executable if executable is None else executable,
                       getattr(sys, "_base_executable", "") if base_executable is None else base_executable]

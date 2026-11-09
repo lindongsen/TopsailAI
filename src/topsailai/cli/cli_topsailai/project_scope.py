@@ -1682,13 +1682,60 @@ def _delete_invalid_session_stdout(
     return deleted
 
 
-#: Bounded window for the resumed process to publish its control channel. A
-#: healthy agent creates its socket within a few hundred milliseconds, so this
-#: only bounds a slow or wedged startup.
+#: Default bounded window for the resumed process to publish its control
+#: channel. A healthy agent creates its socket within a few hundred
+#: milliseconds, so this only bounds a slow or wedged startup.
 RESUME_STARTUP_CONFIRM_SECONDS = 7.0
+
+#: Smallest window a caller may configure. A shorter window would report a
+#: healthy but slow startup as unreachable, so the floor is enforced instead of
+#: trusting the configured value.
+RESUME_STARTUP_CONFIRM_MIN_SECONDS = 7.0
+
+#: Environment variable that overrides the confirmation window.
+RESUME_STARTUP_CONFIRM_ENV = "TOPSAILAI_CLI_RESUME_CONFIRM_SECONDS"
 
 #: Poll interval while waiting for the resumed control channel to appear.
 RESUME_STARTUP_POLL_SECONDS = 0.2
+
+
+def _resolve_resume_confirm_seconds() -> float:
+    """Resolve the startup-confirmation window from the environment.
+
+    The window is read at call time so a value supplied for one run takes
+    effect without mutating module state. A value below
+    ``RESUME_STARTUP_CONFIRM_MIN_SECONDS`` is raised to that floor rather than
+    accepted, because a shorter window would report a healthy but slow startup
+    as unreachable. An unset, non-numeric, or non-positive value falls back to
+    the default.
+    """
+    raw = os.environ.get(RESUME_STARTUP_CONFIRM_ENV, "")
+    if not raw:
+        return RESUME_STARTUP_CONFIRM_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        print(
+            f"{Colors.YELLOW}[WARN] Invalid {RESUME_STARTUP_CONFIRM_ENV} "
+            f"({raw!r}); using {RESUME_STARTUP_CONFIRM_SECONDS} "
+            f"seconds.{Colors.RESET}"
+        )
+        return RESUME_STARTUP_CONFIRM_SECONDS
+    if value <= 0:
+        print(
+            f"{Colors.YELLOW}[WARN] {RESUME_STARTUP_CONFIRM_ENV} ({value}) must "
+            f"be positive; using {RESUME_STARTUP_CONFIRM_SECONDS} "
+            f"seconds.{Colors.RESET}"
+        )
+        return RESUME_STARTUP_CONFIRM_SECONDS
+    if value < RESUME_STARTUP_CONFIRM_MIN_SECONDS:
+        print(
+            f"{Colors.YELLOW}[WARN] {RESUME_STARTUP_CONFIRM_ENV} ({value}) is "
+            f"below the {RESUME_STARTUP_CONFIRM_MIN_SECONDS}-second minimum; "
+            f"using {RESUME_STARTUP_CONFIRM_MIN_SECONDS} seconds.{Colors.RESET}"
+        )
+        return RESUME_STARTUP_CONFIRM_MIN_SECONDS
+    return value
 
 
 def _session_socket_pids(task_dir: str, session_id: str) -> List[int]:
@@ -1760,7 +1807,7 @@ def _new_session_pids(
 def _confirm_resumed_startup(
     session_id: str, snapshot: List[str], *, code: int, mode: str,
     background: bool, home: Optional[str] = None,
-    timeout: float = RESUME_STARTUP_CONFIRM_SECONDS,
+    timeout: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Prove the resumed process is reachable on its own control channel.
 
@@ -1773,6 +1820,12 @@ def _confirm_resumed_startup(
     A foreground ``raw`` resume is the one exception: the agent itself is the
     child, so its exit status already reports the completed run and no channel
     survives it.
+
+    Args:
+        timeout: Explicit window in seconds. When omitted, the window is
+            resolved from ``TOPSAILAI_CLI_RESUME_CONFIRM_SECONDS`` at call
+            time, which keeps the default configurable without mutating module
+            state.
 
     Returns:
         The confirmation facts: ``startup_confirmed``, ``startup_pid`` and
@@ -1795,6 +1848,8 @@ def _confirm_resumed_startup(
             "startup_pid": None,
             "startup_reason": "foreground_raw_exited",
         }
+    if timeout is None:
+        timeout = _resolve_resume_confirm_seconds()
     base = home or get_topsailai_home()
     deadline = time.monotonic() + max(timeout, 0.0)
     # At least one probe is always attempted, so a zero-length window still

@@ -95,6 +95,29 @@ Files used exclusively by one CLI command must be prefixed with that CLI's name 
 other configuration or history files. For example, the `topsailai_cli` command uses `.topsailai_cli.history.jsonl`, not
 a generic `.history.jsonl`, which distinguishes it from `.input_history.jsonl` and `.project_history.jsonl`.
 
+### Environment Variable Naming
+
+Every environment variable consumed only by a CLI script MUST use the `TOPSAILAI_CLI_` prefix, for example
+`TOPSAILAI_CLI_HISTORY_MAX_ENTRIES` or `TOPSAILAI_CLI_RESUME_CONFIRM_SECONDS`. The prefix states that the variable is
+owned by this workspace, so a reader can tell a CLI knob from a project-wide setting without searching the source tree.
+
+A variable that is also read by a component outside this workspace MUST NOT use that prefix, because the prefix would
+claim an ownership the CLI does not have. Decide by checking whether any component outside `cli/` reads the variable:
+when the answer is yes, keep the unprefixed name and treat it as a cross-component contract.
+
+A variable that doubles as a configuration key in `.topsailai/settings.yaml` is a cross-component contract as well, even
+when no code outside `cli/` reads the environment variable directly. Renaming it would break existing configuration
+files, so the unprefixed name is kept.
+
+When a CLI-only variable is renamed, update every reference in the same change: the source that reads it, the matching
+usage document under `docs/usage/`, and the tests that set it.
+
+A renamed variable MUST keep accepting its previous name. Read it through `cli_topsailai/env_compat.py` instead of
+`os.getenv` directly: `get_env` consults the prefixed name first and the legacy name second, so an operator who still
+exports the old name keeps working while the prefixed name always wins. The first use of a legacy name prints one
+`[WARN]` deprecation notice. An empty value counts as configured and does not fall back, because at least one variable
+assigns a meaning to the empty string. Add the new mapping to `LEGACY_NAMES` in the same change that renames a variable.
+
 ## Adding a New CLI Tool
 
 When you create a new CLI script under this directory, you must also register it as a command in the parent project's `bin/` folder so it can be invoked directly by name.
