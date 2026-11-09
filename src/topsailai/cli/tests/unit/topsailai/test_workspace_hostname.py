@@ -196,3 +196,49 @@ def test_invalid_and_generic_rows_do_not_read_metadata(tmp_path, monkeypatch):
     enrich_workspace_hostnames(rows, str(tmp_path))
     assert all(r["hostname"] == "" for r in rows)
     reader.assert_not_called()
+
+
+def test_json_item_exposes_metadata_hostname(tmp_path):
+    """The JSON item carries the same origin hostname the table renders."""
+    from cli_topsailai.core import _workspace_json_item
+
+    write_meta(tmp_path, hostname="origin-host")
+    rows = [row()]
+    formatting.enrich_workspace_rows(rows, str(tmp_path))
+
+    assert _workspace_json_item(rows[0], 1)["hostname"] == "origin-host"
+
+
+@pytest.mark.parametrize("fields", [{}, {"hostname": ""}, {"hostname": None},
+                                    {"hostname": 42}])
+def test_json_item_hostname_is_empty_without_a_metadata_value(tmp_path, fields):
+    """An absent or invalid value stays empty instead of the local hostname."""
+    from cli_topsailai.core import _workspace_json_item
+
+    write_meta(tmp_path, **fields)
+    rows = [row()]
+    formatting.enrich_workspace_rows(rows, str(tmp_path))
+
+    assert _workspace_json_item(rows[0], 1)["hostname"] == ""
+
+
+def test_json_item_hostname_is_empty_for_a_row_without_metadata(tmp_path):
+    """A row with no metadata record reports an empty hostname, not a guess."""
+    from cli_topsailai.core import _workspace_json_item
+
+    rows = [row()]
+    formatting.enrich_workspace_rows(rows, str(tmp_path))
+
+    assert _workspace_json_item(rows[0], 1)["hostname"] == ""
+
+
+def test_json_item_hostname_keeps_the_raw_metadata_value(tmp_path):
+    """JSON carries the raw value while the table sanitizes it for a terminal."""
+    from cli_topsailai.core import _workspace_json_item
+
+    write_meta(tmp_path, hostname="host\nname|x")
+    rows = [row()]
+    formatting.enrich_workspace_rows(rows, str(tmp_path))
+
+    assert _workspace_json_item(rows[0], 1)["hostname"] == "host\nname|x"
+    assert cells(rows)[1][4] == "hostnamex"

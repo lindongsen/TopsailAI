@@ -1302,6 +1302,11 @@ def _workspace_json_item(file_info: dict, index: int) -> dict:
         created_at = datetime.fromtimestamp(ctime).astimezone().strftime(
             "%Y-%m-%dT%H:%M:%S%z"
         )
+    # The origin hostname is metadata evidence only, so an absent or invalid
+    # value stays empty instead of being replaced by the local hostname.
+    hostname = file_info.get("hostname")
+    if not isinstance(hostname, str):
+        hostname = ""
     return {
         "no": index,
         "filename": file_info.get("filename", ""),
@@ -1315,6 +1320,7 @@ def _workspace_json_item(file_info: dict, index: int) -> dict:
         "driver": driver,
         "created_at": created_at,
         "project_workspace": file_info.get("project_workspace"),
+        "hostname": hostname,
     }
 
 
