@@ -79,6 +79,14 @@ func TestMain(m *testing.M) {
 				fmt.Fprintf(os.Stderr, "write helper discovery output: %v\n", err)
 				os.Exit(1)
 			}
+		case "discover-listed":
+			// One listed session without a generation, which is the shape a
+			// history row has: the record exists but no process is verified to
+			// hold its output file.
+			if _, err := os.Stdout.WriteString(`{"sessions":[{"session_id":"native-1","state":"idle"}],"complete":true}`); err != nil {
+				fmt.Fprintf(os.Stderr, "write helper discovery output: %v\n", err)
+				os.Exit(1)
+			}
 		case "execute-fail":
 			// A failing provider reports its own diagnostic on stderr and exits
 			// non-zero, which is the only evidence of why the call failed.
