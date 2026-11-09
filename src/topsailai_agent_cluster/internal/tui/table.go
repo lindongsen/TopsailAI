@@ -347,6 +347,13 @@ func statusCounts(rows []SessionRow) []statusCount {
 
 // writeStatusSummary renders "running(3) | input(2)" below the table, colouring
 // each state with the same mapping the SESSION_STATUS column uses.
+//
+// A session whose liveness the provider could not verify is reported as
+// unknown, so it lands in the unknown bucket like any other unknown state. The
+// summary names that subset separately as "unverified(n)" because the two mean
+// different things to an operator: an unverified session needs a resume, while
+// an unknown state may be a provider report. The bucket count is unchanged, so
+// the numbers still add up to the row count.
 func writeStatusSummary(out io.Writer, rows []SessionRow, policy ColorPolicy) error {
 	counts := statusCounts(rows)
 	if len(counts) == 0 {
@@ -363,8 +370,31 @@ func writeStatusSummary(out io.Writer, rows []SessionRow, policy ColorPolicy) er
 			return err
 		}
 	}
+	if unverified := unverifiedCount(rows); unverified > 0 {
+		if err := writeStyled(out, ansiDim, " | ", policy); err != nil {
+			return err
+		}
+		label := "unverified(" + strconv.Itoa(unverified) + ")"
+		if err := writeStyled(out, ansiYellow, label, policy); err != nil {
+			return err
+		}
+	}
 	_, err := io.WriteString(out, "\n")
 	return err
+}
+
+// unverifiedCount counts the rows whose liveness the provider could not verify.
+// It is a subset of the unknown bucket, never a separate state: the state
+// vocabulary is a protocol contract and unknown is already the correct standard
+// state for such a session.
+func unverifiedCount(rows []SessionRow) int {
+	count := 0
+	for _, row := range rows {
+		if row.Unverified {
+			count++
+		}
+	}
+	return count
 }
 
 // statusSummaryLabel shortens waiting_input to the operator-facing "input".

@@ -342,3 +342,24 @@ occurrences in the captured output.
 Why this prevents recurrence: a stub reader is a test double that omits the very behaviour under
 test, so it certifies a duplication it cannot see. Counting occurrences in the real editor's output
 is the only evidence that distinguishes "written once" from "written twice".
+
+## A proposed field can be a second source of truth for a fact already on the wire
+
+Trigger: the fix for the unverified-session count was proposed as "add `UnverifiedSessions int` to
+`InventoryReport`, populated by the composer". The count was already derivable from
+`sessions[].state_reason`, which every report carries, so the new field would have stored the same
+fact twice. Nothing in the proposal was wrong about the symptom; only the storage location was.
+
+Action: before adding a field to a report, a request or a stored document, check whether the fact
+is already derivable from data that document carries. If it is, derive it at the layer that needs
+it instead of storing it. A stored counter and the list it counts can disagree, and then the
+consumer has to decide which one to trust, which is a contract question nobody asked for. State
+the trade-off explicitly when deriving: a per-render pass over rows the table already iterates is
+not the same cost as a per-request scan of a large document.
+
+Why this prevents recurrence: a redundant field looks like a convenience, and it is convenient
+right up to the first disagreement. Because both values are written by the same producer, the
+divergence appears only after a partial update, a retry, or a second producer, and by then the
+field is part of the wire contract and cannot be removed without a version bump. Deriving keeps
+one source of truth and needs no protocol, storage or schema change, which is also what lets a
+second adapter land without touching the Server.

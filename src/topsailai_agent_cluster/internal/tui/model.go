@@ -22,8 +22,14 @@ type SessionRow struct {
 	State             string `json:"state"`
 	Stale             bool   `json:"stale"`
 	Unknown           bool   `json:"unknown"`
-	LastSuccessAtMS   *int64 `json:"last_success_at_ms,omitempty"`
-	CollectionStatus  string `json:"collection_status"`
+	// Unverified marks a session the provider listed but whose liveness it could
+	// not verify, so no generation was reported. Such a session is reported as
+	// unknown rather than dropped, and only resume may address it. The flag is
+	// derived from state_reason so the summary can name the subset instead of
+	// hiding it inside the unknown bucket.
+	Unverified       bool   `json:"unverified,omitempty"`
+	LastSuccessAtMS  *int64 `json:"last_success_at_ms,omitempty"`
+	CollectionStatus string `json:"collection_status"`
 	// Drive is the bounded controller summary reported by the provider. A nil
 	// value means the provider reported no driver observation, which is not a
 	// confirmed absence of a controller.
@@ -54,7 +60,24 @@ func ListRows(endpoints []protocol.Endpoint, reports map[string]protocol.Invento
 		}
 		for _, session := range report.Sessions {
 			adapter := freshness[session.AdapterID]
-			rows = append(rows, SessionRow{EndpointID: endpoint.EndpointID, EndpointLabel: endpointLabel(endpoint), AdapterID: session.AdapterID, AdapterLabel: adapterLabel(adapter), SessionID: session.SessionID, ProviderSessionID: session.ProviderSessionID, DisplayName: session.DisplayName, ProjectWorkspace: session.ProjectWorkspace, Generation: session.Generation, State: session.State, Stale: adapter.Stale || endpointStale, Unknown: !adapter.DataKnown, LastSuccessAtMS: adapter.LastSuccessAtMS, CollectionStatus: adapter.CollectionStatus, Drive: session.Drive})
+			rows = append(rows, SessionRow{
+				EndpointID:        endpoint.EndpointID,
+				EndpointLabel:     endpointLabel(endpoint),
+				AdapterID:         session.AdapterID,
+				AdapterLabel:      adapterLabel(adapter),
+				SessionID:         session.SessionID,
+				ProviderSessionID: session.ProviderSessionID,
+				DisplayName:       session.DisplayName,
+				ProjectWorkspace:  session.ProjectWorkspace,
+				Generation:        session.Generation,
+				State:             session.State,
+				Stale:             adapter.Stale || endpointStale,
+				Unknown:           !adapter.DataKnown,
+				Unverified:        session.StateReason == protocol.StateReasonLivenessUnverified,
+				LastSuccessAtMS:   adapter.LastSuccessAtMS,
+				CollectionStatus:  adapter.CollectionStatus,
+				Drive:             session.Drive,
+			})
 		}
 	}
 	return rows

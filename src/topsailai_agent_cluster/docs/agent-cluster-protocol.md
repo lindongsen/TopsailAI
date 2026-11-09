@@ -58,6 +58,14 @@ The TUI keeps the row visible and labels it `unverified`. Entering it is refused
 and the resume hint, never with "session not found" and never with "generation changed", because
 neither is true and both hide the only recovery step.
 
+The fleet summary names the subset instead of hiding it inside the unknown bucket. An unverified
+session is reported as `unknown`, so it is counted there like any other unknown state, and the
+summary appends `unverified(n)` after the state tally. The bucket count is unchanged, so the
+numbers still add up to the row count, while an operator can tell "the provider restarted and
+every session needs a resume" from "the provider reported an unknown state". The count is derived
+from `state_reason` at render time rather than stored in the report, so one fact has one source of
+truth and no protocol or schema change is needed.
+
 ## Capability contract
 
 Endpoint publishes standard versioned capabilities for itself, abstract resources and LaunchProfiles. Private adapter capabilities never appear on the wire. Minimum admission requirements are health and bounded discovery of at least one supported resource kind. The MVP platform must implement agent start/resume/stop. Endpoint reports precise standard resource/profile support; an unsupported lifecycle operation is an explicit integration gap, not a silent substitute. Task and output modes remain capability-dependent.
