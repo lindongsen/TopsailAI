@@ -383,3 +383,23 @@ was correct when it was computed can cover a different block after any earlier e
 same turn. The tool reports success either way, and the damage is silent because prose has
 no compiler. Comparing the deletion count against the intent is what turns "the edit
 succeeded" into "the edit changed only what I meant".
+
+## A fabricated test state and a real state can share a name
+
+Trigger: the colour mapping for `idle`, `unknown` and `unverified` was changed to dim, and
+`unknown-state` was changed with it because the name contains `unknown`. That fixture is not
+the real `unknown` state: it is a made-up value that exists only to exercise the `default`
+branch of `stateStyle`, so it must stay yellow. Two tests failed, and the failure looked like
+a broken mapping rather than a broken fixture.
+
+Action: before changing a value that appears in a test, check whether the test asserts the
+real state or the fallback branch. A fixture whose name merely resembles a real state is
+testing the default path, and changing it silently removes the only coverage of that path.
+Keep a separate case for the real state, and name the fixture so the distinction is visible,
+for example `unknown-state` for the fallback and `unknown` for the real one.
+
+Why this prevents recurrence: a fixture name is chosen for readability, not for identity, so
+a substring match on a real state name is not evidence that the fixture represents it. The
+test still passes after the change, because the fallback branch accepts any unrecognized
+value, so the loss of coverage is invisible. Asserting both the real state and the fallback
+in the same table is what keeps the two paths from collapsing into one.
