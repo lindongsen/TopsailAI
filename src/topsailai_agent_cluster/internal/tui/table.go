@@ -412,6 +412,11 @@ func projectCells(values map[string]string, columns []tableColumn) []string {
 
 // tableStates derives each column's colour state from the row itself, so a
 // decorated cell such as "ok (<timestamp>)" keeps the colour of its base status.
+//
+// The DRIVER cell is the one exception: a verified running controller is marked
+// with its own state so it can be emphasised in place. The row colour already
+// carries the session state, and a controller is a separate fact, so colouring the
+// whole row for it would make one cell contradict its own row.
 func tableStates(row SessionRow, columns []tableColumn) []string {
 	states := make([]string, len(columns))
 	for i, column := range columns {
@@ -419,9 +424,20 @@ func tableStates(row SessionRow, columns []tableColumn) []string {
 			states[i] = dataStatus(row)
 			continue
 		}
+		if column.key == columnDrive && driveRunningVerified(row) {
+			states[i] = stateDriveRunning
+			continue
+		}
 		states[i] = rowState(row)
 	}
 	return states
+}
+
+// driveRunningVerified reports whether the provider verified a live controller.
+// An unverified, stale, exited, failed, absent or unknown record is never
+// emphasised, because emphasis must mean "a controller is running right now".
+func driveRunningVerified(row SessionRow) bool {
+	return row.Drive != nil && row.Drive.State == protocol.DriveStateRunning && row.Drive.Verified
 }
 
 // dataStatusCell embeds the latest success stamp in DATA_STATUS.
@@ -574,14 +590,27 @@ func dataStatus(row SessionRow) string {
 	return base
 }
 
+// stateDriveRunning is a per-cell emphasis marker, not a session state. It is
+// deliberately outside the session state vocabulary so it can never be confused
+// with, or counted as, a row state by the summary or the row colour.
+const stateDriveRunning = "drive_running"
+
 // writeCellState writes one cell with the row's colour. A data row is coloured
 // as a whole from its session state, so every cell and separator of that row
 // shares one style; a warning column keeps its own colour when it reports a
 // collection problem, because that signal must stay visible on a healthy row.
+//
+// The drive emphasis marker overrides the row colour for exactly one cell, so a
+// verified running controller is visible without recolouring the row it belongs
+// to. It is bold green rather than plain green so it stays distinguishable from a
+// running session row, which is plain green.
 func writeCellState(w io.Writer, cell string, warn bool, state, rowStyle string, policy ColorPolicy) error {
 	if !policy.Enabled {
 		_, err := io.WriteString(w, cell)
 		return err
+	}
+	if state == stateDriveRunning {
+		return writeStyled(w, ansiBoldGreen, cell, policy)
 	}
 	if warn {
 		switch {

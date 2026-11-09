@@ -222,3 +222,109 @@ func TestInfoRendersEmptyWorkspaceWithoutInventing(t *testing.T) {
 		t.Fatalf("missing empty workspace line: %q", out.String())
 	}
 }
+
+// TestInfoRendersDriveDetail proves info reports the controller detail of the
+// selected session, including the process identity, so an operator does not have
+// to run a second command to learn what a drive start actually created.
+func TestInfoRendersDriveDetail(t *testing.T) {
+	var out strings.Builder
+	session := protocol.Session{
+		SessionID: "res-1",
+		Drive: &protocol.DriveSummary{
+			State:         protocol.DriveStateRunning,
+			Verified:      true,
+			ControllerPID: 4321,
+			RunID:         "run-abc",
+			ObservedAtMS:  1700000000000,
+		},
+	}
+	if err := RenderSessionInfo(&out, protocol.Endpoint{EndpointID: "endpoint-1"}, session); err != nil {
+		t.Fatalf("RenderSessionInfo: %v", err)
+	}
+	rendered := out.String()
+	for _, want := range []string{
+		"drive_state: running",
+		"drive_verified: true",
+		"controller_pid: 4321",
+		"drive_run_id: run-abc",
+		"drive_observed_at_ms: 1700000000000",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("missing %q in info output: %q", want, rendered)
+		}
+	}
+}
+
+// TestInfoReportsAbsentDriveAsNotReported proves an unreported controller is
+// stated rather than omitted. Omitting it would let an operator read a missing
+// line as "no controller exists", which the provider never claimed.
+func TestInfoReportsAbsentDriveAsNotReported(t *testing.T) {
+	var out strings.Builder
+	if err := RenderSessionInfo(&out, protocol.Endpoint{EndpointID: "endpoint-1"}, protocol.Session{SessionID: "res-1"}); err != nil {
+		t.Fatalf("RenderSessionInfo: %v", err)
+	}
+	rendered := out.String()
+	if !strings.Contains(rendered, "drive_state: not_reported") {
+		t.Fatalf("missing not_reported drive state: %q", rendered)
+	}
+	if !strings.Contains(rendered, "not proof that no driver exists") {
+		t.Fatalf("missing absence caveat: %q", rendered)
+	}
+}
+
+// TestInfoAndDriveStatusShareDriveDetail proves the two surfaces cannot drift.
+// They render the same fields from one source, so a field added to one is never
+// silently missing from the other.
+func TestInfoAndDriveStatusShareDriveDetail(t *testing.T) {
+	drive := &protocol.DriveSummary{
+		State:         protocol.DriveStateRunning,
+		Verified:      true,
+		ControllerPID: 4321,
+		RunID:         "run-abc",
+		ObservedAtMS:  1700000000000,
+		Reason:        "launched",
+	}
+	var info strings.Builder
+	if err := RenderSessionInfo(&info, protocol.Endpoint{EndpointID: "endpoint-1"}, protocol.Session{SessionID: "res-1", Drive: drive}); err != nil {
+		t.Fatalf("RenderSessionInfo: %v", err)
+	}
+	var status strings.Builder
+	if err := renderDriveStatus(&status, driveStatusView{SessionID: "res-1", Drive: drive}); err != nil {
+		t.Fatalf("renderDriveStatus: %v", err)
+	}
+	for _, line := range driveDetailLines(drive) {
+		want := line.label + ": " + line.value
+		if !strings.Contains(info.String(), want) {
+			t.Fatalf("info is missing %q: %q", want, info.String())
+		}
+		if !strings.Contains(status.String(), want) {
+			t.Fatalf("drive status is missing %q: %q", want, status.String())
+		}
+	}
+}
+
+// TestInfoSanitizesDriveValues proves the drive detail is escaped like every
+// other provider value, so a controller reason cannot inject a control sequence
+// or forge an extra detail line.
+func TestInfoSanitizesDriveValues(t *testing.T) {
+	var out strings.Builder
+	session := protocol.Session{
+		SessionID: "res-1",
+		Drive: &protocol.DriveSummary{
+			State:  protocol.DriveStateRunning,
+			Reason: "launched\x1b[31m\nsession_id: forged",
+		},
+	}
+	if err := RenderSessionInfo(&out, protocol.Endpoint{EndpointID: "endpoint-1"}, session); err != nil {
+		t.Fatalf("RenderSessionInfo: %v", err)
+	}
+	rendered := out.String()
+	if strings.Contains(rendered, "\x1b") {
+		t.Fatalf("escape sequence survived: %q", rendered)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.HasPrefix(line, "session_id:") && !strings.HasPrefix(line, "session_id: res-1") {
+			t.Fatalf("forged detail line survived: %q", rendered)
+		}
+	}
+}

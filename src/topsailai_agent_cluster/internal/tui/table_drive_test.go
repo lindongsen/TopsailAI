@@ -135,3 +135,141 @@ func TestDriveColumnRendersInTable(t *testing.T) {
 		t.Fatalf("verified drive cell=%q want=running", got)
 	}
 }
+
+// renderDriveRow renders one row and returns the output, so a colour assertion
+// cannot be confused with styling produced by another row.
+func renderDriveRow(t *testing.T, row SessionRow, color ColorPolicy) string {
+	t.Helper()
+	var out, errors strings.Builder
+	if err := RenderTable(&out, &errors, []SessionRow{row}, nil, TableOptions{Location: time.UTC, Color: color}); err != nil {
+		t.Fatalf("RenderTable: %v", err)
+	}
+	return out.String()
+}
+
+// TestDriveCellEmphasisesOnlyVerifiedRunning proves the emphasis means exactly
+// "a controller is running right now". Every other state must stay unemphasised,
+// because a bold green cell reads as a live controller and would make an
+// unverified, stale, exited or failed record look healthy.
+func TestDriveCellEmphasisesOnlyVerifiedRunning(t *testing.T) {
+	cases := []struct {
+		name string
+		row  SessionRow
+		want bool
+	}{
+		{
+			name: "verified running is emphasised",
+			row:  SessionRow{Drive: &protocol.DriveSummary{State: protocol.DriveStateRunning, Verified: true}},
+			want: true,
+		},
+		{
+			name: "unverified running is never emphasised",
+			row:  SessionRow{Drive: &protocol.DriveSummary{State: protocol.DriveStateRunning, Verified: false}},
+			want: false,
+		},
+		{
+			name: "stale record is never emphasised",
+			row:  SessionRow{Drive: &protocol.DriveSummary{State: protocol.DriveStateStale}},
+			want: false,
+		},
+		{
+			name: "exited record is never emphasised",
+			row:  SessionRow{Drive: &protocol.DriveSummary{State: protocol.DriveStateExited}},
+			want: false,
+		},
+		{
+			name: "failed record is never emphasised",
+			row:  SessionRow{Drive: &protocol.DriveSummary{State: protocol.DriveStateFailed}},
+			want: false,
+		},
+		{
+			name: "reported none is never emphasised",
+			row:  SessionRow{Drive: &protocol.DriveSummary{State: protocol.DriveStateNone}},
+			want: false,
+		},
+		{
+			name: "absent observation is never emphasised",
+			row:  SessionRow{},
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.row.EndpointID = "endpoint-1"
+			tc.row.EndpointLabel = "host-1"
+			tc.row.SessionID = "res_1"
+			tc.row.State = "running"
+			tc.row.CollectionStatus = protocol.CollectionSucceeded
+			rendered := renderDriveRow(t, tc.row, ColorPolicy{Enabled: true})
+			got := strings.Contains(rendered, ansiBoldGreen)
+			if got != tc.want {
+				t.Fatalf("bold green present=%t want=%t output=%q", got, tc.want, rendered)
+			}
+		})
+	}
+}
+
+// TestDriveEmphasisDoesNotRecolourTheRow proves the emphasis is confined to the
+// DRIVER cell. The row colour still reports the session state, so a controller
+// can never make one cell contradict the row it belongs to.
+func TestDriveEmphasisDoesNotRecolourTheRow(t *testing.T) {
+	row := SessionRow{
+		EndpointID:       "endpoint-1",
+		EndpointLabel:    "host-1",
+		SessionID:        "res_1",
+		State:            "running",
+		CollectionStatus: protocol.CollectionSucceeded,
+		Drive:            &protocol.DriveSummary{State: protocol.DriveStateRunning, Verified: true},
+	}
+	rendered := renderDriveRow(t, row, ColorPolicy{Enabled: true})
+	// The NO cell keeps the plain green row colour, so the row is still reported
+	// as a running session rather than being recoloured for the controller.
+	if !strings.Contains(rendered, ansiGreen+"1 ") {
+		t.Fatalf("row colour lost from the NO cell: %q", rendered)
+	}
+	if !strings.Contains(rendered, ansiBoldGreen+"running") {
+		t.Fatalf("drive cell is not emphasised: %q", rendered)
+	}
+}
+
+// TestDriveEmphasisIsAbsentWithoutColour proves the emphasis is presentation
+// only. A plain terminal, a redirected stream and a dumb terminal must still
+// carry the drive state as text, so the signal never depends on colour support.
+func TestDriveEmphasisIsAbsentWithoutColour(t *testing.T) {
+	row := SessionRow{
+		EndpointID:       "endpoint-1",
+		EndpointLabel:    "host-1",
+		SessionID:        "res_1",
+		State:            "running",
+		CollectionStatus: protocol.CollectionSucceeded,
+		Drive:            &protocol.DriveSummary{State: protocol.DriveStateRunning, Verified: true},
+	}
+	rendered := renderDriveRow(t, row, ColorPolicy{})
+	if strings.Contains(rendered, "\x1b") {
+		t.Fatalf("plain output contains ANSI: %q", rendered)
+	}
+	if !strings.Contains(rendered, "running") {
+		t.Fatalf("drive state lost without colour: %q", rendered)
+	}
+}
+
+// TestDriveEmphasisSurvivesNarrowLayout proves the narrow layout emphasises the
+// same cell. Both layouts share one state projection, so a terminal width must
+// never change which fact is emphasised.
+func TestDriveEmphasisSurvivesNarrowLayout(t *testing.T) {
+	row := SessionRow{
+		EndpointID:       "endpoint-1",
+		EndpointLabel:    "host-1",
+		SessionID:        "res_1",
+		State:            "running",
+		CollectionStatus: protocol.CollectionSucceeded,
+		Drive:            &protocol.DriveSummary{State: protocol.DriveStateRunning, Verified: true},
+	}
+	var out, errors strings.Builder
+	if err := RenderTable(&out, &errors, []SessionRow{row}, nil, TableOptions{Width: 40, Location: time.UTC, Color: ColorPolicy{Enabled: true}}); err != nil {
+		t.Fatalf("RenderTable: %v", err)
+	}
+	if !strings.Contains(out.String(), ansiBoldGreen) {
+		t.Fatalf("narrow layout lost the emphasis: %q", out.String())
+	}
+}

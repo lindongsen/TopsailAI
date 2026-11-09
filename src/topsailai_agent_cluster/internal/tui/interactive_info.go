@@ -120,11 +120,14 @@ func resolveInfoTarget(state *interactiveState, token string) (string, string, e
 // because session metadata is untrusted report data. The project workspace is
 // printed as descriptive context only; it never selects a route, capability, or
 // permission.
+//
+// The drive fields come from driveDetailLines, the same source drive status uses,
+// so the two surfaces cannot drift. They are appended after the session fields
+// because a controller belongs to the session rather than being part of its
+// identity, and an absent observation is reported as not_reported instead of being
+// omitted: an operator reading info must not conclude that no controller exists.
 func RenderSessionInfo(w io.Writer, endpoint protocol.Endpoint, session protocol.Session) error {
-	lines := []struct {
-		label string
-		value string
-	}{
+	lines := []detailLine{
 		{"session_id", session.SessionID},
 		{"provider_session_id", session.ProviderSessionID},
 		{"display_name", session.DisplayName},
@@ -141,6 +144,7 @@ func RenderSessionInfo(w io.Writer, endpoint protocol.Endpoint, session protocol
 		{"endpoint_id", endpoint.EndpointID},
 		{"endpoint_connection_state", endpoint.ConnectionState},
 	}
+	lines = append(lines, driveDetailLines(session.Drive)...)
 	for _, line := range lines {
 		if _, err := fmt.Fprintf(w, "%s: %s\n", line.label, escapeCell(line.value)); err != nil {
 			return err
