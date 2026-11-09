@@ -73,7 +73,7 @@ see the effect.
   multi-line block and asks once, because the assembled block is never echoed as a
   whole and the question is the only place the operator can see it before it is
   admitted. The confirmation gate stays on every operation that cannot be undone:
-  `stop`, `inject`, `interrupt`, `ctl` and `drive start`.
+  `stop`, `btw`, `interrupt`, `ctl`, `drive start` and `drive stop`.
 - A confirmation question names the provider session identifier first, followed by
   the opaque cluster resource ID in parentheses, for example
   `stop session provider-res-1 (res-1)? Confirm stop?`. The provider identifier is
