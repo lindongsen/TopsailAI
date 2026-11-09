@@ -20,6 +20,31 @@ and has no flag, so the launcher exports it. The launcher
 `scripts/agent-clusterctl` reads a shell configuration file and passes values as
 flags, so a bundle deployment does not depend on inherited environment variables.
 
+## Configuration sources
+
+The same variables reach a process through three different deployment paths, and the path decides
+which of them is authoritative:
+
+| Deployment | Configuration source | Consequence |
+|---|---|---|
+| Bundle | `conf/node.conf`, read by `scripts/agent-clusterctl` and passed as flags | the conffile is authoritative for every key the launcher forwards, and the environment is not consulted for those keys |
+| Debian package | `/opt/agent-cluster/conf/node.conf`, registered as a conffile | an upgrade does not replace the operator's file |
+| Container image | `ENV` in `docker/Dockerfile` plus `-e` at run time | no conffile exists, so the environment is the only source |
+
+Both node deployments use the same file name, `conf/node.conf`; `conf/node.server.conf.example` and
+`conf/node.endpoint.conf.example` are the role templates the package copies into place.
+
+A container image carries no `conf/` directory at all. `internal/config/config.go` reads only the
+process environment, so a `node.conf` placed in the image would be inert, and the image fixes the
+database path and the three TLS paths in `ENV` rather than shipping a file. A variable set with `-e`
+overrides the image default, which is the same precedence the flag has over the environment in a
+package deployment. See `docs/agent-cluster-architecture.md` for the container directory tree and the
+mount points.
+
+The CLI is unaffected by the deployment form: it resolves its two variables from the five sources
+listed under "CLI configuration file precedence" regardless of whether the Server runs as a package or
+a container.
+
 ## Shared
 
 | Variable | Flag | Default | Purpose |
@@ -266,7 +291,8 @@ File format constraints:
 
 ## Related documents
 
-- `docs/agent-cluster-architecture.md`: security baseline and authority model.
+- `docs/agent-cluster-architecture.md`: security baseline, authority model and the implemented
+  container deployment.
 - `docs/agent-cluster-protocol.md`: `ctl.<action>` and `command.exec` operations.
 - `conf/node.server.conf.example` and `conf/node.endpoint.conf.example`: launcher
   configuration examples.

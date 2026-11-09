@@ -9,13 +9,21 @@ created: 2026-10-27
 
 ## Document index
 
-- `docs/agent-cluster-architecture.md`: goals, boundaries, topology, storage, security and design decisions; discussion draft.
+- `docs/agent-cluster-architecture.md`: goals, boundaries, topology, storage, security, container deployment and design decisions; discussion draft.
 - `docs/agent-cluster-protocol.md`: abstract resources, capability negotiation, APIs, commands, synchronization and recovery; discussion draft.
 - `docs/agent-cluster-adapters.md`: Endpoint-private TopsailAI mapping and integration questions; discussion draft.
 - `docs/agent-cluster-database.md`: three Server business tables, constraints, transactions and retention; discussion draft.
 - `docs/agent-cluster-history.md`: provider session history read, resume addressing and the inventory join; implemented contract.
+- `docs/API.md`: implemented Server HTTP surface and response envelope; implemented contract.
+- `docs/Environment_Variables.md`: every variable, its flag, its default and the three deployment configuration sources; implemented contract.
+- `docs/cli-command-surface-rules.md`: rules the operator CLI command surface must follow; implemented contract.
 
-These design documents are not implemented features or an approved final specification. Naming, machine-level Endpoint scope, required lifecycle support and the absence of periodic stdout snapshot refresh are human-confirmed decisions; other proposals remain under discussion. Implementation and verification planning is tracked separately in `.task/plan_20261027T153140_agent-cluster-delivery.md` (project-relative path).
+The five `agent-cluster-*.md` documents are discussion drafts, not an approved final specification;
+the three documents marked as an implemented contract describe behaviour that exists in the code.
+Naming, machine-level Endpoint scope, required lifecycle support and the absence of periodic stdout
+snapshot refresh are human-confirmed decisions; other proposals remain under discussion.
+Implementation and verification planning is tracked separately in
+`.task/plan_20261027T153140_agent-cluster-delivery.md` (project-relative path).
 
 ## Human requirements and sources
 
@@ -214,3 +222,51 @@ Human clarification:
 > 同意 “不引入 Session 历史或复杂消息系统”
 
 Controller responsibilities are CLI invocation, standard formatting, independent collection scheduling, transport, policy and command delivery evidence. Provider-specific discovery/scope and Agent process management belong to Adapter CLI/runtime. Endpoint owns only its bounded invocation helpers and transport resources, never the Agents reached through those tools. Local last-known per-Adapter cache is a latest-value cache, not Session history; on cache loss report unknown, not fabricated emptiness.
+
+## Implemented container deployment
+
+The Server also runs as a container image built from `docker/Dockerfile`. This section describes the
+implemented image, not a proposal. The image is a deployment form of the Server only; an Endpoint runs
+as a node process installed by the Debian package or the bundle, never inside this image.
+
+The image uses the same `/opt/agent-cluster` tree as the package, and every mount point is the same
+path on both sides, so a host path and a container path are never two names for one file:
+
+| Path | Package | Image | Note |
+|---|---|---|---|
+| `/opt/agent-cluster/bin/` | role binaries | `agent-cluster-server` | entry point |
+| `/opt/agent-cluster/conf/` | conffiles | absent | the image is configured by environment variables |
+| `/opt/agent-cluster/certs/` | TLS material | mounted read-only | `ca.pem`, `server.pem`, `server-key.pem` |
+| `/opt/agent-cluster/data/` | SQLite state | mounted read-write | `server.sqlite` |
+| `/opt/agent-cluster/logs/` | rotated log files | present, unused | logs go to stderr |
+| `/opt/agent-cluster/run/` | pid file | absent | the container runtime supervises the process |
+
+`conf/` and `run/` are deliberately absent rather than empty. `internal/config/config.go` reads only
+the process environment and never a `node.conf`, and the container runtime owns process supervision,
+so creating those directories would suggest a conffile or a pid file is honoured inside the container
+when it is not. The image therefore differs from a package only where the difference is real.
+
+The image fixes the database path and the three TLS paths in `ENV`, so a run command supplies only
+the token and the mounts. `AGENT_CLUSTER_LOG_OUTPUT` is `stderr`, because a container should not own a
+log file: the Docker log driver rotates it, and the rotation settings in
+`docs/Environment_Variables.md` do not apply.
+
+The container runs as the unprivileged uid `10001` and listens on every interface. A loopback-only
+bind would make the published port unreachable from other containers, which is the point of
+publishing it: endpoints dial a bridge gateway address and never depend on the container's own IP,
+which changes on every recreate.
+
+The state directory is shared with the host Endpoint, so ownership is granted per entry rather than
+recursively. The directory and `server.sqlite` belong to uid `10001`, while `endpoint.sqlite` keeps
+its own owner, so the container cannot read it. A recursive `chown` would hand the endpoint database
+to the container and weaken the isolation that keeps it unreadable there. SQLite reports a permission
+failure as `out of memory (14)`, which hides the real cause.
+
+The runtime stage installs no packages, because this host's resolver forwards
+`dl-cdn.alpinelinux.org` to unreachable public resolvers and `apk add` fails with a DNS lookup error.
+Busybox already provides the account and probe tools, and the CA bundle is copied from the build
+stage, so the image also builds on an air-gapped host.
+
+Recreating the Server container resets the in-memory connection generation, so every Endpoint must
+restart before it can reconnect. That is the same fencing behaviour described in the transport
+section, not a container-specific defect.

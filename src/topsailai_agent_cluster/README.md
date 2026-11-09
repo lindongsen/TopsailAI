@@ -1,8 +1,12 @@
 # Agent Cluster
 
-Agent Cluster provides provider-neutral Server, Endpoint, and TUI command entry points.
+Agent Cluster provides provider-neutral Server, Endpoint, and TUI command entry points. The Server
+holds the operator API and the latest inventory projection, the Endpoint owns local adapter
+execution and collection, and the CLI serves both an interactive REPL and noninteractive
+subcommands. TopsailAI is the first adapter; the protocol does not depend on it.
 
-The implementation is under active development. The current foundation provides shared configuration and structured logging only.
+The implementation is functional but still under active development. The design documents under
+`docs/` describe the intended contract and are not an approved final specification.
 
 ## Deployment
 
@@ -149,3 +153,7 @@ directory and the server database belong to the image's unprivileged uid `10001`
 database keeps its own owner, so the container cannot read it. A recursive chown would hand that
 database to the container and weaken the isolation. SQLite reports a permission failure as
 `out of memory (14)`, which hides the real cause.
+
+`docs/agent-cluster-architecture.md` carries the authoritative description of this deployment form,
+including the full path table and the reason each difference from a package exists. This section is
+the short version for someone who only wants to start the container.
