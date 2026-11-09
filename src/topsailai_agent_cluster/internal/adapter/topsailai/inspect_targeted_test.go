@@ -54,7 +54,10 @@ func TestInspectUsesTargetedProviderQuery(t *testing.T) {
 	if len(runner.calls) != 1 {
 		t.Fatalf("provider invocations=%d, want 1: %q", len(runner.calls), runner.calls)
 	}
-	want := []string{"workspace", "list", "-s", "provider-session", "--json", "--local"}
+	// --local must be absent: a session recorded on another host is invisible to a
+	// local read, and resume authorizes on the absence of a live target, so a local
+	// read would report that session as not found and admit the resume anyway.
+	want := []string{"workspace", "list", "-s", "provider-session", "--json"}
 	if got := runner.calls[0]; len(got) != len(want) {
 		t.Fatalf("argv=%q want=%q", got, want)
 	} else {
@@ -79,5 +82,53 @@ func TestInspectReportsAbsenceWithoutError(t *testing.T) {
 	}
 	if result.Found {
 		t.Fatalf("absent resource reported as found: %#v", result)
+	}
+}
+
+// TestInspectReportsCrossHostSessionAsFoundNotLive proves a session recorded on
+// another host is found but not live, so resume can reach it.
+//
+// The provider reports process_generation as null for such a row, because this
+// host cannot verify a process it cannot see. Reporting it as not found would be
+// wrong in the other direction: the record exists, and resume authorizes on the
+// absence of a live target, so a not-found answer would admit the resume while
+// claiming the target does not exist. A task directory shared between hosts is
+// exactly the case where resuming another host's session is intended.
+func TestInspectReportsCrossHostSessionAsFoundNotLive(t *testing.T) {
+	runner := &recordingRunner{out: []byte(`{"items":[{"session_id":"provider-session","process_generation":null,"status":"idle","hostname":"other-host"}]}`)}
+	a := newInspectAdapter(t, runner)
+	result, err := a.Inspect(context.Background(), adapter.InspectRequest{Target: protocol.CommandTarget{ResourceID: "res_provider-session"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Found {
+		t.Fatalf("cross-host record must be found: %#v", result)
+	}
+	if result.Live {
+		t.Fatalf("cross-host record must not be live: %#v", result)
+	}
+	if result.Generation != "" {
+		t.Fatalf("cross-host record must report no generation: %#v", result)
+	}
+	if result.State != "idle" {
+		t.Fatalf("state=%q want idle", result.State)
+	}
+}
+
+// TestInspectReportsLiveSessionAsLive proves a session whose process is verified
+// to hold the output file is reported live, so resume refuses it. Without this
+// guard a resume would start a second process against a session already running.
+func TestInspectReportsLiveSessionAsLive(t *testing.T) {
+	runner := &recordingRunner{out: []byte(`{"items":[{"session_id":"provider-session","process_generation":"g7","status":"running"}]}`)}
+	a := newInspectAdapter(t, runner)
+	result, err := a.Inspect(context.Background(), adapter.InspectRequest{Target: protocol.CommandTarget{ResourceID: "res_provider-session"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Found || !result.Live {
+		t.Fatalf("live session must be found and live: %#v", result)
+	}
+	if result.Generation != "g7" {
+		t.Fatalf("generation=%q want g7", result.Generation)
 	}
 }
