@@ -122,11 +122,13 @@ type watchController struct {
 	ticks   <-chan time.Time
 	release func()
 	color   ColorPolicy
-	// layout is the real output boundary's presentation policy, so a rendered
-	// table is fitted to the terminal instead of to the internal buffer.
-	layout TableLayout
-	ctx    context.Context
-	cancel context.CancelFunc
+	// layoutSource re-reads the real output boundary's presentation policy on
+	// every render, so a rendered table is fitted to the terminal instead of to
+	// the internal buffer, and a terminal resize during the loop is honoured
+	// rather than frozen at the moment the loop started.
+	layoutSource func() TableLayout
+	ctx          context.Context
+	cancel       context.CancelFunc
 
 	mu      sync.Mutex
 	pending *watchResult
@@ -137,24 +139,26 @@ type watchController struct {
 }
 
 // newWatchController starts one loop. The ticker is injected so tests can drive
-// ticks deterministically; nil selects the real ticker.
-func newWatchController(parent context.Context, api InteractiveAPI, filter string, request watchRequest, ticker WatchTicker, color ColorPolicy, layout TableLayout) *watchController {
+// ticks deterministically; nil selects the real ticker. layoutSource is queried
+// on every render, so the caller passes a live read of the output boundary
+// rather than a snapshot of it.
+func newWatchController(parent context.Context, api InteractiveAPI, filter string, request watchRequest, ticker WatchTicker, color ColorPolicy, layoutSource func() TableLayout) *watchController {
 	if ticker == nil {
 		ticker = realWatchTicker
 	}
 	ticks, release := ticker(request.Interval)
 	ctx, cancel := context.WithCancel(parent)
 	controller := &watchController{
-		api:     api,
-		filter:  filter,
-		request: request,
-		ticks:   ticks,
-		release: release,
-		color:   color,
-		layout:  layout,
-		ctx:     ctx,
-		cancel:  cancel,
-		done:    make(chan struct{}),
+		api:          api,
+		filter:       filter,
+		request:      request,
+		ticks:        ticks,
+		release:      release,
+		color:        color,
+		layoutSource: layoutSource,
+		ctx:          ctx,
+		cancel:       cancel,
+		done:         make(chan struct{}),
 	}
 	go controller.run()
 	return controller
@@ -166,12 +170,16 @@ func realWatchTicker(interval time.Duration) (<-chan time.Time, func()) {
 	return ticker.C, ticker.Stop
 }
 
-// run collects on every tick until the loop is stopped. A tick that arrives
-// while a collection is in flight is dropped by the ticker channel, so a slow
-// collection never queues a backlog of overlapping scans.
+// run collects once immediately, then on every tick until the loop is stopped.
+// The immediate collection means the operator sees the current inventory at
+// once instead of waiting a whole interval for a table that is already
+// available. A tick that arrives while a collection is in flight is dropped by
+// the ticker channel, so a slow collection never queues a backlog of
+// overlapping scans.
 func (c *watchController) run() {
 	defer close(c.done)
 	defer c.release()
+	c.collect()
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -246,10 +254,12 @@ func (c *watchController) load(ctx context.Context) (reportLoad, error) {
 // and layout stay identical to a manual list. The writer keeps trusted SGR when
 // the colour policy allows it, because the table renderer's styling is trusted
 // application output; provider-derived cell text is already sanitized by
-// escapeCell, so no untrusted escape can survive this seam.
+// escapeCell, so no untrusted escape can survive this seam. The layout is read
+// here rather than stored, so a terminal resize during the loop is honoured on
+// the next render.
 func (c *watchController) render(loaded reportLoad) ([]SessionRow, []byte, error) {
 	var buffer bytes.Buffer
-	safe := &watchWriter{safeWriter: &safeWriter{target: &buffer, keepSGR: c.color.Enabled}, layout: c.layout}
+	safe := &watchWriter{safeWriter: &safeWriter{target: &buffer, keepSGR: c.color.Enabled}, layout: c.layoutSource()}
 	var rows []SessionRow
 	options := tableOptionsFor(safe, c.color, false, func(rendered []SessionRow) {
 		rows = append(rows, rendered...)
@@ -404,6 +414,10 @@ func startWatch(parent context.Context, api InteractiveAPI, state *interactiveSt
 	if err != nil {
 		return nil
 	}
-	controller := newWatchController(parent, api, filter, request, options.Ticks, options.Color, OutputLayout(out))
+	// The layout is passed as a live read, not a snapshot, so a terminal resize
+	// during the loop is honoured on the next render.
+	controller := newWatchController(parent, api, filter, request, options.Ticks, options.Color, func() TableLayout {
+		return OutputLayout(out)
+	})
 	return &replWatch{controller: controller, state: state}
 }

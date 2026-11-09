@@ -128,6 +128,12 @@ func waitForResult(t *testing.T, controller *watchController) watchResult {
 	return watchResult{}
 }
 
+// staticLayout adapts a fixed layout to the live layout source, so a test that
+// does not exercise resizing keeps asserting one presentation policy.
+func staticLayout(layout TableLayout) func() TableLayout {
+	return func() TableLayout { return layout }
+}
+
 // TestParseWatchArguments covers the interactive watch grammar.
 func TestParseWatchArguments(t *testing.T) {
 	cases := []struct {
@@ -176,17 +182,21 @@ func TestParseWatchArgumentsForceFloorNamesTheReason(t *testing.T) {
 	}
 }
 
-// TestWatchControllerCollectsOncePerTick proves one tick performs exactly one
-// collection and publishes rendered output.
-func TestWatchControllerCollectsOncePerTick(t *testing.T) {
+// TestWatchControllerCollectsImmediatelyThenOncePerTick proves the loop
+// publishes a table before any tick arrives, and that each tick then adds
+// exactly one more collection. The immediate collection is what lets the
+// operator see the current inventory at once instead of waiting a whole
+// interval for a table that is already available.
+func TestWatchControllerCollectsImmediatelyThenOncePerTick(t *testing.T) {
 	stub := newWatchStub()
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
 	defer controller.Stop()
-	ticks.tick(t)
+	// No tick is delivered here: the first result must come from the immediate
+	// collection, so a loop that still waits for a tick fails this test.
 	result := waitForResult(t, controller)
 	if result.err != nil {
-		t.Fatalf("collection failed: %v", result.err)
+		t.Fatalf("immediate collection failed: %v", result.err)
 	}
 	if stub.callCount() != 2 {
 		t.Fatalf("inventory reads=%d, want one per endpoint", stub.callCount())
@@ -197,21 +207,42 @@ func TestWatchControllerCollectsOncePerTick(t *testing.T) {
 	if !strings.Contains(string(result.output), "host-one") {
 		t.Fatalf("rendered output missing endpoint data: %q", result.output)
 	}
+	ticks.tick(t)
+	second := waitForResult(t, controller)
+	if second.err != nil {
+		t.Fatalf("tick collection failed: %v", second.err)
+	}
+	if stub.callCount() != 4 {
+		t.Fatalf("inventory reads=%d after one tick, want two collections", stub.callCount())
+	}
 }
 
 // TestWatchControllerSkipsTickWhileCollecting proves a tick that arrives during
-// a collection is dropped instead of queuing an overlapping scan.
+// a collection is dropped instead of queuing an overlapping scan. The immediate
+// collection is the one in flight, so no tick is needed to start it.
 func TestWatchControllerSkipsTickWhileCollecting(t *testing.T) {
 	stub := newWatchStub()
 	gate := make(chan struct{})
 	stub.gate = gate
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
 	defer controller.Stop()
-	ticks.tick(t)
-	// The first collection is blocked, so the tick channel has no receiver and
-	// a second tick cannot be delivered. Releasing the gate proves the loop
-	// resumes with a single pending result rather than a backlog.
+	// Wait until the immediate collection is actually blocked on the gate, so
+	// the tick below is offered to a loop that is inside collect().
+	deadline := time.Now().Add(2 * time.Second)
+	for stub.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if stub.callCount() == 0 {
+		t.Fatal("immediate collection never started")
+	}
+	// The tick channel is unbuffered and the loop is inside collect(), so a tick
+	// has no receiver and must not be accepted.
+	select {
+	case ticks.ticks <- time.Now():
+		t.Fatal("tick was accepted while a collection was in flight")
+	default:
+	}
 	close(gate)
 	result := waitForResult(t, controller)
 	if result.err != nil {
@@ -223,13 +254,20 @@ func TestWatchControllerSkipsTickWhileCollecting(t *testing.T) {
 }
 
 // TestWatchControllerStopCancelsInFlightCollection proves Stop releases a
-// blocked collection instead of waiting for it.
+// blocked collection instead of waiting for it. The immediate collection is the
+// blocked one, so Stop must cancel it without any tick having been delivered.
 func TestWatchControllerStopCancelsInFlightCollection(t *testing.T) {
 	stub := newWatchStub()
 	stub.gate = make(chan struct{})
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
-	ticks.tick(t)
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
+	deadline := time.Now().Add(2 * time.Second)
+	for stub.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if stub.callCount() == 0 {
+		t.Fatal("immediate collection never started")
+	}
 	stopped := make(chan struct{})
 	go func() {
 		controller.Stop()
@@ -246,14 +284,14 @@ func TestWatchControllerStopCancelsInFlightCollection(t *testing.T) {
 }
 
 // TestWatchControllerReportsRepeatedFailureOnce proves a permanently failing
-// endpoint cannot flood the terminal on every tick.
+// endpoint cannot flood the terminal. The immediate collection reports the
+// failure once, and the following tick repeats it without publishing again.
 func TestWatchControllerReportsRepeatedFailureOnce(t *testing.T) {
 	stub := newWatchStub()
 	stub.setFail(errors.New("endpoint unreachable"))
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
 	defer controller.Stop()
-	ticks.tick(t)
 	first := waitForResult(t, controller)
 	if first.err == nil {
 		t.Fatal("expected a reported failure")
@@ -273,9 +311,8 @@ func TestWatchControllerReportsRecoveryAfterFailure(t *testing.T) {
 	stub := newWatchStub()
 	stub.setFail(errors.New("endpoint unreachable"))
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
 	defer controller.Stop()
-	ticks.tick(t)
 	if result := waitForResult(t, controller); result.err == nil {
 		t.Fatal("expected a reported failure")
 	}
@@ -295,7 +332,7 @@ func TestWatchControllerLeavesNoGoroutine(t *testing.T) {
 	before := runtime.NumGoroutine()
 	stub := newWatchStub()
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
 	controller.Stop()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -309,14 +346,14 @@ func TestWatchControllerLeavesNoGoroutine(t *testing.T) {
 
 // TestWatchControllerRejectsPartialCollection proves a partially failed
 // collection is rejected instead of rendering an incomplete row set, because a
-// shorter table would silently rebind row numbers.
+// shorter table would silently rebind row numbers. The immediate collection is
+// enough to observe it.
 func TestWatchControllerRejectsPartialCollection(t *testing.T) {
 	stub := newWatchStub()
 	stub.inventoryErrors = map[string]error{"endpoint-2": errors.New("adapter failed")}
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
 	defer controller.Stop()
-	ticks.tick(t)
 	result := waitForResult(t, controller)
 	if result.err == nil {
 		t.Fatal("partial collection was accepted")
@@ -327,13 +364,13 @@ func TestWatchControllerRejectsPartialCollection(t *testing.T) {
 }
 
 // TestWatchControllerForcedModeUsesForcedCollection proves --force asks the
-// Endpoint for a fresh collection instead of reading the projection.
+// Endpoint for a fresh collection instead of reading the projection. The
+// immediate collection is forced, so no tick is needed to observe it.
 func TestWatchControllerForcedModeUsesForcedCollection(t *testing.T) {
 	stub := refreshScopeStub()
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: 10 * time.Second, Force: true}, ticks.ticker, ColorPolicy{}, TableLayout{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: 10 * time.Second, Force: true}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
 	defer controller.Stop()
-	ticks.tick(t)
 	result := waitForResult(t, controller)
 	if result.err != nil {
 		t.Fatalf("forced collection failed: %v", result.err)
@@ -344,13 +381,13 @@ func TestWatchControllerForcedModeUsesForcedCollection(t *testing.T) {
 }
 
 // TestWatchControllerProjectionModeDoesNotForce proves the default mode never
-// triggers a provider discovery.
+// triggers a provider discovery. The immediate collection is enough to observe
+// it, so no tick is needed.
 func TestWatchControllerProjectionModeDoesNotForce(t *testing.T) {
 	stub := refreshScopeStub()
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, TableLayout{})
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, staticLayout(TableLayout{}))
 	defer controller.Stop()
-	ticks.tick(t)
 	if result := waitForResult(t, controller); result.err != nil {
 		t.Fatalf("projection collection failed: %v", result.err)
 	}
@@ -880,14 +917,14 @@ func renderListBoundary(t *testing.T, stub *watchStub, filter string, color Colo
 }
 
 // watchRender drives one collection through the controller and returns the
-// rendered bytes, so a test observes the real auto-refresh path.
+// rendered bytes, so a test observes the real auto-refresh path. The immediate
+// collection is the one observed, so no tick is needed.
 func watchRender(t *testing.T, color ColorPolicy, layout TableLayout) []byte {
 	t.Helper()
 	stub := newWatchStub()
 	ticks := newWatchManualTicks()
-	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, color, layout)
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, color, staticLayout(layout))
 	defer controller.Stop()
-	ticks.tick(t)
 	result := waitForResult(t, controller)
 	if result.err != nil {
 		t.Fatalf("collection failed: %v", result.err)
@@ -957,6 +994,53 @@ func TestWatchRenderHonoursTerminalWidth(t *testing.T) {
 	}
 	if widest <= width {
 		t.Fatalf("fixture widest line=%d never needed fitting, so the bound is unproven", widest)
+	}
+}
+
+// TestWatchControllerResamplesLayoutOnEveryRender proves a terminal resize
+// during a watch run is honoured on the next render. The layout used to be
+// sampled once when the loop started, so a resize was ignored until the
+// operator left and re-entered the command.
+func TestWatchControllerResamplesLayoutOnEveryRender(t *testing.T) {
+	const narrow = 40
+	stub := newWatchStub()
+	ticks := newWatchManualTicks()
+	// The controller reads the layout from its own goroutine, so the test
+	// guards the value it mutates between ticks.
+	var mu sync.Mutex
+	layout := TableLayout{Width: narrow}
+	controller := newWatchController(context.Background(), stub, "", watchRequest{Interval: time.Second}, ticks.ticker, ColorPolicy{}, func() TableLayout {
+		mu.Lock()
+		defer mu.Unlock()
+		return layout
+	})
+	defer controller.Stop()
+	first := waitForResult(t, controller)
+	if first.err != nil {
+		t.Fatalf("immediate collection failed: %v", first.err)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(string(first.output), "\n"), "\n") {
+		if got := displayWidth(line); got > narrow {
+			t.Fatalf("first render line width=%d exceeds %d: %q", got, narrow, line)
+		}
+	}
+	// Widen the boundary between ticks, exactly as a terminal resize does.
+	mu.Lock()
+	layout = TableLayout{}
+	mu.Unlock()
+	ticks.tick(t)
+	second := waitForResult(t, controller)
+	if second.err != nil {
+		t.Fatalf("tick collection failed: %v", second.err)
+	}
+	widest := 0
+	for _, line := range strings.Split(strings.TrimSuffix(string(second.output), "\n"), "\n") {
+		if got := displayWidth(line); got > widest {
+			widest = got
+		}
+	}
+	if widest <= narrow {
+		t.Fatalf("second render widest line=%d never exceeded %d, so the resize was ignored", widest, narrow)
 	}
 }
 

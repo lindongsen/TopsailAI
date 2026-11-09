@@ -55,7 +55,27 @@ boundary policy. The controller already re-reads the inventory on every tick, so
 `OutputLayout` call per tick is not a meaningful cost. A regression test should resize the writer
 between two ticks and assert that the second render uses the new width.
 
-## Status
+## Resolution
 
-Recorded, not fixed. It is outside the scope of the column-growth change, which deliberately keeps
-its diff to the growth rule and the output boundary.
+Fixed. The controller no longer stores a sampled `TableLayout`. It stores a
+`layoutSource func() TableLayout` and calls it inside `render`, so every render reads the current
+output boundary policy. `startWatch` passes `func() TableLayout { return OutputLayout(out) }`, which
+is a live read rather than a snapshot.
+
+A function-typed field was chosen over storing the `io.Writer` and calling `OutputLayout` inside
+`render`, because the controller never writes to that writer. Holding it would imply an ownership the
+controller does not have, while a layout source states exactly what the controller does: it asks for
+the current policy and does not own the boundary.
+
+The same change also made `watch` collect once immediately on start, before the first tick, so the
+operator sees the current inventory at once instead of waiting a whole interval. Both behaviours are
+documented in `docs/cli-command-surface-rules.md`.
+
+Guarding test: `TestWatchControllerResamplesLayoutOnEveryRender` renders at width 40, widens the
+boundary between ticks, and asserts the second render exceeds 40. It fails when the layout source is
+frozen at construction, with `second render widest line=40 never exceeded 40, so the resize was
+ignored`.
+
+The four tests that encoded the old timing were replaced rather than supplemented, because a test
+that still delivers a tick to start the first collection would keep asserting the behaviour this
+change removes.
