@@ -455,8 +455,24 @@ func TestDebEndpointShipsTheCliAliases(t *testing.T) {
 // entirely, which permits every command instead of failing closed. The payload
 // looked correct, so only the runtime reported it. Asserting the reference here
 // catches the regression without needing a root install.
+//
+// The TLS material is deliberately exempt. It is a conffile so an upgrade keeps
+// the site identity, but it is not a policy path: the controller supplies a
+// default for each of the three files (scripts/agent-clusterctl), and a missing
+// file aborts the launch instead of widening access. A site configuration that
+// omits the keys therefore still resolves the shipped material, so requiring an
+// explicit reference would assert a rule the runtime does not have.
 func TestDebPackagedConfigReferencesEveryShippedConffile(t *testing.T) {
 	packages := buildDebPackages(t)
+
+	// The TLS material is registered as a conffile but is not a policy path, so
+	// it is exempt from the reference rule for the reason stated above.
+	exempt := map[string]bool{
+		"node.conf":    true,
+		"ca.pem":       true,
+		"node.pem":     true,
+		"node-key.pem": true,
+	}
 
 	for _, role := range []string{"server", "endpoint"} {
 		pkg := packages[role]
@@ -467,13 +483,51 @@ func TestDebPackagedConfigReferencesEveryShippedConffile(t *testing.T) {
 		}
 		for _, conffile := range pkg.conffiles {
 			base := filepath.Base(conffile)
-			if base == "node.conf" {
+			if exempt[base] {
 				continue
 			}
 			if !strings.Contains(config, base) {
 				t.Fatalf("the %s package ships the conffile %s but node.conf never references it;\n"+
 					"an unreferenced allowlist makes the Endpoint permit every command",
 					role, conffile)
+			}
+		}
+	}
+}
+
+// TestDebRegistersTLSMaterialAsConffiles proves the TLS material survives an
+// upgrade.
+//
+// This guards a real defect: the packages shipped ca.pem, node.pem and
+// node-key.pem without registering them as conffiles, so dpkg replaced them on
+// every upgrade. A site replaces the shipped development certificate with its own
+// identity, and the certificate subject is what names the node to its peer. The
+// overwrite therefore reverted the certificate to the build host's name while
+// node.conf kept the site ENDPOINT_ID, so the hello identity disagreed with the
+// certificate and the Server rejected the connection. The symptom was a
+// reconnect loop that looked like a network fault, and nothing in the payload
+// revealed it. Registering the material keeps the operator's copy in force and
+// leaves the shipped copy as a .dpkg-dist file to compare against.
+func TestDebRegistersTLSMaterialAsConffiles(t *testing.T) {
+	packages := buildDebPackages(t)
+
+	want := []string{
+		"/opt/agent-cluster/certs/ca.pem",
+		"/opt/agent-cluster/certs/node.pem",
+		"/opt/agent-cluster/certs/node-key.pem",
+	}
+
+	for _, role := range []string{"server", "endpoint"} {
+		pkg := packages[role]
+		registered := make(map[string]bool, len(pkg.conffiles))
+		for _, conffile := range pkg.conffiles {
+			registered[conffile] = true
+		}
+		for _, path := range want {
+			if !registered[path] {
+				t.Fatalf("the %s package ships %s but does not register it as a conffile;\n"+
+					"an upgrade then overwrites the site certificate and the node identity "+
+					"silently reverts to the build host", role, path)
 			}
 		}
 	}

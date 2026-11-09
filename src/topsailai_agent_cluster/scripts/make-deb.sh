@@ -380,6 +380,21 @@ function write_role_config() {
         echo "${OPT_DIR}/conf/control-actions.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
             die "cannot register the control action catalog conffile"
     fi
+    # The TLS material is a conffile for the same reason, and the consequence of
+    # omitting it is worse. A site replaces the shipped development certificate
+    # with its own identity, and the certificate subject is what names the node to
+    # its peer. Without a conffile entry dpkg overwrites that identity on every
+    # upgrade, so the certificate silently reverts to the build host's name while
+    # node.conf keeps the site ENDPOINT_ID. The hello identity then disagrees with
+    # the certificate and the Server rejects the connection, which looks like a
+    # network fault. Registering the material keeps the operator's copy in force
+    # and leaves the shipped copy as a .dpkg-dist file to compare against.
+    echo "${OPT_DIR}/certs/ca.pem" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
+        die "cannot register the CA conffile"
+    echo "${OPT_DIR}/certs/node.pem" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
+        die "cannot register the certificate conffile"
+    echo "${OPT_DIR}/certs/node-key.pem" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
+        die "cannot register the private key conffile"
     chmod 0644 "${PKG_ROOT}/DEBIAN/conffiles"
 }
 
