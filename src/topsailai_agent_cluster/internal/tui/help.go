@@ -46,6 +46,7 @@ var commandHelpCatalog = map[string]commandHelp{
 	"drive":     {"drive [start|stop|status] [session]", "manage the resident driver of one session; a driver injects input on the operator's behalf and is not the agent, so drive stop leaves the agent running", []string{"start: start a driver for the target session; the driver runs autonomously and needs explicit confirmation", "stop: stop only the driver controller; the agent keeps running", "status: report the standard drive state from the persisted inventory; it never probes the provider", "an omitted action reports status, so a bare drive never mutates anything", "session: optional session/resource ID, provider session ID, or a bare list row number; required outside session scope and rejected inside it", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID", "workspace scope resolves the row's own endpoint; a token matching sessions on several endpoints is rejected", "--json: rejected in interactive mode"}, []string{"drive", "drive 1", "drive res_abc", "drive status 1", "drive start 1", "drive stop res_abc"}},
 	"logs":      {"logs [-n <lines>] [-f|--follow] [session]", "show bounded output for a session in the current endpoint, or stream it until a key is pressed", []string{"-n, --lines: maximum number of trailing output lines to show; defaults to the REPL budget, which is 0300 unless the startup --lines option set 0100-1000", "-f, --follow: stream new output records until any key is pressed; the stream is bound to the session generation resolved now, so a replaced session is never followed", "session: optional session/resource ID, provider session ID, or a bare list row number; defaults to the current session", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID", "logf: shorthand for logs -f, so follow is implied and needs no flag; every other argument is accepted unchanged, and a repeated follow flag is still rejected"}, []string{"logs", "logs -n 0250", "logs 1", "logs res_abc", "logs -f", "logs --follow 1", "logf", "logf -n 0250"}},
 	"history":   {"history [endpoint]", "read bounded provider session history for one endpoint and render it as a numbered table; the result is a live provider read, never a persisted projection", []string{"endpoint: optional endpoint ID or hostname; defaults to the current endpoint, and workspace scope requires it", "a hostname shared by several endpoints is rejected with the candidate list", "history row numbers are a separate namespace from list row numbers, and a history render replaces the list row numbers", "a row that the inventory join could not resolve to a live resource and generation cannot be entered with cd; it is reported instead of fabricating a generation", "--json: rejected in interactive mode"}, []string{"history", "history endpoint-1", "history ai-dev"}},
+	"messages":  {"messages [session]", "read one session's conversation; messages are persisted provider data, so a stopped session can still be read", []string{"session: optional provider session ID or a bare history row number; defaults to the current session, and workspace scope requires it", "a bare ASCII number selects the row shown at that row of the most recently rendered history table; a numeric token that is not a row number is retried as a provider session ID", "workspace scope resolves the row's own endpoint; a token matching sessions on several endpoints is rejected", "unlike cd and resume, this command reads both live and stopped sessions, because it addresses persisted provider data rather than a live process", "read-only: it never changes the selected session, the list row numbers, or the history row numbers, so several rows can be read in sequence", "a bounded window is always labelled; a shortened conversation is never presented as complete", "--json: rejected in interactive mode"}, []string{"messages", "messages 3", "messages 20261013131753"}},
 	"send":      {"send [text]", "send a message to the selected session; an explicit text submits directly, and only a bare send reads a multi-line message and asks for confirmation", []string{"text: message text, or a JSON object with a text field; an explicit text is submitted without a confirmation question, because the command word and the payload are already stated", "without text: read a multi-line message and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the message", "a bare send asks Confirm send? before submitting, because the assembled block was never shown as a whole; an empty multi-line message is rejected instead of submitting nothing", "after a completed send: start the same live tail as logs -f, then force one collection for the selected endpoint and revalidate only the selected session, so a later list reads a newer document; the tail opens on the next prompt and any key stops it, and both steps are reported as diagnostics and never turn the accepted send into a failure", "when the client cannot stream or the input mode cannot observe a keypress, the tail degrades to one bounded output snapshot and says so, because a live tail that cannot be stopped is worse than a snapshot"}, []string{`send hello world`, `send {"text":"hello"}`}},
 	"endpoints": {"endpoints [endpoint-id]", "list every registered endpoint with its connection state, observation time and capability revision; JSON output (--json) is available only in the standalone non-interactive command", []string{"endpoint-id: optional endpoint ID filter; an unknown filter renders an empty table", "read-only: it never forces provider discovery and never changes the list row numbers"}, []string{"endpoints", "endpoints endpoint-1"}},
 	"status":    {"status <command-id>", "show the durable result of a command", []string{"command-id: submitted command identifier"}, []string{"status cmd_123"}},
@@ -80,6 +81,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"show":      "show endpoint or session details",
 		"info":      "show session detail by row number or session ID",
 		"history":   "read provider session history for one endpoint and number its rows",
+		"messages":  "read one session's conversation by history row number or session ID",
 		"resume":    "resume a stopped session by history row number",
 		"stop":      "stop a session by row number or session ID",
 		"drive":     "manage a session driver by row number or session ID; drive stop leaves the agent running",
@@ -90,21 +92,22 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"quit":      "leave interactive mode",
 	},
 	ScopeEndpoint: {
-		"list":    "list sessions in the current endpoint",
-		"cd":      "navigate to a session or back to workspace",
-		"show":    "show endpoint or session details",
-		"info":    "show session detail in this endpoint by row number or session ID",
-		"logs":    "show session logs",
-		"history": "read provider session history for the current endpoint and number its rows",
-		"resume":  "resume a stopped session by history row number",
-		"stop":    "stop a session in this endpoint by row number or session ID",
-		"drive":   "manage a session driver in this endpoint by row number or session ID; drive stop leaves the agent running",
-		"status":  "show command result",
-		"refresh": "refresh the current endpoint",
-		"watch":   "re-render the endpoint table on a timer until any key is pressed",
-		"help":    "show help",
-		"quit":    "q: same command; outside workspace scope both return to workspace scope",
-		"exit":    "leave interactive mode from every scope",
+		"list":     "list sessions in the current endpoint",
+		"cd":       "navigate to a session or back to workspace",
+		"show":     "show endpoint or session details",
+		"info":     "show session detail in this endpoint by row number or session ID",
+		"logs":     "show session logs",
+		"history":  "read provider session history for the current endpoint and number its rows",
+		"messages": "read one session's conversation in this endpoint by history row number or session ID",
+		"resume":   "resume a stopped session by history row number",
+		"stop":     "stop a session in this endpoint by row number or session ID",
+		"drive":    "manage a session driver in this endpoint by row number or session ID; drive stop leaves the agent running",
+		"status":   "show command result",
+		"refresh":  "refresh the current endpoint",
+		"watch":    "re-render the endpoint table on a timer until any key is pressed",
+		"help":     "show help",
+		"quit":     "q: same command; outside workspace scope both return to workspace scope",
+		"exit":     "leave interactive mode from every scope",
 	},
 	ScopeSession: {
 		"list":      "list sessions in the current endpoint; an explicit endpoint must match it",
@@ -112,6 +115,7 @@ var scopeCommandDescriptions = map[ScopeKind]map[string]string{
 		"show":      "show the current session, or an explicit endpoint/session target",
 		"info":      "show the current session detail, or another session in this endpoint",
 		"logs":      "show current session output, or another session in this endpoint; -n <lines> bounds the trailing lines and -f streams until a key is pressed",
+		"messages":  "read the current session's conversation; messages are persisted provider data, so a stopped session can still be read",
 		"send":      "send a message to the current session; an explicit text submits directly, and a bare send asks for confirmation; unrecognized text offers this action",
 		"stop":      "stop the current session",
 		"btw":       "inject context into the current session",
@@ -228,7 +232,7 @@ func CommandHelpLines() []string {
 	return formatHelpBlock(cells, descriptions)
 }
 
-var nonInteractiveHelpOrder = []string{"list", "refresh", "history", "endpoints", "show", "info", "logs", "status", "send", "btw", "interrupt", "ctl", "exec", "start", "resume", "stop", "drive", "help", "interactive"}
+var nonInteractiveHelpOrder = []string{"list", "refresh", "history", "messages", "endpoints", "show", "info", "logs", "status", "send", "btw", "interrupt", "ctl", "exec", "start", "resume", "stop", "drive", "help", "interactive"}
 
 // nonInteractiveHelpAliases maps accepted standalone spellings to the advertised
 // command. The advertised list keeps one spelling per surface, while an accepted
@@ -330,6 +334,14 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.description = "read bounded provider session history for one endpoint; the result is a live provider read, never a persisted projection"
 		entry.parameters = []string{"endpoint-id-or-hostname: endpoint to query; a hostname shared by several endpoints is rejected with the candidate list", "--limit: maximum number of history rows returned; 0 keeps the provider's own window and a positive value never raises it", "--json: write the joined history document instead of the rendered table"}
 		entry.examples = []string{"history endpoint-1", "history ai-dev"}
+	case "messages":
+		// The standalone form has no current endpoint and no rendered history
+		// table, so it states both mandatory arguments and never accepts a row
+		// number: a row number only exists after an interactive render.
+		entry.syntax = "agent-cluster-cli [options] messages <endpoint-id-or-hostname> <session-id>"
+		entry.description = "read one session's conversation; messages are persisted provider data, so a stopped session can still be read"
+		entry.parameters = []string{"endpoint-id-or-hostname: endpoint to query; a hostname shared by several endpoints is rejected with the candidate list", "session-id: provider session ID; a cluster resource ID is not accepted, because a stopped session has none", "--max-chars: maximum characters per message; 0 keeps the adapter default and a positive value never raises it", "--json: write the conversation document instead of the rendered blocks"}
+		entry.examples = []string{"messages endpoint-1 20261013131753", "messages ai-dev 20261013131753 --max-chars 2000"}
 	case "endpoints":
 		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] endpoints [endpoint-id]"
 	case "send":

@@ -541,6 +541,10 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		// The history table is trusted application styling over sanitized cells,
 		// so it renders through the trusted writer like list and endpoints.
 		return false, interactiveHistory(ctx, api, state, rest, trustedOut, errOut, options.Color)
+	case "messages":
+		// A conversation is provider prose, so it renders through the untrusted
+		// writer: every body already passed the provider output boundary.
+		return false, interactiveMessages(ctx, api, state, rest, out, errOut, options.Color)
 	case "table":
 		return false, fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "use":

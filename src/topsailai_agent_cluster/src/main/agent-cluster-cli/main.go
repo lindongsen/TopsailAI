@@ -98,6 +98,11 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// because history rows are provider session records, not output lines, and
 	// conflating them would let an output setting silently reshape a history table.
 	historyLimit := flags.Int("limit", 0, "maximum number of history rows returned; 0 keeps the provider's own window")
+	// --max-chars bounds one message body in a conversation read. It is a
+	// separate quantity from --lines and --limit because a message is provider
+	// prose, not an output line and not a history row, and conflating them would
+	// let an unrelated setting silently reshape a conversation.
+	maxChars := flags.Int("max-chars", 0, "maximum characters per message returned by messages; 0 keeps the adapter default")
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
 	folder := flags.String("folder", "", "working folder for start")
@@ -197,6 +202,11 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return fmt.Errorf("usage: history <endpoint-id-or-hostname>")
 		}
 		return history(ctx, api, output, errors, flags.Arg(1), *historyLimit, *jsonMode, tui.OutputColorPolicy(output))
+	case "messages":
+		if flags.NArg() != 3 {
+			return fmt.Errorf("usage: messages <endpoint-id-or-hostname> <session-id>")
+		}
+		return messages(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), *maxChars, *jsonMode, tui.OutputColorPolicy(output))
 	case "table":
 		return fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "show":
@@ -372,7 +382,7 @@ var globalOptionNames = map[string]bool{
 	"json": true, "endpoint": true, "yes": true, "server-url": true, "token": true,
 	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "no-color": true,
 	"no-progress": true,
-	"profile": true, "profile-revision": true, "folder": true, "task": true,
+	"profile":     true, "profile-revision": true, "folder": true, "task": true,
 	"generation": true, "i": true, "follow": true, "f": true,
 }
 
@@ -527,6 +537,20 @@ func history(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, 
 	options := tui.TableOptionsFor(output)
 	options.Color = color
 	return legacyRunner(api).History(ctx, output, errors, target, limit, jsonMode, options)
+}
+
+// messages renders one session's bounded conversation for one endpoint.
+//
+// The endpoint argument is mandatory because a conversation read is
+// endpoint-scoped: provider session IDs may collide across endpoints, so a
+// fleet-wide merge could not identify the session the operator asked for.
+//
+// The session argument is the provider's own session key rather than a cluster
+// resource ID, because a stopped session is absent from the inventory and has no
+// resource ID. That is also why this read needs no generation: it addresses
+// persisted provider data, not a live process.
+func messages(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target, sessionID string, maxChars int, jsonMode bool, color tui.ColorPolicy) error {
+	return legacyRunner(api).Messages(ctx, output, errors, target, sessionID, maxChars, jsonMode, color)
 }
 
 // list renders the session table. full is the per-command request to disable
