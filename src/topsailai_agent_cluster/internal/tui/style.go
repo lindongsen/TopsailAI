@@ -71,10 +71,37 @@ const confirmationHint = "[y/N]"
 // wrapper is the exact form the terminal editor recognises, so the cursor
 // column accounting stays identical to the plain prompt.
 func RenderAnswerPrompt(policy ColorPolicy) string {
+	return "\n" + RenderNamedPrompt(answerPrompt, policy)
+}
+
+// RenderNamedPrompt returns a named prompt such as "start.endpoint> " with the
+// same bold-green styling as the REPL prompt. The wrapper is the exact form the
+// terminal editor recognises, so the cursor column accounting stays identical to
+// the plain prompt. With colour disabled the plain prompt is returned unchanged,
+// so a redirected or --no-color run stays byte-identical.
+func RenderNamedPrompt(name string, policy ColorPolicy) string {
+	name = strings.TrimSuffix(name, " ")
 	if !policy.Enabled {
-		return "\n" + answerPrompt
+		return name + " "
 	}
-	return "\n" + ansiBoldGreen + strings.TrimSuffix(answerPrompt, " ") + ansiReset + " "
+	return ansiBoldGreen + name + ansiReset + " "
+}
+
+// styleNamedPrompt applies RenderNamedPrompt to a caller-supplied prompt, but only
+// when that prompt is a plain named prompt. A question row (leading newline) and an
+// already styled prompt are returned unchanged, because their own renderer owns the
+// styling and re-wrapping them would nest escape sequences.
+func styleNamedPrompt(prompt string, policy ColorPolicy) string {
+	if !policy.Enabled || prompt == "" {
+		return prompt
+	}
+	if strings.Contains(prompt, "\x1b") || strings.HasPrefix(prompt, "\n") {
+		return prompt
+	}
+	if !strings.HasSuffix(prompt, "> ") {
+		return prompt
+	}
+	return RenderNamedPrompt(prompt, policy)
 }
 
 // styledConfirmationQuestion returns the confirmation question with its own

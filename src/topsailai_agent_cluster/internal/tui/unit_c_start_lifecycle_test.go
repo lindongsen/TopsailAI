@@ -326,7 +326,7 @@ func TestUnitCStartPromptCancelPreservesDraftStateForEachField(t *testing.T) {
 			lines <- lineReadResult{line: "cancel"}
 			close(lines)
 			var output, diagnostics strings.Builder
-			outcome, request, err := runStartPrompt(context.Background(), interactiveState{}, draft, lines, &output, &diagnostics, ColorPolicy{})
+			outcome, request, err := runStartPrompt(context.Background(), interactiveState{}, draft, lines, &output, &output, &diagnostics, ColorPolicy{})
 			if err != nil || outcome != startPromptCancel {
 				t.Fatalf("outcome=%v err=%v, want cancel", outcome, err)
 			}
@@ -359,7 +359,7 @@ func TestUnitCStartPromptParentTerminationEachField(t *testing.T) {
 				cancel()
 			}()
 			var diag strings.Builder
-			_, _, err := runStartPrompt(parent, interactiveState{}, draft, make(chan lineReadResult), out, &diag, ColorPolicy{})
+			_, _, err := runStartPrompt(parent, interactiveState{}, draft, make(chan lineReadResult), out, out, &diag, ColorPolicy{})
 			<-joined
 			if err != context.Canceled || out.String() != unitCFieldToken(field) || diag.Len() != 0 {
 				t.Fatalf("field cancellation err=%v output=%q diagnostics=%q", err, out.String(), diag.String())

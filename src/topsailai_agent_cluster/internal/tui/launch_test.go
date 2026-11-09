@@ -72,7 +72,7 @@ func TestProjectLaunchWizard(t *testing.T) {
 func TestLaunchAnswerFailure(t *testing.T) {
 	for _, input := range []string{"", strings.Repeat("x", 20) + "\n"} {
 		lines, done, stop := startInputReader(strings.NewReader(input), 8)
-		_, _, err := launchAnswer(context.Background(), lines, io.Discard, &interactiveState{}, "task")
+		_, _, err := launchAnswer(context.Background(), lines, io.Discard, io.Discard, &interactiveState{}, "task", ColorPolicy{})
 		stop()
 		done.Wait()
 		if err == nil {

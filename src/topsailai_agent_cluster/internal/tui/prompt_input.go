@@ -40,12 +40,15 @@ func markRecoverablePromptFailure(ctx context.Context) {
 
 // readPromptLine requests a history-free child answer after its question is written.
 // The default answer prompt is styled with the same policy as the REPL prompt, so the
-// child question is never the only unstyled prompt in the session.
+// child question is never the only unstyled prompt in the session. A caller-supplied
+// named prompt is styled the same way, because every prompt that waits for operator
+// input must carry colour; a question row and an already styled prompt keep their own
+// renderer's styling instead of being wrapped twice.
 func readPromptLine(ctx context.Context, prompts ...string) (string, bool, error) {
 	config := ctx.Value(promptReaderKey{}).(promptReaderConfig)
 	prompt := RenderAnswerPrompt(config.color)
 	if len(prompts) > 0 {
-		prompt = prompts[0]
+		prompt = styleNamedPrompt(prompts[0], config.color)
 	}
 	line, overflow, err := config.read(ctx, prompt, false, config.limit)
 	if err != nil && config.failure != nil {

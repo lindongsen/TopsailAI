@@ -65,8 +65,9 @@ func resolveLaunchEndpointAnswer(endpoints []protocol.Endpoint, answer string) (
 // resolveLaunchEndpoint returns the endpoint already in scope, or asks for one.
 // The numbered list is printed before the prompt so a bare number is enough;
 // a failed inventory read degrades to the free-text identifier prompt instead of
-// aborting the wizard, and control words keep working in both cases.
-func resolveLaunchEndpoint(ctx context.Context, api InteractiveAPI, state *interactiveState, endpointID string, lines <-chan lineReadResult, out io.Writer) (string, error) {
+// aborting the wizard, and control words keep working in both cases. The field
+// prompt carries application styling, so it is written through the trusted writer.
+func resolveLaunchEndpoint(ctx context.Context, api InteractiveAPI, state *interactiveState, endpointID string, lines <-chan lineReadResult, out, trustedOut io.Writer, color ColorPolicy) (string, error) {
 	if endpointID != "" {
 		return endpointID, nil
 	}
@@ -76,7 +77,7 @@ func resolveLaunchEndpoint(ctx context.Context, api InteractiveAPI, state *inter
 			return "", writeErr
 		}
 	}
-	answer, err := launchAnswerValueOrControl(ctx, lines, out, state, "endpoint")
+	answer, err := launchAnswerValueOrControl(ctx, lines, out, trustedOut, state, "endpoint", color)
 	if err != nil || answer == "" {
 		return "", err
 	}

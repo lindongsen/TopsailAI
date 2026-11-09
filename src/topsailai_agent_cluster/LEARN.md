@@ -113,3 +113,40 @@ concurrent agent surfaces as a failure attributed to whoever runs the build. Edi
 would collide with that agent's work and could silently discard its intent, and reporting it as your
 own defect sends the review in the wrong direction. Timestamps distinguish "my change is broken" from
 "someone else is mid-edit", and re-running is the only correct response to the latter.
+
+## A styled prompt can be stripped by the writer, and a caller prompt can bypass the renderer
+
+Trigger: the interactive `start.endpoint>` prompt had no colour while the REPL prompt did. Two
+separate defects produced one symptom. `writeStartHelp` and the launch wizard built a styled prompt
+and wrote it to the sanitizing writer, which strips SGR sequences, so the colour was emitted and
+then discarded. Separately, `readPromptLine` used a caller-supplied prompt verbatim, so every caller
+that passed a literal string opted out of styling entirely.
+
+Action: when a styled string does not appear styled, check the writer before the style constant. A
+sanitizing writer silently removes exactly the bytes that carry the styling, so the code looks
+correct at the call site. Then check the choke point: if a shared read helper accepts a prompt
+argument, style it there rather than at each call site, because a literal argument is an implicit
+opt-out that no reviewer notices. Enumerate the actual read statements (`grep` for the read call,
+not for the prompt text) to prove no path bypasses the helper.
+
+Why this prevents recurrence: both defects are invisible in a diff. The styling call is present and
+correct, and the prompt string is present and correct; only the writer or the argument path is
+wrong, and neither shows up as a changed line. Counting the read statements converts "I fixed the
+prompts I found" into "no input path can bypass the styling".
+
+## Writing a prompt that the editor also draws prints it twice
+
+Trigger: while colouring the endpoint-disambiguation question, the question was written to the
+trusted writer and also passed to the read as its prompt. The terminal editor redraws the prompt it
+is given, so in editor mode the question would appear twice. A stub reader that never writes the
+prompt could not detect this, so the first probe passed and proved nothing.
+
+Action: decide per prompt whether the caller or the editor owns the row. A named prompt is written
+by the caller and the editor erases and redraws the same row, so it is safe. A question row carries
+the editor's leading-newline marker, so the editor owns it and the caller must not write it. Verify
+with the real editor, not a stub: drive `TerminalEditor.ReadLine` with a fake input and count the
+occurrences in the captured output.
+
+Why this prevents recurrence: a stub reader is a test double that omits the very behaviour under
+test, so it certifies a duplication it cannot see. Counting occurrences in the real editor's output
+is the only evidence that distinguishes "written once" from "written twice".

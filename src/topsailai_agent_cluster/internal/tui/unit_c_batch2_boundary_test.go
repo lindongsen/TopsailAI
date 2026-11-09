@@ -120,7 +120,7 @@ func TestUnitCBatch2TakenAnswerDiscarded(t *testing.T) {
 			draft := startDraft{request: interactiveStartRequest{EndpointID: "e", ResourceID: "r", Profile: "p", ProfileRevision: "v"}}
 			draft.missing[field] = true
 			var out, diagnostics strings.Builder
-			outcome, request, err := runStartPrompt(ctx, interactiveState{}, draft, lines, &out, &diagnostics, ColorPolicy{})
+			outcome, request, err := runStartPrompt(ctx, interactiveState{}, draft, lines, &out, &out, &diagnostics, ColorPolicy{})
 			// B2_TAKEN_ANSWER: detached stale outcome sensitivity seam.
 			if len(lines) != 0 || outcome != startPromptCancel || !reflect.DeepEqual(request, interactiveStartRequest{}) || err != context.Canceled {
 				t.Fatalf("C19 discarded answer: remaining=%d outcome=%v request=%+v err=%v", len(lines), outcome, request, err)
