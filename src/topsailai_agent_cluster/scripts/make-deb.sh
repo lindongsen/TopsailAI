@@ -2,8 +2,13 @@
 # Author: DawsonLin
 # Purpose: Build a Debian package for one Agent Cluster node role.
 #
-# The package carries the same payload as a node bundle, laid out so the whole
-# product is visible in one directory:
+# A node is installed from two packages: a binary package that is identical on
+# every machine, and a config package that carries this site's identity. The
+# split exists because a site replaces the shipped certificate with its own, and
+# a certificate that lives in the binary package is overwritten on every upgrade.
+#
+# The binary package carries the program payload, laid out so the whole product is
+# visible in one directory:
 #
 #   /opt/agent-cluster/            program payload, one directory per node
 #     agent-clusterctl             controller
@@ -20,6 +25,10 @@
 #   topsailai_agent_cluster, topsailai2, agent-cluster-node-setup
 #                                  symlinks to the payload above
 #
+# The config package carries conf/node.conf, certs/ca.pem, certs/node.pem and
+# certs/node-key.pem, plus the endpoint allowlist and control action catalog. It is
+# built per site and is not interchangeable between machines.
+#
 # Configuration, TLS material, state, logs and pid files are real directories
 # inside /opt/agent-cluster, not symlinks into /etc, /var/lib, /var/log and /run.
 # A symlinked layout silently redirects a write to whatever filesystem the link
@@ -27,23 +36,25 @@
 # operator believes it lives under /opt. dpkg honours a conffile at any absolute
 # path, so an operator edit under conf/ still survives an upgrade.
 #
-# A machine has one role, so the two role packages conflict: they both own
-# /opt/agent-cluster/conf/node.conf and the single agent-clusterctl entry point. A
-# host that must run both roles uses the bundle path instead.
+# A machine has one role, so the two config packages conflict: they both own
+# /opt/agent-cluster/conf/node.conf and the same TLS paths. A host that must run
+# both roles uses the bundle path instead.
 #
 # Binaries are built statically (CGO disabled) so the package does not depend on
 # the node libc; the SQLite driver is pure Go, so nothing is lost.
 #
 # Usage:
-#   make-deb.sh --role <node|server|endpoint> --dest <dir> [options]
+#   make-deb.sh --role <node|server|endpoint|config> --dest <dir> [options]
 #
 # Options:
-#   --role      node, server or endpoint (required)
+#   --role      node, server, endpoint or config (required)
 #   --dest      directory that receives the .deb (required)
 #   --version   package version (default: derived from git)
 #   --revision  package revision (default: 1)
 #   --arch      target architecture (default: dpkg --print-architecture)
 #   --config    role configuration template (default: conf/node.<role>.conf.example)
+#   --config-role  role a config package configures: server or endpoint (required
+#               for --role config; it also selects the default template)
 #   --cert      leaf certificate to embed (default: development certificate)
 #   --key       private key paired with --cert (default: development key)
 #   --ca        CA certificate (default: /opt/agent-cluster/certs/ca.pem)
@@ -76,6 +87,10 @@ VERSION=""
 REVISION="1"
 ARCH=""
 CONFIG=""
+# A config package is built per site, so the role it configures cannot be inferred
+# from the package name. --config-role names it explicitly and also selects the
+# default template.
+CONFIG_ROLE=""
 CERT=""
 KEY=""
 CA="${LOCAL_CERTS}/ca.pem"
@@ -98,7 +113,7 @@ function warn() {
 }
 
 function usage() {
-    sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//' >&2
+    sed -n '2,63p' "$0" | sed 's/^# \{0,1\}//' >&2
     exit 2
 }
 
@@ -110,6 +125,7 @@ while [ $# -gt 0 ]; do
         --revision) REVISION="${2:-}"; shift 2 ;;
         --arch) ARCH="${2:-}"; shift 2 ;;
         --config) CONFIG="${2:-}"; shift 2 ;;
+        --config-role) CONFIG_ROLE="${2:-}"; shift 2 ;;
         --cert) CERT="${2:-}"; shift 2 ;;
         --key) KEY="${2:-}"; shift 2 ;;
         --ca) CA="${2:-}"; shift 2 ;;
@@ -161,7 +177,17 @@ fi
 
 case "${ROLE}" in
     node | server | endpoint) ;;
-    *) die "--role must be node, server or endpoint" ;;
+    config)
+        # A config package carries site data, so it must name the role it
+        # configures. Without the role the server and endpoint config packages
+        # would share one name and one version, and installing the second would
+        # silently replace the first.
+        case "${CONFIG_ROLE}" in
+            server | endpoint) ;;
+            *) die "--role config requires --config-role server or endpoint" ;;
+        esac
+        ;;
+    *) die "--role must be node, server, endpoint or config" ;;
 esac
 [ -n "${DEST}" ] || die "--dest is required"
 
@@ -183,7 +209,28 @@ FULL_VERSION="${VERSION}-${REVISION}"
 # breaks scp and several artifact steps, so the file keeps the plain version and
 # dpkg still compares the epoch carried inside the package.
 CONTROL_VERSION="${DEB_EPOCH}:${FULL_VERSION}"
-PACKAGE="agent-cluster-${ROLE}"
+# A config package is named after the role it configures, so the server and
+# endpoint config packages are distinct artifacts rather than one name that the
+# second build overwrites.
+if [ "${ROLE}" = "config" ]; then
+    PACKAGE="agent-cluster-config-${CONFIG_ROLE}"
+else
+    PACKAGE="agent-cluster-${ROLE}"
+fi
+# The config role builds the configuration for another role, so every decision
+# that depends on the role being configured reads this value instead of ROLE.
+# Without it a config build would look for conf/node.config.conf.example and
+# would never append the endpoint-only keys.
+EFFECTIVE_ROLE="${ROLE}"
+[ "${ROLE}" = "config" ] && EFFECTIVE_ROLE="${CONFIG_ROLE}"
+# The control description names what the package actually provides. A config
+# package provides the site configuration for a role, not the role itself, and
+# saying otherwise would mislead an operator reading dpkg output.
+if [ "${ROLE}" = "config" ]; then
+    ROLE_PHRASE="the ${EFFECTIVE_ROLE} configuration for this site"
+else
+    ROLE_PHRASE="the ${ROLE} role"
+fi
 MAINTAINER="DawsonLin <dawson@yunify.com>"
 
 BUILD_ROOT="${BUILD_DIR}/${ROLE}"
@@ -253,6 +300,15 @@ function add_layout_dirs() {
     add_dir "${OPT_DIR}/run" 0755
 }
 
+# Adds only the directories the config package owns. State, logs and pid files
+# belong to the binary package, so a config package must not claim them: two
+# packages owning one directory makes dpkg report a file conflict on a path that
+# neither of them actually populates.
+function add_config_layout_dirs() {
+    add_dir "${OPT_DIR}/conf" 0755
+    add_dir "${OPT_DIR}/certs" 0755
+}
+
 # Builds one static binary into the package tree.
 function build_binary() {
     local pkg="$1"
@@ -302,7 +358,7 @@ function write_control() {
         echo " collects inventory from machine-scoped Endpoints and routes"
         echo " operator commands back to them."
         echo " ."
-        echo " This package provides the ${ROLE} role."
+        echo " This package provides ${ROLE_PHRASE}."
     } >"${PKG_ROOT}/DEBIAN/control" || die "cannot write the control file"
     chmod 0644 "${PKG_ROOT}/DEBIAN/control"
 }
@@ -329,7 +385,7 @@ function write_role_config() {
     # skip loading the allowlist entirely, which permits every command instead of
     # failing closed. Append the relative path only when the configuration does
     # not already set one, so a site that points elsewhere keeps its own value.
-    if [ "${ROLE}" = "endpoint" ]; then
+    if [ "${EFFECTIVE_ROLE}" = "endpoint" ]; then
         if ! grep -qE '^[[:space:]]*COMMAND_ALLOWLIST_FILE=' \
             "${PKG_ROOT}${config}"; then
             {
@@ -356,7 +412,7 @@ function write_role_config() {
     # An adapter override is appended because the last assignment wins and the
     # value must stay single-quoted for the shell that sources it.
     if [ -n "${ADAPTERS}" ]; then
-        [ "${ROLE}" = "endpoint" ] || die "--adapters only applies to the endpoint role"
+        [ "${EFFECTIVE_ROLE}" = "endpoint" ] || die "--adapters only applies to the endpoint role"
         case "${ADAPTERS}" in
             *"'"*) die "--adapters must not contain a single quote" ;;
         esac
@@ -372,7 +428,7 @@ function write_role_config() {
         die "cannot write conffiles"
     # The allowlist is a conffile too: an operator edits it in place, so an upgrade
     # must not silently replace the policy in force with the shipped default.
-    if [ "${ROLE}" = "endpoint" ]; then
+    if [ "${EFFECTIVE_ROLE}" = "endpoint" ]; then
         echo "${OPT_DIR}/conf/command-allowlist.conf" >>"${PKG_ROOT}/DEBIAN/conffiles" ||
             die "cannot register the allowlist conffile"
         # The catalog is a conffile for the same reason: an operator edits the
@@ -413,14 +469,14 @@ function warn_placeholders() {
 # local package can be built without extra arguments.
 function resolve_tls() {
     if [ -z "${CERT}" ]; then
-        case "${ROLE}" in
+        case "${EFFECTIVE_ROLE}" in
             server) CERT="${LOCAL_CERTS}/server.pem" ;;
             endpoint) CERT="${LOCAL_CERTS}/node.pem" ;;
         esac
         [ -n "${CERT}" ] && warn "using the development certificate ${CERT}; pass --cert for a real deployment"
     fi
     if [ -z "${KEY}" ]; then
-        case "${ROLE}" in
+        case "${EFFECTIVE_ROLE}" in
             server) KEY="${LOCAL_CERTS}/server-key.pem" ;;
             endpoint) KEY="${LOCAL_CERTS}/node-key.pem" ;;
         esac
@@ -445,15 +501,13 @@ function build_node_package() {
         "Agent Cluster node controller and CLI configuration helper"
 }
 
-# Builds one role package: binary, configuration, TLS material and, for the
-# endpoint role, the operator CLI that reaches the Server from this node.
+# Builds one role package: the binary and its command entry points only.
+#
+# Configuration and TLS material are shipped by the matching config package, so
+# this package is identical on every machine of the same architecture. A site
+# identity therefore never enters a binary artifact, and replacing a binary
+# cannot overwrite the identity the site installed.
 function build_role_package() {
-    local template="${CONFIG}"
-    [ -n "${template}" ] || template="${PROJECT_DIR}/conf/node.${ROLE}.conf.example"
-    [ -f "${template}" ] || die "missing configuration template ${template}"
-    warn_placeholders "${template}"
-    resolve_tls
-
     build_binary "./src/main/agent-cluster-${ROLE}" "${OPT_DIR}/bin/agent-cluster-${ROLE}"
     add_link "${SBIN_DIR}/agent-cluster-${ROLE}" "${OPT_DIR}/bin/agent-cluster-${ROLE}"
     if [ "${ROLE}" = "endpoint" ]; then
@@ -465,6 +519,37 @@ function build_role_package() {
         add_link "${SBIN_DIR}/topsailai_agent_cluster" "agent-cluster-cli"
         add_link "${SBIN_DIR}/topsailai2" "agent-cluster-cli"
     fi
+    add_layout_dirs
+    add_copyright
+
+    # The config package is a hard dependency rather than a recommendation: the
+    # daemon cannot start without node.conf and its TLS material, so installing
+    # the binary alone would leave a service that fails on every start.
+    if [ "${ROLE}" = "endpoint" ]; then
+        write_control "agent-cluster-node (= ${CONTROL_VERSION}), agent-cluster-config-endpoint (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
+            "agent-cluster-server" \
+            "Agent Cluster endpoint daemon and operator CLI"
+    else
+        write_control "agent-cluster-node (= ${CONTROL_VERSION}), agent-cluster-config-server (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
+            "agent-cluster-endpoint" \
+            "Agent Cluster server daemon"
+    fi
+}
+
+# Builds the configuration package for one role: the conffile, the TLS material
+# and, for the endpoint role, the allowlist and the control action catalog.
+#
+# This package carries site data, so it is built per site and is not
+# interchangeable between machines. Keeping it separate is what lets the binary
+# packages stay generic, and it also keeps a private key out of an artifact that
+# is copied to every node.
+function build_config_package() {
+    local template="${CONFIG}"
+    [ -n "${template}" ] ||
+        template="${PROJECT_DIR}/conf/node.${EFFECTIVE_ROLE}.conf.example"
+    [ -f "${template}" ] || die "missing configuration template ${template}"
+    warn_placeholders "${template}"
+    resolve_tls
 
     write_role_config "${template}"
     add_file "${CA}" "${OPT_DIR}/certs/ca.pem" 0644
@@ -474,7 +559,7 @@ function build_role_package() {
     # file beside the controller. Without it the Endpoint refuses to start, because
     # a missing allowlist is a configuration error rather than an implicit
     # unrestricted policy.
-    if [ "${ROLE}" = "endpoint" ]; then
+    if [ "${EFFECTIVE_ROLE}" = "endpoint" ]; then
         add_file "${PROJECT_DIR}/conf/command-allowlist.conf.example" \
             "${OPT_DIR}/conf/command-allowlist.conf" 0640
         # The control action catalog is the only source of ctl. actions. A missing
@@ -482,25 +567,31 @@ function build_role_package() {
         # reviewed catalog to keep the feature available on a fresh install.
         add_file "${PROJECT_DIR}/conf/control-actions.conf.example" \
             "${OPT_DIR}/conf/control-actions.conf" 0640
+        # The CLI env file is written from node.conf, so the hook belongs to the
+        # package that installs node.conf rather than to the binary package.
+        add_file "${SCRIPT_DIR}/deb/postinst.endpoint" "/DEBIAN/postinst" 0755
     fi
-    add_layout_dirs
+    add_config_layout_dirs
     add_copyright
 
-    if [ "${ROLE}" = "endpoint" ]; then
-        add_file "${SCRIPT_DIR}/deb/postinst.endpoint" "/DEBIAN/postinst" 0755
+    # Two config packages install the same certificate paths, so they cannot
+    # coexist on one machine. Declaring the conflict turns a dpkg file clash into
+    # an explicit refusal.
+    if [ "${EFFECTIVE_ROLE}" = "endpoint" ]; then
         write_control "agent-cluster-node (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
-            "agent-cluster-server" \
-            "Agent Cluster endpoint daemon and operator CLI"
+            "agent-cluster-config-server" \
+            "Agent Cluster endpoint configuration and TLS identity"
     else
         write_control "agent-cluster-node (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
-            "agent-cluster-endpoint" \
-            "Agent Cluster server daemon"
+            "agent-cluster-config-endpoint" \
+            "Agent Cluster server configuration and TLS identity"
     fi
 }
 
 case "${ROLE}" in
     node) build_node_package ;;
     server | endpoint) build_role_package ;;
+    config) build_config_package ;;
 esac
 
 # --root-owner-group makes every entry root:root, so the package does not depend

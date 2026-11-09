@@ -141,36 +141,53 @@ func buildDebPackagesOnce() (map[string]*debPackage, error) {
 		return nil, err
 	}
 
-	packages := make(map[string]*debPackage, 3)
-	for _, role := range []string{"node", "server", "endpoint"} {
+	packages := make(map[string]*debPackage, 5)
+	// The binary packages carry no site data, so they are built without a
+	// configuration or certificate. The config packages carry both, so they are
+	// built with the throwaway material and the site configuration.
+	builds := []struct {
+		key        string
+		role       string
+		configRole string
+	}{
+		{key: "node", role: "node"},
+		{key: "server", role: "server"},
+		{key: "endpoint", role: "endpoint"},
+		{key: "config-server", role: "config", configRole: "server"},
+		{key: "config-endpoint", role: "config", configRole: "endpoint"},
+	}
+	for _, build := range builds {
 		args := []string{
 			filepath.Join(root, "scripts", "make-deb.sh"),
-			"--role", role,
+			"--role", build.role,
 			"--dest", dest,
 			"--build-dir", buildDir,
 			"--version", "0.0.0-test",
 			"--revision", "1",
 		}
-		if role != "node" {
+		if build.configRole != "" {
+			args = append(args, "--config-role", build.configRole)
+		}
+		if build.role != "node" {
 			args = append(args,
 				"--cert", filepath.Join(certs, "node.pem"),
 				"--key", filepath.Join(certs, "node-key.pem"),
 				"--ca", filepath.Join(certs, "ca.pem"),
 			)
 		}
-		if role == "endpoint" {
+		if build.configRole == "endpoint" {
 			args = append(args, "--config", siteConfig)
 		}
 		command := exec.Command("bash", args...)
 		command.Dir = root
 		if output, err := command.CombinedOutput(); err != nil {
-			return nil, &debBuildFailure{role: role, err: err, output: string(output)}
+			return nil, &debBuildFailure{role: build.key, err: err, output: string(output)}
 		}
-		pkg, err := readDebPackage(dest, role)
+		pkg, err := readDebPackage(dest, build.key)
 		if err != nil {
 			return nil, err
 		}
-		packages[role] = pkg
+		packages[build.key] = pkg
 	}
 	return packages, nil
 }
@@ -428,7 +445,6 @@ func TestDebEndpointShipsTheCliAliases(t *testing.T) {
 	if entry, ok := pkg.entries[cli]; !ok || entry.target != "" {
 		t.Fatalf("%s must be a real file in the endpoint payload", cli)
 	}
-
 	want := map[string]string{
 		debSbinDir + "/agent-cluster-cli":       "/opt/agent-cluster/bin/agent-cluster-cli",
 		debSbinDir + "/topsailai_agent_cluster": "agent-cluster-cli",
@@ -446,7 +462,7 @@ func TestDebEndpointShipsTheCliAliases(t *testing.T) {
 }
 
 // TestDebPackagedConfigReferencesEveryShippedConffile proves the packaged
-// configuration names every conffile the package installs.
+// configuration names every conffile the config package installs.
 //
 // This is the invariant behind a real defect: the endpoint package shipped
 // command-allowlist.conf while the packaged configuration never referenced it,
@@ -474,7 +490,7 @@ func TestDebPackagedConfigReferencesEveryShippedConffile(t *testing.T) {
 		"node-key.pem": true,
 	}
 
-	for _, role := range []string{"server", "endpoint"} {
+	for _, role := range []string{"config-server", "config-endpoint"} {
 		pkg := packages[role]
 		config := readPackagedFile(t, pkg, "./opt/agent-cluster/conf/node.conf")
 
@@ -517,7 +533,7 @@ func TestDebRegistersTLSMaterialAsConffiles(t *testing.T) {
 		"/opt/agent-cluster/certs/node-key.pem",
 	}
 
-	for _, role := range []string{"server", "endpoint"} {
+	for _, role := range []string{"config-server", "config-endpoint"} {
 		pkg := packages[role]
 		registered := make(map[string]bool, len(pkg.conffiles))
 		for _, conffile := range pkg.conffiles {
@@ -540,7 +556,7 @@ func TestDebRegistersTLSMaterialAsConffiles(t *testing.T) {
 func TestDebPackagedConfigUsesRelativePaths(t *testing.T) {
 	packages := buildDebPackages(t)
 
-	for _, role := range []string{"server", "endpoint"} {
+	for _, role := range []string{"config-server", "config-endpoint"} {
 		config := readPackagedFile(t, packages[role], "./opt/agent-cluster/conf/node.conf")
 		for _, absolute := range []string{
 			"/etc/agent-cluster/",
@@ -562,12 +578,12 @@ func TestDebPackagedConfigUsesRelativePaths(t *testing.T) {
 // installed before this convention (4e160caf-4), so dpkg reports a downgrade
 // and an operator cannot tell an upgrade from a rollback. The epoch is the only
 // component that outranks every earlier scheme, so it must be present and it
-// must be identical across the three packages that depend on each other.
+// must be identical across every package that depends on another.
 func TestDebPackagesCarryAMonotonicEpoch(t *testing.T) {
 	packages := buildDebPackages(t)
 
 	var epoch string
-	for _, role := range []string{"node", "server", "endpoint"} {
+	for _, role := range []string{"node", "server", "endpoint", "config-server", "config-endpoint"} {
 		pkg := packages[role]
 		if pkg.version == "" {
 			t.Fatalf("the %s package reports no Version field", role)
@@ -592,17 +608,18 @@ func TestDebPackagesCarryAMonotonicEpoch(t *testing.T) {
 
 	// The epoch must stay out of the file name: a colon in a path breaks scp and
 	// several artifact steps, even though dpkg reads the epoch from the package.
-	for _, role := range []string{"node", "server", "endpoint"} {
+	for _, role := range []string{"node", "server", "endpoint", "config-server", "config-endpoint"} {
 		if strings.Contains(filepath.Base(packages[role].path), ":") {
 			t.Fatalf("the %s package file name %q contains a colon; the epoch belongs in "+
 				"the control Version field only", role, filepath.Base(packages[role].path))
 		}
 	}
 
-	// A role package pins the node version exactly, so the pin must carry the
-	// same epoch. A pin without the epoch never matches the installed node
-	// package and dpkg refuses the install.
-	for _, role := range []string{"server", "endpoint"} {
+	// Every package that pins the node version exactly must carry the same epoch
+	// in the pin. A pin without the epoch never matches the installed node
+	// package and dpkg refuses the install. The config packages pin it too, so
+	// they belong in this check rather than only the binary packages.
+	for _, role := range []string{"server", "endpoint", "config-server", "config-endpoint"} {
 		pin := "agent-cluster-node (= " + epoch + ":"
 		if !strings.Contains(packages[role].depends, pin) {
 			t.Fatalf("the %s package Depends %q does not pin the node version with the "+

@@ -102,7 +102,8 @@ DEB_SITE_ARGS = $(call deb_arg,--config,$(DEB_CONFIG)) \
 .DEFAULT_GOAL := help
 
 .PHONY: help build build-testhooks vet test test-packaging bdd integration fmt \
-        deb deb-node deb-server deb-endpoint deb-inspect deb-clean \
+        deb deb-node deb-server deb-endpoint deb-config-server deb-config-endpoint \
+        deb-inspect deb-clean \
         image image-build image-run image-stop image-inspect image-clean \
         server-start server-stop server-restart server-status \
         endpoint-start endpoint-stop endpoint-restart endpoint-status \
@@ -124,10 +125,12 @@ help:
 	@echo "  fmt               format Go sources in place"
 	@echo ""
 	@echo "Package (Debian)"
-	@echo "  deb               build all three packages into $(DEB_DIR)/"
+	@echo "  deb               build every package into $(DEB_DIR)/"
 	@echo "  deb-node          build the controller package only"
-	@echo "  deb-server        build the server package only"
-	@echo "  deb-endpoint      build the endpoint package only"
+	@echo "  deb-server        build the server binary package only"
+	@echo "  deb-endpoint      build the endpoint binary package only"
+	@echo "  deb-config-server build the server site configuration package only"
+	@echo "  deb-config-endpoint build the endpoint site configuration package only"
 	@echo "  deb-inspect       list the packages and their control fields"
 	@echo "  deb-clean         remove the package output and staging trees"
 	@echo ""
@@ -207,30 +210,47 @@ deb-node:
 
 deb-server:
 	@mkdir -p $(DEB_DIR)
-	@bash $(DEB_BUILDER) --role server --dest $(DEB_DIR) --build-dir $(DEB_BUILD_DIR) $(DEB_COMMON_ARGS) $(DEB_SITE_ARGS)
+	@bash $(DEB_BUILDER) --role server --dest $(DEB_DIR) --build-dir $(DEB_BUILD_DIR) $(DEB_COMMON_ARGS)
 
 deb-endpoint:
 	@mkdir -p $(DEB_DIR)
-	@bash $(DEB_BUILDER) --role endpoint --dest $(DEB_DIR) --build-dir $(DEB_BUILD_DIR) $(DEB_COMMON_ARGS) $(DEB_SITE_ARGS) \
+	@bash $(DEB_BUILDER) --role endpoint --dest $(DEB_DIR) --build-dir $(DEB_BUILD_DIR) $(DEB_COMMON_ARGS)
+
+# Builds the site configuration package for one role. It carries node.conf and the
+# TLS identity, so it is built per site and is not interchangeable between
+# machines. The binary packages stay generic, which is what keeps a private key out
+# of an artifact that is copied to every node.
+deb-config-server:
+	@mkdir -p $(DEB_DIR)
+	@bash $(DEB_BUILDER) --role config --config-role server --dest $(DEB_DIR) --build-dir $(DEB_BUILD_DIR) $(DEB_COMMON_ARGS) $(DEB_SITE_ARGS)
+
+deb-config-endpoint:
+	@mkdir -p $(DEB_DIR)
+	@bash $(DEB_BUILDER) --role config --config-role endpoint --dest $(DEB_DIR) --build-dir $(DEB_BUILD_DIR) $(DEB_COMMON_ARGS) $(DEB_SITE_ARGS) \
 		$(call deb_arg,--adapters,$(DEB_ADAPTERS))
 
 # Builds every package. Packages left by an earlier version are removed first: a
 # directory holding two versions of the same package is what `dpkg -i *.deb`
 # picks up, and it installs whichever file the shell happens to expand last. The
-# controller package is built first because both role packages depend on it, so a
-# failure there stops before the large binaries build.
+# controller package is built first because every other package depends on it, so
+# a failure there stops before the large binaries build.
 #
-# The version is resolved once here and pinned for all three builds. Each builder
+# The version is resolved once here and pinned for every build. Each builder
 # invocation otherwise re-derives it from git, so a commit landing mid-run yields
-# a set whose role packages depend on a controller version that was never built,
-# and dpkg then refuses to install the endpoint.
+# a set whose packages depend on a controller version that was never built, and
+# dpkg then refuses to install them.
+#
+# The config packages are built last because they depend on nothing else and are
+# the only artifacts that carry site data. A site that only needs to change its
+# certificate rebuilds one config package instead of the whole set.
 deb:
 	@[ -n "$(DEB_DIR)" ] || { echo "DEB_DIR is empty; refusing to build" >&2; exit 1; }
 	@[ -n "$(DEB_BUILD_DIR)" ] || { echo "DEB_BUILD_DIR is empty; refusing to build" >&2; exit 1; }
 	@rm -f $(DEB_DIR)/agent-cluster-*.deb
 	@version=$$(bash $(DEB_BUILDER) --print-version $(call deb_arg,--version,$(DEB_VERSION))) || exit 1; \
 	echo "building version $$version"; \
-	$(MAKE) --no-print-directory deb-node deb-server deb-endpoint DEB_VERSION="$$version"
+	$(MAKE) --no-print-directory deb-node deb-server deb-endpoint \
+		deb-config-server deb-config-endpoint DEB_VERSION="$$version"
 	@echo ""
 	@echo "packages in $(DEB_DIR):"
 	@ls -1 $(DEB_DIR)/*.deb
