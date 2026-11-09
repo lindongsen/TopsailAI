@@ -375,7 +375,7 @@ func writeStatusSummary(out io.Writer, rows []SessionRow, policy ColorPolicy) er
 			return err
 		}
 		label := "unverified(" + strconv.Itoa(unverified) + ")"
-		if err := writeStyled(out, ansiYellow, label, policy); err != nil {
+		if err := writeStyled(out, ansiBoldYellow, label, policy); err != nil {
 			return err
 		}
 	}
@@ -407,6 +407,12 @@ func statusSummaryLabel(state string) string {
 
 // stateStyle is the single state-to-colour mapping shared by the table and the
 // summary row, so a state can never be coloured differently in the two places.
+//
+// "unverified" is not a session state: it is the colour key rowState returns for
+// a session whose liveness the provider could not verify, whose reported state is
+// already the standard "unknown". It gets its own colour because an unverified
+// session needs a resume decision while a provider-reported unknown session does
+// not, and one colour for both would hide that difference.
 func stateStyle(state string) string {
 	switch state {
 	case "running":
@@ -415,6 +421,8 @@ func stateStyle(state string) string {
 		return ansiDim
 	case "failed", "error":
 		return ansiRed
+	case "unverified":
+		return ansiBoldYellow
 	default:
 		return ansiYellow
 	}
@@ -581,8 +589,16 @@ func minInt(a, b int) int {
 	return b
 }
 
-// rowState reports the provider-reported lifecycle state that colours one row.
+// rowState reports the colour key for one row. A session whose liveness the
+// provider could not verify reports the standard "unknown" state, so returning
+// row.State alone would colour it exactly like a provider-reported unknown
+// session. The "unverified" key is a colour key only: the SESSION_STATUS cell
+// still renders row.State, because the state vocabulary is a protocol contract
+// and "unverified" is not a state.
 func rowState(row SessionRow) string {
+	if row.Unverified {
+		return "unverified"
+	}
 	return row.State
 }
 

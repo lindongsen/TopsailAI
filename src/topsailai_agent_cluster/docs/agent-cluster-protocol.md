@@ -66,6 +66,16 @@ every session needs a resume" from "the provider reported an unknown state". The
 from `state_reason` at render time rather than stored in the report, so one fact has one source of
 truth and no protocol or schema change is needed.
 
+The two conditions are also coloured apart, because a colour is read before any label is. An
+unverified session and a provider-reported unknown session share the `unknown` state, so one colour
+for both would leave the row itself carrying no distinction. The unverified row and the
+`unverified(n)` summary label use bold yellow, while the unknown bucket keeps plain yellow: the two
+stay in the same "uncertain" family, so neither reads as a healthy or a failed session, and they
+remain distinguishable from each other. Bold yellow is used by no other state and by no structural
+element, so a colour always identifies exactly one condition. `unverified` is a colour key only and
+never a state: the SESSION_STATUS cell still renders the reported `unknown`, because the state
+vocabulary is a protocol contract.
+
 ## Capability contract
 
 Endpoint publishes standard versioned capabilities for itself, abstract resources and LaunchProfiles. Private adapter capabilities never appear on the wire. Minimum admission requirements are health and bounded discovery of at least one supported resource kind. The MVP platform must implement agent start/resume/stop. Endpoint reports precise standard resource/profile support; an unsupported lifecycle operation is an explicit integration gap, not a silent substitute. Task and output modes remain capability-dependent.
