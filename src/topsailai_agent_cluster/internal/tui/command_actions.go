@@ -23,6 +23,10 @@ type ActionRequest struct {
 	Profile         string
 	ProfileRevision string
 	Folder          string
+	// DisplayName is the reported session name, used only to describe the target
+	// in progress output. It is presentation data: it never participates in
+	// routing, authorization or the immutable intent.
+	DisplayName string
 }
 
 // ActionResult contains the durable result and command identifier.

@@ -91,3 +91,25 @@ lands on one copy and the other silently keeps the old behaviour. Sharing the im
 the drift structurally impossible rather than dependent on someone remembering to change both. The
 corollary is that a test whose fixture cannot express the failure mode is not coverage, it is a lock
 on the current behaviour.
+
+## A build failure in a file you never touched is not your defect
+
+Trigger: while verifying a change to `internal/tui`, `go build ./...` failed twice in files this
+task never edited — first `interactive_start_prompt.go` (a `writeStartHelp` arity mismatch), then
+`launch_endpoint_choice.go` (a `launchAnswerValueOrControl` arity mismatch). Both were transient:
+another agent was concurrently threading a `trustedOut` writer and a `ColorPolicy` through the same
+package, so the call sites and the definitions disagreed for a few minutes. The same change had
+already passed a full `go test ./internal/tui/` run minutes earlier.
+
+Action: when a build or test failure names a file outside the current change set, check the file's
+modification time against the files you edited before concluding anything. If it is newer, treat the
+failure as a concurrent edit in flight: wait and re-run rather than editing that file. Never "fix"
+another agent's half-applied refactor to make your own verification green, and never report the
+failure as a defect in your own change. Confirm convergence by re-running the build until it is
+clean, then run the full suite.
+
+Why this prevents recurrence: a shared Go package has one compile unit, so any in-flight edit by a
+concurrent agent surfaces as a failure attributed to whoever runs the build. Editing the foreign file
+would collide with that agent's work and could silently discard its intent, and reporting it as your
+own defect sends the review in the wrong direction. Timestamps distinguish "my change is broken" from
+"someone else is mid-edit", and re-running is the only correct response to the latter.

@@ -225,7 +225,7 @@ func interactiveResume(parent context.Context, api InteractiveAPI, state *intera
 		state.commandID = pinned.commandID
 		return invalidateHistoryRowBindings(state, out)
 	}
-	target := confirmationTarget{ProviderSessionID: row.ProviderSessionID, SessionID: row.ResumeResourceID}
+	target := confirmationTarget{DisplayName: row.DisplayName, ProviderSessionID: row.ProviderSessionID, SessionID: row.ResumeResourceID}
 	return interactiveConfirmedAction(parent, api, &pinned, protocol.OperationAgentResume, "resume", target, "", json.RawMessage(`{}`), lines, out, trustedOut, options, revalidate, postSubmit)
 }
 

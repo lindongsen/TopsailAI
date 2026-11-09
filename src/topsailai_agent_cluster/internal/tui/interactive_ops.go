@@ -381,7 +381,7 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS}
+	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, DisplayName: session.DisplayName}
 	progress := NewActionProgress(options.ProgressWriter, request)
 	intent, err := runner.PrepareAction(ctx, request)
 	if err != nil {
@@ -805,7 +805,7 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 		return err
 	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.SessionID, Generation: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS}
+	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.SessionID, Generation: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, DisplayName: target.DisplayName}
 	progress := NewActionProgress(options.ProgressWriter, actionRequest)
 	intent, err := runner.PrepareAction(ctx, actionRequest)
 	if err != nil {

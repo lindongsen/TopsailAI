@@ -192,9 +192,15 @@ func progressVerb(operation string) string {
 // progressTarget names the exact target of the action. Every interpolated value
 // is sanitized first, because a provider identifier is untrusted text and this
 // line is written with trusted styling.
+//
+// The reported session name is named first, matching the confirmation question, so
+// the operator reads the same target description before and after answering. It
+// never replaces an identifier: the opaque resource ID stays, because it is what
+// `status` accepts.
 func progressTarget(request ActionRequest) string {
 	endpoint := sanitizeInlineText(request.EndpointID)
 	session := sanitizeInlineText(request.ResourceID)
+	name := sanitizeInlineText(request.DisplayName)
 	// A start targets a launch profile rather than a session, so naming a session
 	// there would describe a target the action does not have.
 	if request.Operation == protocol.OperationAgentStart {
@@ -209,13 +215,21 @@ func progressTarget(request ActionRequest) string {
 		}
 		return "from profile " + profile + " on endpoint " + endpoint
 	}
-	switch {
-	case session == "" && endpoint == "":
+	if session == "" && endpoint == "" {
 		return ""
-	case session == "":
+	}
+	described := session
+	if name != "" {
+		described = `"` + name + `"`
+		if session != "" {
+			described += " " + session
+		}
+	}
+	switch {
+	case described == "":
 		return "endpoint " + endpoint
 	case endpoint == "":
-		return "session " + session
+		return "session " + described
 	}
-	return "session " + session + " (" + endpoint + ")"
+	return "session " + described + " (" + endpoint + ")"
 }
