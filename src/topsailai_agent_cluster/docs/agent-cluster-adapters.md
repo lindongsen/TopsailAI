@@ -24,6 +24,17 @@ This table describes help/documentation inspected on 2026-10-27, not successful 
 | Follow session stdout | topsailai runtime logs -s SESSION -p PID -n N --follow | Live tail of plain text lines; `--json` is rejected together with `--follow` |
 | Read session context | runtime control get_session_messages with exact selectors | Sensitive data; separate permission, bounded output and schema validation required |
 
+Host scope differs between discovery and revalidation, deliberately. Discovery
+passes `--local`, because the inventory lists only what this Endpoint can control.
+Revalidation does not, because resume authorizes on the absence of a live target:
+a session recorded on another host is absent from a `--local` read, so a local
+revalidation would report it as not found and admit the resume while claiming the
+target does not exist. A task directory shared between hosts is exactly the case
+where resuming another host's session is intended, and the provider applies no
+hostname filter to resume. Such a row reports `process_generation` as `null`,
+because this host cannot verify a process it cannot see, so it is found but not
+live and remains a valid resume candidate.
+
 Workspace JSON items are documented with no, filename, session_name, session_id, is_task, pid, status, created_at and project_workspace. Provider metadata paths must not be exposed by default in cluster summaries. Status values and reliability require fixture validation; do not map a generic status directly to task success.
 
 Runtime JSON fields are documented as ok, exit_code, action, session_id, pid, delivery_state, error_code, message, bytes_written, request_id, response and delivery_unknown. Normalize by parsing the document and checking its semantics as well as process exit. Preserve precise provider error codes in a bounded namespaced detail.
