@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from topsailai.context.chat_history_manager.sql import ChatHistorySQLAlchemy
 from topsailai.context.session_category import resolve_session_category
 from topsailai.logger.log_chat import logger
+from topsailai.utils import db_io_tool
 
 from .__base import SessionStorageBase, SessionData
 
@@ -399,6 +400,7 @@ class SessionSQLAlchemy(SessionStorageBase):
         """
         with self._lock:
             db_session = self.SessionLocal()
+            original_busy_timeout = db_io_tool.apply_write_block(db_session)
             try:
                 # Avoid duplicate session_id
                 if db_session.query(Session).filter(Session.session_id == session_data.session_id).first():
@@ -424,8 +426,11 @@ class SessionSQLAlchemy(SessionStorageBase):
             except Exception as e:
                 db_session.rollback()
                 logger.error(f"create_session failed: {e}")
-                raise e
+                raise db_io_tool.handle_write_failure(
+                    e, "create_session", session_id=session_data.session_id,
+                )
             finally:
+                db_io_tool.restore_write_block(db_session, original_busy_timeout)
                 db_session.close()
 
     def _apply_session_filters(self, query, sessions=None, category=None):
@@ -625,8 +630,10 @@ class SessionSQLAlchemy(SessionStorageBase):
 
         Returns:
             bool: True if the session was deleted, False if it did not exist.
+                A database I/O failure never returns; it blocks or exits the process.
         """
         db_session = self.SessionLocal()
+        original_busy_timeout = db_io_tool.apply_write_block(db_session)
         try:
             # Check if session exists
             session = db_session.query(Session).filter(Session.session_id == session_id).first()
@@ -647,8 +654,11 @@ class SessionSQLAlchemy(SessionStorageBase):
         except Exception as e:
             db_session.rollback()
             logger.error(f"delete_session failed: session_id={session_id}, {e}")
-            raise e
+            raise db_io_tool.handle_write_failure(
+                e, "delete_session", session_id=session_id,
+            )
         finally:
+            db_io_tool.restore_write_block(db_session, original_busy_timeout)
             db_session.close()
 
     def clean_sessions(self, before_seconds: int):
@@ -660,8 +670,10 @@ class SessionSQLAlchemy(SessionStorageBase):
 
         Returns:
             int: Number of sessions deleted.
+                A database I/O failure never returns; it blocks or exits the process.
         """
         db_session = self.SessionLocal()
+        original_busy_timeout = db_io_tool.apply_write_block(db_session)
         try:
             # Calculate the cutoff time
             cutoff_time = datetime.now() - timedelta(seconds=before_seconds)
@@ -694,8 +706,9 @@ class SessionSQLAlchemy(SessionStorageBase):
         except Exception as e:
             db_session.rollback()
             logger.error(f"clean_sessions failed: {e}")
-            raise e
+            raise db_io_tool.handle_write_failure(e, "clean_sessions")
         finally:
+            db_io_tool.restore_write_block(db_session, original_busy_timeout)
             db_session.close()
 
     def update_session_name(self, session_id: str, session_name: str) -> bool:
@@ -713,9 +726,11 @@ class SessionSQLAlchemy(SessionStorageBase):
         Returns:
             bool: True if the session name was updated successfully (or already
                   equalled the requested name), False if the session does not
-                  exist or the update failed.
+                  exist. A database I/O failure never returns: it blocks, then
+                  exits the process, so a lost write cannot look like success.
         """
         db_session = self.SessionLocal()
+        original_busy_timeout = db_io_tool.apply_write_block(db_session)
         try:
             session = db_session.query(Session).filter(Session.session_id == session_id).first()
             if not session:
@@ -732,8 +747,13 @@ class SessionSQLAlchemy(SessionStorageBase):
         except Exception as e:
             db_session.rollback()
             logger.error(f"update_session_name failed: session_id={session_id}, {e}")
+            if db_io_tool.is_db_io_failure(e):
+                raise db_io_tool.handle_write_failure(
+                    e, "update_session_name", session_id=session_id,
+                )
             return False
         finally:
+            db_io_tool.restore_write_block(db_session, original_busy_timeout)
             db_session.close()
 
     def accumulate_session_tokens(
@@ -754,6 +774,7 @@ class SessionSQLAlchemy(SessionStorageBase):
         delta_completion = max(0, int(current_completion_tokens))
 
         db_session = self.SessionLocal()
+        original_busy_timeout = db_io_tool.apply_write_block(db_session)
         try:
             result = db_session.execute(
                 text(
@@ -792,8 +813,13 @@ class SessionSQLAlchemy(SessionStorageBase):
                 f"tokens={delta_tokens}, cached={delta_cached}, "
                 f"completion={delta_completion}, {e}"
             )
+            if db_io_tool.is_db_io_failure(e):
+                raise db_io_tool.handle_write_failure(
+                    e, "accumulate_session_tokens", session_id=session_id,
+                )
             return False
         finally:
+            db_io_tool.restore_write_block(db_session, original_busy_timeout)
             db_session.close()
 
     def accumulate_session_metrics(
@@ -827,6 +853,7 @@ class SessionSQLAlchemy(SessionStorageBase):
         has_delta = int(any(deltas.values()))
 
         db_session = self.SessionLocal()
+        original_busy_timeout = db_io_tool.apply_write_block(db_session)
         try:
             result = db_session.execute(
                 text(
@@ -871,8 +898,13 @@ class SessionSQLAlchemy(SessionStorageBase):
                 f"accumulate_session_metrics failed: session_id={session_id}, "
                 f"deltas={deltas}, {e}"
             )
+            if db_io_tool.is_db_io_failure(e):
+                raise db_io_tool.handle_write_failure(
+                    e, "accumulate_session_metrics", session_id=session_id,
+                )
             return False
         finally:
+            db_io_tool.restore_write_block(db_session, original_busy_timeout)
             db_session.close()
 
     def get_session_token_totals(self, session_id: str) -> tuple[int, int] | None:

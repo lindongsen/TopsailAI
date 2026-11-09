@@ -41,6 +41,7 @@ from datetime import datetime, timedelta
 
 from .__base import ChatHistoryBase, ChatHistoryMessageData
 from topsailai.logger.log_chat import logger
+from topsailai.utils import db_io_tool
 
 
 # SQLAlchemy base class for declarative models
@@ -155,6 +156,7 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
         """
         # Create a new database session
         session = self.SessionLocal()
+        original_busy_timeout = db_io_tool.apply_write_block(session)
         try:
             # Check if message already exists in the database
             existing_message = session.query(Message).filter(Message.msg_id == msg.msg_id).first()
@@ -190,9 +192,10 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
             # Rollback on error and log the exception
             session.rollback()
             logger.error(f"add_messages failed: {e}")
-            raise e
+            raise db_io_tool.handle_write_failure(e, "add_message", msg_id=msg.msg_id)
         finally:
             # Always close the session
+            db_io_tool.restore_write_block(session, original_busy_timeout)
             session.close()
 
     def get_message(self, msg_id) -> ChatHistoryMessageData:
@@ -284,6 +287,7 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
             msg_id (str): The unique identifier of the message to update.
         """
         session = self.SessionLocal()
+        original_busy_timeout = db_io_tool.apply_write_block(session)
         try:
             # Update access time and increment access count
             session.query(Message).filter(Message.msg_id == msg_id).update({
@@ -294,8 +298,9 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
         except Exception as e:
             session.rollback()
             logger.error(f"update_message failed: msg_id={msg_id}, {e}")
-            raise e
+            raise db_io_tool.handle_write_failure(e, "update_message_access", msg_id=msg_id)
         finally:
+            db_io_tool.restore_write_block(session, original_busy_timeout)
             session.close()
 
     def del_messages(self, msg_id=None, session_id=None):
@@ -317,6 +322,7 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
         assert msg_id or session_id
 
         session = self.SessionLocal()
+        original_busy_timeout = db_io_tool.apply_write_block(session)
         try:
             # Build query to find session mappings to delete
             delete_query = session.query(SessionMessage)
@@ -349,9 +355,12 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
             session.commit()
         except Exception as e:
             session.rollback()
-            logger.error("del_messages failed: msg_id={msg_id}, session_id={session_id}, {e}")
-            raise e
+            logger.error(f"del_messages failed: msg_id={msg_id}, session_id={session_id}, {e}")
+            raise db_io_tool.handle_write_failure(
+                e, "del_messages", msg_id=msg_id, session_id=session_id,
+            )
         finally:
+            db_io_tool.restore_write_block(session, original_busy_timeout)
             session.close()
 
     def list_cleanup_messages(self, before_seconds):
@@ -382,8 +391,13 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
             return row[0] if row else None
 
     def delete_cleanup_message(self, msg_id, before_seconds):
-        """Delete one still-old message and all its mappings in one transaction."""
-        with self.SessionLocal() as session:
+        """Delete one still-old message and all its mappings in one transaction.
+
+        A database I/O failure never returns; it blocks or exits the process.
+        """
+        session = self.SessionLocal()
+        original_busy_timeout = db_io_tool.apply_write_block(session)
+        try:
             cutoff = datetime.now() - timedelta(seconds=before_seconds)
             message = session.query(Message).filter(
                 Message.msg_id == msg_id, Message.access_time < cutoff).first()
@@ -394,6 +408,15 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
             session.delete(message)
             session.commit()
             return 1
+        except Exception as e:
+            session.rollback()
+            logger.error(f"delete_cleanup_message failed: msg_id={msg_id}, {e}")
+            raise db_io_tool.handle_write_failure(
+                e, "delete_cleanup_message", msg_id=msg_id,
+            )
+        finally:
+            db_io_tool.restore_write_block(session, original_busy_timeout)
+            session.close()
 
     def clean_messages(self, before_seconds: int) -> int:
         """
@@ -405,8 +428,10 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
 
         Returns:
             int: Number of messages deleted.
+                A database I/O failure never returns; it blocks or exits the process.
         """
         session = self.SessionLocal()
+        original_busy_timeout = db_io_tool.apply_write_block(session)
         try:
             # Calculate the cutoff time for message deletion
             cutoff_time = datetime.now() - timedelta(seconds=before_seconds)
@@ -432,8 +457,11 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
         except Exception as e:
             session.rollback()
             logger.error(f"clean_messages failed: before_seconds={before_seconds}, {e}")
-            raise e
+            raise db_io_tool.handle_write_failure(
+                e, "clean_messages", before_seconds=before_seconds,
+            )
         finally:
+            db_io_tool.restore_write_block(session, original_busy_timeout)
             session.close()
 
 

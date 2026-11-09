@@ -35,12 +35,19 @@ func runStartup(t *testing.T, stub InteractiveAPI, input string, options Interac
 
 func TestStartupRendersInventoryBeforeFirstPrompt(t *testing.T) {
 	output, _ := runStartup(t, startupStub(), "quit\n", InteractiveOptions{})
-	for _, header := range tableHeaders {
+	// The interactive table hides SESSION_ID, so the expected layout is the
+	// interactive one rather than the complete column set.
+	for _, header := range layoutHeaders(TableOptions{HideSessionID: true}) {
 		if !strings.Contains(output, header) {
 			t.Fatalf("startup inventory missing header %q: %q", header, output)
 		}
 	}
-	if !strings.Contains(output, "provider-session-1") {
+	if strings.Contains(output, "SESSION_ID") {
+		t.Fatalf("startup inventory rendered the hidden SESSION_ID column: %q", output)
+	}
+	// The row is identified by its number and state, because the provider session
+	// ID is no longer rendered.
+	if !strings.Contains(output, "1  │ running") {
 		t.Fatalf("startup inventory missing session row: %q", output)
 	}
 	headerIndex := strings.Index(output, "DATA_STATUS")

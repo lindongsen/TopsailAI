@@ -207,9 +207,26 @@ func historyResumableCell(row HistoryViewRow) string {
 	return "no (" + row.ResumeBlockedReason + ")"
 }
 
+// layoutHistoryColumns returns the history columns one render actually prints.
+// It applies the same presentation choice as the session table, so a hidden
+// SESSION_ID is dropped from every interactive table rather than only the list.
+func layoutHistoryColumns(options TableOptions) []tableColumn {
+	if !options.HideSessionID {
+		return historyColumns
+	}
+	kept := make([]tableColumn, 0, len(historyColumns)-1)
+	for _, column := range historyColumns {
+		if column.key == columnID {
+			continue
+		}
+		kept = append(kept, column)
+	}
+	return kept
+}
+
 // RenderHistory writes one bounded history table.
 func RenderHistory(out io.Writer, view HistoryView, options TableOptions) error {
-	columns := historyColumns
+	columns := layoutHistoryColumns(options)
 	headers := columnHeaders(columns)
 	cells := make([][]string, len(view.Rows))
 	states := make([][]string, len(view.Rows))

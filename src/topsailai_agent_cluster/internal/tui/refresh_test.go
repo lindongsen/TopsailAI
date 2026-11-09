@@ -55,6 +55,7 @@ func (s *refreshStub) forcedCollections() []string {
 	sort.Strings(calls)
 	return calls
 }
+
 // refreshScopeStub serves two endpoints and records forced collections.
 func refreshScopeStub() *refreshStub {
 	base := scopeStub()
@@ -87,7 +88,12 @@ func TestRefreshForcesEveryEndpointInWorkspaceScope(t *testing.T) {
 // from the forced collection, so the operator sees fresh data after refresh.
 func TestRefreshRendersTheFreshlyCollectedDocument(t *testing.T) {
 	stub := refreshScopeStub()
-	stub.fresh["endpoint-1"] = scopeInventory("fresh-session", "fresh-generation")
+	previous := stub.reports["endpoint-1"]
+	previous.Sessions[0].DisplayName = "previous work"
+	stub.reports["endpoint-1"] = previous
+	fresh := scopeInventory("fresh-session", "fresh-generation")
+	fresh.Sessions[0].DisplayName = "fresh work"
+	stub.fresh["endpoint-1"] = fresh
 	output, diagnostics := runScope(t, stub, "refresh\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
@@ -95,10 +101,12 @@ func TestRefreshRendersTheFreshlyCollectedDocument(t *testing.T) {
 	// The startup inventory legitimately shows the previous projection, so the
 	// assertion is scoped to the segment the refresh command rendered.
 	scoped := segmentBeforePrompt(output, "workspace> ")
-	if !strings.Contains(scoped, "provider-fresh-session") {
+	// The interactive table hides SESSION_ID, so each row is identified by its
+	// display name, which the table still renders.
+	if !strings.Contains(scoped, "fresh work") {
 		t.Fatalf("refresh did not render the freshly collected session: %q", scoped)
 	}
-	if strings.Contains(scoped, "provider-res-1") {
+	if strings.Contains(scoped, "previous work") {
 		t.Fatalf("refresh rendered the stale projection: %q", scoped)
 	}
 }
@@ -148,6 +156,9 @@ func TestRefreshWorkspaceScopeDegrades(t *testing.T) {
 // reloaded rows instead of only a confirmation line.
 func TestRefreshSessionScopeForcesThenRenders(t *testing.T) {
 	stub := refreshScopeStub()
+	report := stub.reports["endpoint-1"]
+	report.Sessions[0].DisplayName = "reloaded work"
+	stub.reports["endpoint-1"] = report
 	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nrefresh\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
@@ -156,7 +167,7 @@ func TestRefreshSessionScopeForcesThenRenders(t *testing.T) {
 		t.Fatalf("forced collections=%v, want only endpoint-1", stub.refreshCalls)
 	}
 	scoped := segmentBeforePrompt(output, "session[host-one/provider-res-1]> ")
-	if !strings.Contains(scoped, "SESSION_ID") || !strings.Contains(scoped, "provider-res-1") {
+	if !strings.Contains(scoped, "DATA_STATUS") || !strings.Contains(scoped, "reloaded work") {
 		t.Fatalf("session refresh did not render the endpoint table: %q", scoped)
 	}
 	if strings.Contains(scoped, "host-two") {

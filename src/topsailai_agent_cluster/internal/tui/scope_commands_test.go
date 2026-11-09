@@ -45,6 +45,7 @@ func siblingStub() *interactiveStub {
 	report.Sessions = append(report.Sessions, protocol.Session{
 		SessionID:         "res-1b",
 		ProviderSessionID: "provider-1b",
+		DisplayName:       "sibling work",
 		AdapterID:         "adapter-1",
 		Generation:        "generation-1b",
 		State:             "stopped",
@@ -182,7 +183,7 @@ func TestListInSessionScopeShowsSiblingSessions(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
 	scoped := segmentBeforePrompt(output, "session[host-one/provider-res-1]> ")
-	if !strings.Contains(scoped, "provider-1b") {
+	if !strings.Contains(scoped, "sibling work") {
 		t.Fatalf("missing sibling session: %q", scoped)
 	}
 	if strings.Contains(scoped, "res-2") {
@@ -253,7 +254,7 @@ func TestRefreshRendersTableInSessionScope(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
 	scoped := segmentBeforePrompt(output, "session[host-one/provider-res-1]> ")
-	if !strings.Contains(scoped, "SESSION_ID") || !strings.Contains(scoped, "provider-res-1") {
+	if !strings.Contains(scoped, "DATA_STATUS") || !strings.Contains(scoped, "host-one") {
 		t.Fatalf("session refresh did not render the endpoint table: %q", scoped)
 	}
 	if strings.Contains(scoped, "host-two") {
@@ -271,7 +272,7 @@ func TestRefreshInSessionScopeStillRevalidatesTheSelection(t *testing.T) {
 	stub.generationSequence = []string{"generation-1", "generation-1", "generation-1", "generation-1", "generation-2"}
 	output, diagnostics := runScope(t, stub, "cd host-one/endpoint-1/res-1\nrefresh\nexit\n", ColorPolicy{})
 	assertActionableError(t, diagnostics, "error: selected session generation changed; use the session again")
-	if got := strings.Count(output, "SESSION_ID"); got != 1 {
+	if got := strings.Count(output, "DATA_STATUS"); got != 1 {
 		t.Fatalf("refresh rendered %d tables for an invalidated selection, want only the startup table: %q", got, output)
 	}
 	if got := lastPrompt(output); got != "session[host-one/provider-res-1!]>" {

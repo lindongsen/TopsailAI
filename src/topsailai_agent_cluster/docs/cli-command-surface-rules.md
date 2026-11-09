@@ -77,10 +77,21 @@ see the effect.
 - A confirmation question names the provider session identifier first, followed by
   the opaque cluster resource ID in parentheses, for example
   `stop session provider-res-1 (res-1)? Confirm stop?`. The provider identifier is
-  the value the list renders in `SESSION_ID`, so the operator can match the question
-  against the selected row before answering; the opaque ID stays visible because
-  `status` and `info` accept it. A session with no reported provider identifier
-  falls back to the opaque ID alone, so the question never names an empty session.
+  the provider's own name for the session, so the operator can match the question
+  against the selected row before answering even though the interactive table hides
+  the `SESSION_ID` column; the opaque ID stays visible because `status` and `info`
+  accept it. A session with no reported provider identifier falls back to the opaque
+  ID alone, so the question never names an empty session.
+
+- The interactive tables hide the `SESSION_ID` column, because the provider session
+  identifier is a long opaque value that only widens the table while the operator
+  selects a session by row number or name. This covers both interactive tables: the
+  session list and the `history` table. The column is presentation-only: the
+  identifier stays on the row, so `logs`, `stop`, `drive` and the standalone `show`
+  command still accept it. `cd` and the interactive `show` accept a row number, an
+  internal resource ID or a unique display name, which is why the row number and
+  name columns stay visible. The standalone `list` and `history` commands keep the
+  column, because their output is parsed by scripts and tests.
 
 ## Audit
 

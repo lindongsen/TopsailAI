@@ -126,10 +126,15 @@ func TestInteractiveListUsesTableHeaders(t *testing.T) {
 	if err := RunInteractive(context.Background(), stub, strings.NewReader("list\nexit\n"), &output, &diagnostics, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	for _, header := range tableHeaders {
+	// The interactive table hides SESSION_ID, so the expected layout is the
+	// interactive one rather than the complete column set.
+	for _, header := range layoutHeaders(TableOptions{HideSessionID: true}) {
 		if !strings.Contains(output.String(), header) {
 			t.Fatalf("interactive list missing header %q: %q", header, output.String())
 		}
+	}
+	if strings.Contains(output.String(), "SESSION_ID") {
+		t.Fatalf("interactive list rendered the hidden SESSION_ID column: %q", output.String())
 	}
 }
 

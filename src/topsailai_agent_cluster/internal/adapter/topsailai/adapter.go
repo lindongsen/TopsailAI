@@ -625,6 +625,10 @@ func (a *Adapter) ReadOutput(ctx context.Context, request adapter.OutputRequest)
 // text arguments and never decodes a document. Records are delivered as complete
 // lines, and the runner sets PYTHONUNBUFFERED so they arrive as they are written
 // instead of only at process exit.
+//
+// MaxBytes bounds one record, because one record is one chunk. A record longer
+// than the budget is truncated and labelled rather than ending the stream, so an
+// oversized provider line cannot be reported as a provider failure.
 func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollowRequest, emit func(protocol.OutputChunk) error) error {
 	key, err := a.providerTarget(ctx, &protocol.CommandTarget{Kind: "session", ResourceID: request.ResourceID, Generation: request.Generation})
 	if err != nil {
@@ -634,9 +638,16 @@ func (a *Adapter) FollowOutput(ctx context.Context, request protocol.OutputFollo
 	if lines <= 0 || lines > 10000 {
 		lines = 20
 	}
+	limit := request.MaxBytes
+	if limit <= 0 {
+		limit = followDefaultRecordBytes
+	}
+	if limit > followMaxRecordBytes {
+		limit = followMaxRecordBytes
+	}
 	args := []string{"runtime", "logs", "-s", key, "-n", fmt.Sprint(lines), "--follow"}
-	return a.followRunner.Follow(ctx, a.config.Executable, args, func(line string) error {
-		return emit(protocol.OutputChunk{Lines: []string{line}, ObservedAtMS: time.Now().UnixMilli()})
+	return a.followRunner.Follow(ctx, a.config.Executable, args, limit, func(record followRecord) error {
+		return emit(protocol.OutputChunk{Lines: []string{record.Line}, Truncated: record.Truncated, ObservedAtMS: time.Now().UnixMilli()})
 	})
 }
 

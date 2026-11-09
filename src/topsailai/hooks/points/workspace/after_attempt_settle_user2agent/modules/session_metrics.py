@@ -12,6 +12,7 @@ must never interrupt the Agent flow.
 """
 
 from topsailai.logger.log_chat import logger
+from topsailai.utils import db_io_tool
 
 BASELINE_ATTR = "_session_metrics_baseline"
 LATCH_ATTR = "_session_metrics_done"
@@ -136,6 +137,8 @@ def main(*, agent_chat, outcome, attempt=None):
         if session_mgr is None:
             return False
         return bool(session_mgr.accumulate_session_metrics(session_id=session_id, **deltas))
-    except Exception:
+    except Exception as e:
         logger.warning("Session metrics accumulation failed", exc_info=True)
+        if db_io_tool.is_db_io_failure(e):
+            raise
         return False

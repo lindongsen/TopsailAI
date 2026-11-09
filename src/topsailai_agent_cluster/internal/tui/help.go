@@ -25,7 +25,7 @@ var fieldHelp = []string{
 	"NO: display row number from the most recently rendered list; use cd <no> to enter that session.",
 	"SESSION_STATUS: provider-reported lifecycle state, such as running, stopped, or failed; the column is shown only when colour is disabled, because an enabled table colours the whole data row by that state.",
 	"SESSION_NAME: session display name; empty when the provider did not report one.",
-	"SESSION_ID: provider-native session ID; empty when the provider did not report one.",
+	"SESSION_ID: provider-native session ID; empty when the provider did not report one. The interactive table hides this column because the value is long and opaque, so select a session by its row number or name; the standalone list command still prints it, and logs, stop, drive and the standalone show command still accept it as a selector.",
 	"DRIVER: controller state reported by the provider: running, unverified, stale, exited, failed, none, or unknown; a dash means the provider reported no driver observation, which is not proof that no controller exists. A controller injects input on the operator's behalf; it is not the agent, so stopping it leaves the agent running. The column is a read projection of the persisted inventory and never probes the provider.",
 	"PROJECT_WORKSPACE: workspace the session is working on, as reported by the provider; empty when the provider did not report one. It is descriptive report data only and never selects a route, capability, or permission.",
 	"ENDPOINT: endpoint hostname, falling back to its display name or ID.",
@@ -578,7 +578,7 @@ func printContextHelp(out io.Writer, kind ScopeKind) error {
 	if kind == ScopeSession {
 		workflow = "Bare cd or cd / returns to workspace; cd .. returns to endpoint. Numeric row navigation is unavailable in session scope.\n" +
 			"Entering a session renders one bounded output snapshot immediately, using the REPL line budget (0300 by default, or the startup --lines value); run logs again to re-read it.\n" +
-			"Session selectors use internal resource IDs or unique names, not necessarily the provider SESSION_ID shown in list.\n" +
+			"Session selectors use internal resource IDs or unique names; the provider SESSION_ID is hidden from the interactive table, but logs, stop, drive and the standalone show command still accept it.\n" +
 			"Type > <text> to send a message to the current session without spelling the command; the prefix is disjoint from every command word.\n" +
 			"Text that matches no command is offered as a send message; declining keeps the unknown-command diagnostic.\n" +
 			"A line beginning with ! runs one allowlisted command in the session working directory; the endpoint decides the allowlist.\n" +

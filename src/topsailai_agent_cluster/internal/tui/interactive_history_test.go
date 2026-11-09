@@ -61,20 +61,32 @@ func historyScenarioStub(rows []protocol.HistoryRow, report protocol.InventoryRe
 
 // TestInteractiveHistoryRendersTableAndBindsRowNumbers proves the interactive
 // surface renders the history layout and queries exactly the named endpoint.
+//
+// The rows carry a distinguishing display name because the interactive table
+// hides SESSION_ID, so the provider session ID can no longer be used as the
+// marker that proves both rows were rendered.
 func TestInteractiveHistoryRendersTableAndBindsRowNumbers(t *testing.T) {
 	stub := historyScenarioStub([]protocol.HistoryRow{
-		{ProviderSessionID: "wa-live", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning},
-		{ProviderSessionID: "wa-past", Resumable: true, ResourceID: "res-past"},
+		{ProviderSessionID: "wa-live", DisplayName: "live work", Resumable: false, ResumeBlockedReason: protocol.ResumeBlockedProviderRunning},
+		{ProviderSessionID: "wa-past", DisplayName: "past work", Resumable: true, ResourceID: "res-past"},
 	}, historyReport(historyLiveSession("res-live", "wa-live", "gen-1")))
 
 	output, diagnostics := runScope(t, stub, "history endpoint-1\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	for _, want := range []string{"PROVIDER_STATUS", "LIVE", "RESUMABLE", "wa-live", "wa-past"} {
+	for _, want := range []string{"PROVIDER_STATUS", "LIVE", "RESUMABLE", "live work", "past work"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("history table missing %q: %q", want, output)
 		}
+	}
+	// The interactive history table hides SESSION_ID, so neither the header nor
+	// the provider session ID cell may be printed.
+	if strings.Contains(output, "SESSION_ID") {
+		t.Fatalf("interactive history table still prints the SESSION_ID header: %q", output)
+	}
+	if strings.Contains(output, "wa-live") || strings.Contains(output, "wa-past") {
+		t.Fatalf("interactive history table still prints a provider session ID cell: %q", output)
 	}
 	if len(stub.historyCalls) != 1 || stub.historyCalls[0] != "endpoint-1" {
 		t.Fatalf("history calls=%v", stub.historyCalls)

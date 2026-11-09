@@ -224,6 +224,23 @@ These variables control when the agent archives or summarizes message history to
 
 The first three variables are read at `ThresholdContextHistory` initialization time and can be overridden per process. `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` and `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` are read on each call to their respective `is_need_summarize_*` methods.
 
+## Database Write I/O Failure
+
+These variables control how a database **write** reacts to an I/O failure. Reads are out of scope and keep failing fast.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_DB_WRITE_MAX_BLOCK_SECONDS` | `0` | Maximum number of seconds one database write may block while waiting for a competing writer or a pooled connection. `0`, negative, empty, or invalid values block indefinitely. A positive value bounds the wait; when the budget is exhausted the process exits with code `1`. |
+
+### Details
+
+- **Scope is writes only.** The policy applies to `create_session`, `delete_session`, `clean_sessions`, `update_session_name`, `accumulate_session_tokens`, `accumulate_session_metrics`, `add_message`, `update_message_access`, `del_messages`, `delete_cleanup_message`, and `clean_messages`. Read paths keep the driver default so a stuck write can never make a read hang.
+- **Transient failures block.** A lock conflict (`SQLITE_BUSY`, `SQLITE_LOCKED`) or an exhausted connection pool waits instead of failing fast. The wait is implemented per write connection through the SQLite `busy_timeout` pragma, which is restored in `finally` so the widened timeout never leaks onto a pooled connection used by a later read.
+- **Unrecoverable failures exit immediately.** `SQLITE_READONLY`, `SQLITE_IOERR`, `SQLITE_CORRUPT`, `SQLITE_FULL`, `SQLITE_CANTOPEN`, `SQLITE_PROTOCOL`, and `SQLITE_NOTADB` never resolve by waiting, so they exit at once instead of turning a recoverable failure into a permanently hung agent.
+- **Exit is process-wide.** `_async_update_session_name` runs in a daemon thread, so `sys.exit` there would only stop that thread. The policy flushes every log handler and the standard streams, then calls `os._exit(1)`.
+- **A business result is not an I/O failure.** A missing session still returns `False` from `update_session_name`, `delete_session`, `accumulate_session_tokens`, and `accumulate_session_metrics`. A non-I/O exception keeps its original contract, so a programming defect stays testable instead of terminating the process.
+- **Callers never downgrade an I/O failure.** `ctx_manager._async_update_session_name`, `TokenStat.finalize_usage`, and the `after_attempt_settle_user2agent` session-metrics module re-raise an I/O failure instead of logging a warning, so a lost write cannot look like success.
+
 ## Agent2LLM Summary Session-Message Tuning
 
 These variables tune the conditions under which the Agent2LLM summarizer keeps or drops User2Agent session messages when `TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES` is enabled.

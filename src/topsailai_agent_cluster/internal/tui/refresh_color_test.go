@@ -52,7 +52,9 @@ func TestRefreshKeepsTableColors(t *testing.T) {
 func TestRefreshStillFiltersProviderANSI(t *testing.T) {
 	stub := singleHostStub()
 	stub.endpoints[0].DisplayName = "host\x1b[31mRED\x1b[0m"
-	stub.reports["endpoint-1"] = navInventory("sess\x1b[31mRED\x1b[0m", "generation-1")
+	report := navInventory("sess-1", "generation-1")
+	report.Sessions[0].DisplayName = "name\x1b[31mRED\x1b[0m"
+	stub.reports["endpoint-1"] = report
 	var out, diagnostics strings.Builder
 	err := RunInteractive(context.Background(), stub, strings.NewReader("refresh\nexit\n"), &out, &diagnostics, InteractiveOptions{Color: ColorPolicy{Enabled: true}})
 	if err != nil || diagnostics.Len() != 0 {
@@ -62,7 +64,7 @@ func TestRefreshStillFiltersProviderANSI(t *testing.T) {
 	if strings.Contains(text, "\x1b[31m") {
 		t.Fatalf("provider ANSI reached the terminal: %q", text)
 	}
-	if !strings.Contains(text, "provider-sessRED") {
+	if !strings.Contains(text, "nameRED") {
 		t.Fatalf("sanitized provider text missing: %q", text)
 	}
 }

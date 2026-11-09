@@ -235,8 +235,12 @@ func (e *Executor) ReadOutput(ctx context.Context, request protocol.OutputSnapsh
 	}
 	data := strings.Join(result.Lines, "\n")
 	response := protocol.OutputSnapshotResponse{Data: data, Truncated: result.Truncated, ObservedAtMS: result.ObservedAtMS}
+	// Truncate on a rune boundary rather than at a raw byte offset: a byte slice
+	// would cut a multi-byte character in half and hand the caller bytes that no
+	// longer decode. The follow path shares the same helper so the two output
+	// routes cannot disagree about what a truncated payload looks like.
 	if len(response.Data) > limit {
-		response.Data = response.Data[:limit]
+		response.Data = string(adapter.TruncateUTF8([]byte(response.Data), limit))
 		response.Truncated = true
 	}
 	return response, nil

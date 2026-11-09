@@ -45,11 +45,18 @@ func TableOptionsFor(out io.Writer) TableOptions {
 
 // tableOptionsFor builds the table options for one REPL render, so the output
 // boundary decides both the width and whether truncation is disabled.
+//
+// The interactive table hides SESSION_ID: the operator selects a session by its
+// row number or name, and the provider session ID is a long opaque value that
+// only widens the table. The ID stays on the row, so it is still accepted as a
+// command target. The standalone commands keep the column, because their output
+// is parsed by scripts and tests.
 func tableOptionsFor(out io.Writer, color ColorPolicy, clean bool, onRows func([]SessionRow)) TableOptions {
 	options := TableOptionsFor(out)
 	options.Color = color
 	options.Clean = clean
 	options.OnRows = onRows
+	options.HideSessionID = true
 	return options
 }
 

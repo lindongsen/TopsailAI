@@ -6,10 +6,11 @@ import (
 
 // confirmationTarget names the exact session a mutating command will act on.
 //
-// The provider session identifier is named first because it is the value the list
-// shows in SESSION_ID, so the operator can match the confirmation question against
-// the row they selected. The opaque cluster resource ID follows in parentheses
-// because it is what `status` and `info` accept, so the operator can still copy it.
+// The provider session identifier is named first because it is the provider's own
+// name for the session, so the operator can match the confirmation question against
+// the row they selected even though the interactive table hides that column. The
+// opaque cluster resource ID follows in parentheses because it is what `status` and
+// `info` accept, so the operator can still copy it.
 type confirmationTarget struct {
 	ProviderSessionID string
 	SessionID         string

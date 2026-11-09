@@ -157,3 +157,60 @@ own workflow, and `:=` versus `?=` is a one-character difference that no test ex
 is silent in both directions: the build succeeds into the wrong place, and the clean succeeds on the
 wrong place. Verifying with `make -n` plus one real build into a throwaway directory is what turns
 "the variable is used somewhere" into "the artifact actually landed there".
+
+## A test can lock a defect in place by asserting the buggy behaviour
+
+Trigger: the output-follow byte budget was ignored for the whole life of the feature, and the reason
+it survived review was a test named `TestScanFollowLinesRejectsOversizedRecord`. That test asserted
+that an oversized record produces an error, which is exactly the defect: the stream died instead of
+truncating. The test was green, so the behaviour looked intentional and verified. The code comment
+next to it claimed the record was "truncated and labelled", so the comment and the test disagreed and
+nobody compared them.
+
+Action: when a comment or document states an intended behaviour, check whether a test asserts that
+same behaviour. If a test asserts something weaker or different, treat the disagreement as a defect
+until proven otherwise, and read the test name critically: a name like `RejectsOversizedRecord`
+records a decision, so confirm that decision was actually intended rather than inherited from the
+first implementation. When fixing such a defect, replace the test rather than adding a new one beside
+it, because the old test will otherwise keep asserting the old behaviour.
+
+Why this prevents recurrence: a missing test leaves a gap that review might notice, but a wrong test
+actively certifies the defect. It converts "nobody checked" into "somebody checked and approved",
+which is far harder to detect later. Comparing the stated intent against the asserted intent is the
+cheapest way to find this class of bug.
+
+## A parameter threaded through every layer can still have no consumer
+
+Trigger: `max_bytes` travelled from the CLI through the Server, the protocol struct and the Endpoint
+into the adapter, and was then never read. Every layer forwarded it faithfully, so a review that
+followed the plumbing saw a complete chain and concluded the feature worked. The snapshot path read
+the same field correctly, which made the omission look even less likely.
+
+Action: when verifying that a parameter works, do not stop at "it is passed everywhere". Find the
+statement that actually consumes it and confirm the value changes observable behaviour. A grep for the
+field name should show a read that affects output, not only assignments and struct literals. Prefer a
+test that sets a distinctive value and asserts the effect, because a distinctive value cannot be
+confused with a default.
+
+Why this prevents recurrence: forwarding code is mechanical and easy to write correctly, so the
+plumbing looks complete while the behaviour is absent. The defect is invisible in a diff review
+because every changed line is correct; only the missing consumer is wrong, and a missing line does not
+appear in a diff.
+
+## A helper duplicated across two routes drifts
+
+Trigger: the follow output route was fixed to truncate on a UTF-8 rune boundary, while the snapshot
+route kept a raw byte slice. The same protocol field therefore produced valid UTF-8 on one route and
+half a character on the other, and the snapshot defect survived because the only test guarding it
+used an ASCII fixture that is valid UTF-8 at every byte offset.
+
+Action: when the same logic is needed on two code paths, extract it into a package both paths already
+import and have each path call it. A local wrapper that delegates is acceptable; a second copy is not.
+When fixing one of two parallel paths, immediately check whether the sibling path has the same defect
+instead of assuming the fix is local.
+
+Why this prevents recurrence: a copied helper only postpones the divergence, because the next fix
+lands on one copy and the other silently keeps the old behaviour. Sharing the implementation makes
+the drift structurally impossible rather than dependent on someone remembering to change both. The
+corollary is that a test whose fixture cannot express the failure mode is not coverage, it is a lock
+on the current behaviour.

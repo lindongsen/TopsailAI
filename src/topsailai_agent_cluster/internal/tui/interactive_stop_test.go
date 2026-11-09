@@ -208,19 +208,23 @@ func TestStopReportsCommandIDForStatus(t *testing.T) {
 
 // TestStopConfirmationNamesProviderSessionIDFirst proves the workspace-scope stop
 // question names the provider session identifier before the opaque cluster resource
-// ID, so the operator can match the question against the SESSION_ID column of the
-// rendered list before answering. The opaque ID stays available for status and info.
+// ID. The interactive table hides SESSION_ID, so the question is the only place the
+// operator sees the provider identifier before answering; the opaque ID stays
+// available for status and info.
 func TestStopConfirmationNamesProviderSessionIDFirst(t *testing.T) {
 	stub := scopeStub()
 	output, diagnostics := runScope(t, stub, "list\nstop 1\ny\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "stop session provider-res-1 (res-1)? Confirm stop?") {
+	const question = "stop session provider-res-1 (res-1)? Confirm stop?"
+	if !strings.Contains(output, question) {
 		t.Fatalf("confirmation question does not name the provider session ID first: %q", output)
 	}
-	if strings.Index(output, "provider-res-1") > strings.Index(output, "stop session provider-res-1 (res-1)?") {
-		t.Fatalf("provider session ID is not the first identifier in the question: %q", output)
+	// The provider identifier must precede the opaque identifier inside the
+	// question itself, which is the only place both are rendered.
+	if strings.Index(question, "provider-res-1") > strings.Index(question, "(res-1)") {
+		t.Fatalf("provider session ID is not the first identifier in the question: %q", question)
 	}
 }
 

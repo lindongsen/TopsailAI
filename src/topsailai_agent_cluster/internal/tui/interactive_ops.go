@@ -769,7 +769,8 @@ func promptInterruptPayload(parent context.Context, name string, lines <-chan li
 // The question is written through trustedOut because it carries application styling;
 // the interpolated target label is provider data and is sanitized first. The label
 // names the provider session identifier before the opaque cluster resource ID, so the
-// operator can match the question against the SESSION_ID column of the rendered list.
+// operator can match the question against the session they selected even though the
+// interactive table hides the SESSION_ID column.
 func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, state *interactiveState, op, name string, target confirmationTarget, generation string, payload json.RawMessage, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions, revalidate func(context.Context) error, postSubmit func(context.Context, map[string]any) error) error {
 	question := name + " " + sanitizeInlineText(target.label()) + "? Confirm " + name + "? " + confirmationHint + " "
 	if err := writeConfirmationQuestion(trustedOut, question, options.Color); err != nil {

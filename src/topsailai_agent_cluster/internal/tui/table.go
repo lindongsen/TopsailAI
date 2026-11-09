@@ -30,6 +30,10 @@ type TableOptions struct {
 	OnRows func([]SessionRow)
 	// Location formats the DATA_STATUS success stamp; nil means the local timezone.
 	Location *time.Location
+	// HideSessionID drops the SESSION_ID column from the rendered layout. It is an
+	// interactive presentation choice only: the provider session ID stays on the
+	// row, so it is still accepted as a command target, but it is not printed.
+	HideSessionID bool
 }
 
 // Column keys name one logical field so a layout change cannot silently shift
@@ -88,6 +92,30 @@ func columnsFor(policy ColorPolicy) []tableColumn {
 		columns = append(columns, column)
 	}
 	return columns
+}
+
+// layoutColumns returns the columns one render actually prints. It starts from
+// the colour-dependent layout and then applies the presentation choices that do
+// not depend on colour, so a hidden column is dropped for every colour policy.
+func layoutColumns(options TableOptions) []tableColumn {
+	columns := columnsFor(options.Color)
+	if !options.HideSessionID {
+		return columns
+	}
+	kept := make([]tableColumn, 0, len(columns)-1)
+	for _, column := range columns {
+		if column.key == columnID {
+			continue
+		}
+		kept = append(kept, column)
+	}
+	return kept
+}
+
+// layoutHeaders lists the headers of one rendered layout, so a caller that needs
+// the printed headers never has to rebuild the layout itself.
+func layoutHeaders(options TableOptions) []string {
+	return columnHeaders(layoutColumns(options))
 }
 
 // columnHeaders returns the header text of one layout.
@@ -158,7 +186,7 @@ func minimumTableWidth(columns int) int {
 // RenderTable writes a bounded table and sorted endpoint diagnostics.
 func RenderTable(out, errors io.Writer, rows []SessionRow, failures []EndpointFailure, options TableOptions) error {
 	assignRowNumbers(rows)
-	columns := columnsFor(options.Color)
+	columns := layoutColumns(options)
 	headers := columnHeaders(columns)
 	cells := make([][]string, len(rows))
 	states := make([][]string, len(rows))

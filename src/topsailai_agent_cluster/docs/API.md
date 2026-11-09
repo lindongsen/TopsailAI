@@ -193,6 +193,11 @@ invalid value keeps the provider default, and an explicit value is clamped to th
 10000 lines. The two budgets are independent because providers differ: a line-oriented provider
 uses `max_lines`, a byte-oriented provider uses `max_bytes`.
 
+A snapshot longer than `max_bytes` is truncated on a UTF-8 boundary and labelled `truncated: true`,
+so a shortened payload never ends in half a character. The follow route uses the same truncation
+rule, because a caller that receives invalid UTF-8 cannot tell a corrupt provider from a truncated
+read.
+
 The result is one bounded snapshot with its observation time. It is not a stream, not a follow and
 not a durable subscription. A provider that cannot answer returns `503` with the provider's error
 code, so an unavailable read is never reported as an empty successful read.
@@ -204,7 +209,13 @@ code, so an unavailable read is never reported as an empty successful read.
 | GET | `/api/v1/output/follow` | Stream output records for one resource |
 
 Required query parameters are `endpoint_id` and `resource_id`. Optional parameters are
-`generation`, `max_bytes` and `max_lines`, with the same defaults and clamps as the snapshot route.
+`generation`, `max_bytes` and `max_lines`. `max_bytes` defaults to 64 KiB and is clamped to 1 MiB;
+`max_lines` keeps the provider default when absent or invalid and is clamped to 10000 lines.
+
+`max_bytes` bounds one record, because one record is one chunk. A record longer than the budget is
+truncated on a UTF-8 boundary and labelled `truncated: true`, and the stream continues with the next
+record. An oversized record is therefore never reported as a provider failure, and it never hides
+the records that follow it.
 
 The response is `application/x-ndjson` with `Cache-Control: no-store`: one JSON record per line,
 chunk records first and exactly one terminal record last. Each record carries `lines`,

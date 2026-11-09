@@ -22,6 +22,7 @@ from topsailai.logger.log_chat import logger
 from topsailai.utils.print_tool import print_info
 from topsailai.utils import (
     env_tool,
+    db_io_tool,
 )
 #####################################################################
 # Wrapper: `from openai.types.completion_usage import CompletionUsage`
@@ -398,6 +399,8 @@ class TokenStat(threading.Thread):
                     )
         except Exception as e:
             logger.warning(f"finalize_usage: failed to accumulate session tokens: {e}")
+            if db_io_tool.is_db_io_failure(e):
+                raise
         return True
 
     def get_token_stat_info(self):
