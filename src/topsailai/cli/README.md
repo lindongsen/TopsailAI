@@ -101,9 +101,14 @@ Every environment variable consumed only by a CLI script MUST use the `TOPSAILAI
 `TOPSAILAI_CLI_HISTORY_MAX_ENTRIES` or `TOPSAILAI_CLI_RESUME_CONFIRM_SECONDS`. The prefix states that the variable is
 owned by this workspace, so a reader can tell a CLI knob from a project-wide setting without searching the source tree.
 
-A variable that is also read by a component outside this workspace MUST NOT use that prefix, because the prefix would
-claim an ownership the CLI does not have. Decide by checking whether any component outside `cli/` reads the variable:
-when the answer is yes, keep the unprefixed name and treat it as a cross-component contract.
+A variable that the core code defines MUST NOT use that prefix, because the CLI only consumes it. Decide by checking
+whether the core code defines the variable, whether the core environment-variable reference
+`docs/Environment_Variables.md` lists it, or whether the core `env_template` declares it. When any of those is true,
+keep the unprefixed name and read it as a core contract; the CLI must not rename a setting it does not own.
+
+A variable that is also read by a component outside this workspace MUST NOT use that prefix either, because the prefix
+would claim an ownership the CLI does not have. When the answer is yes, keep the unprefixed name and treat it as a
+cross-component contract.
 
 A variable that doubles as a configuration key in `.topsailai/settings.yaml` is a cross-component contract as well, even
 when no code outside `cli/` reads the environment variable directly. Renaming it would break existing configuration

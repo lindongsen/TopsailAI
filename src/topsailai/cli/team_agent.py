@@ -18,7 +18,7 @@ Created: 2025-10-19
 Environment Variables:
     SESSION_ID: Optional session identifier (just use history messages, don't save new messages)
     SYSTEM_PROMPT: Optional file path or content for system prompt
-    TOPSAILAI_CLI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: Set to "1" to save messages, "0" to not save (default: 0)
+    TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: Set to "1" to save messages, "0" to not save (default: 0)
     TOPSAILAI_TASK: Optional file path or content for the task
     TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET: Number for offset (msgs[:offset] + msgs[-offset:]), default is 7
     TOPSAILAI_SESSION_HEAD_TAIL_OFFSET: Fallback offset for session context (default: 7)
@@ -28,7 +28,6 @@ import sys
 import os
 
 import _import_topsailai
-from cli_topsailai.env_compat import get_env
 
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
 
@@ -97,7 +96,7 @@ def main():
     - It formats messages with agent mention prefix
 
     Environment Variables Used:
-        TOPSAILAI_CLI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: Whether to save messages (default: false)
+        TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: Whether to save messages (default: false)
         TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET: Session message offset (default: 7)
         TOPSAILAI_SESSION_HEAD_TAIL_OFFSET: Fallback session message offset (default: 7)
 
@@ -133,9 +132,7 @@ def main():
     answer = agent_chat.run(
         times=1,
         func_build_message=hook_build_message,
-        need_save_answer=env_tool.is_true(
-            get_env("TOPSAILAI_CLI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE")
-        ),
+        need_save_answer=env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE"),
         need_confirm_abort=False,
         need_symbol_for_answer=env_tool.EnvReaderInstance.check_bool("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER"),
         only_save_final=True,
