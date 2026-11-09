@@ -7,52 +7,80 @@ import (
 	"topsailai_agent_cluster/internal/protocol"
 )
 
-// TestUnverifiedAndUnknownUseDifferentColours proves the two conditions an
-// operator must tell apart are not rendered in one colour. An unverified session
-// needs a resume decision; a provider-reported unknown session does not. When
-// both are plain yellow the row colour carries no such distinction, and the
-// operator has to read the summary subset label to learn it.
-func TestUnverifiedAndUnknownUseDifferentColours(t *testing.T) {
-	unknownStyle := stateStyle("unknown")
-	unverifiedStyle := stateStyle("unverified")
-	if unknownStyle == unverifiedStyle {
-		t.Fatalf("unknown and unverified share one colour %q", unknownStyle)
+// TestStateColourMapping pins the complete session-state colour mapping, so a
+// state cannot silently drift into another colour. The mapping is deliberately
+// small: green means running, dim means a state that needs no attention, red
+// means a state that needs attention, and yellow is the remaining uncertain
+// middle.
+//
+// idle, unknown and unverified share dim on purpose. They are all states where
+// nothing is actively running and nothing has failed, so an operator scanning
+// the table should not have to read them. The difference between an unverified
+// session and a provider-reported unknown session is carried by the summary
+// subset label and by the refusal message, not by the row colour.
+func TestStateColourMapping(t *testing.T) {
+	cases := []struct {
+		state string
+		style string
+	}{
+		{"running", ansiGreen},
+		{"stopped", ansiDim},
+		{"completed", ansiDim},
+		{"idle", ansiDim},
+		{"unknown", ansiDim},
+		{"unverified", ansiDim},
+		{"failed", ansiRed},
+		{"error", ansiRed},
+		{"offline", ansiRed},
+		{"waiting_input", ansiYellow},
+		{"ready", ansiYellow},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.state, func(t *testing.T) {
+			if got := stateStyle(testCase.state); got != testCase.style {
+				t.Fatalf("state %q colour = %q, want %q", testCase.state, got, testCase.style)
+			}
+		})
 	}
 }
 
-// TestUnverifiedColourCollidesWithNoColourInUse proves the new state colour is
-// not a reuse of a colour that already means something else. A state that looked
-// like a header, a prompt, a separator or an operator payload would read as
-// chrome or as foreign text rather than as a session condition.
+// TestOfflineIsRedAndNotYellow proves the offline session state is coloured as a
+// condition that needs attention. It used to fall through to the default yellow,
+// which read as "uncertain" for a state that is a definite negative.
 //
-// The existing state colours are included because a second meaning for one
-// colour is the same defect one level down: an operator who learned "green means
-// running" must not meet green meaning something else.
-func TestUnverifiedColourCollidesWithNoColourInUse(t *testing.T) {
-	unverifiedStyle := stateStyle("unverified")
-	inUse := map[string]string{
-		"header":           ansiBoldCyan,
-		"startup text":     ansiCyan,
-		"prompt":           ansiBoldGreen,
-		"running":          ansiGreen,
-		"terminal state":   ansiDim,
-		"unknown":          ansiYellow,
-		"failed":           ansiRed,
-		"operator payload": ansiMagenta,
-		"reset":            ansiReset,
+// The endpoint connection state "offline" is a different domain with its own
+// mapping in connectionStateStyle, so this test also proves the two mappings are
+// not accidentally shared.
+func TestOfflineIsRedAndNotYellow(t *testing.T) {
+	if got := stateStyle("offline"); got != ansiRed {
+		t.Fatalf("offline session state colour = %q, want red %q", got, ansiRed)
 	}
-	for meaning, style := range inUse {
-		if unverifiedStyle == style {
-			t.Fatalf("unverified reuses the %s colour %q", meaning, style)
+	if got := stateStyle("offline"); got == ansiYellow {
+		t.Fatalf("offline must not fall through to the default yellow")
+	}
+	if got := connectionStateStyle("offline"); got != ansiRed {
+		t.Fatalf("endpoint connection offline colour = %q, want red %q", got, ansiRed)
+	}
+}
+
+// TestDimStatesShareOneColour proves the three dim states really are one colour,
+// so the intent is recorded rather than inferred from three separate cases. A
+// future change that gives one of them its own colour has to change this test,
+// which is the point: the sharing is a decision, not an accident.
+func TestDimStatesShareOneColour(t *testing.T) {
+	for _, state := range []string{"idle", "unknown", "unverified"} {
+		if got := stateStyle(state); got != ansiDim {
+			t.Fatalf("state %q colour = %q, want dim %q", state, got, ansiDim)
 		}
 	}
 }
 
-// TestUnverifiedRowIsColouredApartFromUnknownRow proves the distinction reaches
-// the rendered table, not only the mapping. It also proves the SESSION_STATUS
-// cell still shows the reported state, because "unverified" is a colour key and
-// never a state: the state vocabulary is a protocol contract.
-func TestUnverifiedRowIsColouredApartFromUnknownRow(t *testing.T) {
+// TestUnverifiedRowIsDimAndKeepsTheReportedState proves the distinction reaches
+// the rendered table. An unverified session is coloured dim like any other
+// unknown state, and the SESSION_STATUS cell still shows the reported "unknown",
+// because "unverified" is a colour key and never a state: the state vocabulary is
+// a protocol contract.
+func TestUnverifiedRowIsDimAndKeepsTheReportedState(t *testing.T) {
 	rows := []SessionRow{
 		{
 			EndpointID:        "endpoint-1",
@@ -77,8 +105,8 @@ func TestUnverifiedRowIsColouredApartFromUnknownRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	rendered := colored.String()
-	if !strings.Contains(rendered, ansiBoldYellow) {
-		t.Fatalf("unverified row must use its own colour, got %q", rendered)
+	if !strings.Contains(rendered, ansiDim) {
+		t.Fatalf("unverified row must use the dim colour, got %q", rendered)
 	}
 	// The plain layout keeps SESSION_STATUS, so the reported state stays visible
 	// and the colour key never leaks into the text. The summary line legitimately
@@ -99,10 +127,10 @@ func TestUnverifiedRowIsColouredApartFromUnknownRow(t *testing.T) {
 	}
 }
 
-// TestUnverifiedSummaryLabelUsesTheUnverifiedColour proves the summary subset
-// label is coloured like the rows it counts, so the label and the rows it names
-// read as one condition instead of two.
-func TestUnverifiedSummaryLabelUsesTheUnverifiedColour(t *testing.T) {
+// TestUnverifiedSummaryLabelIsDim proves the summary subset label is coloured
+// like the rows it counts, so the label and the rows it names read as one
+// condition instead of two.
+func TestUnverifiedSummaryLabelIsDim(t *testing.T) {
 	rows := []SessionRow{
 		{SessionID: "a", State: "unknown", Unverified: true},
 		{SessionID: "b", State: "unknown"},
@@ -112,10 +140,10 @@ func TestUnverifiedSummaryLabelUsesTheUnverifiedColour(t *testing.T) {
 		t.Fatal(err)
 	}
 	summary := out.String()
-	if !strings.Contains(summary, ansiBoldYellow+"unverified(1)"+ansiReset) {
-		t.Fatalf("unverified label must use the unverified colour, got %q", summary)
+	if !strings.Contains(summary, ansiDim+"unverified(1)"+ansiReset) {
+		t.Fatalf("unverified label must use the dim colour, got %q", summary)
 	}
-	if !strings.Contains(summary, ansiYellow+"unknown(2)"+ansiReset) {
-		t.Fatalf("unknown bucket must keep the unknown colour, got %q", summary)
+	if !strings.Contains(summary, ansiDim+"unknown(2)"+ansiReset) {
+		t.Fatalf("unknown bucket must use the dim colour, got %q", summary)
 	}
 }

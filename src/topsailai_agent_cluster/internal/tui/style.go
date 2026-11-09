@@ -13,19 +13,12 @@ const (
 	ansiGreen     = "\x1b[32m"
 	ansiDim       = "\x1b[2m"
 	ansiYellow    = "\x1b[33m"
-	// ansiBoldYellow marks a session whose liveness the provider could not
-	// verify. It is a distinct state colour, not a variant of ansiYellow: an
-	// unverified session and a provider-reported unknown session are different
-	// facts, and an operator who cannot tell them apart cannot decide whether to
-	// resume. Bold yellow stays in the "uncertain" family while remaining
-	// distinguishable from plain yellow, and it collides with no structural
-	// colour (bold cyan header, bold green prompt, dim separator).
-	ansiBoldYellow = "\x1b[1;33m"
-	ansiRed        = "\x1b[31m"
+	ansiRed       = "\x1b[31m"
 	// ansiMagenta marks operator-supplied payload text, so a message body is
 	// never confused with the application's own question. It is deliberately
-	// outside the state palette (green running, yellow unknown, bold yellow
-	// unverified, red failed), so a payload can never read as a status.
+	// outside the state palette (green running, dim idle/unknown/unverified,
+	// red failed/offline, yellow waiting_input/ready), so a payload can never
+	// read as a status.
 	ansiMagenta = "\x1b[35m"
 	ansiReset   = "\x1b[0m"
 )

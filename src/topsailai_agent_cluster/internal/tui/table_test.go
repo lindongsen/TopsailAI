@@ -58,6 +58,9 @@ func TestTableStateColors(t *testing.T) {
 		{"failed", ansiRed},
 		{"stopped", ansiDim},
 		{"unknown-state", ansiYellow},
+		{"unknown", ansiDim},
+		{"idle", ansiDim},
+		{"offline", ansiRed},
 	}
 	for _, testCase := range cases {
 		var out, errors strings.Builder

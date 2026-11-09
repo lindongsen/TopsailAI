@@ -66,15 +66,30 @@ every session needs a resume" from "the provider reported an unknown state". The
 from `state_reason` at render time rather than stored in the report, so one fact has one source of
 truth and no protocol or schema change is needed.
 
-The two conditions are also coloured apart, because a colour is read before any label is. An
-unverified session and a provider-reported unknown session share the `unknown` state, so one colour
-for both would leave the row itself carrying no distinction. The unverified row and the
-`unverified(n)` summary label use bold yellow, while the unknown bucket keeps plain yellow: the two
-stay in the same "uncertain" family, so neither reads as a healthy or a failed session, and they
-remain distinguishable from each other. Bold yellow is used by no other state and by no structural
-element, so a colour always identifies exactly one condition. `unverified` is a colour key only and
-never a state: the SESSION_STATUS cell still renders the reported `unknown`, because the state
-vocabulary is a protocol contract.
+The session-state colour mapping is deliberately small, because a colour is read before any label
+is. Green means running, dim means a state that needs no attention, red means a state that needs
+attention, and yellow is the remaining uncertain middle:
+
+| Colour | States | Meaning |
+|---|---|---|
+| green | `running` | actively working |
+| dim | `stopped`, `completed`, `idle`, `unknown`, `unverified` | nothing running, nothing failed |
+| red | `failed`, `error`, `offline` | a definite negative |
+| yellow | `waiting_input`, `ready` | uncertain, needs a look |
+
+`idle`, `unknown` and `unverified` share dim on purpose. They are all states where nothing is
+actively running and nothing has failed, so an operator scanning the table should not have to read
+them. The difference between an unverified session and a provider-reported unknown session is carried
+by the `unverified(n)` summary subset label and by the refusal message, not by the row colour. A
+colour therefore identifies a family of conditions rather than exactly one condition, and the label
+carries the finer distinction.
+
+`offline` is red rather than yellow because it is a definite negative, not an uncertain middle. The
+endpoint connection state `offline` is a separate domain with its own mapping, and both are red, so
+the two never disagree about what an offline condition looks like.
+
+`unverified` is a colour key only and never a state: the SESSION_STATUS cell still renders the
+reported `unknown`, because the state vocabulary is a protocol contract.
 
 ## Capability contract
 
