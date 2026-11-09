@@ -274,12 +274,14 @@ deb:
 # Reports what each package contains and how it is declared, which is the check
 # that matters before handing a package to a node. conffiles is a separate
 # control file rather than a control field, so it is read from the control
-# archive; dpkg-deb -f cannot report it.
+# archive; dpkg-deb -f cannot report it. Provides is printed because a config
+# package name carries its site, so the unsuffixed virtual name it provides is the
+# only thing that shows the generic binary package's dependency is satisfiable.
 deb-inspect:
 	@for package in $(DEB_DIR)/*.deb; do \
 		[ -f "$${package}" ] || continue; \
 		echo "=== $${package} ==="; \
-		dpkg-deb -f "$${package}" Package Version Architecture Depends Conflicts; \
+		dpkg-deb -f "$${package}" Package Version Architecture Depends Provides Conflicts; \
 		echo "--- conffiles ---"; \
 		dpkg-deb --ctrl-tarfile "$${package}" | tar -xO ./conffiles 2>/dev/null \
 			|| echo "(none)"; \
