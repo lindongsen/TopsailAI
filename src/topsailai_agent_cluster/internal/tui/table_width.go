@@ -6,10 +6,14 @@ import (
 )
 
 // TableLayout is the presentation policy an output boundary reports: the
-// terminal width and whether truncation is disabled.
+// terminal width, whether truncation is disabled, and whether a growable column
+// may spend width the table does not need.
 type TableLayout struct {
 	Width int
 	Full  bool
+	// Grow is set only by a boundary whose width is a real budget, such as a
+	// terminal. A redirected stream reports no width, so it never grows.
+	Grow bool
 }
 
 // TableLayoutProvider lets an output boundary report its layout once, so a
@@ -24,8 +28,8 @@ func OutputWidth(out io.Writer) int {
 }
 
 // OutputLayout obtains the boundary-provided presentation policy. A writer that
-// only reports a width keeps truncation enabled, so existing callers are
-// unaffected.
+// only reports a width keeps truncation enabled and growth disabled, so existing
+// callers are unaffected.
 func OutputLayout(out io.Writer) TableLayout {
 	if provider, ok := out.(TableLayoutProvider); ok {
 		return provider.TableLayout()
@@ -37,10 +41,10 @@ func OutputLayout(out io.Writer) TableLayout {
 }
 
 // TableOptionsFor builds the table options for one output boundary, so every
-// render path applies the same width and truncation policy.
+// render path applies the same width, truncation and growth policy.
 func TableOptionsFor(out io.Writer) TableOptions {
 	layout := OutputLayout(out)
-	return TableOptions{Width: layout.Width, Full: layout.Full}
+	return TableOptions{Width: layout.Width, Full: layout.Full, Grow: layout.Grow}
 }
 
 // tableOptionsFor builds the table options for one REPL render, so the output
@@ -66,10 +70,7 @@ func fitTableWidths(widths []int, limit int) {
 	if limit <= 0 {
 		return
 	}
-	total := 3 * (len(widths) - 1)
-	for _, width := range widths {
-		total += width
-	}
+	total := tableWidth(widths)
 	for total > limit {
 		widest := -1
 		for i := 1; i < len(widths); i++ {

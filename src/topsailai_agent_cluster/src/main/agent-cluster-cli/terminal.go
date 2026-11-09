@@ -53,11 +53,15 @@ func (out terminalOutput) TerminalHeight() int {
 	return height
 }
 
-// TableLayout reports the width and truncation policy of this output boundary.
-// The width stays the real terminal width even when truncation is disabled, so
-// the interactive line editor keeps its prompt budget.
+// TableLayout reports the width, truncation and growth policy of this output
+// boundary. The width stays the real terminal width even when truncation is
+// disabled, so the interactive line editor keeps its prompt budget.
+//
+// Growth is enabled only for a real terminal, because only there is the width a
+// budget that can be spent. A redirected stream reports no width, so it keeps the
+// capped layout and its output stays byte-identical to the previous behaviour.
 func (out terminalOutput) TableLayout() tui.TableLayout {
-	return tui.TableLayout{Width: out.TerminalWidth(), Full: out.full}
+	return tui.TableLayout{Width: out.TerminalWidth(), Full: out.full, Grow: out.outputIsTerminal()}
 }
 
 // outputIsTerminal reports whether this boundary writes to a real terminal.
