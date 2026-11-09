@@ -169,12 +169,18 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			target = flags.Arg(1)
 		}
 		return tui.PrintNonInteractiveCommandHelp(output, target)
-	case "list":
-		listClean, err := parseListArgs(flags.Args()[1:], false)
+	case "list", tui.ListFullAlias:
+		// lf is the shorthand of "list --full", so it implies the full layout
+		// instead of requiring the flag. Resolving it here keeps one render path:
+		// the shorthand cannot drift into a second implementation, and it can
+		// never silently degrade into the ordinary truncated table that looks
+		// complete while hiding the tail of every over-wide value.
+		shorthand := flags.Arg(0) == tui.ListFullAlias
+		listClean, listFull, err := parseListArgs(flags.Args()[1:], shorthand)
 		if err != nil {
 			return err
 		}
-		return list(ctx, api, output, errors, *filter, listClean, *jsonMode, tui.OutputColorPolicy(output))
+		return list(ctx, api, output, errors, *filter, listClean, listFull, *jsonMode, tui.OutputColorPolicy(output))
 	case "refresh":
 		if err := parseRefreshArgs(flags.Args()[1:]); err != nil {
 			return err
@@ -441,17 +447,46 @@ func splitOptionName(arg string) (string, bool) {
 	return name, false
 }
 
-func parseListArgs(args []string, clean bool) (bool, error) {
+// parseListArgs parses the standalone list tail. --full is the per-command
+// request to render without truncation, and shorthand states that the operator
+// typed lf, which already implies it. A repeated flag is a usage error rather
+// than a harmless duplicate, because the operator who typed it twice cannot tell
+// which one took effect, and the shorthand rejects it for the same reason logf
+// rejects a repeated follow flag: the combination is a contradiction. The
+// spelling is a parameter rather than being inferred from a pre-set full value,
+// so the two meanings cannot be confused.
+func parseListArgs(args []string, shorthand bool) (bool, bool, error) {
+	clean := false
+	full := shorthand
 	for _, arg := range args {
-		if arg != "--clean" {
-			return false, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean]")
+		switch arg {
+		case "--clean":
+			if clean {
+				return false, false, listUsageError(shorthand)
+			}
+			clean = true
+		case "--full":
+			if full {
+				if shorthand {
+					return false, false, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lf [--clean] (full is implied; drop --full)")
+				}
+				return false, false, listUsageError(shorthand)
+			}
+			full = true
+		default:
+			return false, false, listUsageError(shorthand)
 		}
-		if clean {
-			return false, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean]")
-		}
-		clean = true
 	}
-	return clean, nil
+	return clean, full, nil
+}
+
+// listUsageError names the spelling the operator typed, so a usage error never
+// answers with a command they did not run.
+func listUsageError(shorthand bool) error {
+	if shorthand {
+		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lf [--clean]")
+	}
+	return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean] [--full]")
 }
 
 // parseRefreshArgs rejects every positional argument, so a typo cannot silently
@@ -494,10 +529,14 @@ func history(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, 
 	return legacyRunner(api).History(ctx, output, errors, target, limit, jsonMode, options)
 }
 
-func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, jsonMode bool, color tui.ColorPolicy) error {
+// list renders the session table. full is the per-command request to disable
+// truncation, and it is ORed with the boundary value rather than replacing it,
+// so the startup --no-truncate option survives a command that did not repeat it.
+func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, full, jsonMode bool, color tui.ColorPolicy) error {
 	options := tui.TableOptionsFor(output)
 	options.Color = color
 	options.Clean = clean
+	options.Full = options.Full || full
 	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, options)
 }
 

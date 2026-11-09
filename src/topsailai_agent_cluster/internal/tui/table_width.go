@@ -50,15 +50,22 @@ func TableOptionsFor(out io.Writer) TableOptions {
 // tableOptionsFor builds the table options for one REPL render, so the output
 // boundary decides both the width and whether truncation is disabled.
 //
+// full is the per-command request, and it is ORed with the boundary value rather
+// than replacing it. The boundary value comes from the startup --no-truncate
+// option, so an operator who disabled truncation for the whole session must not
+// lose it by running a command that did not repeat the request. A command that
+// has no full form passes false and therefore inherits the boundary unchanged.
+//
 // The interactive table hides SESSION_ID: the operator selects a session by its
 // row number or name, and the provider session ID is a long opaque value that
 // only widens the table. The ID stays on the row, so it is still accepted as a
 // command target. The standalone commands keep the column, because their output
 // is parsed by scripts and tests.
-func tableOptionsFor(out io.Writer, color ColorPolicy, clean bool, onRows func([]SessionRow)) TableOptions {
+func tableOptionsFor(out io.Writer, color ColorPolicy, clean, full bool, onRows func([]SessionRow)) TableOptions {
 	options := TableOptionsFor(out)
 	options.Color = color
 	options.Clean = clean
+	options.Full = options.Full || full
 	options.OnRows = onRows
 	options.HideSessionID = true
 	return options

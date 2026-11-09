@@ -142,7 +142,7 @@ was dispatched rather than rejected as unknown.
 
 | Command | Standalone spelling | Interactive spelling | Compliant |
 |---|---|---|---|
-| `list` | `list` | `list`, `l` | yes |
+| `list` | `list`, `list --full`, `lf` | `list`, `l`, `list --full`, `lf` | yes (the `lf` shorthand implies the full layout on both surfaces) |
 | `refresh` | `refresh` | `refresh`, `r` | yes |
 | `history` | `history <endpoint-id-or-hostname>` | `history [endpoint-id-or-hostname]` | yes (standalone requires the endpoint argument; interactive requires it in workspace scope, and in endpoint scope it defaults to the current endpoint while rejecting a different one) |
 | `endpoints` | `endpoints` | `endpoints` | yes |
@@ -402,6 +402,44 @@ The transport is the existing authenticated WebSocket. One `output_follow_reques
 starts a stream, repeated `output_chunk` frames carry records, and exactly one
 `output_end` frame closes it, all correlated by the same request ID. No new
 connection, no subscription resource and no durable stream state are introduced.
+
+## The `list --full` flag and the `lf` shorthand
+
+`--full` is the per-command request to render the session table without truncation,
+so an operator can read a long value in the middle of a session instead of
+restarting the CLI with `--no-truncate`. `lf` is its shorthand, so the common case
+does not require typing the flag. It is a form of `list`, not a second command and
+not an alias entry.
+
+- Standalone: `agent-cluster-cli [options] [--endpoint <id>] list [--clean] [--full]`
+  and `agent-cluster-cli [options] [--endpoint <id>] lf [--clean]`.
+- Interactive: `list [endpoint] [--clean] [--full]` and `lf [endpoint] [--clean]`.
+- The full layout is implied by the shorthand, so every other argument keeps the
+  meaning it has under `list`: `lf --clean` renders the same table as
+  `list --clean --full`.
+- A repeated `--full` is rejected, because the shorthand already states it and the
+  combination is a contradiction rather than a harmless duplicate.
+- `--full` is ORed with the startup `--no-truncate` option rather than replacing it,
+  so a command that omits the flag cannot silently re-enable truncation.
+- Both surfaces resolve the shorthand into the canonical `list` tail before parsing,
+  so one grammar stays authoritative and the shorthand cannot drift into a second
+  set of rules.
+- It is deliberately absent from the interactive alias registry, for the same reason
+  `logf` is: an alias maps one word to another, while this form also supplies a flag.
+  Registering it would resolve the word and drop the flag, so `lf` would silently
+  render the ordinary truncated table, which looks complete while hiding the tail of
+  every over-wide value. It would also make `l` ambiguous between `list` and `lf`, so
+  Tab would stop completing the far more common `list`. The shorthand is documented
+  in the `list` help body instead, so it stays discoverable without entering that
+  registry.
+- `help lf` answers with the canonical `list` body and keeps `lf` as the heading, so
+  the shorthand never advertises a different contract.
+
+The full layout disables the terminal width bound and the per-column caps, so a
+narrow terminal wraps a long cell onto several lines instead of clipping it. It does
+not widen the terminal, and it does not change which rows are selected. The
+`--no-truncate` startup option keeps its existing meaning and remains the way to make
+every command full for a whole session.
 
 ## Interactive output line budget
 

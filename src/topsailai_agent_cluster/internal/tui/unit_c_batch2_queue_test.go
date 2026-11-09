@@ -230,7 +230,7 @@ func TestUnitCBatch2PrefetchedHelpQuit(t *testing.T) {
 // unitC19MainHelp pins the workspace overview separately from wizard help.
 func unitC19MainHelp() string {
 	return "Current scope: workspace\n\nCommands:\n" +
-		"  list [endpoint] [--clean]             list sessions across all endpoints\n" +
+		"  list [endpoint] [--clean] [--full]    list sessions across all endpoints\n" +
 		"  endpoints [endpoint-id]               list every registered endpoint with its connection state and freshness\n" +
 		"  cd [target]                           navigate to an endpoint or session\n" +
 		"  show [endpoint-or-session]            show endpoint or session details\n" +

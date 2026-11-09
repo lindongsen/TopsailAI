@@ -23,7 +23,7 @@ For **each** of list, endpoints, cd, show, info, start, resume, stop, inject, in
 
 | Command | Required syntax/semantics |
 | --- | --- |
-| list | `list [endpoint] [--clean]`; scoped filter must match current endpoint; --clean omits failed endpoints, diagnostics remain |
+| list | `list [endpoint] [--clean] [--full]`; scoped filter must match current endpoint; --clean omits failed endpoints, diagnostics remain; --full disables truncation so a long PROJECT_WORKSPACE wraps instead of clipping; `lf` is the shorthand and implies --full, so `lf --clean` renders the same table as `list --clean --full`; a repeated --full is a usage error |
 | endpoints | `endpoints [endpoint-id]`; workspace scope only; lists every registered endpoint with connection state, observation time and capability revision; an unknown filter renders an empty table, not an error; it never changes the `list` row numbers used by `cd <number>` |
 | cd | `cd [target]`; empty and / return workspace, .. moves parent, latest row number/hostname/endpoint/internal session/provider session selectors supported |
 | show | `show [endpoint-or-session]`; omitted target uses selected scope target; a bare row number or the displayed provider session ID is accepted; workspace without target must report required selection and name `show <number>` |

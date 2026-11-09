@@ -156,18 +156,38 @@ Both deployment paths install a default policy, so a fresh node starts with the
 shipped allowlist in force rather than refusing to start. The bundle installs
 `conf/command-allowlist.conf.example` as `conf/command-allowlist.conf`; the Debian
 package installs it as `/opt/agent-cluster/conf/command-allowlist.conf` and registers it
-as a conffile, so an upgrade does not replace the operator's policy. The shipped
-default permits `ls`, `pwd`, `git status`, `git log`, `git diff`, `git show`,
-`git push`, `git pull`, `git fetch` and `hostname`.
+as a conffile, so an upgrade does not replace the operator's policy.
+
+The shipped default is the common operational set an operator needs to inspect a
+node and prepare a workspace, grouped by purpose:
+
+| Group | Entries |
+|---|---|
+| Read-only inspection | `ls`, `pwd`, `cat`, `head`, `tail`, `wc`, `grep`, `stat`, `file`, `du`, `df`, `free`, `ps`, `uptime`, `uname`, `whoami`, `id`, `date`, `nproc`, `lscpu`, `lsblk`, `hostname` |
+| Network diagnostics | `ping`, `nc`, `ss`, `netstat` |
+| Filesystem mutation | `mkdir`, `touch` |
+| Git | `git status`, `git log`, `git diff`, `git show`, `git push`, `git pull`, `git fetch` |
+
+Destructive entries are deliberately absent: `rm`, `mv`, `cp`, `dd`, `kill`,
+`truncate` and the package managers are not listed, so this surface cannot delete or
+overwrite. Add them only as an explicit local decision, because prefix matching cannot
+restrict what they act on.
+
+Arguments are confined to the session working directory: an absolute path or a `..`
+element is rejected before the program runs. `df -h` and `du -sh .` are therefore
+usable, while `df /` and `cat /etc/passwd` are refused. Confinement is not a sandbox: a
+program that reads a fixed location without an operand, such as `df` with no argument,
+still reports the whole machine.
 
 The default is not a sandbox. `git push` accepts `--receive-pack` and
 `git fetch`/`git pull` accept `--upload-pack`, both of which run a local command;
 `git pull` also runs the repository's `post-merge` hook and any configured merge
 driver; `git show` honours `--output` and textconv filters declared in
-`.gitattributes`; and `hostname NAME` renames the machine when the Endpoint runs as
-root. Prefix matching cannot distinguish those forms, so an entry is only as narrow
-as its first tokens and every entry is reachable by anyone holding the `control`
-scope.
+`.gitattributes`; `hostname NAME` renames the machine when the Endpoint runs as root;
+`nc` can listen, connect and transfer arbitrary data; `ping -f` floods a target; and
+`mkdir`/`touch` create entries in the session directory. Prefix matching cannot
+distinguish those forms, so an entry is only as narrow as its first tokens and every
+entry is reachable by anyone holding the `control` scope.
 
 The file is reloaded on `SIGHUP`. A reload parses the whole file before replacing
 the active set, so a malformed edit keeps the previous entries in force and is

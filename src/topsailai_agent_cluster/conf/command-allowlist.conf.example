@@ -15,26 +15,71 @@
 # python3, perl, ruby and node. Such an entry is refused when the file is
 # loaded, so a mistake fails at startup rather than at the first execution.
 #
-# The default below is mostly read-only, but it is not a sandbox. `git push`,
-# `git pull`, `git fetch` and `git show` are included because operators need to
-# publish work, synchronise a checkout and inspect arbitrary revisions. All four
-# are more powerful than they look: `git push` accepts `--receive-pack` and
-# `git fetch`/`git pull` accept `--upload-pack`, both of which run a local
-# command, `git pull` also runs the repository's `post-merge` hook and any
-# configured merge driver, and `git show` honours `--output` and textconv filters
-# declared in `.gitattributes`. `hostname` is included for the common read-only
-# query, but the same entry permits `hostname NAME`, which renames the machine
-# when the Endpoint runs as root. Prefix matching cannot distinguish those forms,
-# so every entry here is reachable by anyone holding the `control` scope and must
-# be treated as local code execution.
+# Arguments are confined to the session working directory: an absolute path or a
+# `..` element is rejected before the program runs. `df -h` and `du -sh .` are
+# therefore usable, while `df /` and `cat /etc/passwd` are refused. Confinement
+# is not a sandbox: a program that reads a fixed location without an operand,
+# such as `df` with no argument, still reports the whole machine.
+#
+# The default below is the common operational set an operator needs to inspect a
+# node and prepare a workspace, plus the git entries needed to publish work,
+# synchronise a checkout and inspect arbitrary revisions. It is not a sandbox.
+# `git push` accepts `--receive-pack` and `git fetch`/`git pull` accept
+# `--upload-pack`, both of which run a local command; `git pull` also runs the
+# repository's `post-merge` hook and any configured merge driver; `git show`
+# honours `--output` and textconv filters declared in `.gitattributes`;
+# `hostname NAME` renames the machine when the Endpoint runs as root; `nc` can
+# listen, connect and transfer arbitrary data; `ping -f` floods a target; and
+# `mkdir`/`touch` create entries in the session directory. Prefix matching cannot
+# distinguish those forms, so every entry here is reachable by anyone holding the
+# `control` scope and must be treated as local code execution.
+#
+# Destructive entries are deliberately absent: `rm`, `mv`, `cp`, `dd`, `kill`,
+# `truncate` and the package managers are not listed, so an operator cannot
+# delete or overwrite through this surface. Add them only as an explicit local
+# decision, because prefix matching cannot restrict what they act on.
 #
 # To disable command execution entirely, remove this file and unset
 # COMMAND_ALLOWLIST_FILE in the node configuration. An Endpoint with no
 # allowlist file refuses `command.exec` with an explicit error rather than
 # falling back to an unrestricted shell.
 
+# Read-only inspection: files, disk, memory, CPU, processes and identity.
 ls
 pwd
+cat
+head
+tail
+wc
+grep
+stat
+file
+du
+df
+free
+ps
+uptime
+uname
+whoami
+id
+date
+nproc
+lscpu
+lsblk
+hostname
+
+# Network diagnostics. `ping` and `nc` reach the network, so they are not
+# read-only in effect even though they are usually used to diagnose a link.
+ping
+nc
+ss
+netstat
+
+# Filesystem mutation, confined to the session working directory.
+mkdir
+touch
+
+# Git: inspect, publish and synchronise a checkout.
 git status
 git log
 git diff
@@ -42,4 +87,3 @@ git show
 git push
 git pull
 git fetch
-hostname
