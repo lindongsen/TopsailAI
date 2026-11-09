@@ -462,6 +462,14 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		ctlCall = ctlInvocation{dotted: true, action: action, rest: rest, spelling: "ctl"}
 		rawName = "ctl"
 	}
+	// The logf shorthand is resolved before alias and scope resolution for the
+	// same reason: it carries the follow flag inside the command word. Rewriting
+	// the tail into "-f <tail>" keeps logs' single parser authoritative, so the
+	// shorthand cannot drift into a second grammar or silently degrade into a
+	// snapshot.
+	if rawName == logsFollowAlias {
+		rawName, rest = "logs", logsFollowRest(rest)
+	}
 	// The send prefix is resolved before tokenisation: splitCommand splits on the
 	// first literal space, so ">hello world" would otherwise yield the token
 	// ">hello". The prefix is disjoint from every command word, so this branch can

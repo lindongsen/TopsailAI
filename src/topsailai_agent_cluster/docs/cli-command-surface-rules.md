@@ -107,7 +107,7 @@ was dispatched rather than rejected as unknown.
 | `endpoints` | `endpoints` | `endpoints` | yes |
 | `show` | `show` | `show` | yes |
 | `info` | `info` | `info` | yes |
-| `logs` | `logs`, `logs --follow` | `logs`, `logs -f` | yes |
+| `logs` | `logs`, `logs --follow`, `logf` | `logs`, `logs -f`, `logf` | yes (the `logf` shorthand implies follow on both surfaces) |
 | `status` | `status` | `status` | yes |
 | `send` | `send` | `send`, `>` | yes (explicit text submits directly; a bare `send` asks once) |
 | `context.inject` | `btw` | `btw` | yes |
@@ -317,6 +317,31 @@ two spellings of one behaviour.
   arrives in pieces.
 - `--json` emits one JSON document per record, so a machine-readable stream stays
   parseable line by line.
+
+## The `logf` shorthand
+
+`logf` is the shorthand of `logs -f`, so an operator who follows output often does
+not have to type the flag. It is a form of `logs`, not a second command and not an
+alias entry.
+
+- Standalone: `agent-cluster-cli [options] logf <endpoint> <session>`.
+- Interactive: `logf [-n <lines>] [session]`.
+- Follow is implied, so every other argument keeps the meaning it has under `logs`:
+  `logf -n 7` reads the same budget as `logs -f -n 7`.
+- A repeated follow flag is rejected, because the shorthand already states follow
+  and the combination is a contradiction rather than a harmless duplicate.
+- The shorthand inherits the scope rule of `logs`, so it is unavailable in workspace
+  scope for the same reason.
+- Both surfaces resolve the shorthand into the canonical `logs` tail before parsing,
+  so one grammar stays authoritative and the shorthand cannot drift into a second
+  set of rules.
+- It is deliberately absent from the interactive alias registry. An alias maps one
+  word to another, while this form also supplies a flag; registering it would also
+  make `lo` ambiguous between `logs` and `logf`, so Tab would stop completing the far
+  more common `logs`. The shorthand is documented in the `logs` help body instead, so
+  it stays discoverable without entering that registry.
+- `help logf` answers with the canonical `logs` body and keeps `logf` as the heading,
+  so the shorthand never advertises a different contract.
 
 The transport is the existing authenticated WebSocket. One `output_follow_request`
 starts a stream, repeated `output_chunk` frames carry records, and exactly one

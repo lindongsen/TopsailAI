@@ -63,6 +63,34 @@ var commandScopeMatrix = []commandScopeRule{
 // never be mistaken for a message.
 const sendPrefix = ">"
 
+// logsFollowAlias is the shorthand spelling of "logs -f". It is a form rather
+// than an alias entry, because it also supplies the follow flag: resolving the
+// word to "logs" alone would parse an empty tail and render a one-shot snapshot,
+// which would look like a stream while silently missing everything written after
+// it. It is deliberately absent from commandAliases, for the same reason the
+// dotted ctl form is: an alias maps one word to another, while a form changes the
+// accepted spelling of a command. Registering it as an alias would also make "lo"
+// ambiguous between "logs" and "logf", so Tab would stop completing the far more
+// common "logs". The shorthand is documented in the logs help body instead, so it
+// stays discoverable without entering the alias registry.
+const logsFollowAlias = "logf"
+
+// LogsFollowAlias is the exported spelling of logsFollowAlias, so the standalone
+// dispatcher accepts the same shorthand without duplicating the literal. One
+// constant keeps the two surfaces from drifting into different spellings.
+const LogsFollowAlias = logsFollowAlias
+
+// logsFollowRest rewrites the tail of a logf invocation into the equivalent logs
+// tail, so the shorthand inherits logs' grammar instead of owning a second
+// parser. The follow flag is prepended, so "logf -n 7" becomes "-f -n 7" and a
+// repeated "-f" is rejected by the same duplicate check that guards "logs".
+func logsFollowRest(rest string) string {
+	if strings.TrimSpace(rest) == "" {
+		return "-f"
+	}
+	return "-f " + rest
+}
+
 // commandAliases maps accepted short or compatibility names to canonical commands.
 // "exit" is deliberately absent: it is its own canonical command that always
 // leaves the process, so it must never inherit the scope-aware "quit" behaviour.

@@ -203,12 +203,26 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return fmt.Errorf("usage: info <session-id>")
 		}
 		return legacyRunner(api).Info(ctx, output, flags.Arg(1), *jsonMode)
-	case "logs":
+	case "logs", tui.LogsFollowAlias:
+		// logf is the shorthand of "logs -f", so it implies follow instead of
+		// requiring the flag. Resolving it here keeps one follow path: the
+		// shorthand cannot drift into a second implementation, and it can never
+		// silently degrade into a one-shot snapshot that looks like a stream.
+		shorthand := flags.Arg(0) == tui.LogsFollowAlias
 		if flags.NArg() != 3 {
+			if shorthand {
+				return fmt.Errorf("usage: logf <endpoint-id> <session-id>")
+			}
 			return fmt.Errorf("usage: logs <endpoint-id> <session-id>")
 		}
+		if shorthand && (*follow || *followShort) {
+			// The shorthand already states follow, so a repeated flag is a
+			// contradiction rather than a harmless duplicate; the interactive
+			// parser rejects the same combination.
+			return fmt.Errorf("usage: logf <endpoint-id> <session-id> (follow is implied; drop --follow)")
+		}
 		color := tui.OutputColorPolicy(output)
-		if *follow || *followShort {
+		if shorthand || *follow || *followShort {
 			// The process installs a SIGINT handler, so the default termination is
 			// disabled. A standalone follow therefore has to observe the interrupt
 			// itself, or Ctrl-C would be swallowed and the stream would never end.

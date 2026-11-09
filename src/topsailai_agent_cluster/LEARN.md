@@ -214,3 +214,26 @@ lands on one copy and the other silently keeps the old behaviour. Sharing the im
 the drift structurally impossible rather than dependent on someone remembering to change both. The
 corollary is that a test whose fixture cannot express the failure mode is not coverage, it is a lock
 on the current behaviour.
+
+## An alias that also supplies a flag must not enter the alias registry
+
+Trigger: `logf` was requested as a convenient spelling of `logs -f`. The first implementation
+registered it in `commandAliases` as `"logf": "logs"`, which resolves the word but drops the flag:
+`logf` would then parse an empty tail and render a one-shot snapshot. That is the worst outcome for
+this command, because a snapshot presented as a stream looks complete while silently missing
+everything written after it. The same entry also broke Tab completion: `completableCommands` collects
+every multi-character alias, so `lo` became ambiguous between `logs` and `logf` and
+`TestTerminalTabCompletion/endpoint` failed with `got="log"` instead of `"logs "`.
+
+Action: when a requested spelling carries more than a rename, treat it as a *form* rather than an
+alias entry, the same way the dotted `ctl.<action>` spelling is handled. Resolve it before alias and
+scope resolution, rewrite the tail into the canonical grammar (`logf -n 7` becomes `logs -f -n 7`),
+and let the canonical parser stay the only grammar. Keep it out of `commandAliases` and out of the
+completion list, and document it inside the canonical command's help body so it stays discoverable.
+Then check the completion list explicitly, because an alias entry is not only a dispatch decision.
+
+Why this prevents recurrence: an alias entry looks like the obvious, minimal change, and it does
+resolve the word, so a dispatch-only test passes. The two failures are both invisible from that test:
+the dropped flag degrades the command into a different capability, and the extra alias silently
+changes a shared completion list. Both are consequences of the registry being used for something it
+does not model, so the fix is to stop using it rather than to patch each symptom.
