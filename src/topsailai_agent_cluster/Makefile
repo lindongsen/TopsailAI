@@ -68,6 +68,26 @@ SERVER_PKG := ./src/main/agent-cluster-server
 ENDPOINT_PKG := ./src/main/agent-cluster-endpoint
 CLI_PKG := ./src/main/agent-cluster-cli
 
+# Test package groups, one per component. They are explicit lists rather than
+# directory patterns because package ownership is not the same as directory
+# nesting: internal/channel is shared by Server and Endpoint, so it belongs to
+# common and must not be verified twice, while internal/adapter is Endpoint-only
+# even though it sits beside shared packages. A new package therefore has to be
+# assigned to a group deliberately instead of being picked up by accident.
+#
+# common: packages both roles depend on, plus the module root.
+COMMON_TEST_PKGS := ./internal ./internal/protocol ./internal/config \
+                    ./internal/logging ./internal/security ./internal/channel
+# server: the Server service, its storage and its command entry point.
+SERVER_TEST_PKGS := ./internal/server ./internal/storage/server \
+                    ./src/main/agent-cluster-server
+# endpoint: the Endpoint service, its adapters, its storage and its entry point.
+ENDPOINT_TEST_PKGS := ./internal/adapter ./internal/adapter/topsailai \
+                      ./internal/endpoint ./internal/storage/endpoint \
+                      ./src/main/agent-cluster-endpoint
+# cli: the operator client, the TUI and the CLI entry point.
+CLI_TEST_PKGS := ./internal/client ./internal/tui ./src/main/agent-cluster-cli
+
 # Site values baked into a config package. The binary packages carry no site
 # data, so a real deployment overrides these only when building the config
 # package for one site:
@@ -110,7 +130,10 @@ DEB_SITE_ARGS = $(call deb_arg,--site,$(DEB_SITE)) \
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build build-testhooks vet test test-packaging bdd integration fmt \
+.PHONY: help build build-testhooks vet fmt \
+        test test-all test-unit test-unit-common test-unit-server \
+        test-unit-endpoint test-unit-cli test-bdd test-integration \
+        test-packaging test-harness bdd integration \
         deb deb-node deb-server deb-endpoint deb-config-server deb-config-endpoint \
         deb-inspect deb-clean \
         image image-build image-run image-stop image-inspect image-clean \
@@ -127,11 +150,25 @@ help:
 	@echo ""
 	@echo "Verify"
 	@echo "  vet               run go vet over all packages"
-	@echo "  test              run the default suite, including the packaging tests"
-	@echo "  test-packaging    run only the Debian packaging tests"
-	@echo "  bdd               run the BDD feature suite"
-	@echo "  integration       run the integration suite with test hooks"
 	@echo "  fmt               format Go sources in place"
+	@echo ""
+	@echo "  Test by kind"
+	@echo "  test              run every untagged test (unit, harness, packaging, bdd)"
+	@echo "  test-all          run every test kind, including the tagged integration suite"
+	@echo "  test-unit         run the unit tests of every component"
+	@echo "  test-bdd          run the BDD feature suite"
+	@echo "  test-integration  run the integration suite with test hooks"
+	@echo "  test-packaging    run the Debian packaging tests"
+	@echo "  test-harness      run the test-harness self-tests"
+	@echo ""
+	@echo "  Test by component (unit tests)"
+	@echo "  test-unit-common  run the shared packages: protocol, config, logging,"
+	@echo "                    security, channel and the module root"
+	@echo "  test-unit-server  run the Server service, storage and entry point"
+	@echo "  test-unit-endpoint run the Endpoint service, adapters, storage and entry point"
+	@echo "  test-unit-cli     run the operator client, TUI and CLI entry point"
+	@echo ""
+	@echo "  bdd, integration  aliases kept for the older target names"
 	@echo ""
 	@echo "Package (Debian)"
 	@echo "  deb               build every package into $(DEB_DIR)/"
@@ -196,19 +233,62 @@ build-testhooks:
 vet:
 	go vet ./...
 
-test:
-	go test -count=1 ./...
+# Unit tests are grouped by component so a failure names the component that owns
+# it, and so one component can be verified without paying for the others. The
+# groups are the explicit package lists above, not a directory pattern:
+# internal/channel is shared by Server and Endpoint, so it is verified once with
+# common instead of twice, and a new package has to be assigned deliberately.
+test-unit: test-unit-common test-unit-server test-unit-endpoint test-unit-cli
 
-# The packaging tests live in an untagged package so the default suite above
+test-unit-common:
+	go test -count=1 $(COMMON_TEST_PKGS)
+
+test-unit-server:
+	go test -count=1 $(SERVER_TEST_PKGS)
+
+test-unit-endpoint:
+	go test -count=1 $(ENDPOINT_TEST_PKGS)
+
+test-unit-cli:
+	go test -count=1 $(CLI_TEST_PKGS)
+
+# The BDD suite is cross-component on purpose: a scenario drives the real Server,
+# Endpoint and CLI together, so splitting it by component would either duplicate
+# scenarios or assert a component in isolation, which the unit groups already do.
+# The feature files are registered in tests/bdd/suite_test.go.
+test-bdd:
+	go test ./tests/bdd -count=1 -v
+
+# The integration suite is cross-component for the same reason, and it needs the
+# testhooks build tag because it exercises fault injection inside the binaries.
+test-integration:
+	go test -tags='integration testhooks' ./tests/integration -count=1
+
+# The packaging tests live in an untagged package so the default suite below
 # discovers them. This target runs them alone while iterating on the packager.
 test-packaging:
 	go test -count=1 ./tests/packaging
 
-bdd:
-	go test ./tests/bdd -count=1 -v
+# tests/harness is test support rather than a component: its tests start real
+# Server, Endpoint and fixture processes, so it is verified on its own instead of
+# being folded into a component group.
+test-harness:
+	go test -count=1 ./tests/harness
 
-integration:
-	go test -tags='integration testhooks' ./tests/integration -count=1
+# The default suite is every untagged test, which is what `go test ./...` already
+# covers: the unit groups, the harness package, the packaging tests and the BDD
+# suite. The tagged integration suite is not included, so `test-all` is the target
+# that verifies everything.
+test:
+	go test -count=1 ./...
+
+# Full verification: every test kind, including the tagged integration suite.
+test-all: test-unit test-bdd test-integration test-packaging test-harness
+
+# Kept as aliases because earlier plans and habits refer to these names.
+bdd: test-bdd
+
+integration: test-integration
 
 fmt:
 	gofmt -w src internal

@@ -1,0 +1,210 @@
+---
+maintainer: AI
+workspace: /TopsailAI/src/topsailai/cli
+ProjectFolder: /TopsailAI/src/topsailai/cli
+ProjectRootFolder: /TopsailAI/src/topsailai
+ProjectCode: TOPSAILAI
+programming_language: python
+---
+
+# topsailai session
+
+Inspect and update one session without entering session scope.
+
+## Purpose
+
+Session scope is a stateful interactive context: it remembers the current
+session, loads its own readline history, and changes the prompt. A one-shot
+subcommand cannot enter it, so this subcommand provides the stateless
+equivalents of the session-scope commands.
+
+The boundary with `topsailai runtime` is deliberate:
+
+- `topsailai runtime` acts on a **live** session: send, btw, control, logs.
+- `topsailai session` reads and updates the session's **stored record**.
+
+Operations that already exist under `topsailai runtime` are not duplicated
+here.
+
+## Invocation
+
+```bash
+topsailai session <ACTION> [OPTIONS]
+```
+
+A bare `topsailai session` and `topsailai session --help` both print the help
+and exit with status 0.
+
+## Actions
+
+| Action | Description |
+|--------|-------------|
+| `info <SESSION_ID> [<SESSION_ID> ...]` | Show one session's detail, or several sessions' detail in one call. One identifier uses the single-session renderer; two or more use the batch renderer. |
+| `list [OPTIONS]` | List stored sessions from the session database. |
+| `status <SESSION_ID>` | Report the lock-based `idle` or `processing` state of one session. |
+| `history <SESSION_ID> [--max-chars N]` | Print the stored context messages of one session. |
+| `search <SESSION_ID> <KEYWORD>` | Search one session's context by keyword. |
+| `add-msg <SESSION_ID> -m <TEXT>` | Append one persistent user-to-agent message to a session. |
+| `delete <SESSION_ID> <PID>` | Delete exactly one invalid session stdout file. |
+
+### `info`
+
+```bash
+topsailai session info 20261107021807
+topsailai session info 20261107021807 20261106093012 --json
+```
+
+Options: `--json`, `--no-color`, `--db-conn <string>`, `--home <path>`.
+
+### `list`
+
+```bash
+topsailai session list --limit 20
+topsailai session list --has-project --sort desc --json
+```
+
+Options: `--json`, `--no-color`, `--has-project`, `--category <name>`,
+`--limit <N>`, `--offset <N>`, `--sort asc|desc`, `--db-conn <string>`.
+
+### `status`
+
+```bash
+topsailai session status 20261107021807
+topsailai session status 20261107021807 --json
+```
+
+Options: `--json`.
+
+`status` and `info` answer different questions and may disagree:
+
+- `status` reads the **session lock**. It reports whether a task currently
+  holds the session, as `idle` or `processing`.
+- `info` reports **process liveness** derived from the session stdout file and
+  the owning process.
+
+A session can be `idle` while a process still exists, or `processing` while no
+stdout file is present. Use `status` for "is a task running" and `info` for
+"what is this session".
+
+### `history`
+
+```bash
+topsailai session history 20261107021807
+topsailai session history 20261107021807 --max-chars 200
+```
+
+Options: `--max-chars <N>`, `--db-conn <string>`.
+
+### `search`
+
+```bash
+topsailai session search 20261107021807 timeout
+```
+
+This invokes the registered `/ctx.search` instruction, which runs one agent
+turn. It is not a read-only database query.
+
+### `add-msg`
+
+```bash
+topsailai session add-msg 20261107021807 -m 'please retry'
+topsailai session add-msg 20261107021807 -m 'please retry' --json
+```
+
+Options: `-m/--message <TEXT>` (required), `--json`.
+
+The message is persistent and is delivered on the session's next agent run. An
+empty or whitespace-only message is rejected as a usage error.
+
+### `delete`
+
+```bash
+topsailai session delete 20261107021807 2175537
+topsailai session delete '(temp)' 2175537 --json
+```
+
+Options: `--json`, `--home <path>`.
+
+`delete` removes exactly one file:
+
+```text
+{TOPSAILAI_HOME}/workspace/task/{session_id}.{pid}.session.stdout
+```
+
+The session ID and PID together identify the target, so a different PID of the
+same session and a different session with the same PID are both untouched.
+
+The file is deleted **only** when it is provably invalid:
+
+1. The file exists.
+2. The owning process is proven dead.
+3. No process holds the file open.
+
+A live owner is refused. An owner whose state cannot be verified is also
+refused, because "cannot prove it is gone" is not "it is gone".
+
+Related `stderr`, `pipe` and `inject` files are **not** deleted. They are
+reported as `remaining_related_files` and left to the existing orphan cleanup.
+
+Every successful deletion is logged with the removed path. In `--json` mode the
+log goes to stderr so stdout stays machine-parseable.
+
+For a temporary session, pass the display sentinel `(temp)`; it is translated to
+the on-disk prefix `topsailai`.
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success. |
+| 2 | Usage error: unknown action, missing or invalid argument, conflicting repeated option, empty message. |
+| 3 | `delete` only: the target is not a deletable invalid stdout (`target_not_found`, `target_alive`, `target_identity_unavailable`, `file_in_use`). |
+| 4 | `delete` only: the file exists and is invalid, but removal failed. |
+| 127 | A required child command is not installed. |
+
+## JSON output
+
+`info`, `list`, `status`, `add-msg` and `delete` accept `--json`.
+
+`delete` and `status` emit one JSON object:
+
+```json
+{
+  "ok": true,
+  "exit_code": 0,
+  "action": "delete",
+  "session_id": "20261107021807",
+  "pid": 2175537,
+  "path": "/root/.topsailai/workspace/task/20261107021807.2175537.session.stdout",
+  "error_code": null,
+  "message": null,
+  "remaining_related_files": []
+}
+```
+
+A refusal sets `ok` to `false` and fills `error_code` and `message`.
+
+## Relationship to session scope
+
+| Session-scope command | Non-interactive equivalent |
+|---|---|
+| `/ctx.history` | `topsailai session history <id>` |
+| `/ctx.search` | `topsailai session search <id> <keyword>` |
+| `/ctx.add_msg` | `topsailai session add-msg <id> -m <text>` |
+| `/send` | `topsailai runtime send` |
+| `/ctx.btw` | `topsailai runtime btw` |
+| `/control`, `/control.*` | `topsailai runtime control <action>` |
+| `/cd` | none; entering a scope is interactive only |
+
+`/git.status`, `/git.diff` and `/git {args}` have no non-interactive
+equivalent here by design.
+
+## Notes
+
+- `search` runs one agent turn and therefore needs a usable session; it is not
+  a pure read.
+- `history` runs as a child process because the backing script changes its
+  working directory while importing and resolves its default database relative
+  to that directory.
+- `delete` is a filesystem operation on the task directory. It is not a
+  security boundary against a hostile task directory or other local users.

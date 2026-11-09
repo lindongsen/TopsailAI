@@ -92,7 +92,7 @@ def print_scopes() -> None:
         (
             "session",
             "A focused scope for one session ID, used to inspect its context and interact with that session without selecting it repeatedly.",
-            "Retrieve or stream session data, send runtime messages, add agent2llm or persistent context messages, use configured session commands, show help, or use cd to return to workspace scope.",
+            "Retrieve or stream session data, send runtime messages, add agent2llm or persistent context messages, use configured session commands, show help, or use cd to return to workspace scope. Stateless equivalents are available outside the scope as topsailai session info, list, status, history, search, add-msg and delete.",
         ),
         (
             "doc",

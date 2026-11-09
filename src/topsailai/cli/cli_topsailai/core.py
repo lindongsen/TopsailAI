@@ -276,7 +276,7 @@ def _preprocess_agent_mode(argv: List[str]) -> List[str]:
     """
     result: List[str] = []
     valid_modes = {"raw", "dtach", "tmux"}
-    subcommands = {"workspace", "docs", "project"}
+    subcommands = {"workspace", "docs", "project", "session"}
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -1397,6 +1397,10 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         sys.exit(run_runtime_cli(argv[1:]))
 
+    if argv and argv[0] == "session":
+        from cli_topsailai.session_cli import run_session_cli
+
+        sys.exit(run_session_cli(argv[1:]))
 
     if argv and argv[0] == "--internal-workspace-agent-supervisor":
         from cli_topsailai.agent_launch_background import _supervisor_entry
@@ -1422,7 +1426,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         sys.exit(run_workspace_driver_cli(argv[2:]))
 
-    _TOP_LEVEL_COMMANDS = {"workspace", "docs", "project", "models", "runtime"}
+    _TOP_LEVEL_COMMANDS = {"workspace", "docs", "project", "models", "runtime", "session"}
     _TOP_LEVEL_OPTIONS = {
         "-h", "--help", "--version", "-w", "--workspace",
         "--list-docs", "--read-doc", "-t", "--tui", "--runtime-tui",
@@ -1575,6 +1579,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             add_help=False,
         )
         subparsers.add_parser("runtime", help="send, inject, control or read recent session logs", add_help=False)
+        subparsers.add_parser("session", help="inspect or update one session without entering session scope", add_help=False)
         help_parser.print_help()
         sys.exit(1)
 
@@ -1630,6 +1635,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     subparsers = parser.add_subparsers(dest="subcommand", help="non-interactive commands")
 
     subparsers.add_parser("runtime", help="send, inject, control or read recent session logs", add_help=False)
+    subparsers.add_parser("session", help="inspect or update one session without entering session scope", add_help=False)
 
     # Deprecated non-interactive options. They are kept for backward
     # compatibility and route to the new subcommand behavior with a warning.

@@ -56,3 +56,31 @@ becomes the natural choice. Full record in
 Directed by the human on 2026-11-08: `LEARN.md` is what the AI learned itself; `MEMORY.md` is what
 the human decided should be recorded. They must remain two real files, never a symlink to one
 another, and both are loaded into agent context.
+
+## Tests live in the Makefile, split by component and by test kind
+
+Directed by the human on 2026-11-09, quoted verbatim:
+
+> 测试要写到 Makefile 里面，按组件区分，按测试种类区分。例如：公共的，server的，endpoint的，etc..；单元测试，bdd测试，集成测试, etc..
+
+Directed by the human on 2026-11-09, quoted verbatim:
+
+> 组件级别 或者 较大范围的测试 都应该使用 make 去做，你记到项目记忆里面
+
+So the Makefile is the single entry point for tests, and it exposes two independent axes:
+
+- By component, for unit tests: `test-unit-common`, `test-unit-server`, `test-unit-endpoint`,
+  `test-unit-cli`, aggregated by `test-unit`.
+- By test kind: `test-unit`, `test-bdd`, `test-integration`, `test-packaging`, `test-harness`,
+  aggregated by `test-all`. `test` stays the untagged default suite.
+
+Component-level and larger-scope test runs MUST go through a `make` target rather than an ad-hoc
+`go test` invocation. A `make` target carries the package group, the build tags and the working
+directory in one place, so every agent and every run verifies a component the same way. An ad-hoc
+`go test ./internal/...` silently drops the `integration testhooks` tag or picks up a package that
+belongs to another component, and the difference is invisible in the output.
+
+The component groups are explicit package lists, not directory patterns, because package ownership is
+not directory nesting: `internal/channel` is shared by Server and Endpoint, so it belongs to common and
+must not be verified twice, while `internal/adapter` is Endpoint-only even though it sits beside shared
+packages. A new package therefore has to be assigned to a group deliberately.
