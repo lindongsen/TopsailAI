@@ -166,14 +166,27 @@ That contrast is the evidence for the defect claim. `revalidateGeneration`
 empty strings compare equal, so revalidation alone cannot reject an unverified target. The guard is
 the only site that does, and removing it silently reopens the hole.
 
+## Documentation narrowed
+
+The architecture statement that an Endpoint restart does not affect Agent lifetime was true only for
+separate lifecycle boundaries, and it was read as unconditional. It is now narrowed in both documents:
+
+- `docs/agent-cluster-architecture.md` states that the independence is about control, not process
+  survival, records the observed `ai-dev` case, and states the deployment consequence: a container
+  that hosts its own Agents must not be recreated as routine maintenance, so a deb install installs
+  and does not restart the container.
+- `docs/agent-cluster-protocol.md` carries the same qualification on the lifecycle bullet and points
+  at the architecture document for the observed case.
+
 ## Remaining work
 
-- The deployment rule is a decision, not code: a deb install must not restart the container, and
-  the architecture statement that endpoint restart does not affect agent lifetime still needs to be
-  narrowed for a container that hosts its own agents.
+- The deployment rule is a decision, not code: nothing prevents an operator from recreating a
+  container that hosts its own Agents, and the documentation now states the consequence rather than
+  enforcing it.
 - A bounded count of unverified sessions is not yet reported in the collection result, so the
   operator still cannot see how many sessions lost their liveness in one cycle.
 
 ## Status
 
-Fixed for the reporting and admission change. Deployment guidance recorded, not enforced by code.
+Fixed for the reporting and admission change. Deployment guidance recorded and documented, not
+enforced by code.

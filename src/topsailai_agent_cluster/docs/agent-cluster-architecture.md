@@ -110,6 +110,24 @@ An Endpoint represents one machine: one Endpoint daemon runs in its operating sy
 
 MVP supports start/resume/stop requests by invoking the corresponding Adapter CLI, alongside collecting its returned inventory. Endpoint and Agent are independent: Endpoint is a controller, not an Agent parent process, supervisor or lifecycle owner. Endpoint startup/shutdown/restart does not start, stop, adopt or restart Agents. The provider CLI/runtime is responsible for actual Agent launch, persistence and termination. Endpoint reports only returned evidence; command delivery or CLI exit alone cannot prove Agent readiness or task completion.
 
+That independence is a statement about **control**, not about **process survival**. It holds only when the
+Endpoint process and the Agent processes have separate lifecycle boundaries. When they share one, the
+boundary decides their fate together and the Endpoint's intent is irrelevant: recreating a container
+that hosts both kills every Agent inside it, exactly as restarting a shared systemd unit or a shared
+process group would. The Endpoint never issues a stop in that case, yet the Agents die anyway.
+
+This was observed, not hypothesised. The `ai-dev` Endpoint ran inside the same container as the Agents
+it launched, and recreating that container at `2026-11-09T01:22:39Z` destroyed both running Agents
+while the Endpoint had sent no command. The records and their output survived, because they live on a
+mounted volume rather than in the container. See
+`issues/endpoint-container-restart-kills-agents-and-hides-records.md`.
+
+Deployment consequence: a container that hosts its own Agents must not be recreated as routine
+maintenance, because that is an Agent outage rather than an Endpoint restart. A deb install therefore
+installs and does not restart the container. Where Agents must survive an Endpoint restart, the Agents
+have to run outside the Endpoint's lifecycle boundary, and that is a deployment decision the protocol
+cannot make for the operator.
+
 ## Transport and connectivity
 
 The channel is one authenticated TLS WebSocket carrying registration, heartbeat, bounded inventory synchronization, commands and small event frames. It is versioned and direction-agnostic: either side may dial, because a real deployment may only have one working network path.
@@ -228,6 +246,12 @@ Controller responsibilities are CLI invocation, standard formatting, independent
 The Server also runs as a container image built from `docker/Dockerfile`. This section describes the
 implemented image, not a proposal. The image is a deployment form of the Server only; an Endpoint runs
 as a node process installed by the Debian package or the bundle, never inside this image.
+
+This image is not the only container in a real deployment. An Endpoint may itself run inside a
+container, and the `ai-dev` Endpoint does. That is a supported deployment, but it carries the lifecycle
+risk described in the component boundaries section: recreating that container kills every Agent it
+launched, because the container is their shared lifecycle boundary. The image below is therefore a
+statement about the Server only, and it says nothing about where an Endpoint or its Agents run.
 
 The image uses the same `/opt/agent-cluster` tree as the package, and every mount point is the same
 path on both sides, so a host path and a container path are never two names for one file:
