@@ -165,12 +165,12 @@ func submitActionWithProgress(ctx context.Context, api tui.CommandAPI, output, d
 		return err
 	}
 	if jsonMode {
-		return runner.RenderAction(output, result)
+		return renderActionResult(output, result, true)
 	}
 	if request.Operation == protocol.OperationCommandExec {
 		// The output boundary owns the colour decision, so a terminal run keeps
 		// the provider's SGR colour and a redirected run stays plain.
 		return tui.RenderCommandExecResult(output, result, tui.OutputColorPolicy(output))
 	}
-	return runner.RenderAction(output, result)
+	return renderActionResult(output, result, false)
 }

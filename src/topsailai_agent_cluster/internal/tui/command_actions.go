@@ -114,10 +114,25 @@ func (r CommandRunner) RenderAction(out io.Writer, result map[string]any) error 
 	if r.Policy == LegacyPolicy {
 		return RenderJSON(out, result)
 	}
-	if _, err := fmt.Fprintln(out, StatusLabel(protocol.CommandStatus(stringValue(result, "status")), ReceiptForStatus(result))); err != nil {
+	return RenderReceipt(out, result)
+}
+
+// RenderReceipt writes the human-readable receipt for one durable command
+// result: the conservative status label, the receipt fields and the provider's
+// own return document verbatim.
+//
+// Both surfaces render through this function, so the standalone command and the
+// interactive REPL cannot disagree about which fields are shown or whether the
+// provider document is escaped. The document is printed as its own section
+// instead of inside a JSON envelope, because an escaped document is not the
+// provider's answer: the operator asked for the provider's result, not for a
+// quoted copy of it.
+func RenderReceipt(out io.Writer, result map[string]any) error {
+	receipt := ReceiptForStatus(result)
+	if _, err := fmt.Fprintln(out, StatusLabel(protocol.CommandStatus(stringValue(result, "status")), receipt)); err != nil {
 		return err
 	}
-	return renderReceiptDetails(out, ReceiptForStatus(result))
+	return renderReceiptDetails(out, receipt)
 }
 
 // renderReceiptDetails prints the durable receipt fields carried by a result.

@@ -57,6 +57,12 @@ type FaultInjection struct {
 	HoldPhase                   string
 	HoldDir                     string
 	UnsupportedCapability       string
+	// AdvertisedCapabilities replaces the generic fixture adapter's default
+	// capability list. The default list is a production value asserted by
+	// internal/adapter/command_test.go, so a scenario that needs an operation the
+	// default omits, such as context.inject, declares the list here instead of
+	// changing what every deployment advertises.
+	AdvertisedCapabilities []string
 }
 
 // serverReadinessWait bounds how long StartCluster waits for the Server health
@@ -177,8 +183,22 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 	if options.Faults.ProviderAlwaysFail && !options.Faults.TwoAdapters {
 		adapterArgs[0]["args"].([]string)[1] = "fail"
 	}
+	// The generic fixture adapter's default capability list omits operations such
+	// as context.inject, so a scenario that drives one declares the list it needs.
+	// The default is a production value, so it is replaced here rather than
+	// widened for every deployment.
+	if len(options.Faults.AdvertisedCapabilities) > 0 {
+		declared := make([]map[string]string, 0, len(options.Faults.AdvertisedCapabilities))
+		for _, name := range options.Faults.AdvertisedCapabilities {
+			declared = append(declared, map[string]string{"name": name, "version": "v1"})
+		}
+		adapterArgs[0]["capabilities"] = map[string]any{"capabilities": declared}
+	}
 	if options.Faults.UnsupportedCapability != "" {
 		capabilities := []map[string]string{{"name": "message.send", "version": "v1"}, {"name": "execution.interrupt", "version": "v1"}, {"name": "agent.stop", "version": "v1"}}
+		if declared, ok := adapterArgs[0]["capabilities"].(map[string]any); ok {
+			capabilities = declared["capabilities"].([]map[string]string)
+		}
 		filtered := capabilities[:0]
 		for _, capability := range capabilities {
 			if capability["name"] != options.Faults.UnsupportedCapability {

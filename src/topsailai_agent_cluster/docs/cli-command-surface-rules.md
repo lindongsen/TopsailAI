@@ -46,6 +46,34 @@ A non-interactive command MUST NOT silently degrade to a weaker behaviour.
 - Interactive surfaces may degrade with a visible diagnostic, because a human is
   present to read it. Non-interactive surfaces must fail, because no human is.
 
+## Receipt rendering and the provider return document
+
+A command result has two parts: this service's own durable receipt and the
+provider's own return document. Both surfaces render them through one shared
+renderer, so they cannot disagree about which fields are shown or whether the
+provider document is escaped.
+
+- The default output of an action command is the rendered receipt: the status
+  label, the durable receipt fields, then the provider document as its own
+  `provider_response:` section.
+- The provider document is printed verbatim. It is opaque provider evidence, so
+  it is never re-encoded, re-escaped or reinterpreted as a provider success claim.
+  An escaped copy is not the provider's answer, and an operator who asked for the
+  provider's result must not have to unescape it by eye.
+- `--json` keeps the machine envelope, because a script parses that document. The
+  envelope carries the same document in `provider_response`, so no evidence is
+  lost by choosing the machine form.
+- An absent document prints no section, so a provider that returns nothing keeps
+  the previous output unchanged.
+- A truncated document is always labelled with `provider_response_truncated`, so a
+  shortened provider answer is never presented as complete evidence.
+
+The rule exists because the two surfaces previously disagreed: the interactive
+REPL rendered the receipt while the standalone command emitted the envelope for
+every invocation, so the same `btw` result appeared verbatim in one surface and
+escaped in the other. Sharing one renderer makes that divergence structurally
+impossible rather than dependent on someone remembering to change both.
+
 ## Automatic follow-up steps
 
 An interactive command MAY perform bounded follow-up steps after its own action

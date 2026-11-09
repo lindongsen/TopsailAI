@@ -1250,3 +1250,75 @@ func TestActionRejectsExtraStopPositionals(t *testing.T) {
 		t.Fatalf("intents=%d, want 0", len(stub.intents))
 	}
 }
+
+// providerDocumentStub returns one durable result carrying the provider's own
+// return document, so a test can prove how that document reaches the operator.
+type providerDocumentStub struct {
+	allCapabilityStub
+	document string
+}
+
+func (s *providerDocumentStub) GetCommand(context.Context, string) (map[string]any, error) {
+	return map[string]any{
+		"command_id":        "cmd-1",
+		"status":            string(protocol.StatusFinished),
+		"delivery_boundary": string(protocol.DeliverySubmitted),
+		"effect_certainty":  string(protocol.EffectAcknowledged),
+		"provider_response": s.document,
+	}, nil
+}
+
+// TestStandaloneContextInjectPrintsProviderDocumentVerbatim proves the operator
+// receives the provider's own return document as its own section, unescaped.
+// The provider prints this document on stdout, so a JSON envelope that quotes it
+// would show the operator an escaped copy instead of the provider's answer.
+func TestStandaloneContextInjectPrintsProviderDocumentVerbatim(t *testing.T) {
+	document := `{"ok": true, "action": "btw", "delivery_state": "injection_queued"}`
+	stub := &providerDocumentStub{document: document}
+	var out strings.Builder
+	if err := action(context.Background(), stub, &out, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session", "context text", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+		t.Fatalf("btw: %v", err)
+	}
+	rendered := out.String()
+	if !strings.Contains(rendered, "provider_response:\n"+document+"\n") {
+		t.Fatalf("provider document missing or not verbatim in %q", rendered)
+	}
+	if strings.Contains(rendered, `\"`) {
+		t.Fatalf("provider document was escaped in %q", rendered)
+	}
+	if !strings.Contains(rendered, "confirmed result") {
+		t.Fatalf("receipt status label missing in %q", rendered)
+	}
+}
+
+// TestStandaloneContextInjectJSONModeKeepsTheEnvelope proves --json still emits
+// one parseable document, so the rendered receipt never replaces the machine
+// contract a script depends on.
+func TestStandaloneContextInjectJSONModeKeepsTheEnvelope(t *testing.T) {
+	document := `{"ok": true, "action": "btw"}`
+	stub := &providerDocumentStub{document: document}
+	var out strings.Builder
+	if err := action(context.Background(), stub, &out, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session", "context text", "gen"}, true, true, 100, "", "", "", "", ""); err != nil {
+		t.Fatalf("btw --json: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &decoded); err != nil {
+		t.Fatalf("--json output is not one JSON document: %v in %q", err, out.String())
+	}
+	if decoded["provider_response"] != document {
+		t.Fatalf("provider_response=%v want=%v", decoded["provider_response"], document)
+	}
+}
+
+// TestStandaloneContextInjectOmitsAbsentProviderDocument keeps the previous
+// output unchanged for a provider that returns no document.
+func TestStandaloneContextInjectOmitsAbsentProviderDocument(t *testing.T) {
+	stub := &providerDocumentStub{}
+	var out strings.Builder
+	if err := action(context.Background(), stub, &out, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session", "context text", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+		t.Fatalf("btw: %v", err)
+	}
+	if strings.Contains(out.String(), "provider_response") {
+		t.Fatalf("absent document must print no section, got %q", out.String())
+	}
+}

@@ -645,7 +645,20 @@ func driveWithProgress(ctx context.Context, api tui.CommandAPI, output, diagnost
 	if err != nil {
 		return err
 	}
-	return runner.RenderAction(output, result)
+	return renderActionResult(output, result, jsonMode)
+}
+
+// renderActionResult writes one durable command result for the standalone
+// surface. --json keeps the machine-readable envelope, because a script parses
+// that document; every other invocation renders the receipt, so the provider's
+// own return document is printed verbatim instead of being escaped inside a JSON
+// string. Both branches share the same receipt renderer the interactive REPL
+// uses, so the two surfaces cannot disagree about the provider section.
+func renderActionResult(output io.Writer, result map[string]any, jsonMode bool) error {
+	if jsonMode {
+		return tui.RenderJSON(output, result)
+	}
+	return tui.RenderReceipt(output, result)
 }
 
 // driveOperation maps one accepted drive action onto the standard operation.
@@ -832,7 +845,7 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 	if err != nil {
 		return err
 	}
-	if err := runner.RenderAction(output, result); err != nil {
+	if err := renderActionResult(output, result, jsonMode); err != nil {
 		return err
 	}
 	if operation != "start" {

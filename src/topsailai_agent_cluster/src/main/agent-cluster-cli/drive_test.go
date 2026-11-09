@@ -164,8 +164,23 @@ func TestDriveStartAdmitsTheDriveOperation(t *testing.T) {
 	if intent.Target == nil || intent.Target.ResourceID != "session" || intent.Target.Generation != "gen" {
 		t.Fatalf("target=%+v want session/gen", intent.Target)
 	}
-	// The legacy renderer emits the durable command result as JSON, so the
-	// assertion targets the terminal status rather than a prose receipt.
+	// The standalone surface renders the receipt, so the assertion targets the
+	// operator-facing status label rather than a JSON envelope. --json keeps the
+	// envelope and is covered separately.
+	if got, want := output.String(), "confirmed result\n"; got != want {
+		t.Fatalf("output=%q want=%q", got, want)
+	}
+}
+
+// TestDriveStartJSONModeKeepsTheDurableResult proves --json still emits the
+// machine-readable envelope, so the rendered receipt never replaces the document
+// a script parses.
+func TestDriveStartJSONModeKeepsTheDurableResult(t *testing.T) {
+	stub := &drivePathStub{}
+	var output strings.Builder
+	if err := drive(context.Background(), stub, &output, []string{"start", "ep", "session", "gen"}, true, true, 100, ""); err != nil {
+		t.Fatalf("drive start --json: %v", err)
+	}
 	if !strings.Contains(output.String(), `"status": "finished"`) {
 		t.Fatalf("missing durable result: %q", output.String())
 	}
