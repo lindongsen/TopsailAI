@@ -164,7 +164,7 @@ func TestUnitBFailedListClearsOldRows(t *testing.T) {
 	state.setRows([]SessionRow{{No: 1, EndpointID: "old", SessionID: "old", Generation: "old"}})
 	stub.failList = true
 	var output, diagnostics strings.Builder
-	err := interactiveList(context.Background(), stub, &state, "", false, &output, &diagnostics, ColorPolicy{})
+	err := interactiveList(context.Background(), stub, &state, "", false, false, &output, &diagnostics, ColorPolicy{})
 	if err == nil {
 		t.Fatal("expected list failure")
 	}
@@ -182,7 +182,7 @@ func TestUnitBWriterFailureLeavesRowsEmpty(t *testing.T) {
 	state := interactiveState{}
 	state.setRows([]SessionRow{{No: 1, EndpointID: "old", SessionID: "old", Generation: "old"}})
 	output := &unitBFailingWriter{}
-	err := interactiveList(context.Background(), stub, &state, "", false, output, output, ColorPolicy{})
+	err := interactiveList(context.Background(), stub, &state, "", false, false, output, output, ColorPolicy{})
 	if err == nil || !errors.Is(err, errUnitBWriter) {
 		t.Fatalf("interactiveList error=%v", err)
 	}
@@ -340,7 +340,7 @@ func TestUnitBB1ScopeMatrixAndLeadingZeroEquivalence(t *testing.T) {
 				state.enterEndpoint(stub.endpoints[0])
 			}
 			var output, diagnostics strings.Builder
-			if err := interactiveList(context.Background(), stub, &state, tc.filter, false, &output, &diagnostics, ColorPolicy{}); err != nil {
+			if err := interactiveList(context.Background(), stub, &state, tc.filter, false, false, &output, &diagnostics, ColorPolicy{}); err != nil {
 				t.Fatal(err)
 			}
 			if len(state.Rows) != tc.want {
@@ -665,7 +665,7 @@ func TestUnitBB1ScopeRowsCarryExactCapturedIdentity(t *testing.T) {
 				tc.setup(&state, stub)
 			}
 			var output, diagnostics strings.Builder
-			if err := interactiveList(context.Background(), stub, &state, tc.filter, false, &output, &diagnostics, ColorPolicy{}); err != nil {
+			if err := interactiveList(context.Background(), stub, &state, tc.filter, false, false, &output, &diagnostics, ColorPolicy{}); err != nil {
 				t.Fatal(err)
 			}
 			row, ok := state.Rows[1]

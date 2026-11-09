@@ -91,6 +91,34 @@ func logsFollowRest(rest string) string {
 	return "-f " + rest
 }
 
+// listFullAlias is the shorthand spelling of "list --full". It is a form rather
+// than an alias entry for exactly the reason logsFollowAlias is one: it also
+// supplies a flag. Resolving the word to "list" alone would parse an empty tail
+// and render the ordinary truncated table, which is the worst outcome for this
+// command, because a clipped table looks complete while silently hiding the tail
+// of every over-wide value. It is deliberately absent from commandAliases, so
+// "l" keeps completing "list" and "logs" instead of becoming ambiguous with "lf".
+// The shorthand is documented in the list help body instead, so it stays
+// discoverable without entering the alias registry.
+const listFullAlias = "lf"
+
+// ListFullAlias is the exported spelling of listFullAlias, so the standalone
+// dispatcher accepts the same shorthand without duplicating the literal. One
+// constant keeps the two surfaces from drifting into different spellings.
+const ListFullAlias = listFullAlias
+
+// listFullRest rewrites the tail of an lf invocation into the equivalent list
+// tail, so the shorthand inherits list's grammar instead of owning a second
+// parser. The full flag is prepended, so "lf --clean" becomes "--full --clean"
+// and a repeated "--full" is rejected by the same duplicate check that guards
+// "list".
+func listFullRest(rest string) string {
+	if strings.TrimSpace(rest) == "" {
+		return "--full"
+	}
+	return "--full " + rest
+}
+
 // commandAliases maps accepted short or compatibility names to canonical commands.
 // "exit" is deliberately absent: it is its own canonical command that always
 // leaves the process, so it must never inherit the scope-aware "quit" behaviour.

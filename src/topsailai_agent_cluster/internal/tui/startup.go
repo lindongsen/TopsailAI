@@ -17,7 +17,7 @@ const startupGuide = "list: view sessions | <n> or cd <n>: select | start: launc
 func runStartupList(parent context.Context, api InteractiveAPI, state *interactiveState, controller *interruptController, out, errOut io.Writer, color ColorPolicy) error {
 	ctx, cancel := context.WithCancel(parent)
 	controller.setCancel(cancel)
-	err := interactiveList(ctx, api, state, "", false, out, errOut, color)
+	err := interactiveList(ctx, api, state, "", false, false, out, errOut, color)
 	controller.clearCancel()
 	cancel()
 	if controller.takeCommandInterrupted() {

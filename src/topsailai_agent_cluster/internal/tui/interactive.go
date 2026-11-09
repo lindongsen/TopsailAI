@@ -470,6 +470,13 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 	if rawName == logsFollowAlias {
 		rawName, rest = "logs", logsFollowRest(rest)
 	}
+	// The lf shorthand is resolved here for the same reason: it carries the full
+	// flag inside the command word. Rewriting the tail into "--full <tail>" keeps
+	// list's single parser authoritative, so the shorthand cannot drift into a
+	// second grammar or silently degrade into the ordinary truncated table.
+	if rawName == listFullAlias {
+		rawName, rest = "list", listFullRest(rest)
+	}
 	// The send prefix is resolved before tokenisation: splitCommand splits on the
 	// first literal space, so ">hello world" would otherwise yield the token
 	// ">hello". The prefix is disjoint from every command word, so this branch can
@@ -521,11 +528,11 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		}
 		return true, nil
 	case "list":
-		filter, clean, err := parseListArguments(rest)
+		filter, clean, full, err := parseListArguments(rest)
 		if err != nil {
 			return false, err
 		}
-		return false, interactiveList(ctx, api, state, filter, clean, trustedOut, errOut, options.Color)
+		return false, interactiveList(ctx, api, state, filter, clean, full, trustedOut, errOut, options.Color)
 	case "endpoints":
 		// The endpoint table is trusted application styling over sanitized cells,
 		// so it renders through the trusted writer like list and refresh.
@@ -799,7 +806,7 @@ func loadReports(ctx context.Context, api InteractiveAPI, endpointFilter string)
 	return loaded, nil
 }
 
-func interactiveList(parent context.Context, api InteractiveAPI, state *interactiveState, filter string, clean bool, out, errors io.Writer, color ColorPolicy) error {
+func interactiveList(parent context.Context, api InteractiveAPI, state *interactiveState, filter string, clean, full bool, out, errors io.Writer, color ColorPolicy) error {
 	scoped, err := scopedListFilter(state, filter)
 	if err != nil {
 		return err
@@ -811,7 +818,7 @@ func interactiveList(parent context.Context, api InteractiveAPI, state *interact
 	staged := make([]SessionRow, 0)
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	err = (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, scoped, false, tableOptionsFor(out, color, clean, func(rows []SessionRow) { staged = append(staged, rows...) }))
+	err = (CommandRunner{API: api, Policy: InteractivePolicy}).ListWithOptions(ctx, out, errors, scoped, false, tableOptionsFor(out, color, clean, full, func(rows []SessionRow) { staged = append(staged, rows...) }))
 	if err != nil {
 		state.Rows = nil
 		return err
@@ -820,27 +827,40 @@ func interactiveList(parent context.Context, api InteractiveAPI, state *interact
 	return nil
 }
 
-func parseListArguments(rest string) (string, bool, error) {
+// parseListArguments parses the interactive list tail. --full is the per-command
+// request to render without truncation, and it is a flag rather than a separate
+// command so it inherits list's filter argument and scope availability unchanged.
+// A repeated flag is a usage error instead of a harmless duplicate, because the
+// operator who typed it twice cannot tell which one took effect.
+func parseListArguments(rest string) (string, bool, bool, error) {
 	parts := strings.Fields(rest)
 	filter := ""
 	clean := false
+	full := false
 	for _, part := range parts {
 		if part == "--clean" {
 			if clean {
-				return "", false, fmt.Errorf("usage: list [endpoint] [--clean]")
+				return "", false, false, fmt.Errorf("usage: list [endpoint] [--clean] [--full]")
 			}
 			clean = true
 			continue
 		}
+		if part == "--full" {
+			if full {
+				return "", false, false, fmt.Errorf("usage: list [endpoint] [--clean] [--full]")
+			}
+			full = true
+			continue
+		}
 		if strings.HasPrefix(part, "-") {
-			return "", false, fmt.Errorf("option %q is available only in non-interactive mode; JSON output is available only with the standalone command", part)
+			return "", false, false, fmt.Errorf("option %q is available only in non-interactive mode; JSON output is available only with the standalone command", part)
 		}
 		if filter != "" {
-			return "", false, fmt.Errorf("usage: list [endpoint] [--clean]")
+			return "", false, false, fmt.Errorf("usage: list [endpoint] [--clean] [--full]")
 		}
 		filter = part
 	}
-	return filter, clean, nil
+	return filter, clean, full, nil
 }
 
 func rejectInteractiveOption(command, rest string) error {
@@ -971,7 +991,7 @@ func interactiveRefresh(parent context.Context, api InteractiveAPI, state *inter
 			return err
 		}
 	}
-	err = renderListRows(out, errors, loaded, scoped, false, tableOptionsFor(out, color, false, func(rows []SessionRow) { staged = append(staged, rows...) }))
+	err = renderListRows(out, errors, loaded, scoped, false, tableOptionsFor(out, color, false, false, func(rows []SessionRow) { staged = append(staged, rows...) }))
 	if err != nil {
 		state.Rows = nil
 		return err

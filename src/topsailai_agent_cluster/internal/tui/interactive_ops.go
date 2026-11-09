@@ -637,7 +637,7 @@ func refreshAfterStart(parent context.Context, api InteractiveAPI, endpointID st
 	ctx, cancel := context.WithTimeout(parent, refreshCommandTimeout)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy}
-	return runner.RefreshAfterStart(ctx, trustedOut, out, endpointID, result, false, tableOptionsFor(trustedOut, options.Color, false, nil))
+	return runner.RefreshAfterStart(ctx, trustedOut, out, endpointID, result, false, tableOptionsFor(trustedOut, options.Color, false, false, nil))
 }
 
 // sessionIDs reads the committed projection and returns its standard session IDs.

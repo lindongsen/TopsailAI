@@ -426,3 +426,42 @@ each process's own log, and a host-only reload leaves the container endpoints si
 policy while every host-side check passes. The failure is fail-closed for a newly added command,
 so the operator sees `policy_denied` for a command the documentation says is allowed, and the
 documentation looks wrong instead of the deployment.
+
+## A shorthand that supplies a flag needs a rendered-output test, not a rewrite test
+
+Trigger: `lf` was added as the shorthand of `list --full`. The first test set proved the tail was
+rewritten into `--full <tail>` and that `tableOptionsFor` ORed the flag into the boundary value, and
+both passed. Neither proved the REPL actually rendered a long value in full: the rewrite could have
+been correct while `interactiveList` dropped the flag, and the OR could have been correct while no
+caller passed `true`. The composed path was the only place the two halves met, and it was untested.
+
+Action: when a shorthand carries a flag, add one test that drives the real entry point and asserts
+the rendered bytes, using a fixture value that exceeds the column cap so the two layouts are
+distinguishable. Pair it with a test of the plain command on the same fixture, asserting the clipped
+form appears and the complete value does not, because a fixture that cannot express the failure mode
+is not coverage. Then break each site in the chain in turn and confirm which tests fail: breaking the
+tail rewrite failed only the interactive checks, which proved the two surfaces resolve the shorthand
+at separate sites and neither test covers for the other.
+
+Why this prevents recurrence: a rewrite test and an option test are both unit tests of one link, and
+a chain of correct links can still have no consumer. The rendered bytes are the only evidence that
+the flag reached the renderer. The paired clipped-render test is what stops the full-render test from
+passing for an unrelated reason, such as a fixture whose value was already short enough to fit.
+
+## A substring assertion can match inside an unrelated word
+
+Trigger: a test asserted that the overview help does not advertise `lf`, using
+`strings.Contains(overview, "lf")`. It failed, because the overview contains the phrase "on the
+operator's behalf", and "be**lf**" contains the substring. The command was correctly absent; the
+assertion was wrong.
+
+Action: when asserting that a short token is absent from prose, compare whole tokens rather than
+substrings. Split the text on whitespace and punctuation, or match with a word boundary, so a
+two-letter name cannot be satisfied by the middle of an ordinary word. The same rule applies to
+asserting presence: a substring hit is not evidence that the token is there as a token.
+
+Why this prevents recurrence: short command names are exactly the ones most likely to appear inside
+other words, and the failure direction is silent in both ways. A false positive makes a correct
+implementation look broken, and a false negative would let an unwanted advertisement pass. This is
+the same class of error as matching a fixture name against a real state name: a substring match is
+not an identity match.
