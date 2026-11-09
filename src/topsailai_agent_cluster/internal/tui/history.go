@@ -49,9 +49,16 @@ type HistoryViewRow struct {
 	// contradictory. The two are kept apart so a caller never tells the operator
 	// to refresh data that a refresh cannot disambiguate.
 	Ambiguous bool `json:"ambiguous,omitempty"`
-	// Live reports whether the same provider session is present in the current
-	// inventory for this endpoint. Only a live row can be entered.
+	// Live reports whether the provider session is present in the current
+	// inventory AND its liveness was verified by the Endpoint. Only a live row
+	// can be entered, because entering a session requires a routable generation.
 	Live bool `json:"live"`
+	// Unverified reports that the provider session is present in the current
+	// inventory but the Endpoint could not verify its liveness, so no generation
+	// was reported. Such a row is visible and resumable, but it cannot be entered
+	// and it cannot receive input: the only operation that does not need a
+	// generation is resume, which addresses the provider session by handle.
+	Unverified bool `json:"unverified,omitempty"`
 	// ResourceID and Generation are supplied only by the join. They are empty for
 	// every non-live row, because a past session has no generation to validate.
 	ResourceID string `json:"resource_id,omitempty"`
@@ -129,10 +136,16 @@ func JoinHistory(endpointID string, rows []protocol.HistoryRow, report protocol.
 			// the ambiguity is recorded so the caller can report the real cause.
 			if matches := live[row.ProviderSessionID]; len(matches) == 1 {
 				viewRow.Joined = true
-				viewRow.Live = true
 				viewRow.ResourceID = matches[0].SessionID
 				viewRow.Generation = matches[0].Generation
 				viewRow.State = matches[0].State
+				// A reported session without a generation is present but its
+				// liveness was not verified, so it is not live. Reporting it as
+				// live would let the operator enter a session that cannot be
+				// addressed, and would also block the resume that is the only
+				// operation able to recover it.
+				viewRow.Live = matches[0].Generation != ""
+				viewRow.Unverified = !viewRow.Live
 			} else if len(matches) == 0 {
 				viewRow.Joined = true
 			} else {
@@ -182,7 +195,10 @@ func historyCells(row HistoryViewRow) map[string]string {
 //
 // An ambiguous row is labelled separately from an unjoined row, because the two
 // tell the operator different things: "unjoined" means the inventory could not be
-// read, while "ambiguous" means it was read and contradicted itself.
+// read, while "ambiguous" means it was read and contradicted itself. An
+// "unverified" row is a third case: the inventory reported the session but the
+// Endpoint could not confirm that a process still holds it, so the row exists and
+// can be resumed, but it cannot be entered.
 func historyLiveCell(row HistoryViewRow) string {
 	if row.Ambiguous {
 		return "ambiguous"
@@ -192,6 +208,9 @@ func historyLiveCell(row HistoryViewRow) string {
 	}
 	if row.Live {
 		return "yes"
+	}
+	if row.Unverified {
+		return "unverified"
 	}
 	return "no"
 }

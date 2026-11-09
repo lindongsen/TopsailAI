@@ -156,7 +156,11 @@ func sessionTargetFromLoaded(loaded reportLoad, endpointID, sessionID, expectedG
 			return sessionTarget{}, err
 		}
 		if session.Generation == "" {
-			return sessionTarget{}, fmt.Errorf("session %q has no generation; run list again", sessionID)
+			// A session reported without a generation is present but its liveness
+			// was not verified, so it cannot be addressed. Resume is the only
+			// operation that does not need a generation, so name it as the
+			// recovery step instead of asking for a refresh that cannot help.
+			return sessionTarget{}, fmt.Errorf("session %q is unverified on endpoint %q: the session record exists but no process holds it, so it cannot be addressed; use resume to resume it", sessionID, endpointID)
 		}
 		if expectedGeneration != "" && session.Generation != expectedGeneration {
 			return sessionTarget{}, fmt.Errorf("session %q generation changed; run list again", sessionID)

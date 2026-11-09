@@ -109,17 +109,28 @@ func (e *Executor) Execute(ctx context.Context, intent protocol.ImmutableIntent,
 	}
 	if intent.Target != nil {
 		if intent.Operation == protocol.OperationAgentResume {
-			// Resume authorizes on the absence of the target, and an absence proof
+			// Resume authorizes on the absence of a live target, and that absence
 			// must come from the authoritative provider observation: a cached
 			// snapshot can lag one collection cycle behind and would let a resume
-			// target a session that is already active again.
+			// target a session that is already active again. The check reads Live
+			// rather than Found, because a record whose process is gone is still
+			// listed by the provider; refusing on Found would reject exactly the
+			// sessions resume exists for.
 			inspection, inspectErr := instance.Inspect(ctx, adapter.InspectRequest{Target: *intent.Target})
 			if inspectErr != nil {
 				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_observation_failed"))
 			}
-			if inspection.Found {
+			if inspection.Live {
 				return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_still_active"))
 			}
+		} else if intent.Target.Generation == "" {
+			// Every other operation addresses a live process, so an empty
+			// generation cannot prove which process it would reach. This is
+			// rejected before revalidation, because revalidation compares the
+			// requested generation with the observed one and two empty strings
+			// compare equal: without this guard an unverified session would pass
+			// the comparison and reach the provider as if it were live.
+			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "generation_required"))
 		} else if err := e.revalidateGeneration(ctx, instance, adapterID, *intent.Target); err != nil {
 			return e.recordEarlyRejection(ctx, intent, rejectedReceipt(intent, requestHash, "target_generation_mismatch"))
 		}

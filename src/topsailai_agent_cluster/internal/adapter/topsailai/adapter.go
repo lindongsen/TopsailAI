@@ -267,9 +267,15 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 		if err != nil {
 			return adapter.DiscoverResult{}, fmt.Errorf("decode workspace generation: %w", err)
 		}
-		// Workspace history can contain idle records without a provider generation;
-		// they cannot be addressed safely, so exclude them from routable sessions.
-		if item.SessionID == "" || generation == "" {
+		// A workspace row without a provider generation is a real record whose
+		// liveness the provider could not verify: it reports no generation when no
+		// process holds the session output file. Dropping such a row made the
+		// session disappear from the only surface that can address it, so an
+		// operator saw a shorter list instead of an unverified session. It is
+		// reported as unknown with no generation, which keeps it visible and
+		// resumable while every operation that needs a live target still fails
+		// closed on the empty generation.
+		if item.SessionID == "" {
 			continue
 		}
 		resourceID, err := a.resourceID(ctx, item.SessionID)
@@ -280,8 +286,13 @@ func (a *Adapter) Discover(ctx context.Context, _ adapter.DiscoverRequest) (adap
 		if state == "" {
 			state = item.Status
 		}
+		stateReason := ""
+		if generation == "" {
+			state = protocol.SessionStateUnknown
+			stateReason = protocol.StateReasonLivenessUnverified
+		}
 		observedAtMS := time.Now().UnixMilli()
-		result.Sessions = append(result.Sessions, protocol.Session{SessionID: resourceID, ProviderSessionID: item.SessionID, DisplayName: item.SessionName, ProjectWorkspace: item.ProjectWorkspace, AgentID: item.AgentID, Generation: generation, AdapterID: a.config.AdapterID, State: state, ObservedAtMS: observedAtMS, Drive: driveSummary(item.Driver, observedAtMS)})
+		result.Sessions = append(result.Sessions, protocol.Session{SessionID: resourceID, ProviderSessionID: item.SessionID, DisplayName: item.SessionName, ProjectWorkspace: item.ProjectWorkspace, AgentID: item.AgentID, Generation: generation, AdapterID: a.config.AdapterID, State: state, StateReason: stateReason, ObservedAtMS: observedAtMS, Drive: driveSummary(item.Driver, observedAtMS)})
 	}
 	if response.Total != nil && *response.Total > len(response.Items) {
 		result.Complete = false
@@ -350,7 +361,13 @@ func (a *Adapter) Inspect(ctx context.Context, request adapter.InspectRequest) (
 		if state == "" {
 			state = item.Status
 		}
-		return adapter.InspectResult{Found: true, Generation: generation, State: state}, nil
+		// Found means the provider still lists the record; Live means it also
+		// proved a process holds the session output file. A record without a
+		// generation is listed but unverified, so it is found and not live.
+		// Resume authorizes on the absence of a live target, so it must read Live
+		// rather than Found: reading Found would refuse to resume exactly the
+		// sessions whose process is gone, which is the only case resume exists for.
+		return adapter.InspectResult{Found: true, Live: generation != "", Generation: generation, State: state}, nil
 	}
 	// An empty targeted result is a legitimate absence, not a malformed report.
 	return adapter.InspectResult{Found: false}, nil

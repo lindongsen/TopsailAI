@@ -480,3 +480,52 @@ func TestCommandRunnerHistoryForwardsLimit(t *testing.T) {
 		t.Fatalf("limits=%v want=[7]", api.limits)
 	}
 }
+
+// TestJoinHistoryMarksUnverifiedRowVisibleButNotEnterable covers the case a
+// container restart creates: the provider still reports the session record, but
+// no process holds it, so the Endpoint reports no generation. The row must stay
+// visible and resumable, because resume is the only operation that can recover
+// it, and it must not be reported as live, because entering it would require a
+// generation that does not exist.
+func TestJoinHistoryMarksUnverifiedRowVisibleButNotEnterable(t *testing.T) {
+	rows := []protocol.HistoryRow{{ProviderSessionID: "wa-dead", Resumable: true}}
+	report := protocol.InventoryReport{Sessions: []protocol.Session{historyLiveSession("res_dead", "wa-dead", "")}}
+
+	view := JoinHistory("ep-1", rows, report, true)
+	if len(view.Rows) != 1 {
+		t.Fatalf("rows=%d", len(view.Rows))
+	}
+	row := view.Rows[0]
+	if !row.Joined {
+		t.Fatalf("row should be joined: %+v", row)
+	}
+	if row.Live {
+		t.Fatalf("row without a generation must not be live: %+v", row)
+	}
+	if !row.Unverified {
+		t.Fatalf("row without a generation must be unverified: %+v", row)
+	}
+	if row.Generation != "" {
+		t.Fatalf("unverified row must carry no generation: %+v", row)
+	}
+	if got := historyLiveCell(row); got != "unverified" {
+		t.Fatalf("live cell=%q want=unverified", got)
+	}
+}
+
+// TestJoinHistoryKeepsVerifiedRowLive guards the boundary of the change above:
+// a row whose generation was reported must still be live and must not be
+// labelled unverified, so the new state cannot swallow the ordinary case.
+func TestJoinHistoryKeepsVerifiedRowLive(t *testing.T) {
+	rows := []protocol.HistoryRow{{ProviderSessionID: "wa-1", Resumable: false}}
+	report := protocol.InventoryReport{Sessions: []protocol.Session{historyLiveSession("res_1", "wa-1", "gen-1")}}
+
+	view := JoinHistory("ep-1", rows, report, true)
+	row := view.Rows[0]
+	if !row.Live || row.Unverified {
+		t.Fatalf("verified row must be live and not unverified: %+v", row)
+	}
+	if got := historyLiveCell(row); got != "yes" {
+		t.Fatalf("live cell=%q want=yes", got)
+	}
+}

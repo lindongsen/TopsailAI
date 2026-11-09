@@ -621,3 +621,50 @@ func TestInteractiveHistoryReadsWholeProviderWindow(t *testing.T) {
 		t.Fatalf("limits=%v want=[0]", stub.historyLimits)
 	}
 }
+
+// TestInteractiveResumeAcceptsUnverifiedRow covers the recovery path a container
+// restart requires. The provider still reports the session, but no process holds
+// it, so the Endpoint reports no generation. Resume must be admitted, because it
+// addresses the provider session by handle and is the only operation able to
+// recover the row; refusing it would leave the operator with no recovery step.
+func TestInteractiveResumeAcceptsUnverifiedRow(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-dead", Resumable: true, ResourceID: "res-dead"}},
+		historyReport(historyLiveSession("res-dead", "wa-dead", "")),
+	)
+
+	output, diagnostics := runScope(t, stub, "history endpoint-1\nresume 1\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unverified row must be resumable, diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted=%d want=1", stub.admit)
+	}
+	intent := stub.intents[0]
+	if intent.Operation != protocol.OperationAgentResume {
+		t.Fatalf("wrong operation: %+v", intent)
+	}
+	if intent.Target == nil || intent.Target.ResourceID != "res-dead" || intent.Target.Generation != "" {
+		t.Fatalf("wrong resume target: %+v", intent.Target)
+	}
+	if !strings.Contains(output, "history row numbers are stale after resume; run history to refresh") {
+		t.Fatalf("missing row invalidation notice: %q", output)
+	}
+}
+
+// TestInteractiveHistoryCDRejectsUnverifiedRow guards the other half of the same
+// decision: an unverified row is visible but cannot be entered, because entering
+// it would require a generation that does not exist. The message must name the
+// real reason instead of claiming the row is not live.
+func TestInteractiveHistoryCDRejectsUnverifiedRow(t *testing.T) {
+	stub := historyScenarioStub(
+		[]protocol.HistoryRow{{ProviderSessionID: "wa-dead", Resumable: true, ResourceID: "res-dead"}},
+		historyReport(historyLiveSession("res-dead", "wa-dead", "")),
+	)
+
+	_, diagnostics := runScope(t, stub, "history endpoint-1\ncd 1\nexit\n", ColorPolicy{})
+	want := `history row 1 is unverified on endpoint "endpoint-1": the session record exists but no process holds it, so it cannot be entered; use resume 1 to resume it`
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+}

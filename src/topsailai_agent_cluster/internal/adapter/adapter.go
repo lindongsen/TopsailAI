@@ -45,7 +45,13 @@ type InspectRequest struct {
 
 // InspectResult contains bounded provider-neutral target evidence.
 type InspectResult struct {
-	Found      bool
+	// Found reports that the provider still lists the record.
+	Found bool
+	// Live reports that the provider also proved a process holds the record, so
+	// the target is currently active. It is deliberately separate from Found: a
+	// record can be listed while its liveness is unverified, and an operation that
+	// authorizes on the absence of a live target must read Live, not Found.
+	Live       bool
 	Generation string
 	State      string
 }

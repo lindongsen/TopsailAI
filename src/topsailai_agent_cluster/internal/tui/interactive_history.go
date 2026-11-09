@@ -145,6 +145,13 @@ func cdHistoryRowNumber(state *interactiveState, api InteractiveAPI, parent cont
 		return fmt.Errorf("history row %d is unjoined: the inventory for endpoint %q is unavailable, so the row cannot be entered; run refresh and history again", number, namespace.EndpointID)
 	}
 	if !row.Live {
+		// An unverified row is present but cannot be addressed, so the operator
+		// must be told the real reason instead of a generic "not live". Resume is
+		// the only operation that does not need a generation, so it is the only
+		// recovery step worth naming.
+		if row.Unverified {
+			return fmt.Errorf("history row %d is unverified on endpoint %q: the session record exists but no process holds it, so it cannot be entered; use resume %d to resume it", number, namespace.EndpointID, number)
+		}
 		return fmt.Errorf("history row %d is not live on endpoint %q, so it cannot be entered; use resume %d to resume it", number, namespace.EndpointID, number)
 	}
 	// The join supplies the only routable pair. An empty pair means the join
@@ -230,10 +237,15 @@ func interactiveResume(parent context.Context, api InteractiveAPI, state *intera
 }
 
 // validateResumeAbsence proves from the current inventory that the provider
-// session is still absent, so a stale history row can never resume a session that
-// has since started. The Endpoint repeats this check against the provider's own
-// answer before it invokes the provider, so this is a client-side guard, not the
-// authority.
+// session is not already running, so a stale history row can never resume a
+// session that has since started. The Endpoint repeats this check against the
+// provider's own answer before it invokes the provider, so this is a client-side
+// guard, not the authority.
+//
+// Presence in the inventory is not the same as being live. A session whose
+// liveness was not verified is reported without a generation, and resume is the
+// only operation that can recover it, so such a row must not be refused here.
+// Only a session with a verified generation is already running.
 func validateResumeAbsence(ctx context.Context, api InteractiveAPI, endpointID, providerSessionID string) error {
 	loaded, err := loadReports(ctx, api, endpointID)
 	if err != nil {
@@ -251,9 +263,13 @@ func validateResumeAbsence(ctx context.Context, api InteractiveAPI, endpointID, 
 		return fmt.Errorf("endpoint %q inventory is unavailable, so the absence of session %q cannot be proven", endpointID, providerSessionID)
 	}
 	for _, session := range report.Sessions {
-		if session.ProviderSessionID != "" && session.ProviderSessionID == providerSessionID {
-			return fmt.Errorf("session %q is live on endpoint %q, so it cannot be resumed; use cd to enter it", providerSessionID, endpointID)
+		if session.ProviderSessionID == "" || session.ProviderSessionID != providerSessionID {
+			continue
 		}
+		if session.Generation == "" {
+			continue
+		}
+		return fmt.Errorf("session %q is live on endpoint %q, so it cannot be resumed; use cd to enter it", providerSessionID, endpointID)
 	}
 	return nil
 }

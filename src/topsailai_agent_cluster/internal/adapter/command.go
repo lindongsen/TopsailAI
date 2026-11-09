@@ -111,7 +111,7 @@ func (a *commandAdapter) Inspect(ctx context.Context, request InspectRequest) (I
 		if session.SessionID != request.Target.ResourceID {
 			continue
 		}
-		return InspectResult{Found: true, Generation: session.Generation, State: session.State}, nil
+		return InspectResult{Found: true, Live: session.Generation != "", Generation: session.Generation, State: session.State}, nil
 	}
 	// A resource that is absent from a successful discovery is a legitimate
 	// absence, not an observation failure. Reporting it as an error makes the

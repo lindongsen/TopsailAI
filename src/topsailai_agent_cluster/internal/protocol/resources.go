@@ -59,6 +59,18 @@ type DriveSummary struct {
 	ObservedAtMS int64 `json:"observed_at_ms"`
 }
 
+// SessionStateUnknown means the provider reported the record but could not
+// verify the liveness of the process behind it. It is a real observation of an
+// unverified session, not an unavailable observation: the record exists, only
+// its liveness is unproven.
+const SessionStateUnknown = "unknown"
+
+// StateReasonLivenessUnverified means the provider listed the session but could
+// not confirm that a process still holds its output file, so no generation was
+// reported. Such a session is not routable for operations that require a live
+// target, because the Endpoint cannot prove which process it would address.
+const StateReasonLivenessUnverified = "liveness_unverified"
+
 // Standard drive states. They are provider-neutral: an adapter maps its own
 // vocabulary onto these values and keeps provider-specific detail local.
 const (

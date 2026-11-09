@@ -26,6 +26,38 @@ Use stable opaque cluster resource IDs scoped by Endpoint, privately mapped by E
 
 Separate endpoint connection state (`online`, `suspect`, `offline`) from observed agent state (`running`, `idle`, `waiting_input`, `stopped`, `unknown`) and task state (`pending`, `running`, `succeeded`, `failed`, `cancelled`, `unknown`). Map only states supported by actual evidence; publish only a standard bounded reason code/message, keeping provider-specific diagnostics local. Store observation time and Server receive time separately. Creation/update timestamps are UTC epoch milliseconds; durations/deadlines are not inferred from timestamps alone.
 
+## Implemented unverified session reporting and admission
+
+A provider can list a session record while proving no live process behind it. For TopsailAI this
+happens when no process holds the session output file, so `process_generation` is `null`
+(`cli/cli_topsailai/core.py:1284-1287`). An empty generation therefore means **liveness unverified**,
+not "the record does not exist".
+
+The Endpoint reports such a session instead of dropping it. Dropping it made the session disappear
+from the only surface that can address it, so an operator read a shorter list as "the task is gone"
+while the record and its output were intact. The reported session carries `state=unknown` and
+`state_reason=liveness_unverified`, with an empty generation.
+
+Admission then follows one rule: an empty generation cannot prove which process an operation would
+reach, so every operation that addresses a live process fails closed with `generation_required`.
+`agent.resume` is the sole exception, because it addresses the provider session by handle and exists
+precisely for the case where the process is gone.
+
+The guard runs before generation revalidation, and that order is load-bearing. Revalidation compares
+the requested generation with the observed one (`internal/endpoint/executor.go:301`), and two empty
+strings compare equal, so without the guard an unverified session would pass the comparison and reach
+the provider as if it were live. A regression test asserts that `message.send` and `agent.stop` are
+rejected and `agent.resume` executes, and it fails when the guard is removed.
+
+`InspectResult` separates `Found` from `Live` for the same reason. `Found` means the provider still
+lists the record; `Live` means it also proved a process holds it. Resume authorizes on the absence of
+a live target, so it reads `Live`. Reading `Found` would refuse to resume exactly the sessions resume
+exists for.
+
+The TUI keeps the row visible and labels it `unverified`. Entering it is refused with the real reason
+and the resume hint, never with "session not found" and never with "generation changed", because
+neither is true and both hide the only recovery step.
+
 ## Capability contract
 
 Endpoint publishes standard versioned capabilities for itself, abstract resources and LaunchProfiles. Private adapter capabilities never appear on the wire. Minimum admission requirements are health and bounded discovery of at least one supported resource kind. The MVP platform must implement agent start/resume/stop. Endpoint reports precise standard resource/profile support; an unsupported lifecycle operation is an explicit integration gap, not a silent substitute. Task and output modes remain capability-dependent.

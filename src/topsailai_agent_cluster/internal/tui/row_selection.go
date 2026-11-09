@@ -1,6 +1,10 @@
 package tui
 
-import "fmt"
+import (
+	"fmt"
+
+	"topsailai_agent_cluster/internal/protocol"
+)
 
 // resolveRowSelection maps a bare ASCII row number to the session row it names.
 // Row numbers are the operator-facing shorthand for long provider identifiers, so
@@ -21,6 +25,12 @@ func resolveRowSelection(state *interactiveState, token string) (SessionRow, err
 		return SessionRow{}, fmt.Errorf("row %d does not identify a session; choose a session row", number)
 	}
 	if row.Generation == "" {
+		// A row reported without a generation is present but its liveness was not
+		// verified, so it cannot be addressed. Naming the real reason keeps the
+		// operator from retrying a refresh that cannot change the outcome.
+		if row.State == protocol.SessionStateUnknown {
+			return SessionRow{}, fmt.Errorf("row %d is unverified: the session record exists but no process holds it, so it cannot be addressed; use resume to resume it", number)
+		}
 		return SessionRow{}, fmt.Errorf("row %d has no generation; run list again", number)
 	}
 	return row, nil

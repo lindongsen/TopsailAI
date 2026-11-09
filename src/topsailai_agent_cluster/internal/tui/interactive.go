@@ -883,7 +883,16 @@ func findSelectedIn(loaded reportLoad, state *interactiveState) (protocol.Endpoi
 			if err := validateAdapterFreshness(report, session.AdapterID); err != nil {
 				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, err
 			}
-			if session.Generation == "" || session.Generation != state.Generation {
+			if session.Generation == "" {
+				// A session that is still reported but whose liveness was not
+				// verified has no generation, so it cannot be addressed. This is
+				// not a generation change: the operator must leave the scope and
+				// resume the session, because resume is the only operation that
+				// does not need a generation.
+				state.invalidate("selected session liveness is unverified")
+				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %q is no longer verified as running, so it cannot be addressed; use cd .. then resume it", state.SessionID)
+			}
+			if session.Generation != state.Generation {
 				state.invalidate("selected session generation changed")
 				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session generation changed; use the session again")
 			}

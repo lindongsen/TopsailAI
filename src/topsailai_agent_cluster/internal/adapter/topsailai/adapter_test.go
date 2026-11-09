@@ -102,18 +102,31 @@ func TestDiscoverUsesOpaqueIDsAndRejectsMalformedOrTruncatedResults(t *testing.T
 	}
 }
 
-func TestDiscoverSkipsWorkspaceRowsWithoutGeneration(t *testing.T) {
+// TestDiscoverReportsUnverifiedRowsAsUnknown proves a workspace row without a
+// provider generation is still reported. The provider omits the generation when
+// no process holds the session output file, so such a row is a real record whose
+// liveness is unverified. Dropping it made the session vanish from the only
+// surface that can address it, and the operator saw a shorter list instead of an
+// unverified session.
+func TestDiscoverReportsUnverifiedRowsAsUnknown(t *testing.T) {
 	runner := &fakeRunner{out: []byte(`{"items":[{"session_id":"idle-history","status":"idle"},{"session_id":"live-session","process_generation":"g1","status":"running"}],"total":2}`)}
 	a := newTestAdapter(t, runner)
 	result, err := a.Discover(context.Background(), adapter.DiscoverRequest{})
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
-	if len(result.Sessions) != 1 || result.Sessions[0].Generation != "g1" {
-		t.Fatalf("routable sessions = %#v, want one generation g1 session", result.Sessions)
+	if len(result.Sessions) != 2 {
+		t.Fatalf("sessions = %#v, want both the unverified and the live row", result.Sessions)
 	}
-	if result.Sessions[0].SessionID != "res_live-session" {
-		t.Fatalf("session ID = %q, want opaque mapping", result.Sessions[0].SessionID)
+	unverified := result.Sessions[0]
+	if unverified.SessionID != "res_idle-history" || unverified.Generation != "" {
+		t.Fatalf("unverified session = %#v, want opaque ID and no generation", unverified)
+	}
+	if unverified.State != protocol.SessionStateUnknown || unverified.StateReason != protocol.StateReasonLivenessUnverified {
+		t.Fatalf("unverified session state = %q reason = %q, want unknown/liveness_unverified", unverified.State, unverified.StateReason)
+	}
+	if result.Sessions[1].Generation != "g1" || result.Sessions[1].SessionID != "res_live-session" {
+		t.Fatalf("live session = %#v, want generation g1 and opaque mapping", result.Sessions[1])
 	}
 }
 
@@ -124,14 +137,19 @@ func TestDiscoverAcceptsNumericStringAndNullGenerations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
-	if len(result.Sessions) != 2 {
-		t.Fatalf("session count = %d, want 2: %#v", len(result.Sessions), result.Sessions)
+	if len(result.Sessions) != 3 {
+		t.Fatalf("session count = %d, want 3: %#v", len(result.Sessions), result.Sessions)
 	}
 	if result.Sessions[0].SessionID != "res_numeric" || result.Sessions[0].Generation != "435912980" {
 		t.Fatalf("numeric session = %#v", result.Sessions[0])
 	}
 	if result.Sessions[1].SessionID != "res_string" || result.Sessions[1].Generation != "g1" {
 		t.Fatalf("string session = %#v", result.Sessions[1])
+	}
+	// A null generation is a listed record with unverified liveness, so it stays
+	// visible as unknown instead of being silently excluded.
+	if result.Sessions[2].SessionID != "res_idle" || result.Sessions[2].Generation != "" || result.Sessions[2].State != protocol.SessionStateUnknown {
+		t.Fatalf("null-generation session = %#v, want unknown with no generation", result.Sessions[2])
 	}
 }
 

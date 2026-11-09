@@ -296,7 +296,11 @@ func TestResumePreflightRequiresAuthoritativeAbsence(t *testing.T) {
 		wantCode   string
 	}{
 		{name: "absent executes", inspection: adapter.InspectResult{Found: false}, wantCalls: 1},
-		{name: "live rejects", inspection: adapter.InspectResult{Found: true, Generation: "g1"}, wantCode: "target_still_active"},
+		{name: "live rejects", inspection: adapter.InspectResult{Found: true, Live: true, Generation: "g1"}, wantCode: "target_still_active"},
+		// A record the provider still lists but cannot prove live is exactly the
+		// case resume exists for: the process is gone, the record remains. It must
+		// execute, because refusing on Found would reject every resumable session.
+		{name: "listed but unverified executes", inspection: adapter.InspectResult{Found: true, Live: false}, wantCalls: 1},
 		{name: "observation failure rejects", inspectErr: errors.New("provider unavailable"), wantCode: "target_observation_failed"},
 	}
 	for _, testCase := range tests {
@@ -783,5 +787,92 @@ func TestReadOutputKeepsWholeRunesWhenBudgetFallsInsideARune(t *testing.T) {
 	}
 	if response.Data != "中" {
 		t.Fatalf("data=%q, want the single whole rune that fits in 5 bytes", response.Data)
+	}
+}
+
+// unverifiedTargetAdapter describes every operation that can address a session,
+// so the empty-generation guard can be exercised for each of them without a live
+// provider.
+type unverifiedTargetAdapter struct {
+	adapter.Adapter
+	inspection   adapter.InspectResult
+	executeCalls *int
+}
+
+func (a unverifiedTargetAdapter) Describe(context.Context) (adapter.Descriptor, error) {
+	return adapter.Descriptor{AdapterID: "a1", Capabilities: protocol.CapabilityDescriptor{Revision: "v1", Capabilities: []protocol.Capability{
+		{Name: protocol.OperationMessageSend, Version: "v1"},
+		{Name: protocol.OperationAgentStop, Version: "v1"},
+		{Name: protocol.OperationAgentResume, Version: "v1"},
+	}}}, nil
+}
+
+func (a unverifiedTargetAdapter) Inspect(context.Context, adapter.InspectRequest) (adapter.InspectResult, error) {
+	return a.inspection, nil
+}
+
+func (a unverifiedTargetAdapter) Execute(_ context.Context, request adapter.ExecuteRequest) (adapter.ExecuteResult, error) {
+	*a.executeCalls++
+	return adapter.ExecuteResult{Receipt: protocol.ExecutionReceipt{CommandID: request.Intent.CommandID, Outcome: "submitted", DeliveryBoundary: protocol.DeliverySubmitted, EffectCertainty: protocol.EffectAcknowledged}}, nil
+}
+
+// TestUnverifiedTargetRejectsEveryOperationExceptResume proves the admission rule
+// for a session the provider lists without a generation. Such a session is
+// visible and resumable, but every operation that addresses a live process must
+// fail closed, because an empty generation cannot prove which process it would
+// reach. Resume is the sole exception: it addresses the provider session by
+// handle and exists precisely for the case where the process is gone.
+//
+// The guard must run before generation revalidation. Revalidation compares the
+// requested generation with the observed one, and two empty strings compare
+// equal, so without the guard an unverified session would pass the comparison and
+// reach the provider as if it were live.
+func TestUnverifiedTargetRejectsEveryOperationExceptResume(t *testing.T) {
+	tests := []struct {
+		name      string
+		operation string
+		wantCalls int
+		wantCode  string
+	}{
+		{name: "send rejects", operation: protocol.OperationMessageSend, wantCode: "generation_required"},
+		{name: "stop rejects", operation: protocol.OperationAgentStop, wantCode: "generation_required"},
+		{name: "resume executes", operation: protocol.OperationAgentResume, wantCalls: 1},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, err := endpointstorage.Open(context.Background(), t.TempDir()+"/endpoint.db")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			mapping, err := store.GetOrCreateResourceID(context.Background(), "a1", "provider-session", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			registry := adapter.NewRegistry()
+			if err := registry.RegisterType("fixture", func(context.Context, adapter.Config) (adapter.Adapter, error) {
+				// The provider lists the record but proves no live process, which is
+				// exactly what an unverified session looks like.
+				return unverifiedTargetAdapter{inspection: adapter.InspectResult{Found: true, Live: false}, executeCalls: &calls}, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := registry.Configure(context.Background(), adapter.Config{AdapterID: "a1", ProviderType: "fixture"}); err != nil {
+				t.Fatal(err)
+			}
+			executor, err := NewExecutor(store, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "unverified-" + testCase.name, EndpointID: "e1", Operation: testCase.operation, OperationVersion: "v1", CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Target: &protocol.CommandTarget{Kind: "session", ResourceID: mapping.ResourceID, Generation: ""}, Payload: []byte(`{}`), ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli()}
+			receipt, err := executor.Execute(context.Background(), intent, "hash-"+testCase.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if calls != testCase.wantCalls || receipt.ErrorCode != testCase.wantCode {
+				t.Fatalf("calls=%d receipt=%#v, want calls=%d code=%q", calls, receipt, testCase.wantCalls, testCase.wantCode)
+			}
+		})
 	}
 }

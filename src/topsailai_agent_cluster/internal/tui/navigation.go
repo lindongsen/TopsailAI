@@ -454,7 +454,11 @@ func resolveSessionInEndpoint(state *interactiveState, loaded reportLoad, endpoi
 // enterValidatedSession changes scope only after freshness validation succeeds.
 func enterValidatedSession(state *interactiveState, endpoint protocol.Endpoint, report protocol.InventoryReport, session protocol.Session) (resolveOutcome, error) {
 	if session.Generation == "" {
-		return outcomeNotFound, nil
+		// A session reported without a generation is present but its liveness was
+		// not verified, so it cannot be entered. Returning not-found here would
+		// tell the operator the session does not exist, which is false and hides
+		// the only recovery step.
+		return outcomeCancelled, fmt.Errorf("session %q is unverified on endpoint %q: the session record exists but no process holds it, so it cannot be entered; use resume to resume it", session.SessionID, endpoint.EndpointID)
 	}
 	if err := validateEndpointOnline(endpoint); err != nil {
 		return outcomeCancelled, err

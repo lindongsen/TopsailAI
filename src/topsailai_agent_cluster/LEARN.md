@@ -237,3 +237,24 @@ resolve the word, so a dispatch-only test passes. The two failures are both invi
 the dropped flag degrades the command into a different capability, and the extra alias silently
 changes a shared completion list. Both are consequences of the registry being used for something it
 does not model, so the fix is to stop using it rather than to patch each symptom.
+
+## A green test proves nothing until it has been seen to fail
+
+Trigger: the admission rule "an unverified session must reject send and stop but allow resume" was
+implemented and covered by a new test. The test passed on the first run, which looked like
+confirmation. It was not: the guard it exercised had never been observed to matter, so a test that
+asserted nothing would have looked identical.
+
+Action: after writing a test for a guard, break the guard deliberately and confirm the test fails,
+then restore it and confirm it passes again. The failure message must name the behaviour, not just
+report a mismatch: disabling this guard produced `calls=1` and `outcome=submitted`, which proved the
+command reached the provider instead of being rejected. Delete the temporary break immediately and
+re-run the suite, so the broken build cannot be mistaken for the real one.
+
+Why this prevents recurrence: a test written after the fix encodes whatever the fixed code does, so
+it passes by construction. Only the broken build shows whether the test can distinguish the two
+behaviours. This case was worse than a missing test, because the defect was invisible in review:
+`revalidateGeneration` compares two generations, and two empty strings compare equal, so the
+comparison looked like it validated the target while it silently accepted an unverified one. The
+guard was the only site that rejected it, and a green test on the guard said nothing about whether
+the guard was reachable or necessary.
