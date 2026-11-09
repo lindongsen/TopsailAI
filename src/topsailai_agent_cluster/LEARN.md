@@ -403,3 +403,26 @@ a substring match on a real state name is not evidence that the fixture represen
 test still passes after the change, because the fallback branch accepts any unrecognized
 value, so the loss of coverage is invisible. Asserting both the real state and the fallback
 in the same table is what keeps the two paths from collapsing into one.
+
+## A container endpoint keeps its own allowlist, so a host edit does not reach it
+
+Trigger: the shipped `command.exec` allowlist was extended and the host conffile
+`/opt/agent-cluster/conf/command-allowlist.conf` was updated and reloaded. The two container
+endpoints (`ai-dev`, `topsailai-dev`) run the same binary from the same path, but their
+`/opt/agent-cluster/conf` is inside the container image, not a bind mount of the host tree, so
+the host file never reached them. Their own log showed `reloaded command allowlist entries=10`
+at the moment the host reloaded 35, which is the only evidence that distinguishes "the file is
+correct" from "the process is using it".
+
+Action: after changing any Endpoint conffile, verify each running Endpoint separately by reading
+its own reload log line and its own file content, not the host file. A container endpoint needs
+the file copied into the container and its own `SIGHUP`; a host `SIGHUP` reaches only host
+processes. Confirm the effective entry count per process, because the reload log prints the count
+the process actually parsed.
+
+Why this prevents recurrence: all three endpoints share one binary path and one configuration
+path, so they look like one deployment. The difference is only visible in the mount table and in
+each process's own log, and a host-only reload leaves the container endpoints silently on the old
+policy while every host-side check passes. The failure is fail-closed for a newly added command,
+so the operator sees `policy_denied` for a command the documentation says is allowed, and the
+documentation looks wrong instead of the deployment.

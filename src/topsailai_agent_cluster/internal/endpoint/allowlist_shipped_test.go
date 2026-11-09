@@ -34,9 +34,11 @@ func TestShippedAllowlistParses(t *testing.T) {
 }
 
 // TestShippedAllowlistPinsTheDefaultPolicy pins the intent of the default policy.
-// It is mostly read-only, but it deliberately includes `git push`, `git pull`,
-// `git fetch` and `hostname`, so a later edit that adds a mutating or
-// shell-capable entry has to change this test and justify the change.
+// It is the common operational set an operator needs to inspect a node and
+// prepare a workspace, plus the git entries needed to publish work. It
+// deliberately includes `git push`, `git pull`, `git fetch`, `hostname`, `ping`
+// and `nc`, so a later edit that adds a mutating or shell-capable entry has to
+// change this test and justify the change.
 func TestShippedAllowlistPinsTheDefaultPolicy(t *testing.T) {
 	data, err := os.ReadFile(shippedAllowlistPath(t))
 	if err != nil {
@@ -50,6 +52,31 @@ func TestShippedAllowlistPinsTheDefaultPolicy(t *testing.T) {
 		{"ls"},
 		{"ls", "-la"},
 		{"pwd"},
+		{"cat", "README.md"},
+		{"head", "-n", "20", "README.md"},
+		{"tail", "-n", "20", "README.md"},
+		{"wc", "-l", "README.md"},
+		{"grep", "-rn", "TODO", "."},
+		{"stat", "README.md"},
+		{"file", "README.md"},
+		{"du", "-sh", "."},
+		{"df", "-h"},
+		{"free", "-m"},
+		{"ps", "aux"},
+		{"uptime"},
+		{"uname", "-a"},
+		{"whoami"},
+		{"id"},
+		{"date"},
+		{"nproc"},
+		{"lscpu"},
+		{"lsblk"},
+		{"ping", "-c", "3", "127.0.0.1"},
+		{"nc", "-z", "127.0.0.1", "22"},
+		{"ss", "-lntp"},
+		{"netstat", "-an"},
+		{"mkdir", "-p", "build"},
+		{"touch", "notes.md"},
 		{"git", "status"},
 		{"git", "status", "--short"},
 		{"git", "log", "--oneline"},
@@ -72,6 +99,12 @@ func TestShippedAllowlistPinsTheDefaultPolicy(t *testing.T) {
 	}
 	denied := [][]string{
 		{"rm", "-rf", "/"},
+		{"mv", "a", "b"},
+		{"cp", "a", "b"},
+		{"dd", "if=/dev/zero", "of=x"},
+		{"kill", "-9", "1"},
+		{"truncate", "-s", "0", "x"},
+		{"apt", "install", "x"},
 		{"git", "commit", "-m", "x"},
 		{"git", "clean", "-fdx"},
 		{"git", "reset", "--hard"},
@@ -103,8 +136,10 @@ func TestShippedAllowlistPermissiveFormsAreNotSandboxed(t *testing.T) {
 	}
 	// `git push --receive-pack=CMD` and `git fetch --upload-pack=CMD` run CMD
 	// locally, `git show --output=PATH` writes PATH, and `hostname NAME` renames
-	// the machine when the Endpoint runs as root. Each keeps argv[0..1] equal to
-	// the allowlisted prefix, so the policy permits them. This is a documented
+	// the machine when the Endpoint runs as root. `nc` can listen, connect and
+	// transfer arbitrary data, `ping -f` floods a target, and `mkdir`/`touch`
+	// create entries in the session directory. Each keeps argv[0] equal to the
+	// allowlisted prefix, so the policy permits them. This is a documented
 	// consequence of prefix matching, not an oversight.
 	risky := [][]string{
 		{"git", "push", "--receive-pack=sh -c id", "origin", "main"},
@@ -112,6 +147,10 @@ func TestShippedAllowlistPermissiveFormsAreNotSandboxed(t *testing.T) {
 		{"git", "pull", "--upload-pack=sh -c id", "origin"},
 		{"git", "show", "--output=/tmp/x", "HEAD"},
 		{"hostname", "renamed-by-operator"},
+		{"nc", "-l", "-p", "9000"},
+		{"ping", "-f", "127.0.0.1"},
+		{"mkdir", "-p", "nested/deep"},
+		{"touch", "created-by-operator"},
 	}
 	for _, argv := range risky {
 		if err := list.Permit(argv); err != nil {
