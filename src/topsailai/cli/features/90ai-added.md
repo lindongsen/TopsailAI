@@ -101,3 +101,19 @@ The workspace CLI provides `/env.search <term> [term...]` to fuzzy-search config
 ## JSON Output for `topsailai session history`
 
 `topsailai session history` accepts `--json`, so a script can read one session's stored context messages without parsing the human-readable report. The backing retrieval script gained its own `--json` that prints the stored message objects as one JSON array, and the session subcommand wraps that array in the same structured envelope the other session actions already use (`ok`, `exit_code`, `action`, `session_id`, `message_count`, `messages`, `error_code`, `message`). `--max-chars` keeps one meaning in both modes because the limit is applied to the message objects before serialization. A child failure, a missing child command, or an unusable document is reported as a classified result with `messages` and `message_count` set to `null`, so stdout always stays a single parseable object and a diagnostic never mixes into it. Without `--json` the previous streaming path is unchanged.
+
+## JSON Output for `topsailai session status`
+
+`topsailai session status` accepts `--json`, so a script can read one session's running state without parsing a bare status word. The structured result carries `session_id`, `status`, `error_code` and `message`, where `error_code` is `null` on success and a classified value such as `missing_session_id` or `status_unavailable` on failure. The exit code is `0` when a status was resolved and `1` when it was not, and plain mode keeps printing the bare word while sending diagnostics to stderr so stdout stays clean.
+
+## JSON Output for `topsailai_count_tokens`
+
+`topsailai_count_tokens` accepts `--json`, so a caller can read token counts without parsing bare numbers. Every input path is covered: `--text` reports `source: "text"`, `--file` reports `source: "file"`, the implicit stdin fallback reports `source: "stdin"`, and a multi-file run reports `source: "files"` with a `results` array carrying a per-path `count` and `error`. `--text -` reads stdin and therefore reports the same `stdin` label as `--file -`, so "read from stdin" has exactly one name. A missing file in a multi-file run is reported as `file_not_found` for that entry instead of aborting the whole run.
+
+## JSON Output for `topsailai docs list` and `topsailai docs read`
+
+`topsailai docs list` and `topsailai docs read` accept `--json`, so documentation discovery and retrieval are machine-readable. `docs list` emits the full record array with `row_number`, `folder`, `rel_path`, `path`, `title`, `size_bytes` and `created`. `docs read` emits one result object carrying `status`, `content`, `path`, `rel_path` and `options`, and returns exit code `1` when the status is not `ok`, so a caller can distinguish a resolved document from a missing or ambiguous name without parsing text.
+
+## One Shared `--json` Help Sentence
+
+Every `topsailai session` subcommand that accepts `--json` now reuses one shared help sentence instead of repeating a slightly different wording per subcommand, and the parent command states the contract once in its epilog. The flag keeps identical behaviour; only the help text changed, so the contract is stated once and the per-subcommand output is no longer noisy.
