@@ -363,3 +363,23 @@ divergence appears only after a partial update, a retry, or a second producer, a
 field is part of the wire contract and cannot be removed without a version bump. Deriving keeps
 one source of truth and needs no protocol, storage or schema change, which is also what lets a
 second adapter land without touching the Server.
+
+## A line-range edit can delete a neighbour when the range is guessed
+
+Trigger: while adding one paragraph to `docs/agent-cluster-protocol.md`, a line-range
+replacement deleted the whole `Use stable opaque cluster resource IDs ...` paragraph and
+left two blank lines in its place. The same edit also duplicated a sentence that already
+existed above it. The file looked plausible, because a document with a missing paragraph
+and an extra blank line still renders, and the loss was visible only in `git diff`.
+
+Action: after any line-range edit, read `git diff` for that file before doing anything else,
+and check the deletion count. A documentation edit that only adds prose must show zero
+deletions; any deletion is either the intended one or a lost neighbour. When the target
+region is not a single unambiguous block, replace the whole file or do a literal string
+substitution on the exact text, and assert the surrounding lines before writing.
+
+Why this prevents recurrence: a line number is a position, not an identity, so a range that
+was correct when it was computed can cover a different block after any earlier edit in the
+same turn. The tool reports success either way, and the damage is silent because prose has
+no compiler. Comparing the deletion count against the intent is what turns "the edit
+succeeded" into "the edit changed only what I meant".

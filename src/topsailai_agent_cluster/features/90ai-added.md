@@ -183,9 +183,21 @@ rejected by the provider even though it reads like a list to a human.
 The interactive REPL renders one bounded output snapshot when the operator enters
 session scope, and that snapshot now uses a 300-line budget instead of 100. The
 budget is one quantity with one meaning, so the automatic entry snapshot, a bare
-`logs` command and the post-`send` snapshot all read the same resolved value
-(`internal/tui/interactive.go`, `internal/tui/navigation.go`). Two independent
-literals previously decided the same number, which let the surfaces disagree.
+`logs` command and the degraded post-`send` snapshot all read the same resolved
+value (`internal/tui/interactive.go`, `internal/tui/navigation.go`). Two
+independent literals previously decided the same number, which let the surfaces
+disagree.
+
+The interactive REPL now starts a live tail after a completed `send` in session
+scope, instead of rendering one bounded snapshot. It arms the same follow intent
+that `logs -f` arms, through one shared helper, so the automatic step and the
+explicit command cannot drift into two grammars, two announcements or two
+capability checks (`internal/tui/interactive_ops.go`). The stream opens on the
+next prompt and any key stops it, exactly like an explicit follow. A client that
+cannot stream, or an input mode that cannot observe a keypress, degrades to the
+previous bounded snapshot with a diagnostic that says so, because a live tail that
+cannot be stopped is worse than a snapshot and a snapshot presented as a stream
+would look complete while silently missing later output.
 
 The startup `--lines` option sets the budget when entering interactive mode and is
 bounded to 100-1000. An explicit value outside that window is rejected with an error

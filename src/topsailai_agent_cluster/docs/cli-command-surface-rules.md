@@ -62,11 +62,20 @@ see the effect.
   primary action may already have exhausted.
 - A follow-up step is interactive-only. The standalone surface keeps one command
   per action, so a script never receives extra output it did not ask for.
-- `send` renders one bounded output snapshot and then forces one collection for the
+- `send` arms the same live tail as `logs -f` and then forces one collection for the
   selected endpoint and revalidates only the selected session, so a later `list`
-  reads a newer persisted document. The snapshot runs first because it uses the
+  reads a newer persisted document. The tail is armed first because it binds the
   generation validated before the send, while a refresh can replace that
-  generation.
+  generation; the stream itself opens on the next prompt, through the same seam
+  that starts an explicit `logs -f`. A one-shot snapshot is not used here, because
+  it stops at the moment it was read while the agent keeps writing.
+- The automatic tail degrades to one bounded snapshot, with a diagnostic that says
+  so, when the client cannot stream or the input mode cannot observe a keypress.
+  A live tail that cannot be stopped would be worse than a snapshot, and a
+  snapshot presented as a stream would look complete while silently missing
+  everything written after it.
+- A refresh that replaces the selected session drops the armed tail and reports
+  it, because a stream bound to the replaced generation must never start.
 - `send` asks for confirmation only when the payload is not already on screen. An
   explicit `send <text>`, `send {"text":"..."}` or `> <text>` submits directly,
   because the command word and the text are both visible. A bare `send` reads a
@@ -374,8 +383,10 @@ by default, and the startup `--lines` option sets it within 100-1000.
 - The per-command override is unaffected: `logs -n 7` inside the REPL still reads
   7 lines, because a per-command read is a deliberate, visible request.
 - The budget is resolved once when the REPL starts, so the entry snapshot, a bare
-  `logs` and the post-`send` snapshot cannot disagree about how many lines they
-  show. Two separate literals would be free to drift apart.
+  `logs` and the degraded post-`send` snapshot cannot disagree about how many lines
+  they show. Two separate literals would be free to drift apart. The automatic
+  post-`send` tail uses the same resolved budget, so a follow and a snapshot never
+  disagree about the bound either.
 - The startup value is validated before the editor takes the terminal, so a
   rejected value never leaves the screen in raw mode.
 

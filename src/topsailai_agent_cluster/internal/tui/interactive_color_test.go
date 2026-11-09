@@ -106,11 +106,13 @@ func TestInteractiveStartTableStaysPlainWithoutColour(t *testing.T) {
 	}
 }
 
-// TestInteractiveSendSnapshotKeepsProviderColour proves the automatic snapshot after
-// a send keeps the provider's own colour. The snapshot body is provider text, and
+// TestInteractiveSendDegradedSnapshotKeepsProviderColour proves the degraded
+// automatic step after a send keeps the provider's own colour. This scenario
+// runs without a keypress seam, so the automatic step is the bounded snapshot
+// substitute rather than a live tail; the snapshot body is provider text, and
 // filterProviderOutput keeps SGR only when the policy is enabled, so the trusted
 // writer is safe here and the operator sees the provider's styling.
-func TestInteractiveSendSnapshotKeepsProviderColour(t *testing.T) {
+func TestInteractiveSendDegradedSnapshotKeepsProviderColour(t *testing.T) {
 	stub := newSendRefreshStub()
 	output, diagnostics := runScope(t, stub, sendScenario, ColorPolicy{Enabled: true})
 	if diagnostics != "" {
@@ -124,10 +126,10 @@ func TestInteractiveSendSnapshotKeepsProviderColour(t *testing.T) {
 	}
 }
 
-// TestInteractiveSendSnapshotStaysPlainWithoutColour proves the automatic snapshot
-// strips the provider's colour when colour is disabled, so a redirected stream never
-// receives escape sequences.
-func TestInteractiveSendSnapshotStaysPlainWithoutColour(t *testing.T) {
+// TestInteractiveSendDegradedSnapshotStaysPlainWithoutColour proves the degraded
+// automatic step strips the provider's colour when colour is disabled, so a
+// redirected stream never receives escape sequences.
+func TestInteractiveSendDegradedSnapshotStaysPlainWithoutColour(t *testing.T) {
 	stub := newSendRefreshStub()
 	output, diagnostics := runScope(t, stub, sendScenario, ColorPolicy{})
 	if diagnostics != "" {
@@ -148,11 +150,11 @@ func (s *hostileOutputStub) GetOutput(context.Context, string, string, string, i
 	return protocol.OutputSnapshotResponse{Data: "before\x1b[2Jafter"}, nil
 }
 
-// TestInteractiveSendSnapshotStripsNonSGRControl proves the snapshot body is still
-// stripped of terminal control sequences even though it is written through the
-// trusted writer. Keeping SGR is the only exception, so a cursor-clear sequence must
-// never reach the terminal.
-func TestInteractiveSendSnapshotStripsNonSGRControl(t *testing.T) {
+// TestInteractiveSendDegradedSnapshotStripsNonSGRControl proves the degraded
+// automatic step's snapshot body is still stripped of terminal control sequences
+// even though it is written through the trusted writer. Keeping SGR is the only
+// exception, so a cursor-clear sequence must never reach the terminal.
+func TestInteractiveSendDegradedSnapshotStripsNonSGRControl(t *testing.T) {
 	stub := &hostileOutputStub{sendRefreshStub: newSendRefreshStub()}
 	output, diagnostics := runScope(t, stub, sendScenario, ColorPolicy{Enabled: true})
 	if diagnostics != "" {

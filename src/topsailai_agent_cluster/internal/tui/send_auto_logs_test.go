@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,11 +12,63 @@ import (
 )
 
 // sendScenario is the confirmed send used by the trigger tests. Entering the
-// session already renders one bounded snapshot, so the automatic post-send read
-// is the second output request and the first one is the entry snapshot.
+// session already renders one bounded snapshot, so the automatic post-send step
+// is the second output action and the first one is the entry snapshot.
 const sendScenario = "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\nexit\n"
 
-// sendOutputRequests returns the recorded output requests after the entry
+// sendFollowStub serves both the streaming seam and the forced-collection seam,
+// so a test can prove the automatic post-send step arms a live tail and still
+// forces one collection afterwards.
+type sendFollowStub struct {
+	sendRefreshStub
+	mu           sync.Mutex
+	follows      []outputRequest
+	followStarts int
+	followErr    error
+}
+
+// newSendFollowStub serves the shared two-endpoint fixture with both seams.
+func newSendFollowStub() *sendFollowStub {
+	return &sendFollowStub{sendRefreshStub: *newSendRefreshStub()}
+}
+
+// FollowOutput records the request and returns a stream that stays open until
+// the caller stops it, so a started tail is observable instead of ending at once.
+func (s *sendFollowStub) FollowOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (<-chan protocol.OutputFollowRecord, error) {
+	s.mu.Lock()
+	s.followStarts++
+	s.follows = append(s.follows, outputRequest{endpointID: endpointID, resourceID: resourceID, generation: generation, maxBytes: maxBytes, maxLines: maxLines})
+	s.steps = append(s.steps, "follow")
+	followErr := s.followErr
+	s.mu.Unlock()
+	if followErr != nil {
+		return nil, followErr
+	}
+	return make(chan protocol.OutputFollowRecord), nil
+}
+
+// followRequests returns the recorded follow requests.
+func (s *sendFollowStub) followRequests() []outputRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]outputRequest(nil), s.follows...)
+}
+
+// followCount reports how many streams were opened.
+func (s *sendFollowStub) followCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.followStarts
+}
+
+// automaticSteps returns the recorded automatic steps in order.
+func (s *sendFollowStub) automaticSteps() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.steps...)
+}
+
+// sendOutputRequests returns the recorded snapshot reads after the entry
 // snapshot, which are the reads the send itself caused.
 func sendOutputRequests(stub *interactiveStub) []outputRequest {
 	if len(stub.outputRequests) <= 1 {
@@ -24,85 +77,224 @@ func sendOutputRequests(stub *interactiveStub) []outputRequest {
 	return stub.outputRequests[1:]
 }
 
-// TestUnitSendAutoLogsRendersOneSnapshotAfterTheReceipt proves a completed send
-// reads the selected session's output exactly once, for the identity the send
-// already validated, and only after the durable receipt was rendered.
-func TestUnitSendAutoLogsRendersOneSnapshotAfterTheReceipt(t *testing.T) {
-	stub := scopeStub()
-	output, diagnostics := runScope(t, stub, sendScenario, ColorPolicy{})
+// runSendREPL drives the REPL with a keypress-capable reader, so the automatic
+// follow can actually start. The reader records every watch session it was
+// given, which is how a test proves a stream was armed and then started.
+func runSendREPL(t *testing.T, stub InteractiveAPI, lines []string) (string, string, *watchRecordingReader) {
+	t.Helper()
+	return runWatchREPL(t, stub, lines, nil)
+}
+
+// sendRefreshStub records forced collections and the order of the automatic
+// steps, so a test can prove the refresh runs once, for the selected Endpoint,
+// and only after the tail was armed.
+type sendRefreshStub struct {
+	interactiveStub
+	refreshCalls    []string
+	refreshErr      error
+	refreshDeadline time.Time
+	refreshHasLimit bool
+	steps           []string
+	fresh           map[string]protocol.InventoryReport
+}
+
+// newSendRefreshStub serves the shared two-endpoint fixture with the
+// forced-collection seam.
+func newSendRefreshStub() *sendRefreshStub {
+	base := scopeStub()
+	return &sendRefreshStub{
+		interactiveStub: *base,
+		fresh:           make(map[string]protocol.InventoryReport),
+	}
+}
+
+// RefreshInventory records the forced collection and its position in the
+// automatic sequence.
+func (s *sendRefreshStub) RefreshInventory(ctx context.Context, endpointID string) (protocol.InventoryReport, error) {
+	s.refreshCalls = append(s.refreshCalls, endpointID)
+	s.steps = append(s.steps, "refresh")
+	if deadline, ok := ctx.Deadline(); ok {
+		s.refreshDeadline = deadline
+		s.refreshHasLimit = true
+	}
+	if s.refreshErr != nil {
+		return protocol.InventoryReport{}, s.refreshErr
+	}
+	if report, ok := s.fresh[endpointID]; ok {
+		s.reports[endpointID] = report
+	}
+	return s.reports[endpointID], nil
+}
+
+// GetOutput records a snapshot read in the automatic sequence, so a degraded
+// step is distinguishable from an armed tail.
+func (s *sendRefreshStub) GetOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (protocol.OutputSnapshotResponse, error) {
+	s.steps = append(s.steps, "logs")
+	return s.interactiveStub.GetOutput(ctx, endpointID, resourceID, generation, maxBytes, maxLines)
+}
+
+// TestUnitSendAutoFollowArmsOneLiveTailAfterTheReceipt proves a completed send
+// arms exactly one live tail for the identity the send already validated, and
+// that it does so after the durable receipt was rendered. It also proves the
+// automatic step is no longer a one-shot snapshot, because a snapshot stops at
+// the moment it was read while the agent keeps writing.
+func TestUnitSendAutoFollowArmsOneLiveTailAfterTheReceipt(t *testing.T) {
+	stub := newSendFollowStub()
+	output, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `send {"text":"hi"}`, "quit"})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
 	if stub.admit != 1 {
 		t.Fatalf("admitted %d commands, want 1", stub.admit)
 	}
-	requests := sendOutputRequests(stub)
+	requests := stub.followRequests()
 	if len(requests) != 1 {
-		t.Fatalf("post-send output requests=%+v, want exactly one", requests)
+		t.Fatalf("follow requests=%+v, want exactly one", requests)
 	}
 	request := requests[0]
 	if request.endpointID != "endpoint-1" || request.resourceID != "res-1" || request.generation != "generation-1" {
-		t.Fatalf("wrong output identity tuple: %+v", request)
+		t.Fatalf("wrong follow identity tuple: %+v", request)
 	}
 	receipt := strings.Index(output, "command submitted:")
 	if receipt < 0 {
 		t.Fatalf("missing submission evidence: %q", output)
 	}
 	tail := output[receipt:]
-	snapshot := strings.Index(tail, "observed_at_ms:")
-	if snapshot < 0 {
-		t.Fatalf("send did not render a snapshot after the receipt: %q", output)
+	announced := strings.Index(tail, "follow: res-1 (any key stops)")
+	if announced < 0 {
+		t.Fatalf("send did not arm a live tail after the receipt: %q", output)
 	}
-	if confirmed := strings.Index(tail, "confirmed result"); confirmed < 0 || confirmed > snapshot {
-		t.Fatalf("snapshot was not rendered after the receipt: %q", tail)
+	if confirmed := strings.Index(tail, "confirmed result"); confirmed < 0 || confirmed > announced {
+		t.Fatalf("tail was armed before the receipt: %q", tail)
+	}
+	// The entry snapshot is the only snapshot read, so the automatic step really
+	// replaced the one-shot read instead of running beside it.
+	if stub.outputCalls != 1 {
+		t.Fatalf("snapshot reads=%d want=1 (the entry snapshot only)", stub.outputCalls)
 	}
 }
 
-// TestUnitSendAutoLogsIsBoundedByTheReplDefaults proves the automatic read never
-// requests an unbounded snapshot, so a completed send cannot pull an arbitrary
-// amount of provider output into the terminal.
-func TestUnitSendAutoLogsIsBoundedByTheReplDefaults(t *testing.T) {
-	stub := scopeStub()
-	if _, diagnostics := runScope(t, stub, sendScenario, ColorPolicy{}); diagnostics != "" {
+// TestUnitSendAutoFollowIsBoundedByTheReplDefaults proves the automatic tail
+// never requests an unbounded stream, so a completed send cannot pull an
+// arbitrary amount of provider output into the terminal.
+func TestUnitSendAutoFollowIsBoundedByTheReplDefaults(t *testing.T) {
+	stub := newSendFollowStub()
+	if _, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `send {"text":"hi"}`, "quit"}); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	requests := sendOutputRequests(stub)
+	requests := stub.followRequests()
 	if len(requests) != 1 {
-		t.Fatalf("post-send output requests=%+v, want exactly one", requests)
+		t.Fatalf("follow requests=%+v, want exactly one", requests)
 	}
 	if got := requests[0].maxLines; got != DefaultInteractiveMaxLines {
-		t.Fatalf("post-send maxLines=%d want=%d", got, DefaultInteractiveMaxLines)
+		t.Fatalf("automatic follow maxLines=%d want=%d", got, DefaultInteractiveMaxLines)
 	}
 	if got := requests[0].maxBytes; got != 64<<10 {
-		t.Fatalf("post-send maxBytes=%d want=%d", got, 64<<10)
+		t.Fatalf("automatic follow maxBytes=%d want=%d", got, 64<<10)
 	}
 }
 
-// TestUnitSendAutoLogsKeepsTheExplicitLogsRead proves the automatic read does not
-// replace the explicit command: an operator who asks for logs still gets a second
-// read with its own limit.
-func TestUnitSendAutoLogsKeepsTheExplicitLogsRead(t *testing.T) {
-	stub := scopeStub()
-	input := "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\nlogs -n 7\nexit\n"
-	if _, diagnostics := runScope(t, stub, input, ColorPolicy{}); diagnostics != "" {
+// TestUnitSendAutoFollowStartsTheStreamOnTheNextPrompt proves the armed intent
+// becomes a real stream for the following prompt, so the operator reads live
+// output without typing logs -f, and that a keypress stops it.
+func TestUnitSendAutoFollowStartsTheStreamOnTheNextPrompt(t *testing.T) {
+	stub := newSendFollowStub()
+	_, diagnostics, reader := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `send {"text":"hi"}`, "quit"})
+	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	requests := sendOutputRequests(stub)
-	if len(requests) != 2 {
-		t.Fatalf("post-send output requests=%+v, want the automatic read then the explicit read", requests)
+	if stub.followCount() != 1 {
+		t.Fatalf("streams opened=%d want=1", stub.followCount())
 	}
-	if got := requests[0].maxLines; got != DefaultInteractiveMaxLines {
-		t.Fatalf("automatic read maxLines=%d want=%d", got, DefaultInteractiveMaxLines)
+	sessions, _ := reader.recorded()
+	if len(sessions) < 3 {
+		t.Fatalf("prompts=%d, want at least three", len(sessions))
 	}
-	if got := requests[1].maxLines; got != 7 {
-		t.Fatalf("explicit read maxLines=%d want=7", got)
+	// The prompt after the send is the one that carries the stream.
+	stream := sessions[2]
+	if stream == nil {
+		t.Fatal("the prompt after the send did not carry a stream")
+	}
+	labelled, ok := stream.(followStopLabel)
+	if !ok {
+		t.Fatalf("the armed session does not name itself as a follow: %T", stream)
+	}
+	if label := labelled.StopLabel(); label != "follow stopped" {
+		t.Fatalf("stop label=%q, want the follow wording", label)
+	}
+	stream.Stop()
+}
+
+// TestUnitSendAutoFollowDegradesToASnapshotWithoutStreaming proves a client that
+// cannot stream still shows the effect of the send, and says why it is a
+// snapshot. A snapshot presented as a stream would look complete while silently
+// missing everything written after it.
+func TestUnitSendAutoFollowDegradesToASnapshotWithoutStreaming(t *testing.T) {
+	stub := scopeStub()
+	output, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `send {"text":"hi"}`, "quit"})
+	if diagnostics != "" {
+		t.Fatalf("a degraded automatic step must not be an error: %q", diagnostics)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted %d commands, want 1", stub.admit)
+	}
+	if requests := sendOutputRequests(stub); len(requests) != 1 {
+		t.Fatalf("post-send snapshot reads=%+v, want exactly one", requests)
+	}
+	if !strings.Contains(output, "send completed; automatic follow unavailable:") {
+		t.Fatalf("missing degradation diagnostic: %q", output)
+	}
+	if !strings.Contains(output, "rendered one bounded snapshot instead") {
+		t.Fatalf("degradation did not name the substitute: %q", output)
 	}
 }
 
-// TestUnitSendAutoLogsSkipsEveryRejectedSend proves the read is triggered by a
+// TestUnitSendAutoFollowDegradesWithoutAKeypressSeam proves a reader that cannot
+// observe a keypress never arms a tail it could not stop, and reports the
+// substitute instead of silently doing nothing.
+func TestUnitSendAutoFollowDegradesWithoutAKeypressSeam(t *testing.T) {
+	stub := newSendFollowStub()
+	output, diagnostics := runScope(t, stub, sendScenario, ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("a degraded automatic step must not be an error: %q", diagnostics)
+	}
+	if stub.followCount() != 0 {
+		t.Fatalf("streams opened=%d, want none without a keypress seam", stub.followCount())
+	}
+	if requests := sendOutputRequests(&stub.interactiveStub); len(requests) != 1 {
+		t.Fatalf("post-send snapshot reads=%+v, want exactly one", requests)
+	}
+	if !strings.Contains(output, "send completed; automatic follow unavailable:") {
+		t.Fatalf("missing degradation diagnostic: %q", output)
+	}
+}
+
+// TestUnitSendAutoFollowKeepsTheExplicitLogsRead proves the automatic step does
+// not replace the explicit command: an operator who asks for logs still gets a
+// second read with its own limit.
+func TestUnitSendAutoFollowKeepsTheExplicitLogsRead(t *testing.T) {
+	stub := newSendFollowStub()
+	input := "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\nlogs -n 7\nquit\n"
+	if _, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `send {"text":"hi"}`, "logs -n 7", "quit"}); diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	_ = input
+	requests := sendOutputRequests(&stub.interactiveStub)
+	if len(requests) != 1 {
+		t.Fatalf("post-send snapshot reads=%+v, want only the explicit read", requests)
+	}
+	if got := requests[0].maxLines; got != 7 {
+		t.Fatalf("explicit read maxLines=%d want=7", got)
+	}
+	if len(stub.followRequests()) != 1 {
+		t.Fatalf("follow requests=%+v, want the automatic tail only", stub.followRequests())
+	}
+}
+
+// TestUnitSendAutoFollowSkipsEveryRejectedSend proves the tail is triggered by a
 // completed send only: a declined confirmation, an invalid payload, an uncertain
-// admission, a capability change and a generation change all read nothing.
-func TestUnitSendAutoLogsSkipsEveryRejectedSend(t *testing.T) {
+// admission, a capability change and a generation change all arm nothing.
+func TestUnitSendAutoFollowSkipsEveryRejectedSend(t *testing.T) {
 	cases := []struct {
 		name  string
 		stub  func() InteractiveAPI
@@ -166,14 +358,16 @@ func TestUnitSendAutoLogsSkipsEveryRejectedSend(t *testing.T) {
 	}
 }
 
-// TestUnitSendAutoLogsReportsAFailedReadAsADiagnostic proves a failed follow-up
-// read never turns an accepted send into a failure: the receipt stays, the
-// failure is named, and the REPL keeps running.
-func TestUnitSendAutoLogsReportsAFailedReadAsADiagnostic(t *testing.T) {
-	stub := &failAfterOutputStub{interactiveStub: scopeStub(), succeed: 1}
-	output, diagnostics := runScope(t, stub, sendScenario, ColorPolicy{})
+// TestUnitSendAutoFollowReportsAStartFailureAsADiagnostic proves a tail that
+// cannot start never turns an accepted send into a failure: the receipt stays,
+// and the failure is reported through the armed session instead of being
+// swallowed by the command that armed it.
+func TestUnitSendAutoFollowReportsAStartFailureAsADiagnostic(t *testing.T) {
+	stub := newSendFollowStub()
+	stub.followErr = errors.New("transport unavailable")
+	output, diagnostics, reader := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `send {"text":"hi"}`, "quit"})
 	if diagnostics != "" {
-		t.Fatalf("a failed automatic read must not be an error: %q", diagnostics)
+		t.Fatalf("a failed automatic tail must not be an error: %q", diagnostics)
 	}
 	if stub.admit != 1 {
 		t.Fatalf("admitted %d commands, want 1", stub.admit)
@@ -181,37 +375,94 @@ func TestUnitSendAutoLogsReportsAFailedReadAsADiagnostic(t *testing.T) {
 	if !strings.Contains(output, "command submitted:") || !strings.Contains(output, "confirmed result") {
 		t.Fatalf("receipt was lost: %q", output)
 	}
-	if !strings.Contains(output, "send completed; automatic logs failed: output unavailable") {
-		t.Fatalf("missing failure diagnostic: %q", output)
+	sessions, _ := reader.recorded()
+	if len(sessions) < 3 || sessions[2] == nil {
+		t.Fatalf("the prompt after the send did not carry the armed tail: %+v", sessions)
 	}
-	if got := lastPrompt(output); got != "session[host-one/provider-res-1]>" {
-		t.Fatalf("final prompt = %q, want session prompt", got)
+	payload, err := sessions[2].Idle()
+	if err != nil {
+		t.Fatalf("Idle: %v", err)
+	}
+	if !strings.Contains(string(payload), "follow failed: transport unavailable") {
+		t.Fatalf("missing start-failure diagnostic: %q", payload)
+	}
+	// The REPL keeps running: the session prompt is rendered again after the
+	// receipt, and quit then returns to workspace scope as usual.
+	if !strings.Contains(output, "session[host-one/provider-res-1]>") {
+		t.Fatalf("the REPL did not return to the session prompt: %q", output)
+	}
+	if got := lastPrompt(output); got != "workspace>" {
+		t.Fatalf("final prompt = %q, want workspace after quit", got)
 	}
 }
 
-// TestUnitSendAutoLogsUsesItsOwnBudget proves the automatic read does not reuse
-// the command context: the local wait may already have exhausted that deadline,
-// and reusing it would report an unavailable output for a healthy session.
-func TestUnitSendAutoLogsUsesItsOwnBudget(t *testing.T) {
-	stub := &sendBudgetStub{interactiveStub: scopeStub()}
-	if _, diagnostics := runScope(t, stub, sendScenario, ColorPolicy{}); diagnostics != "" {
+// TestUnitSendAutoFollowKeepsTheForcedCollection proves the send still forces
+// exactly one collection for the selected Endpoint, and that the tail is armed
+// first because it is bound to the generation validated before the send while a
+// refresh can replace it.
+func TestUnitSendAutoFollowKeepsTheForcedCollection(t *testing.T) {
+	stub := newSendFollowStub()
+	output, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `send {"text":"hi"}`, "quit"})
+	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !stub.commandHasDeadline || !stub.outputHasDeadline {
-		t.Fatalf("missing deadlines: command=%v output=%v", stub.commandHasDeadline, stub.outputHasDeadline)
+	if len(stub.refreshCalls) != 1 || stub.refreshCalls[0] != "endpoint-1" {
+		t.Fatalf("forced collections=%v, want exactly one for endpoint-1", stub.refreshCalls)
 	}
-	if !stub.outputDeadline.After(stub.commandDeadline) {
-		t.Fatalf("automatic read deadline=%v is not later than the command deadline=%v", stub.outputDeadline, stub.commandDeadline)
+	// The entry snapshot is the first read, so the automatic steps are the
+	// collection and then the tail: the intent is armed during the send, but the
+	// stream itself opens on the following prompt, which is after the refresh.
+	want := []string{"logs", "refresh", "follow"}
+	got := stub.automaticSteps()
+	if len(got) != len(want) {
+		t.Fatalf("automatic steps=%v, want %v", got, want)
 	}
-	if stub.outputErr != nil {
-		t.Fatalf("automatic read ran on a finished context: %v", stub.outputErr)
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("automatic steps=%v, want %v", got, want)
+		}
+	}
+	if !strings.Contains(output, "follow: res-1 (any key stops)") {
+		t.Fatalf("the tail was not armed before the refresh: %q", output)
+	}
+	if !strings.Contains(output, "command submitted:") {
+		t.Fatalf("receipt was lost: %q", output)
 	}
 }
 
-// TestUnitSendAutoLogsDoesNotTriggerOnOtherActions proves the trigger stays
-// scoped to send: btw, interrupt, resume and stop keep their previous
-// behaviour and read no output of their own.
-func TestUnitSendAutoLogsDoesNotTriggerOnOtherActions(t *testing.T) {
+// TestUnitSendAutoFollowIsCancelledWhenTheRefreshReplacesTheSession proves a
+// refresh that reports a new generation drops the armed tail instead of
+// streaming a session instance the operator no longer addresses.
+func TestUnitSendAutoFollowIsCancelledWhenTheRefreshReplacesTheSession(t *testing.T) {
+	stub := newSendFollowStub()
+	stub.fresh["endpoint-1"] = scopeInventory("res-1", "generation-2")
+	output, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `send {"text":"hi"}`, "quit"})
+	if diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if len(stub.refreshCalls) != 1 {
+		t.Fatalf("forced collections=%v, want exactly one", stub.refreshCalls)
+	}
+	if !strings.Contains(output, "selected session generation changed") {
+		t.Fatalf("missing generation diagnostic: %q", output)
+	}
+	if !strings.Contains(output, "automatic follow cancelled: the selected session was replaced") {
+		t.Fatalf("missing cancellation diagnostic: %q", output)
+	}
+	if stub.followCount() != 0 {
+		t.Fatalf("streams opened=%d, want none for a replaced session", stub.followCount())
+	}
+	// The invalidated prompt is rendered before quit returns to workspace scope,
+	// so the operator sees that the selection can no longer be addressed.
+	if !strings.Contains(output, "session[host-one/provider-res-1!]>") {
+		t.Fatalf("missing invalidated session prompt: %q", output)
+	}
+}
+
+// TestUnitSendAutoFollowDoesNotTriggerOnOtherActions proves the trigger stays
+// scoped to send: btw, interrupt, resume and stop keep their previous behaviour
+// and arm no tail of their own.
+func TestUnitSendAutoFollowDoesNotTriggerOnOtherActions(t *testing.T) {
 	cases := []struct {
 		name  string
 		input string
@@ -236,24 +487,46 @@ func TestUnitSendAutoLogsDoesNotTriggerOnOtherActions(t *testing.T) {
 	}
 }
 
-// failAfterOutputStub succeeds for the first reads and fails afterwards, so the
-// entry snapshot stays healthy while the post-send read fails.
-type failAfterOutputStub struct {
-	*interactiveStub
-	succeed int
+// TestUnitSendAutoFollowInheritsTheSendPrefixAlias proves the ">" alias runs the
+// same automatic step as send, because it dispatches to the same handler and must
+// not become a path that skips the tail or the forced collection.
+func TestUnitSendAutoFollowInheritsTheSendPrefixAlias(t *testing.T) {
+	stub := newSendFollowStub()
+	if _, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", "> hello world", "quit"}); diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted %d commands, want 1", stub.admit)
+	}
+	if len(stub.followRequests()) != 1 {
+		t.Fatalf("follow requests=%+v, want exactly one", stub.followRequests())
+	}
+	if len(stub.refreshCalls) != 1 || stub.refreshCalls[0] != "endpoint-1" {
+		t.Fatalf("forced collections=%v, want exactly one for endpoint-1", stub.refreshCalls)
+	}
 }
 
-func (s *failAfterOutputStub) GetOutput(_ context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (protocol.OutputSnapshotResponse, error) {
-	if s.outputCalls >= s.succeed {
-		s.outputCalls++
-		s.outputRequests = append(s.outputRequests, outputRequest{endpointID: endpointID, resourceID: resourceID, generation: generation, maxBytes: maxBytes, maxLines: maxLines})
-		return protocol.OutputSnapshotResponse{}, errors.New("output unavailable")
+// TestUnitSendAutoFollowUsesItsOwnBudget proves the automatic step does not reuse
+// the command context: the local wait may already have exhausted that deadline,
+// and reusing it would report an unavailable output for a healthy session.
+func TestUnitSendAutoFollowUsesItsOwnBudget(t *testing.T) {
+	stub := &sendBudgetStub{interactiveStub: scopeStub()}
+	if _, diagnostics := runScope(t, stub, sendScenario, ColorPolicy{}); diagnostics != "" {
+		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	return s.interactiveStub.GetOutput(context.Background(), endpointID, resourceID, generation, maxBytes, maxLines)
+	if !stub.commandHasDeadline || !stub.outputHasDeadline {
+		t.Fatalf("missing deadlines: command=%v output=%v", stub.commandHasDeadline, stub.outputHasDeadline)
+	}
+	if !stub.outputDeadline.After(stub.commandDeadline) {
+		t.Fatalf("automatic read deadline=%v is not later than the command deadline=%v", stub.outputDeadline, stub.commandDeadline)
+	}
+	if stub.outputErr != nil {
+		t.Fatalf("automatic read ran on a finished context: %v", stub.outputErr)
+	}
 }
 
 // sendBudgetStub records the command context deadline and the deadline of the
-// post-send output read, so the test can prove they are different budgets.
+// degraded automatic snapshot, so the test can prove they are different budgets.
 type sendBudgetStub struct {
 	*interactiveStub
 	commandDeadline    time.Time
@@ -272,7 +545,8 @@ func (s *sendBudgetStub) AdmitCommand(ctx context.Context, intent protocol.Immut
 }
 
 func (s *sendBudgetStub) GetOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (protocol.OutputSnapshotResponse, error) {
-	// The first read is the entry snapshot; the second is the post-send read.
+	// The first read is the entry snapshot; the second is the degraded
+	// automatic read.
 	if s.outputCalls == 1 {
 		if deadline, ok := ctx.Deadline(); ok {
 			s.outputDeadline = deadline
@@ -281,224 +555,4 @@ func (s *sendBudgetStub) GetOutput(ctx context.Context, endpointID, resourceID, 
 		s.outputErr = ctx.Err()
 	}
 	return s.interactiveStub.GetOutput(ctx, endpointID, resourceID, generation, maxBytes, maxLines)
-}
-
-// sendRefreshStub records forced collections and the order of the automatic
-// steps, so a test can prove the refresh runs once, for the selected Endpoint,
-// and only after the logs read.
-type sendRefreshStub struct {
-	interactiveStub
-	refreshCalls    []string
-	refreshErr      error
-	refreshDeadline time.Time
-	refreshHasLimit bool
-	steps           []string
-	fresh           map[string]protocol.InventoryReport
-}
-
-func newSendRefreshStub() *sendRefreshStub {
-	base := scopeStub()
-	return &sendRefreshStub{
-		interactiveStub: *base,
-		fresh:           make(map[string]protocol.InventoryReport),
-	}
-}
-
-func (s *sendRefreshStub) RefreshInventory(ctx context.Context, endpointID string) (protocol.InventoryReport, error) {
-	s.refreshCalls = append(s.refreshCalls, endpointID)
-	s.steps = append(s.steps, "refresh")
-	if deadline, ok := ctx.Deadline(); ok {
-		s.refreshDeadline = deadline
-		s.refreshHasLimit = true
-	}
-	if s.refreshErr != nil {
-		return protocol.InventoryReport{}, s.refreshErr
-	}
-	if report, ok := s.fresh[endpointID]; ok {
-		s.reports[endpointID] = report
-	}
-	return s.reports[endpointID], nil
-}
-
-func (s *sendRefreshStub) GetOutput(ctx context.Context, endpointID, resourceID, generation string, maxBytes, maxLines int) (protocol.OutputSnapshotResponse, error) {
-	s.steps = append(s.steps, "logs")
-	return s.interactiveStub.GetOutput(ctx, endpointID, resourceID, generation, maxBytes, maxLines)
-}
-
-// TestUnitSendAutoRefreshForcesOneCollectionAfterTheLogs proves a completed send
-// forces exactly one collection for the selected Endpoint, and that the read of
-// the pre-send generation happens first because a refresh can replace it.
-func TestUnitSendAutoRefreshForcesOneCollectionAfterTheLogs(t *testing.T) {
-	stub := newSendRefreshStub()
-	output, diagnostics := runScope(t, stub, sendScenario, ColorPolicy{})
-	if diagnostics != "" {
-		t.Fatalf("unexpected diagnostics: %q", diagnostics)
-	}
-	if stub.admit != 1 {
-		t.Fatalf("admitted %d commands, want 1", stub.admit)
-	}
-	if len(stub.refreshCalls) != 1 || stub.refreshCalls[0] != "endpoint-1" {
-		t.Fatalf("forced collections=%v, want exactly one for endpoint-1", stub.refreshCalls)
-	}
-	// The entry snapshot is the first read, so the send's own read is the second.
-	want := []string{"logs", "logs", "refresh"}
-	if len(stub.steps) != len(want) {
-		t.Fatalf("automatic steps=%v, want %v", stub.steps, want)
-	}
-	for index := range want {
-		if stub.steps[index] != want[index] {
-			t.Fatalf("automatic steps=%v, want %v", stub.steps, want)
-		}
-	}
-	if !strings.Contains(output, "command submitted:") {
-		t.Fatalf("receipt was lost: %q", output)
-	}
-}
-
-// TestUnitSendAutoRefreshUsesTheForcedCollectionBudget proves the refresh waits
-// on the forced-collection budget, which exceeds the Server budget so the Server
-// reports its own explicit failure first.
-func TestUnitSendAutoRefreshUsesTheForcedCollectionBudget(t *testing.T) {
-	stub := newSendRefreshStub()
-	if _, diagnostics := runScope(t, stub, sendScenario, ColorPolicy{}); diagnostics != "" {
-		t.Fatalf("unexpected diagnostics: %q", diagnostics)
-	}
-	if !stub.refreshHasLimit {
-		t.Fatal("forced collection ran without a deadline")
-	}
-	if remaining := time.Until(stub.refreshDeadline); remaining < 20*time.Second {
-		t.Fatalf("forced collection budget=%v, want the refresh budget", remaining)
-	}
-}
-
-// TestUnitSendAutoRefreshSkipsEveryRejectedSend proves the refresh is triggered
-// by a completed send only, so a rejected intent never causes a collection.
-func TestUnitSendAutoRefreshSkipsEveryRejectedSend(t *testing.T) {
-	cases := []struct {
-		name  string
-		input string
-		admit error
-	}{
-		{name: "declined confirmation", input: "cd host-one/endpoint-1/res-1\nsend\nhi\nEOF\nn\nexit\n"},
-		{name: "invalid payload", input: "cd host-one/endpoint-1/res-1\nsend {\nexit\n"},
-		{name: "uncertain admission", input: "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\nexit\n", admit: errors.New("transport timeout")},
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			stub := newSendRefreshStub()
-			stub.admitErr = testCase.admit
-			runScope(t, stub, testCase.input, ColorPolicy{})
-			if len(stub.refreshCalls) != 0 {
-				t.Fatalf("%s forced a collection: %v", testCase.name, stub.refreshCalls)
-			}
-		})
-	}
-}
-
-// TestUnitSendAutoRefreshDoesNotTriggerOnOtherActions proves the refresh stays
-// scoped to send, so a message-free action never forces a collection.
-func TestUnitSendAutoRefreshDoesNotTriggerOnOtherActions(t *testing.T) {
-	cases := []struct {
-		name  string
-		input string
-	}{
-		{name: "btw", input: "cd host-one/endpoint-1/res-1\nbtw {\"text\":\"hi\"}\ny\nexit\n"},
-		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nexit\n"},
-		{name: "resume", input: "cd host-one/endpoint-1/res-1\nresume\ny\nexit\n"},
-		{name: "stop", input: "cd host-one/endpoint-1/res-1\nstop\ny\nexit\n"},
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			stub := newSendRefreshStub()
-			if testCase.name == "resume" {
-				stub.sessionPresenceSequence = []bool{true, true, false, false, false}
-			}
-			runScope(t, stub, testCase.input, ColorPolicy{})
-			if len(stub.refreshCalls) != 0 {
-				t.Fatalf("%s forced a collection: %v", testCase.name, stub.refreshCalls)
-			}
-		})
-	}
-}
-
-// TestUnitSendAutoRefreshReportsAFailureAsADiagnostic proves a failed collection
-// never turns an accepted send into a failure: the receipt stays, the failure is
-// named, and the REPL keeps running.
-func TestUnitSendAutoRefreshReportsAFailureAsADiagnostic(t *testing.T) {
-	stub := newSendRefreshStub()
-	stub.refreshErr = errors.New("endpoint_unavailable")
-	output, diagnostics := runScope(t, stub, sendScenario, ColorPolicy{})
-	if diagnostics != "" {
-		t.Fatalf("a failed automatic refresh must not be an error: %q", diagnostics)
-	}
-	if !strings.Contains(output, "command submitted:") || !strings.Contains(output, "confirmed result") {
-		t.Fatalf("receipt was lost: %q", output)
-	}
-	if !strings.Contains(output, "send completed; automatic refresh failed: endpoint_unavailable") {
-		t.Fatalf("missing failure diagnostic: %q", output)
-	}
-	if got := lastPrompt(output); got != "session[host-one/provider-res-1]>" {
-		t.Fatalf("final prompt = %q, want the unchanged session prompt", got)
-	}
-}
-
-// TestUnitSendAutoRefreshDegradesWithoutTheSeam proves a client without forced
-// collection keeps read-only behaviour: the send still succeeds and reports no
-// refresh failure, because the capability is genuinely absent rather than broken.
-func TestUnitSendAutoRefreshDegradesWithoutTheSeam(t *testing.T) {
-	stub := scopeStub()
-	output, diagnostics := runScope(t, stub, sendScenario, ColorPolicy{})
-	if diagnostics != "" {
-		t.Fatalf("unexpected diagnostics: %q", diagnostics)
-	}
-	if stub.admit != 1 {
-		t.Fatalf("admitted %d commands, want 1", stub.admit)
-	}
-	if strings.Contains(output, "automatic refresh failed") {
-		t.Fatalf("absent capability was reported as a failure: %q", output)
-	}
-	if requests := sendOutputRequests(stub); len(requests) != 1 {
-		t.Fatalf("post-send output requests=%+v, want exactly one", requests)
-	}
-}
-
-// TestUnitSendAutoRefreshInvalidatesAChangedGeneration proves a refresh that
-// reports a new generation invalidates the pinned selection instead of silently
-// retargeting the operator's next command at a different session instance.
-func TestUnitSendAutoRefreshInvalidatesAChangedGeneration(t *testing.T) {
-	stub := newSendRefreshStub()
-	stub.fresh["endpoint-1"] = scopeInventory("res-1", "generation-2")
-	output, diagnostics := runScope(t, stub, sendScenario, ColorPolicy{})
-	if diagnostics != "" {
-		t.Fatalf("unexpected diagnostics: %q", diagnostics)
-	}
-	if len(stub.refreshCalls) != 1 {
-		t.Fatalf("forced collections=%v, want exactly one", stub.refreshCalls)
-	}
-	if !strings.Contains(output, "selected session generation changed") {
-		t.Fatalf("missing generation diagnostic: %q", output)
-	}
-	if got := lastPrompt(output); got != "session[host-one/provider-res-1!]>" {
-		t.Fatalf("final prompt = %q, want an invalidated session prompt", got)
-	}
-}
-
-// TestUnitSendAutoRefreshInheritsTheSendPrefixAlias proves the ">" alias runs
-// the same automatic steps as send, because it dispatches to the same handler
-// and must not become a path that skips the read or the forced collection.
-func TestUnitSendAutoRefreshInheritsTheSendPrefixAlias(t *testing.T) {
-	stub := newSendRefreshStub()
-	input := "cd host-one/endpoint-1/res-1\n> hello world\nexit\n"
-	if _, diagnostics := runScope(t, stub, input, ColorPolicy{}); diagnostics != "" {
-		t.Fatalf("unexpected diagnostics: %q", diagnostics)
-	}
-	if stub.admit != 1 {
-		t.Fatalf("admitted %d commands, want 1", stub.admit)
-	}
-	if requests := sendOutputRequests(&stub.interactiveStub); len(requests) != 1 {
-		t.Fatalf("post-send output requests=%+v, want exactly one", requests)
-	}
-	if len(stub.refreshCalls) != 1 || stub.refreshCalls[0] != "endpoint-1" {
-		t.Fatalf("forced collections=%v, want exactly one for endpoint-1", stub.refreshCalls)
-	}
 }

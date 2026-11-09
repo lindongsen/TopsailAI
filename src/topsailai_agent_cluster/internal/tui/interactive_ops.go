@@ -60,14 +60,24 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 		// because the editor owns the terminal and is the only writer. Arming
 		// keeps the existing watch seam, so a keypress stops the stream through
 		// the same path that stops an auto-refresh loop.
-		if _, ok := api.(OutputFollower); !ok {
-			return fmt.Errorf("follow is unavailable: the API client does not support streaming output")
-		}
-		state.follow = &followRequest{EndpointID: endpointID, ResourceID: session.SessionID, Generation: session.Generation, MaxBytes: maxBytes, MaxLines: maxLines}
-		_, err = fmt.Fprintf(trustedOut, "follow: %s (any key stops)\n", sanitizeInlineText(session.SessionID))
-		return err
+		return armFollowStream(api, state, endpointID, session, maxBytes, maxLines, trustedOut)
 	}
 	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, trustedOut, endpointID, session.SessionID, maxBytes, maxLines, false, color)
+}
+
+// armFollowStream arms one follow intent for the next prompt and names the
+// session it will stream. The explicit logs -f command and the automatic
+// post-send tail both call it, so the two routes cannot drift into two
+// grammars, two announcements or two capability checks. A client without the
+// streaming seam is refused here instead of arming a stream that could never
+// start.
+func armFollowStream(api InteractiveAPI, state *interactiveState, endpointID string, session protocol.Session, maxBytes, maxLines int, trustedOut io.Writer) error {
+	if _, ok := api.(OutputFollower); !ok {
+		return fmt.Errorf("follow is unavailable: the API client does not support streaming output")
+	}
+	state.follow = &followRequest{EndpointID: endpointID, ResourceID: session.SessionID, Generation: session.Generation, MaxBytes: maxBytes, MaxLines: maxLines}
+	_, err := fmt.Fprintf(trustedOut, "follow: %s (any key stops)\n", sanitizeInlineText(session.SessionID))
+	return err
 }
 
 // logsUsage is the single usage string for the logs grammar, so every rejection
@@ -405,18 +415,49 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	}
 	// The message is delivered and the durable receipt is the authority for what
 	// happened, so the operator should not have to type logs to see the effect.
-	// The read gets its own bounded budget because the local wait may already have
-	// exhausted the command deadline, and a failed read is reported as a
-	// diagnostic instead of turning the accepted send into a failure.
-	if err := renderAutomaticSnapshot(parent, api, state, trustedOut, options.Color, options, "send completed"); err != nil {
+	// The automatic step is the same live tail as logs -f, because a one-shot
+	// snapshot stops at the moment it was read while the agent keeps writing.
+	if err := autoFollowAfterSend(parent, api, state, session, trustedOut, options); err != nil {
 		return err
 	}
 	// The send changed the provider's state, so the persisted inventory is now
 	// older than the session the operator is looking at. Force one collection for
 	// this Endpoint and revalidate only the pinned session, so a later list reads
-	// a newer document. This runs after the logs read because that read uses the
-	// generation validated before the send, while a refresh can replace it.
-	return refreshSelectedSession(parent, api, state, out, "send completed")
+	// a newer document.
+	if err := refreshSelectedSession(parent, api, state, out, "send completed"); err != nil {
+		return err
+	}
+	// A refresh that replaced the session invalidates the selection, and a stream
+	// bound to the replaced generation must never start. The intent is dropped
+	// here rather than left armed, because the operator has to select the session
+	// again before any command can address it.
+	if state.Invalidated && state.follow != nil {
+		state.follow = nil
+		return writeAutomaticDiagnostic(trustedOut, "send completed", "automatic follow cancelled: the selected session was replaced")
+	}
+	return nil
+}
+
+// autoFollowAfterSend arms the live tail that follows a completed send. It arms
+// the same intent logs -f arms, so the automatic step and the explicit command
+// share one streaming path, one announcement and one capability check.
+//
+// A client that cannot stream, or a reader that cannot observe a keypress, can
+// never stop a live tail. That case degrades to the previous bounded snapshot
+// and says so, because a snapshot presented as a stream would look complete
+// while silently missing everything written after it.
+func autoFollowAfterSend(parent context.Context, api InteractiveAPI, state *interactiveState, session *protocol.Session, trustedOut io.Writer, options InteractiveOptions) error {
+	if _, ok := api.(OutputFollower); !ok || options.WatchReader == nil {
+		if err := renderAutomaticSnapshot(parent, api, state, trustedOut, options.Color, options, "send completed"); err != nil {
+			return err
+		}
+		return writeAutomaticDiagnostic(trustedOut, "send completed", "automatic follow unavailable: this input mode cannot stop a live tail; rendered one bounded snapshot instead")
+	}
+	maxBytes, maxLines := interactiveOutputBounds(options)
+	if err := armFollowStream(api, state, state.EndpointID, *session, maxBytes, maxLines, trustedOut); err != nil {
+		return writeAutomaticDiagnostic(trustedOut, "send completed", "automatic follow failed: "+sanitizeTerminal([]byte(err.Error())))
+	}
+	return nil
 }
 
 func nextLine(source <-chan lineReadResult) (lineReadResult, bool) {
