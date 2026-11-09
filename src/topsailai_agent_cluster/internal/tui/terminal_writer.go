@@ -248,10 +248,31 @@ func sanitizeTerminal(data []byte) string {
 // Dangerous sequences are always removed. SGR colour survives only when the
 // colour policy is enabled, so a redirected or --no-color run stays byte
 // identical to plain text.
+//
+// A carriage return in provider output is an in-place redraw, not a control
+// character to be reported. A provider progress frame such as
+// "\rGenerating... 0 chars" is ordinary log content, so it is normalized to a
+// line break before sanitization instead of being printed as a replacement rune.
+// A line break is used rather than a raw carriage return because a raw 0x0d
+// would move the cursor to column zero and let provider data overwrite a trusted
+// prompt row.
 func filterProviderOutput(content string, policy ColorPolicy) string {
+	content = normalizeCarriageReturns(content)
 	var output strings.Builder
 	writer := &safeWriter{target: &output, keepSGR: policy.Enabled}
 	_, _ = writer.Write([]byte(content))
 	_ = writer.Flush()
 	return output.String()
+}
+
+// normalizeCarriageReturns turns every carriage return into a line break. A
+// CRLF pair collapses to one break so a Windows-style line ending does not
+// produce a blank line, and a standalone carriage return becomes a break so an
+// in-place redraw keeps each frame on its own readable line.
+func normalizeCarriageReturns(content string) string {
+	if !strings.ContainsRune(content, '\r') {
+		return content
+	}
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	return strings.ReplaceAll(content, "\r", "\n")
 }

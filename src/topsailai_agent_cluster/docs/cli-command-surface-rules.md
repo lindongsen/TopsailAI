@@ -584,6 +584,13 @@ returns and cursor control, so an in-place animation would be printed as
 replacement runes; and a spinner unrelated to real progress would be a fabricated
 signal. Stages are printed as discrete lines instead.
 
+That rule governs diagnostics this application writes, not provider log content.
+Provider output is rendered through a separate boundary that normalizes a carriage
+return to a line break, because a provider progress frame such as
+`\rGenerating... 0 chars` is ordinary log content the operator must be able to
+read. A raw carriage return is still never emitted, because it would move the
+cursor to column zero and let provider data overwrite a trusted prompt row.
+
 Progress is presentation only. A write failure is ignored, so a closed diagnostics
 stream never changes the outcome of the command it describes, and a caller that
 supplies no diagnostics stream keeps the previous silent behaviour.
