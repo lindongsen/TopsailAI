@@ -137,6 +137,10 @@ function load_config() {
     # The command allowlist is optional. An unset value disables command.exec
     # entirely, so it is resolved only when the configuration names a file.
     COMMAND_ALLOWLIST_FILE=$(resolve_path "${COMMAND_ALLOWLIST_FILE:-}")
+    # The control action catalog is optional for the same reason. An unset value
+    # advertises no ctl. action at all, which is the fail-closed default rather
+    # than an error, so it is resolved only when the configuration names a file.
+    CONTROL_ACTION_FILE=$(resolve_path "${CONTROL_ACTION_FILE:-}")
 }
 
 # Reports the binary serving the configured role.
@@ -194,6 +198,7 @@ function doctor() {
         echo "endpoint   : ${ENDPOINT_ID} (${INSTANCE_ID})"
         echo "channel    : ${CHANNEL_ADDRESS}"
         echo "allowlist  : ${COMMAND_ALLOWLIST_FILE:-<disabled>}"
+        echo "catalog    : ${CONTROL_ACTION_FILE:-<disabled>}"
     fi
 }
 
@@ -253,6 +258,11 @@ function start_node() {
         # The allowlist is optional. Without it the endpoint refuses command.exec
         # rather than falling back to an unrestricted shell.
         [ -n "${COMMAND_ALLOWLIST_FILE:-}" ] && args+=(--command-allowlist-file "${COMMAND_ALLOWLIST_FILE}")
+        # The catalog is optional in the same way. Without it the endpoint
+        # advertises no ctl. action and refuses every ctl. operation, so a
+        # packaged node that names the file but never forwards it loses the
+        # whole family while every other capability keeps working.
+        [ -n "${CONTROL_ACTION_FILE:-}" ] && args+=(--control-action-file "${CONTROL_ACTION_FILE}")
         # Adapters are supplied through the environment; no flag exists for them.
         export AGENT_CLUSTER_ADAPTERS="${ADAPTERS}"
         # The collection delay is likewise environment-only, so the binary owns

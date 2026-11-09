@@ -215,6 +215,31 @@ the drift structurally impossible rather than dependent on someone remembering t
 corollary is that a test whose fixture cannot express the failure mode is not coverage, it is a lock
 on the current behaviour.
 
+## A documented forwarding step can be absent from the launcher
+
+Trigger: `docs/Environment_Variables.md` stated that the control action catalog path "is resolved
+relative to the bundle root by the launcher", and `docs/agent-cluster-protocol.md` stated that the
+catalog is "loaded at startup". Neither was true for a packaged node. `scripts/agent-clusterctl`
+resolves `COMMAND_ALLOWLIST_FILE` and passes it as a flag, but it never reads `CONTROL_ACTION_FILE`,
+so every packaged node started with no catalog and advertised zero `ctl.` actions while `node.conf`
+named the file and the file existed with 48 entries.
+
+Action: when a document says a component forwards, resolves or exports a value, verify that claim in
+the component's source before trusting it, exactly as a defect claim is verified against its producer.
+Search the launcher for the key name, not for the feature name: the feature was documented and the
+template shipped the key, so a search for "control action" found documentation and configuration while
+the missing line was a single absent `args+=` entry. Then confirm the runtime effect, because a
+documented capability that silently degrades to fail-closed looks identical to a capability nobody
+configured.
+
+Why this prevents recurrence: documentation and configuration are written from intent, while the
+launcher is written once and then extended key by key. A new key therefore lands in the template and
+the docs but not in the launcher, and every test that guards the template stays green because the
+template really is correct. The failure is fail-closed, so nothing unsafe happens and no error is
+logged; the only symptom is an empty capability list that an operator reads as "not configured yet".
+Comparing the documented forwarding list against the launcher's actual key list is what turns that
+silent gap into a defect.
+
 ## An alias that also supplies a flag must not enter the alias registry
 
 Trigger: `logf` was requested as a convenient spelling of `logs -f`. The first implementation

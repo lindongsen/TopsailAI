@@ -101,7 +101,18 @@ validates a standard shape and never forwards an unvalidated provider instructio
 
 The catalog is Endpoint-local administrative configuration, loaded at startup and reloaded on
 `SIGHUP`. It is the only source of control actions, so the action surface is an operational decision
-rather than a code change. Each entry defines:
+rather than a code change.
+
+Implemented forwarding: `scripts/agent-clusterctl` resolves `CONTROL_ACTION_FILE`, prints it in
+`doctor` and passes `--control-action-file` to the endpoint binary, so a node started through the
+launcher loads the catalog its `node.conf` names. The binary also accepts
+`AGENT_CLUSTER_CONTROL_ACTION_FILE` for a direct launch. An unset value advertises no `ctl.` action
+and refuses every `ctl.` operation, which is the fail-closed default rather than an error. The
+launcher previously forwarded only `COMMAND_ALLOWLIST_FILE`, so every packaged node advertised zero
+`ctl.` actions while `node.conf` named the file; see
+`issues/agent-clusterctl-drops-control-action-file.md`.
+
+Each entry defines:
 
 | Field | Meaning |
 |---|---|

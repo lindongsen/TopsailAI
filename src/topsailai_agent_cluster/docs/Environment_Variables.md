@@ -37,9 +37,11 @@ binary packages carry no configuration, so `agent-cluster-config-server` and
 `agent-cluster-config-endpoint` are the only artifacts that differ between machines.
 
 The launcher forwards a fixed set of keys, so a key present in `node.conf` but absent from that set is
-silently ignored rather than passed to the process. `CONTROL_ACTION_FILE` is currently such a key: the
-template ships it and the binary accepts it, but the launcher never reads it, so a packaged node
-advertises no `ctl.` action. See `AGENT_CLUSTER_CONTROL_ACTION_FILE` below and
+silently ignored rather than passed to the process. `CONTROL_ACTION_FILE` was such a key until it was
+added to the set: the template shipped it and the binary accepted it, but the launcher never read it,
+so a packaged node advertised no `ctl.` action. The launcher now resolves it, prints it in `doctor` and
+passes `--control-action-file`, and `TestLauncherForwardsTheControlActionCatalog` guards all three
+sites. See `AGENT_CLUSTER_CONTROL_ACTION_FILE` below and
 `issues/agent-clusterctl-drops-control-action-file.md`. A key that must reach the process regardless of
 the launcher can be exported directly, because the binary reads the environment as well.
 
@@ -176,14 +178,14 @@ actions: the action name, its permission, its payload schema and the provider
 command each action runs all come from here, so changing the action surface never
 requires a code change.
 
-The launcher does not forward this key. `scripts/agent-clusterctl` resolves
-`COMMAND_ALLOWLIST_FILE` and passes it as a flag, but it never reads
-`CONTROL_ACTION_FILE`, so a node started through the launcher receives no catalog
-path even when `node.conf` names one. A packaged node therefore advertises no `ctl.`
-action until the path reaches the process another way: export
-`AGENT_CLUSTER_CONTROL_ACTION_FILE`, or pass `--control-action-file` directly. The
-gap is recorded in `issues/agent-clusterctl-drops-control-action-file.md`; this
-paragraph describes the current behaviour, not the intended one.
+The launcher forwards this key. `scripts/agent-clusterctl` resolves
+`CONTROL_ACTION_FILE`, prints it in `doctor` and passes `--control-action-file`, so a
+node started through the launcher loads the catalog its `node.conf` names. It
+previously forwarded only `COMMAND_ALLOWLIST_FILE`, so a packaged node advertised no
+`ctl.` action even when `node.conf` named one; that gap is recorded in
+`issues/agent-clusterctl-drops-control-action-file.md` and is guarded by
+`TestLauncherForwardsTheControlActionCatalog`. A direct launch can still supply the
+path with `--control-action-file` or `AGENT_CLUSTER_CONTROL_ACTION_FILE`.
 
 The file is one JSON document. Whole-line `#` comments are ignored, so the shipped
 example can explain itself; trailing comments are not supported. Each entry carries:

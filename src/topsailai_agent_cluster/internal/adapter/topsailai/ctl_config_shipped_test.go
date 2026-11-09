@@ -190,6 +190,50 @@ func TestDeploymentScriptsInstallTheCatalog(t *testing.T) {
 	}
 }
 
+// TestLauncherForwardsTheControlActionCatalog proves the launcher hands the
+// catalog path to the endpoint binary.
+//
+// This guards a real defect: the template named CONTROL_ACTION_FILE and both
+// deployment paths installed the catalog, but scripts/agent-clusterctl resolved
+// and forwarded only COMMAND_ALLOWLIST_FILE. Every packaged node therefore
+// started with no catalog, advertised zero ctl. actions and refused every ctl.
+// operation, while node.conf named the file and the file was present. The
+// failure is fail-closed, so nothing unsafe happened and nothing was logged as
+// an error; the only symptom was an empty capability list that an operator reads
+// as "not configured yet".
+//
+// The allowlist received this treatment in d0bad293. The catalog was added later
+// and never received the same three edits, so the two keys drifted. Asserting all
+// three sites here is what keeps them from drifting again: a resolve without a
+// forward still drops the path, and a forward without a resolve passes a
+// relative path the binary cannot use.
+func TestLauncherForwardsTheControlActionCatalog(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "scripts", "agent-clusterctl")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the launcher: %v", err)
+	}
+	content := string(data)
+
+	// The resolve step turns the configured relative path into an absolute one.
+	if !strings.Contains(content, `CONTROL_ACTION_FILE=$(resolve_path "${CONTROL_ACTION_FILE:-}")`) {
+		t.Errorf("the launcher must resolve CONTROL_ACTION_FILE like COMMAND_ALLOWLIST_FILE;\n" +
+			"a relative path reaches the binary unresolved and the catalog is never found")
+	}
+
+	// The doctor line is how an operator sees which catalog a node would load.
+	if !strings.Contains(content, `echo "catalog    : ${CONTROL_ACTION_FILE:-<disabled>}"`) {
+		t.Errorf("doctor must print the resolved catalog path, otherwise an operator cannot tell\n" +
+			"a missing catalog from a catalog that was never forwarded")
+	}
+
+	// The argv entry is the only site that actually delivers the path.
+	if !strings.Contains(content, `args+=(--control-action-file "${CONTROL_ACTION_FILE}")`) {
+		t.Errorf("the launcher must pass --control-action-file to the endpoint binary;\n" +
+			"without it every packaged node advertises no ctl. action")
+	}
+}
+
 // TestShippedControlActionCatalogListsInstructions proves the shipped
 // call_instruction entry carries the instruction inventory in its enum, so the
 // guided prompt offers a menu instead of a free-text field. The enum is a prompt
