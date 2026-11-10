@@ -72,7 +72,31 @@ def _set_process_group_options(options):
 
 
 def _kill_process_tree(process):
-    """Kill a process and its descendants after a command timeout."""
+    """Kill a process and its descendants after a command timeout.
+
+    KNOWN LIMITATION: this only reaches processes that stayed inside the process
+    group created by ``_set_process_group_options``. A command that daemonizes
+    itself escapes that group and survives the kill. Measured behaviour:
+
+    - ``ssh -f``, ``setsid``, and any double-forking daemon call ``setsid()`` and
+      become the leader of a brand new session, so ``os.killpg`` never signals
+      them. Only the direct shell dies, and it is left as a zombie until reaped.
+    - Killing by session id does NOT help. The escapee owns its own session
+      (observed ``sid=2473662`` for the escapee versus ``sid=2473661`` for the
+      shell), so ``os.killpg(os.getsid(process.pid), SIGKILL)`` misses it.
+    - Tracking descendants does NOT help either. The escapee is reparented to
+      ``PPID=1``, so ``psutil.Process(process.pid).children(recursive=True)``
+      returns an empty list once the shell exits.
+    - The only reliable identification is scanning ``/proc/<pid>/fd`` for every
+      process still holding the pipe write end. That is Linux-only, has no
+      macOS or Windows equivalent, can match an unrelated process that
+      legitimately inherited the pipe, and costs O(processes x fds) per call
+      (measured 0.056s across 539 processes).
+
+    Consequence: a surviving escapee keeps the stdout/stderr pipe write end
+    open, so the pipe never reaches EOF. See the timeout handler in ``exec_cmd``
+    for why that turns into an unbounded hang.
+    """
     if os.name == "posix":
         try:
             os.killpg(process.pid, signal.SIGKILL)
@@ -156,6 +180,84 @@ def exec_cmd(
         text=False,
         **options
     )
+    # ------------------------------------------------------------------
+    # TIMEOUT CLEANUP: KNOWN UNBOUNDED HANG (not yet fixed, documented only)
+    # ------------------------------------------------------------------
+    # The cleanup below is NOT bounded by ``timeout``. When the command spawns a
+    # process that escapes the process group (``ssh -f``, ``setsid``, any
+    # double-forking daemon), the sequence is:
+    #
+    #   1. ``communicate(timeout=...)`` raises ``TimeoutExpired`` as designed.
+    #   2. ``_kill_process_tree`` kills only the process group, so the escapee
+    #      survives and the direct shell is left as a zombie.
+    #   3. The escapee still holds the stdout/stderr pipe write end, so the pipe
+    #      never reaches EOF.
+    #   4. ``process.communicate()`` is called WITHOUT a timeout. Internally it
+    #      waits with ``endtime=None``, so ``selector.select(None)`` blocks
+    #      forever. The caller never regains control.
+    #
+    # Observed in production: a command with ``timeout=180`` blocked the agent
+    # main loop for 61277 seconds (about 17 hours) until the escaped ``ssh -f``
+    # tunnel was killed by PID from outside. The timeout fired correctly; the
+    # cleanup path is what hung. Reproduced twice more within minutes, because
+    # ``ssh-tunnelctl`` itself launches ``ssh -f``.
+    #
+    # Measured facts that constrain any fix (probes run on this host):
+    #
+    #   - ``wait()`` alone, pipes left open, after ``killpg``: returns in 0.000s.
+    #     ``wait()`` is what unblocks; closing the pipes is not what does it.
+    #   - ``TimeoutExpired.output`` already carries partial output (observed
+    #     ``b'PARTIAL\n'``), and no caller in this project reads ``.output`` or
+    #     ``.stderr`` from the exception, so the payload contract is preserved
+    #     even if the pipes are closed during cleanup.
+    #   - ``wait(timeout=...)`` can raise ``TimeoutExpired`` a SECOND time if the
+    #     process is still alive. That would mask the original exception, so any
+    #     replacement must swallow it.
+    #
+    # Candidate fixes and their side effects, all verified by probe:
+    #
+    #   A. Close the pipes, then ``wait(timeout=...)``.
+    #      Fixes the hang. Side effects:
+    #      - A background process started as ``./server &`` WITHOUT output
+    #        redirection dies from SIGPIPE when the read ends close (observed).
+    #        A redirected daemon (``>/dev/null 2>&1``) survives.
+    #      - It does NOT kill the escapee. A process that never writes to stderr
+    #        stays alive after the pipes close (observed), so orphan tunnels
+    #        keep accumulating; only the agent stops hanging.
+    #      - The second ``TimeoutExpired`` from ``wait`` must be suppressed.
+    #
+    #   B. Kill by session id, or track descendants with psutil.
+    #      Does NOT work, do not implement it as-is:
+    #      - ``os.killpg(os.getsid(process.pid), SIGKILL)`` misses the escapee,
+    #        which owns its own session (observed sid 2473662 vs 2473661).
+    #      - ``psutil.Process(process.pid).children(recursive=True)`` returns an
+    #        empty list, because the escapee is reparented to PPID=1.
+    #      - Scanning ``/proc/<pid>/fd`` for pipe holders is the only reliable
+    #        method, but it is Linux-only, may match an unrelated process that
+    #        inherited the pipe, and costs O(processes x fds) per call
+    #        (measured 0.056s across 539 processes).
+    #
+    #   C. An outer watchdog (SIGALRM or a timer thread).
+    #      Side effects:
+    #      - ``signal.signal`` raises "signal only works in main thread" outside
+    #        the main thread, so the watchdog silently stops working if tool
+    #        execution ever moves to a worker thread.
+    #      - SIGALRM does interrupt a blocked ``communicate()`` (observed after
+    #        2.0s), but it leaves the child unreaped and the pipes open, so the
+    #        watchdog must also run the kill-and-close cleanup or it trades a
+    #        hang for a zombie plus leaked file descriptors.
+    #      - A tight bound would abort legitimate long-running commands.
+    #
+    #   D. Capture stdout/stderr into temporary files instead of pipes.
+    #      Removes the hang at its source: with no pipe there is no EOF to wait
+    #      for, so ``communicate()`` returned in 0.001s even with a live escapee.
+    #      Partial output, stdin input, and multi-megabyte output all worked.
+    #      Side effect: pipe backpressure is lost. ``yes`` wrote 681.9 MB to disk
+    #      in 1.5s, where a pipe would have blocked the writer at about 64 KB.
+    #      This option therefore requires an explicit output size cap.
+    #
+    # Until one of these is implemented, callers that may run a daemonizing
+    # command should avoid relying on ``timeout`` to bound the call.
     try:
         stdout, stderr = process.communicate(input=subprocess_input, timeout=timeout)
     except subprocess.TimeoutExpired:
