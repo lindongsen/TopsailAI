@@ -154,7 +154,11 @@ func (f *ObjectFS) AppendFile(p string, data []byte, perm os.FileMode) error {
 	return f.WriteFile(p, combined, perm)
 }
 
-// Stat reports information about one file inside the object.
+// Stat reports information about one file or folder inside the object.
+//
+// A folder is reported as a directory entry so existence checks can confirm a
+// folder created by MkdirAll. The folder test runs only after the file lookup
+// fails, so a file always wins when a name is ambiguous.
 func (f *ObjectFS) Stat(p string) (os.FileInfo, error) {
 	name, err := normalizeAllowRoot(p)
 	if err != nil {
@@ -165,11 +169,40 @@ func (f *ObjectFS) Stat(p string) (os.FileInfo, error) {
 		return objectInfo{name: f.objectName(), dir: true}, nil
 	}
 
-	data, err := f.ReadFile(name)
-	if err != nil {
-		return nil, err
+	data, readErr := f.ReadFile(name)
+	if readErr == nil {
+		return objectInfo{name: path.Base(name), size: int64(len(data))}, nil
 	}
-	return objectInfo{name: path.Base(name), size: int64(len(data))}, nil
+
+	// A folder has no readable content, so a failed read falls through to the
+	// folder test. The original read error is returned when the path is neither
+	// a file nor a folder.
+	isDir, dirErr := f.isDir(name)
+	if dirErr != nil {
+		return nil, dirErr
+	}
+	if isDir {
+		return objectInfo{name: path.Base(name), dir: true}, nil
+	}
+	return nil, readErr
+}
+
+// isDir reports whether a path is a folder inside the object.
+//
+// Object storage keeps no folder entries, so a folder exists only when some
+// archived file lives below it.
+func (f *ObjectFS) isDir(name string) (bool, error) {
+	entries, err := f.listAll()
+	if err != nil {
+		return false, err
+	}
+	prefix := name + "/"
+	for _, entry := range entries {
+		if strings.HasPrefix(entry, prefix) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ReadDir lists the immediate entries of one folder inside the object.
@@ -222,11 +255,68 @@ func (f *ObjectFS) ReadDir(p string) ([]os.DirEntry, error) {
 	return result, nil
 }
 
-// MkdirAll is a no-op because object storage has no meaningful empty folder.
+// agentsFileName is the marker file written into every folder that MkdirAll
+// creates. Object storage has no empty folder, so a folder is visible only when
+// it contains a file; this marker makes a new folder immediately discoverable.
+const agentsFileName = "AGENTS.md"
+
+// agentsFileContent is the default content of the marker file.
+const agentsFileContent = `# AGENTS
+
+This folder was created by the topsailai-data file mkdirs command.
+
+Record instructions for agents working in this folder here.
+`
+
+// MkdirAll creates every missing folder level and writes an AGENTS.md marker
+// into each one.
 //
-// Writing "a/b/c.txt" creates the implied path, so an explicit folder creation
-// has nothing to do.
-func (f *ObjectFS) MkdirAll(string, os.FileMode) error { return nil }
+// Object storage has no empty folder: a folder becomes visible only when it
+// contains a file. Writing the marker makes a new folder immediately
+// discoverable through ReadDir, exists, and list-dirs, so mkdirs is not a
+// silent no-op.
+//
+// A level that already exists is left untouched, so an existing AGENTS.md is
+// never overwritten and no marker is added to a folder that already holds
+// content. The object root always exists and is never modified.
+func (f *ObjectFS) MkdirAll(p string, _ os.FileMode) error {
+	name, err := normalizeAllowRoot(p)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return nil
+	}
+
+	existing, err := f.listAll()
+	if err != nil {
+		return err
+	}
+	present := make(map[string]bool)
+	for _, entry := range existing {
+		for dir := path.Dir(entry); dir != "." && dir != "/" && dir != ""; dir = path.Dir(dir) {
+			present[dir] = true
+		}
+	}
+
+	current := ""
+	for _, segment := range strings.Split(name, "/") {
+		if current == "" {
+			current = segment
+		} else {
+			current += "/" + segment
+		}
+		if present[current] {
+			continue
+		}
+		marker := current + "/" + agentsFileName
+		if err := f.WriteFile(marker, []byte(agentsFileContent), 0o644); err != nil {
+			return err
+		}
+		present[current] = true
+	}
+	return nil
+}
 
 // listAll returns every file path inside the object, excluding metadata
 // markers that the adapter already filters from the archive.

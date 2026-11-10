@@ -129,6 +129,8 @@ func printFileUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --object <id> is required. Every command runs against the actual data of")
 	fmt.Fprintln(w, "  that data object; paths are relative to the object folder, writes take the")
 	fmt.Fprintln(w, "  object lock, and reads and writes update the object usage statistics.")
+	fmt.Fprintln(w, "  mkdirs writes an AGENTS.md marker into every folder it creates, because")
+	fmt.Fprintln(w, "  object storage has no empty folder; an existing folder is left untouched.")
 }
 
 // runFileRead implements "file read".
@@ -389,8 +391,9 @@ func runFileExists(ctx context.Context, mgr *manager.Manager, args []string) err
 
 // runFileMkdirs implements "file mkdirs".
 //
-// Object storage has no meaningful empty folder, so in object mode the command
-// succeeds without creating anything: writing a file creates its implied path.
+// Object storage has no empty folder, so each created level receives an
+// AGENTS.md marker file. That makes the new folder immediately discoverable
+// through list-dirs and exists instead of leaving a silent no-op.
 func runFileMkdirs(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file mkdirs")
 	objectID := fs.String("object", "", "data object that holds the file (required)")

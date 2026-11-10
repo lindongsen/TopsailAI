@@ -748,7 +748,7 @@ read or write a path outside a data object.
 | `write` | Write content, optionally at a byte offset | `<file_path> --object <id> [--content <text>\|--from <path\|->] [--seek n] [--insert]` |
 | `append` | Append content | `<file_path> --object <id> [--content <text>\|--from <path\|->]` |
 | `exists` | Check several paths for existence | `<name=path...> --object <id> [--format yaml\|json]` |
-| `mkdirs` | Accept folder creation as a no-op | `<dir...> --object <id>` |
+| `mkdirs` | Create folders, each seeded with an `AGENTS.md` marker | `<dir...> --object <id>` |
 | `list-dirs` | List several folders | `<dir...> --object <id> [--format yaml\|json]` |
 | `size` | Report a file size in bytes | `<file_path> --object <id>` |
 | `overwrite-lines` | Replace a line range and return a diff | `<file_path> <start_num> --object <id> [--end n] [--content <text>\|--from <path\|->]` |
@@ -782,10 +782,19 @@ object store apply unchanged:
   marker through the file commands. The mandatory `{object}.md` file is actual
   data and remains readable and writable.
 
-`mkdirs` is accepted but performs no work, because object storage has no
-meaningful empty folder: writing `notes/a.md` creates the implied path. The
-absolute-path requirement of the original tool therefore does not apply in
-object mode.
+`mkdirs` creates every missing level of the requested path and writes an
+`AGENTS.md` marker into each level it creates. Object storage has no meaningful
+empty folder, so a folder becomes discoverable only once it holds a file; the
+marker is what makes the new folder visible to `list-dirs` and `exists`.
+
+- A level that already exists is skipped, so an existing `AGENTS.md` is never
+  overwritten and a populated folder receives no marker.
+- The object root is never modified: `mkdirs .` and `mkdirs ""` succeed without
+  writing a marker.
+- The marker is written through the manager, so the object lock, the atomic
+  replacement, and the write statistics apply exactly as for any other write.
+- The absolute-path requirement of the original tool does not apply in object
+  mode, because every path is already relative to the object folder.
 
 ### 20.3 Preserved Behaviour Contracts
 

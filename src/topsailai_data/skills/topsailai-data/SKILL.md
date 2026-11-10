@@ -788,7 +788,7 @@ mode: a file command without `--object` is rejected.
 | `write` | `file write <file_path> --object <id> [--content <text>\|--from <path\|->] [--seek n] [--insert]` | Write content. `--insert` inserts at the offset instead of overwriting. Redirected standard input is read when neither `--content` nor `--from` is given. |
 | `append` | `file append <file_path> --object <id> [--content <text>\|--from <path\|->]` | Append content to a file. Redirected standard input is read when neither `--content` nor `--from` is given. |
 | `exists` | `file exists <name=path...> --object <id> [--format yaml\|json]` | Check several paths for existence. |
-| `mkdirs` | `file mkdirs <dir...> --object <id>` | Accepted as a no-op. Object storage has no empty folder, so writing a file creates the implied path. |
+| `mkdirs` | `file mkdirs <dir...> --object <id>` | Create folders, each seeded with an `AGENTS.md` marker so the folder is discoverable. An existing folder is left untouched. |
 | `list-dirs` | `file list-dirs <dir...> --object <id> [--format yaml\|json]` | List several folders with sorted entries. |
 | `size` | `file size <file_path> --object <id>` | Report a file size in bytes. |
 | `overwrite-lines` | `file overwrite-lines <file_path> <start_num> --object <id> [--end n] [--content <text>\|--from <path\|->]` | Replace a line range and print a unified diff. Redirected standard input is read when neither `--content` nor `--from` is given. |
@@ -911,7 +911,22 @@ Recursive discovery with object-boundary detection belongs to `list` and
 `search` in the object store, which scan the whole store rather than one
 object.
 
-`mkdirs` is accepted but performs no work, because object storage has no
-meaningful empty folder: writing `notes/a.md` creates the implied path. The
-absolute-path requirement of the original tool therefore does not apply in
-object mode.
+`mkdirs` creates every missing level of the requested path and writes an
+`AGENTS.md` marker into each level it creates. Object storage has no meaningful
+empty folder, so a folder becomes discoverable only once it holds a file; the
+marker is what makes the new folder visible to `list-dirs` and `exists`.
+
+```
+bin/topsailai-data file mkdirs notes/2026 --object demo
+bin/topsailai-data file list-dirs "" --object demo
+bin/topsailai-data file read notes/2026/AGENTS.md --object demo
+```
+
+- A level that already exists is skipped, so an existing `AGENTS.md` is never
+  overwritten and a populated folder receives no marker.
+- The object root is never modified: `mkdirs .` and `mkdirs ""` succeed without
+  writing a marker.
+- The marker is written through the manager, so the object lock, the atomic
+  replacement, and the write statistics apply exactly as for any other write.
+- The absolute-path requirement of the original tool does not apply in object
+  mode, because every path is already relative to the object folder.

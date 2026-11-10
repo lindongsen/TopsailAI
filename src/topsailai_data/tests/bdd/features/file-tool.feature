@@ -387,7 +387,7 @@ Feature: File and folder capabilities inside a data object
       | demo |
     Then the command fails with "name=path"
 
-  Scenario: Accept folder creation as a no-op inside an object
+  Scenario: Create discoverable folders with an agents marker
     Given an isolated topsailai-data store
     And an object "demo" with files:
       | path    | content  |
@@ -398,7 +398,60 @@ Feature: File and folder capabilities inside a data object
       | --object |
       | demo |
     Then the command succeeds
-    And object "demo" root listing does not contain "nested"
+    And object "demo" root listing contains "nested"
+    And object "demo" file "nested/a/b/c/AGENTS.md" contains "AGENTS"
+
+  Scenario: Report a created folder as existing
+    Given an isolated topsailai-data store
+    And an object "demo" with files:
+      | path    | content  |
+      | demo.md | markdown |
+    When I run the file command with arguments:
+      | mkdirs |
+      | nested/a/b/c |
+      | --object |
+      | demo |
+    Then the command succeeds
+    When I run the file command with arguments:
+      | exists |
+      | folder=nested/a/b/c |
+      | marker=nested/a/b/c/AGENTS.md |
+      | missing=nested/a/b/c/nope.md |
+      | --object |
+      | demo |
+      | --format |
+      | json |
+    Then the command succeeds
+    And exists result reports "folder" as true
+    And exists result reports "marker" as true
+    And exists result reports "missing" as false
+
+  Scenario: Keep an existing agents marker when creating folders
+    Given an isolated topsailai-data store
+    And an object "demo" with files:
+      | path             | content  |
+      | demo.md          | markdown |
+      | notes/AGENTS.md  | custom   |
+    When I run the file command with arguments:
+      | mkdirs |
+      | notes |
+      | --object |
+      | demo |
+    Then the command succeeds
+    And object "demo" file "notes/AGENTS.md" equals "custom"
+
+  Scenario: Skip the object root when creating folders
+    Given an isolated topsailai-data store
+    And an object "demo" with files:
+      | path    | content  |
+      | demo.md | markdown |
+    When I run the file command with arguments:
+      | mkdirs |
+      | . |
+      | --object |
+      | demo |
+    Then the command succeeds
+    And object "demo" root listing does not contain "AGENTS.md"
 
   Scenario: List the object root
     Given an isolated topsailai-data store

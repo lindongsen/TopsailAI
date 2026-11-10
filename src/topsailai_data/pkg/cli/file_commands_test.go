@@ -412,10 +412,10 @@ func TestFileExistsCommandRejectsMalformedPair(t *testing.T) {
 	}
 }
 
-// TestFileMkdirsCommandIsNoOpInObjectMode proves mkdirs succeeds without
-// creating anything: object storage has no meaningful empty folder, so a folder
-// appears only when a file is written into it.
-func TestFileMkdirsCommandIsNoOpInObjectMode(t *testing.T) {
+// TestFileMkdirsCommandCreatesDiscoverableFolders proves mkdirs writes an
+// AGENTS.md marker into every created level, so the new folder is immediately
+// visible through list-dirs instead of being a silent no-op.
+func TestFileMkdirsCommandCreatesDiscoverableFolders(t *testing.T) {
 	mgr, ctx := setupFileManager(t, 0, nil)
 	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "marker"})
 
@@ -424,16 +424,101 @@ func TestFileMkdirsCommandIsNoOpInObjectMode(t *testing.T) {
 		t.Fatalf("expected OK, got %q", out)
 	}
 
-	listed := runFileCommand(t, ctx, mgr, "list-dirs", "", "--format", "json", "--object", "demo")
-	var parsed map[string][]string
-	if err := json.Unmarshal([]byte(listed), &parsed); err != nil {
-		t.Fatalf("expected JSON output, got %q: %v", listed, err)
+	root := decodeListing(t, runFileCommand(t, ctx, mgr, "list-dirs", "", "--format", "json", "--object", "demo"))
+	if !containsEntry(root[""], "nested") {
+		t.Fatalf("expected the object root to list nested, got %v", root[""])
 	}
-	for _, entry := range parsed[""] {
-		if entry == "nested" {
-			t.Fatalf("expected mkdirs to create nothing, got %v", parsed[""])
+
+	level := decodeListing(t, runFileCommand(t, ctx, mgr, "list-dirs", "nested/a/b/c", "--format", "json", "--object", "demo"))
+	if !containsEntry(level["nested/a/b/c"], "AGENTS.md") {
+		t.Fatalf("expected AGENTS.md in the created folder, got %v", level["nested/a/b/c"])
+	}
+
+	content := runFileCommand(t, ctx, mgr, "read", "nested/a/b/c/AGENTS.md", "--object", "demo")
+	if !strings.Contains(content, "AGENTS") {
+		t.Fatalf("expected the marker content, got %q", content)
+	}
+}
+
+// TestFileMkdirsCommandPreservesExistingContent proves mkdirs never overwrites
+// an existing AGENTS.md and never adds a marker to a folder that already holds
+// files.
+func TestFileMkdirsCommandPreservesExistingContent(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{
+		"demo.md":         "marker",
+		"notes/AGENTS.md": "custom instructions",
+		"notes/keep.txt":  "keep me",
+	})
+
+	out := runFileCommand(t, ctx, mgr, "mkdirs", "notes", "--object", "demo")
+	if strings.TrimSpace(out) != "OK" {
+		t.Fatalf("expected OK, got %q", out)
+	}
+
+	content := runFileCommand(t, ctx, mgr, "read", "notes/AGENTS.md", "--object", "demo")
+	if strings.TrimSpace(content) != "custom instructions" {
+		t.Fatalf("expected the existing AGENTS.md to survive, got %q", content)
+	}
+
+	kept := runFileCommand(t, ctx, mgr, "read", "notes/keep.txt", "--object", "demo")
+	if strings.TrimSpace(kept) != "keep me" {
+		t.Fatalf("expected the existing file to survive, got %q", kept)
+	}
+}
+
+// TestFileMkdirsCommandIsIdempotent proves a repeated mkdirs leaves the marker
+// content unchanged.
+func TestFileMkdirsCommandIsIdempotent(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "marker"})
+
+	runFileCommand(t, ctx, mgr, "mkdirs", "docs", "--object", "demo")
+	first := runFileCommand(t, ctx, mgr, "read", "docs/AGENTS.md", "--object", "demo")
+
+	runFileCommand(t, ctx, mgr, "mkdirs", "docs", "--object", "demo")
+	second := runFileCommand(t, ctx, mgr, "read", "docs/AGENTS.md", "--object", "demo")
+
+	if first != second {
+		t.Fatalf("expected an idempotent marker, got %q then %q", first, second)
+	}
+}
+
+// TestFileMkdirsCommandSkipsObjectRoot proves the object root is never given a
+// marker file.
+func TestFileMkdirsCommandSkipsObjectRoot(t *testing.T) {
+	mgr, ctx := setupFileManager(t, 0, nil)
+	createObjectWithFiles(t, ctx, mgr, "demo", map[string]string{"demo.md": "marker"})
+
+	out := runFileCommand(t, ctx, mgr, "mkdirs", ".", "--object", "demo")
+	if strings.TrimSpace(out) != "OK" {
+		t.Fatalf("expected OK, got %q", out)
+	}
+
+	root := decodeListing(t, runFileCommand(t, ctx, mgr, "list-dirs", "", "--format", "json", "--object", "demo"))
+	if containsEntry(root[""], "AGENTS.md") {
+		t.Fatalf("expected no marker at the object root, got %v", root[""])
+	}
+}
+
+// decodeListing decodes list-dirs JSON output.
+func decodeListing(t *testing.T, out string) map[string][]string {
+	t.Helper()
+	var parsed map[string][]string
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("expected JSON output, got %q: %v", out, err)
+	}
+	return parsed
+}
+
+// containsEntry reports whether names holds want.
+func containsEntry(names []string, want string) bool {
+	for _, name := range names {
+		if name == want {
+			return true
 		}
 	}
+	return false
 }
 
 // TestFileMkdirsCommandAcceptsRelativePathInObjectMode proves the absolute-path

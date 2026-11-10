@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -405,8 +406,9 @@ func TestReadDirRejectsMissingFolder(t *testing.T) {
 	}
 }
 
-// TestMkdirAllIsNoOp succeeds without creating anything.
-func TestMkdirAllIsNoOp(t *testing.T) {
+// TestMkdirAllCreatesDiscoverableFolders proves every created level receives an
+// AGENTS.md marker, so the folder is visible through ReadDir.
+func TestMkdirAllCreatesDiscoverableFolders(t *testing.T) {
 	mgr, ctx := newTestManager(t)
 	createObject(t, ctx, mgr, "demo", map[string]string{"demo.md": "markdown"})
 	fs := newObjectFS(t, ctx, mgr, "demo")
@@ -414,9 +416,164 @@ func TestMkdirAllIsNoOp(t *testing.T) {
 	if err := fs.MkdirAll("some/relative/dir", 0o755); err != nil {
 		t.Fatalf("mkdirs: %v", err)
 	}
-	if _, err := fs.ReadDir("some"); err == nil {
-		t.Fatal("mkdirs created a folder, but object storage has no empty folders")
+
+	entries, err := fs.ReadDir("some")
+	if err != nil {
+		t.Fatalf("expected the created folder to be listable: %v", err)
 	}
+	if !hasEntry(entries, "relative") {
+		t.Fatalf("expected relative in some, got %v", entryNames(entries))
+	}
+
+	deep, err := fs.ReadDir("some/relative/dir")
+	if err != nil {
+		t.Fatalf("expected the deepest folder to be listable: %v", err)
+	}
+	if !hasEntry(deep, "AGENTS.md") {
+		t.Fatalf("expected AGENTS.md in the deepest folder, got %v", entryNames(deep))
+	}
+
+	data, err := fs.ReadFile("some/relative/dir/AGENTS.md")
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	if !strings.Contains(string(data), "AGENTS") {
+		t.Fatalf("expected marker content, got %q", string(data))
+	}
+}
+
+// TestMkdirAllPreservesExistingContent proves an existing AGENTS.md is never
+// overwritten and a populated folder receives no marker.
+func TestMkdirAllPreservesExistingContent(t *testing.T) {
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{
+		"demo.md":         "markdown",
+		"notes/AGENTS.md": "custom",
+		"notes/keep.txt":  "keep",
+	})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	if err := fs.MkdirAll("notes", 0o755); err != nil {
+		t.Fatalf("mkdirs: %v", err)
+	}
+
+	data, err := fs.ReadFile("notes/AGENTS.md")
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "custom" {
+		t.Fatalf("expected the existing marker to survive, got %q", string(data))
+	}
+
+	kept, err := fs.ReadFile("notes/keep.txt")
+	if err != nil {
+		t.Fatalf("read kept file: %v", err)
+	}
+	if strings.TrimSpace(string(kept)) != "keep" {
+		t.Fatalf("expected the existing file to survive, got %q", string(kept))
+	}
+}
+
+// TestMkdirAllSkipsObjectRoot proves the object root never receives a marker.
+func TestMkdirAllSkipsObjectRoot(t *testing.T) {
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{"demo.md": "markdown"})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	if err := fs.MkdirAll("", 0o755); err != nil {
+		t.Fatalf("mkdirs on the root: %v", err)
+	}
+	if err := fs.MkdirAll(".", 0o755); err != nil {
+		t.Fatalf("mkdirs on the root: %v", err)
+	}
+
+	entries, err := fs.ReadDir("")
+	if err != nil {
+		t.Fatalf("list root: %v", err)
+	}
+	if hasEntry(entries, "AGENTS.md") {
+		t.Fatalf("expected no marker at the object root, got %v", entryNames(entries))
+	}
+}
+
+// TestStatReportsCreatedFolder proves a folder created by MkdirAll is
+// discoverable through Stat, which is what the exists command relies on.
+func TestStatReportsCreatedFolder(t *testing.T) {
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{"demo.md": "markdown"})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	if err := fs.MkdirAll("nested/a/b/c", 0o755); err != nil {
+		t.Fatalf("mkdirs: %v", err)
+	}
+
+	for _, dir := range []string{"nested", "nested/a", "nested/a/b", "nested/a/b/c"} {
+		info, err := fs.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat %q: %v", dir, err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("expected %q to be reported as a folder", dir)
+		}
+	}
+}
+
+// TestStatReportsMissingPath proves a missing path still fails.
+func TestStatReportsMissingPath(t *testing.T) {
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{"demo.md": "markdown"})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	if _, err := fs.Stat("missing"); err == nil {
+		t.Fatal("expected a missing path to fail")
+	}
+}
+
+// TestMkdirAllKeepsTraversalInsideObject proves a traversal path is clamped
+// into the object instead of reaching outside it, matching normalize.
+func TestMkdirAllKeepsTraversalInsideObject(t *testing.T) {
+	mgr, ctx := newTestManager(t)
+	createObject(t, ctx, mgr, "demo", map[string]string{"demo.md": "markdown"})
+	fs := newObjectFS(t, ctx, mgr, "demo")
+
+	if err := fs.MkdirAll("../outside", 0o755); err != nil {
+		t.Fatalf("mkdirs: %v", err)
+	}
+
+	entries, err := fs.ReadDir("")
+	if err != nil {
+		t.Fatalf("list root: %v", err)
+	}
+	if !hasEntry(entries, "outside") {
+		t.Fatalf("expected the clamped folder inside the object, got %v", entryNames(entries))
+	}
+
+	marker, err := fs.ReadFile("outside/AGENTS.md")
+	if err != nil {
+		t.Fatalf("expected the marker inside the object: %v", err)
+	}
+	if !strings.Contains(string(marker), "AGENTS") {
+		t.Fatalf("expected marker content, got %q", string(marker))
+	}
+}
+
+// hasEntry reports whether entries holds a name.
+func hasEntry(entries []os.DirEntry, want string) bool {
+	for _, entry := range entries {
+		if entry.Name() == want {
+			return true
+		}
+	}
+	return false
+}
+
+// entryNames returns the entry names for failure messages.
+func entryNames(entries []os.DirEntry) []string {
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
 }
 
 // TestOpenSupportsSeeking reads through the seekable interface.
