@@ -70,11 +70,32 @@ cleanup_fixtures() {
 
 trap 'stop_processes; cleanup_fixtures' EXIT
 
+# count_matches prints how many lines of a file match a pattern.
+#
+# It prints 0 rather than failing when the file is absent or nothing matches, so the
+# caller can compare counts without treating "no match yet" as an error.
+count_matches() {
+	local file="$1" pattern="$2"
+	if [ ! -f "$file" ]; then
+		echo 0
+		return 0
+	fi
+	grep -c "$pattern" "$file" || true
+}
+
 # wait_for_log waits for a pattern to appear in a file.
+#
+# It waits for a NEW occurrence beyond a baseline the caller captured BEFORE the action
+# that should produce it. Two separate mistakes are avoided this way:
+#   - A plain grep matches a line from an earlier run, because the Node log is appended
+#     to across a restart, so the wait returns before the restarted Node registered.
+#   - Capturing the baseline inside this function is also wrong, because the event can
+#     already have happened by the time it is called: the baseline would include the
+#     very occurrence being waited for, and the wait would then block until timeout.
 wait_for_log() {
-	local file="$1" pattern="$2" deadline=$((SECONDS + READY_TIMEOUT))
+	local file="$1" pattern="$2" baseline="$3" deadline=$((SECONDS + READY_TIMEOUT))
 	while ((SECONDS < deadline)); do
-		if [ -f "$file" ] && grep -q "$pattern" "$file"; then
+		if [ "$(count_matches "$file" "$pattern")" -gt "$baseline" ]; then
 			return 0
 		fi
 		sleep 0.1
@@ -133,21 +154,23 @@ BASE_URL="http://$LISTEN"
 CHANNEL_URL="ws://$LISTEN/channel"
 
 echo "manual: launching the Server on $LISTEN" >&2
+LISTEN_BASELINE=$(count_matches "$SERVER_LOG" 'msg="server listening"')
 CONNECTOR_SERVER_LISTEN="$LISTEN" \
 	CONNECTOR_SERVER_TUNNEL_TOKEN="$TUNNEL_TOKEN" \
 	CONNECTOR_SERVER_CLIENT_TOKEN="$CLIENT_TOKEN" \
 	"$BIN/connector-server" run >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
-wait_for_log "$SERVER_LOG" 'msg="server listening"' ||
+wait_for_log "$SERVER_LOG" 'msg="server listening"' "$LISTEN_BASELINE" ||
 	fail "the Server did not listen within ${READY_TIMEOUT}s; see $SERVER_LOG"
 
 echo "manual: launching the Node" >&2
+ESTABLISHED_BASELINE=$(count_matches "$SERVER_LOG" 'msg="channel established"')
 CONNECTOR_NODE_SERVER_URL="$CHANNEL_URL" \
 	CONNECTOR_NODE_TUNNEL_TOKEN="$TUNNEL_TOKEN" \
 	CONNECTOR_NODE_CONFIG_DIR="$WORK/node-config" \
 	"$BIN/connector-node" run >"$NODE_LOG" 2>&1 &
 NODE_PID=$!
-wait_for_log "$SERVER_LOG" 'msg="channel established"' ||
+wait_for_log "$SERVER_LOG" 'msg="channel established"' "$ESTABLISHED_BASELINE" ||
 	fail "the Node did not register within ${READY_TIMEOUT}s; see $SERVER_LOG"
 
 IDENTITY_FILE="$WORK/node-config/identity"
@@ -336,8 +359,9 @@ if ! grep -q 'node identity generated' "$NODE_LOG"; then
 fi
 
 echo "manual: probe 14: a killed Node makes the next request fail fast" >&2
+CLOSED_BASELINE=$(count_matches "$SERVER_LOG" 'msg="channel closed"')
 kill "$NODE_PID" 2>/dev/null || true
-wait_for_log "$SERVER_LOG" 'msg="channel closed"' ||
+wait_for_log "$SERVER_LOG" 'msg="channel closed"' "$CLOSED_BASELINE" ||
 	fail "the Server did not record the closed channel"
 START_MS=$(date +%s%3N)
 OUT=$(cli file.read project probe.txt 2>&1)
@@ -357,12 +381,13 @@ echo "manual: an offline request was refused with node_offline in ${ELAPSED_MS}m
 NODE_PID=""
 
 echo "manual: probe 15: a restarted Node serves again" >&2
+RESTART_BASELINE=$(count_matches "$SERVER_LOG" 'msg="channel established"')
 CONNECTOR_NODE_SERVER_URL="$CHANNEL_URL" \
 	CONNECTOR_NODE_TUNNEL_TOKEN="$TUNNEL_TOKEN" \
 	CONNECTOR_NODE_CONFIG_DIR="$WORK/node-config" \
 	"$BIN/connector-node" run >>"$NODE_LOG" 2>&1 &
 NODE_PID=$!
-wait_for_log "$SERVER_LOG" 'msg="channel established"' ||
+wait_for_log "$SERVER_LOG" 'msg="channel established"' "$RESTART_BASELINE" ||
 	fail "the restarted Node did not register"
 OUT=$(cli file.read project probe.txt) || fail "a read after the restart failed: $OUT"
 case "$OUT" in
