@@ -386,6 +386,49 @@ mask it.
 
 The `POST`/`DELETE /api/v1/output/subscriptions` routes above remain unimplemented proposals. They are not required for follow, because a follow stream is bounded by its own request and ends with its terminal frame; a durable subscription would add retained state that the current design does not need.
 
+## Implemented interactive follow recovery
+
+An interactive follow stream can end without the operator seeing any output. Two
+different failures produce that symptom, and both are recovered with one bounded
+snapshot instead of leaving an empty screen.
+
+The first is an abnormal end. A stream that breaks after printing part of the tail
+showed the operator a partial answer, and the snapshot is the only way to see the
+rest. The measured case ended after 63 of 300 requested records with
+`consumer_overflow`, so a rule based on "nothing was received" would have missed
+exactly the failure that most needs recovering.
+
+The second is a keypress that arrives before the editor's idle tick. The editor
+draws pending bytes only on that tick, so a fast or repeated keypress ends the read
+with the bytes still pending and they are discarded. The records were received and
+never displayed. The decision is therefore made at the **print boundary**, not the
+receive boundary: only bytes handed to the terminal count as output the operator
+saw.
+
+Recovery is declined in three cases, each for a reason:
+
+- A clean end with nothing printed means the provider had nothing to show. The
+  snapshot would be empty too, so printing it would only add noise.
+- `endpoint_offline` means the snapshot travels the same channel and would fail
+  identically, adding a second identical error.
+- A keypress that became a real command means the operator deliberately moved on.
+  Restoring the tail would answer a question they stopped asking. An abnormal end
+  still recovers in that situation, because the stream failed rather than being
+  dismissed.
+
+The recovery prints one dim status line naming the reason before the snapshot, so a
+snapshot is never mistaken for a stream that is still running. A failed snapshot is a
+diagnostic, never a command failure: the stream already ended and the operator's
+command was accepted before it started.
+
+The editor no longer prints a stop label for a stream that already reported its own
+end. One ending is described by one line, so the recovery line is not preceded by a
+contradictory `follow stopped`.
+
+This applies to the interactive surface only. The standalone `FollowLogs` path has no
+terminal to observe a keypress, and adding a snapshot there would change its exit
+semantics, so it keeps its current behaviour.
+
 ## Command lifecycle and uncertain effects
 
 Track lifecycle separately from provider evidence:
