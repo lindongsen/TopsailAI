@@ -47,6 +47,11 @@ const (
 	FrameMessagesRequest = "messages_request"
 	// FrameMessagesResponse returns a bounded provider conversation read.
 	FrameMessagesResponse = "messages_response"
+	// FrameModelCatalogRequest requests a bounded model-catalog read for one
+	// session. It is a read-only query, so it carries no generation requirement.
+	FrameModelCatalogRequest = "model_catalog_request"
+	// FrameModelCatalogResponse returns a bounded model-catalog read.
+	FrameModelCatalogResponse = "model_catalog_response"
 	// FrameOutputResponse returns a bounded provider output snapshot.
 	FrameOutputResponse = "output_response"
 	// FrameOutputFollowRequest starts one streaming output follow. It is a
@@ -73,6 +78,8 @@ type Frame struct {
 	HistoryResult        *protocol.HistoryResult          `json:"history_result,omitempty"`
 	MessagesQuery        *protocol.MessagesQuery          `json:"messages_query,omitempty"`
 	MessagesResult       *protocol.MessagesResult         `json:"messages_result,omitempty"`
+	ModelCatalogQuery    *protocol.ModelCatalogQuery      `json:"model_catalog_query,omitempty"`
+	ModelCatalog         *protocol.ModelCatalog           `json:"model_catalog,omitempty"`
 	Type                 string                           `json:"type"`
 	ProtocolVersion      string                           `json:"protocol_version"`
 	FrameID              string                           `json:"frame_id,omitempty"`

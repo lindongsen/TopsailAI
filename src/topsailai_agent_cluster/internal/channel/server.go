@@ -34,13 +34,14 @@ type Server struct {
 	// SharedCertificate relaxes the certificate-to-Endpoint identity binding when
 	// every Endpoint presents the same Server certificate. It is opt-in because
 	// the binding is a real security property, not a formality.
-	SharedCertificate bool
-	pendingOutput     map[string]pendingOutputRequest
-	pendingLaunch     map[string]pendingLaunchRequest
-	pendingRefresh    map[string]pendingRefreshRequest
-	pendingFollow     map[string]pendingFollowRequest
-	pendingHistory    map[string]pendingHistoryRequest
-	pendingMessages   map[string]pendingMessagesRequest
+	SharedCertificate   bool
+	pendingOutput       map[string]pendingOutputRequest
+	pendingLaunch       map[string]pendingLaunchRequest
+	pendingRefresh      map[string]pendingRefreshRequest
+	pendingFollow       map[string]pendingFollowRequest
+	pendingHistory      map[string]pendingHistoryRequest
+	pendingMessages     map[string]pendingMessagesRequest
+	pendingModelCatalog map[string]pendingModelCatalogRequest
 }
 
 // pendingOutputRequest tracks one output request so read-limit failures can be reported.
@@ -103,7 +104,7 @@ type Peer struct {
 
 // NewServer constructs a channel server.
 func NewServer(tlsConfig *tls.Config) *Server {
-	return &Server{TLSConfig: tlsConfig, Fence: NewFence(), Active: make(map[string]*Peer), HeartbeatTimeout: 30 * time.Second, RevokedSerials: make(map[string]bool), pendingOutput: make(map[string]pendingOutputRequest), pendingRefresh: make(map[string]pendingRefreshRequest), pendingFollow: make(map[string]pendingFollowRequest), pendingHistory: make(map[string]pendingHistoryRequest), pendingMessages: make(map[string]pendingMessagesRequest)}
+	return &Server{TLSConfig: tlsConfig, Fence: NewFence(), Active: make(map[string]*Peer), HeartbeatTimeout: 30 * time.Second, RevokedSerials: make(map[string]bool), pendingOutput: make(map[string]pendingOutputRequest), pendingRefresh: make(map[string]pendingRefreshRequest), pendingFollow: make(map[string]pendingFollowRequest), pendingHistory: make(map[string]pendingHistoryRequest), pendingMessages: make(map[string]pendingMessagesRequest), pendingModelCatalog: make(map[string]pendingModelCatalogRequest)}
 }
 
 // Handler accepts Endpoint-initiated WebSocket upgrades and fences older peers.
@@ -249,6 +250,9 @@ func (s *Server) readLoop(ctx context.Context, peer *Peer) {
 		}
 		if frame.Type == FrameMessagesResponse {
 			s.deliverMessages(peer, frame)
+		}
+		if frame.Type == FrameModelCatalogResponse {
+			s.deliverModelCatalog(peer, frame)
 		}
 		if frame.Type == FrameOutputResponse {
 			s.Mu.Lock()
@@ -580,6 +584,7 @@ func (s *Server) remove(peer *Peer) {
 	s.failPendingRefresh(peer.EndpointID)
 	s.failPendingHistory(peer.EndpointID)
 	s.failPendingMessages(peer.EndpointID)
+	s.failPendingModelCatalog(peer.EndpointID)
 	// A disconnected Endpoint can never answer a snapshot or a follow either, so
 	// those waiters are failed immediately instead of blocking until their own
 	// deadline.
