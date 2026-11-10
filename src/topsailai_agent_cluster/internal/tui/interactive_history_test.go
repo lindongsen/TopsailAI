@@ -375,7 +375,7 @@ func TestInteractiveResumeRejectsNonNumericArgument(t *testing.T) {
 	)
 
 	_, diagnostics := runScope(t, stub, "history endpoint-1\nresume abc\nexit\n", ColorPolicy{})
-	if !strings.Contains(diagnostics, "resume accepts a history row number only; run history to see the rows") {
+	if !strings.Contains(diagnostics, "resume accepts a row number only; run list or history to see the rows") {
 		t.Fatalf("diagnostics=%q", diagnostics)
 	}
 	if stub.admit != 0 {
@@ -383,17 +383,18 @@ func TestInteractiveResumeRejectsNonNumericArgument(t *testing.T) {
 	}
 }
 
-// TestInteractiveResumeRequiresRowArgument proves the missing argument is a
-// syntax failure with the documented usage.
-func TestInteractiveResumeRequiresRowArgument(t *testing.T) {
+// TestInteractiveResumeBareWithoutUnknownSessionExplainsTheFix proves a bare
+// resume is rejected when no listed session is unknown, because there is no
+// unambiguous target to recover.
+func TestInteractiveResumeBareWithoutUnknownSessionExplainsTheFix(t *testing.T) {
 	stub := historyScenarioStub(nil, historyReport())
 
-	_, diagnostics := runScope(t, stub, "resume\nexit\n", ColorPolicy{})
-	if !strings.Contains(diagnostics, "error: invalid arguments") {
+	_, diagnostics := runScope(t, stub, "list\nresume\nexit\n", ColorPolicy{})
+	if !strings.Contains(diagnostics, "no unknown session is listed, so a bare resume has no target; run list and resume <row>") {
 		t.Fatalf("diagnostics=%q", diagnostics)
 	}
-	if !strings.Contains(diagnostics, "usage: resume <row-number>") {
-		t.Fatalf("diagnostics=%q", diagnostics)
+	if stub.admit != 0 {
+		t.Fatalf("bare resume without an unknown session admitted %d commands", stub.admit)
 	}
 }
 
@@ -454,18 +455,18 @@ func TestInteractiveResumeRejectsOfflineEndpoint(t *testing.T) {
 	}
 }
 
-// TestInteractiveResumeWithoutHistoryNamespaceExplainsTheFix proves resume refuses
-// to act before any history render, because it has no row to address.
-func TestInteractiveResumeWithoutHistoryNamespaceExplainsTheFix(t *testing.T) {
+// TestInteractiveResumeWithoutRenderedTableExplainsTheFix proves resume refuses
+// to act before any table render, because it has no row to address.
+func TestInteractiveResumeWithoutRenderedTableExplainsTheFix(t *testing.T) {
 	stub := historyScenarioStub(nil, historyReport())
 	state := &interactiveState{}
 
 	err := interactiveResume(context.Background(), stub, state, "1", nil, io.Discard, io.Discard, InteractiveOptions{})
-	if err == nil || !strings.Contains(err.Error(), "resume requires a history row; run history first") {
+	if err == nil || !strings.Contains(err.Error(), "resume requires a rendered table; run list or history first") {
 		t.Fatalf("err=%v", err)
 	}
 	if stub.admit != 0 {
-		t.Fatalf("history-less resume admitted %d commands", stub.admit)
+		t.Fatalf("table-less resume admitted %d commands", stub.admit)
 	}
 }
 
@@ -666,5 +667,177 @@ func TestInteractiveHistoryCDRejectsUnverifiedRow(t *testing.T) {
 	want := `history row 1 is unverified on endpoint "endpoint-1": the session record exists but no process holds it, so it cannot be entered; use resume 1 to resume it`
 	if !strings.Contains(diagnostics, want) {
 		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+}
+
+// unverifiedSession builds one session the provider listed but could not prove
+// live, so it carries no generation. It is the only shape resume accepts from the
+// list table, because it is the only case where a session is visible but cannot be
+// entered.
+func unverifiedSession(resourceID, providerSessionID, displayName string) protocol.Session {
+	return protocol.Session{
+		SessionID:         resourceID,
+		ProviderSessionID: providerSessionID,
+		DisplayName:       displayName,
+		Generation:        "",
+		State:             protocol.SessionStateUnknown,
+		StateReason:       protocol.StateReasonLivenessUnverified,
+	}
+}
+
+// TestInteractiveResumeAcceptsUnknownListRow proves the list table can supply the
+// resume target.
+//
+// Before this, resume required a history namespace, and history is a different
+// provider surface that does not contain an unverified session at all. The row was
+// therefore visible in the list and unreachable by the only operation able to
+// recover it, so the operator had no recovery step.
+func TestInteractiveResumeAcceptsUnknownListRow(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport(unverifiedSession("res-dead", "wa-dead", "dead work")))
+
+	output, diagnostics := runScope(t, stub, "list\nresume 1\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("unknown list row must be resumable, diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted=%d want=1", stub.admit)
+	}
+	intent := stub.intents[0]
+	if intent.Operation != protocol.OperationAgentResume || intent.EndpointID != "endpoint-1" {
+		t.Fatalf("wrong resume intent: %+v", intent)
+	}
+	if intent.Target == nil || intent.Target.ResourceID != "res-dead" || intent.Target.Generation != "" {
+		t.Fatalf("wrong resume target: %+v", intent.Target)
+	}
+	if !strings.Contains(output, "list row numbers are stale after resume; run list to refresh") {
+		t.Fatalf("missing list invalidation notice: %q", output)
+	}
+}
+
+// TestInteractiveResumeRejectsLiveListRow proves a list row with a generation is
+// entered rather than resumed, so resume can never start a second runtime for a
+// session that is already running.
+func TestInteractiveResumeRejectsLiveListRow(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport(historyLiveSession("res-live", "wa-live", "gen-1")))
+
+	_, diagnostics := runScope(t, stub, "list\nresume 1\nexit\n", ColorPolicy{})
+	want := `row 1 is live on endpoint "endpoint-1", so it cannot be resumed; use cd 1 to enter it`
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("live list row admitted %d commands", stub.admit)
+	}
+}
+
+// TestInteractiveResumeRejectsNonUnknownListRow proves only an unknown session is
+// resumable from the list. A stopped session is a different condition: the provider
+// proved no process holds it, so it is not a resume candidate from this table.
+func TestInteractiveResumeRejectsNonUnknownListRow(t *testing.T) {
+	stopped := protocol.Session{SessionID: "res-stopped", ProviderSessionID: "wa-stopped", State: "stopped"}
+	stub := historyScenarioStub(nil, historyReport(stopped))
+
+	_, diagnostics := runScope(t, stub, "list\nresume 1\nexit\n", ColorPolicy{})
+	want := `row 1 is "stopped" on endpoint "endpoint-1", so it cannot be resumed; only an unknown session can be resumed from the list`
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("non-unknown list row admitted %d commands", stub.admit)
+	}
+}
+
+// TestInteractiveResumeBareAcceptsSoleUnknownSession proves a bare resume recovers
+// the only unknown session without the operator having to read a row number first.
+func TestInteractiveResumeBareAcceptsSoleUnknownSession(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport(
+		historyLiveSession("res-live", "wa-live", "gen-1"),
+		unverifiedSession("res-dead", "wa-dead", "dead work"),
+	))
+
+	output, diagnostics := runScope(t, stub, "list\nresume\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("sole unknown session must be resumable, diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted=%d want=1", stub.admit)
+	}
+	intent := stub.intents[0]
+	if intent.Target == nil || intent.Target.ResourceID != "res-dead" || intent.Target.Generation != "" {
+		t.Fatalf("bare resume selected the wrong target: %+v", intent.Target)
+	}
+	if !strings.Contains(output, "list row numbers are stale after resume; run list to refresh") {
+		t.Fatalf("missing list invalidation notice: %q", output)
+	}
+}
+
+// TestInteractiveResumeBareRejectsSeveralUnknownSessions proves the uniqueness
+// guard. With two unknown rows there is no way to tell which one was meant, and
+// resuming the wrong session would start a runtime nobody asked for, so the
+// ambiguity is reported with the candidate row numbers instead of being resolved
+// by position.
+func TestInteractiveResumeBareRejectsSeveralUnknownSessions(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport(
+		unverifiedSession("res-a", "wa-a", "first work"),
+		unverifiedSession("res-b", "wa-b", "second work"),
+	))
+
+	_, diagnostics := runScope(t, stub, "list\nresume\nexit\n", ColorPolicy{})
+	want := "2 unknown sessions are listed (1, 2), so a bare resume is ambiguous; run resume <row> to choose one"
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("ambiguous bare resume admitted %d commands", stub.admit)
+	}
+}
+
+// TestInteractiveResumeBareIgnoresLiveSessions proves the uniqueness guard counts
+// only unknown sessions. A live session is not a resume candidate, so its presence
+// must not make a sole unknown session look ambiguous.
+func TestInteractiveResumeBareIgnoresLiveSessions(t *testing.T) {
+	stub := historyScenarioStub(nil, historyReport(
+		historyLiveSession("res-live-a", "wa-live-a", "gen-1"),
+		unverifiedSession("res-dead", "wa-dead", "dead work"),
+		historyLiveSession("res-live-b", "wa-live-b", "gen-2"),
+	))
+
+	_, diagnostics := runScope(t, stub, "list\nresume\ny\nexit\n", ColorPolicy{})
+	if diagnostics != "" {
+		t.Fatalf("live rows must not make a sole unknown session ambiguous, diagnostics=%q", diagnostics)
+	}
+	if stub.admit != 1 {
+		t.Fatalf("admitted=%d want=1", stub.admit)
+	}
+	if intent := stub.intents[0]; intent.Target == nil || intent.Target.ResourceID != "res-dead" {
+		t.Fatalf("bare resume selected the wrong target: %+v", intent.Target)
+	}
+}
+
+// TestInteractiveResumeRejectsUnknownListRowWithGeneration proves the generation
+// guard is load-bearing on its own.
+//
+// The state check alone cannot reject this row, because the reported state really is
+// unknown. A generation was nevertheless reported, so the provider did prove a live
+// process, and resuming would start a second runtime for it. The generation check is
+// therefore the only site that refuses the row, and it must run before the state
+// check so the operator is told to enter the session rather than told the state is
+// wrong.
+func TestInteractiveResumeRejectsUnknownListRowWithGeneration(t *testing.T) {
+	contradictory := protocol.Session{
+		SessionID:         "res-odd",
+		ProviderSessionID: "wa-odd",
+		Generation:        "gen-1",
+		State:             protocol.SessionStateUnknown,
+	}
+	stub := historyScenarioStub(nil, historyReport(contradictory))
+
+	_, diagnostics := runScope(t, stub, "list\nresume 1\nexit\n", ColorPolicy{})
+	want := `row 1 is live on endpoint "endpoint-1", so it cannot be resumed; use cd 1 to enter it`
+	if !strings.Contains(diagnostics, want) {
+		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
+	}
+	if stub.admit != 0 {
+		t.Fatalf("unknown row with a generation admitted %d commands", stub.admit)
 	}
 }

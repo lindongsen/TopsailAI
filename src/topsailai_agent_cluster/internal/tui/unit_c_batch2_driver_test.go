@@ -428,14 +428,31 @@ func (d *unitCBatch2Driver) interruptContinuation(t *testing.T) {
 }
 
 // unitCBatch2HelpText pins all successful wizard help writes, not only its first Write.
+// The parameter block and the examples are derived from commandHelpCatalog instead of
+// being copied, because a second copy of the help body silently drifts from it: commit
+// 8e92ee7e added two parameters to the catalog and left this fixture stale, which broke
+// six concurrency tests that have nothing to do with help wording. The rendered content
+// itself stays pinned by TestStartHelpPinsAutoFollowParameters, so deriving the
+// transcript here does not remove the only assertion on what the operator reads.
 func unitCBatch2HelpText() string {
 	first, _ := c10ExpectedWrite("help")
-	return first + "Parameters:\n" +
-		"  endpoint: endpoint ID\n  resource: compatibility resource identifier\n  --profile: launch profile ID (required)\n  --profile-revision: launch profile revision (required)\n  --folder: optional working folder; empty value is treated as omitted\n  --task: optional literal initial task text; no JSON is required\n  without --task and without a positional task: read a multi-line task and finish it with a standalone EOF line or Ctrl+D; the terminator is never part of the task, and the accepted task is echoed verbatim with colour so it can be verified before submission\n  an empty multi-line task is rejected instead of submitting nothing\n  after a completed start: force one collection for the selected endpoint, then start the same live tail as logs -f for the session that appeared, so the new session is watched without typing logf; the tail is armed after the collection because the launched session generation is minted by it, and any key stops it\n  no tail is armed when no session appeared yet, when more than one appeared, when the generation is unverified, or when the client cannot stream; the reason is reported as a diagnostic, and a client that cannot stop a tail renders one bounded snapshot instead\n  --json: rejected in interactive mode\nExamples:\n" +
-		"  start\n" +
-		"  start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1\n" +
-		`  start endpoint-1 ignored-resource --profile topsailai-main --profile-revision topsailai-v1 --task "summarize the open issues"` + "\n" +
-		"Project launch: start [endpoint] selects a live adapter and project (or manual folder), then asks for the initial task. Without an endpoint argument it prints a numbered endpoint list and accepts a bare number, so no endpoint identifier has to be typed. An empty task answer enters multi-line task mode: type the task, then finish it with a standalone EOF line or Ctrl+D, and the accepted task is echoed verbatim with colour so it can be verified before submission. Empty/cancel cancels. Legacy explicit --profile syntax and clients without launch queries use the endpoint/resource/profile/revision prompts; q quits, r refreshes, and help repeats guidance.\n"
+	entry := commandHelpCatalog["start"]
+	var body strings.Builder
+	body.WriteString(first)
+	if len(entry.parameters) > 0 {
+		body.WriteString("Parameters:\n")
+		for _, parameter := range entry.parameters {
+			body.WriteString("  " + parameter + "\n")
+		}
+	}
+	if len(entry.examples) > 0 {
+		body.WriteString("Examples:\n")
+		for _, example := range entry.examples {
+			body.WriteString("  " + example + "\n")
+		}
+	}
+	body.WriteString("Project launch: start [endpoint] selects a live adapter and project (or manual folder), then asks for the initial task. Without an endpoint argument it prints a numbered endpoint list and accepts a bare number, so no endpoint identifier has to be typed. An empty task answer enters multi-line task mode: type the task, then finish it with a standalone EOF line or Ctrl+D, and the accepted task is echoed verbatim with colour so it can be verified before submission. Empty/cancel cancels. Legacy explicit --profile syntax and clients without launch queries use the endpoint/resource/profile/revision prompts; q quits, r refreshes, and help repeats guidance.\n")
+	return body.String()
 }
 
 // waitRun reads the cached result after the runner publication barrier.
