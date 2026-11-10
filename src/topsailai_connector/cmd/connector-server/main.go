@@ -1,20 +1,96 @@
 // Command connector-server is the cloud-side entry point. It accepts Node
 // connections and calls the operations a Node advertises.
 //
-// The skeleton only proves the package layout builds; the listener, the
-// handshake and the operation dispatch are added by later logical units.
+// This build loads and validates the configuration, reports readiness and waits
+// for a signal. The listener, the channel registry and the CLI API are added by
+// later logical units, so the process deliberately refuses to pretend it is
+// serving: it validates everything it can validate and then says what it is not
+// yet doing.
 package main
 
 import (
 	"flag"
-	"log"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"topsailai_connector/internal/protocol"
+	"topsailai_connector/internal/server"
 )
 
 func main() {
-	listen := flag.String("listen", ":8443", "address the server listens on")
-	flag.Parse()
+	if err := run(os.Args[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "connector-server: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	log.Printf("connector-server starting, protocol=%s listen=%s", protocol.Version, *listen)
+// run is the whole process, separated from main so a test can call it and so
+// every failure returns an error instead of calling os.Exit in the middle.
+func run(arguments []string) error {
+	command, rest := splitCommand(arguments)
+
+	switch command {
+	case "", "run":
+		return runServer(rest)
+	default:
+		return fmt.Errorf("unknown command %q; want run", command)
+	}
+}
+
+// splitCommand separates the subcommand from its flags. A leading flag means the
+// default subcommand, so `connector-server --help` works without naming `run`.
+func splitCommand(arguments []string) (string, []string) {
+	if len(arguments) == 0 {
+		return "", nil
+	}
+	first := arguments[0]
+	if len(first) > 0 && first[0] == '-' {
+		return "", arguments
+	}
+	return first, arguments[1:]
+}
+
+// runServer loads the configuration, validates both secrets and waits for a
+// shutdown signal.
+//
+// Every failure here is a startup failure. A Server that started with a missing
+// or short secret would authenticate callers it should refuse, and the mistake
+// would surface as a successful request rather than as a refusal.
+func runServer(arguments []string) error {
+	flags := flag.NewFlagSet("run", flag.ContinueOnError)
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	config, err := server.LoadConfig(os.Getenv)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("connector-server starting",
+		"protocol", protocol.Version,
+		"config", config.Redacted(),
+	)
+	logger.Warn("connector-server is not listening yet; the channel listener and the CLI API are added by later logical units")
+
+	return waitForShutdown(logger)
+}
+
+// waitForShutdown blocks until the process is asked to stop, then returns so the
+// deferred cleanup runs. A Server that exited without closing its listener would
+// leave the port bound until the operating system reclaimed it, which on Windows
+// is long enough to make an immediate restart fail.
+func waitForShutdown(logger *slog.Logger) error {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
+	received := <-signals
+	logger.Info("connector-server stopping", "signal", received.String())
+	return nil
 }
