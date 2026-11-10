@@ -97,6 +97,55 @@ Endpoint exclusively owns adapter discovery/configuration, local provider IDs, h
 
 The database proposal is revised from four tables to three: no `endpoint_adapters` table or adapter column in commands. See `docs/agent-cluster-database.md` for the authoritative table design. Supporting authentication/migration infrastructure is separate from these three business tables.
 
+## The cluster defines the abstraction first
+
+Human direction:
+
+> 你要注意，cluster是个抽象层，你得设计自己的接口，再去对接adapter。别管provider是怎么做的，你不用学它，你要有自己的抽象模型，抽象层。
+
+> 你把这种原则，这种开发方式，记到文档里，cluster始终是抽象层，通用框架，行为模式要先自己定，不要去照着adapter/provider来定。
+
+The cluster is the abstraction layer and the general framework. Its resources, operations, result
+documents, error codes, safety classes and authorization scopes are defined by the cluster itself,
+from the cluster's own model of what an operator needs. An adapter then maps that contract onto
+whatever a provider happens to offer. The direction is always cluster to adapter, never the reverse.
+
+This is a design rule, not a preference. A provider's vocabulary, numbering, file layout, flags or
+record format must never become the shape of the cluster contract, because the contract is what the
+Server, the stored documents, the API and the CLI are built on. A contract shaped by one provider
+cannot survive a second provider, and the whole point of this architecture is that a second provider
+requires no Server, schema or CLI change.
+
+The rule has five consequences for every new capability:
+
+- Name the abstract resource and the abstract operation first, in cluster terms, before reading any
+  provider source. A design that cannot be stated without naming a provider is not a design yet.
+- Provider detail is confined to the adapter mapping section of `docs/agent-cluster-adapters.md` and
+  to adapter code. It never appears in `internal/protocol`, in a Server route, in a stored document
+  or in a CLI help body.
+- A provider's own numbering, index or row number is presentation, never an identity. The cluster
+  mints its own opaque ID through `adapter.ResourceMapper`, and a bare number typed by an operator is
+  resolved client-side against the last rendered list, exactly as `resume <row>` already works.
+- A capability the cluster needs as a first-class operation is a standard operation with its own
+  name, safety class and permission. It must not be reachable only through the generic
+  `ctl.<action>` escape hatch, which exists for provider-specific actions.
+- Reuse an existing cluster pattern rather than inventing a new one. A new read surface is a new
+  instance of the history pattern, not a new pattern.
+
+The rule also decides where a defect belongs. A cluster-side mapping that looks operation-agnostic is
+a cluster defect even when the only shipped adapter cannot reach it, because the contract is what a
+second adapter will be written against. Conversely, a provider limitation is an adapter gap and must
+be reported as an explicit capability gap rather than absorbed into the cluster contract.
+
+This was learned by getting it wrong. The first design of the session model-selection command was
+written by reading the provider's registry file, its selection function and its numbered text output,
+and then copying that shape into the cluster. The result could not be stated without naming provider
+files, inherited a provider numbering scheme as if it were an identity, and would have needed a
+provider change to produce a structured menu. The human rejected the direction, not the feature. The
+corrected design defines `ModelProfile`, `agent.model.list` and `agent.model.select` in cluster terms
+and confines every provider detail to one adapter section. See
+`.task/plan_20261109T150000_session-model-command.md`.
+
 ## Component boundaries
 
 | Component | Owns | Must not own |

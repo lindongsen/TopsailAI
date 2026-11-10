@@ -7,6 +7,26 @@ created: 2026-10-27
 
 # Adapter Mapping, Delivery Plan and Discussion
 
+## This document is the only place provider detail belongs
+
+Every section below describes how one adapter reaches one provider. That is the correct place for it,
+and it is the only place it belongs.
+
+The cluster contract is defined elsewhere and independently: `docs/agent-cluster-protocol.md` names
+the abstract resources, operations, payloads, result documents, safety classes and error codes, and
+`docs/agent-cluster-architecture.md` states the rule that the cluster defines the abstraction first.
+Nothing in this document may change that contract. If a provider cannot satisfy a standard operation,
+the answer is an explicit capability gap reported by the adapter, never a reshaped cluster operation
+that happens to fit the provider.
+
+Two habits follow, and both are mandatory when adding an adapter:
+
+- Read the cluster contract first and ask what the adapter must supply to satisfy it. Do not read the
+  provider first and ask what operation the cluster could offer instead.
+- Keep provider vocabulary out of every other document. A provider flag, registry file, index or
+  record format named in `internal/protocol`, in a Server route, in a stored document or in a CLI
+  help body is a defect, even when it is only a comment.
+
 ## Verified TopsailAI integration surface
 
 This table describes help/documentation inspected on 2026-10-27, not successful live operations. Installed behavior and compatibility must be verified before implementing an adapter release.

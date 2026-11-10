@@ -93,11 +93,56 @@ the two never disagree about what an offline condition looks like.
 `unverified` is a colour key only and never a state: the SESSION_STATUS cell still renders the
 reported `unknown`, because the state vocabulary is a protocol contract.
 
+## How a standard operation is defined
+
+A standard operation is defined by the cluster, from the cluster's own model of what an operator
+needs. It is never derived from what a provider happens to expose. The order is fixed:
+
+1. Name the abstract resource and its opaque identity.
+2. Name the operation, its target kind, its payload and its result document.
+3. Assign its safety class and its required permission.
+4. Define its standard error codes.
+5. Only then write the adapter mapping that reaches a provider.
+
+Steps 1 to 4 are the contract. Step 5 is adapter-private and may change without touching the
+contract. A design that cannot complete steps 1 to 4 without naming a provider has not reached the
+contract yet, and must not be implemented as if it had.
+
+Two consequences follow, and both are load-bearing:
+
+- A provider's numbering, index, row number, file layout or flag spelling is presentation, never an
+  identity and never a wire field. The cluster mints its own opaque ID through
+  `adapter.ResourceMapper`, and an operator-typed number is resolved client-side against the last
+  rendered list, exactly as `resume <row>` already works.
+- A capability the cluster needs as a first-class operation is a standard operation with its own
+  name, safety class and permission. It must not be reachable only through the generic
+  `ctl.<action>` family, because that family exists for provider-specific actions that the cluster
+  deliberately does not model.
+
+A new read surface reuses the existing read pattern rather than inventing one: an optional adapter
+interface, a protocol query/result pair, a channel frame pair, a Server route with a scope rule, and
+a client method. The history read is the reference instance of that pattern.
+
 ## Capability contract
 
 Endpoint publishes standard versioned capabilities for itself, abstract resources and LaunchProfiles. Private adapter capabilities never appear on the wire. Minimum admission requirements are health and bounded discovery of at least one supported resource kind. The MVP platform must implement agent start/resume/stop. Endpoint reports precise standard resource/profile support; an unsupported lifecycle operation is an explicit integration gap, not a silent substitute. Task and output modes remain capability-dependent.
 
 Each advertised operation includes a stable semantic name/version, target kinds, request and result JSON Schemas, payload limits, safety class, required permissions, execution/acknowledgement meaning, deduplication scope and platform prerequisites. Capability revisions are bound to admitted commands; a changed descriptor triggers revalidation, not silent reinterpretation.
+
+### Standard safety classes
+
+`safety_class` is a closed vocabulary defined by the cluster, not a free-form provider label:
+
+| Value | Meaning |
+|---|---|
+| `read_only` | The operation never changes provider state. |
+| `mutating` | The operation may change provider state. |
+
+The distinction is part of the contract because it decides what an operator is asked to confirm and
+what a credential must hold. A read-only listing advertised as `mutating` is a contract lie: it
+forces a confirmation prompt and a stronger permission onto an operation that changes nothing, and it
+hides the real mutating operation behind the same label. An operation whose class is not one of the
+two values is rejected rather than guessed.
 
 Suggested semantic operations:
 
