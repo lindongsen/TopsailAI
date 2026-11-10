@@ -320,7 +320,7 @@ bin/topsailai-data show hello
 | `get-archive` | `get-archive <id>` | Output the object's actual data as a tar archive to stdout. |
 | `put` | `put <id> <dest-file> [--from <file\|->]` | Write a single file into the object's actual data. `<dest-file>` is the name inside the object; `--from` accepts a local file or `-` for stdin; when omitted, content is read from stdin. |
 | `put-archive` | `put-archive <id> <archive\|->` | Replace object actual data from a tar archive. Use `-` to read the archive from stdin. |
-| `file` | `file <subcommand> [arguments]` | Read, inspect, and edit local files and folders. See the file command group section. |
+| `file` | `file <subcommand> [arguments] --object <id>` | Read, inspect, and edit files inside one data object. Every subcommand requires `--object <id>`. See the file command group section. |
 
 ### Command examples
 
@@ -770,45 +770,75 @@ read this skill documentation first rather than exploring the filesystem.
 ## File and folder command group
 
 The `file` command group exposes the file and folder capabilities of the
-TopsailAI file tool. It operates on the local filesystem, not on stored
-objects, so it is the right tool when a task needs to read or edit a file
-outside the topsailai-data store.
+TopsailAI file tool, scoped to the actual data of one data object. Every
+subcommand requires `--object <id>`, and every path is relative to that
+object's folder.
+
+This is the right tool when a task needs to read or edit a file inside an
+object without a `get`-edit-`put` round trip. There is no operating-system
+mode: a file command without `--object` is rejected.
 
 | Subcommand | Usage | Description |
 |------------|-------|-------------|
-| `read` | `file read <file_path> [--seek n] [--size n]` | Read a file, optionally a byte window. A negative `--seek` counts from the end; `--size -1` reads to the end. |
-| `read-lines` | `file read-lines <file_path> [--start n] [--end n]` | Read a line range as `{n}-{content}`. `--end 0` reads only `--start`; `--end -1` reads to the end. |
-| `read-around` | `file read-around <file_path> <line_number> [--context n]` | Read a line with surrounding context. The target is marked `:` and context lines `-`. |
-| `read-context` | `file read-context <file_path> <pattern> [--context n] [--case-sensitive]` | Read lines matching a regular expression with context. Matching is case-insensitive by default. |
-| `read-files` | `file read-files <file_path...> [--format yaml\|json]` | Read several files into one path-to-content map. |
-| `write` | `file write <file_path> [--content <text>\|--from <path\|->] [--seek n] [--insert]` | Write content. `--insert` inserts at the offset instead of overwriting. Redirected standard input is read when neither `--content` nor `--from` is given. |
-| `append` | `file append <file_path> [--content <text>\|--from <path\|->]` | Append content to a file. Redirected standard input is read when neither `--content` nor `--from` is given. |
-| `exists` | `file exists <name=path...> [--format yaml\|json]` | Check several paths for existence. |
-| `mkdirs` | `file mkdirs <absolute_dir...>` | Create folders, including missing parents. Absolute paths are required. |
-| `list-dirs` | `file list-dirs <dir...> [--format yaml\|json]` | List several folders with sorted entries. |
-| `size` | `file size <file_path>` | Report a file size in bytes. |
-| `overwrite-lines` | `file overwrite-lines <file_path> <start_num> [--end n] [--content <text>\|--from <path\|->]` | Replace a line range and print a unified diff. Redirected standard input is read when neither `--content` nor `--from` is given. |
-| `insert` | `file insert <file_path> <line_num> [--content <text>\|--from <path\|->] [--before]` | Insert content before or after a line and print a unified diff. Redirected standard input is read when neither `--content` nor `--from` is given. |
+| `read` | `file read <file_path> --object <id> [--seek n] [--size n]` | Read a file, optionally a byte window. A negative `--seek` counts from the end; `--size -1` reads to the end. |
+| `read-lines` | `file read-lines <file_path> --object <id> [--start n] [--end n]` | Read a line range as `{n}-{content}`. `--end 0` reads only `--start`; `--end -1` reads to the end. |
+| `read-around` | `file read-around <file_path> <line_number> --object <id> [--context n]` | Read a line with surrounding context. The target is marked `:` and context lines `-`. |
+| `read-context` | `file read-context <file_path> <pattern> --object <id> [--context n] [--case-sensitive]` | Read lines matching a regular expression with context. Matching is case-insensitive by default. |
+| `read-files` | `file read-files <file_path...> --object <id> [--format yaml\|json]` | Read several files into one path-to-content map. |
+| `write` | `file write <file_path> --object <id> [--content <text>\|--from <path\|->] [--seek n] [--insert]` | Write content. `--insert` inserts at the offset instead of overwriting. Redirected standard input is read when neither `--content` nor `--from` is given. |
+| `append` | `file append <file_path> --object <id> [--content <text>\|--from <path\|->]` | Append content to a file. Redirected standard input is read when neither `--content` nor `--from` is given. |
+| `exists` | `file exists <name=path...> --object <id> [--format yaml\|json]` | Check several paths for existence. |
+| `mkdirs` | `file mkdirs <dir...> --object <id>` | Accepted as a no-op. Object storage has no empty folder, so writing a file creates the implied path. |
+| `list-dirs` | `file list-dirs <dir...> --object <id> [--format yaml\|json]` | List several folders with sorted entries. |
+| `size` | `file size <file_path> --object <id>` | Report a file size in bytes. |
+| `overwrite-lines` | `file overwrite-lines <file_path> <start_num> --object <id> [--end n] [--content <text>\|--from <path\|->]` | Replace a line range and print a unified diff. Redirected standard input is read when neither `--content` nor `--from` is given. |
+| `insert` | `file insert <file_path> <line_num> --object <id> [--content <text>\|--from <path\|->] [--before]` | Insert content before or after a line and print a unified diff. Redirected standard input is read when neither `--content` nor `--from` is given. |
 
 ### Examples
 
 ```
-bin/topsailai-data file read ./notes/design.md
-bin/topsailai-data file read ./notes/design.md --seek 100 --size 200
-bin/topsailai-data file read-lines ./notes/design.md --start 10 --end 20
-bin/topsailai-data file read-around ./notes/design.md 42 --context 3
-bin/topsailai-data file read-context ./notes/design.md "TODO" --context 2
-bin/topsailai-data file read-files ./a.md ./b.md --format json
-bin/topsailai-data file write ./notes/new.md --content "# Title"
-bin/topsailai-data file write ./notes/new.md --from ./draft.md
-bin/topsailai-data file append ./notes/log.md --content "one more line"
-bin/topsailai-data file exists a=./a.md b=./b.md
-bin/topsailai-data file mkdirs /tmp/work/reports
-bin/topsailai-data file list-dirs ./notes ./docs
-bin/topsailai-data file size ./notes/design.md
-bin/topsailai-data file overwrite-lines ./notes/design.md 10 --end 12 --content "replacement"
-bin/topsailai-data file insert ./notes/design.md 5 --content "inserted line"
+bin/topsailai-data file read notes/design.md --object project--qrew--skill-hub
+bin/topsailai-data file read notes/design.md --object project--qrew--skill-hub --seek 100 --size 200
+bin/topsailai-data file read-lines notes/design.md --object project--qrew--skill-hub --start 10 --end 20
+bin/topsailai-data file read-around notes/design.md 42 --object project--qrew--skill-hub --context 3
+bin/topsailai-data file read-context notes/design.md "TODO" --object project--qrew--skill-hub --context 2
+bin/topsailai-data file read-files a.md b.md --object project--qrew--skill-hub --format json
+bin/topsailai-data file write notes/new.md --object project--qrew--skill-hub --content "# Title"
+bin/topsailai-data file write notes/new.md --object project--qrew--skill-hub --from ./draft.md
+bin/topsailai-data file append notes/log.md --object project--qrew--skill-hub --content "one more line"
+bin/topsailai-data file exists a=a.md b=b.md --object project--qrew--skill-hub
+bin/topsailai-data file list-dirs . notes --object project--qrew--skill-hub
+bin/topsailai-data file size notes/design.md --object project--qrew--skill-hub
+bin/topsailai-data file overwrite-lines notes/design.md 10 --object project--qrew--skill-hub --end 12 --content "replacement"
+bin/topsailai-data file insert notes/design.md 5 --object project--qrew--skill-hub --content "inserted line"
 ```
+
+### Object scoping
+
+`--object <id>` names the data object whose actual data the command operates
+on. The object folder is the root of every path:
+
+- A path is relative to the object folder. `notes/a.md` addresses the file
+  `notes/a.md` inside that object, never a file on the host.
+- A leading slash is ignored, so `/notes/a.md` and `notes/a.md` are the same
+  file.
+- An empty path addresses the object root. `list-dirs ""` and `list-dirs .`
+  both list the top level of the object folder.
+- A path that escapes the object folder, such as `../outside.md`, is rejected.
+- An unknown object id fails with `object not found` before any file is
+  touched.
+
+Because every operation is routed through the manager, the object store
+guarantees apply unchanged:
+
+- Write operations acquire the advisory object lock.
+- Single-file writes replace the destination atomically, so a failed write
+  leaves the previous content intact.
+- Read and write operations update the object's usage statistics.
+- Reserved metadata markers (`<object>.tags`, `<object>.lock`,
+  `<object>.deleted`, `<object>.ceased`, `.stat.json`) are rejected as read and
+  write targets, so a caller cannot bypass lifecycle management. The mandatory
+  `<object>.md` file is actual data and stays readable and writable.
 
 ### Writing content from standard input
 
@@ -817,16 +847,16 @@ The four content-writing subcommands (`write`, `append`, `overwrite-lines`,
 is given. Piping content is therefore enough; no extra flag is required.
 
 ```
-printf 'piped content\n' | bin/topsailai-data file write ./notes/from-stdin.md
-printf 'one more line\n' | bin/topsailai-data file append ./notes/log.md
-printf 'TWO\n' | bin/topsailai-data file overwrite-lines ./notes/design.md 2
-printf 'inserted\n' | bin/topsailai-data file insert ./notes/design.md 5
+printf 'piped content\n' | bin/topsailai-data file write notes/from-stdin.md --object project--qrew--skill-hub
+printf 'one more line\n' | bin/topsailai-data file append notes/log.md --object project--qrew--skill-hub
+printf 'TWO\n' | bin/topsailai-data file overwrite-lines notes/design.md 2 --object project--qrew--skill-hub
+printf 'inserted\n' | bin/topsailai-data file insert notes/design.md 5 --object project--qrew--skill-hub
 ```
 
 The explicit `--from -` form keeps working and is equivalent:
 
 ```
-printf 'dash content\n' | bin/topsailai-data file write ./notes/from-dash.md --from -
+printf 'dash content\n' | bin/topsailai-data file write notes/from-dash.md --object project--qrew--skill-hub --from -
 ```
 
 Content sources are resolved in this order:
@@ -859,43 +889,29 @@ waiting, so an interactive invocation never hangs.
 - `overwrite-lines` and `insert` print a unified diff. `overwrite-lines` also
   prints the warning that line numbers change after each call, so re-read the
   file before the next edit.
-- `mkdirs` rejects relative paths so a call cannot create folders in an
-  unexpected working directory.
 - `read-files`, `list-dirs`, and `exists` record a per-item failure instead of
   hiding the other items.
 
-### Path resolution and discovery
+### Discovery inside an object
 
-The `file` group imposes no folder structure. Paths are ordinary operating
-system paths:
-
-- An absolute path is used verbatim.
-- A relative path is resolved against the process working directory.
-- `TOPSAILAI_DATA_ROOT` is not consulted. The only configuration that affects
-  this group is `TOPSAILAI_DATA_FILE_MAX_BYTES` and
-  `TOPSAILAI_DATA_FILE_WHITE_LIST_NO_TRUNCATE_EXT`, and both affect truncation
-  only.
-- No time prefix, classify directory, object folder, or metadata marker file is
-  created. `file write ./notes/a.md` produces exactly `./notes/a.md`.
-
-This is the opposite of the object-store commands, which place every object at
-`{TOPSAILAI_DATA_ROOT}/YYYY/MMDD/HHMM/{classify...}/{name}` with a mandatory
-`{name}.md` marker and optional `.tags`, `.lock`, `.deleted`, `.ceased`, and
-`.stat.json` files.
-
-Discovery is shallow. `list-dirs` lists the immediate entries of each named
-directory and does not recurse, so each deeper level must be named explicitly:
+`list-dirs` lists the immediate entries of each named folder inside the object
+and does not recurse, so each deeper level must be named explicitly:
 
 ```
-bin/topsailai-data file list-dirs ./notes
-bin/topsailai-data file list-dirs ./notes/archive
+bin/topsailai-data file list-dirs . --object project--qrew--skill-hub
+bin/topsailai-data file list-dirs notes --object project--qrew--skill-hub
+bin/topsailai-data file list-dirs notes/archive --object project--qrew--skill-hub
 ```
 
-`exists` reports a boolean per named path and accepts files and directories
-alike. There is no recursive walk and no search-by-name command in the `file`
-group; recursive discovery with object-boundary detection belongs to `list` and
-`search` in the object store.
+`exists` reports a boolean per named path and accepts files and folders alike.
+`size` reports a byte count, and `read` returns content.
 
-`mkdirs` requires absolute paths while the read and write subcommands accept
-relative paths. The asymmetry is preserved from the original tool so folder
-creation cannot silently land in an unexpected working directory.
+There is no recursive walk and no search-by-name command in the `file` group.
+Recursive discovery with object-boundary detection belongs to `list` and
+`search` in the object store, which scan the whole store rather than one
+object.
+
+`mkdirs` is accepted but performs no work, because object storage has no
+meaningful empty folder: writing `notes/a.md` creates the implied path. The
+absolute-path requirement of the original tool therefore does not apply in
+object mode.

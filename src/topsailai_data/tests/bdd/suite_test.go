@@ -165,4 +165,13 @@ func registerSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^scenario file "([^"]+)" equals "([^"]*)"$`, scenarioFileEquals)
 	ctx.Step(`^scenario file "([^"]+)" has size (\d+)$`, scenarioFileHasSize)
 	ctx.Step(`^scenario folder "([^"]+)" exists$`, scenarioFolderExists)
+	ctx.Step(`^an object "([^"]+)" with files:$`, givenObjectWithFiles)
+	ctx.Step(`^an object "([^"]+)" with file "([^"]+)" repeated (\d+) times as "([^"]*)"$`, givenObjectWithRepeatedFile)
+	ctx.Step(`^object "([^"]+)" file "([^"]+)" equals "([^"]*)"$`, objectFileEquals)
+	ctx.Step(`^object "([^"]+)" file "([^"]+)" contains "([^"]*)"$`, objectFileContains)
+	ctx.Step(`^object "([^"]+)" file "([^"]+)" does not contain "([^"]*)"$`, objectFileDoesNotContain)
+	ctx.Step(`^object "([^"]+)" file "([^"]+)" has size (\d+)$`, objectFileHasSize)
+	ctx.Step(`^object "([^"]+)" root listing contains "([^"]+)"$`, objectRootListingContains)
+	ctx.Step(`^object "([^"]+)" root listing does not contain "([^"]+)"$`, objectRootListingDoesNotContain)
+	ctx.Step(`^exists result reports "([^"]+)" as (true|false)$`, existenceResultReports)
 }

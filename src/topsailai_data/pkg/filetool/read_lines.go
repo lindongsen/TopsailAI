@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -18,7 +17,7 @@ const maxLineBytes = 16 * 1024 * 1024
 
 // lineReader streams decoded lines from a file.
 type lineReader struct {
-	fd     *os.File
+	closer io.Closer
 	reader *bufio.Scanner
 }
 
@@ -26,8 +25,8 @@ type lineReader struct {
 //
 // A bounded byte sample is used to detect the encoding, then the whole stream is
 // decoded incrementally so a large file is never fully loaded.
-func openLineReader(path string) (*lineReader, error) {
-	fd, err := os.Open(path)
+func openLineReader(path string, fs FS) (*lineReader, error) {
+	fd, err := resolveFS(fs).Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +51,7 @@ func openLineReader(path string) (*lineReader, error) {
 
 	scanner := bufio.NewScanner(source)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
-	return &lineReader{fd: fd, reader: scanner}, nil
+	return &lineReader{closer: fd, reader: scanner}, nil
 }
 
 // next returns the next line without its line ending.
@@ -67,7 +66,7 @@ func (r *lineReader) next() (string, bool, error) {
 }
 
 // Close releases the underlying file.
-func (r *lineReader) Close() error { return r.fd.Close() }
+func (r *lineReader) Close() error { return r.closer.Close() }
 
 // ReadFileLinesOptions controls a line-range read.
 type ReadFileLinesOptions struct {
@@ -78,6 +77,10 @@ type ReadFileLinesOptions struct {
 	// is read; -1 means through the end of the file. Other negative values are
 	// rejected.
 	EndNum int
+
+	// FS is the file system to read from. A nil value uses the operating
+	// system file system.
+	FS FS
 }
 
 // ReadFileLines returns the requested lines formatted as "{n}-{content}".
@@ -104,7 +107,7 @@ func ReadFileLines(path string, opts ReadFileLinesOptions) (string, error) {
 		return "", fmt.Errorf("%w: start_num (%d) > end_num (%d)", ErrInvalidRange, startNum, endNum)
 	}
 
-	reader, err := openLineReader(path)
+	reader, err := openLineReader(path, opts.FS)
 	if err != nil {
 		return "", err
 	}
@@ -143,6 +146,10 @@ type ReadFileAroundLineOptions struct {
 	// ContextNum is the number of lines shown before and after the target.
 	// Values <= 0 show only the target line.
 	ContextNum int
+
+	// FS is the file system to read from. A nil value uses the operating
+	// system file system.
+	FS FS
 }
 
 // ReadFileAroundLine returns the target line and its surrounding context.
@@ -164,7 +171,7 @@ func ReadFileAroundLine(path string, opts ReadFileAroundLineOptions) (string, er
 		contextNum = 0
 	}
 
-	reader, err := openLineReader(path)
+	reader, err := openLineReader(path, opts.FS)
 	if err != nil {
 		return "", err
 	}
@@ -221,6 +228,10 @@ type ReadFileWithContextOptions struct {
 
 	// CaseSensitive enables case-sensitive matching when true.
 	CaseSensitive bool
+
+	// FS is the file system to read from. A nil value uses the operating
+	// system file system.
+	FS FS
 }
 
 // ReadFileWithContext returns lines matching a regular expression with context.
@@ -247,7 +258,7 @@ func ReadFileWithContext(path string, opts ReadFileWithContextOptions) (string, 
 		contextNum = 0
 	}
 
-	reader, err := openLineReader(path)
+	reader, err := openLineReader(path, opts.FS)
 	if err != nil {
 		return "", err
 	}

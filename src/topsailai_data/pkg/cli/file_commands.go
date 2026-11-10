@@ -4,6 +4,14 @@
 // tool so an agent can read, inspect, and edit files through the CLI. Every
 // command delegates to the filetool package; this file only parses arguments,
 // applies boundary configuration, and formats output.
+//
+// Every subcommand requires --object <id> and operates on the actual data of
+// that data object, so a caller can read and edit files inside an object
+// without a get-edit-put round trip. Paths are relative to the object folder.
+// Reads and writes go through the manager, which means the advisory object
+// lock, atomic replacement, and usage statistics apply exactly as they do for
+// the get and put commands. There is no operating-system mode: a file command
+// without --object is rejected.
 package cli
 
 import (
@@ -17,6 +25,8 @@ import (
 
 	"github.com/topsailai/topsailai_data/pkg/filetool"
 	"github.com/topsailai/topsailai_data/pkg/manager"
+	"github.com/topsailai/topsailai_data/pkg/models"
+	"github.com/topsailai/topsailai_data/pkg/objectfs"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
@@ -44,6 +54,21 @@ func fileOptions(mgr *manager.Manager) filetool.Options {
 	return opts
 }
 
+// objectFS returns the object-backed file system named by --object.
+//
+// The flag is mandatory: an empty id is rejected so a file command can never
+// silently fall back to operating-system paths. A missing manager is rejected
+// for the same reason.
+func objectFS(ctx context.Context, mgr *manager.Manager, objectID string) (filetool.FS, error) {
+	if objectID == "" {
+		return nil, fmt.Errorf("--object <id> is required")
+	}
+	if mgr == nil {
+		return nil, fmt.Errorf("--object requires a configured manager")
+	}
+	return objectfs.New(ctx, mgr, models.ObjectID(objectID))
+}
+
 // runFile dispatches the "file" command group to its subcommand.
 func runFile(ctx context.Context, mgr *manager.Manager, args []string) error {
 	if len(args) == 0 {
@@ -69,19 +94,19 @@ func runFile(ctx context.Context, mgr *manager.Manager, args []string) error {
 // fileSubcommands returns the registered "file" subcommands.
 func fileSubcommands() []Command {
 	return []Command{
-		{Name: "read", Usage: "read <file_path> [--seek n] [--size n]", Run: runFileRead},
-		{Name: "read-lines", Usage: "read-lines <file_path> [--start n] [--end n]", Run: runFileReadLines},
-		{Name: "read-around", Usage: "read-around <file_path> <line_number> [--context n]", Run: runFileReadAround},
-		{Name: "read-context", Usage: "read-context <file_path> <pattern> [--context n] [--case-sensitive]", Run: runFileReadContext},
-		{Name: "read-files", Usage: "read-files <file_path...> [--format yaml|json]", Run: runFileReadFiles},
-		{Name: "write", Usage: "write <file_path> [--content <text>|--from <path|->] [--seek n] [--insert]", Run: runFileWrite},
-		{Name: "append", Usage: "append <file_path> [--content <text>|--from <path|->]", Run: runFileAppend},
-		{Name: "exists", Usage: "exists <name=path...> [--format yaml|json]", Run: runFileExists},
-		{Name: "mkdirs", Usage: "mkdirs <absolute_dir...>", Run: runFileMkdirs},
-		{Name: "list-dirs", Usage: "list-dirs <dir...> [--format yaml|json]", Run: runFileListDirs},
-		{Name: "size", Usage: "size <file_path>", Run: runFileSize},
-		{Name: "overwrite-lines", Usage: "overwrite-lines <file_path> <start_num> [--end n] [--content <text>|--from <path|->]", Run: runFileOverwriteLines},
-		{Name: "insert", Usage: "insert <file_path> <line_num> [--content <text>|--from <path|->] [--before]", Run: runFileInsert},
+		{Name: "read", Usage: "read <file_path> --object <id> [--seek n] [--size n]", Run: runFileRead},
+		{Name: "read-lines", Usage: "read-lines <file_path> --object <id> [--start n] [--end n]", Run: runFileReadLines},
+		{Name: "read-around", Usage: "read-around <file_path> <line_number> --object <id> [--context n]", Run: runFileReadAround},
+		{Name: "read-context", Usage: "read-context <file_path> <pattern> --object <id> [--context n] [--case-sensitive]", Run: runFileReadContext},
+		{Name: "read-files", Usage: "read-files <file_path...> --object <id> [--format yaml|json]", Run: runFileReadFiles},
+		{Name: "write", Usage: "write <file_path> --object <id> [--content <text>|--from <path|->] [--seek n] [--insert]", Run: runFileWrite},
+		{Name: "append", Usage: "append <file_path> --object <id> [--content <text>|--from <path|->]", Run: runFileAppend},
+		{Name: "exists", Usage: "exists <name=path...> --object <id> [--format yaml|json]", Run: runFileExists},
+		{Name: "mkdirs", Usage: "mkdirs <dir...> --object <id>", Run: runFileMkdirs},
+		{Name: "list-dirs", Usage: "list-dirs <dir...> --object <id> [--format yaml|json]", Run: runFileListDirs},
+		{Name: "size", Usage: "size <file_path> --object <id>", Run: runFileSize},
+		{Name: "overwrite-lines", Usage: "overwrite-lines <file_path> <start_num> --object <id> [--end n] [--content <text>|--from <path|->]", Run: runFileOverwriteLines},
+		{Name: "insert", Usage: "insert <file_path> <line_num> --object <id> [--content <text>|--from <path|->] [--before]", Run: runFileInsert},
 	}
 }
 
@@ -101,13 +126,17 @@ func printFileUsage(w io.Writer) {
 	fmt.Fprintln(w, "  overwrite-lines and insert print a unified diff of the change.")
 	fmt.Fprintln(w, "  write, append, overwrite-lines, and insert read redirected stdin when")
 	fmt.Fprintln(w, "  neither --content nor --from is given.")
+	fmt.Fprintln(w, "  --object <id> is required. Every command runs against the actual data of")
+	fmt.Fprintln(w, "  that data object; paths are relative to the object folder, writes take the")
+	fmt.Fprintln(w, "  object lock, and reads and writes update the object usage statistics.")
 }
 
 // runFileRead implements "file read".
-func runFileRead(_ context.Context, mgr *manager.Manager, args []string) error {
+func runFileRead(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file read")
 	seek := fs.Int64("seek", 0, "byte offset to start reading; negative counts from the end")
 	size := fs.Int64("size", -1, "maximum bytes to read; -1 reads to the end")
+	objectID := fs.String("object", "", "data object that holds the file (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -116,9 +145,15 @@ func runFileRead(_ context.Context, mgr *manager.Manager, args []string) error {
 		return fmt.Errorf("file read: %w", err)
 	}
 
+	target, err := objectFS(ctx, mgr, *objectID)
+	if err != nil {
+		return fmt.Errorf("file read: %w", err)
+	}
+
 	content, err := filetool.ReadFile(remaining[0], filetool.ReadFileOptions{
 		Seek:    *seek,
 		Size:    *size,
+		FS:      target,
 		Options: fileOptions(mgr),
 	})
 	if err != nil {
@@ -129,10 +164,11 @@ func runFileRead(_ context.Context, mgr *manager.Manager, args []string) error {
 }
 
 // runFileReadLines implements "file read-lines".
-func runFileReadLines(_ context.Context, mgr *manager.Manager, args []string) error {
+func runFileReadLines(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file read-lines")
 	start := fs.Int("start", 1, "1-based first line to read")
 	end := fs.Int("end", 0, "1-based last line; 0 reads only --start, -1 reads to the end")
+	objectID := fs.String("object", "", "data object that holds the file (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -141,9 +177,15 @@ func runFileReadLines(_ context.Context, mgr *manager.Manager, args []string) er
 		return fmt.Errorf("file read-lines: %w", err)
 	}
 
+	target, err := objectFS(ctx, mgr, *objectID)
+	if err != nil {
+		return fmt.Errorf("file read-lines: %w", err)
+	}
+
 	content, err := filetool.ReadFileLines(remaining[0], filetool.ReadFileLinesOptions{
 		StartNum: *start,
 		EndNum:   *end,
+		FS:       target,
 	})
 	if err != nil {
 		return fmt.Errorf("file read-lines: %w", err)
@@ -153,9 +195,10 @@ func runFileReadLines(_ context.Context, mgr *manager.Manager, args []string) er
 }
 
 // runFileReadAround implements "file read-around".
-func runFileReadAround(_ context.Context, mgr *manager.Manager, args []string) error {
+func runFileReadAround(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file read-around")
 	contextNum := fs.Int("context", 10, "lines of context before and after the target")
+	objectID := fs.String("object", "", "data object that holds the file (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -168,10 +211,15 @@ func runFileReadAround(_ context.Context, mgr *manager.Manager, args []string) e
 	if err != nil {
 		return fmt.Errorf("file read-around: %w", err)
 	}
+	target, err := objectFS(ctx, mgr, *objectID)
+	if err != nil {
+		return fmt.Errorf("file read-around: %w", err)
+	}
 
 	content, err := filetool.ReadFileAroundLine(remaining[0], filetool.ReadFileAroundLineOptions{
 		LineNumber: lineNumber,
 		ContextNum: *contextNum,
+		FS:         target,
 	})
 	if err != nil {
 		return fmt.Errorf("file read-around: %w", err)
@@ -181,10 +229,11 @@ func runFileReadAround(_ context.Context, mgr *manager.Manager, args []string) e
 }
 
 // runFileReadContext implements "file read-context".
-func runFileReadContext(_ context.Context, mgr *manager.Manager, args []string) error {
+func runFileReadContext(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file read-context")
 	contextNum := fs.Int("context", 10, "lines of context before and after each match")
 	caseSensitive := fs.Bool("case-sensitive", false, "match case-sensitively")
+	objectID := fs.String("object", "", "data object that holds the file (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -193,10 +242,16 @@ func runFileReadContext(_ context.Context, mgr *manager.Manager, args []string) 
 		return fmt.Errorf("file read-context: %w", err)
 	}
 
+	target, err := objectFS(ctx, mgr, *objectID)
+	if err != nil {
+		return fmt.Errorf("file read-context: %w", err)
+	}
+
 	content, err := filetool.ReadFileWithContext(remaining[0], filetool.ReadFileWithContextOptions{
 		Pattern:       remaining[1],
 		ContextNum:    *contextNum,
 		CaseSensitive: *caseSensitive,
+		FS:            target,
 	})
 	if err != nil {
 		return fmt.Errorf("file read-context: %w", err)
@@ -206,9 +261,10 @@ func runFileReadContext(_ context.Context, mgr *manager.Manager, args []string) 
 }
 
 // runFileReadFiles implements "file read-files".
-func runFileReadFiles(_ context.Context, mgr *manager.Manager, args []string) error {
+func runFileReadFiles(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file read-files")
 	format := fs.String("format", "yaml", "output format: yaml or json")
+	objectID := fs.String("object", "", "data object that holds the file (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -217,7 +273,16 @@ func runFileReadFiles(_ context.Context, mgr *manager.Manager, args []string) er
 		return fmt.Errorf("file read-files: %w", err)
 	}
 
-	result, err := filetool.ReadFiles(remaining, filetool.ReadFileOptions{Size: -1, Options: fileOptions(mgr)})
+	target, err := objectFS(ctx, mgr, *objectID)
+	if err != nil {
+		return fmt.Errorf("file read-files: %w", err)
+	}
+
+	result, err := filetool.ReadFiles(remaining, filetool.ReadFileOptions{
+		Size:    -1,
+		FS:      target,
+		Options: fileOptions(mgr),
+	})
 	if err != nil {
 		return fmt.Errorf("file read-files: %w", err)
 	}
@@ -225,12 +290,13 @@ func runFileReadFiles(_ context.Context, mgr *manager.Manager, args []string) er
 }
 
 // runFileWrite implements "file write".
-func runFileWrite(_ context.Context, mgr *manager.Manager, args []string) error {
+func runFileWrite(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file write")
 	content := fs.String("content", "", "content to write")
 	from := fs.String("from", "", "local file to read content from (use - for stdin; stdin is read when omitted)")
 	seek := fs.Int64("seek", 0, "byte offset where writing starts; negative counts from the end")
 	insert := fs.Bool("insert", false, "insert content instead of overwriting")
+	objectID := fs.String("object", "", "data object that holds the file (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -243,9 +309,14 @@ func runFileWrite(_ context.Context, mgr *manager.Manager, args []string) error 
 	if err != nil {
 		return fmt.Errorf("file write: %w", err)
 	}
+	target, err := objectFS(ctx, mgr, *objectID)
+	if err != nil {
+		return fmt.Errorf("file write: %w", err)
+	}
 	if err := filetool.WriteFile(remaining[0], text, filetool.WriteFileOptions{
 		Seek:   *seek,
 		Insert: *insert,
+		FS:     target,
 	}); err != nil {
 		return fmt.Errorf("file write: %w", err)
 	}
@@ -254,10 +325,11 @@ func runFileWrite(_ context.Context, mgr *manager.Manager, args []string) error 
 }
 
 // runFileAppend implements "file append".
-func runFileAppend(_ context.Context, mgr *manager.Manager, args []string) error {
+func runFileAppend(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file append")
 	content := fs.String("content", "", "content to append")
 	from := fs.String("from", "", "local file to read content from (use - for stdin; stdin is read when omitted)")
+	objectID := fs.String("object", "", "data object that holds the file (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -270,7 +342,11 @@ func runFileAppend(_ context.Context, mgr *manager.Manager, args []string) error
 	if err != nil {
 		return fmt.Errorf("file append: %w", err)
 	}
-	if err := filetool.AppendFile(remaining[0], text); err != nil {
+	target, err := objectFS(ctx, mgr, *objectID)
+	if err != nil {
+		return fmt.Errorf("file append: %w", err)
+	}
+	if err := filetool.AppendFileWithFS(remaining[0], text, target); err != nil {
 		return fmt.Errorf("file append: %w", err)
 	}
 	fmt.Fprintln(os.Stdout, "OK")
@@ -278,9 +354,10 @@ func runFileAppend(_ context.Context, mgr *manager.Manager, args []string) error
 }
 
 // runFileExists implements "file exists".
-func runFileExists(_ context.Context, mgr *manager.Manager, args []string) error {
+func runFileExists(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file exists")
 	format := fs.String("format", "yaml", "output format: yaml or json")
+	objectID := fs.String("object", "", "data object that holds the file (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -298,7 +375,12 @@ func runFileExists(_ context.Context, mgr *manager.Manager, args []string) error
 		checks[name] = path
 	}
 
-	result, err := filetool.CheckFilesExisting(checks)
+	target, err := objectFS(ctx, mgr, *objectID)
+	if err != nil {
+		return fmt.Errorf("file exists: %w", err)
+	}
+
+	result, err := filetool.CheckFilesExistingWithFS(checks, target)
 	if err != nil {
 		return fmt.Errorf("file exists: %w", err)
 	}
@@ -306,8 +388,12 @@ func runFileExists(_ context.Context, mgr *manager.Manager, args []string) error
 }
 
 // runFileMkdirs implements "file mkdirs".
-func runFileMkdirs(_ context.Context, mgr *manager.Manager, args []string) error {
+//
+// Object storage has no meaningful empty folder, so in object mode the command
+// succeeds without creating anything: writing a file creates its implied path.
+func runFileMkdirs(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file mkdirs")
+	objectID := fs.String("object", "", "data object that holds the file (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -316,7 +402,12 @@ func runFileMkdirs(_ context.Context, mgr *manager.Manager, args []string) error
 		return fmt.Errorf("file mkdirs: %w", err)
 	}
 
-	if err := filetool.MakeDirs(remaining); err != nil {
+	target, err := objectFS(ctx, mgr, *objectID)
+	if err != nil {
+		return fmt.Errorf("file mkdirs: %w", err)
+	}
+
+	if err := filetool.MakeDirsWithFS(remaining, target); err != nil {
 		return fmt.Errorf("file mkdirs: %w", err)
 	}
 	fmt.Fprintln(os.Stdout, "OK")
@@ -324,9 +415,10 @@ func runFileMkdirs(_ context.Context, mgr *manager.Manager, args []string) error
 }
 
 // runFileListDirs implements "file list-dirs".
-func runFileListDirs(_ context.Context, mgr *manager.Manager, args []string) error {
+func runFileListDirs(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file list-dirs")
 	format := fs.String("format", "yaml", "output format: yaml or json")
+	objectID := fs.String("object", "", "data object that holds the file (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -335,7 +427,12 @@ func runFileListDirs(_ context.Context, mgr *manager.Manager, args []string) err
 		return fmt.Errorf("file list-dirs: %w", err)
 	}
 
-	result, err := filetool.ListDirs(remaining)
+	target, err := objectFS(ctx, mgr, *objectID)
+	if err != nil {
+		return fmt.Errorf("file list-dirs: %w", err)
+	}
+
+	result, err := filetool.ListDirsWithFS(remaining, target)
 	if err != nil {
 		return fmt.Errorf("file list-dirs: %w", err)
 	}
@@ -343,8 +440,9 @@ func runFileListDirs(_ context.Context, mgr *manager.Manager, args []string) err
 }
 
 // runFileSize implements "file size".
-func runFileSize(_ context.Context, mgr *manager.Manager, args []string) error {
+func runFileSize(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file size")
+	objectID := fs.String("object", "", "data object that holds the file (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -353,7 +451,12 @@ func runFileSize(_ context.Context, mgr *manager.Manager, args []string) error {
 		return fmt.Errorf("file size: %w", err)
 	}
 
-	size, err := filetool.FileSize(remaining[0])
+	target, err := objectFS(ctx, mgr, *objectID)
+	if err != nil {
+		return fmt.Errorf("file size: %w", err)
+	}
+
+	size, err := filetool.FileSizeWithFS(remaining[0], target)
 	if err != nil {
 		return fmt.Errorf("file size: %w", err)
 	}
@@ -362,11 +465,12 @@ func runFileSize(_ context.Context, mgr *manager.Manager, args []string) error {
 }
 
 // runFileOverwriteLines implements "file overwrite-lines".
-func runFileOverwriteLines(_ context.Context, mgr *manager.Manager, args []string) error {
+func runFileOverwriteLines(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file overwrite-lines")
 	end := fs.Int("end", 0, "1-based last line; 0 replaces only start_num, -1 replaces to the end")
 	content := fs.String("content", "", "replacement content")
 	from := fs.String("from", "", "local file to read content from (use - for stdin; stdin is read when omitted)")
+	objectID := fs.String("object", "", "data object that holds the file (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -383,11 +487,16 @@ func runFileOverwriteLines(_ context.Context, mgr *manager.Manager, args []strin
 	if err != nil {
 		return fmt.Errorf("file overwrite-lines: %w", err)
 	}
+	target, err := objectFS(ctx, mgr, *objectID)
+	if err != nil {
+		return fmt.Errorf("file overwrite-lines: %w", err)
+	}
 
 	diff, err := filetool.OverwriteLines(remaining[0], filetool.OverwriteLinesOptions{
 		StartNum: startNum,
 		EndNum:   *end,
 		Content:  text,
+		FS:       target,
 	})
 	if err != nil {
 		return fmt.Errorf("file overwrite-lines: %w", err)
@@ -397,11 +506,12 @@ func runFileOverwriteLines(_ context.Context, mgr *manager.Manager, args []strin
 }
 
 // runFileInsert implements "file insert".
-func runFileInsert(_ context.Context, mgr *manager.Manager, args []string) error {
+func runFileInsert(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("file insert")
 	content := fs.String("content", "", "content to insert")
 	from := fs.String("from", "", "local file to read content from (use - for stdin; stdin is read when omitted)")
 	before := fs.Bool("before", false, "insert before the line instead of after")
+	objectID := fs.String("object", "", "data object that holds the file (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -418,11 +528,16 @@ func runFileInsert(_ context.Context, mgr *manager.Manager, args []string) error
 	if err != nil {
 		return fmt.Errorf("file insert: %w", err)
 	}
+	target, err := objectFS(ctx, mgr, *objectID)
+	if err != nil {
+		return fmt.Errorf("file insert: %w", err)
+	}
 
 	diff, err := filetool.InsertContent(remaining[0], filetool.InsertContentOptions{
 		LineNum: lineNum,
 		Before:  *before,
 		Content: text,
+		FS:      target,
 	})
 	if err != nil {
 		return fmt.Errorf("file insert: %w", err)

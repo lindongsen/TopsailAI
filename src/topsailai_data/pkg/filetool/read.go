@@ -3,7 +3,6 @@ package filetool
 import (
 	"fmt"
 	"io"
-	"os"
 )
 
 // readBlockSize is the block size used when reading content that may need
@@ -20,6 +19,10 @@ type ReadFileOptions struct {
 	// Size is the maximum number of bytes to read. -1 reads to the end of the
 	// file. Defaults to -1.
 	Size int64
+
+	// FS is the file system to read from. A nil value uses the operating
+	// system file system.
+	FS FS
 
 	// Options carries the truncation behaviour.
 	Options
@@ -39,7 +42,7 @@ func ReadFile(path string, opts ReadFileOptions) (string, error) {
 		return "", invalidParameter("size", opts.Size, "must be -1 or a non-negative byte count")
 	}
 
-	fd, err := os.Open(path)
+	fd, err := resolveFS(opts.FS).Open(path)
 	if err != nil {
 		return "", err
 	}
