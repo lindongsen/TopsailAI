@@ -610,6 +610,10 @@ Each CLI-specific environment variable independently overrides its default when 
 | `TOPSAILAI_CLI_SESSION_DRIVER_ENTRY` | Optional absolute path to a driver entry file; `.py` requires read access, compiled entries require execute access; defaults to the standard sibling scripts layout. |
 | `TOPSAILAI_CLI_SESSION_DRIVER_PYTHON` | Optional absolute path to a compatible executable Python interpreter whose filename starts with `python`; defaults to the validated CLI runtime for `.py` entries and is unused for compiled entries. |
 
+Both driver variables also accept their previous unprefixed names as deprecated fallbacks: `TOPSAILAI_SESSION_DRIVER_ENTRY`
+and `TOPSAILAI_SESSION_DRIVER_PYTHON`. The prefixed name wins when both are set, an empty value counts as configured, and
+the first use of an old name prints one `[WARN]` deprecation notice on stderr.
+
 The CLI validates these files once at its configuration boundary. An invalid explicit override is rejected rather than silently replaced with a default. Missing default files or an invalid interpreter print an `[ERROR]` with correction guidance and safely block launch. The chosen interpreter must have the driver dependencies installed; file validation alone does not prove import compatibility. Read-only metadata remains available, but unverifiable running evidence shows `?`. Configuration changes require restarting the CLI. The driver receives the resolved `TOPSAILAI_HOME` explicitly, with noninteractive detached standard streams. Environment contents and process command lines are not printed.
 
 ### Driver column and outcomes

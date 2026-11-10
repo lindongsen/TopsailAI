@@ -48,7 +48,6 @@ def harness(monkeypatch, tmp_path):
              (project_scope, "print_managed_project_table", None),
              (project_scope, "resolve_agent_folder", str(tmp_path)),
              (project_scope, "launch_agent_in_folder", None),
-             (project_scope, "resume_session", None),
              (help_text, "print_help", None), (help_text, "print_scopes", None),
              (help_text, "print_instruction_help", None)]
     for module, name, value in specs:

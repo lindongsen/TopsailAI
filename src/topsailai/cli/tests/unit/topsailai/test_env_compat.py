@@ -75,9 +75,9 @@ class GetEnvFallbackTest(unittest.TestCase):
         """An unconfigured variable must return the caller's default."""
         self.assertEqual(
             env_compat.get_env(
-                "TOPSAILAI_CLI_WORKSPACE_ROOT", environ={}, default="/TopsailAI"
+                "TOPSAILAI_CLI_SCAN_MAX_TOKENS", environ={}, default="20000"
             ),
-            "/TopsailAI",
+            "20000",
         )
 
     def test_a_name_without_a_legacy_counterpart_returns_the_default(self):

@@ -117,6 +117,12 @@ JSONL history files (`.topsailai_cli.history.jsonl`, `.input_history.jsonl`, `.p
 - `TOPSAILAI_PROJECT_HISTORY_MAX_SIZE` controls `.project_history.jsonl` rotation.
 - `TOPSAILAI_HISTORY_LOAD_MAX_ENTRIES` limits how many recent records are loaded into memory from `.input_history.jsonl` and `.project_history.jsonl`.
 
+The three `TOPSAILAI_CLI_HISTORY_*` variables above still accept their previous unprefixed names
+(`TOPSAILAI_HISTORY_MAX_SIZE_MB`, `TOPSAILAI_HISTORY_MAX_ENTRIES`, `TOPSAILAI_HISTORY_MAX_BACKUPS`) as deprecated
+fallbacks. The prefixed name wins when both are set, an empty value counts as configured, and the first use of an old name
+prints one `[WARN]` deprecation notice. `TOPSAILAI_INPUT_HISTORY_MAX_SIZE`, `TOPSAILAI_PROJECT_HISTORY_MAX_SIZE`, and
+`TOPSAILAI_HISTORY_LOAD_MAX_ENTRIES` keep their unprefixed names because the core code also reads them.
+
 See `../../../docs/Environment_Variables.md` for the full list of environment variables.
 
 ## Workspace conventions

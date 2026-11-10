@@ -2,8 +2,6 @@
 
 import os
 
-from cli_topsailai.env_compat import get_env
-
 
 def get_topsailai_home() -> str:
     """
@@ -32,22 +30,3 @@ def get_topsailai_home() -> str:
 def expand_path(path: str) -> str:
     """Expand ``~`` and environment variables in *path*."""
     return os.path.expandvars(os.path.expanduser(path))
-
-
-def get_workspace_root(path: str = "") -> str:
-    """Return the workspace root used by the CLI.
-
-    The CLI historically used ``/TopsailAI`` as the fixed workspace root.
-    This helper preserves that default while allowing override via the
-    ``TOPSAILAI_CLI_WORKSPACE_ROOT`` environment variable.
-
-    Args:
-        path: Optional path to resolve relative to the workspace root.
-
-    Returns:
-        The workspace root, or the joined path if *path* is provided.
-    """
-    root = get_env("TOPSAILAI_CLI_WORKSPACE_ROOT", default="/TopsailAI")
-    if path:
-        return os.path.join(root, path)
-    return root

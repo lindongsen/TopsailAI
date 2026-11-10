@@ -156,6 +156,26 @@ The variables below are consumed only by `topsailai_launch_agent`. They are inte
 
 When either session variable is supplied, the launcher uses its value and passes the same value through both variables. When neither is supplied, it creates one before launching the driver.
 
+### Legacy Variable Names
+
+Every renamed variable in the table above still accepts its previous unprefixed name as a deprecated fallback, so an
+environment that still exports `TOPSAILAI_SCAN_MAX_TOKENS` keeps working without a change. Resolution rules:
+
+- The prefixed name always wins when both names are set, so a variable can be migrated one at a time.
+- An empty value counts as configured and does not fall back to the legacy name.
+- The first use of a legacy name prints one `[WARN] <old> is deprecated; use <new> instead.` notice on stderr; the
+  notice is not repeated for the same variable within one process.
+
+| Prefixed name | Accepted legacy name |
+|---------------|----------------------|
+| `TOPSAILAI_CLI_SCAN_EXCLUDE` | `TOPSAILAI_SCAN_EXCLUDE` |
+| `TOPSAILAI_CLI_SCAN_EXCLUDE_DIRS` | `TOPSAILAI_SCAN_EXCLUDE_DIRS` |
+| `TOPSAILAI_CLI_SCAN_EXCLUDE_FILES` | `TOPSAILAI_SCAN_EXCLUDE_FILES` |
+| `TOPSAILAI_CLI_SCAN_MAX_TOKENS` | `TOPSAILAI_SCAN_MAX_TOKENS` |
+| `TOPSAILAI_CLI_SCAN_INCLUDE_FILES` | `TOPSAILAI_SCAN_INCLUDE_FILES` |
+| `TOPSAILAI_CLI_TMP_CLEANUP_MAX_AGE_DAYS` | `TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS` |
+
+
 ### Scan Exclusion Filters
 
 `TOPSAILAI_CLI_SCAN_EXCLUDE`, `TOPSAILAI_CLI_SCAN_EXCLUDE_DIRS`, and `TOPSAILAI_CLI_SCAN_EXCLUDE_FILES` filter specific names out of

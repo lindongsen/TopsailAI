@@ -5,7 +5,6 @@ Unit tests for utility helpers in cli_topsailai.
 
 import os
 import sys
-import tempfile
 import unittest
 
 sys.path.insert(
@@ -16,7 +15,7 @@ sys.path.insert(
 )
 
 from cli_topsailai.core import _preprocess_agent_mode
-from cli_topsailai.paths import expand_path, get_workspace_root
+from cli_topsailai.paths import expand_path
 
 
 class TestUtils(unittest.TestCase):
@@ -25,11 +24,6 @@ class TestUtils(unittest.TestCase):
     def test_expand_path_tilde(self):
         home = os.path.expanduser("~")
         self.assertEqual(expand_path("~"), home)
-
-    def test_get_workspace_root(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = get_workspace_root(tmpdir)
-            self.assertEqual(root, tmpdir)
 
     def test_preprocess_agent_mode_short_and_long_forms_match(self):
         """Short and long agent-mode forms should normalize identically."""
