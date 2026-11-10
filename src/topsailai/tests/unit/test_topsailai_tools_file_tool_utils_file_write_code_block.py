@@ -87,7 +87,7 @@ class TestOverwriteCodeBlock:
         )
 
     def test_replace_to_end_of_file(self, tmp_path):
-        """Test replacing from a line to end of file (end_num=0)."""
+        """Test replacing from a line to end of file (end_num=-1)."""
         test_file = tmp_path / "test.txt"
         test_file.write_text(
             "line1\n"
@@ -97,7 +97,7 @@ class TestOverwriteCodeBlock:
             "line5\n"
         )
 
-        result = overwrite_code_block(str(test_file), 3, 0, "new_line3\nnew_end\n")
+        result = overwrite_code_block(str(test_file), 3, -1, "new_line3\nnew_end\n")
 
         assert "new_line3" in result
         assert "new_end" in result
@@ -107,6 +107,29 @@ class TestOverwriteCodeBlock:
             "line2\n"
             "new_line3\n"
             "new_end\n"
+        )
+
+    def test_end_num_zero_replaces_only_start_line(self, tmp_path):
+        """end_num=0 means no end line, so only start_num is replaced."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text(
+            "line1\n"
+            "line2\n"
+            "line3\n"
+            "line4\n"
+            "line5\n"
+        )
+
+        result = overwrite_code_block(str(test_file), 3, 0, "new_line3\n")
+
+        assert "new_line3" in result
+        content = test_file.read_text()
+        assert content == (
+            "line1\n"
+            "line2\n"
+            "new_line3\n"
+            "line4\n"
+            "line5\n"
         )
 
     def test_replace_first_line(self, tmp_path):
@@ -136,7 +159,7 @@ class TestOverwriteCodeBlock:
         assert content == "line1\nline2\nnew_last_line\n"
 
     def test_replace_entire_file(self, tmp_path):
-        """Test replacing the entire file content."""
+        """Test replacing the entire file content with end_num=-1."""
         test_file = tmp_path / "test.txt"
         test_file.write_text(
             "line1\n"
@@ -145,7 +168,7 @@ class TestOverwriteCodeBlock:
         )
 
         result = overwrite_code_block(
-            str(test_file), 1, 0, "new_content_line1\nnew_content_line2\n"
+            str(test_file), 1, -1, "new_content_line1\nnew_content_line2\n"
         )
 
         content = test_file.read_text()
@@ -231,7 +254,7 @@ class TestOverwriteCodeBlock:
         assert content == "line1\nmodified\nline3\n"
 
     def test_end_num_as_string_zero(self, tmp_path):
-        """Test end_num=0 passed as string."""
+        """Test end_num="0" passed as string replaces only the start line."""
         test_file = tmp_path / "test.txt"
         test_file.write_text(
             "line1\n"
@@ -239,9 +262,9 @@ class TestOverwriteCodeBlock:
             "line3\n"
         )
 
-        result = overwrite_code_block(str(test_file), "2", "0", "new_line2\nnew_line3\n")
+        result = overwrite_code_block(str(test_file), "2", "0", "new_line2\n")
         content = test_file.read_text()
-        assert content == "line1\nnew_line2\nnew_line3\n"
+        assert content == "line1\nnew_line2\nline3\n"
 
     def test_returns_diff_string(self, tmp_path):
         """Test that the function returns a string with diff content."""
@@ -307,11 +330,11 @@ class TestOverwriteCodeBlock:
         assert not content.endswith('\n')
 
     def test_file_without_trailing_newline_replace_end(self, tmp_path):
-        """Test replace to end of file without trailing newline."""
+        """Test replace to end of file without trailing newline using end_num=-1."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("line1\nline2\nline3")
 
-        result = overwrite_code_block(str(test_file), 2, 0, "new_line2\nnew_line3\nnew_line4")
+        result = overwrite_code_block(str(test_file), 2, -1, "new_line2\nnew_line3\nnew_line4")
         content = test_file.read_text()
         assert content == "line1\nnew_line2\nnew_line3\nnew_line4"
         assert not content.endswith('\n')
@@ -707,8 +730,8 @@ class TestStringFirstLineParameters:
         ("start_num", "-inf"), ("start_num", ""),
         ("start_num", None), ("start_num", "abc"),
         ("end_num", "NaN"), ("end_num", "+inf"),
-        ("end_num", "-inf"), ("end_num", ""),
-        ("end_num", None), ("end_num", "abc"),
+        ("end_num", "-inf"), ("end_num", "abc"),
+        ("end_num", -2), ("end_num", "-2"),
     ])
     def test_rejects_invalid_numeric_values_without_writing(
             self, tmp_path, parameter, value):
@@ -722,6 +745,41 @@ class TestStringFirstLineParameters:
         assert result["status"] == "invalid_request"
         assert parameter in result["reason"]
         assert target.read_text(encoding="utf-8") == original
+
+    @pytest.mark.parametrize("end_num", ["", "   ", None])
+    def test_blank_end_num_replaces_only_start_line(self, tmp_path, end_num):
+        """Blank or None end_num means no end line, so only start_num is replaced."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        result = overwrite_code_block(
+            str(target), 2, end_num, "changed\n"
+        )
+        assert "changed" in result
+        assert target.read_text(encoding="utf-8") == "one\nchanged\nthree\n"
+
+    def test_omitted_end_num_replaces_only_start_line(self, tmp_path):
+        """Omitting end_num entirely replaces only start_num."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        result = overwrite_code_block(str(target), 2, content="changed\n")
+        assert "changed" in result
+        assert target.read_text(encoding="utf-8") == "one\nchanged\nthree\n"
+
+    def test_end_num_minus_one_replaces_through_end(self, tmp_path):
+        """end_num=-1 replaces from start_num through the end of the file."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        result = overwrite_code_block(str(target), 2, -1, "changed\n")
+        assert "changed" in result
+        assert target.read_text(encoding="utf-8") == "one\nchanged\n"
+
+    def test_end_num_minus_one_on_last_line(self, tmp_path):
+        """end_num=-1 on the last line replaces exactly that line."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        result = overwrite_code_block(str(target), 3, -1, "changed\n")
+        assert "changed" in result
+        assert target.read_text(encoding="utf-8") == "one\ntwo\nchanged\n"
 
     @pytest.mark.parametrize(("start_num", "end_num", "message"), [
         (-1, 1, "Invalid start_num"),

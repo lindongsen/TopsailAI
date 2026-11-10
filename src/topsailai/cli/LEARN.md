@@ -299,6 +299,11 @@ mistaken for a fix.
 
 ## A line-range overwrite with `end_num=0` replaces to end of file
 
+> **Semantics changed on 2026-11-10.** `end_num=0`, `null`, or empty text now
+> means "no end line, so only `start_num` is replaced", and `-1` means "through
+> the end of the file". The incident below is kept as the historical record that
+> motivated the change; the tool no longer behaves as described in it.
+
 ### Trigger
 
 While updating one test class, I passed `end_num=0` to the line-range overwrite

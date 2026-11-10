@@ -12,7 +12,7 @@ from contextlib import contextmanager
 
 import chardet
 
-from topsailai.tools.tool_utils.parameter import resolve_finite_int
+from topsailai.tools.tool_utils.parameter import resolve_end_num, resolve_finite_int
 
 
 _ENCODING_SAMPLE_SIZE = 32768
@@ -312,7 +312,11 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> st
         file_path (str): The path to the file to read from
         start_num (int): The starting line number (1-based). Lines before this number
                         will be excluded. Must be >= 1.
-        end_num (int): The ending line number (1-based, inclusive). 0 for no end limit.
+        end_num (int): The ending line number (1-based, inclusive).
+                       Omitted, ``0``, ``None``, or blank text means no end line,
+                       so only ``start_num`` is read.
+                       ``-1`` reads through the end of the file.
+                       Any other negative value is rejected.
 
     Returns:
         str: The concatenated content of the specified lines as a single string.
@@ -325,20 +329,27 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> st
         # Read lines 1-10 from a file
         content = read_file_lines("example.txt", 1, 10)
 
-        # Read all of content from a file
-        content = read_file_lines("example.txt", 1, 0)
+        # Read only line 3
+        content = read_file_lines("example.txt", 3)
+
+        # Read from line 3 through the end of the file
+        content = read_file_lines("example.txt", 3, -1)
     """
     start_num, error = resolve_finite_int(start_num, "start_num")
     if error:
         return error
-    end_num, error = resolve_finite_int(end_num, "end_num")
+    end_num, error = resolve_end_num(end_num, "end_num")
     if error:
         return error
     try:
         if not start_num:
             start_num = 1
 
-        if end_num != 0 and start_num > end_num:
+        # ``0`` means no end line, so only ``start_num`` is addressed.
+        if end_num == 0:
+            end_num = start_num
+
+        if end_num > 0 and start_num > end_num:
             return f"Error: Invalid range: start_num ({start_num}) > end_num ({end_num})"
 
         start_idx = start_num - 1
@@ -350,7 +361,7 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> st
                 total_lines = line_num
                 line = _strip_line_ending(line)
                 idx = line_num - 1
-                if end_num and idx >= end_num:
+                if end_num > 0 and idx >= end_num:
                     break
                 if idx >= start_idx:
                     output_lines.append(f"{line_num}-{line}")

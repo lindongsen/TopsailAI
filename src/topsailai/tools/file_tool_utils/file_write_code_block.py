@@ -7,7 +7,7 @@ Purpose:
 
 import os
 
-from topsailai.tools.tool_utils.parameter import resolve_finite_int
+from topsailai.tools.tool_utils.parameter import invalid_request, resolve_end_num, resolve_finite_int
 from topsailai.utils import (
     file_tool as _file_tool,
     json_tool,
@@ -15,7 +15,7 @@ from topsailai.utils import (
 from . import file_diff
 
 
-def overwrite_code_block(file_path: str, start_num: int, end_num: int, content: str, **_) -> str:
+def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, content: str = None, **_) -> str:
     """
     Replace lines from start_num to end_num (1-based, inclusive) with the provided content.
     The content can be a single line or multi-line block.
@@ -31,7 +31,13 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int, content: 
         file_path (str): Path to the file to modify
         start_num (int): The 1-based starting line number to begin replacement -> **include this line to replace**
         end_num (int): The 1-based ending line number (inclusive) to end replacement.
-                       Pass 0 to replace from start_num to the end of the file.
+                       Omitted, ``0``, ``None``, or blank text means no end line,
+                       so ONLY ``start_num`` is replaced.
+                       ``-1`` replaces from ``start_num`` through the end of the file.
+                       Any other negative value is rejected.
+                       This differs from ``read_file_lines``, where ``0`` means
+                       "read to the end"; a write is destructive, so the
+                       ambiguous value must never delete the rest of the file.
         content (str): The new content to insert in place of the replaced lines.
                        Can be a single line or multi-line string.
                        Pass null string to delete lines.
@@ -44,13 +50,26 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int, content: 
         ```
         args=("example.py", 5, 10, "def new_function():\\n    pass\\n")
         ```
+
+        Replace only line 5
+        ```
+        args=("example.py", 5, 0, "def new_function():\\n    pass\\n")
+        ```
+
+        Replace line 5 through the end of the file
+        ```
+        args=("example.py", 5, -1, "def new_function():\\n    pass\\n")
+        ```
     """
     start_num, error = resolve_finite_int(start_num, "start_num")
     if error:
         return error
-    end_num, error = resolve_finite_int(end_num, "end_num")
+    end_num, error = resolve_end_num(end_num, "end_num")
     if error:
         return error
+    # ``content`` is required; an omitted value must never delete lines silently.
+    if content is None:
+        return invalid_request("content", content, "must be a string")
 
     with _file_tool.ctxm_temp_file("") as (tmp_file, fp):
         # Check if file exists
@@ -87,8 +106,11 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int, content: 
         # Convert to 0-based indices
         start_idx = start_num - 1
 
-        # If end_num is 0, replace to end of file
+        # ``0`` means no end line, so only ``start_num`` is replaced.
+        # ``-1`` means through the end of the file.
         if end_num == 0:
+            end_idx = start_num
+        elif end_num == -1:
             end_idx = len(lines_content)
         else:
             # end_num is 1-based inclusive, so end_num as slice end gives exclusive end
@@ -107,8 +129,8 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int, content: 
         if end_idx > len(lines_content):
             end_idx = len(lines_content)
 
-        # Validate range: start_idx must be < end_idx when end_num != 0
-        if end_num != 0 and start_idx >= end_idx:
+        # Validate range: the replaced block must contain at least one line
+        if start_idx >= end_idx:
             raise Exception(
                 f"Invalid range: start_num ({start_num}) > end_num ({end_num})"
             )
