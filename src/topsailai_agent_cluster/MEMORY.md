@@ -134,9 +134,9 @@ cluster terms and confines every provider detail to one adapter section. See
 
 ## Point out an existing convention instead of inventing a parallel one
 
-Directed by the human on 2026-11-10, quoted verbatim:
+Directed by the human on 2026-11-10; wording normalized, meaning preserved:
 
-> commit. 此外，如果是已经存在的通用做法，你要提醒我了，保持标准化和复用性也是很重要事。要记住。
+> 此外，如果是已经存在的通用做法，你要提醒我。保持标准化和复用性也是很重要的。要记住。
 
 This is a standing rule for every change, not a note about one prompt. Before adding a constant, a
 helper, a format, a naming scheme or a control flow, search the project for the same concept. If a
@@ -163,3 +163,31 @@ Consequences that MUST hold:
   and do not "improve" it in passing.
 - When a change makes an existing abstraction reusable, prefer wiring the new case into that
   abstraction over copying its behaviour, so one definition keeps serving every caller.
+
+## Quote the human's meaning, not their disfluency
+
+Directed by the human on 2026-11-10, wording normalized:
+
+> 原话不通顺的话也不要照抄。
+
+A recorded human statement must preserve what the human decided. It must not preserve typing
+artefacts, missing punctuation, run-on clauses or a stray leading word that only made sense in the
+middle of a conversation. Normalize the wording, keep the meaning, and label the quote honestly as
+normalized rather than verbatim.
+
+This corrects an over-literal habit. The rule "preserve the human's own words" was being applied as
+"copy the message byte for byte", so a recorded quote began with an unrelated instruction from the
+same message and read as broken Chinese. The decision it carried was clear; the transcription was
+not. The same problem appeared twice in the plan document for the bare-send confirmation prompt.
+
+Consequences that MUST hold:
+
+- Preserve the decision, the constraint and the intent. Those are the facts that must survive.
+- Fix grammar, punctuation and spacing, and drop fragments that belong to a different instruction in
+  the same message.
+- Label the result as normalized, for example `wording normalized, meaning preserved`, so a reader
+  never mistakes it for a verbatim transcript.
+- Never paraphrase into a different decision. Normalizing wording is allowed; changing what the human
+  asked for is not.
+- Keep the original wording when the exact phrasing is itself the subject, such as a command name, a
+  prompt string or a UI label the human typed deliberately.
