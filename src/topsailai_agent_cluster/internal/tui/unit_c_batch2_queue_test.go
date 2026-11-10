@@ -236,7 +236,7 @@ func unitC19MainHelp() string {
 		"  show [endpoint-or-session]            show endpoint or session details\n" +
 		"  info [session]                        show session detail by row number or session ID\n" +
 		unitC19StartHelpLine() +
-		"  resume [row]                          resume a stopped session by history row number\n" +
+		"  resume [row]                          resume a stopped session by row number; a bare resume needs exactly one unknown session\n" +
 		"  stop [session]                        stop a session by row number or session ID\n" +
 		"  drive [start|stop|status] [session]   manage a session driver by row number or session ID; drive stop leaves the agent running\n" +
 		"  status [command-id]                   show command result\n" +

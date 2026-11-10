@@ -222,6 +222,44 @@ and that `cd` and `logs` must work.
   against a session that has since stopped: the join is re-evaluated against the
   current inventory before the transition, and a row that is no longer live is rejected.
 
+## Implemented resume addressing across both tables
+
+`resume` resolves its row number against whichever table rendered last, because the
+namespace rule above already makes exactly one of them current. The two tables are
+different provider surfaces, and only the live table contains the sessions resume
+exists for.
+
+The history table is a bounded past-record view: it reads the provider's session
+records through a capped query and reports the adapter's own resumability verdict.
+An unverified session is frequently absent from it, because the cap is reached by
+older records first. The live table reports such a session as `unknown` with an
+empty generation, so it is visible there and nowhere else.
+
+| Input | Accepted when | Refused otherwise |
+|---|---|---|
+| `resume <n>` after `history` | the adapter reports the row resumable | the adapter's own reason, unchanged |
+| `resume <n>` after `list` | the reported state is `unknown` and no generation was reported | `use cd <n> to enter it` when a generation was reported, or the reported state when it is not `unknown` |
+| `resume` with no argument | exactly one listed session is `unknown` | the candidate row numbers when several are unknown, or a hint to run `list` when none is |
+
+Three properties of this rule are load-bearing:
+
+- The generation check runs before the state check. A row that reports `unknown` while
+  also reporting a generation is contradictory, and the generation is the stronger
+  evidence: the provider did prove a live process, so the row must be entered rather
+  than resumed. Checking the state first would tell the operator the state is wrong
+  when the real problem is that the session is already running.
+- Live sessions never count toward the bare-resume ambiguity. A live session is not a
+  resume candidate, so a busy fleet must not disable the shortcut.
+- A successful resume clears both row-number namespaces, not only the one that supplied
+  the number, because a resume changes the inventory and a number from either table can
+  be stale afterwards. The notice names the command that refreshes the table the
+  operator was actually using.
+
+The client-side guard is not the authority. The absence of a live target is re-proven
+from a complete fresh inventory before submission, and the Endpoint repeats the check
+against the provider's own answer, so a stale list row cannot resume a session that has
+started in the meantime.
+
 ## Failure semantics
 
 Following the project's command-surface rules, the non-interactive surface must fail
