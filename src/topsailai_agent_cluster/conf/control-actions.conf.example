@@ -419,7 +419,7 @@
     },
     {
       "name": "agent.models",
-      "permission": "read_output",
+      "permission": "control",
       "payload_constants": {"instruction": "agent.models"},
       "payload_schema": {
         "type": "object",

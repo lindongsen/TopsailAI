@@ -114,12 +114,17 @@ func (a *Adapter) Describe(context.Context) (adapter.Descriptor, error) {
 			// command.exec runs an operator-supplied argv array, so it declares the
 			// control permission: an operator who may not control a session must not
 			// be able to run commands in its working directory either.
-			{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion, TargetKinds: []string{"session"}, SafetyClass: "mutating", RequiredPermission: "control"},
+			{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion, TargetKinds: []string{"session"}, SafetyClass: protocol.SafetyClassMutating, RequiredPermission: "control"},
 			// agent.model.select changes the model a running agent uses, so it
 			// declares the control permission and the mutating safety class. A
 			// credential that may only read output must not be able to change what
 			// the agent is running on.
 			{Name: protocol.OperationAgentModelSelect, Version: protocol.ModelSelectPayloadVersion, TargetKinds: []string{"session"}, SafetyClass: protocol.SafetyClassMutating, RequiredPermission: "control"},
+			// agent.model.list reads the profiles a session can select, so it
+			// declares the view permission and the read-only safety class. It is
+			// advertised separately from select because a credential that may look
+			// at the menu must not thereby be able to change the model.
+			{Name: protocol.OperationAgentModelList, Version: "v1", TargetKinds: []string{"session"}, SafetyClass: protocol.SafetyClassReadOnly, RequiredPermission: "view"},
 		}},
 	}
 	// The provider control family is advertised per enabled action so an operator
