@@ -638,21 +638,54 @@ proposals.
 | Endpoint existence versus reachability | Reported separately: `404 endpoint_not_found` for an identity that was never registered, `503 endpoint_offline` for a registered Endpoint with no live channel |
 | Policy directory packaging | A conffile in the config package, so an upgrade keeps a site's policy instead of replacing it, matching the command allowlist |
 | Token maintenance script location | `scripts/` beside `agent-clusterctl`, not a subcommand of the Endpoint binary |
+| Refusal code for a denied read | The shared `policy_denied` code, with the refused operation named in the message |
+| `endpoint_admin` in the vocabulary | Kept, even though no Endpoint operation requires it, so a closed vocabulary never changes |
+| A `permissions` entry naming an unserved operation | Accepted at load with a warning, so one file set serves a version-skewed fleet |
 | CLI token distribution | A local per-Endpoint map in the CLI's own configuration file, never a Server-side path |
 
-The last decision is the one that keeps the design coherent. A Server-side distribution path would
-make the Server a token holder, and a holder can hand tokens out, which is the authority this design
-removes. Paying the cost once per CLI machine is cheaper than reintroducing that authority.
+The CLI token distribution decision is the one that keeps the design coherent. A Server-side
+distribution path would make the Server a token holder, and a holder can hand tokens out, which is
+the authority this design removes. Paying the cost once per CLI machine is cheaper than
+reintroducing that authority.
 
-## Open questions
+## Why these decisions
 
-- Should a denied read return a distinct code per operation, or one shared `policy_denied` code
-  with the operation named in the message?
-- Should `endpoint_admin` be removed from the vocabulary until an operation needs it, or kept so
-  the file format does not change later?
-- Should a `permissions` entry be allowed to name an operation the Endpoint does not serve? The
-  current proposal accepts it, so a policy can be written before the operation ships, but it also
-  means a typo in a non-`ctl.` name is the only thing load-time validation can catch.
-- Which grant should a site give a machine that is only observed, such as `gd-dev`: a read-only
-  token, or `deny-all`? The answer depends on whether that machine is ever operated remotely, so it
-  is a deployment decision rather than a design one.
+Each of the last three decisions removes a way the policy could have grown a second vocabulary or
+failed silently.
+
+Reusing `policy_denied` keeps one code for one decision. The eleven command operations already
+return it (`internal/endpoint/executor.go:140`), so a read that returned its own code would be a
+second vocabulary for the same refusal, and it would grow with every read operation added, forcing
+a client to learn each new code. Naming the operation in the message costs nothing, because the
+caller asked for that operation and learns nothing it did not already know.
+
+Keeping `endpoint_admin` protects a closed vocabulary. Removing a name would make an existing
+policy file fail to load, and reintroducing it later would be another format change, so an unused
+name is cheaper than a format that changes twice.
+
+Accepting an unserved operation in `permissions` is what makes one file set serve the whole fleet.
+A version-skewed Endpoint would otherwise need its own policy file, which is exactly the
+per-machine maintenance the `endpoints` declaration exists to avoid, and writing a policy before
+the operation ships is a normal deployment order. The load warning is not optional, because this
+acceptance is the only place in the design where a mistake can be silent: a misspelled operation
+name would otherwise never take effect and never be reported.
+
+## What a site does not need to configure
+
+The two directions of restriction live in two different places, and conflating them is the easiest
+way to misconfigure a deployment.
+
+| Restriction | Where it is configured | Effect |
+|---|---|---|
+| Who may operate this machine | The Endpoint policy directory | A token with no matching file is refused |
+| Which machines this CLI may address | The CLI's own token map | An Endpoint absent from the map is refused locally |
+
+A machine that should be reachable by every other machine but whose own CLI should stay local needs
+no policy directory at all. An absent directory is permissive, so every provisioned token is
+accepted, while the local CLI is confined by having only its own entry in its map. That is the
+correct configuration for a host that is observed and operated from elsewhere but must not reach
+out itself, and it needs no `deny-all` file, because `deny-all` would refuse the remote operators
+the site actually wants.
+
+A `deny-all` file is therefore reserved for a machine that no caller should operate, which is a
+different requirement from a machine whose own CLI should stay local.
