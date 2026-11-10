@@ -585,11 +585,12 @@ func model(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, ta
 // unavailable profile is refused before anything is submitted rather than being sent
 // to the provider as an opaque value.
 //
-// The catalog read is also what supplies the generation when the caller did not pass
-// one. A model change addresses a live process, so the generation is mandatory: an
-// empty generation would let the Endpoint refuse the command with generation_required,
-// which is a correct but late failure, and reading it here lets the operator see the
-// real reason before a confirmation question is asked.
+// The catalog carries no generation, so the generation a model change needs is
+// resolved from the committed inventory instead. A model change addresses a live
+// process, and the Endpoint rejects an empty generation with generation_required
+// (internal/endpoint/executor.go:126-133), which would otherwise surface only after
+// the operator had already answered the confirmation question. Resolving it here
+// turns that late failure into an immediate one that names the real reason.
 func modelSelectWithProgress(ctx context.Context, api tui.CommandAPI, output, diagnostics io.Writer, target, sessionID, profile string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
 	if tui.IsRowNumber(profile) {
 		return fmt.Errorf("model profile %q is a row number, which only exists after an interactive render; name the profile by model_profile_id or display name", profile)
@@ -601,6 +602,15 @@ func modelSelectWithProgress(ctx context.Context, api tui.CommandAPI, output, di
 	endpoint, err := tui.ResolveEndpointTarget(ctx, api, target)
 	if err != nil {
 		return err
+	}
+	if generationFlag == "" {
+		generationFlag, err = resolveSessionGeneration(ctx, api, endpoint.EndpointID, sessionID)
+		if err != nil {
+			return err
+		}
+		if generationFlag == "" {
+			return fmt.Errorf("session %q has no verified generation in the committed inventory, so a model change cannot address it; pass --generation explicitly or refresh the inventory", sessionID)
+		}
 	}
 	catalog, err := querier.GetModelCatalog(ctx, endpoint.EndpointID, sessionID, generationFlag)
 	if err != nil {
@@ -720,6 +730,24 @@ func interruptContext(parent context.Context, interrupts <-chan os.Signal) (cont
 	}
 }
 
+// resolveSessionGeneration looks up the generation the committed inventory reports
+// for one session. An empty result means the inventory reports no verified
+// generation for that session, which is a fact the caller must interpret: a model
+// change refuses it, while a follow stream passes it through and lets the Endpoint
+// decide. The lookup is shared so the two surfaces cannot drift apart.
+func resolveSessionGeneration(ctx context.Context, api tui.CommandAPI, endpointID, sessionID string) (string, error) {
+	report, err := api.GetInventory(ctx, endpointID)
+	if err != nil {
+		return "", err
+	}
+	for _, session := range report.Sessions {
+		if session.SessionID == sessionID {
+			return session.Generation, nil
+		}
+	}
+	return "", nil
+}
+
 // followLogs streams output records for one session. The generation is resolved
 // from the committed inventory first, so the stream is bound to the exact
 // session the operator named rather than to whatever the provider reports later.
@@ -728,16 +756,11 @@ func interruptContext(parent context.Context, interrupts <-chan os.Signal) (cont
 func followLogs(ctx context.Context, api tui.CommandAPI, output io.Writer, endpointID, resourceID, generation string, maxBytes, maxLines int, jsonMode bool, color tui.ColorPolicy) error {
 	runner := legacyRunner(api)
 	if generation == "" {
-		report, err := api.GetInventory(ctx, endpointID)
+		resolved, err := resolveSessionGeneration(ctx, api, endpointID, resourceID)
 		if err != nil {
 			return err
 		}
-		for _, session := range report.Sessions {
-			if session.SessionID == resourceID {
-				generation = session.Generation
-				break
-			}
-		}
+		generation = resolved
 	}
 	return runner.FollowLogs(ctx, output, endpointID, resourceID, generation, maxBytes, maxLines, jsonMode, color)
 }
