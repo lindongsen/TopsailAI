@@ -64,7 +64,10 @@ def get_cmd_timeout(cmd:str|list, timeout:int) -> int:
     timeout = int(timeout)
     raw_timeout = timeout
 
-    env_cmd_timeout_map = EnvReaderInstance.get("TOPSALAI_TOOL_CMD_TIMEOUT_MAP")
+    # The legacy key keeps deployments that copied the misspelled name working.
+    env_cmd_timeout_map = EnvReaderInstance.get_with_fallback(
+        "TOPSAILAI_TOOL_CMD_TIMEOUT_MAP", "TOPSALAI_TOOL_CMD_TIMEOUT_MAP",
+    )
     if not env_cmd_timeout_map:
         return timeout
 

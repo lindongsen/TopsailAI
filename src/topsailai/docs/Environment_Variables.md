@@ -328,7 +328,7 @@ For team agents, the effective offset is resolved in this order:
 | `TOPSAILAI_SUBAGENT_SYSTEM_PROMPT` | `""` | System prompt for subagents. |
 | `TOPSAILAI_MULTIMODAL_TOOL_PROMPT` | `""` | Prompt for the multimodal tool. |
 | `TOPSAILAI_SUBAGENT_ROLE_FOLDER` | `""` | Folder for subagent role files (`{role_name}.member`). Defaults to `${TOPSAILAI_HOME}/subagents`. Loaded into the subagent tool prompt; matching roles prefix messages with `@{role_name}:`. |
-| `TOPSALAI_TOOL_CMD_TIMEOUT_MAP` | (JSON) | Command timeout map as JSON. Defines `min_timeout` and `max_timeout` for matching command prefixes such as `pytest `, `go test`, `bash tests/run_test`, and `make test`. |
+| `TOPSAILAI_TOOL_CMD_TIMEOUT_MAP` | (JSON) | Command timeout map as JSON. Defines `min_timeout` and `max_timeout` for matching command prefixes such as `pytest `, `go test`, `bash tests/run_test`, and `make test`. The misspelled legacy key `TOPSALAI_TOOL_CMD_TIMEOUT_MAP` is still read as a fallback when the preferred key is unset or empty. |
 
 ## Tool Approval
 
