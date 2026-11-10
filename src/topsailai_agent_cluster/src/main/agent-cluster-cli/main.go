@@ -174,18 +174,21 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			target = flags.Arg(1)
 		}
 		return tui.PrintNonInteractiveCommandHelp(output, target)
-	case "list", tui.ListFullAlias:
-		// lf is the shorthand of "list --full", so it implies the full layout
-		// instead of requiring the flag. Resolving it here keeps one render path:
-		// the shorthand cannot drift into a second implementation, and it can
-		// never silently degrade into the ordinary truncated table that looks
-		// complete while hiding the tail of every over-wide value.
-		shorthand := flags.Arg(0) == tui.ListFullAlias
-		listClean, listFull, err := parseListArgs(flags.Args()[1:], shorthand)
+	case "list", tui.ListFullAlias, tui.ListBriefAlias:
+		// lf is the shorthand of "list --full" and lb is the shorthand of
+		// "list --brief", so each implies its own flag instead of requiring it.
+		// Resolving them here keeps one render path: a shorthand cannot drift into
+		// a second implementation, and it can never silently degrade into the
+		// ordinary layout that looks complete while hiding what the operator asked
+		// for. The two shorthands are separate spellings rather than one spelling
+		// with a mode, because they select opposite layouts and a single word
+		// cannot state which one was meant.
+		shorthand := listShorthand(flags.Arg(0))
+		listClean, listFull, listBrief, err := parseListArgs(flags.Args()[1:], shorthand)
 		if err != nil {
 			return err
 		}
-		return list(ctx, api, output, errors, *filter, listClean, listFull, *jsonMode, tui.OutputColorPolicy(output))
+		return list(ctx, api, output, errors, *filter, listClean, listFull, listBrief, *jsonMode, tui.OutputColorPolicy(output))
 	case "refresh":
 		if err := parseRefreshArgs(flags.Args()[1:]); err != nil {
 			return err
@@ -378,6 +381,14 @@ func resolveInteractiveLines(flags *flag.FlagSet, value int) (int, error) {
 // globalOptionNames lists the options the top-level flag set owns. Only these are
 // hoisted, so an option a subcommand owns (for example list --clean) keeps its
 // position and its meaning.
+//
+// Every option registered on the top-level flag set MUST appear here. A flag that
+// is registered but absent from this map is accepted only before the subcommand,
+// because Go's flag package stops parsing at the first positional argument. The
+// operator then sees a usage error for a flag the help text documents, which reads
+// as "the flag does not exist" rather than "the flag is in the wrong place".
+// TestGlobalOptionNamesCoverEveryRegisteredFlag enforces this, so a new flag
+// cannot be added without deciding whether it is hoistable.
 var globalOptionNames = map[string]bool{
 	"json": true, "endpoint": true, "yes": true, "server-url": true, "token": true,
 	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "no-color": true,
@@ -457,46 +468,89 @@ func splitOptionName(arg string) (string, bool) {
 	return name, false
 }
 
+// listShorthand names the list spelling the operator typed, so a usage error can
+// answer with that spelling and the implied flag can be derived from it. It is a
+// type rather than a bool because there are now two shorthands that imply
+// opposite layouts, and a bool could only express "some shorthand".
+type listShorthand string
+
+const (
+	// listShorthandNone is the canonical "list" spelling, which implies nothing.
+	listShorthandNone listShorthand = ""
+	// listShorthandFull is "lf", which implies --full.
+	listShorthandFull listShorthand = tui.ListFullAlias
+	// listShorthandBrief is "lb", which implies --brief.
+	listShorthandBrief listShorthand = tui.ListBriefAlias
+)
+
+// listShorthandFor classifies the command word the operator typed.
+func listShorthandFor(spelling string) listShorthand {
+	switch spelling {
+	case tui.ListFullAlias:
+		return listShorthandFull
+	case tui.ListBriefAlias:
+		return listShorthandBrief
+	default:
+		return listShorthandNone
+	}
+}
+
 // parseListArgs parses the standalone list tail. --full is the per-command
-// request to render without truncation, and shorthand states that the operator
-// typed lf, which already implies it. A repeated flag is a usage error rather
-// than a harmless duplicate, because the operator who typed it twice cannot tell
-// which one took effect, and the shorthand rejects it for the same reason logf
-// rejects a repeated follow flag: the combination is a contradiction. The
-// spelling is a parameter rather than being inferred from a pre-set full value,
-// so the two meanings cannot be confused.
-func parseListArgs(args []string, shorthand bool) (bool, bool, error) {
+// request to render without truncation and --brief is the per-command request to
+// render only the identifying columns; the two are independent axes, so they
+// combine. shorthand states which spelling the operator typed, because that
+// spelling already implies one of the two flags.
+//
+// A repeated flag is a usage error rather than a harmless duplicate, because the
+// operator who typed it twice cannot tell which one took effect. A shorthand
+// rejects the flag it already implies for the same reason logf rejects a repeated
+// follow flag: the combination is a contradiction. It accepts the other flag,
+// because that one states something the shorthand did not.
+func parseListArgs(args []string, shorthand listShorthand) (bool, bool, bool, error) {
 	clean := false
-	full := shorthand
+	full := shorthand == listShorthandFull
+	brief := shorthand == listShorthandBrief
 	for _, arg := range args {
 		switch arg {
 		case "--clean":
 			if clean {
-				return false, false, listUsageError(shorthand)
+				return false, false, false, listUsageError(shorthand)
 			}
 			clean = true
 		case "--full":
 			if full {
-				if shorthand {
-					return false, false, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lf [--clean] (full is implied; drop --full)")
+				if shorthand == listShorthandFull {
+					return false, false, false, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lf [--clean] (full is implied; drop --full)")
 				}
-				return false, false, listUsageError(shorthand)
+				return false, false, false, listUsageError(shorthand)
 			}
 			full = true
+		case "--brief":
+			if brief {
+				if shorthand == listShorthandBrief {
+					return false, false, false, fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lb [--clean] (brief is implied; drop --brief)")
+				}
+				return false, false, false, listUsageError(shorthand)
+			}
+			brief = true
 		default:
-			return false, false, listUsageError(shorthand)
+			return false, false, false, listUsageError(shorthand)
 		}
 	}
-	return clean, full, nil
+	return clean, full, brief, nil
 }
 
 // listUsageError names the spelling the operator typed, so a usage error never
 // answers with a command they did not run.
-func listUsageError(shorthand bool) error {
-	if shorthand {
-		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lf [--clean]")
+func listUsageError(shorthand listShorthand) error {
+	switch shorthand {
+	case listShorthandFull:
+		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lf [--clean] [--brief]")
+	case listShorthandBrief:
+		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] lb [--clean] [--full]")
+	default:
+		return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean] [--full] [--brief]")
 	}
-	return fmt.Errorf("usage: agent-cluster-cli [options] [--endpoint <id>] list [--clean] [--full]")
 }
 
 // parseRefreshArgs rejects every positional argument, so a typo cannot silently
@@ -556,11 +610,14 @@ func messages(ctx context.Context, api tui.CommandAPI, output, errors io.Writer,
 // list renders the session table. full is the per-command request to disable
 // truncation, and it is ORed with the boundary value rather than replacing it,
 // so the startup --no-truncate option survives a command that did not repeat it.
-func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, full, jsonMode bool, color tui.ColorPolicy) error {
+// brief selects the identifying column set; it is a separate axis from full, so
+// the two combine instead of overriding each other.
+func list(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, filter string, clean, full, brief, jsonMode bool, color tui.ColorPolicy) error {
 	options := tui.TableOptionsFor(output)
 	options.Color = color
 	options.Clean = clean
 	options.Full = options.Full || full
+	options.Brief = brief
 	return legacyRunner(api).ListWithOptions(ctx, output, errors, filter, jsonMode, options)
 }
 

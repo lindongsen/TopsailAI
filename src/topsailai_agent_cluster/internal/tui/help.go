@@ -33,7 +33,7 @@ var fieldHelp = []string{
 }
 
 var commandHelpCatalog = map[string]commandHelp{
-	"list":      {"list [endpoint] [--clean] [--full]", ListHelpDescription + "; JSON output (--json/-json) is available only in the standalone non-interactive command", []string{"endpoint: optional endpoint ID filter", "--clean: omit endpoints that failed to report; diagnostics still go to stderr", "--full: disable truncation; a narrow terminal wraps long cells instead of clipping them", "lf: shorthand for list --full"}, []string{"list", "list endpoint-1", "list --clean", "list --full", "lf"}},
+	"list":      {"list [endpoint] [--clean] [--full] [--brief]", ListHelpDescription + "; JSON output (--json/-json) is available only in the standalone non-interactive command", []string{"endpoint: optional endpoint ID filter", "--clean: omit endpoints that failed to report; diagnostics still go to stderr", "--full: disable truncation; a narrow terminal wraps long cells instead of clipping them", "--brief: print only the identifying columns NO, SESSION_NAME and ENDPOINT", "lf: shorthand for list --full", "lb: shorthand for list --brief"}, []string{"list", "list endpoint-1", "list --clean", "list --full", "list --brief", "lf", "lb"}},
 	"cd":        {"cd [target]", "navigate between workspace, endpoint, and session scopes; bare cd returns to workspace", []string{"target: latest displayed row number, hostname, hostname/endpoint-id, session, hostname/endpoint-id/session, .., or /", "a bare ASCII number is shorthand for cd <number> in workspace and endpoint scope; leading zeros are accepted and the number is temporary; a valid replacement list that fails during loading, rendering, or diagnostics invalidates the previous row numbers; invalid syntax or an invalid scoped filter preserves them", "failed-endpoint placeholders are displayed but cannot be selected; session scope rejects the explicit cd <number> form, and a bare number typed there is message text offered as a send", "after a valid replacement begins, a load, render, or diagnostic failure leaves no selectable row bindings; invalid syntax or an invalid scoped filter is rejected before replacement begins and preserves the previous bindings", "a hostname shared by several endpoints prompts for a numbered choice, a hostname/endpoint-id answer, or cancel", "entering session scope immediately starts the same live tail as logs -f for the selected session, using the generation the transition validated, so the operator reads output as it is written instead of a snapshot that stops at the moment it was read; any key stops the tail", "when the client cannot stream or the input mode cannot observe a keypress, entering a session renders one bounded output snapshot instead and says so, because a live tail that cannot be stopped is worse than a snapshot; a failed read is reported as a diagnostic and does not change the selected session"}, []string{"cd", "cd 1", "cd /", "cd ..", "cd ai-dev", "cd ai-dev/endpoint-1", "cd res_abc", "cd ai-dev/endpoint-1/res_abc"}},
 	"show":      {"show [endpoint-or-session]", "show detailed information for an endpoint or session; defaults to the current scope target", []string{"endpoint-or-session: optional endpoint ID, session/resource ID, provider session ID, or a bare list row number", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID"}, []string{"show", "show 1", "show endpoint-1"}},
 	"info":      {"info [session]", "show session detail for one session, including its provider session PID, driver state and controller PID; defaults to the current session", []string{"session: optional session/resource ID, provider session ID, or a bare list row number; required in workspace scope and rejected when it names an endpoint", "a bare ASCII number selects the session shown at that row of the most recently rendered list; a numeric token that is not a row number is retried as a provider session ID", "read-only: it never changes the selected session, the list row numbers, or any provider state", "provider_pid is the process identity the provider reported for the session; it is display evidence only, so it is never a routing identity, never a generation and never a signal authority, and a provider that reported no PID leaves provider_pid empty instead of printing 0", "the drive fields are the same fields drive status prints, so the two surfaces cannot disagree; an absent observation is reported as drive_state: not_reported, which is not proof that no controller exists", "--json: rejected in interactive mode"}, []string{"info", "info 1", "info res_abc"}},
@@ -237,7 +237,7 @@ var nonInteractiveHelpOrder = []string{"list", "refresh", "history", "messages",
 // nonInteractiveHelpAliases maps accepted standalone spellings to the advertised
 // command. The advertised list keeps one spelling per surface, while an accepted
 // alias still resolves to the same detailed help.
-var nonInteractiveHelpAliases = map[string]string{"control": "ctl", logsFollowAlias: "logs", listFullAlias: "list"}
+var nonInteractiveHelpAliases = map[string]string{"control": "ctl", logsFollowAlias: "logs", listFullAlias: "list", listBriefAlias: "list"}
 
 // NonInteractiveCommandHelpLines returns only commands dispatched by the standalone CLI.
 func NonInteractiveCommandHelpLines() []string {
@@ -323,7 +323,7 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 	case "status":
 		entry.syntax = "agent-cluster-cli [options] status <command-id>"
 	case "list":
-		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] list [--clean] [--full]"
+		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] list [--clean] [--full] [--brief]"
 	case "refresh":
 		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] refresh"
 	case "history":
@@ -452,10 +452,10 @@ func helpTarget(target string) string {
 	if normalized == logsFollowAlias {
 		return "logs"
 	}
-	// The lf shorthand is a form rather than an alias entry, so it is resolved
-	// here for the same reason: the dispatcher accepts the spelling, so help must
-	// answer it instead of reporting an unknown command.
-	if normalized == listFullAlias {
+	// The lf and lb shorthands are forms rather than alias entries, so they are
+	// resolved here for the same reason: the dispatcher accepts the spelling, so
+	// help must answer it instead of reporting an unknown command.
+	if normalized == listFullAlias || normalized == listBriefAlias {
 		return "list"
 	}
 	return normalized

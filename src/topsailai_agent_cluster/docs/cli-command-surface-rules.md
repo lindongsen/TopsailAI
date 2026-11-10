@@ -172,7 +172,7 @@ was dispatched rather than rejected as unknown.
 
 | Command | Standalone spelling | Interactive spelling | Compliant |
 |---|---|---|---|
-| `list` | `list`, `list --full`, `lf` | `list`, `l`, `list --full`, `lf` | yes (the `lf` shorthand implies the full layout on both surfaces) |
+| `list` | `list`, `list --full`, `lf`, `list --brief`, `lb` | `list`, `l`, `list --full`, `lf`, `list --brief`, `lb` | yes (the `lf` shorthand implies the full layout and the `lb` shorthand implies the brief column set, on both surfaces) |
 | `refresh` | `refresh` | `refresh`, `r` | yes |
 | `history` | `history <endpoint-id-or-hostname>` | `history [endpoint-id-or-hostname]` | yes (standalone requires the endpoint argument; interactive requires it in workspace scope, and in endpoint scope it defaults to the current endpoint while rejecting a different one) |
 | `endpoints` | `endpoints` | `endpoints` | yes |
@@ -470,6 +470,55 @@ narrow terminal wraps a long cell onto several lines instead of clipping it. It 
 not widen the terminal, and it does not change which rows are selected. The
 `--no-truncate` startup option keeps its existing meaning and remains the way to make
 every command full for a whole session.
+
+## The `list --brief` flag and the `lb` shorthand
+
+`--brief` is the per-command request to print only the columns that identify a row:
+`NO`, `SESSION_NAME` and `ENDPOINT`. It exists so an operator can scan which session
+runs on which machine without the descriptive columns pushing the table past a narrow
+terminal. `lb` is its shorthand. It is a form of `list`, not a second command and not
+an alias entry.
+
+- Standalone: `agent-cluster-cli [options] [--endpoint <id>] list [--clean] [--full] [--brief]`
+  and `agent-cluster-cli [options] [--endpoint <id>] lb [--clean] [--full]`.
+- Interactive: `list [endpoint] [--clean] [--full] [--brief]` and
+  `lb [endpoint] [--clean] [--full]`.
+- The brief layout is implied by the shorthand, so every other argument keeps the
+  meaning it has under `list`: `lb --clean` renders the same table as
+  `list --clean --brief`.
+- A repeated `--brief` is rejected, because the shorthand already states it and the
+  combination is a contradiction rather than a harmless duplicate.
+- `--brief` and `--full` are independent axes. `--brief` chooses the column set and
+  `--full` chooses whether a value is truncated, so `lb --full` is a coherent request:
+  the three identifying columns, printed without truncation. `--brief` is not ORed
+  with any session-wide option, because no startup flag selects a column set.
+- Both surfaces resolve the shorthand into the canonical `list` tail before parsing,
+  so one grammar stays authoritative and the shorthand cannot drift into a second set
+  of rules.
+- It is deliberately absent from the interactive alias registry, for the same reason
+  `lf` and `logf` are: an alias maps one word to another, while this form also supplies
+  a flag. Registering it would resolve the word and drop the column set, so `lb` would
+  silently render the wide table, which looks complete while showing every column the
+  operator asked to hide. It would also make `l` ambiguous between `list` and `lb`, so
+  Tab would stop completing the far more common `list`. The shorthand is documented in
+  the `list` help body instead, so it stays discoverable without entering that registry.
+- `help lb` answers with the canonical `list` body and keeps `lb` as the heading, so
+  the shorthand never advertises a different contract.
+
+The brief column set is a set rather than a list of removals, so a column added later
+is absent from a brief table by default instead of silently widening it. It is applied
+after the colour-dependent layout, so a brief table prints the same three columns
+whether or not colour is enabled, which is what makes the layout predictable for an
+operator who redirected the output.
+
+The status summary line is kept. With `SESSION_STATUS` and `DATA_STATUS` dropped, the
+summary is the only remaining signal of how the reported states are distributed, and
+removing it would leave a brief table with no state information at all.
+
+The spelling is `lb` rather than `ll` on purpose. `ll` is the shell mnemonic of
+`ls -l`, which means more detail, so it would name the opposite of what this command
+does. It also sits one key away from `lf` while meaning the reverse, so a typo would
+produce a table that looks normal and hides half the information.
 
 ## Interactive output line budget
 

@@ -910,7 +910,7 @@ func renderListBoundary(t *testing.T, stub *watchStub, filter string, color Colo
 		t.Fatalf("loadReports: %v", err)
 	}
 	boundary := &layoutBuffer{layout: layout}
-	if err := renderListRows(boundary, io.Discard, loaded, filter, false, tableOptionsFor(boundary, color, false, false, nil)); err != nil {
+	if err := renderListRows(boundary, io.Discard, loaded, filter, false, tableOptionsFor(boundary, color, listArguments{}, nil)); err != nil {
 		t.Fatalf("renderListRows: %v", err)
 	}
 	return boundary.Bytes()

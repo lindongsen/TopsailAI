@@ -19,13 +19,13 @@ func TestUnitBS3InvalidListPreservesOnlyBeforeValidationAndRecovers(t *testing.T
 	old := SessionRow{No: 1, EndpointID: "old", SessionID: "old", Generation: "old"}
 	state.setRows([]SessionRow{old})
 	var output, diagnostics strings.Builder
-	if err := interactiveList(context.Background(), stub, &state, "endpoint-2", false, false, &output, &diagnostics, ColorPolicy{}); err == nil {
+	if err := interactiveList(context.Background(), stub, &state, listArguments{Filter: "endpoint-2"}, &output, &diagnostics, ColorPolicy{}); err == nil {
 		t.Fatal("expected invalid scoped list filter")
 	}
 	if got := state.Rows[1]; got != old {
 		t.Fatalf("invalid list changed old binding: %+v", state.Rows)
 	}
-	if err := interactiveList(context.Background(), stub, &state, "", false, false, &output, &diagnostics, ColorPolicy{}); err != nil {
+	if err := interactiveList(context.Background(), stub, &state, listArguments{}, &output, &diagnostics, ColorPolicy{}); err != nil {
 		t.Fatalf("successful recovery: %v", err)
 	}
 	if _, ok := state.Rows[1]; !ok {
@@ -38,7 +38,7 @@ func TestUnitBS3PartialTableWriteFailureLeavesRowsEmpty(t *testing.T) {
 	state := interactiveState{}
 	state.setRows([]SessionRow{{No: 1, SessionID: "old", Generation: "old"}})
 	writer := &unitBFailAfterWriter{remaining: 3}
-	err := interactiveList(context.Background(), stub, &state, "", false, false, writer, io.Discard, ColorPolicy{})
+	err := interactiveList(context.Background(), stub, &state, listArguments{}, writer, io.Discard, ColorPolicy{})
 	if err == nil {
 		t.Fatal("expected partial table writer failure")
 	}
@@ -52,7 +52,7 @@ func TestUnitBS3PublishesRowsOnlyAfterEveryOutputAndDiagnosticWrite(t *testing.T
 	state := interactiveState{}
 	state.setRows([]SessionRow{{No: 1, SessionID: "old", Generation: "old"}})
 	observer := &unitBObservingWriter{state: &state}
-	if err := interactiveList(context.Background(), stub, &state, "", false, false, observer, io.Discard, ColorPolicy{}); err == nil {
+	if err := interactiveList(context.Background(), stub, &state, listArguments{}, observer, io.Discard, ColorPolicy{}); err == nil {
 		t.Fatal("expected render failure")
 	}
 	if observer.sawRows {
@@ -61,7 +61,7 @@ func TestUnitBS3PublishesRowsOnlyAfterEveryOutputAndDiagnosticWrite(t *testing.T
 
 	state.setRows([]SessionRow{{No: 1, SessionID: "old", Generation: "old"}})
 	diagnosticFailure := &unitBFailingWriter{}
-	if err := interactiveList(context.Background(), &unitBDiagnosticAPI{interactiveStub: scopeStub()}, &state, "", false, false, io.Discard, diagnosticFailure, ColorPolicy{}); err == nil {
+	if err := interactiveList(context.Background(), &unitBDiagnosticAPI{interactiveStub: scopeStub()}, &state, listArguments{}, io.Discard, diagnosticFailure, ColorPolicy{}); err == nil {
 		t.Fatal("expected diagnostic write failure")
 	}
 	if len(state.Rows) != 0 {
@@ -76,7 +76,7 @@ func TestUnitBS3PublishesOnlyAfterSuccessfulTableAndDiagnostics(t *testing.T) {
 	state := interactiveState{}
 	state.setRows([]SessionRow{{No: 1, EndpointID: "old", SessionID: "old", Generation: "old"}})
 	observer := &unitBSuccessfulObservingWriter{state: &state}
-	if err := interactiveList(context.Background(), &unitBDiagnosticAPI{interactiveStub: stub}, &state, "", false, false, observer, io.Discard, ColorPolicy{}); err != nil {
+	if err := interactiveList(context.Background(), &unitBDiagnosticAPI{interactiveStub: stub}, &state, listArguments{}, observer, io.Discard, ColorPolicy{}); err != nil {
 		t.Fatalf("successful render: %v", err)
 	}
 	if observer.sawRows {
@@ -120,14 +120,14 @@ func TestUnitBS3SuccessfulListReplacesOldBindings(t *testing.T) {
 	}
 	state.setRows(oldRows)
 	var output, diagnostics strings.Builder
-	if err := interactiveList(context.Background(), stub, &state, "", false, false, &output, &diagnostics, ColorPolicy{}); err != nil {
+	if err := interactiveList(context.Background(), stub, &state, listArguments{}, &output, &diagnostics, ColorPolicy{}); err != nil {
 		t.Fatalf("initial successful list: %v", err)
 	}
 	if len(state.Rows) != 2 {
 		t.Fatalf("initial rows=%d want=2", len(state.Rows))
 	}
 	stub.failList = true
-	if err := interactiveList(context.Background(), stub, &state, "", false, false, &output, &diagnostics, ColorPolicy{}); err == nil {
+	if err := interactiveList(context.Background(), stub, &state, listArguments{}, &output, &diagnostics, ColorPolicy{}); err == nil {
 		t.Fatal("expected injected list failure")
 	}
 	if len(state.Rows) != 0 {
@@ -136,7 +136,7 @@ func TestUnitBS3SuccessfulListReplacesOldBindings(t *testing.T) {
 	if _, ok := state.Rows[99]; ok {
 		t.Fatal("failed replacement retained old row 99")
 	}
-	if err := interactiveList(context.Background(), stub, &state, "", false, false, &output, &diagnostics, ColorPolicy{}); err != nil {
+	if err := interactiveList(context.Background(), stub, &state, listArguments{}, &output, &diagnostics, ColorPolicy{}); err != nil {
 		t.Fatalf("successful recovery: %v", err)
 	}
 	if len(state.Rows) != 2 || state.Rows[1].SessionID == "old-1" {
@@ -229,7 +229,7 @@ func TestUnitBS3DiagnosticFailureClearsOldIdentityAndRecoveryPublishesNewIdentit
 	failing := &unitBDiagnosticAPI{interactiveStub: stub}
 	failing.inventoryErr = errors.New("diagnostic fixture failure")
 	var output, diagnostics strings.Builder
-	if err := interactiveList(context.Background(), failing, &state, "", false, false, io.Discard, &unitBFailingWriter{}, ColorPolicy{}); err == nil {
+	if err := interactiveList(context.Background(), failing, &state, listArguments{}, io.Discard, &unitBFailingWriter{}, ColorPolicy{}); err == nil {
 		t.Fatal("expected diagnostic failure")
 	}
 	if len(state.Rows) != 0 {
@@ -237,7 +237,7 @@ func TestUnitBS3DiagnosticFailureClearsOldIdentityAndRecoveryPublishesNewIdentit
 	}
 	stub.inventoryErr = nil
 	stub.reports["endpoint-1"] = scopeInventory("session-B", "generation-B")
-	if err := interactiveList(context.Background(), stub, &state, "", false, false, &output, &diagnostics, ColorPolicy{}); err != nil {
+	if err := interactiveList(context.Background(), stub, &state, listArguments{}, &output, &diagnostics, ColorPolicy{}); err != nil {
 		t.Fatalf("recovery: %v", err)
 	}
 	row, ok := state.Rows[1]
@@ -260,7 +260,7 @@ func TestUnitBB4FailedReplacementInvalidatesBothNumericSpellings(t *testing.T) {
 			before := state
 			stub.failList = true
 			var output, diagnostics strings.Builder
-			if err := interactiveList(context.Background(), stub, &state, "", false, false, &output, &diagnostics, ColorPolicy{}); err == nil {
+			if err := interactiveList(context.Background(), stub, &state, listArguments{}, &output, &diagnostics, ColorPolicy{}); err == nil {
 				t.Fatal("expected replacement failure")
 			}
 			if len(state.Rows) != 0 {

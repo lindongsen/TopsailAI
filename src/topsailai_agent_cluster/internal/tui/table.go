@@ -39,6 +39,10 @@ type TableOptions struct {
 	// interactive presentation choice only: the provider session ID stays on the
 	// row, so it is still accepted as a command target, but it is not printed.
 	HideSessionID bool
+	// Brief renders only the columns that identify a row: NO, SESSION_NAME and
+	// ENDPOINT. It is a column-set choice, independent of Full, which is a
+	// truncation choice, so "brief and untruncated" is a coherent request.
+	Brief bool
 }
 
 // Column keys name one logical field so a layout change cannot silently shift
@@ -115,17 +119,31 @@ func columnsFor(policy ColorPolicy) []tableColumn {
 	return columns
 }
 
+// briefColumnKeys is the column set a brief layout prints: the three fields that
+// identify a row and nothing else. It is a set rather than a list of removals, so
+// a column added later is absent from a brief table by default instead of
+// silently widening it.
+var briefColumnKeys = map[string]bool{
+	columnNo:       true,
+	columnName:     true,
+	columnEndpoint: true,
+}
+
 // layoutColumns returns the columns one render actually prints. It starts from
 // the colour-dependent layout and then applies the presentation choices that do
 // not depend on colour, so a hidden column is dropped for every colour policy.
+//
+// Brief is applied last and is a set, so it wins over the colour layout: a brief
+// table prints the same three columns whether or not colour is enabled, which is
+// what makes the layout predictable for an operator who redirected the output.
 func layoutColumns(options TableOptions) []tableColumn {
 	columns := columnsFor(options.Color)
-	if !options.HideSessionID {
-		return columns
-	}
-	kept := make([]tableColumn, 0, len(columns)-1)
+	kept := make([]tableColumn, 0, len(columns))
 	for _, column := range columns {
-		if column.key == columnID {
+		if options.HideSessionID && column.key == columnID {
+			continue
+		}
+		if options.Brief && !briefColumnKeys[column.key] {
 			continue
 		}
 		kept = append(kept, column)

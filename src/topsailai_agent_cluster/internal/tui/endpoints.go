@@ -205,5 +205,5 @@ func interactiveEndpoints(parent context.Context, api InteractiveAPI, rest strin
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	return (CommandRunner{API: api, Policy: InteractivePolicy}).Endpoints(ctx, out, strings.TrimSpace(rest), false, tableOptionsFor(out, color, false, false, nil))
+	return (CommandRunner{API: api, Policy: InteractivePolicy}).Endpoints(ctx, out, strings.TrimSpace(rest), false, tableOptionsFor(out, color, listArguments{}, nil))
 }

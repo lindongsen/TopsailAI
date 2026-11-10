@@ -647,7 +647,7 @@ func refreshAfterStart(parent context.Context, api InteractiveAPI, endpointID st
 	ctx, cancel := context.WithTimeout(parent, refreshCommandTimeout)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy}
-	return runner.RefreshAfterStartWithResult(ctx, trustedOut, out, endpointID, result, false, tableOptionsFor(trustedOut, options.Color, false, false, nil))
+	return runner.RefreshAfterStartWithResult(ctx, trustedOut, out, endpointID, result, false, tableOptionsFor(trustedOut, options.Color, listArguments{}, nil))
 }
 
 // autoFollowAfterStart arms the live tail that follows a freshly launched session,

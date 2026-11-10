@@ -124,6 +124,40 @@ func listFullRest(rest string) string {
 	return "--full " + rest
 }
 
+// listBriefAlias is the shorthand spelling of "list --brief". It is a form rather
+// than an alias entry for exactly the reason listFullAlias is one: it also
+// supplies a flag. Resolving the word to "list" alone would parse an empty tail
+// and render the ordinary wide table, which is the worst outcome for this
+// command, because a wide table presented as a brief one looks complete while
+// burying the three columns the operator asked for. It is deliberately absent
+// from commandAliases, so "l" keeps completing "list" instead of becoming
+// ambiguous with "lb". The shorthand is documented in the list help body instead,
+// so it stays discoverable without entering the alias registry.
+//
+// The spelling is "lb" rather than "ll" on purpose. "ll" is the shell mnemonic of
+// "ls -l", which means more detail, and it sits one adjacent key away from "lf"
+// while meaning the opposite, so an operator's muscle memory would produce the
+// reverse of the intended layout.
+const listBriefAlias = "lb"
+
+// ListBriefAlias is the exported spelling of listBriefAlias, so the standalone
+// dispatcher accepts the same shorthand without duplicating the literal. One
+// constant keeps the two surfaces from drifting into different spellings.
+const ListBriefAlias = listBriefAlias
+
+// listBriefRest rewrites the tail of an lb invocation into the equivalent list
+// tail, so the shorthand inherits list's grammar instead of owning a second
+// parser. The brief flag is prepended, so "lb --full" becomes "--brief --full"
+// and a repeated "--brief" is rejected by the same duplicate check that guards
+// "list". Brief and full are independent axes, so the combination is accepted:
+// three columns, no truncation.
+func listBriefRest(rest string) string {
+	if strings.TrimSpace(rest) == "" {
+		return "--brief"
+	}
+	return "--brief " + rest
+}
+
 // commandAliases maps accepted short or compatibility names to canonical commands.
 // "exit" is deliberately absent: it is its own canonical command that always
 // leaves the process, so it must never inherit the scope-aware "quit" behaviour.

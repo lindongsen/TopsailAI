@@ -515,3 +515,24 @@ The correction also split one gap into two different ones, which is the useful o
 list exists, but it reports what is configured, while the current model is runtime state reported only
 as text (`workspace/plugin_instruction/agent.py:289`). A single "no JSON" claim hid that distinction
 and would have produced a catalog that silently omitted which profile is in use.
+
+## A help body and a help syntax line are two different sources
+
+Trigger: `--brief` was added to `list` and documented in the catalog entry, and the interactive
+`help list` body showed it. The standalone `help list` Syntax line still read
+`list [--clean] [--full]`, because `PrintNonInteractiveCommandHelp` overrides `entry.syntax` with a
+hardcoded string per command (`internal/tui/help.go:326`). The catalog entry was correct, the
+parameters and examples were correct, and only the one-line syntax override was stale. Every test
+passed, because the tests asserted the parameters and the examples, never the Syntax line.
+
+Action: when adding a flag to a command that exists on both surfaces, grep for the command's syntax
+string, not only for the flag name. A per-surface override is a second source of truth for the same
+grammar, so it must be edited separately and asserted separately. Assert the exact Syntax line on
+each surface, because a `Contains` check on the flag name passes as soon as the parameter list
+mentions it, even while the syntax line contradicts it.
+
+Why this prevents recurrence: the override exists precisely so the standalone surface can state a
+different grammar, so it is legitimate code rather than a duplicate to be removed. That also means it
+will never be caught by a test that checks the shared catalog, and the disagreement is invisible in
+review because both strings are plausible. Reading the rendered help output of the real binary is what
+turned "the flag is documented" into "the flag is advertised where the operator looks".
