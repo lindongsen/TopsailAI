@@ -53,6 +53,8 @@ configured and does not fall back, and the first use of an old name prints one
 | Variable | Meaning |
 |---|---|
 | `TOPSAILAI_CLI_DEBUG_INPUT` | When non-empty, append input-read diagnostics to `{TOPSAILAI_HOME}/.tmp/read_input_debug.log`. Unset or empty disables the log. Accepts the legacy name `TOPSAILAI_DEBUG_INPUT`. |
+| `TOPSAILAI_CLI_ENTRY` | Overrides the deployed CLI entry point used by the detached supervisor of `workspace agent` and `workspace resume`. Set it when the entry point cannot be derived from `argv[0]`, for example when the CLI is started through a wrapper. Unset means the resolved `argv[0]` is used. |
+| `TOPSAILAI_CLI_NEED_TIPS` | Boolean controlling the startup tips printed by `llm_chat` and `llm_chats`; defaults to enabled and is forced off in debug mode. |
 
 ## Options
 
