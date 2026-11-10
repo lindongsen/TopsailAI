@@ -1,12 +1,17 @@
 package topsailai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
+
+	tiktoken "github.com/pkoukk/tiktoken-go"
+	tiktokenloader "github.com/pkoukk/tiktoken-go-loader"
 
 	"topsailai_agent_cluster/internal/protocol"
 )
@@ -60,10 +65,12 @@ func (a *Adapter) Messages(ctx context.Context, query protocol.MessagesQuery) (p
 	if code, err := a.requireSession(ctx, sessionID); err != nil {
 		return protocol.MessagesResult{ProviderSessionID: sessionID, ErrorCode: code}, err
 	}
+	// --max-chars is deliberately never passed to the provider. The provider
+	// truncates the raw stored document, which cuts a structured body into
+	// invalid JSON; the adapter would then be unable to unwrap exactly the long
+	// messages an operator most wants to read. The bound is applied below, after
+	// unwrapping, so it shortens readable text instead of corrupting the record.
 	args := []string{"session", "history", sessionID, "--json"}
-	if maxChars := clampMessagesMaxChars(query.MaxChars); maxChars > 0 {
-		args = append(args, "--max-chars", fmt.Sprint(maxChars))
-	}
 	output, err := a.run(ctx, args, nil)
 	if err != nil {
 		return protocol.MessagesResult{ProviderSessionID: sessionID, ErrorCode: protocol.MessagesProviderError}, err
@@ -93,10 +100,25 @@ func (a *Adapter) Messages(ctx context.Context, query protocol.MessagesQuery) (p
 	if envelope.MessageCount > len(envelope.Messages) {
 		result.Truncated = true
 	}
+	// The caller's display bound is resolved once, before the loop, so every
+	// message is shortened by the same rule.
+	maxChars := clampMessagesMaxChars(query.MaxChars)
 	total := 0
 	for _, entry := range envelope.Messages {
-		content, cut := boundedMessageContent(entry.Content)
-		if cut {
+		// The counts are measured from the body as the provider stored it, before
+		// unwrapping and before any display bound. That is the order the provider's
+		// own human-readable surface uses, and it is load-bearing: a count taken
+		// after truncation would describe the shortened text, so the same message
+		// would report a different size depending on how much of it was displayed.
+		wordCount := utf8.RuneCountInString(entry.Content)
+		tokenCount := countProviderTokens(entry.Content)
+		// The provider wraps most bodies in its own step record, so the body is
+		// unwrapped before it is bounded. The order matters: bounding first would
+		// cut the wrapper into invalid JSON, and the unwrapper would then have to
+		// give up on exactly the long messages an operator most wants to read.
+		unwrapped := unwrapProviderContent(entry.Content)
+		content := truncateMessageContent(unwrapped, maxChars)
+		if content != unwrapped {
 			result.Truncated = true
 		}
 		total += len(content)
@@ -108,6 +130,8 @@ func (a *Adapter) Messages(ctx context.Context, query protocol.MessagesQuery) (p
 			Role:        entry.Role,
 			Content:     content,
 			CreatedAtMS: messagesTimeMS(entry.CreateTime),
+			WordCount:   wordCount,
+			TokenCount:  tokenCount,
 		})
 	}
 	return result, nil
@@ -150,8 +174,10 @@ func (a *Adapter) requireSession(ctx context.Context, sessionID string) (string,
 // clampMessagesMaxChars bounds the caller's per-message character request.
 //
 // A value above the accepted maximum is clamped rather than rejected, so a caller
-// cannot request a bound the provider would silently reduce. Zero keeps the
-// provider's own default.
+// cannot request a bound the adapter would silently reduce. Zero means no
+// truncation, which is the cluster's own convention: the provider treats a zero
+// bound as an empty body, but a request that erases every message is not a useful
+// operator intent, so the cluster reads zero as "show the whole body".
 func clampMessagesMaxChars(value int) int {
 	if value <= 0 {
 		return 0
@@ -162,23 +188,190 @@ func clampMessagesMaxChars(value int) int {
 	return value
 }
 
-// boundedMessageContent keeps one message body inside the accepted bound.
+// truncateMessageContent shortens one readable body to the caller's display bound.
 //
-// The cut lands on a UTF-8 boundary, because a raw byte slice would split a
-// multi-byte character and produce invalid text. The caller is told that a cut
-// happened, so a shortened message is never presented as complete.
-func boundedMessageContent(content string) (string, bool) {
-	if !utf8.ValidString(content) {
-		return "", true
+// The cut is counted in code points and lands on a rune boundary, so a multi-byte
+// character is never split. The provider's own human-readable surface appends an
+// ellipsis to a shortened body, and the same marker is used here so the operator
+// can see that text is missing rather than assuming the message ended there.
+//
+// A zero bound means no truncation. The provider treats a zero bound as an empty
+// body, but that reading is not carried over: a request that erases every message
+// is not a useful operator intent, and silently returning nothing would look like
+// a session with no content.
+func truncateMessageContent(content string, maxChars int) string {
+	if maxChars <= 0 {
+		return content
 	}
-	if len(content) <= protocol.MaxMessageContentBytes {
-		return content, false
+	if utf8.RuneCountInString(content) <= maxChars {
+		return content
 	}
-	cut := protocol.MaxMessageContentBytes
-	for cut > 0 && !utf8.RuneStart(content[cut]) {
-		cut--
+	count := 0
+	for offset := range content {
+		if count == maxChars {
+			return content[:offset] + "..."
+		}
+		count++
 	}
-	return content[:cut], true
+	return content
+}
+
+// providerTokenEncodingName is the encoding the provider's own counter uses.
+//
+// It is named here rather than derived from a model, because the provider counts
+// with a fixed encoding and the cluster must reproduce that number, not the number
+// a different model would produce.
+const providerTokenEncodingName = "cl100k_base"
+
+var (
+	// providerTokenEncodingOnce builds the encoder at most once per process.
+	//
+	// Loading the encoding costs about 200ms, which is a fifth of the whole
+	// messages budget. Building it per message would spend the budget on setup and
+	// leave nothing for the read itself.
+	providerTokenEncodingOnce sync.Once
+	// providerTokenEncoding is nil when the encoding could not be loaded, so a
+	// counting failure degrades to "no count claimed" instead of failing the read.
+	providerTokenEncoding *tiktoken.Tiktoken
+)
+
+// countProviderTokens reports how many model tokens one body contains.
+//
+// The provider's own human-readable surface prints this number next to each
+// message, so the cluster reproduces it rather than inventing a different measure.
+// The counting rule is provider detail and therefore lives in the adapter: a
+// second provider may count differently, and the renderer must never compute this
+// for itself.
+//
+// The encoding is loaded from an embedded vocabulary, so counting works on a host
+// with no network access. A load or encode failure returns zero, which the protocol
+// documents as "no count claimed" rather than as a measured empty body: a display
+// detail must never turn a readable conversation into a failed read.
+func countProviderTokens(content string) int {
+	if content == "" {
+		return 0
+	}
+	providerTokenEncodingOnce.Do(func() {
+		// The offline loader is installed before the encoding is requested, because
+		// the default loader downloads the vocabulary at first use. A packaged node
+		// may have no route to the internet, so a download would make the count
+		// depend on network reachability.
+		tiktoken.SetBpeLoader(tiktokenloader.NewOfflineLoader())
+		encoding, err := tiktoken.GetEncoding(providerTokenEncodingName)
+		if err != nil {
+			return
+		}
+		providerTokenEncoding = encoding
+	})
+	if providerTokenEncoding == nil {
+		return 0
+	}
+	// EncodeOrdinary is used rather than Encode because the provider calls
+	// encoding.encode(text) with no special-token arguments, which treats every
+	// special token as ordinary text. Encode would instead panic on a body that
+	// happens to contain a token-looking string, and a conversation is untrusted
+	// text that may contain anything.
+	return len(providerTokenEncoding.EncodeOrdinary(content))
+}
+
+// Provider step-record field names. These are provider vocabulary, so they are
+// confined to this adapter and never appear in the protocol, the Server or the CLI.
+const (
+	providerStepField    = "step_name"
+	providerRawTextField = "raw_text"
+	providerFormatPrefix = "topsailai."
+)
+
+// unwrapProviderContent converts one provider message body into the readable form
+// the provider's own human-facing surface prints.
+//
+// The provider stores most bodies as its own step record, either one object or an
+// array of them, each carrying a step name and the text the operator actually
+// wrote. Printing that record verbatim shows JSON to the operator, which is why the
+// cluster unwraps it here rather than in the renderer: the record format is
+// provider detail, so it belongs to the adapter and must never reach the protocol,
+// the Server, a stored document or a CLI help body.
+//
+// The unwrapping is deliberately forgiving. A body that is not a step record, or
+// that no longer parses because the provider truncated it, is returned unchanged.
+// Losing the operator's text would be worse than showing it in its raw form, and a
+// truncated body is exactly the case where the surviving text still matters.
+func unwrapProviderContent(content string) string {
+	// The provider applies the same cheap prefilter before parsing, so a plain
+	// prose body never pays for a decode attempt.
+	if !strings.Contains(content, providerStepField) {
+		return content
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(content), &decoded); err != nil {
+		return content
+	}
+	entries, ok := providerStepEntries(decoded)
+	if !ok {
+		return content
+	}
+	var builder strings.Builder
+	for _, entry := range entries {
+		builder.WriteString(providerFormatPrefix)
+		builder.WriteString(fmt.Sprint(entry[providerStepField]))
+		builder.WriteString("\n")
+		delete(entry, providerStepField)
+		if value, present := entry[providerRawTextField]; present {
+			builder.WriteString(providerJSONDump(value))
+			builder.WriteString("\n")
+			delete(entry, providerRawTextField)
+		}
+		// Any field the cluster does not model is preserved rather than dropped,
+		// because a step record can carry evidence the operator still needs.
+		if len(entry) > 0 {
+			builder.WriteString(providerJSONDump(entry))
+			builder.WriteString("\n")
+		}
+		builder.WriteString("\n")
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+// providerStepEntries normalizes a decoded body into step records.
+//
+// The provider accepts both a single record and an array of them, and it refuses
+// the whole body when any element is not a record carrying a step name. The same
+// all-or-nothing rule is kept here, so a mixed body is shown verbatim instead of
+// being half-unwrapped into something that reads like a complete conversation.
+func providerStepEntries(decoded any) ([]map[string]any, bool) {
+	candidates, isList := decoded.([]any)
+	if !isList {
+		candidates = []any{decoded}
+	}
+	entries := make([]map[string]any, 0, len(candidates))
+	for _, candidate := range candidates {
+		entry, isRecord := candidate.(map[string]any)
+		if !isRecord {
+			return nil, false
+		}
+		if _, present := entry[providerStepField]; !present {
+			return nil, false
+		}
+		entries = append(entries, entry)
+	}
+	return entries, true
+}
+
+// providerJSONDump renders one decoded value the way the provider's own formatter
+// does: a string is returned unchanged, and anything else is indented JSON with
+// its keys sorted and its non-ASCII text left readable.
+func providerJSONDump(value any) string {
+	if text, isText := value.(string); isText {
+		return text
+	}
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(value); err != nil {
+		return fmt.Sprint(value)
+	}
+	return strings.TrimRight(buffer.String(), "\n")
 }
 
 // messagesTimeMS converts one provider timestamp to UTC epoch milliseconds.

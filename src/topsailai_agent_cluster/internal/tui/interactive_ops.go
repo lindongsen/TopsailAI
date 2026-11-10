@@ -137,6 +137,86 @@ func parseLineCount(raw string) (int, error) {
 	return count, nil
 }
 
+// messagesUsage is the accepted grammar of the interactive messages command.
+//
+// It names both accepted spellings of the bound and states that no endpoint
+// argument is taken, because the interactive surface resolves the endpoint from
+// the current scope. The standalone command requires an endpoint, so an operator
+// who learned the standalone form would otherwise type one here and receive a
+// usage error that never said the endpoint was the problem.
+const messagesUsage = "usage: messages [-c <n>|--max-chars <n>] [history-row-number-or-session-id] (no endpoint argument; the endpoint comes from the current scope)"
+
+// parseMessagesArgs splits an optional target token from an optional per-message
+// character bound. Accepted forms are -c <n>, --max-chars <n> and --max-chars=<n>.
+//
+// The bound is parsed here rather than forwarded to the provider, because the
+// provider truncates the raw stored document and would cut a structured body into
+// invalid JSON. The adapter applies the bound after unwrapping, so the operator
+// shortens readable text instead of corrupting the record.
+func parseMessagesArgs(rest string) (string, int, error) {
+	maxChars := 0
+	target := ""
+	tokens := strings.Fields(rest)
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "-c" || token == "--max-chars":
+			if i+1 >= len(tokens) {
+				return "", 0, fmt.Errorf("%s", messagesUsage)
+			}
+			i++
+			parsed, err := parseMaxChars(tokens[i])
+			if err != nil {
+				return "", 0, err
+			}
+			maxChars = parsed
+		case strings.HasPrefix(token, "--max-chars="):
+			parsed, err := parseMaxChars(strings.TrimPrefix(token, "--max-chars="))
+			if err != nil {
+				return "", 0, err
+			}
+			maxChars = parsed
+		case strings.HasPrefix(token, "-"):
+			return "", 0, fmt.Errorf("%s", messagesUsage)
+		default:
+			if target != "" {
+				return "", 0, fmt.Errorf("%s", messagesUsage)
+			}
+			target = token
+		}
+	}
+	return target, maxChars, nil
+}
+
+// parseMaxChars validates a per-message character bound.
+//
+// Zero is accepted and means "no bound", which is the same meaning the standalone
+// command, the client and the adapter already give it. Rejecting it here made the
+// two surfaces disagree about one value: the same "--max-chars 0" was an error in
+// the REPL and a full conversation in a script. The provider reads an explicit
+// zero as "erase every body", but that is not carried over, because a request that
+// erases every message is not a useful operator intent and silently returning
+// nothing would look like a session with no content.
+//
+// A negative value is rejected rather than read as "no bound", because the
+// operator who typed a number asked for a bound and silently ignoring it would
+// show a full conversation they believed they had narrowed. A value above the
+// protocol maximum is rejected rather than clamped, because a clamp would honour a
+// different bound than the one requested while reporting success.
+func parseMaxChars(raw string) (int, error) {
+	count, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("--max-chars must be an integer")
+	}
+	if count < 0 {
+		return 0, fmt.Errorf("--max-chars %d is negative; a bound must be zero or a positive count", count)
+	}
+	if count > protocol.MaxMessagesMaxChars {
+		return 0, fmt.Errorf("--max-chars %d exceeds the maximum of %d", count, protocol.MaxMessagesMaxChars)
+	}
+	return count, nil
+}
+
 func interactiveValue(values map[string]any, key string) string {
 	value, _ := values[key].(string)
 	return value

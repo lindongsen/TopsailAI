@@ -20,7 +20,8 @@ import (
 // absence, so the two are mutually exclusive; messages addresses persisted
 // provider data and therefore needs neither.
 func interactiveMessages(parent context.Context, api InteractiveAPI, state *interactiveState, rest string, out, diagnostics io.Writer, color ColorPolicy) error {
-	if err := rejectInteractiveOption("messages", rest); err != nil {
+	target, maxChars, err := parseMessagesArgs(rest)
+	if err != nil {
 		return err
 	}
 	querier, ok := api.(MessagesQuerier)
@@ -29,11 +30,11 @@ func interactiveMessages(parent context.Context, api InteractiveAPI, state *inte
 	}
 	ctx, cancel := commandContext(parent)
 	defer cancel()
-	endpointID, sessionID, err := messagesTarget(ctx, api, state, strings.TrimSpace(rest))
+	endpointID, sessionID, err := messagesTarget(ctx, api, state, target)
 	if err != nil {
 		return err
 	}
-	result, err := querier.GetMessages(ctx, endpointID, sessionID, 0)
+	result, err := querier.GetMessages(ctx, endpointID, sessionID, maxChars)
 	if err != nil {
 		return err
 	}
@@ -41,9 +42,10 @@ func interactiveMessages(parent context.Context, api InteractiveAPI, state *inte
 		return fmt.Errorf("messages for session %q on endpoint %q failed: %s", sessionID, endpointID, result.ErrorCode)
 	}
 	view := BuildMessagesView(endpointID, result)
-	// The conversation is provider prose, so it renders through the untrusted
-	// writer: every body already passed the provider output boundary, and the
-	// labels around it are plain text.
+	// The renderer owns both halves of the boundary: it applies trusted styling
+	// to its own headers and sanitizes every provider body itself. It therefore
+	// needs the trusted writer, because the untrusted one would strip the styling
+	// it emits while adding nothing the renderer does not already do.
 	return RenderMessages(out, view, color)
 }
 

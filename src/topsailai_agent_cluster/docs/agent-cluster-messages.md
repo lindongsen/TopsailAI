@@ -50,8 +50,12 @@ The adapter invokes two provider commands, both with `--json`:
 
 ```text
 topsailai session info <session_id> --json
-topsailai session history <session_id> --json [--max-chars N]
+topsailai session history <session_id> --json
 ```
+
+Neither command receives `--max-chars`, even when the caller asked for a display bound. The
+provider would truncate the raw stored document, which cuts a structured body into invalid
+JSON, so the bound is applied by the adapter after unwrapping instead.
 
 `session info` is the existence pre-check. It is required because `session history`
 returns a successful empty document for a session that does not exist, so the two cases
@@ -167,32 +171,160 @@ and rows 3, 4 and 5 can be read consecutively.
 
 ## Bounds and truncation
 
-Three bounds apply, and every one of them is labelled when it is reached:
+Two acceptance bounds apply, and neither is a display decision:
 
 | Bound | Value | Meaning |
 |---|---|---|
 | `MaxMessages` | 1000 | accepted message count |
-| `MaxMessageContentBytes` | 64 KiB | one message body |
-| `MaxMessagesBytes` | 512 KiB | the whole accepted document |
+| `MaxMessagesBytes` | 512 KiB | the whole accepted provider document |
 
-`--max-chars` is forwarded to the provider, which truncates one message and appends an
-ellipsis. The adapter applies its own byte bounds as well, because `--max-chars` bounds one
-message only: a real session contained a single message of 105,871 words, so a per-message
-bound alone cannot bound the document.
+There is deliberately no per-message byte bound. The document bound already rejects anything
+larger, so a second bound could only ever cut a body that had already been accepted, and that
+cut would be silent: the operator would read a shortened message as a complete one. An
+over-ceiling body is a defect, not a display decision, so it fails closed at the document
+check instead of being trimmed.
 
-A truncated document is always labelled. A shortened answer must never be presented as
-complete, because the operator would then believe the conversation ended where the bound
-was reached.
+`--max-chars` is never forwarded to the provider. The provider truncates the raw stored
+document, which cuts a structured body into invalid JSON, and the adapter would then be unable
+to unwrap exactly the long messages an operator most wants to read. The bound is applied after
+unwrapping, so it shortens readable text instead of corrupting the record.
+
+The caller's bound is counted in characters and clamped to `MaxMessagesMaxChars` (100000)
+rather than rejected, so a caller cannot ask for a bound the provider would silently reduce.
+A shortened body always ends with an ellipsis.
+
+Two different facts are labelled separately, because one boolean cannot carry both:
+
+| Fact | Label |
+|---|---|
+| messages are missing | `conversation is a bounded window: N of M messages shown` |
+| every message present, one body shortened | `one or more message bodies were shortened to the requested bound` |
+| neither | no label, so the output is byte-identical to the provider |
+
+The window case is judged first, because a report that omitted messages may also have
+shortened the ones it kept, and the missing messages are the more important fact. A shortened
+answer must never be presented as complete, because the operator would then believe the
+conversation ended where the bound was reached.
 
 ## Rendering
 
 Message content is untrusted. It is stripped of terminal control sequences before it is
 written, using the same boundary `logs` already applies, so a message can never emit an
-escape sequence that the terminal would execute.
+escape sequence that the terminal would execute. That holds with colour enabled as well:
+the boundary keeps only colour-only SGR sequences and still removes cursor movement, title
+changes and hyperlinks, so provider prose can never reposition the cursor or overwrite a
+trusted row.
 
-The rendered form prints one block per message with its role and observation time, so the
-operator can tell who spoke and when. The `--json` form writes the standard document
-instead, so a script never has to parse the rendered text.
+The rendered form reproduces the provider's own human-readable conversation format, so the
+same conversation reads the same way here and in the provider CLI. The layout is a copy, not
+an interpretation:
+
+| Element | Exact form |
+|---|---|
+| Separator | 80 `=` characters, one above and one below each header |
+| Block prefix | one blank line before each separator |
+| Header | `#{n} - Role: {ROLE} - Words: {n} - Tokens: {n} - {timestamp}` |
+| Role casing | upper case |
+| Timestamp | `YYYY-MM-DD HH:MM:SS.mmm`, milliseconds included |
+| Empty body | `  [No content]`, two leading spaces |
+| Trailer | one blank line after the last block |
+
+The separator is a fixed 80 characters rather than the terminal width, because the provider
+uses a fixed width and a faithful copy must not reflow when the window is resized.
+
+`Words` is the character count of the untruncated body, not a word count. The provider's own
+function is named `_count_words` but counts characters, and the cluster reproduces the
+observed behaviour rather than the name. Go counts runes, not bytes, because the provider
+counts code points.
+
+`Tokens` is the model token count of the untruncated body, measured with the same
+`cl100k_base` encoding the provider uses. Both counts describe the whole message, because they
+are measured before the display bound is applied, so shortening a body never changes its
+header.
+
+The counts are provider-derived facts, so the adapter supplies them through
+`protocol.Message.WordCount` and `TokenCount`. The renderer never computes a count itself,
+because a second adapter would then be unable to supply its own counting semantics.
+
+The row number and the speaker word are styled as structural labels, and the separator,
+timestamp and truncation label are dimmed. The message body is never styled, because it is
+provider data rather than application structure. With colour disabled, or when the stream is
+redirected, no escape sequence is emitted at all, so the plain form is byte-identical to the
+provider's own output.
+
+A record whose body is empty is rendered as `[No content]` rather than as a blank gap, so an
+empty message is not mistaken for a rendering failure.
+
+The `--json` form writes the standard document instead, so a script never has to parse the
+rendered text.
+
+## Provider step-record unwrapping
+
+The provider stores most message bodies as its own step record rather than as plain prose: one
+object or an array of them, each carrying a step name and the text the operator actually wrote.
+Printing that record verbatim shows JSON to the operator, which is not a readable conversation.
+
+The adapter unwraps the record before the body is bounded, and the order is load-bearing. Bounding
+first would cut the wrapper into invalid JSON, so the unwrapper would give up on exactly the long
+messages an operator most wants to read. A regression test pins the order by using a body whose
+wrapper alone pushes it past the byte bound.
+
+The unwrapped form is `topsailai.<step>` followed by the text, matching what the provider's own
+human-facing surface prints. Any field the cluster does not model is preserved after the text rather
+than dropped, because a step record can carry evidence the operator still needs.
+
+The unwrapping is deliberately forgiving, and it is all-or-nothing:
+
+- A body that is not a step record is returned unchanged, because the cluster must not invent
+  structure that is absent.
+- A body that no longer parses, because the provider truncated it, is returned unchanged. Losing the
+  surviving text would be worse than showing it in its raw form, and a truncated body is exactly the
+  case where the remaining text still matters.
+- A body whose elements are not all step records is returned unchanged. Half-unwrapping it would read
+  like a complete conversation while silently dropping entries.
+
+This unwrapping belongs to the adapter, not to the renderer or the protocol. The record format is
+provider detail, so it is confined to the adapter and never appears in `internal/protocol`, a Server
+route, a stored document or a CLI help body. A second adapter supplies its own unwrapping, and the
+cluster contract is unchanged.
+
+## Structured-body rendering
+
+Unwrapping removes the provider's own step record. A body can still be a JSON object or array
+afterwards, because the adapter only unwraps a record it recognises, and because a provider may
+store a structure the cluster does not model. Forwarding that body verbatim shows braces and
+quotes to the operator, which is the same defect unwrapping exists to remove.
+
+The renderer therefore recognises the shape of a body and renders it for a human. The rule is
+generic and never names a provider field, because provider vocabulary belongs to the adapter:
+
+| Shape | Rendering |
+|---|---|
+| object | one `key: value` line per entry, keys sorted |
+| object, nested value | the nested block indented under its key |
+| object, long or multi-line string | the text on its own indented block under its key |
+| array of scalars | one bulleted line per item |
+| array containing an object | numbered blocks, each rendered by the object rule |
+| empty object or array | `{}` or `[]`, stated rather than left blank |
+| not valid JSON | printed verbatim |
+| bare JSON scalar | printed verbatim |
+
+Rules that hold in every case:
+
+- A structured body never prints `{`, `}`, `["` or `"]`. The `[n]` markers of a numbered list are
+  the intended output, not JSON punctuation.
+- Keys are sorted, so the same body renders identically on every read. An operator comparing two
+  reads must not see a difference that is not a change in the data.
+- Nesting is bounded at six levels. Past the bound a value is printed inline as compact JSON,
+  because the alternative is indentation that pushes the text off the terminal edge.
+- A body that is not valid JSON is printed verbatim. A truncated body is exactly the case where
+  the surviving text still matters, so replacing it with an error would lose the only evidence.
+- Every rendered body still passes the control-sequence boundary, because it is provider-derived
+  text. The renderer is not a trust boundary.
+
+Rendering happens after unwrapping and before the display bound, so a structured body is bounded
+as rendered text rather than as JSON. The counts in the header are measured from the body as the
+provider stored it, so they describe the whole message and never change when a body is shortened.
 
 ## Failure semantics
 

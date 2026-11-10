@@ -103,6 +103,12 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// prose, not an output line and not a history row, and conflating them would
 	// let an unrelated setting silently reshape a conversation.
 	maxChars := flags.Int("max-chars", 0, "maximum characters per message returned by messages; 0 keeps the adapter default")
+	// -c is the short spelling of --max-chars. Both surfaces accept it, so an
+	// operator who learned it in the interactive REPL can use it here too. It is a
+	// separate flag rather than an alias entry because Go's flag package has no
+	// alias mechanism, and the two spellings are reconciled after parsing so they
+	// can never disagree about one quantity.
+	maxCharsShort := flags.Int("c", 0, "short form of --max-chars")
 	profile := flags.String("profile", "", "launch profile ID for start")
 	profileRevision := flags.String("profile-revision", "", "launch profile revision for start")
 	folder := flags.String("folder", "", "working folder for start")
@@ -164,6 +170,32 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		options := tui.InteractiveOptions{MaxBytes: *maxBytes, MaxLines: interactiveLines, WaitTimeoutMS: *waitTimeoutMS, Interrupt: interrupts, CloseInput: input == os.Stdin || interrupts != nil, Color: tui.OutputColorPolicy(output), ProgressWriter: errors}
 		return tui.RunInteractive(ctx, api, input, output, errors, wireEditorReaders(options, editor))
 	}
+	// A negative numeric option is rejected at the boundary rather than passed
+	// down, because every consumer reads a non-positive bound as "no bound". A
+	// negative bound would therefore silently widen the result instead of
+	// narrowing it, and the operator would see a complete conversation while
+	// believing it was bounded.
+	if err := rejectNegativeNumericFlags(*maxChars, *maxCharsShort, *historyLimit, *maxBytes, *lines); err != nil {
+		return err
+	}
+	// The two spellings of the per-message bound are reconciled into one value
+	// before any command reads it, so -c and --max-chars can never disagree. Two
+	// different values are rejected instead of resolved by precedence, because
+	// either choice would silently ignore a bound the operator stated.
+	messageBound, err := reconcileMaxChars(*maxChars, *maxCharsShort)
+	if err != nil {
+		return err
+	}
+	// A bound above the protocol maximum is rejected rather than clamped, so the
+	// two surfaces agree about one value. The adapter clamps, which means a caller
+	// who asked for 999999999 receives a 100000 bound while the command reports
+	// success and prints no diagnostic; the operator then believes a bound was
+	// honoured that was silently replaced. The interactive surface already rejects
+	// this value, so accepting it here made the same request succeed in a script
+	// and fail in the REPL.
+	if messageBound > protocol.MaxMessagesMaxChars {
+		return fmt.Errorf("--max-chars %d exceeds the maximum of %d", messageBound, protocol.MaxMessagesMaxChars)
+	}
 	switch flags.Arg(0) {
 	case "help":
 		if flags.NArg() > 2 {
@@ -202,14 +234,14 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		return endpoints(ctx, api, output, endpointFilter, *jsonMode, tui.OutputColorPolicy(output))
 	case "history":
 		if flags.NArg() != 2 {
-			return fmt.Errorf("usage: history <endpoint-id-or-hostname>")
+			return fmt.Errorf("usage: history <endpoint-id-or-hostname> [--limit N]")
 		}
 		return history(ctx, api, output, errors, flags.Arg(1), *historyLimit, *jsonMode, tui.OutputColorPolicy(output))
 	case "messages":
 		if flags.NArg() != 3 {
-			return fmt.Errorf("usage: messages <endpoint-id-or-hostname> <session-id>")
+			return fmt.Errorf("usage: messages <endpoint-id-or-hostname> <session-id> [-c N|--max-chars N]")
 		}
-		return messages(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), *maxChars, *jsonMode, tui.OutputColorPolicy(output))
+		return messages(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), messageBound, *jsonMode, tui.OutputColorPolicy(output))
 	case "table":
 		return fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "show":
@@ -378,6 +410,50 @@ func resolveInteractiveLines(flags *flag.FlagSet, value int) (int, error) {
 	return value, nil
 }
 
+// rejectNegativeNumericFlags rejects a negative value for any numeric option.
+//
+// Every consumer of these options reads a non-positive value as "no bound", so a
+// negative value would widen the result instead of narrowing it. The operator
+// would then see a complete conversation or a complete output snapshot while
+// believing the request was bounded, which is the opposite of what the flag says.
+// The check lives at the boundary because the same convention is repeated in the
+// adapter, the client and the Server, and a single rejected value cannot drift.
+func rejectNegativeNumericFlags(maxChars, maxCharsShort, historyLimit, maxBytes, lines int) error {
+	checks := []struct {
+		name  string
+		value int
+	}{
+		{"--max-chars", maxChars},
+		{"-c", maxCharsShort},
+		{"--limit", historyLimit},
+		{"--max-bytes", maxBytes},
+		{"--lines", lines},
+	}
+	for _, check := range checks {
+		if check.value < 0 {
+			return fmt.Errorf("%s %d is negative; a bound must be zero or a positive count", check.name, check.value)
+		}
+	}
+	return nil
+}
+
+// reconcileMaxChars folds the two spellings of the per-message bound into one
+// value, so -c and --max-chars can never disagree about one quantity.
+//
+// Two different non-zero values are rejected instead of resolved by precedence,
+// because either choice would silently ignore a bound the operator stated. Zero
+// means "not supplied" for both spellings, so "-c 0" and "--max-chars 0" agree
+// and both mean "no bound", which is the meaning every consumer already applies.
+func reconcileMaxChars(maxChars, maxCharsShort int) (int, error) {
+	if maxChars != 0 && maxCharsShort != 0 && maxChars != maxCharsShort {
+		return 0, fmt.Errorf("--max-chars %d and -c %d disagree; state the bound once", maxChars, maxCharsShort)
+	}
+	if maxCharsShort != 0 {
+		return maxCharsShort, nil
+	}
+	return maxChars, nil
+}
+
 // globalOptionNames lists the options the top-level flag set owns. Only these are
 // hoisted, so an option a subcommand owns (for example list --clean) keeps its
 // position and its meaning.
@@ -392,15 +468,16 @@ func resolveInteractiveLines(flags *flag.FlagSet, value int) (int, error) {
 var globalOptionNames = map[string]bool{
 	"json": true, "endpoint": true, "yes": true, "server-url": true, "token": true,
 	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "no-color": true,
-	"no-progress": true,
-	"profile":     true, "profile-revision": true, "folder": true, "task": true,
+	"no-progress": true, "no-truncate": true, "limit": true, "max-chars": true, "c": true,
+	"profile": true, "profile-revision": true, "folder": true, "task": true,
 	"generation": true, "i": true, "follow": true, "f": true,
 }
 
 // booleanGlobalOptions lists the hoisted options that take no value, so hoisting
 // never swallows the following argument as if it were that option's value.
 var booleanGlobalOptions = map[string]bool{
-	"json": true, "yes": true, "no-color": true, "no-progress": true, "i": true, "follow": true, "f": true,
+	"json": true, "yes": true, "no-color": true, "no-progress": true, "no-truncate": true,
+	"i": true, "follow": true, "f": true,
 }
 
 // hoistTrailingFlags moves recognized global options that appear after the
@@ -450,12 +527,46 @@ func hoistTrailingFlags(args []string) []string {
 		// A value-taking option written as a separate pair takes its value with
 		// it, otherwise hoisting would leave the value behind as a positional.
 		// A boolean option never consumes the next argument.
-		if !hasValue && !booleanGlobalOptions[name] && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+		if !hasValue && !booleanGlobalOptions[name] && i+1 < len(args) && takesSeparateValue(args[i+1]) {
 			i++
 			hoisted = append(hoisted, args[i])
 		}
 	}
 	return append(hoisted, rest...)
+}
+
+// takesSeparateValue reports whether the argument after a value-taking option is
+// that option's value rather than another option.
+//
+// A following option is never a value, but a negative number is: "--max-chars -5"
+// states one option and one value, while "--max-chars --json" states two options.
+// Treating every leading dash as an option made a negative value fall through to
+// the positional list, so the flag then consumed the subcommand name and reported
+// `invalid value "messages" for flag -max-chars`, which names neither the real
+// problem nor the real argument.
+func takesSeparateValue(next string) bool {
+	if next == "--" {
+		return false
+	}
+	if !strings.HasPrefix(next, "-") {
+		return true
+	}
+	return isNegativeNumber(next)
+}
+
+// isNegativeNumber reports whether the argument is a negative number rather than
+// an option. The first character after the dash must be a digit or a decimal
+// point, so a word such as "-inf" is never mistaken for a value.
+func isNegativeNumber(arg string) bool {
+	if len(arg) < 2 || arg[0] != '-' {
+		return false
+	}
+	rest := arg[1:]
+	if (rest[0] < '0' || rest[0] > '9') && rest[0] != '.' {
+		return false
+	}
+	_, err := strconv.ParseFloat(rest, 64)
+	return err == nil
 }
 
 // splitOptionName reports the option name without its leading dashes and whether

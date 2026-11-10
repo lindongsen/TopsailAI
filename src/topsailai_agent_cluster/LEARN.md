@@ -516,6 +516,88 @@ list exists, but it reports what is configured, while the current model is runti
 as text (`workspace/plugin_instruction/agent.py:289`). A single "no JSON" claim hid that distinction
 and would have produced a catalog that silently omitted which profile is in use.
 
+## A failing test is not another agent's until the diff names your own change
+
+Trigger: `make test-unit-cli` failed on `TestUnitCBatch2PrefetchedHelpQuit`, and the failure was
+reported to the human as another agent's concurrent edit to `internal/tui`. That was wrong. The
+failure diff showed `want` containing `messages [session]` while the output contained
+`messages [--max-chars N] [session]`, which is exactly the syntax this task had just added to
+`help.go`. The file was not foreign at all; the expectation inside it was stale because of this
+change. The mis-attribution was reported twice before the diff was read.
+
+Action: before attributing a failure to another agent, read the failure diff and check whether the
+differing text is produced by a line this task changed. The correct test is not "is the failing file
+in my change set" but "does the difference come from my change". A test file that embeds generated
+output will fail because of a change in a different file, so the failing file being untouched proves
+nothing. Only after the diff shows a value this task did not produce is a concurrent edit the
+explanation.
+
+Why this prevents recurrence: a stale expectation in a test file looks exactly like a foreign edit,
+because the file is not in the change set and the failure appears while verifying unrelated work. The
+convenient explanation is also the one that requires no work, so it is easy to accept without
+evidence. Reading the diff converts the question into a fact, and in this case the fact was that the
+defect was self-inflicted and blocking.
+
+## Generated help text is pinned in more than one place
+
+Trigger: changing one `messages` syntax string in `help.go` broke two separate tests. The first was a
+literal copy of the main help block in `unit_c_batch2_queue_test.go`. The second was a SHA256 digest
+and byte size of the full help output in `unit_c_start_parse_test.go`, which no grep for the old
+syntax could find, because a digest contains no readable text.
+
+Action: after changing any help or usage string, search for the old text and also search for digest
+pins (`sha256`, `Sum256`, `digest`) in the same package. A digest pin cannot be found by searching for
+the text it covers, so it must be looked for by mechanism. When updating a digest, first confirm the
+source file contains only the intended change, so the new digest can only be caused by that change;
+then copy the actual value from the failure output instead of computing it separately. Check the size
+field too: an unchanged size with a changed digest is evidence that the edit was length-preserving,
+which is a useful confirmation that the padding was right.
+
+Why this prevents recurrence: a literal expectation fails loudly and points at the line, while a
+digest fails with two opaque hex strings and no indication of which text changed. The digest is
+therefore the harder half of the same edit, and it is invisible to a text search. Confirming the
+source diff before accepting a new digest is what keeps the pin meaningful rather than merely
+updated to whatever the code now produces.
+
+## Byte parity with a provider is not a quality criterion
+
+Trigger: the `messages` renderer was rewritten to reproduce the provider's own human-readable
+output byte for byte, and that was reported as the acceptance criterion. The human rejected the
+result: a message body that the provider stores as a JSON object still printed as braces and
+quotes, because the provider's own non-JSON surface dumps raw JSON in that case. Copying the
+provider faithfully reproduced its defect.
+
+Action: when the requirement is "make this readable", the criterion is readability, not equality
+with the source. Read the provider's output to learn the layout, then ask what the provider does
+with each *shape* of data, and improve the shapes it handles badly. State the criterion in terms
+of what the operator sees, and keep byte parity only for the cases where the provider is already
+correct, such as plain prose.
+
+Why this prevents recurrence: byte parity is measurable, so it feels like a rigorous criterion,
+and a `cmp` that reports no difference looks like proof of success. It is proof of sameness, not
+of quality, and it silently converts "the provider is wrong here" into "we are wrong here too".
+The abstraction layer exists precisely to be better than any single provider, so a criterion that
+forbids improving on the provider contradicts the layer's purpose. The tell is a requirement
+phrased as "copy it exactly" applied to a case where the source output is visibly unreadable.
+
+## A renderer that recognises shape must not name the provider's fields
+
+Trigger: the fix for the unreadable body could have been written as "if the body has `raw_text`
+and `step_name`, print the text". That would have worked for this provider and broken the
+abstraction: the renderer would then encode one provider's record format, and a second provider
+would need a renderer change.
+
+Action: split the responsibility by layer. The adapter owns the provider's record shape and
+unwraps it, because that shape is provider detail. The renderer owns only generic JSON shapes:
+object, array, scalar, nested, empty. A renderer that needs a field name to decide what to print
+is doing the adapter's job in the wrong place.
+
+Why this prevents recurrence: the provider-specific version is shorter and passes every test on
+the only provider that exists, so review cannot see the defect. It appears later as a renderer
+that must be edited for every new adapter, which is exactly the coupling the cluster contract
+forbids. The generic version is testable with fixtures that name no provider at all, and those
+fixtures keep working when the provider's record format changes.
+
 ## A help body and a help syntax line are two different sources
 
 Trigger: `--brief` was added to `list` and documented in the catalog entry, and the interactive

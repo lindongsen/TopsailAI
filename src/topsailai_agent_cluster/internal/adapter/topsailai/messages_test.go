@@ -2,9 +2,12 @@ package topsailai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"topsailai_agent_cluster/internal/protocol"
 )
@@ -141,84 +144,171 @@ func TestMessagesNeverForwardsDatabaseSelection(t *testing.T) {
 	}
 }
 
-// TestMessagesClampsMaxChars proves a caller cannot request a bound the provider
-// would silently reduce, and that zero keeps the provider default.
-func TestMessagesClampsMaxChars(t *testing.T) {
+// TestMessagesNeverForwardsMaxChars proves the display bound is applied by the
+// adapter and never forwarded to the provider.
+//
+// The provider truncates the raw stored document, which cuts a structured body
+// into invalid JSON. The adapter would then be unable to unwrap exactly the long
+// messages an operator most wants to read, so the bound must be applied after
+// unwrapping. Forwarding it would also make the bound act on the wrapper instead
+// of on the text the operator reads.
+func TestMessagesNeverForwardsMaxChars(t *testing.T) {
 	runner := &perCallRunner{answers: [][]byte{
+		[]byte(`{"session_id":"s1"}`),
+		[]byte(`{"ok":true,"session_id":"s1","message_count":0,"messages":[]}`),
 		[]byte(`{"session_id":"s1"}`),
 		[]byte(`{"ok":true,"session_id":"s1","message_count":0,"messages":[]}`),
 		[]byte(`{"session_id":"s1"}`),
 		[]byte(`{"ok":true,"session_id":"s1","message_count":0,"messages":[]}`),
 	}}
 	adapter := messagesAdapter(t, runner)
-	if _, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1", MaxChars: protocol.MaxMessagesMaxChars * 10}); err != nil {
-		t.Fatalf("Messages: %v", err)
+	for _, bound := range []int{0, 10, protocol.MaxMessagesMaxChars * 10} {
+		if _, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1", MaxChars: bound}); err != nil {
+			t.Fatalf("bound %d: Messages: %v", bound, err)
+		}
 	}
-	historyArgs := runner.calls[1]
-	found := false
-	for i, arg := range historyArgs {
-		if arg == "--max-chars" {
-			found = true
-			if historyArgs[i+1] != "100000" {
-				t.Fatalf("max-chars = %q, want the clamped 100000", historyArgs[i+1])
+	for _, call := range runner.calls {
+		for _, arg := range call {
+			if arg == "--max-chars" || arg == "-c" {
+				t.Fatalf("argv %v forwards the display bound to the provider", call)
 			}
 		}
 	}
-	if !found {
-		t.Fatalf("argv %v omits --max-chars", historyArgs)
-	}
-	if _, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1"}); err != nil {
-		t.Fatalf("Messages: %v", err)
-	}
-	for _, arg := range runner.calls[3] {
-		if arg == "--max-chars" {
-			t.Fatalf("argv %v passes --max-chars for an unset bound", runner.calls[3])
-		}
-	}
 }
 
-// TestMessagesLabelsTruncation proves a bounded window is never presented as a
-// complete conversation.
-func TestMessagesLabelsTruncation(t *testing.T) {
-	long := strings.Repeat("a", protocol.MaxMessageContentBytes+10)
-	document := `{"ok":true,"session_id":"s1","message_count":1,"messages":[{"role":"user","content":"` + long + `"}]}`
+// TestMessagesAppliesBoundAfterUnwrapping proves the bound shortens the readable
+// text rather than the provider's wrapper.
+//
+// The fixture body is a step record whose raw_text is longer than the bound. If
+// the bound were applied to the wrapper, the result would be a cut JSON fragment;
+// if it were applied after unwrapping, the result is the readable prefix plus the
+// provider's own ellipsis.
+func TestMessagesAppliesBoundAfterUnwrapping(t *testing.T) {
+	body := `{"raw_text":"` + strings.Repeat("x", 100) + `","step_name":"task"}`
+	document := `{"ok":true,"session_id":"s1","message_count":1,"messages":[{"role":"user","content":` + strconv.Quote(body) + `}]}`
 	runner := &perCallRunner{answers: [][]byte{[]byte(`{"session_id":"s1"}`), []byte(document)}}
 	adapter := messagesAdapter(t, runner)
-	result, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1"})
-	if err != nil {
-		t.Fatalf("Messages: %v", err)
-	}
-	if !result.Truncated {
-		t.Fatalf("an oversized message was not labelled truncated")
-	}
-	if len(result.Messages) != 1 || len(result.Messages[0].Content) != protocol.MaxMessageContentBytes {
-		t.Fatalf("content length = %d, want %d", len(result.Messages[0].Content), protocol.MaxMessageContentBytes)
-	}
-}
-
-// TestMessagesKeepsUTF8Boundary proves a cut never splits a multi-byte character,
-// because a raw byte slice would produce invalid text.
-func TestMessagesKeepsUTF8Boundary(t *testing.T) {
-	// Three-byte runes fill the bound exactly, so the cut lands mid-rune unless it
-	// is moved back to a rune start.
-	content := strings.Repeat("中", protocol.MaxMessageContentBytes/3+1)
-	document := `{"ok":true,"session_id":"s1","message_count":1,"messages":[{"role":"user","content":"` + content + `"}]}`
-	runner := &perCallRunner{answers: [][]byte{[]byte(`{"session_id":"s1"}`), []byte(document)}}
-	adapter := messagesAdapter(t, runner)
-	result, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1"})
+	result, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1", MaxChars: 40})
 	if err != nil {
 		t.Fatalf("Messages: %v", err)
 	}
 	if len(result.Messages) != 1 {
 		t.Fatalf("messages = %d, want 1", len(result.Messages))
 	}
-	if !strings.HasPrefix(content, result.Messages[0].Content) {
+	content := result.Messages[0].Content
+	if strings.Contains(content, "raw_text") || strings.Contains(content, "step_name") {
+		t.Fatalf("the bound was applied to the wrapper, not the readable text: %q", content)
+	}
+	if !strings.HasPrefix(content, "topsailai.task") {
+		t.Fatalf("the unwrapped body lost its provider label: %q", content)
+	}
+	if !strings.HasSuffix(content, "...") {
+		t.Fatalf("a shortened body was not marked with the provider's ellipsis: %q", content)
+	}
+	if !result.Truncated {
+		t.Fatalf("a shortened body was not labelled truncated")
+	}
+}
+
+// TestMessagesCountsComeFromTheStoredBody proves the counts describe the message
+// as the provider stored it, not the shortened text.
+//
+// A count taken after truncation would make the same message report a different
+// size depending on how much of it was displayed, so the header would disagree
+// with the provider's own surface for the same record.
+func TestMessagesCountsComeFromTheStoredBody(t *testing.T) {
+	body := `{"raw_text":"` + strings.Repeat("x", 100) + `","step_name":"task"}`
+	document := `{"ok":true,"session_id":"s1","message_count":1,"messages":[{"role":"user","content":` + strconv.Quote(body) + `}]}`
+	runner := &perCallRunner{answers: [][]byte{[]byte(`{"session_id":"s1"}`), []byte(document)}}
+	adapter := messagesAdapter(t, runner)
+	result, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1", MaxChars: 10})
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	if len(result.Messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(result.Messages))
+	}
+	message := result.Messages[0]
+	if message.WordCount != utf8.RuneCountInString(body) {
+		t.Fatalf("word count = %d, want the stored body's %d", message.WordCount, utf8.RuneCountInString(body))
+	}
+	if message.TokenCount == 0 {
+		t.Fatalf("token count was not measured")
+	}
+	if message.WordCount <= utf8.RuneCountInString(message.Content) {
+		t.Fatalf("the count was taken after truncation: count=%d shown=%d", message.WordCount, utf8.RuneCountInString(message.Content))
+	}
+}
+
+// TestMessagesLabelsTruncation proves a shortened body is labelled, and that the
+// label is the display bound rather than a byte ceiling.
+//
+// The only bound applied to a body is the caller's character bound, so this test
+// drives that bound. A byte ceiling would cut the body without an ellipsis, which
+// is exactly the silent loss this test exists to prevent.
+func TestMessagesLabelsTruncation(t *testing.T) {
+	const bound = 50
+	long := strings.Repeat("a", bound+10)
+	document := `{"ok":true,"session_id":"s1","message_count":1,"messages":[{"role":"user","content":"` + long + `"}]}`
+	runner := &perCallRunner{answers: [][]byte{[]byte(`{"session_id":"s1"}`), []byte(document)}}
+	adapter := messagesAdapter(t, runner)
+	result, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1", MaxChars: bound})
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	if !result.Truncated {
+		t.Fatalf("a shortened body was not labelled truncated")
+	}
+	if len(result.Messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(result.Messages))
+	}
+	content := result.Messages[0].Content
+	if !strings.HasSuffix(content, "...") {
+		t.Fatalf("a shortened body was not marked with the provider's ellipsis: %q", content)
+	}
+	if got := utf8.RuneCountInString(strings.TrimSuffix(content, "...")); got != bound {
+		t.Fatalf("kept %d characters, want the requested %d", got, bound)
+	}
+}
+
+// TestMessagesKeepsUTF8Boundary proves a cut never splits a multi-byte character,
+// because a byte slice would produce invalid text.
+//
+// The bound is counted in characters, so a body of three-byte runes must be cut
+// after exactly the requested number of runes rather than at a byte offset.
+func TestMessagesKeepsUTF8Boundary(t *testing.T) {
+	const bound = 40
+	content := strings.Repeat("中", bound+10)
+	document := `{"ok":true,"session_id":"s1","message_count":1,"messages":[{"role":"user","content":"` + content + `"}]}`
+	runner := &perCallRunner{answers: [][]byte{[]byte(`{"session_id":"s1"}`), []byte(document)}}
+	adapter := messagesAdapter(t, runner)
+	result, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1", MaxChars: bound})
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	if len(result.Messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(result.Messages))
+	}
+	got := result.Messages[0].Content
+	// The kept text is the body minus the provider's ellipsis, so the prefix check
+	// is made against that rather than against the marked form.
+	kept := strings.TrimSuffix(got, "...")
+	if kept == got {
+		t.Fatalf("a shortened body was not marked with the provider's ellipsis: %q", got)
+	}
+	if !strings.HasPrefix(content, kept) {
 		t.Fatalf("the cut did not land on a rune boundary")
 	}
-	for _, r := range result.Messages[0].Content {
+	if !utf8.ValidString(kept) {
+		t.Fatalf("the cut produced invalid UTF-8")
+	}
+	for _, r := range kept {
 		if r == '\uFFFD' {
 			t.Fatalf("the cut produced a replacement rune")
 		}
+	}
+	if n := utf8.RuneCountInString(kept); n != bound {
+		t.Fatalf("kept %d runes, want the requested %d", n, bound)
 	}
 }
 
@@ -237,4 +327,149 @@ func TestMessagesRejectsEmptySessionID(t *testing.T) {
 	if len(runner.calls) != 0 {
 		t.Fatalf("calls = %d, want 0", len(runner.calls))
 	}
+}
+
+// TestMessagesUnwrapsSingleStepRecord proves one wrapped body is shown as the
+// provider's own human-facing surface shows it, instead of as JSON.
+func TestMessagesUnwrapsSingleStepRecord(t *testing.T) {
+	content := `{"raw_text":"重新全部编译打包一遍","step_name":"task"}`
+	document := `{"ok":true,"session_id":"s1","message_count":1,"messages":[{"role":"user","content":` + quoteJSON(content) + `}]}`
+	runner := &perCallRunner{answers: [][]byte{[]byte(`{"session_id":"s1"}`), []byte(document)}}
+	adapter := messagesAdapter(t, runner)
+	result, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1"})
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	want := "topsailai.task\n重新全部编译打包一遍"
+	if got := result.Messages[0].Content; got != want {
+		t.Fatalf("content = %q, want %q", got, want)
+	}
+}
+
+// TestMessagesUnwrapsStepRecordArray proves an array of step records is unwrapped
+// entry by entry, which is the shape most assistant replies use.
+func TestMessagesUnwrapsStepRecordArray(t *testing.T) {
+	content := `[{"raw_text":"first","step_name":"think"},{"raw_text":"second","step_name":"answer"}]`
+	document := `{"ok":true,"session_id":"s1","message_count":1,"messages":[{"role":"assistant","content":` + quoteJSON(content) + `}]}`
+	runner := &perCallRunner{answers: [][]byte{[]byte(`{"session_id":"s1"}`), []byte(document)}}
+	adapter := messagesAdapter(t, runner)
+	result, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1"})
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	want := "topsailai.think\nfirst\n\ntopsailai.answer\nsecond"
+	if got := result.Messages[0].Content; got != want {
+		t.Fatalf("content = %q, want %q", got, want)
+	}
+}
+
+// TestMessagesKeepsPlainProseVerbatim proves a body that is not a step record is
+// never rewritten, because the cluster must not invent structure that is absent.
+func TestMessagesKeepsPlainProseVerbatim(t *testing.T) {
+	content := "just a plain sentence with no wrapper"
+	document := `{"ok":true,"session_id":"s1","message_count":1,"messages":[{"role":"user","content":` + quoteJSON(content) + `}]}`
+	runner := &perCallRunner{answers: [][]byte{[]byte(`{"session_id":"s1"}`), []byte(document)}}
+	adapter := messagesAdapter(t, runner)
+	result, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1"})
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	if got := result.Messages[0].Content; got != content {
+		t.Fatalf("content = %q, want %q", got, content)
+	}
+}
+
+// TestMessagesKeepsTruncatedWrapperVerbatim proves a body the provider cut into
+// invalid JSON is still shown. Losing the surviving text would be worse than
+// showing it in its raw form, and a truncated body is exactly the case where the
+// remaining text still matters.
+func TestMessagesKeepsTruncatedWrapperVerbatim(t *testing.T) {
+	content := `{"raw_text":"---\n> File: /tmp/x.md > START\n# Learn`
+	document := `{"ok":true,"session_id":"s1","message_count":1,"messages":[{"role":"user","content":` + quoteJSON(content) + `}]}`
+	runner := &perCallRunner{answers: [][]byte{[]byte(`{"session_id":"s1"}`), []byte(document)}}
+	adapter := messagesAdapter(t, runner)
+	result, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1"})
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	if got := result.Messages[0].Content; got != content {
+		t.Fatalf("content = %q, want the original text %q", got, content)
+	}
+}
+
+// TestMessagesKeepsMixedBodyVerbatim proves the unwrapper is all-or-nothing. A body
+// whose elements are not all step records is shown verbatim, because half-unwrapping
+// it would read like a complete conversation while silently dropping entries.
+func TestMessagesKeepsMixedBodyVerbatim(t *testing.T) {
+	content := `[{"raw_text":"kept","step_name":"think"},"not a record"]`
+	document := `{"ok":true,"session_id":"s1","message_count":1,"messages":[{"role":"assistant","content":` + quoteJSON(content) + `}]}`
+	runner := &perCallRunner{answers: [][]byte{[]byte(`{"session_id":"s1"}`), []byte(document)}}
+	adapter := messagesAdapter(t, runner)
+	result, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1"})
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	if got := result.Messages[0].Content; got != content {
+		t.Fatalf("content = %q, want the original text %q", got, content)
+	}
+}
+
+// TestMessagesPreservesUnmodelledStepFields proves a field the cluster does not
+// model survives the unwrapping, because a step record can carry evidence the
+// operator still needs.
+func TestMessagesPreservesUnmodelledStepFields(t *testing.T) {
+	content := `{"raw_text":"body","step_name":"tool_call","tool_name":"bash"}`
+	document := `{"ok":true,"session_id":"s1","message_count":1,"messages":[{"role":"assistant","content":` + quoteJSON(content) + `}]}`
+	runner := &perCallRunner{answers: [][]byte{[]byte(`{"session_id":"s1"}`), []byte(document)}}
+	adapter := messagesAdapter(t, runner)
+	result, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1"})
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	got := result.Messages[0].Content
+	if !strings.HasPrefix(got, "topsailai.tool_call\nbody\n") {
+		t.Fatalf("content = %q, want the step header and body first", got)
+	}
+	if !strings.Contains(got, `"tool_name": "bash"`) {
+		t.Fatalf("content = %q, want the unmodelled field preserved", got)
+	}
+}
+
+// TestMessagesUnwrapsBeforeBounding proves the unwrapping happens before the
+// display bound is applied. Bounding first would cut the wrapper into invalid JSON,
+// so the unwrapper would give up on exactly the long messages an operator most
+// wants.
+func TestMessagesUnwrapsBeforeBounding(t *testing.T) {
+	// The wrapper alone pushes the body past the bound, so a bound-first order
+	// would leave an unparsable fragment instead of the readable text.
+	const bound = 200
+	body := strings.Repeat("a", bound+50)
+	content := `{"raw_text":"` + body + `","step_name":"task"}`
+	document := `{"ok":true,"session_id":"s1","message_count":1,"messages":[{"role":"user","content":` + quoteJSON(content) + `}]}`
+	runner := &perCallRunner{answers: [][]byte{[]byte(`{"session_id":"s1"}`), []byte(document)}}
+	adapter := messagesAdapter(t, runner)
+	result, err := adapter.Messages(context.Background(), protocol.MessagesQuery{ProviderSessionID: "s1", MaxChars: bound})
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	got := result.Messages[0].Content
+	if strings.HasPrefix(got, `{"raw_text"`) {
+		t.Fatalf("content = %q, want the unwrapped text rather than a JSON fragment", got)
+	}
+	if !strings.HasPrefix(got, "topsailai.task\n") {
+		t.Fatalf("content = %q, want the step header first", got)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("content = %q, want the shortened body marked", got)
+	}
+}
+
+// quoteJSON renders one string as a JSON literal, so a fixture can carry a body
+// that is itself JSON without hand-escaping every quote.
+func quoteJSON(value string) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
 }

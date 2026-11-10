@@ -73,7 +73,7 @@ func TestInteractiveMessagesReadsStoppedRowByNumber(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	for _, want := range []string{"[1] user", "first question", "[2] assistant", "first answer"} {
+	for _, want := range []string{"#1 - Role: USER", "first question", "#2 - Role: ASSISTANT", "first answer"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("conversation missing %q: %q", want, output)
 		}
@@ -255,6 +255,55 @@ func TestRenderMessagesLabelsTruncation(t *testing.T) {
 	}
 }
 
+// TestRenderMessagesLabelsShortenedBodySeparately proves a shortened body is not
+// reported as a bounded window.
+//
+// The two facts are different: a window means messages are missing, while a
+// shortened body means every message is present and only one is cut. Reporting the
+// window label when nothing was omitted claims messages were dropped, which is the
+// same class of error as presenting a shortened body as complete. This case is
+// separate from the window case because a fixture that sets both flags cannot
+// distinguish the two branches.
+func TestRenderMessagesLabelsShortenedBodySeparately(t *testing.T) {
+	view := MessagesView{
+		EndpointID:        "ep-1",
+		ProviderSessionID: "wa-1",
+		Rows:              []MessagesViewRow{{No: 1, Role: "user", Content: "cut..."}},
+		MessageCount:      1,
+		Truncated:         true,
+	}
+	var out strings.Builder
+	if err := RenderMessages(&out, view, ColorPolicy{}); err != nil {
+		t.Fatalf("RenderMessages: %v", err)
+	}
+	rendered := out.String()
+	if strings.Contains(rendered, "bounded window") {
+		t.Fatalf("a shortened body was reported as a bounded window: %q", rendered)
+	}
+	if !strings.Contains(rendered, "shortened") {
+		t.Fatalf("a shortened body was not labelled: %q", rendered)
+	}
+}
+
+// TestRenderMessagesOmitsLabelWhenComplete proves a complete conversation carries
+// no trailer, so a clean read is byte-identical to the provider's own output.
+func TestRenderMessagesOmitsLabelWhenComplete(t *testing.T) {
+	view := MessagesView{
+		EndpointID:        "ep-1",
+		ProviderSessionID: "wa-1",
+		Rows:              []MessagesViewRow{{No: 1, Role: "user", Content: "whole"}},
+		MessageCount:      1,
+	}
+	var out strings.Builder
+	if err := RenderMessages(&out, view, ColorPolicy{}); err != nil {
+		t.Fatalf("RenderMessages: %v", err)
+	}
+	rendered := out.String()
+	if strings.Contains(rendered, "bounded window") || strings.Contains(rendered, "shortened") {
+		t.Fatalf("a complete conversation carried a truncation label: %q", rendered)
+	}
+}
+
 // TestRenderMessagesStripsControlSequences proves provider prose cannot reach the
 // terminal as a trusted instruction. A conversation is untrusted data, so an
 // escape sequence in it must be neutralized exactly like followed output.
@@ -290,7 +339,7 @@ func TestRenderMessagesMarksAbsentRole(t *testing.T) {
 	if err := RenderMessages(&out, view, ColorPolicy{}); err != nil {
 		t.Fatalf("RenderMessages: %v", err)
 	}
-	if !strings.Contains(out.String(), "[1] -") {
+	if !strings.Contains(out.String(), "Role: -") {
 		t.Fatalf("an absent role was not marked: %q", out.String())
 	}
 }
@@ -464,7 +513,7 @@ func TestCommandRunnerMessagesRendersConversation(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 	rendered := out.String()
-	for _, fragment := range []string{"[1] user", "[2] assistant", "first question", "second answer"} {
+	for _, fragment := range []string{"#1 - Role: USER", "#2 - Role: ASSISTANT", "first question", "second answer"} {
 		if !strings.Contains(rendered, fragment) {
 			t.Fatalf("rendered output missing %q: %s", fragment, rendered)
 		}
@@ -491,7 +540,218 @@ func TestCommandRunnerMessagesJSONMode(t *testing.T) {
 	if decoded.EndpointID != "ep-1" || decoded.ProviderSessionID != "wa-1" || len(decoded.Rows) != 1 {
 		t.Fatalf("decoded=%+v", decoded)
 	}
-	if strings.Contains(out.String(), "[1] user") {
+	// The prose form is identified by its rule and header, not by a row label
+	// that no longer exists. Asserting a token the renderer never emits would
+	// pass even if prose were emitted.
+	if strings.Contains(out.String(), messagesRule) || strings.Contains(out.String(), "Role: ") {
 		t.Fatalf("json mode must not render prose: %s", out.String())
+	}
+}
+
+// TestRenderMessagesMatchesProviderLayout proves the rendered conversation is
+// byte-identical to the provider's own human-readable format.
+//
+// The expected value is written out literally rather than assembled from the
+// renderer's own constants, because a test that reuses the constants proves only
+// that the code agrees with itself. The literal below was copied from the
+// provider's output for the same record.
+func TestRenderMessagesMatchesProviderLayout(t *testing.T) {
+	view := MessagesView{
+		EndpointID:        "ep-1",
+		ProviderSessionID: "wa-1",
+		Rows: []MessagesViewRow{
+			{No: 1, Role: "user", Content: "first question", WordCount: 14, TokenCount: 3, CreatedAtMS: 1762647150285},
+			{No: 2, Role: "assistant", Content: "second answer", WordCount: 13, TokenCount: 3},
+		},
+		MessageCount: 2,
+	}
+	var out strings.Builder
+	if err := RenderMessages(&out, view, ColorPolicy{}); err != nil {
+		t.Fatalf("RenderMessages: %v", err)
+	}
+	rule := strings.Repeat("=", 80)
+	want := "\n" + rule + "\n" +
+		"#1 - Role: USER - Words: 14 - Tokens: 3 - " + formatMessagesTime(1762647150285) + "\n" +
+		rule + "\n" +
+		"first question\n" +
+		"\n" + rule + "\n" +
+		"#2 - Role: ASSISTANT - Words: 13 - Tokens: 3\n" +
+		rule + "\n" +
+		"second answer\n" +
+		"\n"
+	if got := out.String(); got != want {
+		t.Fatalf("rendered layout does not match the provider format:\ngot  %q\nwant %q", got, want)
+	}
+}
+
+// TestRenderMessagesRuleIsFixedWidth proves the rule is a fixed 80 columns and
+// does not follow the terminal width.
+//
+// The provider's format uses a fixed rule, so a rule that followed the terminal
+// would make the same conversation look different on two terminals and would no
+// longer match the provider's output.
+func TestRenderMessagesRuleIsFixedWidth(t *testing.T) {
+	view := MessagesView{
+		EndpointID:        "ep-1",
+		ProviderSessionID: "wa-1",
+		Rows:              []MessagesViewRow{{No: 1, Role: "user", Content: "body"}},
+		MessageCount:      1,
+	}
+	for _, width := range []int{40, 5, 200} {
+		out := &layoutBuffer{layout: TableLayout{Width: width}}
+		if err := RenderMessages(out, view, ColorPolicy{}); err != nil {
+			t.Fatalf("RenderMessages: %v", err)
+		}
+		// Compare whole lines rather than substrings: a 40-character rule is a
+		// substring of an 80-character rule, so a substring check would report a
+		// width-following rule that does not exist.
+		for _, line := range strings.Split(out.String(), "\n") {
+			if line == "" || strings.Trim(line, "=") != "" {
+				continue
+			}
+			if len(line) != messagesRuleWidth {
+				t.Fatalf("width %d: a rule of %d columns was drawn, want %d: %q", width, len(line), messagesRuleWidth, line)
+			}
+		}
+	}
+}
+
+// TestRenderMessagesHeaderCarriesCounts proves the header reports the word and
+// token counts the adapter measured.
+//
+// The counts are carried through from the adapter rather than computed here,
+// because the counting rule belongs to the adapter. A renderer that computed them
+// itself would impose this provider's rule on every other provider.
+func TestRenderMessagesHeaderCarriesCounts(t *testing.T) {
+	view := MessagesView{
+		EndpointID:        "ep-1",
+		ProviderSessionID: "wa-1",
+		Rows:              []MessagesViewRow{{No: 7, Role: "assistant", Content: "body", WordCount: 99535, TokenCount: 20004}},
+		MessageCount:      1,
+	}
+	var out strings.Builder
+	if err := RenderMessages(&out, view, ColorPolicy{}); err != nil {
+		t.Fatalf("RenderMessages: %v", err)
+	}
+	if !strings.Contains(out.String(), "#7 - Role: ASSISTANT - Words: 99535 - Tokens: 20004") {
+		t.Fatalf("the header did not carry the adapter's counts: %q", out.String())
+	}
+}
+
+// TestRenderMessagesCountsSurviveTruncation proves a shortened body still reports
+// the counts of the whole message.
+//
+// The counts describe the message, not the window, so truncating the body must not
+// change them. A count taken after truncation would make the same message report a
+// different size depending on how much of it was displayed.
+func TestRenderMessagesCountsSurviveTruncation(t *testing.T) {
+	view := MessagesView{
+		EndpointID:        "ep-1",
+		ProviderSessionID: "wa-1",
+		Rows:              []MessagesViewRow{{No: 1, Role: "user", Content: "short...", WordCount: 5000, TokenCount: 1200}},
+		MessageCount:      1,
+		Truncated:         true,
+	}
+	var out strings.Builder
+	if err := RenderMessages(&out, view, ColorPolicy{}); err != nil {
+		t.Fatalf("RenderMessages: %v", err)
+	}
+	rendered := out.String()
+	if !strings.Contains(rendered, "Words: 5000 - Tokens: 1200") {
+		t.Fatalf("the counts were lost when the body was shortened: %q", rendered)
+	}
+	if !strings.Contains(rendered, "short...") {
+		t.Fatalf("the shortened body was not rendered: %q", rendered)
+	}
+}
+
+// TestRenderMessagesStylesHeaderWhenColorEnabled proves the header carries the
+// trusted styling and the body does not. The header is application structure, so
+// it is styled; the body is provider prose, so it stays plain.
+func TestRenderMessagesStylesHeaderWhenColorEnabled(t *testing.T) {
+	view := MessagesView{
+		EndpointID:        "ep-1",
+		ProviderSessionID: "wa-1",
+		Rows:              []MessagesViewRow{{No: 1, Role: "user", Content: "plain body", CreatedAtMS: 1700000000000}},
+		MessageCount:      1,
+	}
+	var out strings.Builder
+	if err := RenderMessages(&out, view, ColorPolicy{Enabled: true}); err != nil {
+		t.Fatalf("RenderMessages: %v", err)
+	}
+	rendered := out.String()
+	if !strings.Contains(rendered, ansiBoldCyan+"#1"+ansiReset) {
+		t.Fatalf("the row number was not styled: %q", rendered)
+	}
+	if !strings.Contains(rendered, ansiBoldCyan+"Role: USER"+ansiReset) {
+		t.Fatalf("the role was not styled: %q", rendered)
+	}
+	if !strings.Contains(rendered, ansiDim) {
+		t.Fatalf("the rule or time was not dimmed: %q", rendered)
+	}
+	// The body must not be wrapped in styling, because it is provider data.
+	if strings.Contains(rendered, ansiBoldCyan+"plain body") {
+		t.Fatalf("the provider body inherited trusted styling: %q", rendered)
+	}
+}
+
+// TestRenderMessagesStripsControlSequencesWithColorEnabled proves the provider
+// boundary still removes non-SGR sequences when colour is on. Colour being
+// enabled must not widen the allow list to cursor movement, because provider prose
+// could then reposition the cursor and overwrite a trusted row.
+func TestRenderMessagesStripsControlSequencesWithColorEnabled(t *testing.T) {
+	view := MessagesView{
+		EndpointID:        "ep-1",
+		ProviderSessionID: "wa-1",
+		Rows:              []MessagesViewRow{{No: 1, Role: "user", Content: "before \x1b[2J\x1b[1;1Hafter"}},
+		MessageCount:      1,
+	}
+	var out strings.Builder
+	if err := RenderMessages(&out, view, ColorPolicy{Enabled: true}); err != nil {
+		t.Fatalf("RenderMessages: %v", err)
+	}
+	rendered := out.String()
+	if strings.Contains(rendered, "\x1b[2J") || strings.Contains(rendered, "\x1b[1;1H") {
+		t.Fatalf("a cursor-control sequence survived with colour enabled: %q", rendered)
+	}
+	if !strings.Contains(rendered, "before") || !strings.Contains(rendered, "after") {
+		t.Fatalf("the message body was lost: %q", rendered)
+	}
+}
+
+// TestRenderMessagesMarksEmptyBody proves a record that carried no text is stated
+// rather than left blank, so an empty body is not mistaken for a render failure.
+func TestRenderMessagesMarksEmptyBody(t *testing.T) {
+	view := MessagesView{
+		EndpointID:        "ep-1",
+		ProviderSessionID: "wa-1",
+		Rows:              []MessagesViewRow{{No: 1, Role: "assistant", Content: "   \n\t"}},
+		MessageCount:      1,
+	}
+	var out strings.Builder
+	if err := RenderMessages(&out, view, ColorPolicy{}); err != nil {
+		t.Fatalf("RenderMessages: %v", err)
+	}
+	if !strings.Contains(out.String(), "[No content]") {
+		t.Fatalf("an empty body was not stated: %q", out.String())
+	}
+}
+
+// TestRenderMessagesNoColorStaysPlain proves a disabled colour policy emits no
+// escape sequence at all, so a redirected stream stays byte-identical to plain
+// text.
+func TestRenderMessagesNoColorStaysPlain(t *testing.T) {
+	view := MessagesView{
+		EndpointID:        "ep-1",
+		ProviderSessionID: "wa-1",
+		Rows:              []MessagesViewRow{{No: 1, Role: "user", Content: "body", CreatedAtMS: 1700000000000}},
+		MessageCount:      1,
+	}
+	var out strings.Builder
+	if err := RenderMessages(&out, view, ColorPolicy{}); err != nil {
+		t.Fatalf("RenderMessages: %v", err)
+	}
+	if strings.Contains(out.String(), "\x1b") {
+		t.Fatalf("a disabled colour policy emitted an escape sequence: %q", out.String())
 	}
 }
