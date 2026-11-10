@@ -24,7 +24,7 @@ list, stat]`.
 ## The expected refusal
 
 A refused path is `invalid_argument` when the grammar rejects it before touching the
-filesystem, and `not_found` or `unauthorized` when the fence rejects it during
+filesystem, and `not_found` or `denied` when the fence rejects it during
 resolution. The distinction matters: a grammar rejection is a cheap check, and a
 fence rejection is the kernel refusing to resolve.
 
@@ -511,7 +511,7 @@ the defect recorded in `issues/issue-scope-name-validation-too-loose.md`.
 
 **Action:** `file.read` on the policy file's relative path.
 
-**Expected:** `unauthorized`. The deny list is computed from resolved paths at
+**Expected:** `denied`. The deny list is computed from resolved paths at
 startup, so the file is refused by identity rather than by name.
 
 ### AC-PATH-60: Reading the Node's identity file through a scope
@@ -520,7 +520,7 @@ startup, so the file is refused by identity rather than by name.
 
 **Action:** `file.read` on the identity file's relative path.
 
-**Expected:** `unauthorized`. This is the case that matters most: the identity file
+**Expected:** `denied`. This is the case that matters most: the identity file
 holds the `node-token`, so reading it would hand the caller the secret that
 authorises the read.
 
@@ -530,7 +530,7 @@ authorises the read.
 
 **Action:** `file.read` on the symlink.
 
-**Expected:** `unauthorized`. The deny list is compared against the resolved path,
+**Expected:** `denied`. The deny list is compared against the resolved path,
 so a symlink does not rename the file.
 
 ### AC-PATH-62: Reaching the identity file by a different spelling
@@ -539,7 +539,7 @@ so a symlink does not rename the file.
 
 **Action:** `file.read` on `.config/./identity` and on `.config//identity`.
 
-**Expected:** `invalid_argument` for the `.` component, and `unauthorized` for the
+**Expected:** `invalid_argument` for the `.` component, and `denied` for the
 double separator if it is accepted. A deny list compared against the raw string
 would be bypassed by any spelling the filesystem accepts.
 
@@ -549,7 +549,7 @@ would be bypassed by any spelling the filesystem accepts.
 
 **Action:** `file.read` on `identity`.
 
-**Expected:** `unauthorized`. On Windows the two names are the same file, so a
+**Expected:** `denied`. On Windows the two names are the same file, so a
 case-sensitive comparison would be bypassed by changing the case.
 
 ## What these cases do not cover

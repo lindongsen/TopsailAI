@@ -212,7 +212,7 @@ the content is not a NUL in a path.
 
 **Action:** `file.read` on it.
 
-**Expected:** `unauthorized` or `not_found`, and the error does not distinguish the
+**Expected:** `denied` or `not_found`, and the error does not distinguish the
 two. A distinguishable error is an existence oracle.
 
 ### TC-OP-28: Read does not follow a symlink out
@@ -288,7 +288,7 @@ name the policy never mentioned.
 
 **Action:** `file.list` on `project`.
 
-**Expected:** `unauthorized`. `list` is a separate permission from `read`, so a
+**Expected:** `denied`. `list` is a separate permission from `read`, so a
 read-only grant does not list.
 
 ### TC-OP-37: `file.stat` requires `stat`
@@ -297,7 +297,7 @@ read-only grant does not list.
 
 **Action:** `file.stat` on `project`.
 
-**Expected:** `unauthorized`.
+**Expected:** `denied`.
 
 ### TC-OP-38: `file.read` requires `read`
 
@@ -305,7 +305,7 @@ read-only grant does not list.
 
 **Action:** `file.read` on `project`.
 
-**Expected:** `unauthorized`.
+**Expected:** `denied`.
 
 ### TC-OP-39: A grant on one scope does not apply to another
 
@@ -313,13 +313,13 @@ read-only grant does not list.
 
 **Action:** `file.read` on `scratch`.
 
-**Expected:** `unauthorized`.
+**Expected:** `denied`.
 
 ### TC-OP-40: An undefined scope is refused
 
 **Action:** `file.read` on `unknown`.
 
-**Expected:** `unauthorized`. An undefined scope is not a directory, so it is refused
+**Expected:** `denied`. An undefined scope is not a directory, so it is refused
 before any path resolution.
 
 ### TC-OP-41: An empty grant refuses everything
@@ -328,7 +328,7 @@ before any path resolution.
 
 **Action:** Every operation on that scope.
 
-**Expected:** `unauthorized` for all of them. An empty grant is a valid policy that
+**Expected:** `denied` for all of them. An empty grant is a valid policy that
 grants nothing.
 
 ## Response shape

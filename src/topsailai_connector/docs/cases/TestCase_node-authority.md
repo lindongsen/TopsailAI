@@ -32,7 +32,7 @@ policy defines it.
 
 **Action:** Send `file.read` with `scope: scratch`.
 
-**Expected:** `unauthorized`. The Node's scope list is the whole list, so a name
+**Expected:** `denied`. The Node's scope list is the whole list, so a name
 outside it does not exist.
 
 ### TC-NODE-3: A scope defined but with no grant is refused
@@ -42,7 +42,7 @@ outside it does not exist.
 
 **Action:** Send `file.read` with `scope: scratch`.
 
-**Expected:** `unauthorized`. Defining a scope exposes a directory to the policy, not
+**Expected:** `denied`. Defining a scope exposes a directory to the policy, not
 to a caller.
 
 ### TC-NODE-4: The Node's scope list is not published to the Server
@@ -59,7 +59,7 @@ report them to a caller and cannot check a scope itself.
 
 **Action:** Send `scope: project ` with a trailing space.
 
-**Expected:** `unauthorized`. The name is not trimmed, because trimming would make
+**Expected:** `denied`. The name is not trimmed, because trimming would make
 two different wire values address the same scope.
 
 ### TC-NODE-6: A scope name differing in case is refused
@@ -68,7 +68,7 @@ two different wire values address the same scope.
 
 **Action:** Send `scope: Project`.
 
-**Expected:** `unauthorized`. A case-insensitive match would make the policy mean
+**Expected:** `denied`. A case-insensitive match would make the policy mean
 something different on Windows than on Linux.
 
 ### TC-NODE-7: A scope name with a path separator is refused before lookup
@@ -97,7 +97,7 @@ is consulted, so a path can never be a scope.
 
 **Action:** Send `file.read` with `scope: alias`.
 
-**Expected:** `unauthorized`. The grant is attached to the name, so sharing a
+**Expected:** `denied`. The grant is attached to the name, so sharing a
 directory does not share a grant.
 
 ## Permission control
@@ -116,7 +116,7 @@ directory does not share a grant.
 
 **Action:** Send `file.read`.
 
-**Expected:** `unauthorized`. `list` and `read` are separate permissions, so one does
+**Expected:** `denied`. `list` and `read` are separate permissions, so one does
 not imply the other.
 
 ### TC-NODE-13: A permission granted on another scope does not apply
@@ -125,7 +125,7 @@ not imply the other.
 
 **Action:** Send `file.read` with `scope: scratch`.
 
-**Expected:** `unauthorized`. A grant is a pair of scope and permission, so a
+**Expected:** `denied`. A grant is a pair of scope and permission, so a
 permission held elsewhere is not held here.
 
 ### TC-NODE-14: An empty permission list refuses every operation
@@ -134,7 +134,7 @@ permission held elsewhere is not held here.
 
 **Action:** Send `file.list`, `file.stat` and `file.read` in turn.
 
-**Expected:** All three are `unauthorized`. An empty list is a scope that exists and
+**Expected:** All three are `denied`. An empty list is a scope that exists and
 grants nothing.
 
 ### TC-NODE-15: `read` does not imply `list`
@@ -143,7 +143,7 @@ grants nothing.
 
 **Action:** Send `file.list`.
 
-**Expected:** `unauthorized`. Reading a known file and enumerating a directory are
+**Expected:** `denied`. Reading a known file and enumerating a directory are
 different exposures, so the policy keeps them separate.
 
 ### TC-NODE-16: `read` does not imply `stat`
@@ -152,7 +152,7 @@ different exposures, so the policy keeps them separate.
 
 **Action:** Send `file.stat`.
 
-**Expected:** `unauthorized`. Metadata is an exposure of its own: a name, a size and
+**Expected:** `denied`. Metadata is an exposure of its own: a name, a size and
 a modification time leak information a read of a known file does not.
 
 ### TC-NODE-17: `list` does not imply `read`
@@ -161,7 +161,7 @@ a modification time leak information a read of a known file does not.
 
 **Action:** Send `file.read`.
 
-**Expected:** `unauthorized`. Seeing that a file exists is not reading it.
+**Expected:** `denied`. Seeing that a file exists is not reading it.
 
 ### TC-NODE-18: `stat` does not imply `read`
 
@@ -169,7 +169,7 @@ a modification time leak information a read of a known file does not.
 
 **Action:** Send `file.read`.
 
-**Expected:** `unauthorized`.
+**Expected:** `denied`.
 
 ### TC-NODE-19: `write` granted does not enable `file.write` in the first version
 
@@ -211,7 +211,7 @@ operation has no permission to look up.
 
 **Action:** Send a request with a wrong `node-token` and an unknown scope.
 
-**Expected:** `unauthorized` for the token, and the scope is never consulted. The
+**Expected:** `denied` for the token, and the scope is never consulted. The
 order matters because a scope error would tell an unauthenticated caller which scope
 names exist.
 
@@ -219,7 +219,7 @@ names exist.
 
 **Action:** Send a valid `node-token` with `scope: unknown`.
 
-**Expected:** `unauthorized`, and the refusal names the scope check rather than the
+**Expected:** `denied`, and the refusal names the scope check rather than the
 token check.
 
 ### TC-NODE-25: A valid node-token with a known scope and no grant is refused
@@ -227,7 +227,7 @@ token check.
 **Action:** Send a valid `node-token`, a defined scope, and an operation whose
 permission is not granted.
 
-**Expected:** `unauthorized`, and the refusal names the permission check.
+**Expected:** `denied`, and the refusal names the permission check.
 
 ### TC-NODE-26: A valid node-token with a grant and an escaping path is refused
 
@@ -244,7 +244,7 @@ was still refused, which proves the two checks are independent.
 
 **Action:** Send `file.read` with a path that would also escape the fence.
 
-**Expected:** `unauthorized` for the permission, not a fence error. A fence error
+**Expected:** `denied` for the permission, not a fence error. A fence error
 would tell a caller that the path was well formed enough to reach the fence.
 
 ### TC-NODE-28: A refusal at any step produces no partial work
@@ -264,7 +264,7 @@ leaked.
 
 **Action:** Send `file.list`, `file.stat` and `file.read`.
 
-**Expected:** All three are `unauthorized`.
+**Expected:** All three are `denied`.
 
 ### TC-NODE-30: A policy with no scopes refuses everything
 
@@ -272,7 +272,7 @@ leaked.
 
 **Action:** Send any operation.
 
-**Expected:** `unauthorized`. An empty policy is a valid policy that grants nothing.
+**Expected:** `denied`. An empty policy is a valid policy that grants nothing.
 
 ### TC-NODE-31: A missing policy file fails startup
 
@@ -311,7 +311,7 @@ failed open would be a reload that removed the authority.
 **Action:** Modify the Server to append a scope name to a forwarded request, then
 send a request for that scope.
 
-**Expected:** `unauthorized`. The Node's policy is the only scope list, so a scope the
+**Expected:** `denied`. The Node's policy is the only scope list, so a scope the
 Server invented does not exist.
 
 ### TC-NODE-36: The Server cannot widen a grant
@@ -319,21 +319,21 @@ Server invented does not exist.
 **Action:** Modify the Server to rewrite the operation from `file.list` to
 `file.read` on a scope granted only `list`.
 
-**Expected:** `unauthorized`. The Node checks the operation it received against its
+**Expected:** `denied`. The Node checks the operation it received against its
 own grant, so a rewritten operation is a different request that is also refused.
 
 ### TC-NODE-37: The Server cannot mark a request pre-approved
 
 **Action:** Modify the Server to add an approval field to the forwarded request.
 
-**Expected:** `invalid_argument` or `unauthorized`. The Node's request schema has no
+**Expected:** `invalid_argument` or `denied`. The Node's request schema has no
 approval field, so an unknown field is refused rather than ignored.
 
 ### TC-NODE-38: The Server cannot translate a permission
 
 **Action:** Modify the Server to send `list` where the caller asked for `read`.
 
-**Expected:** `unauthorized`. The Node has no translation table, so a permission is
+**Expected:** `denied`. The Node has no translation table, so a permission is
 only the one the policy names.
 
 ### TC-NODE-39: The Server does not receive the policy
@@ -367,7 +367,7 @@ because the policy is a local file, not a Server-supplied value.
 
 **Action:** Send a request for an undefined scope through the CLI.
 
-**Expected:** `unauthorized`. The CLI's choice of scope is a request, and the Node
+**Expected:** `denied`. The CLI's choice of scope is a request, and the Node
 refuses it.
 
 ### TC-NODE-43: The CLI cannot request a permission the grant lacks
@@ -376,13 +376,13 @@ refuses it.
 
 **Action:** Ask the CLI for `file.read`.
 
-**Expected:** `unauthorized`. The CLI has no way to make the Node agree.
+**Expected:** `denied`. The CLI has no way to make the Node agree.
 
 ### TC-NODE-44: The CLI's claimed identity does not affect the decision
 
 **Action:** Send a request with a `subject` or `user` field naming an administrator.
 
-**Expected:** `invalid_argument` or `unauthorized`. The Node's decision depends on the
+**Expected:** `invalid_argument` or `denied`. The Node's decision depends on the
 `node-token` and the policy, not on a name the caller supplies.
 
 ### TC-NODE-45: Two CLIs with the same `client_token` get the same decision
@@ -410,7 +410,7 @@ not need a restart.
 
 **Action:** Remove `read`, send `SIGHUP`, then send `file.read`.
 
-**Expected:** `unauthorized`. Narrowing takes effect as promptly as widening, because
+**Expected:** `denied`. Narrowing takes effect as promptly as widening, because
 a delay on narrowing is a window of excess authority.
 
 ### TC-NODE-48: A reload does not affect a request already authorized

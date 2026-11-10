@@ -342,7 +342,7 @@ relative path, so a leaked policy does not leak the filesystem layout.
 
 **Action:** Send a request with `scope: /home/me/project`.
 
-**Expected:** `unauthorized`. A scope is a name, so a path is not a scope.
+**Expected:** `denied`. A scope is a name, so a path is not a scope.
 
 ### TC-POL-49: A scope name is not resolved against the filesystem
 

@@ -1,8 +1,9 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: open
+status: done
 created: 2026-11-09
+resolved: 2026-11-10
 updated: 2026-11-10
 ---
 
@@ -51,3 +52,20 @@ in the URL, and the two must agree.
 No test exercises a request for a specific Node, because no routing exists yet.
 The gap is a missing field rather than a wrong value, so no assertion could have
 caught it.
+
+## Resolution
+
+Fixed. `protocol.Request` now carries `NodeID string` and
+`NodeToken security.Secret` as two separate fields, so the address that may be
+logged and the secret that never may be are not one string.
+
+`Authority.AuthorizeOperation` compares the `NodeID` on the request with the
+`NodeID` of the identity the Node holds, and refuses a disagreement with
+`invalid_argument` rather than an authentication failure, because the request is
+malformed rather than untrusted.
+
+Tests: `internal/protocol/operation_test.go` asserts both fields round-trip and
+that the token is redacted in a formatted request;
+`internal/node/authority_test.go` asserts a request for another Node is refused.
+
+Fixed in `e0918e7f` (wire contract) and `36407d6f` (authority).

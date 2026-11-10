@@ -186,7 +186,7 @@ printed.
 **Action:** Run `connector-node regenerate`, then send a request with the old
 `node-token`.
 
-**Expected:** `unauthorized` on the very next request. There is no grace period,
+**Expected:** `denied` on the very next request. There is no grace period,
 because a grace period would keep the leaked value working.
 
 ### TC-PAIR-23: Regeneration drops the live channel
@@ -234,7 +234,7 @@ must not require a Server change.
 
 **Action:** Send a request addressed to `node_a` carrying `node_b`'s `node-token`.
 
-**Expected:** `unauthorized` from `node_a`. The `node-token` is per-Node, so a pair
+**Expected:** `denied` from `node_a`. The `node-token` is per-Node, so a pair
 is not a portable credential.
 
 ### TC-PAIR-28: The `node-id` in the URL and in the pair must agree

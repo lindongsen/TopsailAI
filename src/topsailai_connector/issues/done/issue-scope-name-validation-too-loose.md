@@ -1,8 +1,9 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: open
+status: done
 created: 2026-11-09
+resolved: 2026-11-10
 ---
 
 # Scope name validation accepts characters that are not identifiers
@@ -50,3 +51,19 @@ change has to argue against it.
 The existing tests cover the separator, `.` and `..` cases, which are the cases the
 implementation was written for. No test asserted that a name must be an
 identifier, so the gap between the rule and the check was never exercised.
+
+## Resolution
+
+Fixed. `ValidateScopeName` in `internal/security/scopes.go` was changed from a
+blacklist to a whitelist: a scope name is letters, digits, `-` and `_` only, with a
+leading `-` or `_` refused because it makes the name look like a flag. A space, a
+tab, a NUL byte, a colon and a trailing dot are all refused now, which is the
+character set the issue asked for.
+
+The rule is stated in `docs/permission-design.md` so a future change has to argue
+against it rather than silently widen it.
+
+Tests: `internal/security/scopes_test.go` covers the accepted set, the rejected
+set including every character named in this issue, and control characters.
+
+Fixed in `13a52a4b`.

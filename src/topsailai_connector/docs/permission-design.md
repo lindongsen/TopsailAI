@@ -105,7 +105,7 @@ Three consequences follow, and each is a rule rather than an observation:
 
 The CLI is not an authority either. It chooses which scope and operation to ask
 for, and that choice is a request, not a grant. A CLI that asks for a scope the
-policy does not define receives `unauthorized` from the Node, and the CLI has no
+policy does not define receives `denied` from the Node, and the CLI has no
 way to make the Node agree.
 
 ### Default deny
@@ -682,16 +682,33 @@ Validation rules, all of which fail startup rather than warn:
 - `version` is required, so a future format change is detectable.
 - Every scope needs an absolute `path`.
 - A scope name must pass the identifier rule: letters, digits, `-` and `_` only.
-  This is stricter than the current `ValidateScopeName`, which accepts a space, a
-  tab, a NUL byte, a colon and a trailing dot.
+  `security.ValidateScopeName` is a whitelist, so a space, a tab, a NUL byte, a
+  colon and a trailing dot are refused because they are not in the alphabet
+  rather than because someone remembered to list them.
 - A `grants` entry naming an undefined scope is an error, not a silent no-op,
   because a typo would otherwise look like a working policy.
 - An unknown permission string is an error.
+- A permission listed twice in one grant is an error, because a policy that says
+  the same thing twice is a policy whose author was not reading what they wrote.
 - An empty `grants` list is valid and refuses everything.
 - An unknown key is an error, because a typo in a security config that is silently
   ignored is worse than a crash.
+- A file holding more than one YAML document is an error, because the second
+  document would be silently ignored and a policy that is half-read is a policy
+  nobody can reason about.
+- An empty file is an error rather than an empty policy. An empty policy refuses
+  everything, which looks like a working Node that denies every request.
+- The file is capped at 1 MiB and the cap is applied before decoding, because
+  reading an oversized file into memory before deciding it is oversized is the
+  wrong order.
 - Reload on `SIGHUP` is all-or-nothing: a file that fails validation leaves the
   previous policy in force and logs the rejection.
+
+The policy file is parsed with `gopkg.in/yaml.v3`, the project's only third-party
+dependency. A hand-written parser was rejected: a security configuration parser
+that disagrees with every other YAML reader about quoting, anchors or duplicate
+keys is a parser whose mistakes are invisible in review. Decoding is strict
+(`KnownFields(true)`), so an unknown key is refused rather than ignored.
 
 The policy file is the only place a permission is granted. A secret proves the
 caller may talk to the Node; the policy decides what the caller may do once it has

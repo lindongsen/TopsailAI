@@ -1,8 +1,9 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: open
+status: done
 created: 2026-11-10
+resolved: 2026-11-10
 ---
 
 # Code implements the superseded signed-token model
@@ -58,3 +59,21 @@ they test the old model against itself.
 - `issues/undo/issue-token-leeway-not-implemented.md` — obsolete, because the
   design removed expiry.
 - `issues/issue-request-has-no-node-identity.md` — superseded by the pair design.
+
+## Resolution
+
+Fixed by commits `13a52a4b` and `e0918e7f`.
+
+- `internal/security/token.go` was deleted. `internal/security/secret.go` now
+  holds `Secret`, `Equal` (SHA-256 then `subtle.ConstantTimeCompare`, so the
+  comparison runs over 32 bytes regardless of length) and `Validate`.
+- `internal/security/identity.go` holds `NodeIdentity`, `NewNodeIdentity`,
+  `NewNodeToken`, `ParseNodeIdentity` and the two validators.
+- `internal/protocol/operation.go` `Request` now carries `NodeID` and
+  `NodeToken security.Secret` instead of `Token string`.
+- `internal/protocol/codes.go` replaced the free-form `Error string` with an
+  enumerated `Code`, so a refusal and a missing file are distinguishable.
+
+Verified: `go build ./...`, `go vet ./...` and `go test -count=1 ./...` pass, and
+`GOOS=windows` / `GOOS=darwin` build and vet pass. Coverage is 95.3% for
+`internal/security` and 100% for `internal/protocol`.

@@ -24,7 +24,7 @@ admits the right value, refuses the wrong one, and refuses for the right reason.
 
 **Action:** Node sends `hello` with `tunnel_token=beta`.
 
-**Expected:** The connection closes with `unauthorized`. No frame is accepted after
+**Expected:** The connection closes with `denied`. No frame is accepted after
 `hello`.
 
 ### TC-SEC-3: An empty `tunnel_token` is refused
@@ -33,7 +33,7 @@ admits the right value, refuses the wrong one, and refuses for the right reason.
 
 **Action:** Node sends `hello` with `tunnel_token=""`.
 
-**Expected:** `unauthorized`. An empty value is not treated as "no authentication
+**Expected:** `denied`. An empty value is not treated as "no authentication
 required".
 
 ### TC-SEC-4: A missing `tunnel_token` field is refused
@@ -42,7 +42,7 @@ required".
 
 **Action:** Node sends `hello` with no `tunnel_token` field.
 
-**Expected:** `unauthorized`. A missing field and an empty field produce the same
+**Expected:** `denied`. A missing field and an empty field produce the same
 error, so a caller cannot tell which one it sent.
 
 ### TC-SEC-5: A prefix of `tunnel_token` is refused
@@ -51,7 +51,7 @@ error, so a caller cannot tell which one it sent.
 
 **Action:** Node sends `hello` with `tunnel_token=alpha`.
 
-**Expected:** `unauthorized`. A prefix check would turn a long secret into a short
+**Expected:** `denied`. A prefix check would turn a long secret into a short
 one, so the comparison is over the whole value.
 
 ### TC-SEC-6: A `tunnel_token` with trailing whitespace is refused
@@ -60,7 +60,7 @@ one, so the comparison is over the whole value.
 
 **Action:** Node sends `hello` with `tunnel_token="alpha "`.
 
-**Expected:** `unauthorized`. The value is not trimmed, because trimming would make
+**Expected:** `denied`. The value is not trimmed, because trimming would make
 two different strings equivalent and hide a copy-paste error.
 
 ### TC-SEC-7: The Server refuses to start without `tunnel_token`
@@ -99,7 +99,7 @@ Node connected.
 
 **Action:** CLI sends a request with `Authorization: Bearer delta`.
 
-**Expected:** `unauthorized`, and **the Node receives nothing**. The case asserts
+**Expected:** `denied`, and **the Node receives nothing**. The case asserts
 the absence of a forwarded frame, because a refusal that still forwards has not
 protected the Node.
 
@@ -109,7 +109,7 @@ protected the Node.
 
 **Action:** CLI sends a request with no `Authorization` header.
 
-**Expected:** `unauthorized`.
+**Expected:** `denied`.
 
 ### TC-SEC-12: A `client_token` in the URL is not accepted
 
@@ -117,7 +117,7 @@ protected the Node.
 
 **Action:** CLI sends `GET /v1/nodes/node_x/operations?client_token=gamma`.
 
-**Expected:** `unauthorized`. A secret in a URL lands in access logs, proxy logs and
+**Expected:** `denied`. A secret in a URL lands in access logs, proxy logs and
 `Referer` headers, so the query string is not a credential channel.
 
 ### TC-SEC-13: `client_token` does not authorise an operation
@@ -128,7 +128,7 @@ policy grants `project: [read]`. CLI holds a `node-token` for a different Node.
 **Action:** CLI sends a request with a valid `client_token` and a wrong
 `node-token`.
 
-**Expected:** The Server forwards, the Node refuses with `unauthorized`. The
+**Expected:** The Server forwards, the Node refuses with `denied`. The
 `client_token` proves the caller may use the Server and proves nothing about the
 operation.
 
@@ -148,7 +148,7 @@ operation.
 
 **Action:** CLI sends a request with `node-token=xyz`.
 
-**Expected:** `unauthorized` from the Node. The Server forwarded it, because the
+**Expected:** `denied` from the Node. The Server forwarded it, because the
 Server cannot check it.
 
 ### TC-SEC-16: The Server never learns the correct `node-token`
@@ -246,7 +246,7 @@ secret with two names.
 **Action:** Restart the Server with `CONNECTOR_SERVER_CLIENT_TOKEN=gamma2`, then
 send a request with `gamma`.
 
-**Expected:** `unauthorized`. There is no grace period, because a grace period is a
+**Expected:** `denied`. There is no grace period, because a grace period is a
 second valid credential.
 
 ### TC-SEC-25: Rotating `tunnel_token` drops live channels

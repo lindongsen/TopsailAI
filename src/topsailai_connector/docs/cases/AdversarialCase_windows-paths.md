@@ -127,14 +127,14 @@ file attached to a visible one.
 
 **Action:** `file.read` on `identity`.
 
-**Expected:** `unauthorized`. A case-sensitive deny-list comparison would be
+**Expected:** `denied`. A case-sensitive deny-list comparison would be
 bypassed by changing the case, and on Windows the two names are the same file.
 
 ### AC-WIN-18: A deny-list entry bypassed by mixed case
 
 **Action:** `file.read` on `IdEnTiTy`.
 
-**Expected:** `unauthorized`.
+**Expected:** `denied`.
 
 ### AC-WIN-19: A legitimate file read with different case
 
@@ -295,7 +295,7 @@ is touched, so the platform limit is never reached.
 
 **Action:** `file.read` on it.
 
-**Expected:** `unauthorized` or `not_found`, and the error does not reveal whether
+**Expected:** `denied` or `not_found`, and the error does not reveal whether
 the file exists. A "permission denied" that differs from "not found" is an existence
 oracle.
 
@@ -316,7 +316,7 @@ Node's user may read is readable.
 
 **Action:** `file.read` on its relative path.
 
-**Expected:** `unauthorized`. This is the case that matters most on Windows too: the
+**Expected:** `denied`. This is the case that matters most on Windows too: the
 file holds the `node-token`.
 
 ### AC-WIN-41: The identity file reached by a junction
@@ -325,7 +325,7 @@ file holds the `node-token`.
 
 **Action:** `file.read` on the junction path.
 
-**Expected:** `unauthorized`. The deny list is compared against the resolved path.
+**Expected:** `denied`. The deny list is compared against the resolved path.
 
 ### AC-WIN-42: The identity file reached by a short name
 
@@ -333,7 +333,7 @@ file holds the `node-token`.
 
 **Action:** `file.read` on the short-name path.
 
-**Expected:** `unauthorized`. A deny list compared against the raw string would be
+**Expected:** `denied`. A deny list compared against the raw string would be
 bypassed by any alias the filesystem accepts.
 
 ## Platform independence

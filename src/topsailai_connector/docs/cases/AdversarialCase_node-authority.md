@@ -23,7 +23,7 @@ is "the Node decided wrongly", not "the Node resolved a path wrongly".
 **Action:** Send requests for `scratch`, `tool`, `home`, `root`, `tmp`, `etc` and
 `private` in turn.
 
-**Expected:** Every one is `unauthorized`. A guessed name is not a scope, and the
+**Expected:** Every one is `denied`. A guessed name is not a scope, and the
 refusal is identical for every guess so the responses do not reveal which names
 exist.
 
@@ -42,7 +42,7 @@ turns the scope list into something a caller can enumerate by measuring.
 **Action:** Send a defined scope with no grant and an undefined scope, and compare the
 two responses.
 
-**Expected:** Both are `unauthorized` with the same message. Distinguishing "no such
+**Expected:** Both are `denied` with the same message. Distinguishing "no such
 scope" from "no grant on that scope" tells a caller which names exist.
 
 ### AC-NODE-4: Use a scope name that is a path
@@ -83,7 +83,7 @@ well as a malformed name.
 
 **Action:** Send `scope: PROJECT` when the policy defines `project`.
 
-**Expected:** `unauthorized`. A case-insensitive match would make the policy mean one
+**Expected:** `denied`. A case-insensitive match would make the policy mean one
 thing on Windows and another on Linux.
 
 ### AC-NODE-10: Use a scope name with a trailing dot
@@ -104,7 +104,7 @@ scope, so the name is refused rather than repaired.
 
 **Action:** Send `scope: CON` when the policy defines `con`.
 
-**Expected:** `unauthorized` or `invalid_argument`. A reserved device name is not a
+**Expected:** `denied` or `invalid_argument`. A reserved device name is not a
 directory, so it cannot be a scope even if the policy names it.
 
 ### AC-NODE-13: Use a scope name longer than the filesystem allows
@@ -120,7 +120,7 @@ before it reaches a filesystem call.
 
 **Action:** Send `scope: project` to Node B.
 
-**Expected:** `unauthorized`. A scope name is local to a Node, so a name that works
+**Expected:** `denied`. A scope name is local to a Node, so a name that works
 elsewhere does not work here.
 
 ## Obtaining a permission that was not granted
@@ -131,7 +131,7 @@ elsewhere does not work here.
 
 **Action:** Send `file.read` on `project`.
 
-**Expected:** `unauthorized`. `list` is not a weaker `read`, so holding one does not
+**Expected:** `denied`. `list` is not a weaker `read`, so holding one does not
 imply the other.
 
 ### AC-NODE-16: Ask for a permission granted on a different scope
@@ -140,7 +140,7 @@ imply the other.
 
 **Action:** Send `file.read` on `scratch`.
 
-**Expected:** `unauthorized`. A grant is a pair, so a permission held elsewhere is not
+**Expected:** `denied`. A grant is a pair, so a permission held elsewhere is not
 held here.
 
 ### AC-NODE-17: Ask for a permission by naming it in the request
@@ -154,14 +154,14 @@ a caller does not get to state what it is allowed to do.
 
 **Action:** Send a request with `role: admin`.
 
-**Expected:** `invalid_argument` or `unauthorized`. There is no role vocabulary, so a
+**Expected:** `invalid_argument` or `denied`. There is no role vocabulary, so a
 role claim is an unknown field rather than a privilege.
 
 ### AC-NODE-19: Ask for a permission by naming a subject
 
 **Action:** Send a request with `subject: root`.
 
-**Expected:** `invalid_argument` or `unauthorized`. The decision depends on the
+**Expected:** `invalid_argument` or `denied`. The decision depends on the
 `node-token` and the policy, not on a name the caller supplies.
 
 ### AC-NODE-20: Ask for an operation that is not implemented
@@ -232,27 +232,27 @@ when it was built.
 
 **Action:** Modify the Server to append a scope to the forwarded request.
 
-**Expected:** `unauthorized`. The Node's policy is the only scope list.
+**Expected:** `denied`. The Node's policy is the only scope list.
 
 ### AC-NODE-29: A compromised Server invents a grant
 
 **Action:** Modify the Server to add an approval field to the forwarded request.
 
-**Expected:** `invalid_argument` or `unauthorized`. The Node's schema has no approval
+**Expected:** `invalid_argument` or `denied`. The Node's schema has no approval
 field, so an unknown field is refused rather than ignored.
 
 ### AC-NODE-30: A compromised Server rewrites the operation
 
 **Action:** Modify the Server to change `file.list` into `file.read`.
 
-**Expected:** `unauthorized`. The rewritten operation is checked against the same
+**Expected:** `denied`. The rewritten operation is checked against the same
 grant, and the grant does not cover it.
 
 ### AC-NODE-31: A compromised Server rewrites the scope
 
 **Action:** Modify the Server to change `scratch` into `project`.
 
-**Expected:** `unauthorized` if `project` lacks the permission, and a successful read
+**Expected:** `denied` if `project` lacks the permission, and a successful read
 of `project` if it has it. This case is expected to succeed when the grant exists,
 and that is the honest result: the Server is a pipe, so it can send any request a
 caller could have sent. What it cannot do is make the Node grant something the policy
@@ -291,21 +291,21 @@ recorded so the risk is not forgotten.
 
 **Action:** Modify the Server to forward a request without the `node-token`.
 
-**Expected:** `unauthorized`. A missing secret is a refusal, not an anonymous request.
+**Expected:** `denied`. A missing secret is a refusal, not an anonymous request.
 
 ### AC-NODE-36: A compromised Server substitutes its own `client_token`
 
 **Action:** Modify the Server to forward a request carrying `client_token` in the
 `node-token` field.
 
-**Expected:** `unauthorized`. The Node compares against its own value, so the Server's
+**Expected:** `denied`. The Node compares against its own value, so the Server's
 secret is not a Node secret.
 
 ### AC-NODE-37: A compromised Server asks the Node to reveal its policy
 
 **Action:** Send an operation that would return the policy file.
 
-**Expected:** `unsupported_operation` or `unauthorized`. There is no operation that
+**Expected:** `unsupported_operation` or `denied`. There is no operation that
 reads the policy, and the config directory is refused as a scope at startup.
 
 ### AC-NODE-38: A compromised Server asks the Node to regenerate its identity

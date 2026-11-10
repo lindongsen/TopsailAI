@@ -144,26 +144,26 @@ the process table and in the history file.
 
 **Action:** Send a CLI request with `Authorization: Bearer <tunnel_token>`.
 
-**Expected:** `unauthorized`. Two secrets that both work at both gates are one
+**Expected:** `denied`. Two secrets that both work at both gates are one
 secret with two names.
 
 ### AC-SEC-17: `client_token` used as `tunnel_token`
 
 **Action:** Send `hello` with `tunnel_token=<client_token>`.
 
-**Expected:** `unauthorized`.
+**Expected:** `denied`.
 
 ### AC-SEC-18: `node-token` used as `client_token`
 
 **Action:** Send a CLI request with `Authorization: Bearer <node-token>`.
 
-**Expected:** `unauthorized`. The `node-token` is not a Server credential.
+**Expected:** `denied`. The `node-token` is not a Server credential.
 
 ### AC-SEC-19: `client_token` used as `node-token`
 
 **Action:** Send a request with a valid `client_token` and `node-token=<client_token>`.
 
-**Expected:** `unauthorized` from the Node.
+**Expected:** `denied` from the Node.
 
 ### AC-SEC-20: A pair from one Node used against another
 
@@ -171,7 +171,7 @@ secret with two names.
 
 **Action:** Address `node_a` with `node_b`'s `node-token`.
 
-**Expected:** `unauthorized` from `node_a`.
+**Expected:** `denied` from `node_a`.
 
 ### AC-SEC-21: A pair from a Node that has regenerated
 
@@ -179,7 +179,7 @@ secret with two names.
 
 **Action:** Send a request with the old pair.
 
-**Expected:** `unauthorized`. The old value is not kept as a fallback.
+**Expected:** `denied`. The old value is not kept as a fallback.
 
 ## Replay
 
@@ -216,7 +216,7 @@ decision is enforced.
 
 **Action:** Replay a request captured before the rotation.
 
-**Expected:** `unauthorized`. Rotation is the only revocation mechanism, so it must
+**Expected:** `denied`. Rotation is the only revocation mechanism, so it must
 actually revoke.
 
 ## The Server as an attacker
@@ -312,7 +312,7 @@ newline.
 **Action:** Start the Server, then send a request with the value without the
 newline.
 
-**Expected:** `unauthorized`, and the startup log names the likely cause. A trailing
+**Expected:** `denied`, and the startup log names the likely cause. A trailing
 newline from a file is the most common way a correct secret fails, so the error
 message must say so without printing the value.
 

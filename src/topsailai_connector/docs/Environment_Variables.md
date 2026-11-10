@@ -10,11 +10,13 @@ updated: 2026-11-10
 
 ## Status
 
-Neither binary reads an environment variable today. Both entry points parse
-command-line flags only, so this document is the reference for the configuration
-surface as it is decided, not a description of code that exists.
+Both binaries read their configuration from the environment. The Server validates
+its two secrets and its listen address; the Node validates its server URL and its
+tunnel token, then loads the policy file and opens every scope the policy defines.
+Neither binary opens a socket yet, so the variables that configure the listener,
+the CLI and the log are decided but unread. Each such section says so.
 
-The table below separates what is implemented from what is planned. A planned
+The sections below separate what is implemented from what is decided. A decided
 variable is a decision, not a promise that the name is final; it is listed so a
 later change has a name to argue against instead of inventing a second one.
 
@@ -22,16 +24,21 @@ later change has a name to argue against instead of inventing a second one.
 
 Configuration is resolved in one place, at startup, in this order:
 
-1. Command-line flag.
-2. Environment variable.
-3. Configuration file.
-4. Built-in default.
+1. Environment variable.
+2. Built-in default.
 
-The order matters because a flag is the most explicit statement of intent and a
-default is the least. A value is read once at the boundary and converted into a
-typed field, then passed downward as a parameter. No package below the entry point
-reads the environment, because a function that reads a global variable hides its
-own dependencies and cannot be tested without mutating process state.
+There is no command-line flag for a configuration value and no configuration
+file, because a second source of the same value is a second place for the two to
+disagree. The flags that exist select a subcommand; they do not override a
+variable. A value that has no default is required, and an absent required value
+fails startup instead of falling back.
+
+A value is read once at the boundary and converted into a typed field, then passed
+downward as a parameter. No package below the entry point reads the environment,
+because a function that reads a global variable hides its own dependencies and
+cannot be tested without mutating process state. `LoadConfig` therefore takes a
+`lookup func(string) string` rather than calling `os.Getenv` itself, so a test
+supplies a fixed environment without touching the process.
 
 ## Secrets in the environment: an accepted trade-off
 
@@ -76,18 +83,35 @@ choice, not a change to the contract.
 
 ## Implemented
 
-None. Both binaries currently accept flags only:
+Both binaries now read their configuration from the environment. The flags below
+are the only command-line options, and they select a subcommand rather than
+override a variable:
 
-| Binary | Flag | Default | Meaning |
-|---|---|---|---|
-| `connector-server` | `-listen` | `:8443` | Address the Server listens on |
-| `connector-node` | `-server` | `wss://127.0.0.1:8443/channel` | Server channel address the Node dials |
+| Binary | Subcommand | Meaning |
+|---|---|---|
+| `connector-server` | `run` (default) | Load and validate the configuration, then wait for a signal |
+| `connector-node` | `run` (default) | Load the configuration, the policy and the identity, then wait for a signal |
+| `connector-node` | `id` | Print the `node-id.node-token` pair and nothing else |
+| `connector-node` | `regenerate` | Replace the pair; `--keep-id` keeps the node id |
 
-## Planned
+The Server validates `CONNECTOR_SERVER_TUNNEL_TOKEN` and
+`CONNECTOR_SERVER_CLIENT_TOKEN` at startup and refuses to run when either is
+missing, empty, padded with whitespace or shorter than 16 bytes. The Node
+validates `CONNECTOR_NODE_SERVER_URL` and `CONNECTOR_NODE_TUNNEL_TOKEN` the same
+way, then loads the policy file and opens every scope it defines.
+
+Neither binary listens on a socket yet. The Server reports that it is not
+listening rather than pretending to serve, because a process that prints
+"starting" and then accepts nothing is a process an operator will believe.
+
+## Reference
 
 Every name carries the `CONNECTOR_` prefix, which is the project code from
 `project.yaml`. A variable is named for what it holds rather than for where it is
 used, so a reader can guess the meaning without opening the code.
+
+The Server and Node sections below are implemented. The CLI section is not: the
+CLI subcommand does not exist yet, so those three variables are read by nothing.
 
 ### Server
 
@@ -130,6 +154,52 @@ The Node's config directory is created with `0700` on POSIX and an owner-only AC
 on Windows, because it holds the `node-token`. A scope whose root is inside this
 directory, or which contains it, is refused at startup.
 
+#### `CONNECTOR_NODE_POLICY_FILE` validation and failure modes
+
+The policy file is the only place a scope is defined and a permission granted, so
+every problem with it is a startup failure. A Node that started with a broken
+policy would be a Node whose operator believes it is serving something it is not,
+and the failure would surface as a refusal at the first request instead of at the
+moment the mistake was made.
+
+The value is resolved in this order: the variable when it is set and non-empty,
+otherwise `<config>/policy.yaml`. A relative path is refused, because a relative
+path resolves against whatever directory the process happened to inherit, so the
+same configuration would load a different file under a different launcher.
+
+| Condition | Result |
+|---|---|
+| Variable unset or empty | Falls back to `<config>/policy.yaml` |
+| Path is relative | Startup failure |
+| File does not exist | Startup failure (`policy file is missing`) |
+| Path is a directory | Startup failure |
+| File is empty | Startup failure; an empty file is not an empty policy |
+| File exceeds 1 MiB | Startup failure, checked before decoding |
+| Malformed YAML | Startup failure |
+| More than one YAML document | Startup failure; only the first would be read |
+| Unknown top-level key | Startup failure; a misspelt key would otherwise be ignored |
+| Unknown key inside a scope | Startup failure |
+| Missing `version` or an unknown version | Startup failure |
+| Scope name that is not an identifier | Startup failure |
+| Scope with no `path` | Startup failure |
+| Grant naming an undefined scope | Startup failure |
+| Unknown permission name | Startup failure |
+| Duplicate permission in one grant | Startup failure |
+| Scope path that does not exist | Startup failure |
+| Scope path that is a file, not a directory | Startup failure |
+| Scope path inside the config directory, or containing it | Startup failure |
+| Any scope failing to open | Startup failure; already-opened scopes are closed first |
+
+The last row is the one that matters most: scopes are opened one at a time, and a
+failure closes the ones already opened before returning. A half-open Node that
+kept serving the scopes that happened to work would be a Node whose reachable
+surface depends on which directory was missing.
+
+The 1 MiB cap is applied to the file size before decoding, not to the decoded
+result, because a decoder that is asked to read an unbounded file has already lost
+the argument. A policy is a short configuration; a policy file measured in
+megabytes is a mistake or an attack, and both are refused the same way.
+
 ### CLI
 
 The CLI is a subcommand of the Server binary, so these variables are read by the
@@ -155,7 +225,12 @@ use, because a long-lived credential in the environment is inherited by every ch
 process. Neither value is ever echoed by `--help`, by a configuration dump or by an
 error message.
 
-### Shared
+### Shared (decided, not yet read)
+
+None of these is read by any code today. They are listed so a later change has a
+name to argue against instead of inventing a second one, and the section is marked
+because a variable documented as implemented and read by nothing is a variable an
+operator will set and expect to work.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -164,6 +239,11 @@ error message.
 | `CONNECTOR_LOG_MAX_BACKUPS` | `10` | Number of rotated log files kept |
 | `CONNECTOR_LOG_MAX_AGE_DAYS` | `30` | Age after which a rotated log file is removed |
 | `CONNECTOR_MAX_RESPONSE_BYTES` | `262144` | Cap on a single response payload, so one read cannot exhaust memory |
+
+`CONNECTOR_MAX_RESPONSE_BYTES` is the one exception in spirit: the cap exists and
+is enforced, but it is a constant (`node.MaxResponseBytes`) rather than a variable,
+because a cap an operator can raise is a cap that will be raised. Making it
+configurable is a decision for the version that needs a larger read, not a default.
 
 There is no `CONNECTOR_TOKEN_LEEWAY_SECONDS`, because no secret in this model
 carries an expiry and therefore no clock comparison happens. A variable that
@@ -194,14 +274,19 @@ produces one error for every kind of mismatch.
 
 ## Log rotation
 
-Both binaries write to a size-bounded, rotating log. Rotation is implemented in
-application code rather than delegated to `logrotate`, because the Node runs on
-Windows where `logrotate` does not exist and because a rotation policy that lives
-outside the binary is a policy the binary cannot report on.
+**Not implemented.** Neither binary writes a log file. Both write to standard error
+through `log.Printf`, which the process supervisor is expected to capture and
+rotate. The `CONNECTOR_LOG_*` variables above are decided but unread.
 
-Rotation events are themselves logged: a rotation, a deletion of an old backup and
-a failure during cleanup each produce one entry, so an operator can tell a quiet
-log from a broken one.
+The intended design, recorded so the eventual implementation has a target: rotation
+happens in application code rather than through `logrotate`, because the Node runs
+on Windows where `logrotate` does not exist and because a rotation policy that lives
+outside the binary is a policy the binary cannot report on. Rotation events are
+themselves logged, so an operator can tell a quiet log from a broken one.
+
+This section previously stated that rotation was implemented. It was not, and the
+claim was wrong in the direction that matters: an operator reading it would have
+assumed a size bound existed and left a log to grow without one.
 
 ## Related documents
 
