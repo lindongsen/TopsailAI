@@ -131,3 +131,35 @@ required a provider change to produce a structured menu. The human rejected the 
 feature. The corrected design defines `ModelProfile`, `agent.model.list` and `agent.model.select` in
 cluster terms and confines every provider detail to one adapter section. See
 `.task/plan_20261109T150000_session-model-command.md`.
+
+## Point out an existing convention instead of inventing a parallel one
+
+Directed by the human on 2026-11-10, quoted verbatim:
+
+> commit. 此外，如果是已经存在的通用做法，你要提醒我了，保持标准化和复用性也是很重要事。要记住。
+
+This is a standing rule for every change, not a note about one prompt. Before adding a constant, a
+helper, a format, a naming scheme or a control flow, search the project for the same concept. If a
+convention already exists, reuse it and tell the human that it exists. If none exists, say so before
+creating one. If the existing convention is itself inconsistent, raise that as a decision for the
+human instead of quietly starting a second one.
+
+The rule exists because this was violated in the bare-`send` confirmation work. A new constant
+`sendAnswerHint = "(y/N)"` was added while `confirmationHint = "[y/N]"` already existed in
+`internal/tui/style.go`. The duplicate was not a harmless extra line: `answerHintIndex` had to accept
+two spellings and take the last match, and the CLI advertised its accepted answers two different ways
+depending on the command. The human corrected it with `用[y/N]吧，统一起来`, after which
+`sendAnswerHint` was deleted, `answerHintIndex` collapsed to a single `strings.LastIndex`, and
+`sendConfirmPrompt` became `"send.confirm" + confirmationHint + "> "`. The code got shorter and the
+divergence became structurally impossible.
+
+Consequences that MUST hold:
+
+- Reuse the existing constant, helper or pattern, and name it when reporting the change, so the human
+  can confirm the reuse was the right call.
+- Never introduce a second spelling, a second constant or a second code path for a concept the
+  project already models. A duplicate is a future divergence, not a local convenience.
+- When the existing convention looks wrong or incomplete, report it and ask. Do not fork it silently
+  and do not "improve" it in passing.
+- When a change makes an existing abstraction reusable, prefer wiring the new case into that
+  abstraction over copying its behaviour, so one definition keeps serving every caller.
