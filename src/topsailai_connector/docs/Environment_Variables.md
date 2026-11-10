@@ -11,10 +11,11 @@ updated: 2026-11-10
 ## Status
 
 Both binaries read their configuration from the environment. The Server validates
-its two secrets and its listen address; the Node validates its server URL and its
-tunnel token, then loads the policy file and opens every scope the policy defines.
-Neither binary opens a socket yet, so the variables that configure the listener,
-the CLI and the log are decided but unread. Each such section says so.
+its two secrets and its listen address, then binds one listener that serves the
+channel and the CLI API. The Node validates its server URL and its tunnel token,
+loads the policy file, opens every scope the policy defines, and dials the Server.
+The CLI subcommand calls the Server over HTTP. The variables that configure the
+log are decided but unread, and that section says so.
 
 The sections below separate what is implemented from what is decided. A decided
 variable is a decision, not a promise that the name is final; it is listed so a
@@ -89,8 +90,8 @@ override a variable:
 
 | Binary | Subcommand | Meaning |
 |---|---|---|
-| `connector-server` | `run` (default) | Load and validate the configuration, then wait for a signal |
-| `connector-node` | `run` (default) | Load the configuration, the policy and the identity, then wait for a signal |
+| `connector-server` | `run` (default) | Load and validate the configuration, bind the listener and serve until a signal arrives |
+| `connector-node` | `run` (default) | Load the configuration, the policy and the identity, dial the Server and serve until a signal arrives |
 | `connector-node` | `id` | Print the `node-id.node-token` pair and nothing else |
 | `connector-node` | `regenerate` | Replace the pair; `--keep-id` keeps the node id |
 | `connector-server` | `cli` | Call one operation on one Node and print the result |
@@ -101,9 +102,11 @@ missing, empty, padded with whitespace or shorter than 16 bytes. The Node
 validates `CONNECTOR_NODE_SERVER_URL` and `CONNECTOR_NODE_TUNNEL_TOKEN` the same
 way, then loads the policy file and opens every scope it defines.
 
-Neither binary listens on a socket yet. The Server reports that it is not
-listening rather than pretending to serve, because a process that prints
-"starting" and then accepts nothing is a process an operator will believe.
+The Server binds its listener before it logs that it is listening, so a bind
+failure is reported as a startup failure instead of a process that prints
+"starting" and then accepts nothing. The Node dials the Server and retries a
+dropped connection; a refused handshake is not retried, because a wrong tunnel
+token does not become right by trying again.
 
 ## Reference
 
@@ -281,6 +284,51 @@ Server cannot tell whether `CONNECTOR_SERVER_TUNNEL_TOKEN` is the value a Node
 holds, because it has nothing to compare against beyond the value it was given. The
 only correctness check that exists is the comparison at request time, and it
 produces one error for every kind of mismatch.
+
+## Transport and its fixed limits
+
+The channel between the Node and the Server is a WebSocket, provided by
+`github.com/gorilla/websocket v1.5.3`. It is the project's second third-party
+dependency, after `gopkg.in/yaml.v3` for the policy file. The choice is recorded
+here because a dependency is a decision, not an implementation detail: the
+standard library has no WebSocket server, and the alternative was a hand-rolled
+framing layer over a hijacked HTTP connection, which is more code to get wrong
+than a library that is already widely deployed.
+
+The CLI does **not** use the WebSocket. It calls the Server over plain HTTP JSON,
+so a CLI client needs no WebSocket implementation and no long-lived connection.
+
+The limits below are **constants, not environment variables**. A timeout an
+operator can raise is a timeout that will be raised, and each of these exists to
+bound a failure rather than to be tuned. They are documented so an operator can
+predict behaviour instead of discovering it during an incident.
+
+| Constant | Value | Where | Purpose |
+|---|---|---|---|
+| `MaxChannelMessageBytes` | 1 MiB | Server | Largest channel message accepted. A larger message is refused rather than buffered |
+| `MaxFramePayloadBytes` | 1 MiB | Node | Largest frame payload accepted, matching the Server's cap so a request the Server accepted is never refused here for size alone |
+| `MaxRequestBodyBytes` | 1 MiB | Server | Largest CLI request body accepted, checked before decoding |
+| `MaxResponseBytes` | 256 KiB | Node | Cap on a single file read, so one read cannot exhaust memory |
+| `MaxResponseBytes` (CLI) | 8 MiB | CLI | Cap on a CLI response, above the Node's cap so a legitimate answer is never truncated by the client |
+| `handshakeTimeout` | 10 s | Server | How long the Server waits for `hello` after the upgrade |
+| `handshakeTimeout` | 10 s | Node | How long the Node waits for `hello_confirm` |
+| `writeTimeout` | 10 s | Server | Per-frame write deadline on the channel |
+| `socketWriteTimeout` | 10 s | Node | Per-frame write deadline on the socket |
+| `dialTimeout` | 15 s | Node | How long one connection attempt may take |
+| `reconnectDelay` | 5 s | Node | Pause between connection attempts after a dropped link |
+| `shutdownTimeout` | 10 s | Server | How long a graceful shutdown waits before closing what remains |
+| `maxInFlight` | 64 | Server | Requests one channel may have outstanding at once |
+
+Two of these deserve a note because the value is not arbitrary:
+
+- **`reconnectDelay` applies to a dropped connection, not to a refused
+  handshake.** A laptop that sleeps and a Server that restarts are ordinary
+  events; a wrong tunnel token is not, and a tight retry loop against a Server
+  that is refusing would be a denial of service the Node inflicts on itself.
+- **The Server's `http.Server` deliberately has no write timeout.** A forwarded
+  request is already bounded by `CONNECTOR_SERVER_REQUEST_TIMEOUT_SECONDS`, and a
+  second bound would cut a slow but healthy answer short with a transport error
+  instead of the `node_timeout` the caller can act on.
 
 ## Log rotation
 
