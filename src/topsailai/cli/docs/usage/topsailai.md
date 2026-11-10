@@ -41,6 +41,19 @@ topsailai
 
 At startup, `topsailai_cli.py` loads CLI-specific environment variables from `.topsailai_cli.env`. It checks the process startup directory first and then `{TOPSAILAI_HOME}/.topsailai_cli.env`; when `TOPSAILAI_HOME` is unset, the standard `~/.topsailai` default (or `/topsailai` without `HOME`) is used. Existing process environment variables have highest priority, and values loaded from the startup directory take priority over values in the TopsailAI home file. Missing files are ignored.
 
+## CLI Environment Variables
+
+Variables owned by this CLI use the `TOPSAILAI_CLI_` prefix. A variable that the
+core code defines keeps its unprefixed name, because the CLI only consumes it.
+Renamed variables still accept their previous unprefixed name as a deprecated
+fallback: the prefixed name wins when both are set, an empty value counts as
+configured and does not fall back, and the first use of an old name prints one
+`[WARN] <old> is deprecated; use <new> instead.` notice on stderr.
+
+| Variable | Meaning |
+|---|---|
+| `TOPSAILAI_CLI_DEBUG_INPUT` | When non-empty, append input-read diagnostics to `{TOPSAILAI_HOME}/.tmp/read_input_debug.log`. Unset or empty disables the log. Accepts the legacy name `TOPSAILAI_DEBUG_INPUT`. |
+
 ## Options
 
 These options apply only to the default interactive mode (no subcommand). They control the runtime/watch behavior when you start the CLI interactively.
