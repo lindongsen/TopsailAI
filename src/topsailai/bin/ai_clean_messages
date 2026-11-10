@@ -28,4 +28,10 @@ run_cli() {
   fi
 }
 
-DEBUG=${DEBUG} run_cli ai_clean_messages $*
+get_args_id() {
+  for i in $(seq $1 $2); do
+    echo -n " \"\${${i}}\""
+  done
+}
+
+DEBUG=${DEBUG} eval "run_cli ai_clean_messages $(get_args_id 1 $#)"

@@ -34,13 +34,21 @@ Every selection predicate runs in the database, so a filter never reads rows it 
 
 ## Empty values through the `bin/` wrapper
 
-An empty value reaches the script only when it is invoked directly, for example
-`./ai_list_sessions.py --excluded-categories ""`. The `../bin/ai_list_sessions`
-wrapper ends with `run_cli ai_list_sessions $*`, and the unquoted `$*` word-splits
-its arguments, so an empty string is dropped and the child reports
-`error: argument --excluded-categories: expected one argument` with exit code `2`.
-This affects `--category ""` identically and predates this option. The wrapper is
-outside this workspace, so it is reported rather than edited.
+An empty value works both directly and through the wrapper. The `../bin/`
+wrappers quote every argument the same way `../bin/topsailai.cli` does, so an
+empty string survives the hand-off:
+
+```bash
+./ai_list_sessions.py --category ""
+topsailai_list_sessions --category ""
+```
+
+Both list uncategorized sessions and exit `0`. Before the wrappers quoted their
+arguments, the unquoted `$*` word-split the argument list, dropped the empty
+string, and the child reported `error: argument --category: expected one
+argument` with exit code `2`. The same defect also glob-expanded values
+containing `*` and split values containing spaces, which turned a rejected value
+into an empty result. See `../../issues/done/issue-bin-wrapper-drops-empty-arguments.md`.
 
 ## Examples
 
