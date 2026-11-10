@@ -305,6 +305,15 @@ the operator reloads explicitly, so a script run cannot silently change the beha
 a running Endpoint. The script is a convenience over files an operator can edit by hand,
 not a privileged path.
 
+The CLI obtains each Endpoint's token from its own configuration, never from the Server. A
+Server-side distribution path would make the Server a token holder, and a holder can hand tokens
+out, which is the authority this design removes. The CLI therefore keeps a local map from Endpoint
+identity to token in the same per-user configuration file it already reads for the Server URL and
+the `server-token`, so one precedence rule and one parser cover every setting. A CLI that addresses
+an Endpoint with no entry in its map refuses locally and reports a configuration error rather than
+sending a request without a credential, because an Endpoint refusal would describe the symptom and
+hide the cause.
+
 Six operations bypass every Endpoint hook today and are the gap the policy closes:
 `output.read`, `output.follow`, `agent.model.list`, `launch.query`, `history.read`
 and `messages.read`. `agent.model.list` has an operation constant but is served by

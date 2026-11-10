@@ -519,7 +519,7 @@ Endpoint, so it must exist on the wire, and the CLI must be able to supply it.
 | Channel frame | A new `endpoint_token` field | The Endpoint cannot verify a credential it never receives |
 | Immutable intent | A new `endpoint_token` field | Every command already travels as an intent, so the token rides with it |
 | Six read request structures | A new `endpoint_token` field each | These bypass the intent path and carry their own request shape |
-| CLI | A new `--endpoint-token` flag and a per-Endpoint token map | A token names its Endpoints, so the CLI resolves the one for the addressed Endpoint |
+| CLI | A new `--endpoint-token` flag and a per-Endpoint token map in the CLI configuration | A token names its Endpoints, so the CLI resolves the one for the addressed Endpoint |
 | Server handlers | Forward the field verbatim | The Server must not drop or rewrite it |
 
 The field is deliberately a plain string and not a structured credential. The Server
@@ -579,21 +579,80 @@ reader never observes a half-written policy. And it does not signal the Endpoint
 operator reloads on `SIGHUP` as with any other policy edit, so a script run cannot silently change
 what a running Endpoint serves without the operator knowing a reload happened.
 
+## How the CLI obtains an endpoint token
+
+A token is provisioned on the Endpoint and presented by the CLI, so the two sides need the same
+secret without the Server ever holding it. The CLI therefore keeps its own local map from Endpoint
+identity to token, and the Server is not part of that distribution.
+
+The CLI already has a configuration mechanism, so the map extends it rather than adding a second
+one. Configuration is read once at the CLI entry point with a fixed precedence, and each source only
+fills keys the higher-precedence source left unset:
+
+| Precedence | Source | Path |
+|---|---|---|
+| 1 | Process environment | not a file |
+| 2 | Executable-local file | `<executable directory>/.env.local` |
+| 3 | Per-user file written at install time | `~/.topsailai/.topsailai_agent_cluster.env` |
+
+The per-user file is the normal place for the map, because it is the file the install path already
+writes and the file a user can edit without touching a package. One key holds the whole map:
+
+```text
+AGENT_CLUSTER_ENDPOINT_TOKENS='gd-dev=7f3a9c2e5b1d4a86,topsailai-dev=1c9e4f7a2b8d3056'
+```
+
+The value is a comma-separated list of `endpoint_id=token` pairs. A token therefore must not contain
+a comma or an equals sign, which the provisioning script guarantees by generating tokens from a
+restricted alphabet. Keeping the map in one key means the existing literal parser, the existing
+precedence rules and the existing install path all apply unchanged; a second file would need a
+second parser and a second install path, and the two would drift.
+
+A `--endpoint-token` flag overrides the map for one invocation. It exists for a one-off request
+against a machine the map does not cover, and it must not become the normal path, because a token
+typed on a command line lands in shell history.
+
+The CLI resolves the token for the Endpoint it is addressing, and refuses locally when the map has
+no entry for that Endpoint. The refusal is a local configuration error, not an authorization
+decision: the message must say the token is missing from the CLI configuration, and it must not be
+reported as `policy_denied`, because the request never left the machine. Sending a request with no
+credential would only produce a refusal from the Endpoint that says nothing about the real cause.
+
+Distribution stays local for the same reason the Server holds no token table. A Server-side
+distribution path would make the Server a token holder, and a Server that holds tokens can hand them
+out, which is the authority this design removes. The cost is that each CLI needs its own map, and
+that cost is paid once per machine rather than once per request.
+
+The provisioning script writes the Endpoint side, so it can print the CLI line for the token it just
+created. That keeps the two halves of one secret from being transcribed by hand, and it keeps the
+map format in one place instead of in a document and a script that can disagree.
+
+## Decided
+
+These were open questions and are now settled, so they are recorded as decisions rather than
+proposals.
+
+| Decision | Outcome |
+|---|---|
+| Server-side authorization checks | All five are removed. The Server keeps only caller authentication, Endpoint existence and channel liveness |
+| Endpoint existence versus reachability | Reported separately: `404 endpoint_not_found` for an identity that was never registered, `503 endpoint_offline` for a registered Endpoint with no live channel |
+| Policy directory packaging | A conffile in the config package, so an upgrade keeps a site's policy instead of replacing it, matching the command allowlist |
+| Token maintenance script location | `scripts/` beside `agent-clusterctl`, not a subcommand of the Endpoint binary |
+| CLI token distribution | A local per-Endpoint map in the CLI's own configuration file, never a Server-side path |
+
+The last decision is the one that keeps the design coherent. A Server-side distribution path would
+make the Server a token holder, and a holder can hand tokens out, which is the authority this design
+removes. Paying the cost once per CLI machine is cheaper than reintroducing that authority.
+
 ## Open questions
 
 - Should a denied read return a distinct code per operation, or one shared `policy_denied` code
   with the operation named in the message?
-- Should the policy directory be a conffile in the config package, so an upgrade keeps a site's
-  policy instead of replacing it? The command allowlist is already a conffile, so consistency
-  argues yes.
 - Should `endpoint_admin` be removed from the vocabulary until an operation needs it, or kept so
   the file format does not change later?
 - Should a `permissions` entry be allowed to name an operation the Endpoint does not serve? The
   current proposal accepts it, so a policy can be written before the operation ships, but it also
   means a typo in a non-`ctl.` name is the only thing load-time validation can catch.
-- Should the token script live in `scripts/` beside `agent-clusterctl`, or be a subcommand of the
-  Endpoint binary so it ships with the package that owns the format?
-- How does a CLI obtain the token for each Endpoint it addresses? Provisioning is settled: the
-  operator creates tokens and a script maintains them. What remains open is distribution to the
-  CLI, where a local per-Endpoint map is simple but hand-maintained, and a Server-side path would
-  make the Server a token holder, which this design deliberately avoids.
+- Which grant should a site give a machine that is only observed, such as `gd-dev`: a read-only
+  token, or `deny-all`? The answer depends on whether that machine is ever operated remotely, so it
+  is a deployment decision rather than a design one.
