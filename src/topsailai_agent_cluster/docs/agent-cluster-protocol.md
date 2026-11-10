@@ -120,8 +120,9 @@ Two consequences follow, and both are load-bearing:
   deliberately does not model.
 
 A new read surface reuses the existing read pattern rather than inventing one: an optional adapter
-interface, a protocol query/result pair, a channel frame pair, a Server route with a scope rule, and
-a client method. The history read is the reference instance of that pattern.
+interface, a protocol query/result pair, a channel frame pair, a Server route that forwards the
+caller token, an Endpoint policy rule and a client method. The history read is the reference
+instance of that pattern, and the Endpoint access policy is the reference for the policy rule.
 
 ## Capability contract
 
@@ -244,6 +245,88 @@ a bounded, allowlisted operation, not a remote shell.
   completely before swapping it atomically; a parse failure keeps the previous list and is logged, and
   a reload never leaves an empty list in force.
 
+## Endpoint access policy
+
+The Server is a router, not an authorizer. It verifies that the caller may talk to
+the cluster, that the addressed Endpoint exists, and that a live channel reaches
+it. It then forwards the request unchanged. It never decides whether an operation
+is permitted, and it never inspects an Endpoint policy.
+
+Authorization belongs to the Endpoint, because the Endpoint is the only party that
+knows what it can serve and the only party that performs the work. A caller that
+the Server accepts still reaches an Endpoint that may refuse it, and a compromised
+Server cannot widen what an Endpoint serves.
+
+A CLI therefore presents two independent credentials. The `server-token` is
+verified by the Server and answers whether the caller may talk to the cluster at
+all; it stays in the HTTP `Authorization` header and terminates at the Server. The
+`endpoint-token` is verified by the Endpoint and answers whether the caller may
+exercise an operation on that machine; it travels inside the request body and then
+inside the channel frame, because it must survive past the Server. The Server
+forwards it without interpreting it, exactly as it forwards an opaque provider
+response. A request that omits the `endpoint-token` is refused by the Endpoint and
+never falls back to a default policy, because a missing credential must not be
+weaker than a wrong one.
+
+The two hops have different reachability requirements. The CLI reaches the Server over
+HTTP, so the CLI's network must be able to reach the Server; that is the only hop an
+operator has to arrange. The Server and the Endpoint speak WebSocket, and either side
+may dial, so the link is established as soon as one side can reach the other. A machine
+that can neither dial out nor be dialled is unreachable, which is a network fact rather
+than a policy decision.
+
+The policy is an Endpoint-local directory, not one file, because different callers need
+different authority on the same machine. Each file describes exactly one token and is
+selected by the token that caller presents. The token is the only dimension that can
+select a policy, because a caller Endpoint ID is asserted rather than proven and a
+policy keyed on it would let any caller claim the most permissive identity.
+
+A token file declares three things: the `endpoints` that accept the token, the `scopes`
+it is granted, and the `permissions` it is granted. `scopes` and `permissions` are
+additive, so a declaration can only widen what the token may do and never silently
+narrow it; a file that declares neither grants nothing, which is why an empty file is
+rejected at load. `endpoints` is the only narrowing declaration: it limits where the
+token is accepted, and it is verifiable because the Endpoint knows its own identity
+instead of trusting a claim. One file set therefore serves the whole fleet, and a token
+that names several Endpoints is accepted by each of them.
+
+The directory has three states: permissive when it is not configured, restrictive when
+it contains token files, and denying per token when a file contains `deny-all`. A token
+that presents a credential with no matching file is refused, because falling back to a
+permissive default would mean that adding one token file silently leaves every other
+caller unrestricted. The directory reuses the five operator scope names, so an operator
+learns one vocabulary rather than two. It reloads on `SIGHUP` and keeps the previous
+policy when a reload fails.
+
+Tokens are provisioned by the operator, not issued by the Server, because a Server that
+held the token table would become a second authorizer. A maintenance script creates,
+lists, edits, removes and rotates token files, and it never signals the Endpoint itself:
+the operator reloads explicitly, so a script run cannot silently change the behaviour of
+a running Endpoint. The script is a convenience over files an operator can edit by hand,
+not a privileged path.
+
+Six operations bypass every Endpoint hook today and are the gap the policy closes:
+`output.read`, `output.follow`, `agent.model.list`, `launch.query`, `history.read`
+and `messages.read`. `agent.model.list` has an operation constant but is served by
+its own frame instead of an immutable intent, so it never reaches the policy hook.
+The last three are policy identifiers rather than protocol operations, because those
+frames carry no operation constant. Inventory publication, heartbeat, command
+receipt delivery, the fleet list and the session list stay outside the policy, so a
+denying caller still sees which machines and sessions exist while being unable to
+read their content or operate them.
+
+Because the Server no longer authorizes operations, five Server-side checks are
+removed: command admission, output read, messages read, history read and model
+catalog read. The Server keeps three checks, and all three concern reachability
+rather than permission: caller authentication (`401 unauthorized`), Endpoint
+existence (`404 endpoint_not_found`) and channel liveness (`503 endpoint_offline`).
+Endpoint existence and channel liveness must be reported separately, because a
+router that cannot distinguish "no such address" from "address unreachable" has not
+verified the address.
+
+The full contract, directory layout, file format and enforcement points are in
+`docs/agent-cluster-endpoint-access-policy.md`.
+
 ## Required agent lifecycle semantics
 
 - `agent.start` targets Endpoint and opaque launch_profile_id/profile_revision. Endpoint validates the standard intent and invokes its configured Adapter CLI start operation; the CLI/runtime controls how the independent Agent starts. No arbitrary shell or remote executable configuration is accepted.
@@ -330,7 +413,7 @@ All paths below are proposed, not existing APIs. JSON responses use a common env
 
 Enrollment, credential rotation and revocation are administrative operations specified in a later security contract. Endpoint local API exposes health/readiness, standard resources, command status and locally authorized command admission through the same internal services. Route naming can mirror the Server API under a local scope; exact local administration endpoints remain to be specified.
 
-A command request contains client-generated command_id, endpoint_id, target kind/ID/generation (or launch_profile_id/profile_revision for start), operation/version, capability_revision, typed payload, expiry and optional expected_resource_revision. Server derives the operator identity and permissions from authentication, never from client-provided authority claims. HTTP 202 means Server admission only. A repeated ID with identical canonical intent returns its prior state; changed intent returns conflict. Owner/scope checks precede duplicate-result disclosure.
+A command request contains client-generated command_id, endpoint_id, target kind/ID/generation (or launch_profile_id/profile_revision for start), operation/version, capability_revision, typed payload, expiry, the caller's `endpoint_token` and optional expected_resource_revision. The Server derives the caller identity from the `server-token`, never from client-provided authority claims, and it forwards the `endpoint_token` without interpreting it. HTTP 202 means Server admission only, which is reachability rather than permission: the Endpoint may still refuse the operation. A repeated ID with identical canonical intent returns its prior state; changed intent returns conflict. Owner checks precede duplicate-result disclosure.
 
 SSE uses resource changes, command updates and freshness events. MVP does not periodically refresh stdout snapshots. Explicit snapshot requests are one-shot reads.
 
@@ -405,7 +488,7 @@ The receipt also carries the provider's own return document as `provider_respons
 End-to-end delivery is at-least-once with bounded deduplication, NOT exactly-once execution:
 
 - Server persists intent before replying 202. Endpoint persists admitted intent before invoking the provider.
-- IDs are bound to authenticated issuer, scope, canonical payload hash and frozen target. Deduplicate repeated transport frames on both sides.
+- IDs are bound to the presented `endpoint_token`, the canonical payload hash and the frozen target. Deduplicate repeated transport frames on both sides. The token is part of the binding because the same command ID presented by a different caller is a different intent, and treating it as a duplicate would let one caller observe another caller's result.
 - Endpoint crash after provider invocation but before result persistence is an uncertain boundary. Reconcile through QueryCommand if the provider supports a correlated ID; otherwise expose unknown and require an explicit new operator decision. Never replay side effects merely because no result was stored.
 - Reconnect resends retained intent with the same ID, never a new ID. Endpoint journal state decides whether to return the retained result, reconcile, or report unknown, not blindly execute again.
 - A duplicate after dedup history expiry is not safe to execute. Commands have immutable expiry and an endpoint-bound admission token/validity window; reject expired or unverifiable replays and require a new intent ID.
@@ -433,14 +516,20 @@ Initial reachability policy remains heartbeat every 10 seconds, suspect after 30
 
 SQLite serializes write transactions; use bounded transaction lengths, a bounded busy retry policy and explicit database-error responses. Configure WAL/checkpoint and durability settings deliberately with the SQLite library; publish commit evidence rather than promising hard real-time I/O. The initial single active Server owns the database. Measure JSON serialization/whole-document replacement costs, collection duration, commit latency, database/WAL size and bounded query parsing under representative retained provider history. No per-Session SQL index or database-specific JSON features are needed for MVP.
 
-## Implemented output read authorization
+## Implemented output read authorization, scheduled for removal
 
-Both output routes require the `read_output` scope. `GET /api/v1/output` and
-`GET /api/v1/output/follow` resolve the required permission through one shared
-helper (`internal/server/output_scope.go`), so a future output route cannot be
-added without the check. A credential that lacks the scope receives `403` with
-code `permission_denied`, and the message names the operation and the missing
-permission.
+This section describes behaviour that exists in the code today. The Endpoint access
+policy supersedes it: once the policy is in force, the Server stops authorizing
+operations and the Endpoint decides, so the check described here is removed rather
+than kept alongside the policy. Two authorizers would disagree, and the weaker one
+would silently win.
+
+Current behaviour, for reference while the change is pending. Both output routes
+require the `read_output` scope. `GET /api/v1/output` and `GET /api/v1/output/follow`
+resolve the required permission through one shared helper
+(`internal/server/output_scope.go`), so a future output route cannot be added without
+the check. A credential that lacks the scope receives `403` with code
+`permission_denied`, and the message names the operation and the missing permission.
 
 The check runs before the transport is consulted and before the handler inspects
 whether a transport or streaming capability is configured. An unauthorized caller
@@ -448,10 +537,15 @@ therefore cannot infer Endpoint reachability or Server streaming capability from
 status code or a response time.
 
 An empty scope set remains unrestricted, which models the single-credential
-deployment where the one provisioned token is the administrator. The check
-therefore only narrows access when `AGENT_CLUSTER_AUTH_SCOPES` (or
-`--auth-scopes`) is set explicitly. Verification must narrow the scopes, because a
-default deployment cannot distinguish a working check from a missing one.
+deployment where the one provisioned token is the administrator. The check therefore
+only narrows access when `AGENT_CLUSTER_AUTH_SCOPES` (or `--auth-scopes`) is set
+explicitly.
+
+After the change, the same two properties are preserved by different means. A caller
+without the `endpoint-token` is refused by the Endpoint, and the refusal happens
+before the transport is consulted there, so reachability still cannot be inferred
+from a status code. The scope vocabulary survives as the Endpoint policy's
+vocabulary, so an operator still learns one set of names.
 
 ## Output and backpressure
 
