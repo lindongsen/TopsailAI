@@ -416,16 +416,21 @@ func TestAuthorityAuthorizeOperationRefusesUnimplemented(t *testing.T) {
 			if scope != nil {
 				t.Fatal("AuthorizeOperation() = non-nil scope, want nil on refusal")
 			}
-			if code := CodeOf(err); code != protocol.CodeDenied {
-				t.Fatalf("CodeOf(AuthorizeOperation()) = %v, want %v", code, protocol.CodeDenied)
+			if code := CodeOf(err); code != protocol.CodeUnsupportedOperation {
+				t.Fatalf("CodeOf(AuthorizeOperation()) = %v, want %v", code, protocol.CodeUnsupportedOperation)
 			}
 		})
 	}
 }
 
 // TestAuthorityAuthorizeOperationRejectsUnknownOperation checks that a name
-// outside the vocabulary is invalid_argument rather than denied, because
-// "unknown" and "not allowed" are different answers a caller needs to tell apart.
+// outside the vocabulary is unsupported_operation, the same code an unimplemented
+// operation gets.
+//
+// The two are deliberately collapsed. If an unknown name answered
+// invalid_argument while a declared-but-disabled name answered
+// unsupported_operation, a caller could enumerate the vocabulary by comparing the
+// two codes, which is the same oracle the scope check refuses to provide.
 func TestAuthorityAuthorizeOperationRejectsUnknownOperation(t *testing.T) {
 	fixture := newAuthorityFixture(t)
 	authority := fixture.load(t, nil)
@@ -437,8 +442,8 @@ func TestAuthorityAuthorizeOperationRejectsUnknownOperation(t *testing.T) {
 	if scope != nil {
 		t.Fatal("AuthorizeOperation(file.delete) = non-nil scope, want nil")
 	}
-	if code := CodeOf(err); code != protocol.CodeInvalidArgument {
-		t.Fatalf("CodeOf(AuthorizeOperation(file.delete)) = %v, want %v", code, protocol.CodeInvalidArgument)
+	if code := CodeOf(err); code != protocol.CodeUnsupportedOperation {
+		t.Fatalf("CodeOf(AuthorizeOperation(file.delete)) = %v, want %v", code, protocol.CodeUnsupportedOperation)
 	}
 }
 

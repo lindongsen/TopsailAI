@@ -125,7 +125,9 @@ it never has a value that is half public and half secret.
 `file.write` and `command.exec` are refused with `unsupported_operation` even
 though the wire contract declares them. The refusal is at dispatch, not at
 advertisement, so it does not depend on the Server honouring what the Node
-advertised.
+advertised. An operation name outside the vocabulary gets the same
+`unsupported_operation` code, so a caller cannot enumerate the vocabulary by
+comparing the two answers.
 
 ### Response
 
@@ -171,13 +173,13 @@ is why the codes are enumerated.
 | Code | Name | Meaning | Retry |
 |---|---|---|---|
 | `0` | `success` | The operation happened | — |
-| `1001` | `invalid_argument` | The request is malformed: unknown operation, bad scope name, rejected path, bad JSON | No |
+| `1001` | `invalid_argument` | The request is malformed: bad scope name, rejected path, bad JSON | No |
 | `1002` | `unauthenticated` | `client_token` is missing, empty or does not match; or the `node-token` was refused by the Node | No |
 | `1003` | `node_offline` | No live connection for that `node_id` | Yes, later |
 | `1004` | `node_timeout` | The Node did not answer within the request timeout | Yes |
 | `1005` | `denied` | The Node refused: no grant, or the policy does not allow it | No |
 | `1006` | `not_found` | The path does not exist inside the scope | No |
-| `1007` | `unsupported_operation` | The operation is declared but not enabled in this version | No |
+| `1007` | `unsupported_operation` | The operation is unknown or declared but not enabled in this version | No |
 | `1008` | `too_large` | The response exceeds the cap, or the request body exceeds the limit | No |
 | `1009` | `internal` | The Server failed. Details are logged, not returned | Yes |
 

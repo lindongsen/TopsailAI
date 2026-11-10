@@ -144,21 +144,21 @@ func (a *Authority) Authorize(scope security.Scope, permission security.Permissi
 // the permission it consumes and refuses an operation this version does not
 // implement.
 //
-// The enabled check happens before the grant check, so a caller asking for
-// `file.write` is refused for the version reason rather than being told whether a
-// write grant exists. Both refusals are CodeDenied, so the ordering does not leak
-// anything either way; it is stated so a later change does not reverse it by
-// accident.
+// An unknown name and a declared-but-disabled name get the same code,
+// CodeUnsupportedOperation, on purpose. If an unknown name answered
+// invalid_argument while `file.write` answered unsupported_operation, a caller
+// could enumerate the vocabulary by comparing the two codes, which is the same
+// oracle the scope check refuses to provide. Both answers are also true: this
+// binary implements neither.
+//
+// The version gate runs before the grant check, so a caller asking for
+// `file.write` learns that the operation is unimplemented rather than whether a
+// write grant exists. That ordering is stated so a later change does not reverse
+// it by accident.
 func (a *Authority) AuthorizeOperation(operation protocol.Operation, scope security.Scope) (*Scope, error) {
-	if err := operation.Validate(); err != nil {
-		return nil, newError(protocol.CodeInvalidArgument, "%v", err)
-	}
-	if !operation.Enabled() {
-		return nil, newError(protocol.CodeDenied, "operation %q is not implemented in this version", operation)
-	}
-	permission, ok := operation.Permission()
-	if !ok {
-		return nil, newError(protocol.CodeInvalidArgument, "operation %q has no permission mapping", operation)
+	permission, known := operation.Permission()
+	if !known || !operation.Enabled() {
+		return nil, newError(protocol.CodeUnsupportedOperation, "operation %q is not implemented in this version", operation)
 	}
 	return a.Authorize(scope, permission)
 }
