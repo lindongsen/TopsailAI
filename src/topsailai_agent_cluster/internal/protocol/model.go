@@ -27,6 +27,16 @@ type ModelProfile struct {
 	UnavailableReason string `json:"unavailable_reason,omitempty"`
 }
 
+// ModelCatalogQuery bounds one model-catalog read for one session.
+//
+// The target is the standard CommandTarget, so a catalog read addresses a session
+// exactly the way every other session-scoped operation does. A catalog read is
+// read-only, so it does not require a generation: an unverified session can still
+// be asked which profiles it offers, and only a selection needs a live target.
+type ModelCatalogQuery struct {
+	Target CommandTarget `json:"target"`
+}
+
 // ModelCatalog is one bounded read of the profiles a session can select.
 //
 // An empty Profiles list is a real answer meaning "this session offers no
