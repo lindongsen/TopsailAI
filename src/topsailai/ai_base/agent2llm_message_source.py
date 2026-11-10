@@ -1,3 +1,4 @@
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Iterable
@@ -9,6 +10,7 @@ from topsailai.ai_base.constants import (
     MSG_KEY_RAW_TEXT,
 )
 from topsailai.utils import thread_local_tool
+from topsailai.utils.print_tool import print_step
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +145,92 @@ def unset_agent2llm_message_source():
     )
 
 
+def _indent_block(text, prefix: str = "    ") -> str:
+    """Indent every line of ``text`` so a multi-line value stays readable.
+
+    Args:
+        text: Value to render. It is converted with ``str()``.
+        prefix: String prepended to each output line.
+
+    Returns:
+        str: The value with every line prefixed.
+    """
+    lines = str(text).splitlines() or [""]
+    return "\n".join(f"{prefix}{line}" for line in lines)
+
+
+def _to_jsonl_line(msg: dict) -> str:
+    """Serialize one runtime message back to its single-line JSONL form.
+
+    Args:
+        msg: Runtime message dict as consumed from the source.
+
+    Returns:
+        str: One JSON object on a single line, or a plain ``str()`` fallback
+        when the payload is not JSON serializable.
+    """
+    try:
+        return json.dumps(msg, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(msg)
+
+
+def _format_runtime_message_for_log(index: int, total: int, msg: dict) -> str:
+    """Render one consumed runtime message as a human-readable log block.
+
+    The block shows the message position, its routing fields, the readable
+    text body, and the original single-line JSONL payload so a reader can see
+    both what the agent received and what the source actually contained.
+
+    Args:
+        index: 1-based position of the message in this injection batch.
+        total: Total number of messages in this injection batch.
+        msg: Runtime message dict as consumed from the source.
+
+    Returns:
+        str: Multi-line, human-readable representation of the message.
+    """
+    role = msg.get("role", ROLE_USER)
+    ts = msg.get("ts")
+    content = msg.get("content")
+
+    lines = [f"--- runtime message {index}/{total} ---", f"role: {role}"]
+    if ts:
+        lines.append(f"ts: {ts}")
+
+    if isinstance(content, dict):
+        lines.append(f"step_name: {content.get(MSG_KEY_STEP_NAME, '')}")
+        raw_text = content.get(MSG_KEY_RAW_TEXT, "")
+        lines.append("raw_text:")
+        lines.append(_indent_block(raw_text) if str(raw_text).strip() else "    (empty)")
+    else:
+        lines.append("content:")
+        lines.append(_indent_block(content) if str(content).strip() else "    (empty)")
+
+    lines.append("jsonl:")
+    lines.append(_indent_block(_to_jsonl_line(msg)))
+    return "\n".join(lines)
+
+
+def _format_injected_messages_for_log(messages: list[dict]) -> str:
+    """Build the full log text for one injection batch.
+
+    Args:
+        messages: Runtime messages that were actually injected, in order.
+
+    Returns:
+        str: A count header followed by one readable block per message.
+    """
+    header = (
+        f"injected {len(messages)} runtime message(s) into Agent2LLM context"
+    )
+    blocks = [
+        _format_runtime_message_for_log(index, len(messages), msg)
+        for index, msg in enumerate(messages, start=1)
+    ]
+    return "\n".join([header, *blocks])
+
+
 def apply_agent2llm_message_source(agent) -> int:
     """Inject runtime messages from the registered source into ``agent.messages``.
 
@@ -160,6 +248,11 @@ def apply_agent2llm_message_source(agent) -> int:
     when it contains the expected keys; otherwise it is coerced safely and a
     warning is logged.
 
+    Every injected batch is reported through ``print_step`` with
+    ``need_format=False`` and ``need_log=True``, so the log always records the
+    injected count plus the readable body and original JSONL payload of each
+    message, independent of the console step-print switches.
+
     Args:
         agent: The current ``AgentBase`` instance.
 
@@ -171,10 +264,15 @@ def apply_agent2llm_message_source(agent) -> int:
         return 0
 
     count = 0
+    injected_messages = []
     for msg in source.consume_messages():
         if not isinstance(msg, dict):
             logger.warning("skip non-dict runtime message from source: %s", type(msg))
             continue
+
+        # Keep the untouched payload for the injection log. The ``ts`` field is
+        # stripped only from the copy that is injected into the context.
+        original_msg = msg
 
         # The ``ts`` field is a representation-only creation timestamp produced
         # by the message source. It must never be injected into the Agent2LLM
@@ -230,8 +328,13 @@ def apply_agent2llm_message_source(agent) -> int:
             logger.warning("unsupported runtime message role '%s', defaulting to user", role)
             agent.add_user_message(content_dict, need_print=False)
 
+        injected_messages.append(original_msg)
         count += 1
 
     if count:
-        logger.info("injected %d runtime message(s) into Agent2LLM context", count)
+        print_step(
+            _format_injected_messages_for_log(injected_messages),
+            need_format=False,
+            need_log=True,
+        )
     return count

@@ -6,7 +6,7 @@ apply_agent2llm_message_source injection logic, and build_message helpers.
 """
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from topsailai.ai_base.agent2llm_message_source import (
     Agent2LLMMessageSource,
@@ -293,6 +293,103 @@ class TestApplyAgent2LLMMessageSource(unittest.TestCase):
         self.assertEqual(content[MSG_KEY_STEP_NAME], STEP_NAME_OBSERVATION)
         self.assertEqual(content[MSG_KEY_RAW_TEXT], "plain text")
         self.assertNotIn("ts", content)
+
+class TestInjectionLog(unittest.TestCase):
+    """Test the human-readable injection log emitted through print_step."""
+
+    def setUp(self):
+        rid_all_thread_vars()
+        self.agent = MagicMock()
+        self.agent.messages = []
+
+    def tearDown(self):
+        rid_all_thread_vars()
+
+    def _apply_with_patch(self, messages):
+        """Inject ``messages`` and return the print_step mock."""
+        source = DummySource(messages)
+        set_agent2llm_message_source(source)
+        with patch(
+            "topsailai.ai_base.agent2llm_message_source.print_step"
+        ) as mock_print_step:
+            count = apply_agent2llm_message_source(self.agent)
+        return count, mock_print_step
+
+    def test_print_step_uses_need_format_false_and_need_log_true(self):
+        """The injection log must bypass formatting and always reach the log."""
+        count, mock_print_step = self._apply_with_patch(
+            [{"role": ROLE_USER, "content": "hello"}]
+        )
+
+        self.assertEqual(count, 1)
+        mock_print_step.assert_called_once()
+        self.assertEqual(mock_print_step.call_args.kwargs["need_format"], False)
+        self.assertEqual(mock_print_step.call_args.kwargs["need_log"], True)
+
+    def test_log_contains_count_and_jsonl_payload(self):
+        """The log must state the injected count and the original JSONL line."""
+        count, mock_print_step = self._apply_with_patch([
+            {"role": ROLE_USER, "content": "first"},
+            {"role": ROLE_USER, "content": "second"},
+        ])
+
+        self.assertEqual(count, 2)
+        text = mock_print_step.call_args.args[0]
+        self.assertIn("injected 2 runtime message(s)", text)
+        self.assertIn('{"role": "user", "content": "first"}', text)
+        self.assertIn('{"role": "user", "content": "second"}', text)
+        self.assertIn("runtime message 1/2", text)
+        self.assertIn("runtime message 2/2", text)
+
+    def test_log_keeps_ts_field_of_original_payload(self):
+        """The log shows the original JSONL, so ts stays visible there while
+        the injected content must not contain it."""
+        ts = "2026-07-04T12:34:56.789012+00:00"
+        count, mock_print_step = self._apply_with_patch([
+            {"role": ROLE_USER, "content": "with ts", "ts": ts},
+        ])
+
+        self.assertEqual(count, 1)
+        text = mock_print_step.call_args.args[0]
+        self.assertIn(ts, text)
+        self.assertNotIn("ts", self.agent.add_user_message.call_args.args[0])
+
+    def test_log_renders_structured_content_readably(self):
+        """Structured content must be shown as step_name plus indented text."""
+        structured = {
+            MSG_KEY_STEP_NAME: STEP_NAME_OBSERVATION,
+            MSG_KEY_RAW_TEXT: "line one\nline two",
+        }
+        count, mock_print_step = self._apply_with_patch([
+            {"role": ROLE_USER, "content": structured},
+        ])
+
+        self.assertEqual(count, 1)
+        text = mock_print_step.call_args.args[0]
+        self.assertIn(f"step_name: {STEP_NAME_OBSERVATION}", text)
+        self.assertIn("raw_text:", text)
+        self.assertIn("    line one\n    line two", text)
+
+    def test_no_log_when_nothing_is_injected(self):
+        """An empty batch must not emit an injection log."""
+        count, mock_print_step = self._apply_with_patch([])
+
+        self.assertEqual(count, 0)
+        mock_print_step.assert_not_called()
+
+    def test_skipped_messages_are_not_logged(self):
+        """Only messages that were actually injected appear in the log."""
+        count, mock_print_step = self._apply_with_patch([
+            {"role": ROLE_USER, "content": ""},
+            {"role": ROLE_USER, "content": "kept"},
+        ])
+
+        self.assertEqual(count, 1)
+        text = mock_print_step.call_args.args[0]
+        self.assertIn("injected 1 runtime message(s)", text)
+        self.assertIn("kept", text)
+        self.assertNotIn("runtime message 2/2", text)
+
 
 if __name__ == '__main__':
     unittest.main()
