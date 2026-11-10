@@ -414,3 +414,38 @@ success evidence is something the wrapped process itself produces, such as its
 own control channel. Also keep the pre-launch baseline: enumerating candidates
 after the launch silently includes the run's own new files, which turns a
 cleanup into data loss and makes a leftover PID look like a fresh startup.
+
+## A relative line number from a piped view is not an absolute file line
+
+### Trigger
+
+Four separate edits in one task damaged a file even though each one targeted a
+small, intentional change: a `paths.py` docstring lost its opening `"""`, an
+`env_compat.py` dict gained a duplicate closing `}`, a `test_env_compat.py`
+docstring line disappeared, and `docs/usage/topsailai.md` lost the
+`ProjectFolder:` and `ProjectRootFolder:` frontmatter lines. Every one was
+caught only by reading the file back afterwards.
+
+### Action taken
+
+Restored each file from the read-back content or from `git show HEAD:<path>`,
+re-checked every file with `ast.parse` where it was Python, and confirmed with
+`git diff --numstat` that the documentation file ended at `+13/-0` — pure
+addition, no deletion. The shared root cause was that I read a window with
+`sed -n 'A,Bp' | cat -n`, which numbers lines from 1 inside the window, and then
+passed those window-relative numbers to the line-range overwrite tool as if they
+were absolute file lines.
+
+### Why this prevents recurrence
+
+A line number is only meaningful together with the coordinate system that
+produced it. `sed -n 'A,Bp' | cat -n`, `head -n N | cat -n`, and any other piped
+view renumber from 1, so a number taken from that view silently points at a
+different line in the real file — and when the offset is small the damage looks
+like a plausible edit rather than a truncation. Always obtain absolute numbers
+with `grep -n` or `awk 'NR>=A && NR<=B {printf "%d|%s\n", NR, $0}'`, which print
+the file's own numbering, and never derive an absolute line from a windowed
+listing. After any multi-line replacement, immediately run `git diff --numstat`
+and treat an unexpected deletion count as a failure, not as formatting noise;
+reading the file back is what caught all four incidents here, so it is not an
+optional courtesy but the actual safety net.

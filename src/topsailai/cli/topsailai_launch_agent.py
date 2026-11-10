@@ -46,6 +46,7 @@ import threading
 import time
 # DONOT REMOVE THIS
 import readline
+from cli_topsailai.env_compat import get_env
 
 PWD = os.getenv("TOPSAILAI_PWD")
 if PWD:
@@ -58,24 +59,24 @@ _TASK_MESSAGE_FILE = None
 BASE_ITEM_NAMES = ("_", "_default")
 # Default age threshold (days) for cleaning stale files in the workspace .tmp/ directory.
 # Files older than this many days are removed on launch; fresher files are kept.
-# Configurable via TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS (default: 1 day).
+# Configurable via TOPSAILAI_CLI_TMP_CLEANUP_MAX_AGE_DAYS (default: 1 day).
 _TMP_CLEANUP_DEFAULT_MAX_AGE_DAYS = 1.0
 
 
 def _resolve_tmp_cleanup_max_age_days():
     """Resolve the .tmp/ cleanup age threshold (days) from the environment.
 
-    Reads TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS at call time so values supplied
+    Reads TOPSAILAI_CLI_TMP_CLEANUP_MAX_AGE_DAYS at call time so values supplied
     at runtime (e.g. via self_environs) take effect. Falls back to the default
     of 1 day when the variable is unset, non-numeric, or not greater than zero.
     """
-    raw = os.getenv("TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS", "")
+    raw = get_env("TOPSAILAI_CLI_TMP_CLEANUP_MAX_AGE_DAYS") or ""
     if raw:
         try:
             value = float(raw)
         except (TypeError, ValueError):
             print(
-                f"[TopsailAI-Launcher] Warning: Invalid TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS "
+                f"[TopsailAI-Launcher] Warning: Invalid TOPSAILAI_CLI_TMP_CLEANUP_MAX_AGE_DAYS "
                 f"({raw!r}); using default {_TMP_CLEANUP_DEFAULT_MAX_AGE_DAYS}.",
                 file=sys.stderr,
             )
@@ -83,7 +84,7 @@ def _resolve_tmp_cleanup_max_age_days():
         if value > 0:
             return value
         print(
-            f"[TopsailAI-Launcher] Warning: TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS ({value}) "
+            f"[TopsailAI-Launcher] Warning: TOPSAILAI_CLI_TMP_CLEANUP_MAX_AGE_DAYS ({value}) "
             f"must be positive; using default {_TMP_CLEANUP_DEFAULT_MAX_AGE_DAYS}.",
             file=sys.stderr,
         )
@@ -1621,9 +1622,9 @@ def _load_scan_exclusions(extra_all=None):
     Three comma-separated variables control which names are filtered out of
     the scanned folder tree:
 
-    - ``TOPSAILAI_SCAN_EXCLUDE``: names excluded for both files and dirs.
-    - ``TOPSAILAI_SCAN_EXCLUDE_DIRS``: directory names excluded.
-    - ``TOPSAILAI_SCAN_EXCLUDE_FILES``: file names excluded.
+    - ``TOPSAILAI_CLI_SCAN_EXCLUDE``: names excluded for both files and dirs.
+    - ``TOPSAILAI_CLI_SCAN_EXCLUDE_DIRS``: directory names excluded.
+    - ``TOPSAILAI_CLI_SCAN_EXCLUDE_FILES``: file names excluded.
 
     Values support fnmatch wildcards (e.g. ``*.log``, ``build*``).
 
@@ -1632,9 +1633,9 @@ def _load_scan_exclusions(extra_all=None):
     the environment-based list so both sources stay effective; duplicates and
     empty entries are dropped while the original order is preserved.
     """
-    excl_all = _parse_csv_names(os.getenv("TOPSAILAI_SCAN_EXCLUDE"))
-    excl_dirs = _parse_csv_names(os.getenv("TOPSAILAI_SCAN_EXCLUDE_DIRS"))
-    excl_files = _parse_csv_names(os.getenv("TOPSAILAI_SCAN_EXCLUDE_FILES"))
+    excl_all = _parse_csv_names(get_env("TOPSAILAI_CLI_SCAN_EXCLUDE"))
+    excl_dirs = _parse_csv_names(get_env("TOPSAILAI_CLI_SCAN_EXCLUDE_DIRS"))
+    excl_files = _parse_csv_names(get_env("TOPSAILAI_CLI_SCAN_EXCLUDE_FILES"))
     return (_merge_exclusions(excl_all, extra_all), excl_dirs, excl_files)
 
 
@@ -1659,14 +1660,14 @@ def _merge_exclusions(patterns, extra):
 # Default token budget for the scanned workspace folder tree. The tree is the
 # largest single contributor to the agent's first-turn context, so it must not
 # grow without bound on large repositories.
-# Configurable via TOPSAILAI_SCAN_MAX_TOKENS (0 or negative disables the limit).
+# Configurable via TOPSAILAI_CLI_SCAN_MAX_TOKENS (0 or negative disables the limit).
 _SCAN_DEFAULT_MAX_TOKENS = 20000
 # Approximate characters per token used when tiktoken is unavailable.
 _SCAN_FALLBACK_CHARS_PER_TOKEN = 4
 
 
 def _resolve_scan_max_tokens():
-    """Resolve the folder-tree token budget from TOPSAILAI_SCAN_MAX_TOKENS.
+    """Resolve the folder-tree token budget from TOPSAILAI_CLI_SCAN_MAX_TOKENS.
 
     Reads the variable at call time so values supplied at runtime (e.g. via
     ``self_environs``) take effect. Returns the default of 20000 when the
@@ -1676,14 +1677,14 @@ def _resolve_scan_max_tokens():
     Returns:
         int: Maximum tokens for the scanned tree, or 0 when unlimited.
     """
-    raw = os.getenv("TOPSAILAI_SCAN_MAX_TOKENS", "")
+    raw = get_env("TOPSAILAI_CLI_SCAN_MAX_TOKENS") or ""
     if not raw:
         return _SCAN_DEFAULT_MAX_TOKENS
     try:
         value = int(raw)
     except (TypeError, ValueError):
         print(
-            f"[TopsailAI-Launcher] Warning: Invalid TOPSAILAI_SCAN_MAX_TOKENS "
+            f"[TopsailAI-Launcher] Warning: Invalid TOPSAILAI_CLI_SCAN_MAX_TOKENS "
             f"({raw!r}); using default {_SCAN_DEFAULT_MAX_TOKENS}.",
             file=sys.stderr,
         )
@@ -1693,7 +1694,7 @@ def _resolve_scan_max_tokens():
     return value
 
 
-# Accepted truthy/falsy spellings for TOPSAILAI_SCAN_INCLUDE_FILES. Any other
+# Accepted truthy/falsy spellings for TOPSAILAI_CLI_SCAN_INCLUDE_FILES. Any other
 # value warns and falls back to the folders-only default.
 _SCAN_INCLUDE_FILES_TRUE = ("1", "true", "yes", "y", "on")
 _SCAN_INCLUDE_FILES_FALSE = ("", "0", "false", "no", "n", "off")
@@ -1785,7 +1786,7 @@ def _resolve_scan_include_files(cli_flag=None, environ=None, settings_flag=None)
     default and files must be requested explicitly.
 
     Priority: an explicit ``--include-files`` / ``--folders-only`` flag wins,
-    then ``TOPSAILAI_SCAN_INCLUDE_FILES`` read from ``environ`` (falling back to
+    then ``TOPSAILAI_CLI_SCAN_INCLUDE_FILES`` read from ``environ`` (falling back to
     the process environment), then ``scan.include_files`` from settings.yaml,
     then the folders-only default.
 
@@ -1802,7 +1803,7 @@ def _resolve_scan_include_files(cli_flag=None, environ=None, settings_flag=None)
     if cli_flag is not None:
         return bool(cli_flag)
     source = environ if environ is not None else os.environ
-    raw = source.get("TOPSAILAI_SCAN_INCLUDE_FILES")
+    raw = get_env("TOPSAILAI_CLI_SCAN_INCLUDE_FILES", environ=source)
     if raw is not None:
         value = str(raw).strip().lower()
         if value in _SCAN_INCLUDE_FILES_TRUE:
@@ -1810,7 +1811,7 @@ def _resolve_scan_include_files(cli_flag=None, environ=None, settings_flag=None)
         if value in _SCAN_INCLUDE_FILES_FALSE:
             return False
         print(
-            f"[TopsailAI-Launcher] Warning: Invalid TOPSAILAI_SCAN_INCLUDE_FILES "
+            f"[TopsailAI-Launcher] Warning: Invalid TOPSAILAI_CLI_SCAN_INCLUDE_FILES "
             f"({raw!r}); using the default folders-only scan.",
             file=sys.stderr,
         )
@@ -1923,7 +1924,7 @@ class _ScanTokenBudget:
         return (
             f"[... folder tree truncated at {self.max_tokens} tokens "
             f"({self.used} used, {self.emitted} entries listed); "
-            f"raise TOPSAILAI_SCAN_MAX_TOKENS or exclude folders to see more]"
+            f"raise TOPSAILAI_CLI_SCAN_MAX_TOKENS or exclude folders to see more]"
         )
 
 
@@ -1989,7 +1990,7 @@ def _scan_workspace_files(
 
     ``exclude_names`` optionally adds name patterns (comma-separated strings
     or a list of them, fnmatch wildcards supported) that are skipped for both
-    files and directories, on top of the ``TOPSAILAI_SCAN_EXCLUDE*`` filters.
+    files and directories, on top of the ``TOPSAILAI_CLI_SCAN_EXCLUDE*`` filters.
 
     ``include_files`` controls which entries the tree lists. It defaults to
     False (folders only), which keeps the tree compact; pass True to list files
@@ -2002,7 +2003,7 @@ def _scan_workspace_files(
     Symbolic links are not followed: symlinked files are listed as leaf
     entries and symlinked directories are not recursed into.
 
-    The tree is bounded by ``TOPSAILAI_SCAN_MAX_TOKENS`` (default 20000,
+    The tree is bounded by ``TOPSAILAI_CLI_SCAN_MAX_TOKENS`` (default 20000,
     shared by every scanned root). As soon as the next entry would exceed the
     budget, scanning stops there: no deeper folder is visited and no sibling is
     listed. Only complete lines are emitted, so folder and file names are never
@@ -2267,7 +2268,7 @@ def main():
         dest="include_files",
         help=(
             "List files as well as folders in the scanned tree. "
-            "Overrides TOPSAILAI_SCAN_INCLUDE_FILES."
+            "Overrides TOPSAILAI_CLI_SCAN_INCLUDE_FILES."
         ),
     )
     scan_content.add_argument(
@@ -2276,7 +2277,7 @@ def main():
         dest="include_files",
         help=(
             "List only folders in the scanned tree (the default). "
-            "Overrides TOPSAILAI_SCAN_INCLUDE_FILES."
+            "Overrides TOPSAILAI_CLI_SCAN_INCLUDE_FILES."
         ),
     )
     parser.add_argument(
@@ -2288,7 +2289,7 @@ def main():
         help=(
             "Ignore these file or folder names when scanning the workspace tree. "
             "Accepts comma-separated names with fnmatch wildcards (e.g. 'build,dist,*.log'). "
-            "May be repeated. Merged with TOPSAILAI_SCAN_EXCLUDE."
+            "May be repeated. Merged with TOPSAILAI_CLI_SCAN_EXCLUDE."
         ),
     )
     args = parser.parse_args()
@@ -2307,7 +2308,7 @@ def main():
     # seeded from settings.yaml is honored by both --scan and the context tree.
     if args.scan is not None:
         # Honor the top-level self_environs section so scan exclusions
-        # (e.g. TOPSAILAI_SCAN_EXCLUDE_DIRS) take effect without requiring
+        # (e.g. TOPSAILAI_CLI_SCAN_EXCLUDE_DIRS) take effect without requiring
         # the full launch flow. Silently skip when settings.yaml is absent.
         scan_settings = _load_settings_if_exists(
             os.path.join(os.getcwd(), ".topsailai", "settings.yaml")
@@ -2556,7 +2557,7 @@ def main():
         merged_env["TOPSAILAI_PROJECT_FOLDER"] = project_folder
         os.environ["TOPSAILAI_PROJECT_FOLDER"] = project_folder
     # Resolve whether the scanned tree lists files as well as folders. The CLI
-    # flag wins, then TOPSAILAI_SCAN_INCLUDE_FILES from the merged environment,
+    # flag wins, then TOPSAILAI_CLI_SCAN_INCLUDE_FILES from the merged environment,
     # then scan.include_files from settings.yaml; the default lists folders
     # only. scan.preferred_extensions adds selected files in folders-only mode.
     scan_include_setting, scan_preferred = _resolve_scan_settings(settings)

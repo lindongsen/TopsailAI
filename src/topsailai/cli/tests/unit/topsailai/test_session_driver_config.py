@@ -112,7 +112,7 @@ def test_unreadable_entry(installation, monkeypatch):
 def test_boundary_error(monkeypatch, capsys):
     """Configuration failures provide actionable error output at the boundary."""
     monkeypatch.setattr(config, "resolve_driver_authority", Mock(side_effect=ValueError(
-        "TOPSAILAI_SESSION_DRIVER_ENTRY: set an absolute entry before restarting the CLI")))
+        "TOPSAILAI_CLI_SESSION_DRIVER_ENTRY: set an absolute entry before restarting the CLI")))
     assert core._driver_authority({}) is None
     output = capsys.readouterr().out
     assert "[ERROR]" in output and config.ENTRY_ENV in output and "restarting" in output

@@ -101,7 +101,7 @@ class TestResolveScanSettings(unittest.TestCase):
 class TestResolveScanIncludeFilesSettings(unittest.TestCase):
     """Verify settings.yaml participates in the include-files priority chain."""
 
-    ENV_KEY = "TOPSAILAI_SCAN_INCLUDE_FILES"
+    ENV_KEY = "TOPSAILAI_CLI_SCAN_INCLUDE_FILES"
 
     def setUp(self):
         self._saved = os.environ.pop(self.ENV_KEY, None)
@@ -265,15 +265,15 @@ class TestMainScanSettings(unittest.TestCase):
     def setUp(self):
         self._original_dir = os.getcwd()
         self._original_argv = sys.argv
-        self._saved_env = os.environ.pop("TOPSAILAI_SCAN_INCLUDE_FILES", None)
+        self._saved_env = os.environ.pop("TOPSAILAI_CLI_SCAN_INCLUDE_FILES", None)
 
     def tearDown(self):
         os.chdir(self._original_dir)
         sys.argv = self._original_argv
         if self._saved_env is None:
-            os.environ.pop("TOPSAILAI_SCAN_INCLUDE_FILES", None)
+            os.environ.pop("TOPSAILAI_CLI_SCAN_INCLUDE_FILES", None)
         else:
-            os.environ["TOPSAILAI_SCAN_INCLUDE_FILES"] = self._saved_env
+            os.environ["TOPSAILAI_CLI_SCAN_INCLUDE_FILES"] = self._saved_env
 
     def _write_settings(self, workspace, scan_block):
         settings_dir = os.path.join(workspace, ".topsailai")

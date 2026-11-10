@@ -15,7 +15,7 @@ sys.path.insert(0, CLI_DIR)
 
 import topsailai_launch_agent as launcher
 
-_ENV_KEY = "TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS"
+_ENV_KEY = "TOPSAILAI_CLI_TMP_CLEANUP_MAX_AGE_DAYS"
 
 
 class TestResolveMaxAgeDays(unittest.TestCase):

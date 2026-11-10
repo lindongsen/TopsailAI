@@ -41,6 +41,21 @@ topsailai
 
 At startup, `topsailai_cli.py` loads CLI-specific environment variables from `.topsailai_cli.env`. It checks the process startup directory first and then `{TOPSAILAI_HOME}/.topsailai_cli.env`; when `TOPSAILAI_HOME` is unset, the standard `~/.topsailai` default (or `/topsailai` without `HOME`) is used. Existing process environment variables have highest priority, and values loaded from the startup directory take priority over values in the TopsailAI home file. Missing files are ignored.
 
+## CLI Environment Variables
+
+Variables owned by this CLI use the `TOPSAILAI_CLI_` prefix. A variable that the
+core code defines keeps its unprefixed name, because the CLI only consumes it.
+Renamed variables still accept their previous unprefixed name as a deprecated
+fallback: the prefixed name wins when both are set, an empty value counts as
+configured and does not fall back, and the first use of an old name prints one
+`[WARN] <old> is deprecated; use <new> instead.` notice on stderr.
+
+| Variable | Meaning |
+|---|---|
+| `TOPSAILAI_CLI_DEBUG_INPUT` | When non-empty, append input-read diagnostics to `{TOPSAILAI_HOME}/.tmp/read_input_debug.log`. Unset or empty disables the log. Accepts the legacy name `TOPSAILAI_DEBUG_INPUT`. |
+| `TOPSAILAI_CLI_ENTRY` | Overrides the deployed CLI entry point used by the detached supervisor of a background (`-b`) `workspace agent` or `workspace resume` launch. Set it when the entry point cannot be derived from `argv[0]`, for example when the CLI is started through a wrapper. Unset means the resolved `argv[0]` is used. A foreground launch does not use it. |
+| `TOPSAILAI_CLI_NEED_TIPS` | Boolean controlling the startup tips printed by `llm_chat` and `llm_chats`; defaults to enabled and is forced off in debug mode. |
+
 ## Options
 
 These options apply only to the default interactive mode (no subcommand). They control the runtime/watch behavior when you start the CLI interactively.
@@ -607,8 +622,12 @@ Each CLI-specific environment variable independently overrides its default when 
 
 | Variable | Meaning |
 |---|---|
-| `TOPSAILAI_SESSION_DRIVER_ENTRY` | Optional absolute path to a driver entry file; `.py` requires read access, compiled entries require execute access; defaults to the standard sibling scripts layout. |
-| `TOPSAILAI_SESSION_DRIVER_PYTHON` | Optional absolute path to a compatible executable Python interpreter whose filename starts with `python`; defaults to the validated CLI runtime for `.py` entries and is unused for compiled entries. |
+| `TOPSAILAI_CLI_SESSION_DRIVER_ENTRY` | Optional absolute path to a driver entry file; `.py` requires read access, compiled entries require execute access; defaults to the standard sibling scripts layout. |
+| `TOPSAILAI_CLI_SESSION_DRIVER_PYTHON` | Optional absolute path to a compatible executable Python interpreter whose filename starts with `python`; defaults to the validated CLI runtime for `.py` entries and is unused for compiled entries. |
+
+Both driver variables also accept their previous unprefixed names as deprecated fallbacks: `TOPSAILAI_SESSION_DRIVER_ENTRY`
+and `TOPSAILAI_SESSION_DRIVER_PYTHON`. The prefixed name wins when both are set, an empty value counts as configured, and
+the first use of an old name prints one `[WARN]` deprecation notice on stderr.
 
 The CLI validates these files once at its configuration boundary. An invalid explicit override is rejected rather than silently replaced with a default. Missing default files or an invalid interpreter print an `[ERROR]` with correction guidance and safely block launch. The chosen interpreter must have the driver dependencies installed; file validation alone does not prove import compatibility. Read-only metadata remains available, but unverifiable running evidence shows `?`. Configuration changes require restarting the CLI. The driver receives the resolved `TOPSAILAI_HOME` explicitly, with noninteractive detached standard streams. Environment contents and process command lines are not printed.
 
@@ -778,6 +797,15 @@ When no channel answers inside the window, the resume is not confirmed and
 returns 4 with `startup_reason: heartbeat_unreachable`. A launch that already
 failed keeps its own status (5, 6, or 130) instead of being reported as an
 unconfirmed startup.
+
+The window is configurable through `TOPSAILAI_CLI_RESUME_CONFIRM_SECONDS`. The
+default is `7` seconds and `7` is also the enforced minimum: a smaller configured
+value is raised to `7` seconds with a warning, because a shorter window would
+report a healthy but slow startup as unreachable. An unset, non-numeric, or
+non-positive value falls back to the default. The value is read when the
+confirmation starts, so it applies to the current run without restarting
+anything. An explicit `timeout` argument passed by a caller takes precedence over
+the environment variable.
 
 ### Leftover cleanup
 

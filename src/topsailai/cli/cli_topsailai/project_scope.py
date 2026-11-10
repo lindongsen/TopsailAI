@@ -1085,85 +1085,6 @@ def _prompt_for_driver() -> str:
         )
 
 
-def _resolve_session_entry(
-    arg: str, entries: List[Dict[str, Any]]
-) -> Optional[Dict[str, Any]]:
-    """Resolve a numeric argument to a project-scope session entry.
-
-    Args:
-        arg: User-provided argument, expected to be a 1-based number.
-        entries: Current project scope entries.
-
-    Returns:
-        The matching entry dictionary, or ``None`` if the argument is invalid.
-    """
-    if not arg.isdigit():
-        print(
-            f"{Colors.RED}[ERROR] Usage: /resume <number>{Colors.RESET}"
-        )
-        return None
-    idx = int(arg) - 1
-    if not (0 <= idx < len(entries)):
-        print(
-            f"{Colors.RED}[ERROR] Invalid number. Please enter 1-{len(entries)}.{Colors.RESET}"
-        )
-        return None
-    return entries[idx]
-
-
-def resume_session(
-    arg: str, entries: List[Dict[str, Any]], agent_mode: str = "dtach", *,
-    driver: Optional[str] = None,
-) -> bool:
-    """Resume an idle session with the selected built-in agent driver.
-
-    The explicit driver wins; otherwise the chats driver is selected without
-    prompting. Existing row, workspace, refusal and boolean behavior remains.
-    """
-    entry = _resolve_session_entry(arg, entries)
-    if entry is None:
-        return False
-
-    session_id = entry.get("session_id", "")
-    if not session_id:
-        print(
-            f"{Colors.RED}[ERROR] Selected entry has no session ID.{Colors.RESET}"
-        )
-        return False
-
-    status = entry.get("status") or "Idle"
-    if status == "Running":
-        print(
-            f"{Colors.RED}[ERROR] Session '{session_id}' is already running and "
-            f"cannot be resumed.{Colors.RESET}"
-        )
-        return False
-
-    project_workspace = entry.get("project_workspace", "")
-    if not project_workspace:
-        lookup = load_project_workspace_lookup()
-        project_workspace = lookup.get(session_id, "")
-    if not project_workspace:
-        print(
-            f"{Colors.RED}[ERROR] Selected session has no project workspace.{Colors.RESET}"
-        )
-        return False
-
-    selected_driver = driver or _RESUME_DEFAULT_DRIVER
-    if selected_driver not in _RESUME_DRIVER_OPTIONS:
-        print(
-            f"{Colors.RED}[ERROR] Unsupported resume driver: {selected_driver}{Colors.RESET}"
-        )
-        return False
-    print(
-        f"{Colors.GREEN}[INFO] Resuming session '{session_id}' with driver '{selected_driver}' "
-        f"in {project_workspace} (mode: {agent_mode}) ...{Colors.RESET}"
-    )
-    launch_agent_driver(
-        project_workspace, selected_driver, session_id, agent_mode=agent_mode
-    )
-    return True
-
 
 class ResumeLookupError(RuntimeError):
     """Raised when the authoritative session lookup cannot be trusted."""
@@ -1682,13 +1603,60 @@ def _delete_invalid_session_stdout(
     return deleted
 
 
-#: Bounded window for the resumed process to publish its control channel. A
-#: healthy agent creates its socket within a few hundred milliseconds, so this
-#: only bounds a slow or wedged startup.
+#: Default bounded window for the resumed process to publish its control
+#: channel. A healthy agent creates its socket within a few hundred
+#: milliseconds, so this only bounds a slow or wedged startup.
 RESUME_STARTUP_CONFIRM_SECONDS = 7.0
+
+#: Smallest window a caller may configure. A shorter window would report a
+#: healthy but slow startup as unreachable, so the floor is enforced instead of
+#: trusting the configured value.
+RESUME_STARTUP_CONFIRM_MIN_SECONDS = 7.0
+
+#: Environment variable that overrides the confirmation window.
+RESUME_STARTUP_CONFIRM_ENV = "TOPSAILAI_CLI_RESUME_CONFIRM_SECONDS"
 
 #: Poll interval while waiting for the resumed control channel to appear.
 RESUME_STARTUP_POLL_SECONDS = 0.2
+
+
+def _resolve_resume_confirm_seconds() -> float:
+    """Resolve the startup-confirmation window from the environment.
+
+    The window is read at call time so a value supplied for one run takes
+    effect without mutating module state. A value below
+    ``RESUME_STARTUP_CONFIRM_MIN_SECONDS`` is raised to that floor rather than
+    accepted, because a shorter window would report a healthy but slow startup
+    as unreachable. An unset, non-numeric, or non-positive value falls back to
+    the default.
+    """
+    raw = os.environ.get(RESUME_STARTUP_CONFIRM_ENV, "")
+    if not raw:
+        return RESUME_STARTUP_CONFIRM_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        print(
+            f"{Colors.YELLOW}[WARN] Invalid {RESUME_STARTUP_CONFIRM_ENV} "
+            f"({raw!r}); using {RESUME_STARTUP_CONFIRM_SECONDS} "
+            f"seconds.{Colors.RESET}"
+        )
+        return RESUME_STARTUP_CONFIRM_SECONDS
+    if value <= 0:
+        print(
+            f"{Colors.YELLOW}[WARN] {RESUME_STARTUP_CONFIRM_ENV} ({value}) must "
+            f"be positive; using {RESUME_STARTUP_CONFIRM_SECONDS} "
+            f"seconds.{Colors.RESET}"
+        )
+        return RESUME_STARTUP_CONFIRM_SECONDS
+    if value < RESUME_STARTUP_CONFIRM_MIN_SECONDS:
+        print(
+            f"{Colors.YELLOW}[WARN] {RESUME_STARTUP_CONFIRM_ENV} ({value}) is "
+            f"below the {RESUME_STARTUP_CONFIRM_MIN_SECONDS}-second minimum; "
+            f"using {RESUME_STARTUP_CONFIRM_MIN_SECONDS} seconds.{Colors.RESET}"
+        )
+        return RESUME_STARTUP_CONFIRM_MIN_SECONDS
+    return value
 
 
 def _session_socket_pids(task_dir: str, session_id: str) -> List[int]:
@@ -1760,7 +1728,7 @@ def _new_session_pids(
 def _confirm_resumed_startup(
     session_id: str, snapshot: List[str], *, code: int, mode: str,
     background: bool, home: Optional[str] = None,
-    timeout: float = RESUME_STARTUP_CONFIRM_SECONDS,
+    timeout: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Prove the resumed process is reachable on its own control channel.
 
@@ -1773,6 +1741,12 @@ def _confirm_resumed_startup(
     A foreground ``raw`` resume is the one exception: the agent itself is the
     child, so its exit status already reports the completed run and no channel
     survives it.
+
+    Args:
+        timeout: Explicit window in seconds. When omitted, the window is
+            resolved from ``TOPSAILAI_CLI_RESUME_CONFIRM_SECONDS`` at call
+            time, which keeps the default configurable without mutating module
+            state.
 
     Returns:
         The confirmation facts: ``startup_confirmed``, ``startup_pid`` and
@@ -1795,6 +1769,8 @@ def _confirm_resumed_startup(
             "startup_pid": None,
             "startup_reason": "foreground_raw_exited",
         }
+    if timeout is None:
+        timeout = _resolve_resume_confirm_seconds()
     base = home or get_topsailai_home()
     deadline = time.monotonic() + max(timeout, 0.0)
     # At least one probe is always attempted, so a zero-length window still
