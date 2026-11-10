@@ -1,0 +1,12 @@
+bin/
+.tmp/
+.task/
+.coverage
+*.log
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+__pycache__/
+*.pyc
