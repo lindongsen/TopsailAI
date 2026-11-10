@@ -18,6 +18,7 @@ import (
 
 	"topsailai_connector/internal/protocol"
 	"topsailai_connector/internal/server"
+	"topsailai_connector/internal/server/cli"
 )
 
 func main() {
@@ -29,22 +30,37 @@ func main() {
 
 // run is the whole process, separated from main so a test can call it and so
 // every failure returns an error instead of calling os.Exit in the middle.
+//
+// The `cli` subcommand is the one exception to the error-returning shape: it
+// returns an exit status instead, because a CLI must exit non-zero on an error
+// code so a shell script can branch on it.
 func run(arguments []string) error {
 	command, rest := splitCommand(arguments)
 
 	switch command {
 	case "", "run":
 		return runServer(rest)
+	case "cli":
+		os.Exit(cli.Run(rest, os.Getenv, os.Stdout, os.Stderr))
+		return nil
 	default:
-		return fmt.Errorf("unknown command %q; want run", command)
+		return fmt.Errorf("unknown command %q; want run or cli", command)
 	}
 }
 
 // splitCommand separates the subcommand from its flags. A leading flag means the
 // default subcommand, so `connector-server --help` works without naming `run`.
+//
+// A leading word that is not a known command is returned as the command, so `run`
+// reports it as unknown instead of starting the Server: a typo that silently
+// started the default subcommand is a typo an operator never learns about.
 func splitCommand(arguments []string) (string, []string) {
 	if len(arguments) == 0 {
 		return "", nil
+	}
+	switch arguments[0] {
+	case "run", "cli":
+		return arguments[0], arguments[1:]
 	}
 	first := arguments[0]
 	if len(first) > 0 && first[0] == '-' {
