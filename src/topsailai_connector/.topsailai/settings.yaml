@@ -1,0 +1,29 @@
+# AI Agent TopsailAI-Launcher Configuration
+# This file tells topsailai_launch_agent.py which driver to run, which files
+# to inject into the agent context, and which environment variables to set.
+
+ai_agent_driver: "topsailai_agent_chats"
+
+workspace: "."
+
+scan:
+  include_files: false
+  preferred_extensions: []
+
+# Context sources injected at agent startup. Keep this list small: every entry
+# is loaded on every turn and consumes prompt tokens. project.yaml carries the
+# project identity and structure; the permission contract constrains every code
+# change. Other design documents are read on demand from docs/ instead.
+context:
+  _:
+    - project.yaml
+    - README.md
+    - LEARN.md
+    - MEMORY.md
+    - docs/permission-design.md
+  default: []
+
+environment:
+  _:
+    TOPSAILAI_INTERACTIVE_MODE: "1"
+  default: {}
