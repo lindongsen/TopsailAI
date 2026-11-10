@@ -1,5 +1,7 @@
 package protocol
 
+import "fmt"
+
 const (
 	OperationMessageSend        = "message.send"
 	OperationContextInject      = "context.inject"
@@ -20,7 +22,38 @@ const (
 	// OperationCommandExec runs one allowlisted argv array in a session working
 	// directory. It is a bounded standard operation, not a remote shell.
 	OperationCommandExec = "command.exec"
+	// OperationAgentModelList reads the model profiles a session can select. It
+	// is a read-only operation: it never changes provider state, so it is
+	// advertised with SafetyClassReadOnly and needs only the view scope.
+	OperationAgentModelList = "agent.model.list"
+	// OperationAgentModelSelect switches one session to a model profile. It
+	// changes live agent behaviour, so it is advertised with SafetyClassMutating
+	// and needs the control scope.
+	OperationAgentModelSelect = "agent.model.select"
 )
+
+// Standard safety classes. The vocabulary is closed, because the value decides
+// whether an operator must confirm an operation and which scope a credential must
+// hold. A read-only listing advertised as mutating is a contract lie: it forces a
+// confirmation and a stronger scope onto an operation that changes nothing, while
+// hiding the operations that really do change state behind the same label.
+const (
+	// SafetyClassReadOnly marks an operation that never changes provider state.
+	SafetyClassReadOnly = "read_only"
+	// SafetyClassMutating marks an operation that may change provider state.
+	SafetyClassMutating = "mutating"
+)
+
+// ValidateSafetyClass rejects a safety class outside the closed vocabulary
+// instead of guessing what an unknown value was meant to mean.
+func ValidateSafetyClass(value string) error {
+	switch value {
+	case SafetyClassReadOnly, SafetyClassMutating:
+		return nil
+	default:
+		return fmt.Errorf("invalid safety class %q", value)
+	}
+}
 
 // Capability describes one standard operation supported by an Endpoint.
 type Capability struct {
