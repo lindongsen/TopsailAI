@@ -141,7 +141,7 @@ func cdHistoryRowNumber(state *interactiveState, api InteractiveAPI, parent cont
 	// sessions for one provider session ID, so the operator must inspect the
 	// endpoint inventory; no client-side retry can resolve contradictory data.
 	if row.Ambiguous {
-		return fmt.Errorf("history row %d is ambiguous: endpoint %q reports several live sessions for provider session %q, so the row cannot be entered; inspect the endpoint inventory", number, namespace.EndpointID, row.ProviderSessionID)
+		return fmt.Errorf("history row %d is ambiguous: endpoint %q reports several live sessions for session %s, so the row cannot be entered; inspect the endpoint inventory", number, namespace.EndpointID, sessionIdentityLabel(row.DisplayName, row.ProviderSessionID, ""))
 	}
 	if !row.Joined {
 		return fmt.Errorf("history row %d is unjoined: the inventory for endpoint %q is unavailable, so the row cannot be entered; run refresh and history again", number, namespace.EndpointID)
@@ -279,7 +279,7 @@ func historyResumeSelection(namespace *historyNamespace, number int) (resumeSele
 	// a session that is already running, so the row is refused before the adapter
 	// verdict is consulted.
 	if row.Ambiguous {
-		return resumeSelection{}, fmt.Errorf("history row %d is ambiguous: endpoint %q reports several live sessions for provider session %q, so it cannot be resumed; inspect the endpoint inventory instead", number, namespace.EndpointID, row.ProviderSessionID)
+		return resumeSelection{}, fmt.Errorf("history row %d is ambiguous: endpoint %q reports several live sessions for session %s, so it cannot be resumed; inspect the endpoint inventory instead", number, namespace.EndpointID, sessionIdentityLabel(row.DisplayName, row.ProviderSessionID, ""))
 	}
 	if row.Live {
 		return resumeSelection{}, fmt.Errorf("history row %d is live on endpoint %q, so it cannot be resumed; use cd %d to enter it", number, namespace.EndpointID, number)
@@ -380,7 +380,7 @@ func validateResumeAbsence(ctx context.Context, api InteractiveAPI, endpointID, 
 	}
 	report, ok := loaded.reports[endpointID]
 	if !ok || !report.ReportComplete {
-		return fmt.Errorf("endpoint %q inventory is unavailable, so the absence of session %q cannot be proven", endpointID, providerSessionID)
+		return fmt.Errorf("endpoint %q inventory is unavailable, so the absence of session %s cannot be proven", endpointID, sessionIdentityLabel("", providerSessionID, ""))
 	}
 	for _, session := range report.Sessions {
 		if session.ProviderSessionID == "" || session.ProviderSessionID != providerSessionID {
@@ -389,7 +389,7 @@ func validateResumeAbsence(ctx context.Context, api InteractiveAPI, endpointID, 
 		if session.Generation == "" {
 			continue
 		}
-		return fmt.Errorf("session %q is live on endpoint %q, so it cannot be resumed; use cd to enter it", providerSessionID, endpointID)
+		return fmt.Errorf("session %s is live on endpoint %q, so it cannot be resumed; use cd to enter it", sessionIdentityLabel(session.DisplayName, session.ProviderSessionID, session.SessionID), endpointID)
 	}
 	return nil
 }

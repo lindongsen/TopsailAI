@@ -101,7 +101,7 @@ func TestHiddenSessionIDStillNamesTheStopConfirmation(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "stop session provider-res-1 (res-1)? Confirm stop?") {
+	if !strings.Contains(output, "stop session (provider-res-1)? Confirm stop?") {
 		t.Fatalf("confirmation question lost the provider session ID: %q", output)
 	}
 }

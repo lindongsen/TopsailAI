@@ -399,7 +399,7 @@ func TestDriveStartConfirmationNamesTheSession(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	const question = `drive start session "Daily work" provider-res-1 (res-1)? Confirm drive start?`
+	const question = `drive start session (Daily work) (provider-res-1)? Confirm drive start?`
 	if !strings.Contains(output, question) {
 		t.Fatalf("drive start question does not name the session: %q", output)
 	}
@@ -423,22 +423,23 @@ func TestDriveStopConfirmationNamesTheSession(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	const question = `drive stop session "Daily work" provider-res-1 (res-1)? Confirm drive stop?`
+	const question = `drive stop session (Daily work) (provider-res-1)? Confirm drive stop?`
 	if !strings.Contains(output, question) {
 		t.Fatalf("drive stop question does not name the session: %q", output)
 	}
 }
 
-// TestDriveConfirmationKeepsTheOldWordingWithoutAName proves a session the provider
-// reported no name for keeps the previous wording exactly. The name is descriptive
-// report data, so its absence must not change the question an operator answers.
-func TestDriveConfirmationKeepsTheOldWordingWithoutAName(t *testing.T) {
+// TestDriveConfirmationNamesTheProviderIDWithoutAName proves a session the provider
+// reported no name for still names the provider session identifier, and omits the
+// empty name rather than printing "()". The name is descriptive report data, so its
+// absence must not degrade the question into an opaque resource ID.
+func TestDriveConfirmationNamesTheProviderIDWithoutAName(t *testing.T) {
 	stub := driveCapabilityStub{interactiveStub: driveStub()}
 	output, diagnostics := runScope(t, stub, "drive start res-1\ny\nquit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	const question = "drive start session provider-res-1 (res-1)? Confirm drive start?"
+	const question = "drive start session (provider-res-1)? Confirm drive start?"
 	if !strings.Contains(output, question) {
 		t.Fatalf("unnamed session changed the question: %q", output)
 	}

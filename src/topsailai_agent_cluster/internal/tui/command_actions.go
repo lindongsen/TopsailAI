@@ -27,6 +27,10 @@ type ActionRequest struct {
 	// in progress output. It is presentation data: it never participates in
 	// routing, authorization or the immutable intent.
 	DisplayName string
+	// ProviderSessionID is the provider's own key for the session, used only to
+	// describe the target in progress output. Like DisplayName it is presentation
+	// data and never participates in routing or the immutable intent.
+	ProviderSessionID string
 }
 
 // ActionResult contains the durable result and command identifier.

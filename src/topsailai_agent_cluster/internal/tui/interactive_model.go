@@ -20,10 +20,12 @@ import (
 // would let a number silently change meaning depending on which table was rendered
 // last.
 type modelCatalogNamespace struct {
-	EndpointID string
-	SessionID  string
-	Generation string
-	Rows       map[int]ModelCatalogViewRow
+	EndpointID        string
+	SessionID         string
+	ProviderSessionID string
+	DisplayName       string
+	Generation        string
+	Rows              map[int]ModelCatalogViewRow
 }
 
 // IsRowNumber reports whether token is a rendered row number.
@@ -96,7 +98,7 @@ func interactiveModelList(parent context.Context, api InteractiveAPI, state *int
 		return err
 	}
 	if catalog.ErrorCode != "" {
-		return modelCatalogError(target.sessionID, catalog.ErrorCode)
+		return modelCatalogError(sessionIdentityLabel(target.displayName, target.providerSessionID, target.sessionID), catalog.ErrorCode)
 	}
 	view := NewModelCatalogView(target.endpointID, target.sessionID, catalog)
 	// The live and history namespaces are dropped before the catalog is rendered, so
@@ -112,7 +114,7 @@ func interactiveModelList(parent context.Context, api InteractiveAPI, state *int
 	if len(view.Rows) == 0 {
 		// An empty catalog is a real answer, so it is stated plainly instead of
 		// rendering an empty table that looks like a rendering fault.
-		_, err := fmt.Fprintf(out, "session %q offers no selectable model profile\n", target.sessionID)
+		_, err := fmt.Fprintf(out, "session %s offers no selectable model profile\n", sessionIdentityLabel(target.displayName, target.providerSessionID, target.sessionID))
 		return err
 	}
 	options := TableOptionsFor(out)
@@ -122,10 +124,12 @@ func interactiveModelList(parent context.Context, api InteractiveAPI, state *int
 		return err
 	}
 	state.modelCatalog = &modelCatalogNamespace{
-		EndpointID: target.endpointID,
-		SessionID:  target.sessionID,
-		Generation: target.generation,
-		Rows:       make(map[int]ModelCatalogViewRow, len(view.Rows)),
+		EndpointID:        target.endpointID,
+		SessionID:         target.sessionID,
+		ProviderSessionID: target.providerSessionID,
+		DisplayName:       target.displayName,
+		Generation:        target.generation,
+		Rows:              make(map[int]ModelCatalogViewRow, len(view.Rows)),
 	}
 	for _, row := range view.Rows {
 		state.modelCatalog.Rows[row.No] = row
@@ -146,7 +150,7 @@ func interactiveModelSelect(parent context.Context, api InteractiveAPI, state *i
 	if err != nil {
 		return err
 	}
-	row, err := resolveModelProfileSelector(state.modelCatalog, target.sessionID, profileToken)
+	row, err := resolveModelProfileSelector(state.modelCatalog, target.sessionID, profileToken, sessionIdentityLabel(target.displayName, target.providerSessionID, target.sessionID))
 	if err != nil {
 		return err
 	}
@@ -202,12 +206,18 @@ func interactiveModelSelect(parent context.Context, api InteractiveAPI, state *i
 // them. A number that is not in the table is an error and is never retried as an
 // identifier: falling through would silently apply a profile the operator never
 // selected, which is the one outcome this command must not produce.
-func resolveModelProfileSelector(namespace *modelCatalogNamespace, sessionID, token string) (ModelCatalogViewRow, error) {
+//
+// requestedLabel is the canonical identity expression of the session being addressed,
+// so a refusal names the session the same way every other message does. It is passed
+// in rather than derived here, because the requested session and the rendered session
+// are different targets and only the caller knows which one it asked for.
+func resolveModelProfileSelector(namespace *modelCatalogNamespace, sessionID, token, requestedLabel string) (ModelCatalogViewRow, error) {
 	if namespace == nil {
-		return ModelCatalogViewRow{}, fmt.Errorf("no model catalog has been rendered for session %q; run model first", sessionID)
+		return ModelCatalogViewRow{}, fmt.Errorf("no model catalog has been rendered for session %s; run model first", requestedLabel)
 	}
 	if namespace.SessionID != sessionID {
-		return ModelCatalogViewRow{}, fmt.Errorf("the last rendered model catalog belongs to session %q, not %q; run model again", namespace.SessionID, sessionID)
+		renderedLabel := sessionIdentityLabel(namespace.DisplayName, namespace.ProviderSessionID, namespace.SessionID)
+		return ModelCatalogViewRow{}, fmt.Errorf("the last rendered model catalog belongs to session %s, not %s; run model again", renderedLabel, requestedLabel)
 	}
 	if number, numeric := parseRowNumber(token); numeric {
 		row, ok := namespace.Rows[number]

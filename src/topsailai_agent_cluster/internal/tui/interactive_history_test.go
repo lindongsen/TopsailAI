@@ -411,7 +411,7 @@ func TestInteractiveResumeRevalidatesAbsenceBeforeSubmission(t *testing.T) {
 	stub.interactiveStub.sessionPresenceSequence = []bool{true, false, true}
 
 	_, diagnostics := runScope(t, stub, "history endpoint-1\nresume 1\ny\nexit\n", ColorPolicy{})
-	want := `session "wa-past" is live on endpoint "endpoint-1", so it cannot be resumed; use cd to enter it`
+	want := `session (wa-past) is live on endpoint "endpoint-1", so it cannot be resumed; use cd to enter it`
 	if !strings.Contains(diagnostics, want) {
 		t.Fatalf("diagnostics=%q, want %q", diagnostics, want)
 	}

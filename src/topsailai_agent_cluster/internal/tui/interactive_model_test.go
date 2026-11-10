@@ -40,7 +40,7 @@ func TestModelSelectUnmatchedNumberIsNotRetriedAsAnID(t *testing.T) {
 		ModelCatalogViewRow{No: 2, ModelProfileID: "7", DisplayName: "seven"},
 	)
 
-	row, err := resolveModelProfileSelector(namespace, "res_1", "7")
+	row, err := resolveModelProfileSelector(namespace, "res_1", "7", "res_1")
 	if err == nil {
 		t.Fatalf("an unmatched row number must be refused, but it resolved to profile %q", row.ModelProfileID)
 	}
@@ -57,12 +57,43 @@ func TestModelSelectUnmatchedNumberIsNotRetriedAsAnID(t *testing.T) {
 func TestModelSelectRejectsACatalogFromAnotherSession(t *testing.T) {
 	namespace := modelNamespace("res_1", ModelCatalogViewRow{No: 1, ModelProfileID: "mp-1"})
 
-	_, err := resolveModelProfileSelector(namespace, "res_2", "1")
+	_, err := resolveModelProfileSelector(namespace, "res_2", "1", "res_2")
 	if err == nil {
 		t.Fatal("expected a catalog from another session to be rejected")
 	}
 	if !strings.Contains(err.Error(), "res_1") || !strings.Contains(err.Error(), "res_2") {
 		t.Fatalf("expected both session IDs in the message, got %q", err.Error())
+	}
+}
+
+// TestModelSelectNamesTheRenderedSessionCanonically proves the refusal that names the
+// rendered catalog uses the canonical session identity expression.
+//
+// The fixture gives the rendered session a name and a provider ID that both differ
+// from its opaque resource ID, so a message that still prints the opaque ID is
+// distinguishable from one that prints the identity. Without that difference the two
+// behaviours would produce the same text and the test could not tell them apart.
+func TestModelSelectNamesTheRenderedSessionCanonically(t *testing.T) {
+	namespace := &modelCatalogNamespace{
+		EndpointID:        "endpoint-1",
+		SessionID:         "res-1",
+		ProviderSessionID: "provider-res-1",
+		DisplayName:       "Daily work",
+		Rows:              map[int]ModelCatalogViewRow{1: {No: 1, ModelProfileID: "mp-1"}},
+	}
+
+	_, err := resolveModelProfileSelector(namespace, "res-2", "1", "(Other work) (provider-res-2)")
+	if err == nil {
+		t.Fatal("expected a catalog from another session to be rejected")
+	}
+	if !strings.Contains(err.Error(), "(Daily work) (provider-res-1)") {
+		t.Fatalf("the rendered session is not named canonically: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "(Other work) (provider-res-2)") {
+		t.Fatalf("the requested session is not named canonically: %q", err.Error())
+	}
+	if strings.Contains(err.Error(), " (res-1)") || strings.Contains(err.Error(), " (res-2)") {
+		t.Fatalf("the message still names an opaque resource ID: %q", err.Error())
 	}
 }
 
@@ -72,7 +103,7 @@ func TestModelSelectRejectsACatalogFromAnotherSession(t *testing.T) {
 // An empty namespace is not "no profiles exist"; it is "nothing was rendered", and
 // the two must not collapse into one message.
 func TestModelSelectWithoutARenderedCatalogAsksForOne(t *testing.T) {
-	_, err := resolveModelProfileSelector(nil, "res_1", "1")
+	_, err := resolveModelProfileSelector(nil, "res_1", "1", "res_1")
 	if err == nil {
 		t.Fatal("expected a select without a rendered catalog to be rejected")
 	}
@@ -92,7 +123,7 @@ func TestModelSelectResolvesRowNumberToTheOpaqueID(t *testing.T) {
 		ModelCatalogViewRow{No: 2, ModelProfileID: "mp-2", DisplayName: "gpt"},
 	)
 
-	row, err := resolveModelProfileSelector(namespace, "res_1", "2")
+	row, err := resolveModelProfileSelector(namespace, "res_1", "2", "res_1")
 	if err != nil {
 		t.Fatalf("expected row 2 to resolve, got %v", err)
 	}
@@ -120,7 +151,7 @@ func TestModelSelectResolvesRowNumberToTheOpaqueID(t *testing.T) {
 func TestModelSelectAcceptsTheOpaqueIDAndDisplayName(t *testing.T) {
 	namespace := modelNamespace("res_1", ModelCatalogViewRow{No: 1, ModelProfileID: "mp-1", DisplayName: "claude"})
 
-	byID, err := resolveModelProfileSelector(namespace, "res_1", "mp-1")
+	byID, err := resolveModelProfileSelector(namespace, "res_1", "mp-1", "res_1")
 	if err != nil {
 		t.Fatalf("expected the opaque ID to resolve, got %v", err)
 	}
@@ -128,7 +159,7 @@ func TestModelSelectAcceptsTheOpaqueIDAndDisplayName(t *testing.T) {
 		t.Fatalf("expected row 1, got %d", byID.No)
 	}
 
-	byName, err := resolveModelProfileSelector(namespace, "res_1", "claude")
+	byName, err := resolveModelProfileSelector(namespace, "res_1", "claude", "res_1")
 	if err != nil {
 		t.Fatalf("expected the display name to resolve, got %v", err)
 	}
@@ -136,7 +167,7 @@ func TestModelSelectAcceptsTheOpaqueIDAndDisplayName(t *testing.T) {
 		t.Fatalf("expected mp-1, got %q", byName.ModelProfileID)
 	}
 
-	if _, err := resolveModelProfileSelector(namespace, "res_1", "mp-unseen"); err == nil {
+	if _, err := resolveModelProfileSelector(namespace, "res_1", "mp-unseen", "res_1"); err == nil {
 		t.Fatal("expected a profile that was never rendered to be rejected")
 	}
 }
@@ -152,7 +183,7 @@ func TestModelSelectRejectsAnAmbiguousDisplayName(t *testing.T) {
 		ModelCatalogViewRow{No: 2, ModelProfileID: "mp-2", DisplayName: "claude"},
 	)
 
-	_, err := resolveModelProfileSelector(namespace, "res_1", "claude")
+	_, err := resolveModelProfileSelector(namespace, "res_1", "claude", "res_1")
 	if err == nil {
 		t.Fatal("expected an ambiguous display name to be rejected")
 	}

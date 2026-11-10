@@ -38,7 +38,7 @@ func interactiveMessages(parent context.Context, api InteractiveAPI, state *inte
 		return err
 	}
 	if result.ErrorCode != "" {
-		return fmt.Errorf("messages for session %q on endpoint %q failed: %s", sessionID, endpointID, result.ErrorCode)
+		return fmt.Errorf("messages for session %s on endpoint %q failed: %s", sessionIdentityLabel("", sessionID, ""), endpointID, result.ErrorCode)
 	}
 	view := BuildMessagesView(endpointID, result)
 	// The conversation is provider prose, so it renders through the untrusted

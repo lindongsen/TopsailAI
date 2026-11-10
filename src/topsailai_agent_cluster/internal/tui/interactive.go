@@ -930,7 +930,7 @@ func findSelectedIn(loaded reportLoad, state *interactiveState) (protocol.Endpoi
 				// resume the session, because resume is the only operation that
 				// does not need a generation.
 				state.invalidate("selected session liveness is unverified")
-				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %q is no longer verified as running, so it cannot be addressed; use cd .. then resume it", state.SessionID)
+				return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %s is no longer verified as running, so it cannot be addressed; use cd .. then resume it", sessionIdentityLabel(state.Scope.SessionName, state.Scope.ProviderSessionID, state.SessionID))
 			}
 			if session.Generation != state.Generation {
 				state.invalidate("selected session generation changed")
@@ -941,7 +941,7 @@ func findSelectedIn(loaded reportLoad, state *interactiveState) (protocol.Endpoi
 	}
 	// The endpoint no longer reports the pinned session, so the selection can never be
 	// resolved again; name the recovery step instead of leaving the operator to guess.
-	return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %q was not found; use cd .. to leave the session scope", state.SessionID)
+	return protocol.Endpoint{}, protocol.InventoryReport{}, nil, fmt.Errorf("selected session %s was not found; use cd .. to leave the session scope", sessionIdentityLabel(state.Scope.SessionName, state.Scope.ProviderSessionID, state.SessionID))
 }
 
 func validateSessionFreshness(report protocol.InventoryReport, session protocol.Session) error {
@@ -950,7 +950,7 @@ func validateSessionFreshness(report protocol.InventoryReport, session protocol.
 		collectionStatus = report.CollectionStatus
 	}
 	if session.Stale || session.Unknown || collectionStatus != protocol.CollectionSucceeded {
-		return fmt.Errorf("session %q is not fresh: stale=%t unknown=%t collection_status=%s", session.SessionID, session.Stale, session.Unknown, collectionStatus)
+		return fmt.Errorf("session %s is not fresh: stale=%t unknown=%t collection_status=%s", sessionIdentityLabel(session.DisplayName, session.ProviderSessionID, session.SessionID), session.Stale, session.Unknown, collectionStatus)
 	}
 	return nil
 }

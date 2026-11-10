@@ -603,13 +603,16 @@ func modelSelectWithProgress(ctx context.Context, api tui.CommandAPI, output, di
 	if err != nil {
 		return err
 	}
+	// The label is resolved once and reused by every message below, so one command
+	// performs one inventory read instead of one per failure path.
+	label := tui.SessionIdentityLabelFromInventory(ctx, api, endpoint.EndpointID, sessionID)
 	if generationFlag == "" {
 		generationFlag, err = resolveSessionGeneration(ctx, api, endpoint.EndpointID, sessionID)
 		if err != nil {
 			return err
 		}
 		if generationFlag == "" {
-			return fmt.Errorf("session %q has no verified generation in the committed inventory, so a model change cannot address it; pass --generation explicitly or refresh the inventory", sessionID)
+			return fmt.Errorf("session %s has no verified generation in the committed inventory, so a model change cannot address it; pass --generation explicitly or refresh the inventory", label)
 		}
 	}
 	catalog, err := querier.GetModelCatalog(ctx, endpoint.EndpointID, sessionID, generationFlag)
@@ -617,10 +620,10 @@ func modelSelectWithProgress(ctx context.Context, api tui.CommandAPI, output, di
 		return err
 	}
 	if catalog.ErrorCode != "" {
-		return tui.ModelCatalogError(sessionID, catalog.ErrorCode)
+		return tui.ModelCatalogError(label, catalog.ErrorCode)
 	}
 	view := tui.NewModelCatalogView(endpoint.EndpointID, sessionID, catalog)
-	row, err := tui.ResolveModelProfileSelector(view, profile)
+	row, err := tui.ResolveModelProfileSelector(view, profile, label)
 	if err != nil {
 		return err
 	}

@@ -138,15 +138,16 @@ func runShellCommand(parent context.Context, api InteractiveAPI, state *interact
 	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
 	actionRequest := ActionRequest{
-		Operation:      protocol.OperationCommandExec,
-		OperationLabel: "exec",
-		EndpointID:     state.EndpointID,
-		ResourceID:     session.SessionID,
-		DisplayName:    session.DisplayName,
-		Generation:     session.Generation,
-		Payload:        payload,
-		Confirmed:      true,
-		WaitTimeoutMS:  options.WaitTimeoutMS,
+		Operation:         protocol.OperationCommandExec,
+		OperationLabel:    "exec",
+		EndpointID:        state.EndpointID,
+		ResourceID:        session.SessionID,
+		DisplayName:       session.DisplayName,
+		ProviderSessionID: session.ProviderSessionID,
+		Generation:        session.Generation,
+		Payload:           payload,
+		Confirmed:         true,
+		WaitTimeoutMS:     options.WaitTimeoutMS,
 	}
 	progress := NewActionProgress(options.ProgressWriter, actionRequest)
 	intent, err := runner.PrepareAction(ctx, actionRequest)

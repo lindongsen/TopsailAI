@@ -173,7 +173,7 @@ func (r CommandRunner) Messages(ctx context.Context, out, errors io.Writer, targ
 		return err
 	}
 	if result.ErrorCode != "" {
-		return fmt.Errorf("messages for session %q on endpoint %q failed: %s", sessionID, endpoint.EndpointID, result.ErrorCode)
+		return fmt.Errorf("messages for session %s on endpoint %q failed: %s", sessionIdentityLabel("", sessionID, ""), endpoint.EndpointID, result.ErrorCode)
 	}
 	view := BuildMessagesView(endpoint.EndpointID, result)
 	if jsonMode {

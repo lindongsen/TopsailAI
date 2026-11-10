@@ -193,14 +193,13 @@ func progressVerb(operation string) string {
 // is sanitized first, because a provider identifier is untrusted text and this
 // line is written with trusted styling.
 //
-// The reported session name is named first, matching the confirmation question, so
-// the operator reads the same target description before and after answering. It
-// never replaces an identifier: the opaque resource ID stays, because it is what
-// `status` accepts.
+// The session is described by the canonical identity expression, matching the
+// confirmation question, so the operator reads the same target description before
+// and after answering. The opaque resource ID is not printed, because it is a
+// routing identity rather than a name; `info` and `--json` still expose it.
 func progressTarget(request ActionRequest) string {
 	endpoint := sanitizeInlineText(request.EndpointID)
 	session := sanitizeInlineText(request.ResourceID)
-	name := sanitizeInlineText(request.DisplayName)
 	// A start targets a launch profile rather than a session, so naming a session
 	// there would describe a target the action does not have.
 	if request.Operation == protocol.OperationAgentStart {
@@ -218,13 +217,7 @@ func progressTarget(request ActionRequest) string {
 	if session == "" && endpoint == "" {
 		return ""
 	}
-	described := session
-	if name != "" {
-		described = `"` + name + `"`
-		if session != "" {
-			described += " " + session
-		}
-	}
+	described := sessionIdentityLabel(request.DisplayName, request.ProviderSessionID, request.ResourceID)
 	switch {
 	case described == "":
 		return "endpoint " + endpoint

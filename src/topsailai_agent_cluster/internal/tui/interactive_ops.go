@@ -396,7 +396,7 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	ctx, cancel := commandContext(parent)
 	defer cancel()
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, DisplayName: session.DisplayName}
+	request := ActionRequest{Operation: protocol.OperationMessageSend, EndpointID: state.EndpointID, ResourceID: state.SessionID, Generation: session.Generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, DisplayName: session.DisplayName, ProviderSessionID: session.ProviderSessionID}
 	progress := NewActionProgress(options.ProgressWriter, request)
 	intent, err := runner.PrepareAction(ctx, request)
 	if err != nil {
@@ -786,12 +786,12 @@ func reconcileStoppedSelection(ctx context.Context, api InteractiveAPI, state *i
 	}
 	loaded, err := loadReports(ctx, api, state.EndpointID)
 	if err != nil {
-		_, writeErr := fmt.Fprintf(out, "session %s scope unchanged: endpoint inventory unavailable; use cd .. to leave the session scope\n", sessionID)
+		_, writeErr := fmt.Fprintf(out, "session %s scope unchanged: endpoint inventory unavailable; use cd .. to leave the session scope\n", sessionIdentityLabel(state.Scope.SessionName, state.Scope.ProviderSessionID, sessionID))
 		return writeErr
 	}
 	report, ok := loaded.reports[state.EndpointID]
 	if !ok || !report.ReportComplete {
-		_, writeErr := fmt.Fprintf(out, "session %s scope unchanged: endpoint inventory unavailable; use cd .. to leave the session scope\n", sessionID)
+		_, writeErr := fmt.Fprintf(out, "session %s scope unchanged: endpoint inventory unavailable; use cd .. to leave the session scope\n", sessionIdentityLabel(state.Scope.SessionName, state.Scope.ProviderSessionID, sessionID))
 		return writeErr
 	}
 	for _, session := range report.Sessions {
@@ -803,8 +803,12 @@ func reconcileStoppedSelection(ctx context.Context, api InteractiveAPI, state *i
 	if !found {
 		endpoint = protocol.Endpoint{EndpointID: state.EndpointID, Hostname: state.Scope.Hostname}
 	}
+	// The label is captured before the scope changes, because entering endpoint
+	// scope replaces ScopeState and would drop the session identity the message
+	// has to name.
+	label := sessionIdentityLabel(state.Scope.SessionName, state.Scope.ProviderSessionID, sessionID)
 	state.enterEndpoint(endpoint)
-	_, err = fmt.Fprintf(out, "session %s is no longer reported by endpoint %s; returned to endpoint scope\n", sessionID, endpoint.EndpointID)
+	_, err = fmt.Fprintf(out, "session %s is no longer reported by endpoint %s; returned to endpoint scope\n", label, endpoint.EndpointID)
 	return err
 }
 
@@ -948,7 +952,7 @@ func interactiveConfirmedAction(parent context.Context, api InteractiveAPI, stat
 		return err
 	}
 	runner := CommandRunner{API: api, Policy: InteractivePolicy, NewID: func() string { return fmt.Sprintf("cli-%d", time.Now().UnixNano()) }}
-	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.SessionID, Generation: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, DisplayName: target.DisplayName}
+	actionRequest := ActionRequest{Operation: op, OperationLabel: name, EndpointID: state.EndpointID, ResourceID: target.SessionID, Generation: generation, Payload: payload, Confirmed: true, WaitTimeoutMS: options.WaitTimeoutMS, DisplayName: target.DisplayName, ProviderSessionID: target.ProviderSessionID}
 	progress := NewActionProgress(options.ProgressWriter, actionRequest)
 	intent, err := runner.PrepareAction(ctx, actionRequest)
 	if err != nil {

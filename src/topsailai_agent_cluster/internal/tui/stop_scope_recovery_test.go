@@ -32,7 +32,7 @@ func TestStopLeavesTheRemovedSessionScope(t *testing.T) {
 	if stub.admit != 1 {
 		t.Fatalf("admitted %d commands, want 1", stub.admit)
 	}
-	if !strings.Contains(output, "session res-1 is no longer reported by endpoint endpoint-1; returned to endpoint scope") {
+	if !strings.Contains(output, "session (provider-res-1) is no longer reported by endpoint endpoint-1; returned to endpoint scope") {
 		t.Fatalf("missing scope notice: %q", output)
 	}
 	if got := lastPrompt(output); got != "endpoint[host-one/endpoint-1]>" {
@@ -51,7 +51,7 @@ func TestStopScopeRecoveryKeepsTheNextCommandUsable(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if !strings.Contains(output, "session res-1 is no longer reported by endpoint endpoint-1; returned to endpoint scope") {
+	if !strings.Contains(output, "session (provider-res-1) is no longer reported by endpoint endpoint-1; returned to endpoint scope") {
 		t.Fatalf("missing scope notice: %q", output)
 	}
 }
@@ -209,10 +209,41 @@ func TestStopScopeRecoveryUsesItsOwnBudget(t *testing.T) {
 	if stub.reconcileBudget <= 0 {
 		t.Fatalf("reconciliation budget = %v, want a fresh bounded budget", stub.reconcileBudget)
 	}
-	if !strings.Contains(output, "session res-1 is no longer reported by endpoint endpoint-1; returned to endpoint scope") {
+	if !strings.Contains(output, "session (provider-res-1) is no longer reported by endpoint endpoint-1; returned to endpoint scope") {
 		t.Fatalf("reconciliation did not converge the scope: %q", output)
 	}
 	if got := lastPrompt(output); got != "endpoint[host-one/endpoint-1]>" {
 		t.Fatalf("final prompt = %q, want endpoint prompt", got)
+	}
+}
+
+// TestFindSelectedNamesTheSessionIdentityWhenTheSessionIsGone proves the message the
+// human named as the example expresses the session as the canonical identity
+// expression, ({provider_session_name}) ({provider_session_id}), instead of the
+// opaque cluster resource ID. The pinned scope carries the identity, so the message
+// can name the session the operator selected even though the endpoint no longer
+// reports it.
+func TestFindSelectedNamesTheSessionIdentityWhenTheSessionIsGone(t *testing.T) {
+	state := interactiveState{}
+	endpoint := protocol.Endpoint{EndpointID: "endpoint-1", Hostname: "host-one", ConnectionState: "online"}
+	state.enterSessionDetails(endpoint, "res-1", "provider-res-1", "Daily work", "adapter-1", "generation-1")
+	loaded := reportLoad{
+		endpoints: []protocol.Endpoint{endpoint},
+		reports: map[string]protocol.InventoryReport{
+			"endpoint-1": {ReportComplete: true, CollectionStatus: protocol.CollectionSucceeded},
+		},
+	}
+	_, _, _, err := findSelectedIn(loaded, &state)
+	if err == nil {
+		t.Fatal("expected the missing session to be reported")
+	}
+	const want = `selected session (Daily work) (provider-res-1) was not found; use cd .. to leave the session scope`
+	if err.Error() != want {
+		t.Fatalf("message = %q, want %q", err.Error(), want)
+	}
+	// The opaque resource ID must not appear as its own parenthesised token, because
+	// the canonical expression replaces it rather than accompanying it.
+	if strings.Contains(err.Error(), " (res-1)") {
+		t.Fatalf("message still names the opaque resource ID: %q", err.Error())
 	}
 }

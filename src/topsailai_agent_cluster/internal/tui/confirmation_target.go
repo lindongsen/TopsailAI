@@ -19,24 +19,24 @@ type confirmationTarget struct {
 	SessionID         string
 }
 
-// label renders one confirmation label. An absent name and provider identifier
-// fall back to the cluster resource ID alone, so the question never names an empty
-// session and never repeats the word session.
+// label renders one confirmation label as the canonical session identity
+// expression, ({provider_session_name}) ({provider_session_id}).
+//
+// The reported name is the only value the interactive table shows, so naming it
+// first lets the operator match the question against the row they selected. The
+// provider session identifier follows because it is the provider's own key for
+// the session. The opaque cluster resource ID is not printed: it is a routing
+// identity, and `info` and `--json` still expose it.
+//
+// A name never replaces an identifier, because it can be empty, duplicated or
+// changed between collections. An absent name and provider identifier fall back
+// to the resource ID alone, and the word "session" is omitted there so the
+// question never reads "session session-1".
 func (t confirmationTarget) label() string {
 	if t.ProviderSessionID == "" && t.DisplayName == "" {
 		return t.SessionID
 	}
-	label := "session"
-	if t.DisplayName != "" {
-		label += ` "` + t.DisplayName + `"`
-	}
-	if t.ProviderSessionID != "" {
-		label += " " + t.ProviderSessionID
-	}
-	if t.SessionID != "" && t.SessionID != t.ProviderSessionID {
-		label += " (" + t.SessionID + ")"
-	}
-	return label
+	return "session " + sessionIdentityLabel(t.DisplayName, t.ProviderSessionID, t.SessionID)
 }
 
 // confirmationTargetFor names one resolved session for a confirmation question.

@@ -116,7 +116,7 @@ func TestStopRejectsChangedGenerationBeforeConfirmation(t *testing.T) {
 	// generation for the selected session.
 	stub.generationSequence = []string{"generation-1", "generation-1", "generation-1", "generation-1", "generation-2"}
 	_, diagnostics := runScope(t, stub, "list\nstop 1\nexit\n", ColorPolicy{})
-	assertActionableError(t, diagnostics, `error: session "res-1" generation changed; run list again`)
+	assertActionableError(t, diagnostics, `error: session (provider-res-1) generation changed; run list again`)
 	if stub.admit != 0 {
 		t.Fatalf("changed generation admitted %d commands", stub.admit)
 	}
@@ -206,25 +206,28 @@ func TestStopReportsCommandIDForStatus(t *testing.T) {
 	}
 }
 
-// TestStopConfirmationNamesProviderSessionIDFirst proves the workspace-scope stop
-// question names the provider session identifier before the opaque cluster resource
-// ID. The interactive table hides SESSION_ID, so the question is the only place the
-// operator sees the provider identifier before answering; the opaque ID stays
-// available for status and info.
-func TestStopConfirmationNamesProviderSessionIDFirst(t *testing.T) {
+// TestStopConfirmationNamesTheSessionIdentity proves the workspace-scope stop
+// question expresses the session as the canonical identity expression,
+// ({provider_session_name}) ({provider_session_id}). The interactive table hides
+// SESSION_ID, so the question is the only place the operator sees the provider
+// identifier before answering; the opaque cluster resource ID is not printed
+// because it is a routing identity, and status and info still expose it.
+func TestStopConfirmationNamesTheSessionIdentity(t *testing.T) {
 	stub := scopeStub()
 	output, diagnostics := runScope(t, stub, "list\nstop 1\ny\nexit\n", ColorPolicy{})
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	const question = "stop session provider-res-1 (res-1)? Confirm stop?"
+	const question = "stop session (provider-res-1)? Confirm stop?"
 	if !strings.Contains(output, question) {
-		t.Fatalf("confirmation question does not name the provider session ID first: %q", output)
+		t.Fatalf("confirmation question does not use the canonical session identity: %q", output)
 	}
-	// The provider identifier must precede the opaque identifier inside the
-	// question itself, which is the only place both are rendered.
-	if strings.Index(question, "provider-res-1") > strings.Index(question, "(res-1)") {
-		t.Fatalf("provider session ID is not the first identifier in the question: %q", question)
+	// The opaque resource ID must not appear as its own parenthesised token,
+	// because the canonical expression replaces it rather than accompanying it.
+	// A bare substring check would be satisfied by "(provider-res-1)" itself, so
+	// the leading space makes this a distinct-token comparison.
+	if strings.Contains(question, " (res-1)") {
+		t.Fatalf("confirmation question still names the opaque resource ID: %q", question)
 	}
 }
 

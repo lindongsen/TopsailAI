@@ -216,7 +216,7 @@ func (r CommandRunner) ModelCatalog(ctx context.Context, out, errors io.Writer, 
 		return err
 	}
 	if catalog.ErrorCode != "" {
-		return modelCatalogError(resourceID, catalog.ErrorCode)
+		return modelCatalogError(SessionIdentityLabelFromInventory(ctx, r.API, endpoint.EndpointID, resourceID), catalog.ErrorCode)
 	}
 	view := NewModelCatalogView(endpoint.EndpointID, resourceID, catalog)
 	if jsonMode {
@@ -231,7 +231,7 @@ func (r CommandRunner) ModelCatalog(ctx context.Context, out, errors io.Writer, 
 		// An empty catalog is a real answer, not a failure and not an unsupported
 		// adapter, so it is stated plainly instead of rendering an empty table that
 		// looks like a rendering fault.
-		_, err := fmt.Fprintf(out, "session %q offers no selectable model profile\n", resourceID)
+		_, err := fmt.Fprintf(out, "session %s offers no selectable model profile\n", SessionIdentityLabelFromInventory(ctx, r.API, endpoint.EndpointID, resourceID))
 		return err
 	}
 	return RenderModelCatalog(out, view, options)
@@ -242,14 +242,14 @@ func (r CommandRunner) ModelCatalog(ctx context.Context, out, errors io.Writer, 
 // The unsupported code is named explicitly, because "this endpoint cannot answer"
 // and "this session has no profiles" need different remedies: the first is an
 // integration gap, the second is a configuration choice.
-func modelCatalogError(resourceID, code string) error {
+func modelCatalogError(label, code string) error {
 	if code == "" {
 		return nil
 	}
 	if code == protocol.ModelCatalogUnsupported {
-		return fmt.Errorf("model profiles are unavailable for session %q: the endpoint has no model-catalog-capable adapter", resourceID)
+		return fmt.Errorf("model profiles are unavailable for session %s: the endpoint has no model-catalog-capable adapter", label)
 	}
-	return fmt.Errorf("model profiles for session %q failed: %s", resourceID, code)
+	return fmt.Errorf("model profiles for session %s failed: %s", label, code)
 }
 
 // ResolveEndpointTarget resolves one endpoint ID or unique hostname.
@@ -267,8 +267,8 @@ func ResolveEndpointTarget(ctx context.Context, api CommandAPI, target string) (
 // It is exported for the same reason: the standalone surface must report an
 // unsupported adapter and an empty catalog as two different outcomes, and a second
 // mapping would let the two surfaces disagree about which one the operator sees.
-func ModelCatalogError(resourceID, code string) error {
-	return modelCatalogError(resourceID, code)
+func ModelCatalogError(label, code string) error {
+	return modelCatalogError(label, code)
 }
 
 // ResolveModelProfileSelector resolves one profile selector against a rendered view.
@@ -276,7 +276,12 @@ func ModelCatalogError(resourceID, code string) error {
 // The standalone surface has no rendered table, so it passes the view it just built
 // from a live read. That keeps one resolution rule for both surfaces: a selector only
 // ever resolves against a catalog that was actually read, never against a guess.
-func ResolveModelProfileSelector(view ModelCatalogView, token string) (ModelCatalogViewRow, error) {
+//
+// label is the canonical identity expression of the session being addressed. The view
+// carries only the opaque resource ID, so the caller supplies the label it resolved
+// from the committed inventory; a refusal then names the session the same way every
+// other message does.
+func ResolveModelProfileSelector(view ModelCatalogView, token, label string) (ModelCatalogViewRow, error) {
 	namespace := &modelCatalogNamespace{
 		EndpointID: view.EndpointID,
 		SessionID:  view.SessionID,
@@ -285,7 +290,7 @@ func ResolveModelProfileSelector(view ModelCatalogView, token string) (ModelCata
 	for _, row := range view.Rows {
 		namespace.Rows[row.No] = row
 	}
-	return resolveModelProfileSelector(namespace, view.SessionID, token)
+	return resolveModelProfileSelector(namespace, view.SessionID, token, label)
 }
 
 // ModelProfileLabel names one profile in operator-facing text.
