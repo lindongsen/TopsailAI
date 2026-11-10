@@ -183,6 +183,11 @@ def exec_cmd(
     # ------------------------------------------------------------------
     # TIMEOUT CLEANUP: KNOWN UNBOUNDED HANG (not yet fixed, documented only)
     # ------------------------------------------------------------------
+    # HUMAN DECISION: the human explicitly REJECTS every candidate solution
+    # listed below (A, B, C and D). None of them may be implemented. The human
+    # has not yet found an acceptable approach, so this stays an open problem
+    # until the human decides otherwise. Do not pick one of these options on
+    # your own initiative, even if it looks like the obvious fix.
     # The cleanup below is NOT bounded by ``timeout``. When the command spawns a
     # process that escapes the process group (``ssh -f``, ``setsid``, any
     # double-forking daemon), the sequence is:
@@ -256,8 +261,8 @@ def exec_cmd(
     #      in 1.5s, where a pipe would have blocked the writer at about 64 KB.
     #      This option therefore requires an explicit output size cap.
     #
-    # Until one of these is implemented, callers that may run a daemonizing
-    # command should avoid relying on ``timeout`` to bound the call.
+    # No fix is approved. Callers that may run a daemonizing command must not
+    # rely on ``timeout`` to bound the call.
     try:
         stdout, stderr = process.communicate(input=subprocess_input, timeout=timeout)
     except subprocess.TimeoutExpired:
