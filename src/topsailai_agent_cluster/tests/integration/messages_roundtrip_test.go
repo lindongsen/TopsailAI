@@ -288,12 +288,11 @@ func TestMessagesRoundTripMissingSessionCLI(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("missing session exit code 0 stdout=%s", stdout)
 	}
-	// The assertion targets the message the client actually prints, not the
-	// envelope code. The shared client decoder discards the envelope `code`
-	// field and reports only the status and message, so `session_not_found`
-	// never reaches stderr. Asserting the code here would assert a behaviour
-	// that does not exist; the discarded code is tracked separately.
-	if !containsAll(stderr, "404", "provider does not know session", "never-recorded") {
+	// The assertion targets the stable machine code, which the shared client
+	// decoder now surfaces. Before that fix the envelope `code` field was
+	// discarded, so only the human-readable message reached stderr and this
+	// assertion had to match message text.
+	if !containsAll(stderr, "404", "session_not_found", "provider does not know session", "never-recorded") {
 		t.Fatalf("missing session diagnostic: stderr=%s stdout=%s", stderr, stdout)
 	}
 	// A missing session must never render as an empty conversation, because an

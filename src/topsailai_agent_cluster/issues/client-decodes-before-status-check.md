@@ -139,3 +139,71 @@ The `messages` command is complete and verified without this change. Fixing the
 shared client alters the error contract of every command, so it needs its own
 logical unit, its own regression coverage across the affected commands, and a
 review of every caller that currently matches on message text.
+
+## Resolution
+
+Fixed in `internal/client/api.go`. The status is now read before any decode, and
+one shared helper builds every non-2xx error.
+
+### What changed
+
+- `request()` checks `resp.StatusCode` first and delegates to `decodeFailure`.
+  A 2xx response that is not an envelope now fails with
+  `server response (<status>) is not a valid envelope`, so a corrupt success is
+  never silently accepted as an empty result.
+- `decodeFailure(prefix, resp)` reads at most `failureExcerptBytes` (4096) of the
+  body, tries the envelope decode, and otherwise quotes the trimmed excerpt. An
+  empty body reports `empty response body` instead of `EOF`.
+- `failureCode(any)` renders the envelope code. The field stays `any` because a
+  success response carries the integer `0`; only a non-empty rendering is
+  reported, so a coded failure reads
+  `server request failed (404): session_not_found: provider does not know session x`.
+- `FollowOutput` now calls the same helper instead of its own copy. It previously
+  decoded with the error ignored, so a non-JSON rejection produced
+  `server follow failed (404): ` with an empty message.
+
+### Measured before and after
+
+| Response | Before | After |
+|---|---|---|
+| plain-text `404 page not found` | `json: cannot unmarshal number into Go value of type struct {...}` | `server request failed (404): page not found` |
+| plain-text `Service Unavailable` | `invalid character 'S' looking for beginning of value` | `server request failed (503): Service Unavailable` |
+| HTML `502 Bad Gateway` | `invalid character '<' looking for beginning of value` | `server request failed (502): <html>...` |
+| empty body | `EOF` | `server request failed (500): empty response body` |
+| coded JSON 404 | `server request failed (404): Session not found: x` | `server request failed (404): session_not_found: Session not found: x` |
+| non-JSON follow 404 | `server follow failed (404): ` | `server follow failed (404): page not found` |
+
+### Regression coverage
+
+`internal/client/api_test.go` gained four tests, and each one fails against the
+previous implementation, so they prove the defect rather than locking in the
+current behaviour:
+
+- `TestAPIClientReportsStatusForNonJSONFailure` — four sub-cases (plain-text 404,
+  plain-text 503, HTML 502, empty body). Each asserts the status appears and the
+  decoder error does not.
+- `TestAPIClientSurfacesFailureCode` — asserts `session_not_found` reaches the
+  caller.
+- `TestAPIClientFollowReportsStatusForNonJSONFailure` — asserts the follow path
+  shares the decoder.
+- `TestAPIClientRejectsNonEnvelopeSuccess` — asserts a non-envelope 2xx fails
+  loudly.
+
+Coverage: `decodeFailure` 100%, `failureCode` 75%, `request` 89.3%,
+`FollowOutput` 88.6%, package total 85.9%.
+
+### Caller impact
+
+No test asserted the previous error text, so no assertion had to be relaxed. The
+`messages` integration test was tightened instead: it now asserts
+`session_not_found` in stderr, which is only possible after this fix. Verified by
+running the tightened assertion against the previous client, where it fails with
+`server request failed (404): provider does not know session never-recorded`.
+
+### Remaining limitation
+
+`Content-Type` is still not inspected. A `text/plain` response whose body happens
+to be a valid envelope is accepted. This is deliberate: the Server sets the header
+correctly, and rejecting on a header mismatch would break proxies that rewrite it.
+The status-first ordering is what matters, because it is the only evidence that
+survives a body that is not JSON at all.

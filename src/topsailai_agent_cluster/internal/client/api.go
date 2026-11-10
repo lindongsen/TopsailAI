@@ -108,11 +108,7 @@ func (c *APIClient) FollowOutput(ctx context.Context, endpointID, resourceID, ge
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
-		var envelope struct {
-			Message string `json:"message"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&envelope)
-		return nil, fmt.Errorf("server follow failed (%d): %s", resp.StatusCode, envelope.Message)
+		return nil, decodeFailure("server follow failed", resp)
 	}
 	records := make(chan FollowChunk, 64)
 	go func() {
@@ -202,19 +198,65 @@ func (c *APIClient) request(ctx context.Context, method, path string, body any, 
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return decodeFailure("server request failed", resp)
+	}
 	var envelope struct {
 		Code    any             `json:"code"`
 		Message string          `json:"message"`
 		Data    json.RawMessage `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		return err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("server request failed (%d): %s", resp.StatusCode, envelope.Message)
+		return fmt.Errorf("server response (%d) is not a valid envelope: %w", resp.StatusCode, err)
 	}
 	if target == nil || len(envelope.Data) == 0 || string(envelope.Data) == "null" {
 		return nil
 	}
 	return json.Unmarshal(envelope.Data, target)
+}
+
+// failureExcerptBytes bounds how much of a non-JSON failure body is quoted back to
+// the operator, so a large HTML error page cannot flood the terminal.
+const failureExcerptBytes = 4096
+
+// decodeFailure builds the operator-facing error for a non-2xx response.
+//
+// The status code is reported first because it is the only evidence that
+// distinguishes "this route does not exist" from "the response is corrupt". A
+// Server that predates a route answers with plain text, so the envelope decode is
+// best-effort: when it fails the bounded body excerpt is quoted instead of the
+// decoder's own error, which would otherwise surface a Go type name and hide the
+// status code entirely.
+func decodeFailure(prefix string, resp *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, failureExcerptBytes))
+	var envelope struct {
+		Code    any    `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &envelope); err == nil && envelope.Message != "" {
+		if code := failureCode(envelope.Code); code != "" {
+			return fmt.Errorf("%s (%d): %s: %s", prefix, resp.StatusCode, code, envelope.Message)
+		}
+		return fmt.Errorf("%s (%d): %s", prefix, resp.StatusCode, envelope.Message)
+	}
+	excerpt := strings.TrimSpace(string(body))
+	if excerpt == "" {
+		return fmt.Errorf("%s (%d): empty response body", prefix, resp.StatusCode)
+	}
+	return fmt.Errorf("%s (%d): %s", prefix, resp.StatusCode, excerpt)
+}
+
+// failureCode renders the envelope code for an error response. A success response
+// carries the integer 0, so the field is decoded as any and only a non-empty
+// rendering is reported. The code is surfaced because callers must be able to
+// match a stable machine code instead of the human-readable message text.
+func failureCode(code any) string {
+	switch value := code.(type) {
+	case nil:
+		return ""
+	case string:
+		return value
+	default:
+		return fmt.Sprint(value)
+	}
 }

@@ -112,3 +112,139 @@ func TestAPIClientGetOutputSendsLineBudget(t *testing.T) {
 		}
 	}
 }
+
+// TestAPIClientReportsStatusForNonJSONFailure proves a non-JSON failure body is
+// reported by status code instead of by the decoder's own error.
+//
+// A Server that predates a route answers with plain text, so decoding before
+// checking the status hid the only useful evidence: the status code. The
+// plain-text 404 case is the worst of them, because "404 page not found" begins
+// with digits and the decoder therefore reports a Go type name.
+func TestAPIClientReportsStatusForNonJSONFailure(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  int
+		body    string
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "plain text 404 from a server without the route",
+			status:  http.StatusNotFound,
+			body:    "404 page not found\n",
+			want:    []string{"server request failed (404)", "page not found"},
+			notWant: []string{"cannot unmarshal", "Go value of type"},
+		},
+		{
+			name:    "plain text 503",
+			status:  http.StatusServiceUnavailable,
+			body:    "Service Unavailable",
+			want:    []string{"server request failed (503)", "Service Unavailable"},
+			notWant: []string{"invalid character"},
+		},
+		{
+			name:    "html 502 from a proxy",
+			status:  http.StatusBadGateway,
+			body:    "<html><body>502 Bad Gateway</body></html>",
+			want:    []string{"server request failed (502)", "502 Bad Gateway"},
+			notWant: []string{"invalid character"},
+		},
+		{
+			name:   "empty body",
+			status: http.StatusInternalServerError,
+			body:   "",
+			want:   []string{"server request failed (500)", "empty response body"},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(testCase.status)
+				_, _ = fmt.Fprint(w, testCase.body)
+			}))
+			defer server.Close()
+			client := NewAPIClient(server.URL, "")
+			_, err := client.ListEndpoints(context.Background())
+			if err == nil {
+				t.Fatal("non-2xx response succeeded")
+			}
+			message := err.Error()
+			for _, want := range testCase.want {
+				if !strings.Contains(message, want) {
+					t.Fatalf("error=%q missing %q", message, want)
+				}
+			}
+			for _, notWant := range testCase.notWant {
+				if strings.Contains(message, notWant) {
+					t.Fatalf("error=%q must not contain %q", message, notWant)
+				}
+			}
+		})
+	}
+}
+
+// TestAPIClientSurfacesFailureCode proves the stable machine code reaches the
+// caller. Without it a caller can only match human-readable message text, which
+// changes whenever the wording changes.
+func TestAPIClientSurfacesFailureCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprint(w, `{"code":"session_not_found","message":"Session not found: x","data":null}`)
+	}))
+	defer server.Close()
+	client := NewAPIClient(server.URL, "")
+	_, err := client.GetMessages(context.Background(), "e1", "x", 0)
+	if err == nil {
+		t.Fatal("404 response succeeded")
+	}
+	message := err.Error()
+	for _, want := range []string{"server request failed (404)", "session_not_found", "Session not found: x"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("error=%q missing %q", message, want)
+		}
+	}
+}
+
+// TestAPIClientFollowReportsStatusForNonJSONFailure proves the follow path shares
+// the same failure decoder, so a non-JSON rejection is not reported as a decode
+// error there either.
+func TestAPIClientFollowReportsStatusForNonJSONFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprint(w, "404 page not found\n")
+	}))
+	defer server.Close()
+	client := NewAPIClient(server.URL, "")
+	_, err := client.FollowOutput(context.Background(), "e1", "res_1", "g1", 4096, 250)
+	if err == nil {
+		t.Fatal("non-2xx follow succeeded")
+	}
+	message := err.Error()
+	for _, want := range []string{"server follow failed (404)", "page not found"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("error=%q missing %q", message, want)
+		}
+	}
+	if strings.Contains(message, "cannot unmarshal") {
+		t.Fatalf("error=%q leaked a decoder error", message)
+	}
+}
+
+// TestAPIClientRejectsNonEnvelopeSuccess proves a 2xx response that is not an
+// envelope fails loudly instead of being silently accepted as an empty result.
+func TestAPIClientRejectsNonEnvelopeSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "not-json")
+	}))
+	defer server.Close()
+	client := NewAPIClient(server.URL, "")
+	_, err := client.ListEndpoints(context.Background())
+	if err == nil {
+		t.Fatal("non-envelope success response succeeded")
+	}
+	if !strings.Contains(err.Error(), "not a valid envelope") {
+		t.Fatalf("error=%q does not name the envelope contract", err.Error())
+	}
+}
