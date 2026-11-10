@@ -28,20 +28,24 @@ func modelNamespace(sessionID string, rows ...ModelCatalogViewRow) *modelCatalog
 // TestModelSelectUnmatchedNumberIsNotRetriedAsAnID proves a number that is not in
 // the rendered catalog is refused instead of being reinterpreted as a profile ID.
 //
-// Falling through to an ID lookup would submit a profile the operator never saw,
-// which is the one outcome a numbered menu must never produce.
+// The catalog deliberately contains a profile whose opaque ID is the literal token
+// "7" while row number 7 does not exist. A guard that refuses the unmatched number
+// returns an error; a fall-through resolves that profile and returns it, so the two
+// behaviours differ in the returned row rather than only in the message text.
+// Asserting on the message alone cannot tell them apart, because both refusal paths
+// report the same recovery hint.
 func TestModelSelectUnmatchedNumberIsNotRetriedAsAnID(t *testing.T) {
-	namespace := modelNamespace("res_1", ModelCatalogViewRow{No: 1, ModelProfileID: "mp-1", DisplayName: "claude"})
+	namespace := modelNamespace("res_1",
+		ModelCatalogViewRow{No: 1, ModelProfileID: "mp-1", DisplayName: "claude"},
+		ModelCatalogViewRow{No: 2, ModelProfileID: "7", DisplayName: "seven"},
+	)
 
-	_, err := resolveModelProfileSelector(namespace, "res_1", "7")
+	row, err := resolveModelProfileSelector(namespace, "res_1", "7")
 	if err == nil {
-		t.Fatal("expected an unmatched row number to be rejected")
+		t.Fatalf("an unmatched row number must be refused, but it resolved to profile %q", row.ModelProfileID)
 	}
 	if !strings.Contains(err.Error(), "run model again") {
 		t.Fatalf("expected the recovery hint, got %q", err.Error())
-	}
-	if strings.Contains(err.Error(), "mp-") {
-		t.Fatalf("an unmatched number must not be retried as a profile ID, got %q", err.Error())
 	}
 }
 
