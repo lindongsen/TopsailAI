@@ -53,12 +53,12 @@ func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiv
 			if err := cdHistoryRowNumber(state, api, parent, index); err != nil {
 				return err
 			}
-			return autoLogsOnSessionEntry(parent, api, state, previous, trustedOut, color, options)
+			return autoLogsOnSessionEntry(parent, api, state, previous, trustedOut, options)
 		}
 		if err := cdRowNumber(state, api, parent, index); err != nil {
 			return err
 		}
-		return autoLogsOnSessionEntry(parent, api, state, previous, trustedOut, color, options)
+		return autoLogsOnSessionEntry(parent, api, state, previous, trustedOut, options)
 	}
 	for _, part := range parts {
 		if strings.TrimSpace(part) == "" {
@@ -88,19 +88,22 @@ func interactiveCD(parent context.Context, api InteractiveAPI, state *interactiv
 	if err := rerenderNavigatedList(parent, api, state, trustedOut, color); err != nil {
 		return err
 	}
-	return autoLogsOnSessionEntry(parent, api, state, previous, trustedOut, color, options)
+	return autoLogsOnSessionEntry(parent, api, state, previous, trustedOut, options)
 }
 
-// autoLogsOnSessionEntry renders one bounded output snapshot when a navigation
-// command actually enters session scope. The generation validated by the
-// transition is reused, so entering a session costs one output read and no
-// repeated inventory discovery. A failed read is reported without rolling back
-// the already validated selection.
-func autoLogsOnSessionEntry(parent context.Context, api InteractiveAPI, state *interactiveState, previous ScopeState, trustedOut io.Writer, color ColorPolicy, options InteractiveOptions) error {
+// autoLogsOnSessionEntry follows the output of the session a navigation command
+// actually entered. The generation validated by the transition is reused, so
+// entering a session costs one output read and no repeated inventory discovery.
+// It arms the same live tail as logs -f, because a one-shot snapshot stops at the
+// moment it was read while the agent keeps writing. A client that cannot stream,
+// or a reader that cannot observe a keypress, degrades to that bounded snapshot
+// and says why. A failed read is reported without rolling back the already
+// validated selection.
+func autoLogsOnSessionEntry(parent context.Context, api InteractiveAPI, state *interactiveState, previous ScopeState, trustedOut io.Writer, options InteractiveOptions) error {
 	if state.Scope.Kind != ScopeSession || previous.Kind == ScopeSession {
 		return nil
 	}
-	return renderAutomaticSnapshot(parent, api, state, trustedOut, color, options, "session selected")
+	return autoFollowAfterAction(parent, api, state, state.EndpointID, state.SessionID, state.Generation, trustedOut, options, "session selected")
 }
 
 // renderAutomaticSnapshot renders one bounded output snapshot for the selected

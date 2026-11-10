@@ -127,3 +127,36 @@ change behaviour now, so the current snapshot-on-entry behaviour stands.
 
 Open. Recorded from the human's proposal on 2026-11-09; behaviour deliberately
 unchanged.
+
+## Resolution
+
+Resolved on 2026-11-10. The human chose option B: follow when the capability
+exists, otherwise fall back to the bounded snapshot and say why.
+
+`autoLogsOnSessionEntry` (`internal/tui/navigation.go`) now calls the shared
+`autoFollowAfterAction` helper instead of `renderAutomaticSnapshot`, so entering a
+session arms the same live tail as `logs -f` for the identity the transition
+already validated. The same helper serves `send`, `btw` and `start`, so the four
+automatic steps cannot drift into four copies of the capability check, the
+announcement or the degradation wording.
+
+The three obstacles recorded above are handled rather than ignored:
+
+- A client without the streaming seam, or an input mode that cannot observe a
+  keypress, degrades to one bounded snapshot and prints
+  `automatic follow unavailable: this input mode cannot stop a live tail; rendered
+  one bounded snapshot instead`. A tail that cannot be stopped would be worse than
+  a snapshot.
+- The tail carries the resolved REPL budget (`DefaultInteractiveMaxLines`, 300 by
+  default), so the adapter cannot clamp it to 20 lines and leave the operator with a
+  300-line snapshot followed by a 20-line stream.
+- The tail is armed, not opened: the stream starts on the next prompt through the
+  same seam an explicit `logs -f` uses, so it cannot race the input prompt.
+
+`btw` was resolved in the same change and now arms the tail after its durable
+receipt. `interrupt` is deliberately unchanged, because stopping a turn is not a
+reason to expect new output.
+
+Verification: `go test ./internal/tui -count=1` reports only the 6 pre-existing
+`TestUnitCBatch2*` failures, identical to the pristine `HEAD` baseline. Each guard
+was broken deliberately and observed to fail before being restored.

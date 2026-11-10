@@ -77,6 +77,18 @@ func sendOutputRequests(stub *interactiveStub) []outputRequest {
 	return stub.outputRequests[1:]
 }
 
+// actionFollowRequests returns the follow requests caused by the action under
+// test, skipping the entry transition's own tail. Entering a session arms the
+// same live tail as logs -f, so the first request belongs to the scenario rather
+// than to the action, exactly as the entry snapshot does for snapshot reads.
+func actionFollowRequests(stub *sendFollowStub) []outputRequest {
+	requests := stub.followRequests()
+	if len(requests) <= 1 {
+		return nil
+	}
+	return requests[1:]
+}
+
 // runSendREPL drives the REPL with a keypress-capable reader, so the automatic
 // follow can actually start. The reader records every watch session it was
 // given, which is how a test proves a stream was armed and then started.
@@ -147,7 +159,7 @@ func TestUnitSendAutoFollowArmsOneLiveTailAfterTheReceipt(t *testing.T) {
 	if stub.admit != 1 {
 		t.Fatalf("admitted %d commands, want 1", stub.admit)
 	}
-	requests := stub.followRequests()
+	requests := actionFollowRequests(stub)
 	if len(requests) != 1 {
 		t.Fatalf("follow requests=%+v, want exactly one", requests)
 	}
@@ -167,10 +179,11 @@ func TestUnitSendAutoFollowArmsOneLiveTailAfterTheReceipt(t *testing.T) {
 	if confirmed := strings.Index(tail, "confirmed result"); confirmed < 0 || confirmed > announced {
 		t.Fatalf("tail was armed before the receipt: %q", tail)
 	}
-	// The entry snapshot is the only snapshot read, so the automatic step really
-	// replaced the one-shot read instead of running beside it.
-	if stub.outputCalls != 1 {
-		t.Fatalf("snapshot reads=%d want=1 (the entry snapshot only)", stub.outputCalls)
+	// Entering the session already arms a tail, so the send must not also read a
+	// snapshot: the automatic step replaced the one-shot read instead of running
+	// beside it.
+	if stub.outputCalls != 0 {
+		t.Fatalf("snapshot reads=%d want=0 (both the entry and the send arm tails)", stub.outputCalls)
 	}
 }
 
@@ -182,7 +195,7 @@ func TestUnitSendAutoFollowIsBoundedByTheReplDefaults(t *testing.T) {
 	if _, diagnostics, _ := runSendREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", `send {"text":"hi"}`, "quit"}); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	requests := stub.followRequests()
+	requests := actionFollowRequests(stub)
 	if len(requests) != 1 {
 		t.Fatalf("follow requests=%+v, want exactly one", requests)
 	}
@@ -203,14 +216,16 @@ func TestUnitSendAutoFollowStartsTheStreamOnTheNextPrompt(t *testing.T) {
 	if diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if stub.followCount() != 1 {
-		t.Fatalf("streams opened=%d want=1", stub.followCount())
+	// Two streams open: the entry transition's tail on the prompt after cd, and
+	// the send's tail on the prompt after the send.
+	if stub.followCount() != 2 {
+		t.Fatalf("streams opened=%d want=2 (entry and send)", stub.followCount())
 	}
 	sessions, _ := reader.recorded()
 	if len(sessions) < 3 {
 		t.Fatalf("prompts=%d, want at least three", len(sessions))
 	}
-	// The prompt after the send is the one that carries the stream.
+	// The prompt after the send is the one that carries the send's stream.
 	stream := sessions[2]
 	if stream == nil {
 		t.Fatal("the prompt after the send did not carry a stream")
@@ -279,15 +294,17 @@ func TestUnitSendAutoFollowKeepsTheExplicitLogsRead(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
 	_ = input
-	requests := sendOutputRequests(&stub.interactiveStub)
+	// The entry transition arms a tail instead of reading a snapshot, so the only
+	// snapshot read in the run is the explicit one.
+	requests := stub.outputRequests
 	if len(requests) != 1 {
-		t.Fatalf("post-send snapshot reads=%+v, want only the explicit read", requests)
+		t.Fatalf("snapshot reads=%+v, want only the explicit read", requests)
 	}
 	if got := requests[0].maxLines; got != 7 {
 		t.Fatalf("explicit read maxLines=%d want=7", got)
 	}
-	if len(stub.followRequests()) != 1 {
-		t.Fatalf("follow requests=%+v, want the automatic tail only", stub.followRequests())
+	if got := len(actionFollowRequests(stub)); got != 1 {
+		t.Fatalf("action follow requests=%d, want the automatic tail only", got)
 	}
 }
 
@@ -354,6 +371,11 @@ func TestUnitSendAutoFollowSkipsEveryRejectedSend(t *testing.T) {
 			if requests := sendOutputRequests(stub); len(requests) != 0 {
 				t.Fatalf("%s reached the output API: %+v", testCase.name, requests)
 			}
+			// These stubs cannot stream, so the entry transition degrades to a
+			// snapshot and a rejected send must add no read of its own. The tail
+			// path for a rejected send is covered by the streaming tests above,
+			// which use a client that can stream; asserting it here would need a
+			// streaming stub this matrix deliberately does not use.
 		})
 	}
 }
@@ -409,10 +431,11 @@ func TestUnitSendAutoFollowKeepsTheForcedCollection(t *testing.T) {
 	if len(stub.refreshCalls) != 1 || stub.refreshCalls[0] != "endpoint-1" {
 		t.Fatalf("forced collections=%v, want exactly one for endpoint-1", stub.refreshCalls)
 	}
-	// The entry snapshot is the first read, so the automatic steps are the
-	// collection and then the tail: the intent is armed during the send, but the
-	// stream itself opens on the following prompt, which is after the refresh.
-	want := []string{"logs", "refresh", "follow"}
+	// The entry transition opens the first tail, the send arms its intent without
+	// opening a stream yet, the refresh runs, and the send's stream opens on the
+	// following prompt. The intent is therefore armed before the refresh, which is
+	// what keeps it bound to the generation the send validated.
+	want := []string{"follow", "refresh", "follow"}
 	got := stub.automaticSteps()
 	if len(got) != len(want) {
 		t.Fatalf("automatic steps=%v, want %v", got, want)
@@ -449,8 +472,10 @@ func TestUnitSendAutoFollowIsCancelledWhenTheRefreshReplacesTheSession(t *testin
 	if !strings.Contains(output, "automatic follow cancelled: the selected session was replaced") {
 		t.Fatalf("missing cancellation diagnostic: %q", output)
 	}
-	if stub.followCount() != 0 {
-		t.Fatalf("streams opened=%d, want none for a replaced session", stub.followCount())
+	// Only the entry transition's tail opened; the send's intent was cancelled
+	// before its stream could start, so the replaced generation is never streamed.
+	if stub.followCount() != 1 {
+		t.Fatalf("streams opened=%d, want only the entry tail for a replaced session", stub.followCount())
 	}
 	// The invalidated prompt is rendered before quit returns to workspace scope,
 	// so the operator sees that the selection can no longer be addressed.
@@ -459,15 +484,15 @@ func TestUnitSendAutoFollowIsCancelledWhenTheRefreshReplacesTheSession(t *testin
 	}
 }
 
-// TestUnitSendAutoFollowDoesNotTriggerOnOtherActions proves the trigger stays
-// scoped to send: btw, interrupt, resume and stop keep their previous behaviour
-// and arm no tail of their own.
+// TestUnitSendAutoFollowDoesNotTriggerOnOtherActions proves the send trigger
+// stays scoped to send: interrupt, resume and stop keep their previous behaviour
+// and arm no tail of their own. btw is covered separately, because context
+// injection does arm a tail.
 func TestUnitSendAutoFollowDoesNotTriggerOnOtherActions(t *testing.T) {
 	cases := []struct {
 		name  string
 		input string
 	}{
-		{name: "btw", input: "cd host-one/endpoint-1/res-1\nbtw {\"text\":\"hi\"}\ny\nexit\n"},
 		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nexit\n"},
 		{name: "resume", input: "cd host-one/endpoint-1/res-1\nresume\ny\nexit\n"},
 		{name: "stop", input: "cd host-one/endpoint-1/res-1\nstop\ny\nexit\n"},
@@ -483,6 +508,10 @@ func TestUnitSendAutoFollowDoesNotTriggerOnOtherActions(t *testing.T) {
 			if requests := sendOutputRequests(stub); len(requests) != 0 {
 				t.Fatalf("%s reached the output API: %+v", testCase.name, requests)
 			}
+			// These stubs cannot stream, so the entry transition degrades to a
+			// snapshot and the action must add no read of its own. A tail cannot be
+			// armed without the streaming seam, so the snapshot assertion is the
+			// complete check available to this matrix.
 		})
 	}
 }
@@ -498,8 +527,8 @@ func TestUnitSendAutoFollowInheritsTheSendPrefixAlias(t *testing.T) {
 	if stub.admit != 1 {
 		t.Fatalf("admitted %d commands, want 1", stub.admit)
 	}
-	if len(stub.followRequests()) != 1 {
-		t.Fatalf("follow requests=%+v, want exactly one", stub.followRequests())
+	if requests := actionFollowRequests(stub); len(requests) != 1 {
+		t.Fatalf("follow requests=%+v, want exactly one", requests)
 	}
 	if len(stub.refreshCalls) != 1 || stub.refreshCalls[0] != "endpoint-1" {
 		t.Fatalf("forced collections=%v, want exactly one for endpoint-1", stub.refreshCalls)

@@ -56,31 +56,57 @@ func runScopeWithOptions(t *testing.T, stub InteractiveAPI, input string, option
 	return output.String(), diagnostics.String()
 }
 
-// TestUnitStartupBudgetReachesTheEntrySnapshot proves the startup budget is the
-// single source of truth: the automatic entry snapshot and a bare logs command
-// both read the configured count instead of two independent literals.
-func TestUnitStartupBudgetReachesTheEntrySnapshot(t *testing.T) {
+// runBudgetREPL drives the REPL with both the watch reader and an explicit line
+// budget. The watch reader is required because a client that cannot observe a
+// keypress cannot stop a live tail, so without it every case would silently
+// exercise the degradation path instead of the tail the operator gets.
+func runBudgetREPL(t *testing.T, stub InteractiveAPI, lines []string, maxLines int) (string, string) {
+	t.Helper()
+	reader := &watchRecordingReader{lines: lines}
+	var out, diagnostics strings.Builder
+	options := InteractiveOptions{
+		ReadLine: func(ctx context.Context, prompt string, history bool, limit int) (string, bool, error) {
+			return reader.ReadLineWithWatch(ctx, prompt, history, limit, nil)
+		},
+		WatchReader: reader,
+		MaxLines:    maxLines,
+	}
+	if err := RunInteractive(context.Background(), stub, noPromptStream{t}, &out, &diagnostics, options); err != nil {
+		t.Fatalf("RunInteractive: %v", err)
+	}
+	return out.String(), diagnostics.String()
+}
+
+// TestUnitStartupBudgetReachesTheEntryTail proves the startup budget is the
+// single source of truth: the automatic entry tail and a bare logs command both
+// read the configured count instead of two independent literals. The stub serves
+// the streaming seam, so this exercises the tail the operator actually gets
+// rather than the degradation path.
+func TestUnitStartupBudgetReachesTheEntryTail(t *testing.T) {
 	cases := []struct {
 		name  string
-		input string
-		want  int
+		input []string
 	}{
-		{name: "entry snapshot only", input: "cd host-one/endpoint-1/res-1\nexit\n", want: 500},
-		{name: "entry snapshot then bare logs", input: "cd host-one/endpoint-1/res-1\nlogs\nexit\n", want: 500},
+		{name: "entry tail only", input: []string{"cd host-one/endpoint-1/res-1", "exit"}},
+		{name: "entry tail then bare logs", input: []string{"cd host-one/endpoint-1/res-1", "logs", "exit"}},
 	}
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			stub := scopeStub()
-			if _, diagnostics := runScopeWithOptions(t, stub, testCase.input, InteractiveOptions{MaxLines: 500}); diagnostics != "" {
+			stub := newSendFollowStub()
+			if _, diagnostics := runBudgetREPL(t, stub, testCase.input, 500); diagnostics != "" {
 				t.Fatalf("unexpected diagnostics: %q", diagnostics)
 			}
-			if len(stub.outputRequests) == 0 {
-				t.Fatalf("no output request was recorded")
+			follows := stub.followRequests()
+			if len(follows) != 1 {
+				t.Fatalf("entry follow requests=%+v want exactly one", follows)
+			}
+			if got := follows[0].maxLines; got != 500 {
+				t.Fatalf("entry tail maxLines=%d want=500", got)
 			}
 			for index, request := range stub.outputRequests {
-				if request.maxLines != testCase.want {
-					t.Fatalf("output request %d maxLines=%d want=%d", index, request.maxLines, testCase.want)
+				if request.maxLines != 500 {
+					t.Fatalf("output request %d maxLines=%d want=500", index, request.maxLines)
 				}
 			}
 		})
@@ -88,20 +114,25 @@ func TestUnitStartupBudgetReachesTheEntrySnapshot(t *testing.T) {
 }
 
 // TestUnitStartupBudgetKeepsThePerCommandOverride proves the startup budget does
-// not swallow an explicit per-command count: a deliberate read still wins.
+// not swallow an explicit per-command count: a deliberate read still wins, while
+// the automatic entry tail keeps the configured budget.
 func TestUnitStartupBudgetKeepsThePerCommandOverride(t *testing.T) {
-	stub := scopeStub()
-	input := "cd host-one/endpoint-1/res-1\nlogs -n 7\nexit\n"
-	if _, diagnostics := runScopeWithOptions(t, stub, input, InteractiveOptions{MaxLines: 500}); diagnostics != "" {
+	stub := newSendFollowStub()
+	lines := []string{"cd host-one/endpoint-1/res-1", "logs -n 7", "exit"}
+	if _, diagnostics := runBudgetREPL(t, stub, lines, 500); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if len(stub.outputRequests) != 2 {
-		t.Fatalf("output requests=%+v", stub.outputRequests)
+	follows := stub.followRequests()
+	if len(follows) != 1 {
+		t.Fatalf("entry follow requests=%+v want exactly one", follows)
 	}
-	if got := stub.outputRequests[0].maxLines; got != 500 {
-		t.Fatalf("entry snapshot maxLines=%d want=500", got)
+	if got := follows[0].maxLines; got != 500 {
+		t.Fatalf("entry tail maxLines=%d want=500", got)
 	}
-	if got := stub.outputRequests[1].maxLines; got != 7 {
+	if len(stub.outputRequests) != 1 {
+		t.Fatalf("output requests=%+v want exactly one explicit read", stub.outputRequests)
+	}
+	if got := stub.outputRequests[0].maxLines; got != 7 {
 		t.Fatalf("explicit read maxLines=%d want=7", got)
 	}
 }
@@ -109,14 +140,33 @@ func TestUnitStartupBudgetKeepsThePerCommandOverride(t *testing.T) {
 // TestUnitUnsetStartupBudgetUsesTheDefault proves an unset budget resolves to the
 // documented default rather than to the standalone logs default.
 func TestUnitUnsetStartupBudgetUsesTheDefault(t *testing.T) {
-	stub := scopeStub()
-	if _, diagnostics := runScopeWithOptions(t, stub, "cd host-one/endpoint-1/res-1\nexit\n", InteractiveOptions{}); diagnostics != "" {
+	stub := newSendFollowStub()
+	if _, diagnostics := runBudgetREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", "exit"}, 0); diagnostics != "" {
 		t.Fatalf("unexpected diagnostics: %q", diagnostics)
 	}
-	if len(stub.outputRequests) != 1 {
-		t.Fatalf("output requests=%+v", stub.outputRequests)
+	follows := stub.followRequests()
+	if len(follows) != 1 {
+		t.Fatalf("entry follow requests=%+v want exactly one", follows)
 	}
-	if got := stub.outputRequests[0].maxLines; got != DefaultInteractiveMaxLines {
-		t.Fatalf("entry snapshot maxLines=%d want=%d", got, DefaultInteractiveMaxLines)
+	if got := follows[0].maxLines; got != DefaultInteractiveMaxLines {
+		t.Fatalf("entry tail maxLines=%d want=%d", got, DefaultInteractiveMaxLines)
+	}
+}
+
+// TestUnitStartupBudgetReachesTheDegradedEntrySnapshot proves the same budget
+// reaches the fallback path. A client without the streaming seam renders one
+// bounded snapshot, so the two paths cannot disagree about the bound. The
+// degradation notice is written to the trusted output, not to diagnostics.
+func TestUnitStartupBudgetReachesTheDegradedEntrySnapshot(t *testing.T) {
+	stub := scopeStub()
+	output, _ := runBudgetREPL(t, stub, []string{"cd host-one/endpoint-1/res-1", "exit"}, 500)
+	if !strings.Contains(output, "automatic follow unavailable") {
+		t.Fatalf("want a degradation notice in the output, got %q", output)
+	}
+	if len(stub.outputRequests) != 1 {
+		t.Fatalf("output requests=%+v want exactly one snapshot", stub.outputRequests)
+	}
+	if got := stub.outputRequests[0].maxLines; got != 500 {
+		t.Fatalf("degraded entry snapshot maxLines=%d want=500", got)
 	}
 }

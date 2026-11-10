@@ -226,9 +226,9 @@ func TestRenderReceiptDetailsSkipsEmptyFields(t *testing.T) {
 
 // TestLogsForwardsParsedLineCountToAPI proves the line limit parsed from the
 // interactive command reaches the API request instead of only trimming the
-// rendered text, which is the defect this test guards. Entering the session
-// already renders one bounded snapshot, so the explicit logs read is the second
-// request and must carry its own parsed limit.
+// rendered text, which is the defect this test guards. This stub cannot stream,
+// so entering the session degrades to one bounded snapshot and the explicit logs
+// read is the second request; it must carry its own parsed limit.
 func TestLogsForwardsParsedLineCountToAPI(t *testing.T) {
 	cases := []struct {
 		name  string

@@ -90,6 +90,18 @@ see the effect.
   primary action may already have exhausted.
 - A follow-up step is interactive-only. The standalone surface keeps one command
   per action, so a script never receives extra output it did not ask for.
+- Four interactive steps arm the same live tail as `logs -f`: entering a session,
+  `send`, `btw` and `start`. They share one arm-or-snapshot helper, so the four
+  cannot drift into four copies of the capability check, the announcement or the
+  degradation wording. `interrupt` is deliberately excluded, because stopping a
+  turn is not a reason to expect new output.
+- Entering a session arms the tail for the identity the transition already
+  validated, so the entry costs one output read and no repeated discovery. It
+  degrades to one bounded snapshot, with a diagnostic that says so, when the client
+  cannot stream or the input mode cannot observe a keypress.
+- `btw` arms the tail after its durable receipt, because injected context usually
+  makes the agent keep working and the operator should not have to type `logs` to
+  see the effect.
 - `send` arms the same live tail as `logs -f` and then forces one collection for the
   selected endpoint and revalidates only the selected session, so a later `list`
   reads a newer persisted document. The tail is armed first because it binds the
@@ -461,16 +473,16 @@ every command full for a whole session.
 
 ## Interactive output line budget
 
-Entering session scope renders one bounded snapshot automatically, so the REPL
-needs a line budget before the operator types anything. That budget is 300 lines
-by default, and the startup `--lines` option sets it within 100-1000.
+Entering session scope starts the same live tail as `logs -f` automatically, so the
+REPL needs a line budget before the operator types anything. That budget is 300
+lines by default, and the startup `--lines` option sets it within 100-1000.
 
 - The budget is one quantity with one meaning: how many trailing output lines a
   read returns. `--lines` keeps that name on both surfaces instead of adding a
   second flag that would raise a precedence question and a silent loser.
 - The default is surface-aware. A standalone `logs` keeps 100, because a script
   asking for a snapshot is not the same as an operator who deliberately selected
-  a session. The REPL uses 300, because the entry snapshot is the first thing an
+  a session. The REPL uses 300, because the entry tail is the first thing an
   operator reads and a session tail is usually read to see what just happened.
 - An explicit startup value outside 100-1000 is rejected with an error naming the
   range. It is never silently clamped, because an operator who asked for 5000
@@ -480,11 +492,11 @@ by default, and the startup `--lines` option sets it within 100-1000.
   to its own documented maximum.
 - The per-command override is unaffected: `logs -n 7` inside the REPL still reads
   7 lines, because a per-command read is a deliberate, visible request.
-- The budget is resolved once when the REPL starts, so the entry snapshot, a bare
+- The budget is resolved once when the REPL starts, so the entry tail, a bare
   `logs` and the degraded post-`send` snapshot cannot disagree about how many lines
-  they show. Two separate literals would be free to drift apart. The automatic
-  post-`send` tail uses the same resolved budget, so a follow and a snapshot never
-  disagree about the bound either.
+  they show. Two separate literals would be free to drift apart. Every automatic
+  tail uses the same resolved budget, so a follow and a snapshot never disagree
+  about the bound either.
 - The startup value is validated before the editor takes the terminal, so a
   rejected value never leaves the screen in raw mode.
 

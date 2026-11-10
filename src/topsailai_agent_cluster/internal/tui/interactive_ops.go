@@ -60,7 +60,7 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 		// because the editor owns the terminal and is the only writer. Arming
 		// keeps the existing watch seam, so a keypress stops the stream through
 		// the same path that stops an auto-refresh loop.
-		return armFollowStream(api, state, endpointID, session, maxBytes, maxLines, trustedOut)
+		return armFollowStream(api, state, endpointID, session.SessionID, session.Generation, maxBytes, maxLines, trustedOut)
 	}
 	return (CommandRunner{API: api, Policy: InteractivePolicy}).Logs(ctx, trustedOut, endpointID, session.SessionID, maxBytes, maxLines, false, color)
 }
@@ -71,12 +71,12 @@ func interactiveLogs(parent context.Context, api InteractiveAPI, state *interact
 // grammars, two announcements or two capability checks. A client without the
 // streaming seam is refused here instead of arming a stream that could never
 // start.
-func armFollowStream(api InteractiveAPI, state *interactiveState, endpointID string, session protocol.Session, maxBytes, maxLines int, trustedOut io.Writer) error {
+func armFollowStream(api InteractiveAPI, state *interactiveState, endpointID, sessionID, generation string, maxBytes, maxLines int, trustedOut io.Writer) error {
 	if _, ok := api.(OutputFollower); !ok {
 		return fmt.Errorf("follow is unavailable: the API client does not support streaming output")
 	}
-	state.follow = &followRequest{EndpointID: endpointID, ResourceID: session.SessionID, Generation: session.Generation, MaxBytes: maxBytes, MaxLines: maxLines}
-	_, err := fmt.Fprintf(trustedOut, "follow: %s (any key stops)\n", sanitizeInlineText(session.SessionID))
+	state.follow = &followRequest{EndpointID: endpointID, ResourceID: sessionID, Generation: generation, MaxBytes: maxBytes, MaxLines: maxLines}
+	_, err := fmt.Fprintf(trustedOut, "follow: %s (any key stops)\n", sanitizeInlineText(sessionID))
 	return err
 }
 
@@ -417,7 +417,7 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	// happened, so the operator should not have to type logs to see the effect.
 	// The automatic step is the same live tail as logs -f, because a one-shot
 	// snapshot stops at the moment it was read while the agent keeps writing.
-	if err := autoFollowAfterSend(parent, api, state, session, trustedOut, options); err != nil {
+	if err := autoFollowAfterAction(parent, api, state, state.EndpointID, session.SessionID, session.Generation, trustedOut, options, "send completed"); err != nil {
 		return err
 	}
 	// The send changed the provider's state, so the persisted inventory is now
@@ -438,24 +438,26 @@ func submitSessionMessage(parent context.Context, api InteractiveAPI, state *int
 	return nil
 }
 
-// autoFollowAfterSend arms the live tail that follows a completed send. It arms
-// the same intent logs -f arms, so the automatic step and the explicit command
-// share one streaming path, one announcement and one capability check.
+// autoFollowAfterAction arms the live tail that follows a completed session
+// action. It arms the same intent logs -f arms, so every automatic step and the
+// explicit command share one streaming path, one announcement and one capability
+// check. failurePrefix names the action that triggered the tail, so the operator
+// can tell which step degraded.
 //
 // A client that cannot stream, or a reader that cannot observe a keypress, can
 // never stop a live tail. That case degrades to the previous bounded snapshot
 // and says so, because a snapshot presented as a stream would look complete
 // while silently missing everything written after it.
-func autoFollowAfterSend(parent context.Context, api InteractiveAPI, state *interactiveState, session *protocol.Session, trustedOut io.Writer, options InteractiveOptions) error {
+func autoFollowAfterAction(parent context.Context, api InteractiveAPI, state *interactiveState, endpointID, sessionID, generation string, trustedOut io.Writer, options InteractiveOptions, failurePrefix string) error {
 	if _, ok := api.(OutputFollower); !ok || options.WatchReader == nil {
-		if err := renderAutomaticSnapshot(parent, api, state, trustedOut, options.Color, options, "send completed"); err != nil {
+		if err := renderAutomaticSnapshot(parent, api, state, trustedOut, options.Color, options, failurePrefix); err != nil {
 			return err
 		}
-		return writeAutomaticDiagnostic(trustedOut, "send completed", "automatic follow unavailable: this input mode cannot stop a live tail; rendered one bounded snapshot instead")
+		return writeAutomaticDiagnostic(trustedOut, failurePrefix, "automatic follow unavailable: this input mode cannot stop a live tail; rendered one bounded snapshot instead")
 	}
 	maxBytes, maxLines := interactiveOutputBounds(options)
-	if err := armFollowStream(api, state, state.EndpointID, *session, maxBytes, maxLines, trustedOut); err != nil {
-		return writeAutomaticDiagnostic(trustedOut, "send completed", "automatic follow failed: "+sanitizeTerminal([]byte(err.Error())))
+	if err := armFollowStream(api, state, endpointID, sessionID, generation, maxBytes, maxLines, trustedOut); err != nil {
+		return writeAutomaticDiagnostic(trustedOut, failurePrefix, "automatic follow failed: "+sanitizeTerminal([]byte(err.Error())))
 	}
 	return nil
 }
@@ -703,7 +705,7 @@ func autoFollowAfterStart(parent context.Context, api InteractiveAPI, state *int
 		return writeAutomaticDiagnostic(trustedOut, "start completed", "automatic follow unavailable: this input mode cannot stop a live tail; rendered one bounded snapshot instead")
 	}
 	maxBytes, maxLines := interactiveOutputBounds(options)
-	if err := armFollowStream(api, state, endpointID, session, maxBytes, maxLines, trustedOut); err != nil {
+	if err := armFollowStream(api, state, endpointID, session.SessionID, session.Generation, maxBytes, maxLines, trustedOut); err != nil {
 		return writeAutomaticDiagnostic(trustedOut, "start completed", "automatic follow failed: "+sanitizeTerminal([]byte(err.Error())))
 	}
 	return nil
@@ -849,7 +851,17 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	if err != nil {
 		return err
 	}
-	return interactiveConfirmedAction(parent, api, state, op, name, confirmationTargetFor(*session), session.Generation, payload, lines, out, trustedOut, options, nil, nil)
+	// Context injection is followed by a live tail, because the injected context
+	// usually makes the agent keep working and the operator should not have to
+	// type logs to see the effect. Interrupt is not: stopping a turn is not a
+	// reason to expect new output, so it keeps its previous behaviour.
+	var postSubmit func(context.Context, map[string]any) error
+	if op == protocol.OperationContextInject {
+		postSubmit = func(postCtx context.Context, _ map[string]any) error {
+			return autoFollowAfterAction(postCtx, api, state, state.EndpointID, session.SessionID, session.Generation, trustedOut, options, name+" completed")
+		}
+	}
+	return interactiveConfirmedAction(parent, api, state, op, name, confirmationTargetFor(*session), session.Generation, payload, lines, out, trustedOut, options, nil, postSubmit)
 }
 
 // promptInterruptPayload guides a bare interrupt through the action choice and, for a soft
