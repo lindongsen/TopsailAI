@@ -75,6 +75,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	registerFollowSteps(ctx)
 	registerOutputScopeSteps(ctx)
 	registerQReturnsToWorkspaceSteps(ctx)
+	registerModelSteps(ctx)
 	ctx.After(func(goCtx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if activeScenario != nil && activeScenario.commandDone != nil {
 			<-activeScenario.commandDone
