@@ -2,7 +2,6 @@ package main
 
 import (
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -271,29 +270,41 @@ func TestRunNodeRejectsAMissingPolicy(t *testing.T) {
 	}
 }
 
-// TestWaitForShutdownReturnsOnSignal checks that the wait returns when a signal
-// arrives, so the deferred cleanup runs.
+// TestContextFromSignalsCancelsOnSignal checks that a signal cancels the context
+// the dialer runs under, so the deferred cleanup runs and the connection closes.
 //
 // The channel is a parameter rather than created inside the function, so the test
 // can deliver a signal without sending one to the test process. Sending a real
 // signal would make the test depend on the order in which two handlers register,
 // and a mistake there would kill the test binary instead of failing the test.
-func TestWaitForShutdownReturnsOnSignal(t *testing.T) {
+func TestContextFromSignalsCancelsOnSignal(t *testing.T) {
 	signals := make(chan os.Signal, 1)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	done := make(chan error, 1)
-	go func() { done <- waitForShutdown(logger, signals) }()
+	ctx, stop := contextFromSignals(signals)
+	defer stop()
 
 	signals <- os.Interrupt
 
 	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("waitForShutdown() = %v, want nil", err)
-		}
+	case <-ctx.Done():
 	case <-timeoutAfter(t):
-		t.Fatal("waitForShutdown() did not return after a signal")
+		t.Fatal("contextFromSignals() did not cancel after a signal")
+	}
+}
+
+// TestContextFromSignalsStopsWithoutASignal checks that the cancel function
+// releases the watcher even when no signal arrives, so a process that stops for
+// another reason does not leave a goroutine waiting on a channel nobody sends to.
+func TestContextFromSignalsStopsWithoutASignal(t *testing.T) {
+	signals := make(chan os.Signal, 1)
+
+	ctx, stop := contextFromSignals(signals)
+	stop()
+
+	select {
+	case <-ctx.Done():
+	case <-timeoutAfter(t):
+		t.Fatal("stop() did not cancel the context")
 	}
 }
 

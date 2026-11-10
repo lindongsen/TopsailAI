@@ -1,13 +1,14 @@
 // Command connector-node is the personal-computer entry point. It dials the
 // Server, keeps the link open and serves the operations its policy allows.
 //
-// This build starts the process, loads the configuration, loads the policy,
-// opens every scope the policy defines and prepares the node identity. The
-// dialer, the handshake and the operation dispatch are added by later logical
-// units, so the process reports readiness and then waits for a signal.
+// The process loads the configuration, loads the policy, opens every scope the
+// policy defines, prepares the node identity and then dials the Server. It never
+// listens: the Node is the side that initiates, so a personal computer needs no
+// inbound port, no public address and no firewall change.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -65,7 +66,13 @@ func splitCommand(arguments []string) (string, []string) {
 	return arguments[0], arguments[1:]
 }
 
-// runNode starts the Node: configuration, identity, policy, scopes, then wait.
+// runNode starts the Node: configuration, identity, policy, scopes, then dial.
+//
+// The order is deliberate. The runtime is opened first, because it loads the
+// identity and the policy and refuses to start when either is unusable; a dialer
+// built before that would connect to the Server and then discover it has nothing
+// to serve. The dialer is built last, so a Node that cannot serve never appears
+// connected.
 func runNode(arguments []string) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	if err := flags.Parse(arguments); err != nil {
@@ -91,33 +98,55 @@ func runNode(arguments []string) error {
 	// operator has to copy it into a CLI and there is no lookup endpoint. It goes
 	// to stdout rather than to the log, so a log file does not accumulate
 	// credentials.
-	if identity, generated := runtime.NewIdentity(); generated {
+	identity, generated := runtime.NewIdentity()
+	if generated {
 		fmt.Printf("node identity generated: %s\n", identity.String())
 	}
 
 	runtime.Report()
 
-	// The signal channel is created here rather than inside waitForShutdown, so
+	// The identity comes from the runtime rather than from a second read of the
+	// file, so the value the dialer validates is the value the deny list was built
+	// from. Reading it twice would let a regeneration between the two reads leave
+	// the process serving under an identity it no longer owns.
+	dispatcher := node.NewDispatcher(runtime.Authority(), identity, logger)
+
+	dialer, err := node.NewDialer(runtime.Config(), identity, dispatcher, logger)
+	if err != nil {
+		return err
+	}
+
+	// The signal channel is created here rather than inside contextFromSignals, so
 	// the wait can be tested without sending a signal to the test process.
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
 
-	return waitForShutdown(logger, signals)
+	ctx, stop := contextFromSignals(signals)
+	defer stop()
+
+	return dialer.Run(ctx)
 }
 
-// waitForShutdown blocks until a signal arrives, then returns so the deferred
-// cleanup runs. A Node that exited without releasing its scope handles would
-// leave a directory that cannot be removed on Windows.
+// contextFromSignals returns a context cancelled when a signal arrives on the
+// channel, plus the cancel function that releases the watcher.
 //
 // The channel is a parameter so a test can deliver a signal without signalling
 // the test process: a real signal would make the test depend on the order in
 // which two handlers register, and a mistake there would kill the test binary
 // instead of failing the test.
-func waitForShutdown(logger *slog.Logger, signals <-chan os.Signal) error {
-	received := <-signals
-	logger.Info("connector-node stopping", "signal", received.String())
-	return nil
+func contextFromSignals(signals <-chan os.Signal) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		select {
+		case <-signals:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	return ctx, cancel
 }
 
 // runID prints the node-id.node-token pair and nothing else, so it can be copied

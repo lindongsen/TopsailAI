@@ -1,14 +1,15 @@
 // Command connector-server is the cloud-side entry point. It accepts Node
 // connections and calls the operations a Node advertises.
 //
-// This build loads and validates the configuration, reports readiness and waits
-// for a signal. The listener, the channel registry and the CLI API are added by
-// later logical units, so the process deliberately refuses to pretend it is
-// serving: it validates everything it can validate and then says what it is not
-// yet doing.
+// The process serves two surfaces from one listener: the channel at /channel,
+// where a Node dials in, and the CLI API at /v1/nodes/{node_id}/operations, where
+// an operator calls an operation. Both are served from one port behind one TLS
+// certificate, because the two surfaces share the routing registry and a second
+// port would not isolate state.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -69,8 +70,8 @@ func splitCommand(arguments []string) (string, []string) {
 	return first, arguments[1:]
 }
 
-// runServer loads the configuration, validates both secrets and waits for a
-// shutdown signal.
+// runServer loads the configuration, validates both secrets and serves the two
+// surfaces until the process is asked to stop.
 //
 // Every failure here is a startup failure. A Server that started with a missing
 // or short secret would authenticate callers it should refuse, and the mistake
@@ -88,25 +89,51 @@ func runServer(arguments []string) error {
 		return err
 	}
 
+	// The registry is created here and handed to the listener, so the channel
+	// surface and the CLI surface share one routing table. Two registries would
+	// let a Node register into one while the CLI looked in the other, and the
+	// symptom would be a Node that looks connected and answers node_offline.
+	registry := server.NewRegistry()
+
+	listener, err := server.NewListener(config, registry, logger)
+	if err != nil {
+		return err
+	}
+
 	logger.Info("connector-server starting",
 		"protocol", protocol.Version,
 		"config", config.Redacted(),
+		"listen", listener.Addr(),
 	)
-	logger.Warn("connector-server is not listening yet; the channel listener and the CLI API are added by later logical units")
 
-	return waitForShutdown(logger)
+	ctx, stop := signalContext()
+	defer stop()
+
+	return listener.Serve(ctx)
 }
 
-// waitForShutdown blocks until the process is asked to stop, then returns so the
-// deferred cleanup runs. A Server that exited without closing its listener would
-// leave the port bound until the operating system reclaimed it, which on Windows
-// is long enough to make an immediate restart fail.
-func waitForShutdown(logger *slog.Logger) error {
+// signalContext returns a context cancelled when the process is asked to stop.
+//
+// The cancellation is what makes a shutdown orderly: Serve closes the HTTP server
+// and every live channel when the context ends, so a Node that is mid-request is
+// answered instead of being cut off by a process that vanished. A Server that
+// exited without closing its listener would leave the port bound until the
+// operating system reclaimed it, which on Windows is long enough to make an
+// immediate restart fail.
+func signalContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(signals)
 
-	received := <-signals
-	logger.Info("connector-server stopping", "signal", received.String())
-	return nil
+	go func() {
+		defer signal.Stop(signals)
+		select {
+		case <-signals:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	return ctx, cancel
 }
