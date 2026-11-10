@@ -28,6 +28,7 @@ var featurePaths = []string{
 	"../../features/bidirectional_channel.feature",
 	"../../features/output_follow.feature",
 	"../../features/output_scope.feature",
+	"../../features/model_command.feature",
 }
 
 // TestFeatures runs the strict real-boundary BDD suite.
