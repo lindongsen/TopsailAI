@@ -263,6 +263,61 @@ def exec_cmd(
     #
     # No fix is approved. Callers that may run a daemonizing command must not
     # rely on ``timeout`` to bound the call.
+    #
+    # HUMAN PROPOSAL (not rejected, not yet implemented): launch the process
+    # through tmux and control it through tmux instead of running it directly.
+    # This is the only approach so far that the human considers acceptable in
+    # principle. It is documented here as a workaround, NOT as an approved fix
+    # for the code below. Probes on this host confirmed it works:
+    #
+    #   - Baseline ``setsid sleep 30 2>&1 &`` through this function: HUNG, the
+    #     outer alarm fired at 20s and the call never returned.
+    #   - Same daemonizing command wrapped as
+    #     ``tmux -L <socket> new-session -d 'setsid sleep 30'``: returned in
+    #     0.024s with stdout ``b'started\n'``.
+    #
+    # Why it works: the tmux CLIENT is a short-lived process that exits as soon
+    # as the session is created, and the tmux SERVER daemonizes itself
+    # (``ppid=1``, its own session id). Scanning ``/proc/<pid>/fd`` after the
+    # call returned found NO process holding the caller's stdout or stderr pipe,
+    # so the pipe reaches EOF immediately and the unbounded ``communicate()``
+    # has nothing to wait for. The escapee problem disappears because the
+    # long-lived process is no longer a child of this function at all.
+    #
+    # Requirements and side effects, all measured:
+    #
+    #   - ``-d`` is mandatory. Without it tmux tries to attach a terminal and
+    #     fails with ``open terminal failed: not a terminal`` (returned in
+    #     0.013s, so it fails fast rather than hanging, but nothing runs).
+    #   - Use a dedicated socket (``-L <name>``) per caller. The default socket
+    #     is shared with the human's own sessions, and ``kill-server`` on it
+    #     would destroy unrelated work.
+    #   - Exit status is NOT propagated. The tmux client returns 0 no matter
+    #     what the command does (verified: a command exiting 42 still gave
+    #     client rc 0). The status must be read separately, either with
+    #     ``set-option -t <session> remain-on-exit on`` set BEFORE the command
+    #     exits and then ``display-message -p '#{pane_dead_status}'`` (verified
+    #     returning 42), or by having a wrapper write ``$?`` to a file
+    #     (verified). Without ``remain-on-exit`` the pane and its output are
+    #     destroyed on exit and ``capture-pane`` returns an empty string.
+    #   - Output is a terminal stream, not a clean pipe. It contains the echoed
+    #     command, shell prompts, and ANSI escape sequences such as
+    #     ``\x1b]0;root@host: ~/dir\x07``. Any consumer must strip these.
+    #   - Output must be captured with ``pipe-pane -o 'cat > <file>'`` or
+    #     ``capture-pane``. ``pipe-pane`` handled 1.48 MB from ``seq 1 200000``
+    #     without loss, but the log file grows without bound, so it needs the
+    #     same size cap that option D requires.
+    #   - The tmux server outlives this function and is reparented to ``ppid=1``
+    #     in its own session, so ``_kill_process_tree`` cannot reach it either.
+    #     If the agent dies, the tmux server and everything inside it keep
+    #     running. Cleanup must be explicit: ``tmux -L <socket> kill-server``
+    #     was verified to kill the pane children as well.
+    #   - tmux is an external dependency. It is absent on Windows and may be
+    #     missing on minimal images, so any use must degrade gracefully rather
+    #     than assume it exists.
+    #   - Interactive control is possible: ``send-keys`` plus ``capture-pane``
+    #     was verified to drive a shell and read its output, which is what makes
+    #     this approach usable for long-running interactive work.
     try:
         stdout, stderr = process.communicate(input=subprocess_input, timeout=timeout)
     except subprocess.TimeoutExpired:
