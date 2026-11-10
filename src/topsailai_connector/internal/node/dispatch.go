@@ -74,7 +74,10 @@ func (d *Dispatcher) Dispatch(request protocol.Request) protocol.Response {
 		return d.refuse(request, protocol.CodeDenied, "request is addressed to another node")
 	}
 	if !d.identity.Token.Equal(request.NodeToken) {
-		return d.refuse(request, protocol.CodeDenied, "node token does not match")
+		// The contract names this unauthenticated rather than denied: the caller
+		// did not prove it may talk to this Node at all, which is a different
+		// answer from "you may talk to this Node but not do that".
+		return d.refuse(request, protocol.CodeUnauthenticated, "node token does not match")
 	}
 	if len(request.Data) > 0 || len(request.Argv) > 0 {
 		return d.refuse(request, protocol.CodeInvalidArgument, "request carries a field no enabled operation uses")

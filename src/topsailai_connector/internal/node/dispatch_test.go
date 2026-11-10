@@ -110,8 +110,8 @@ func TestDispatchRefusesWrongToken(t *testing.T) {
 	request.NodeToken = security.Secret("not-the-right-token-value")
 
 	response := fixture.dispatcher.Dispatch(request)
-	if response.Code != protocol.CodeDenied {
-		t.Fatalf("Dispatch() code = %s, want denied", response.Code.Name())
+	if response.Code != protocol.CodeUnauthenticated {
+		t.Fatalf("Dispatch() code = %s, want unauthenticated", response.Code.Name())
 	}
 }
 
@@ -124,8 +124,8 @@ func TestDispatchRefusesEmptyToken(t *testing.T) {
 	request.NodeToken = ""
 
 	response := fixture.dispatcher.Dispatch(request)
-	if response.Code != protocol.CodeDenied {
-		t.Fatalf("Dispatch() code = %s, want denied", response.Code.Name())
+	if response.Code != protocol.CodeUnauthenticated {
+		t.Fatalf("Dispatch() code = %s, want unauthenticated", response.Code.Name())
 	}
 }
 
@@ -441,8 +441,8 @@ func TestDispatchLogNeverContainsToken(t *testing.T) {
 	request.NodeToken = security.Secret("a-very-secret-token-value")
 
 	response := fixture.dispatcher.Dispatch(request)
-	if response.Code != protocol.CodeDenied {
-		t.Fatalf("Dispatch() code = %s, want denied", response.Code.Name())
+	if response.Code != protocol.CodeUnauthenticated {
+		t.Fatalf("Dispatch() code = %s, want unauthenticated", response.Code.Name())
 	}
 
 	logged := fixture.logs.String()

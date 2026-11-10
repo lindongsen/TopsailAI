@@ -119,6 +119,17 @@ func (d *Dialer) connectOnce(ctx context.Context) error {
 		}
 	}()
 
+	// A cancellation cannot interrupt a blocked websocket read, so the connection
+	// is closed when the context ends. Without this the session would observe the
+	// cancellation only after the next frame arrived, and a Node with an idle
+	// channel would ignore a shutdown indefinitely.
+	stopWatcher := context.AfterFunc(ctx, func() {
+		if err := conn.Close(); err != nil {
+			d.logger.Debug("closing the channel during shutdown reported an error", "error", err)
+		}
+	})
+	defer stopWatcher()
+
 	if err := d.handshake(conn); err != nil {
 		return err
 	}
@@ -131,7 +142,13 @@ func (d *Dialer) connectOnce(ctx context.Context) error {
 	}
 
 	session := NewSession(d.dispatcher, frames, d.logger)
-	return session.Serve(ctx)
+	err = session.Serve(ctx)
+	if ctx.Err() != nil {
+		// The read failed because this side closed the connection to honour the
+		// cancellation, so the error describes the shutdown rather than a fault.
+		return nil
+	}
+	return err
 }
 
 // dial opens the websocket connection.
