@@ -241,9 +241,11 @@ they were last seen, which is a privacy decision this design does not make.
 - A request for an unknown `node_id` is refused with `node_offline`. It is **not**
   queued. Queueing would turn an immediate refusal into a delayed surprise, and
   the caller would not know whether the request would ever run.
-- A request whose `node-id` half differs from the path `node_id` is refused with
-  `unauthenticated`, not `denied`. The pair does not authorize that Node at all, so
-  the request never reaches the authority question.
+- The path `node_id` selects the connection. The Server does not compare it with
+  anything, because the `node-token` arrives in a header on its own and the Server
+  never receives the pair. A pair whose halves disagree is refused by the Node,
+  which is the only party that knows the correct `node-token`. The Server relays
+  that refusal unchanged.
 - One connection serves one Node. A Node that reconnects replaces its registry
   entry, and the previous connection is closed.
 
@@ -260,50 +262,66 @@ they were last seen, which is a privacy decision this design does not make.
 ## CLI surface
 
 The CLI is a subcommand of the Server binary, so an operator installs one binary
-and gets both the Server and the client. It reads the Server URL and `client_token`
-from flags or its config file, and it reads the `node-id.node-token` pair from a
-flag, a config file or an environment variable.
+and gets both the Server and the client. It has no configuration file: every input
+comes from a flag or from an environment variable, and a flag wins over the
+environment because a flag is the more explicit statement of intent.
 
 ```
-connector-server cli file.list  --node node_7f3a.kQ2v... --scope project --path .
-connector-server cli file.stat  --node node_7f3a.kQ2v... --scope project --path notes.md
-connector-server cli file.read  --node node_7f3a.kQ2v... --scope project --path notes.md
+connector-server cli file.list --server https://cloud.example:8443 \
+    --client-token <client_token> --node node_7f3a.kQ2v... --scope project --path .
 ```
 
 `--node` takes the whole pair, not just the identifier, because the pair is what
 the operator copies from `connector-node id`. The CLI splits it and sends the two
 halves to the two places the Server expects them.
 
-| Input | Source | Why |
-|---|---|---|
-| Server URL | `--server` or config | The CLI is not co-located with the Server |
-| `client_token` | `--client-token` or config | Server-wide, so a config file with `0600` is reasonable |
-| `node-id.node-token` | `--node` or config or `CONNECTOR_CLI_NODE` | Per-Node; the operator copies it once |
-| `node-id` alone | Derived from the pair | Never configured separately, so the two cannot disagree |
+| Flag | Environment | Required | Meaning |
+|---|---|---|---|
+| `--server` | `CONNECTOR_CLI_SERVER_URL` | yes | Server base URL, `http` or `https` |
+| `--client-token` | `CONNECTOR_CLI_CLIENT_TOKEN` | yes | The `client_token` the Server operator issued |
+| `--node` | `CONNECTOR_CLI_NODE` | yes | The whole `node-id.node-token` pair |
+| `--scope` | none | yes | A scope name the Node's policy defines |
+| `--path` | none | no | Relative path inside the scope; empty means the scope root |
+| `--offset` | none | no | Byte offset for `file.read`, default `0` |
+| `--length` | none | no | Byte count for `file.read`; `0` means up to the cap |
+| `--request-id` | none | no | Correlation id echoed by the Server; generated when absent |
+| `--json` | none | no | Print the whole response envelope instead of the payload |
+
+The operation name is the one positional argument: `file.list`, `file.stat` or
+`file.read`. A second positional argument is refused rather than ignored, because
+an ignored argument is a command that did something other than what it looked like
+it did. Flags must precede the operation name, because Go's flag parser stops at
+the first non-flag argument.
 
 Rules:
 
-- The pair is accepted from an environment variable because it is per-Node and an
-  operator may switch between Nodes per call. `client_token` is not read from the
-  environment by default, because a Server-wide credential in the environment is
-  inherited by every child process.
-- The CLI never prints a secret, and it never includes one in an error message. A
-  `--verbose` flag prints the request with `client_token` and the `node-token`
-  replaced by `<redacted>`, and prints the `node-id` in full because it is not a
-  secret.
+- `client_token` is read from the environment as well as from a flag, because a
+  script that calls the CLI repeatedly should not repeat the credential on every
+  line. The cost is that a Server-wide credential in the environment is inherited
+  by every child process, so an operator who cares about that passes the flag and
+  leaves the variable unset.
+- The CLI never prints a secret, and it never includes one in an error message.
+  `cli.Describe` prints the `node-id` in full because it is the public half, and
+  replaces both secrets with `<redacted>` without revealing a prefix or a length.
 - The CLI exits non-zero on any error code, so a shell script can branch on it. The
   error code and message go to stderr, and the payload goes to stdout, so
   `file.read` can be piped into another program without stripping a header.
 - `file.read` writes the file content to stdout as raw bytes, not as JSON. A
   `--json` flag wraps the whole response envelope for scripting.
+- A truncated `file.read` prints a notice on stderr, never on stdout, because a
+  notice on stdout corrupts a piped payload.
 - The CLI refuses a `--node` value that does not parse as `node-id.node-token`
   before sending anything, so a copy-paste error surfaces locally instead of as a
   confusing authentication failure from the Node.
+- The CLI's own timeout is longer than the Server's forward timeout, so the CLI
+  receives the Server's `node_timeout` answer instead of giving up first and
+  reporting a network error that hides the real cause.
 
 ## How the CLI learns the pair
 
 The CLI cannot discover the pair. It is generated by the Node at first start and
-printed by `connector-node id`, and the operator copies it into the CLI's config.
+printed by `connector-node id`, and the operator passes it to the CLI with `--node`
+or `CONNECTOR_CLI_NODE`.
 There is no lookup endpoint, because a lookup endpoint would let any caller
 enumerate which Nodes exist.
 

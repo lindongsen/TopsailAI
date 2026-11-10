@@ -93,6 +93,7 @@ override a variable:
 | `connector-node` | `run` (default) | Load the configuration, the policy and the identity, then wait for a signal |
 | `connector-node` | `id` | Print the `node-id.node-token` pair and nothing else |
 | `connector-node` | `regenerate` | Replace the pair; `--keep-id` keeps the node id |
+| `connector-server` | `cli` | Call one operation on one Node and print the result |
 
 The Server validates `CONNECTOR_SERVER_TUNNEL_TOKEN` and
 `CONNECTOR_SERVER_CLIENT_TOKEN` at startup and refuses to run when either is
@@ -110,8 +111,8 @@ Every name carries the `CONNECTOR_` prefix, which is the project code from
 `project.yaml`. A variable is named for what it holds rather than for where it is
 used, so a reader can guess the meaning without opening the code.
 
-The Server and Node sections below are implemented. The CLI section is not: the
-CLI subcommand does not exist yet, so those three variables are read by nothing.
+The Server, Node and CLI sections below are implemented. The "Shared" section is
+not: those variables are named but read by nothing, and the section says so.
 
 ### Server
 
@@ -220,10 +221,19 @@ out of step with each other, which is the failure mode that would otherwise prod
 a request addressed to one Node carrying another Node's secret.
 
 Both `CONNECTOR_CLI_CLIENT_TOKEN` and `CONNECTOR_CLI_NODE` are accepted from the
-environment for scripting convenience. A config file is preferred for interactive
-use, because a long-lived credential in the environment is inherited by every child
-process. Neither value is ever echoed by `--help`, by a configuration dump or by an
-error message.
+environment for scripting convenience. A flag takes precedence over the variable,
+because a flag is the more explicit statement of intent. There is no config file
+for the CLI: the only two sources are a flag and the environment, so an operator
+never has to work out which of three places won.
+
+Neither value is ever echoed by `--help`, by an error message or by a verbose dump.
+`cli.Describe` renders a request with both secrets replaced by a fixed marker and
+the `node-id` printed in full, because the identifier is the public half of the
+pair and an operator debugging a routing problem needs to see it.
+
+A long-lived credential in the environment is inherited by every child process, so
+a flag is the safer choice for interactive use. The environment exists so a script
+can export the pair once instead of repeating it on every call.
 
 ### Shared (decided, not yet read)
 
