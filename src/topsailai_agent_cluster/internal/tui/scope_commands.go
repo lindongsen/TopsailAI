@@ -58,6 +58,11 @@ var commandScopeMatrix = []commandScopeRule{
 	// surface available in all three scopes, including session scope where the
 	// selected session already names the target.
 	{Name: "messages", Workspace: true, Endpoint: true, Session: true},
+	// model lists the model profiles one session can select. It is available in
+	// every scope because session scope already names its target, while the other
+	// two scopes can resolve one. It is read-only, so it needs neither a live
+	// generation nor a proven absence.
+	{Name: "model", Workspace: true, Endpoint: true, Session: true},
 	{Name: "help", Workspace: true, Endpoint: true, Session: true},
 	{Name: "quit", Workspace: true, Endpoint: true, Session: true},
 	{Name: "exit", Workspace: true, Endpoint: true, Session: true},
@@ -135,6 +140,7 @@ var commandAliases = map[string]string{
 	"w":        "watch",
 	"control":  "ctl",
 	sendPrefix: "send",
+	"m":        "model",
 }
 
 // canonicalCommandName returns the registered command for an accepted spelling.

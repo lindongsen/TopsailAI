@@ -207,6 +207,11 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return fmt.Errorf("usage: messages <endpoint-id-or-hostname> <session-id>")
 		}
 		return messages(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), *maxChars, *jsonMode, tui.OutputColorPolicy(output))
+	case "model":
+		if flags.NArg() != 3 {
+			return fmt.Errorf("usage: model <endpoint-id-or-hostname> <session-id>")
+		}
+		return model(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), *jsonMode, tui.OutputColorPolicy(output))
 	case "table":
 		return fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "show":
@@ -551,6 +556,22 @@ func history(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, 
 // persisted provider data, not a live process.
 func messages(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target, sessionID string, maxChars int, jsonMode bool, color tui.ColorPolicy) error {
 	return legacyRunner(api).Messages(ctx, output, errors, target, sessionID, maxChars, jsonMode, color)
+}
+
+// model renders the model profiles one session can select.
+//
+// The endpoint argument is mandatory because a catalog read is endpoint-scoped:
+// provider session IDs may collide across endpoints, so a fleet-wide merge could
+// not identify the session the operator asked for.
+//
+// The generation is empty on purpose. A catalog read is read-only and addresses
+// the provider's configuration rather than a live process, so it needs no
+// generation proof; requiring one would refuse to list profiles for exactly the
+// stopped sessions an operator may want to inspect before resuming.
+func model(ctx context.Context, api tui.CommandAPI, output, errors io.Writer, target, sessionID string, jsonMode bool, color tui.ColorPolicy) error {
+	options := tui.TableOptionsFor(output)
+	options.Color = color
+	return legacyRunner(api).ModelCatalog(ctx, output, errors, target, sessionID, "", jsonMode, options)
 }
 
 // list renders the session table. full is the per-command request to disable

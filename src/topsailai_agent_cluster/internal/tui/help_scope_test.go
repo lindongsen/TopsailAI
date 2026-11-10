@@ -275,7 +275,7 @@ func TestHelpOverviewKeepsScopePrompts(t *testing.T) {
 
 func TestHelpOverviewKeepsScopeRestrictions(t *testing.T) {
 	output, diagnostics := runScope(t, scopeStub(), "send {}\nquit\n", ColorPolicy{})
-	if !strings.Contains(diagnostics, `command "send" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, drive, status, refresh, watch, history, messages, help, quit, exit`) {
+	if !strings.Contains(diagnostics, `command "send" is unavailable in workspace scope; available commands: list, endpoints, cd, show, info, start, resume, stop, drive, status, refresh, watch, history, messages, model, help, quit, exit`) {
 		t.Fatalf("scope restriction lost: %q", diagnostics)
 	}
 	if strings.Contains(output, "admitted") {
@@ -427,9 +427,9 @@ func TestContextHelpListsOnlyScopeAliases(t *testing.T) {
 		kind ScopeKind
 		want string
 	}{
-		{ScopeWorkspace, "Aliases: ?=help, l=list, q=quit, r=refresh, w=watch"},
-		{ScopeEndpoint, "Aliases: ?=help, l=list, q=quit, r=refresh, w=watch"},
-		{ScopeSession, "Aliases: >=send, ?=help, control=ctl, l=list, q=quit, r=refresh"},
+		{ScopeWorkspace, "Aliases: ?=help, l=list, m=model, q=quit, r=refresh, w=watch"},
+		{ScopeEndpoint, "Aliases: ?=help, l=list, m=model, q=quit, r=refresh, w=watch"},
+		{ScopeSession, "Aliases: >=send, ?=help, control=ctl, l=list, m=model, q=quit, r=refresh"},
 	} {
 		t.Run(testCase.kind.String(), func(t *testing.T) {
 			var out strings.Builder

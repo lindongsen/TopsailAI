@@ -96,6 +96,10 @@ type interactiveState struct {
 	// render. It is nil until history renders, and rendering a list clears it, so
 	// a number always means the row of the table the operator last saw.
 	history *historyNamespace
+	// modelCatalog is the profile-number namespace produced by the most recent
+	// model catalog render. It is separate from history because a profile number
+	// selects a model configuration while a history row number selects a session.
+	modelCatalog *modelCatalogNamespace
 }
 
 type interruptController struct {
@@ -541,6 +545,10 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		// The history table is trusted application styling over sanitized cells,
 		// so it renders through the trusted writer like list and endpoints.
 		return false, interactiveHistory(ctx, api, state, rest, trustedOut, errOut, options.Color)
+	case "model":
+		// The model catalog table is trusted application styling over sanitized
+		// cells, so it renders through the trusted writer like list and history.
+		return false, interactiveModel(ctx, api, state, rest, trustedOut, errOut, options.Color)
 	case "messages":
 		// A conversation is provider prose, so it renders through the untrusted
 		// writer: every body already passed the provider output boundary.
