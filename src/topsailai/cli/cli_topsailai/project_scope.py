@@ -45,7 +45,16 @@ from cli_topsailai.projects import (
     build_managed_project_list as _build_managed_project_list,
     print_project_table as _print_managed_project_table,
 )
+from topsailai.ai_base.constants import SESSION_CATEGORY_AGENT_DRIVER
 
+
+# Session categories that are internal machinery rather than user sessions.
+# The session agent driver creates an analysis agent per poll and exports the
+# target session's project workspace into its own process, so those rows carry a
+# non-empty ``project_workspace`` and would otherwise be listed as project
+# sessions. They are excluded from the default list only; an explicit session ID
+# lookup still returns whatever the caller named.
+_INTERNAL_SESSION_CATEGORIES = (SESSION_CATEGORY_AGENT_DRIVER,)
 
 # Built-in agent drivers offered when resuming a session.
 _RESUME_DEFAULT_DRIVER = "topsailai_agent_chats"
@@ -284,10 +293,20 @@ def build_project_list(
     """Build the list of recent sessions with a project workspace.
 
     Runs ``topsailai_list_sessions --json --has-project --sort desc`` with an
-    optional session ID and limit, then parses the JSON output. Sessions are
-    then re-sorted by the modification time of their most recent
-    ``*.session.stdout`` file (oldest first, newest last). When a session has
-    no stdout file, its ``create_time`` is used as a fallback.
+    optional session ID, the internal-category exclusion, and a limit, then
+    parses the JSON output. Sessions are then re-sorted by the modification
+    time of their most recent ``*.session.stdout`` file (oldest first, newest
+    last). When a session has no stdout file, its ``create_time`` is used as a
+    fallback.
+
+    Internal machinery sessions listed in ``_INTERNAL_SESSION_CATEGORIES`` are
+    excluded from the default list, because the session agent driver exports the
+    target session's project workspace into its own process and those rows would
+    otherwise occupy the page and shift every selectable row number. The
+    exclusion is applied by the database query, before pagination, so a page
+    still contains the requested number of user sessions. An explicit
+    ``session_id`` lookup is never filtered, because the caller named that
+    session on purpose.
 
     Each entry is enriched with a ``status`` field (``Running`` or ``Idle``)
     by scanning ``{TOPSAILAI_HOME}/workspace/task/`` for the most recent
@@ -312,6 +331,8 @@ def build_project_list(
     ]
     if session_id:
         cmd.append(session_id)
+    else:
+        cmd.extend(["--excluded-categories", ",".join(_INTERNAL_SESSION_CATEGORIES)])
     if limit is not None:
         cmd.extend(["--limit", str(limit)])
 

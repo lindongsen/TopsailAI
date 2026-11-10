@@ -462,7 +462,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `project add <path> [name]` | Add a project to the managed project list. |
 | `project del <path>` | Remove a project from the managed project list. |
 | `project list [--json]` | Display all managed projects; `--json` outputs a JSON array instead of a table. |
-| `project list_sessions [--json]` | Display recent sessions with project workspaces (default limit: 30); `--json` outputs JSON instead of a table. |
+| `project list_sessions [--json]` | Display recent sessions with project workspaces (default limit: 30); `--json` outputs JSON instead of a table. Internal `agent_driver` sessions are excluded from the default list, because the session agent driver exports the target session's project workspace into its own process and those rows would otherwise occupy the page and shift every selectable row number. The exclusion is applied by the database query before pagination, so a page still holds the requested number of user sessions. An explicit session ID lookup is never filtered. |
 | `project launch <folder>` | Launch an agent in `<folder>` using the same behavior as the project-scope `/agent <folder>` command. |
 | `project resume <session> [-d DRIVER]` | Resume an idle session; the default driver is `topsailai_agent_chats`. |
 | `models list` | Display all model registry entries. |
